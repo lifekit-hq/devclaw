@@ -1,6 +1,6 @@
 ---
 name: devclaw-status
-description: Produce a morning status digest of the live devclaw instance — every durable goal's phase/lifecycle, anything blocked or awaiting Denys, recent deliveries, and the deduplicated problems catalog. Reads live state through the devclaw MCP (pointed at the VPS). Use whenever Denys asks "what's the status of goals", "any problems", "what's blocked", "what needs me", "how are the goals doing", "give me the devclaw digest", "/devclaw-status", or any morning/standup check on the running instance — even if he doesn't say "digest". This is the read-only "what's going on right now" surface; it never steers, resumes, cancels, or edits a goal.
+description: Produce a morning status digest of the live devclaw instance — every durable goal's phase/lifecycle, anything blocked or awaiting Denys, recent deliveries, the deduplicated problems catalog, and the nightly cycle reports (clean-cycle / mechanism-wedge history). Reads live state through the devclaw MCP (pointed at the VPS). Use whenever Denys asks "what's the status of goals", "any problems", "what's blocked", "what needs me", "how are the goals doing", "did last night run clean", "give me the devclaw digest", "/devclaw-status", or any morning/standup check on the running instance — even if he doesn't say "digest". This is the read-only "what's going on right now" surface; it never steers, resumes, cancels, or edits a goal.
 ---
 
 # devclaw-status — the morning digest of the live instance
@@ -26,6 +26,19 @@ The MCP tools you use:
 | `tail_goal(id)` | the deliveries tail (what each action shipped: summary + gate verdict + PR) and the live event stream — use only to explain a specific goal, not for every goal |
 | `list_projects` / `project_status(id)` | the project rollup, if Denys wants it grouped by project |
 | `list_problems` | the deduplicated problems catalog (message ×count) — **only if the tool exists** (see Problems below) |
+
+There is **one exception** to "everything is an MCP tool": the **cycle reports**.
+They are NOT exposed as an MCP tool — the only read surface is the HTTP route
+**`GET /evals/cycles.json`** on the *same server the MCP tunnels to*. Derive its
+base URL from the configured devclaw MCP url (in `~/.claude.json`,
+`mcpServers.devclaw.url`, e.g. `http://127.0.0.1:28791/mcp`) by stripping the
+trailing `/mcp`, then:
+`curl -s --max-time 15 "<base>/evals/cycles.json?limit=14"`.
+Each row is `{cycle_key, clean (0/1), wedges_json, pauses_json, summary, …}`;
+the human-readable `summary` already carries the settled/done/failed line and
+the needs-operator list — parse it, don't recompute. If the curl fails or
+returns nothing, say the cycle-report endpoint wasn't reachable (same fail-loud
+rule as a missing MCP) — don't invent a cycle history.
 
 **Hard rule — never fabricate status.** If the devclaw MCP tools are **not
 available in this session** (no `list_goals` in your toolset), the MCP isn't
@@ -64,10 +77,25 @@ repo forbids. A digest that looks current but isn't is worse than no digest.
    > redeployed the new code, so there's no read surface here yet.
    Don't guess at problems from goal logs to fill the gap — say what's readable.
 
-5. **Optional project grouping.** Only if Denys asked for it, or there are enough
+5. **Cycle reports.** `curl` the `/evals/cycles.json` endpoint (base-URL
+   derivation above). Report the last ~14 nightly cycles as a clean/wedged
+   history — **a cycle is `clean` iff zero mechanism-wedges fired in its
+   22:00–05:00 Europe/London window** (ADR 0006). A *wedge* is the loop's own
+   plumbing breaking — an engine error, a review-gate crash, a worker with no
+   result line, a wall-clock timeout, a broken delivery, a `mechanical:*` block.
+   A genuine `needs_answer` (human-gated by design) and a self-healed quota/auth
+   pause are **clean**, not wedges — surface them under "needs operator" /
+   "pauses" but never count them against the cycle. Lead with the **most recent
+   cycle** (did last night run clean?) and the **rolling clean rate** over the
+   window; then name the recurring wedge *classes* (e.g. `review_crash ×3`,
+   `engine_error ×3`) so a systemic wedge is visible, not just last night's. If
+   only a handful of cycles exist, say so — the mechanism is young and the rate
+   is noisy.
+
+6. **Optional project grouping.** Only if Denys asked for it, or there are enough
    goals that grouping helps, fold in `list_projects` / `project_status`.
 
-6. **Render the digest** (next section). Keep it tight — this is a glance, not a
+7. **Render the digest** (next section). Keep it tight — this is a glance, not a
    report.
 
 ### How Denys clears a blocked goal — put the right verb on each blocked line
@@ -105,6 +133,11 @@ calm — don't manufacture urgency.
 - ×<count> <message>
   …or the "not exposed over MCP" note.
 
+## Cycle reports
+- Last night (<cycle_key>): ✅ CLEAN — settled <n> (<d> done, <f> failed) · needs-op <n>
+  …or ⚠️ <n> wedge(s): <class ×n, class ×n>
+- Clean rate: <clean>/<total> cycles · recurring wedge: <class> (<n> nights)
+
 ## Quiet (<n>)
 - <objective> — <lifecycle> (done / idle / cancelled)
 ```
@@ -130,3 +163,13 @@ Rules that keep it honest and scannable:
 - **Fail-loud on a missing MCP** mirrors the repo's core philosophy (loud failure
   over silent degradation). The stale local db is a trap; naming the disconnect
   is the correct, honest output.
+- **Cycle reports answer the operator's real done-criterion** — "kick off a goal
+  for the cycle and it runs without me." Goal state answers "what needs me right
+  now"; the clean-cycle history answers "is the *loop itself* healthy, or is its
+  own plumbing wedging night after night." A run of ⚠️ cycles with the same wedge
+  class is the single most important reliability signal on the instance, so it
+  earns its own section rather than being buried in the per-message problems
+  catalog (which mixes plumbing wedges with by-design gate verdicts and human
+  gates). The clean/wedge boundary is deliberately narrow: only mechanism
+  breakage counts, so the rate doesn't get diluted by needs_answer gates and
+  self-healed pauses that are the system *working*.
