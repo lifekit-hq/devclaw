@@ -188,6 +188,55 @@ def parse_cli_envelope(stdout: str) -> CliEnvelope | None:
     )
 
 
+def _record_timeout_diagnostics(
+    *,
+    role: str,
+    model: str | None,
+    prompt: str,
+    argv_head: str,
+    started: int,
+    bytes_out: int | None,
+    first_byte_at: int | None,
+) -> None:
+    """Make a cognition timeout LEGIBLE (2026-07-24, cognition-timeout-observability).
+
+    A bare ``"timeout"`` couldn't distinguish the two causes that need OPPOSITE
+    fixes: the CLI hung before emitting a byte (``bytes_out == 0`` /
+    ``first_byte_ms`` never set → auth / network / queue, an *infra* stall) vs a
+    genuinely slow-or-large generation (``bytes_out > 0`` → a *work-size*
+    problem). ``input_chars`` correlates timeouts with prompt size (the third
+    discriminator). The signals land on the trace AND on one greppable
+    ``devclaw.cognition.timeout`` stderr line so the cross-night distribution is
+    recoverable from container logs. ``bytes_out`` is ``None`` only on the
+    buffered fallback path (test doubles); real subprocesses always report it.
+
+    Deliberately does NOT touch the raised ``PlannerError`` wording — the quota
+    classifier (``loom.limits.classify_failure``) regexes that message, so it
+    stays byte-identical."""
+    latency = _trace.now_ms() - started
+    input_chars = len(prompt)
+    bytes_str = "unknown" if bytes_out is None else str(bytes_out)
+    fb_ms = (first_byte_at - started) if first_byte_at is not None else None
+    fb_str = "none" if fb_ms is None else str(fb_ms)
+    diag = (
+        f"timeout input_chars={input_chars} bytes_out={bytes_str} "
+        f"first_byte_ms={fb_str}"
+    )
+    sys.stderr.write(
+        f"devclaw.cognition.timeout role={role} model={model or '-'} "
+        f"elapsed_ms={latency} input_chars={input_chars} "
+        f"bytes_out={bytes_str} first_byte_ms={fb_str}\n"
+    )
+    _trace.record_cognition(
+        role=role, model=model or "", prompt=prompt, response="",
+        latency_ms=latency, error=diag,
+    )
+    _trace.record_subprocess(
+        cmd="claude --print", argv_head=argv_head, latency_ms=latency,
+        exit_code=None, error=diag,
+    )
+
+
 async def call_claude(
     prompt: str,
     model: str | None = None,
@@ -224,9 +273,9 @@ async def call_claude(
             # after ~20 dispatches, and every subsequent plan attempt hit
             # ``[Errno 7] Argument list too long``. The prompt now rides on
             # stdin instead. ``claude --print`` reads the whole stdin as the
-            # prompt when argv doesn't provide one; closing stdin after write
-            # (via ``communicate(input=)``) avoids the "no stdin data received
-            # in 3s" warning the old ``stdin=DEVNULL`` path was working around.
+            # prompt when argv doesn't provide one; the read path below feeds it
+            # and closes stdin, avoiding the "no stdin data received in 3s"
+            # warning the old ``stdin=DEVNULL`` path was working around.
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -244,24 +293,77 @@ async def call_claude(
         )
         raise PlannerError(f"Failed to spawn {CLAUDE_BIN}: {exc}") from exc
 
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(input=prompt.encode("utf-8")),
-            timeout=effective_timeout_ms / 1000,
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        latency = _trace.now_ms() - started
-        _trace.record_cognition(
-            role=role, model=model or "", prompt=prompt, response="",
-            latency_ms=latency, error="timeout",
-        )
-        _trace.record_subprocess(
-            cmd="claude --print", argv_head=argv_head, latency_ms=latency,
-            exit_code=None, error="timeout",
-        )
-        raise PlannerError(f"claude --print timed out after {effective_timeout_ms}ms")
+    prompt_bytes = prompt.encode("utf-8")
+    timeout_s = effective_timeout_ms / 1000
+    # Real subprocesses (``stdout`` is an asyncio ``StreamReader``) take the
+    # streaming read path so a timeout can capture partial output + first-byte
+    # timing — the two signals that separate "hung before first token" from
+    # "slow/large generation" (see :func:`_record_timeout_diagnostics`). Test
+    # doubles that implement only ``.communicate()`` (no ``.stdout``) fall
+    # through to the original buffered call, byte-for-byte unchanged.
+    if getattr(proc, "stdout", None) is not None and getattr(proc, "stderr", None) is not None:
+        stdout_buf = bytearray()
+        stderr_buf = bytearray()
+        first_byte_at: list[int | None] = [None]
+
+        async def _feed_stdin() -> None:
+            stdin = proc.stdin
+            if stdin is None:
+                return
+            try:
+                stdin.write(prompt_bytes)
+                await stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # child exited before consuming stdin — not a call failure
+            finally:
+                try:
+                    stdin.close()
+                except Exception:  # noqa: BLE001 — closing a dead pipe is benign
+                    pass
+
+        async def _drain(stream, buf: bytearray, mark_first: bool) -> None:
+            while True:
+                chunk = await stream.read(65536)
+                if not chunk:
+                    break
+                if mark_first and first_byte_at[0] is None:
+                    first_byte_at[0] = _trace.now_ms()
+                buf.extend(chunk)
+
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(
+                    _feed_stdin(),
+                    _drain(proc.stdout, stdout_buf, True),
+                    _drain(proc.stderr, stderr_buf, False),
+                ),
+                timeout=timeout_s,
+            )
+            await proc.wait()
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            _record_timeout_diagnostics(
+                role=role, model=model, prompt=prompt, argv_head=argv_head,
+                started=started, bytes_out=len(stdout_buf),
+                first_byte_at=first_byte_at[0],
+            )
+            raise PlannerError(f"claude --print timed out after {effective_timeout_ms}ms")
+        stdout_b, stderr_b = bytes(stdout_buf), bytes(stderr_buf)
+    else:
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(input=prompt_bytes),
+                timeout=timeout_s,
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            _record_timeout_diagnostics(
+                role=role, model=model, prompt=prompt, argv_head=argv_head,
+                started=started, bytes_out=None, first_byte_at=None,
+            )
+            raise PlannerError(f"claude --print timed out after {effective_timeout_ms}ms")
 
     stdout = stdout_b.decode("utf-8", "replace")
     stderr = stderr_b.decode("utf-8", "replace")
