@@ -44,3 +44,35 @@ def git_head_sha(workspace_dir: str) -> Optional[str]:
     sha = proc.stdout.strip()
     # Defensive — short SHAs (some git configs) or empty output fail closed.
     return sha if len(sha) >= 40 else None
+
+
+def is_ancestor_of_head(workspace_dir: str, sha: str) -> bool:
+    """True iff ``sha`` is a known commit that is an ancestor of the
+    workspace's current HEAD.
+
+    Divergence guard for the trend bookmark: workspaces are force-reset
+    between goal actions (``checkout -f -B goal/<id> origin/…``; goal
+    branches get squash-merged and recreated off new main), so a bookmark
+    taken on yesterday's branch tip is frequently NOT reachable from today's
+    HEAD. ``git diff`` from such a divergent base re-reports long-existing
+    paths as newly added, and the bookmark-aware signals (D1/D2/D3) fire
+    spuriously forever.
+
+    ``git merge-base --is-ancestor`` exits 0 for a valid ancestor, 1 for a
+    known-but-divergent commit, and 128 for an unknown or garbage-collected
+    SHA — one call covers both the divergence and the lost-object cases.
+    Returns ``False`` on ANY failure (timeout, missing binary, non-git dir);
+    callers treat ``False`` as "re-seed to HEAD", which is the safe no-fire
+    outcome. Never raises."""
+    try:
+        proc = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", sha, "HEAD"],
+            cwd=workspace_dir,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_REVPARSE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return False
+    return proc.returncode == 0
