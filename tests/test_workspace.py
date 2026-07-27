@@ -167,3 +167,56 @@ async def test_branch_equals_default_branch_uses_legacy_path(tmp_path):
     out = await prepare_workspace(str(ws), repo_url=origin, branch="main")
     assert out == "main"
     assert _git_out(ws, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+
+
+@pytest.mark.asyncio
+async def test_goal_branch_prep_survives_dirty_tracked_file(tmp_path):
+    """The 2026-07-25 closeloop-bench wedge: a TRACKED ``.devclaw/trends.md``
+    (committed to the goal branch by a prior action) gets appended to by the
+    trend detector between actions, and an unforced ``checkout -B`` then
+    refuses with 'Your local changes … would be overwritten by checkout' —
+    a mechanical:prep block caused by the loop's own mechanism output. Prep
+    must force through: local modifications to tracked files never survive,
+    and never wedge the goal."""
+    origin = _make_origin_with_main(tmp_path)
+
+    # A prior action committed .devclaw/trends.md to the goal branch.
+    pre = tmp_path / "pre"
+    subprocess.run(["git", "clone", origin, str(pre)], check=True, capture_output=True)
+    _git(pre, "checkout", "-b", "goal/g")
+    (pre / ".devclaw").mkdir()
+    (pre / ".devclaw" / "trends.md").write_text("## trends\n")
+    _git(pre, "add", "-A"); _git(pre, "commit", "-m", "commit trends file")
+    _git(pre, "push", "-u", "origin", "goal/g")
+
+    ws = tmp_path / "ws"
+    await prepare_workspace(str(ws), repo_url=origin, branch="goal/g")
+
+    # Between actions the trend detector appends to the now-tracked file.
+    (ws / ".devclaw" / "trends.md").write_text("## trends\n- new observation\n")
+
+    out = await prepare_workspace(str(ws), repo_url=origin, branch="goal/g")
+    assert out == "goal/g"
+    assert _git_out(ws, "rev-parse", "--abbrev-ref", "HEAD") == "goal/g"
+    # Pristine at the remote tip — the local append is discarded, not wedging.
+    assert (ws / ".devclaw" / "trends.md").read_text() == "## trends\n"
+    assert _git_out(ws, "status", "--porcelain") == ""
+
+
+@pytest.mark.asyncio
+async def test_goal_branch_create_survives_dirty_tracked_file(tmp_path):
+    """Same wedge class on the FIRST-item path: the goal branch doesn't exist
+    on origin yet, but a tracked file (committed on main) was modified locally
+    between preps. Creating ``goal/<id>`` off origin/main must force through
+    the dirt, not refuse."""
+    origin = _make_origin_with_main(tmp_path)
+    ws = tmp_path / "ws"
+
+    await prepare_workspace(str(ws), repo_url=origin)  # clone at main
+    (ws / "README.md").write_text("locally dirtied tracked file\n")
+
+    out = await prepare_workspace(str(ws), repo_url=origin, branch="goal/g")
+    assert out == "goal/g"
+    assert _git_out(ws, "rev-parse", "--abbrev-ref", "HEAD") == "goal/g"
+    assert (ws / "README.md").read_text() == "seed\n"
+    assert _git_out(ws, "status", "--porcelain") == ""
