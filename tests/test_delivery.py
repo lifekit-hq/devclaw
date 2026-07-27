@@ -825,3 +825,57 @@ async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_
     assert t.status == "done"
     assert t.pr_url == "https://github.com/acme/w/pull/3"
     assert prep_calls == []  # no branch params → the wire is fully inert
+
+
+async def test_target_branch_on_base_or_default_is_rejected_before_any_push(
+    store, tmp_path, monkeypatch
+):
+    """Invariant-guard finding on PR-2: target_branch == base_branch (or the
+    remote default) would put the workspace ON the base itself and delivery's
+    branch-reuse mode would push unreviewed commits STRAIGHT to it, failing
+    only afterwards on `gh pr create` — loud but already irreversible. The
+    contract is rejected at prep: the engine never runs, prepare_workspace is
+    never called, nothing is ever pushed."""
+    origin, repo = _clone_with_origin(tmp_path)
+    runner_calls: list = []
+    prep_calls: list = []
+
+    async def runner(req: EngineRequest):
+        runner_calls.append(req.goal)
+        return {"status": "ok", "workspaceDir": req.workspace_dir}
+
+    async def recording_prep(*a, **kw):
+        prep_calls.append((a, kw))
+
+    monkeypatch.setattr("devclaw.task_queue.prepare_workspace", recording_prep)
+
+    q = TaskQueue(store, runner=runner)
+
+    # target == remote default (main): rejected.
+    tid = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="tweak on main",
+        deliver=True, target_branch="main",
+    )
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert "default branch" in (t.error or "")
+    assert "never pushes" in (t.error or "")
+
+    # target == base (non-default): rejected before the base is even fetched.
+    tid2 = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="tweak on release",
+        deliver=True, base_branch="release/1.0", target_branch="release/1.0",
+    )
+    await q.drain()
+    t2 = store.get_task(tid2)
+    assert t2.status == "failed"
+    assert "equals base_branch" in (t2.error or "")
+
+    assert runner_calls == []   # the agent never launched for either
+    assert prep_calls == []     # the workspace was never put on the base
+    # And the real origin's main is untouched — no push ever happened.
+    out = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=origin, capture_output=True, text=True,
+    )
+    assert out.returncode == 0

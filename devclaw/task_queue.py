@@ -52,7 +52,11 @@ from .engine.sandcastle import run_sandcastle, sandbox_owner_id, sweep_orphan_sa
 # Module globals on purpose (like deliver_change) so tests patch them on THIS
 # namespace: the direct-dispatch branch-target wire (v1-helper-resurface PR-2)
 # preps a caller-pinned target_branch before the engine runs.
-from .engine.workspace import WorkspaceError, prepare_workspace
+from .engine.workspace import (
+    WorkspaceError,
+    _default_branch as _workspace_default_branch,
+    prepare_workspace,
+)
 from .dispatch_gate import operator_block
 from .state_store import Program, StateStore, Task, TaskKind, _now_ms
 # Leaf concerns split out of this module. The git ``_sync`` helpers are re-exported
@@ -934,11 +938,33 @@ class TaskQueue(_NotifyMixin):
         passed, so a non-repo workspace fails with prepare_workspace's own
         actionable message rather than cloning from scratch (that ergonomic is
         P3)."""
+        # A target equal to the base (or to the remote default) would put
+        # the workspace ON the base itself and delivery's branch-reuse mode
+        # would then `git push` unreviewed commits STRAIGHT to it — failing
+        # only afterwards on `gh pr create` (head == base), i.e. loud but
+        # already irreversible. Reject the contract up front, BEFORE any
+        # fetch: devclaw never pushes a base/default branch directly.
+        if target_branch and base_branch and target_branch == base_branch:
+            return (
+                f"target_branch '{target_branch}' equals base_branch — "
+                "delivery would push unreviewed commits straight to the "
+                "base itself. Pin a work branch (e.g. feat/…) to continue, "
+                "or omit target_branch for a fresh derived branch."
+            )
         if base_branch:
             err = await _base_branch_error(workspace_dir, base_branch)
             if err:
                 return err
         if target_branch:
+            default = await _workspace_default_branch(workspace_dir)
+            if target_branch == default:
+                return (
+                    f"target_branch '{target_branch}' is the repository's "
+                    "default branch — devclaw never pushes the default branch "
+                    "directly (every change ships as a PR). Pin a work branch "
+                    "(e.g. feat/…), or omit target_branch for a fresh derived "
+                    "branch."
+                )
             try:
                 await prepare_workspace(
                     workspace_dir, branch=target_branch, base_branch=base_branch
