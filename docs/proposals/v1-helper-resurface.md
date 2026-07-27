@@ -1,12 +1,11 @@
 # Proposal — re-surface the v1 task-runner helper (bounded task → PR, no goal ceremony)
 
-- **Status:** **P1 LOCKED (direction) — 2026-07-23.** The direction (re-surface the
-  existing direct task-runner as a first-class daily-driver, and give it a
-  caller-chosen delivery target) is endorsed — it's the named follow-on from the
-  console proposal's `[OPEN] #7` lean ("commandable daily driver") and it closes the
-  `speckit-handoff-gap`. All P1 `[OPEN]`s are resolved below (§7). **LOCKED = direction,
-  not schedule** — the tranche is Denys's to sequence; no P1 code lands outside it.
-  P2/P3 are named-but-unsized.
+- **Status:** **P1 GRADUATED → [ADR 0011](../decisions/0011-branch-target-delivery-seam.md) — 2026-07-27**
+  (Denys greenlit the tranche; the seam + dispatch wiring shipped, starting at
+  PR #387). The ADR is canonical for P1 from here; this proposal remains the
+  home of **P2 (console "file a task" surface) and P3 (direct-path prep
+  ergonomics)** — named-but-unsized, deferred with owner Denys (§7 O6/O7).
+  History: P1 LOCKED (direction) 2026-07-23, all P1 `[OPEN]`s resolved (§7).
 - **Date opened / firmed:** 2026-07-23 · **Authors:** Denys + Claude
 - **Grounded on:** a read-only investigation of `main` @ `c71449e` (findings in §2 are
   quoted from code, not assumed).

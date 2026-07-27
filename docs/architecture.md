@@ -239,10 +239,15 @@ and `tests/test_self_triage.py`.
 - **Public surface:** every `@mcp.tool` decorator in `devclaw/server/tools.py`.
   HTTP endpoints in `devclaw/server/http.py`.
 - **Allowed to call:** layer 2 (`goals.create_goal(...)`, `goals.get_goal(...)`,
-  etc.) and the project registry.
-- **Forbidden:** reaching into layer 4 directly (e.g. dispatching tasks
-  bypassing `GoalService`), touching goal state directly (must go through
-  `GoalStore`).
+  etc.), the project registry, and — for the **direct-task intake**
+  (`dispatch_task`, the v1 task-runner path re-surfaced by
+  [ADR 0011](./decisions/0011-branch-target-delivery-seam.md)) —
+  `TaskQueue.submit`. The direct intake is a sanctioned second front door onto
+  the same queue → engine → gates → delivery machinery, NOT a goal bypass: it
+  carries no goal, so there is no `GoalService` to bypass.
+- **Forbidden:** touching goal state directly (must go through `GoalStore`),
+  spawning engines/containers, or reaching queue *internals* — layer 1 talks
+  to `submit`/read surfaces only; execution, gating, and settle stay layer 4's.
 - **Tested by:** `tests/test_dashboard.py`, `tests/test_console_prs_endpoint.py`
   — full HTTP/tool requests against the FastMCP app (via the in-process client
   in `conftest.py`) with the layers below stubbed. The general telemetry read

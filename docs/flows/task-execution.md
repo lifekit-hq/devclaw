@@ -221,3 +221,23 @@ couldn't distinguish *"the docker run from Step C never happened"* from
    prepend "you're in a docker-less sandbox; ignore stack-bring-up
    instructions from `CLAUDE.md`; use the unit-only verify path." Today
    the agent has to figure it out from instruction overrides.
+
+## The direct-task path — branch targeting (ADR 0011)
+
+Everything above traces a task the GOAL layer dispatched. The same sequence
+also runs for a **direct task** (`dispatch_task` at layer 1 → `queue.submit`
+→ Steps C–K) with no goal, no heartbeat, no planner — the v1-helper path
+re-surfaced by [ADR 0011](../decisions/0011-branch-target-delivery-seam.md).
+Two optional inputs shape ONLY Step J (delivery) and a new pre-step:
+
+- `base_branch` — grounds the ahead-count/diff range and becomes
+  `gh pr create --base <base_branch>`. Verified resolvable at dispatch;
+  a bogus base fails the task loudly before the engine runs.
+- `target_branch` — the queue preps the workspace ON that branch
+  (`prepare_workspace(branch=target_branch)`, created off `base_branch` if
+  new), and Step J reuses its single PR (the widened goal-mode reuse path).
+  If delivery lands anywhere else, the task settles `failed` — the
+  "continue this branch" contract never silently degrades.
+
+Omitted ⇒ byte-identical legacy behavior (fresh derived branch → default
+base). Goal-dispatched tasks pass neither.
