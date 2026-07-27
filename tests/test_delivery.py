@@ -679,3 +679,203 @@ async def test_deliver_failure_on_caller_chosen_branch_still_fails_closed(tmp_pa
     assert r2["pr_url"] is None
     assert "gh pr create failed" in (r2["error"] or "")
     assert delivery_failed(r2)
+
+
+# ---- branch-target wire to the direct-task path (v1-helper-resurface PR-2) --
+
+
+async def test_direct_task_with_target_branch_lands_on_it_end_to_end(
+    store, tmp_path, monkeypatch
+):
+    """PR-2 wire, whole direct path: dispatch → prep puts the workspace ON the
+    pinned target_branch (real prepare_workspace, created off the origin
+    default since it doesn't exist yet) → the agent's change is delivered ON
+    that branch (real git against a local bare origin, gh faked) → the task
+    settles done with the PR recorded and the workspace still on the branch."""
+    origin, repo = _clone_with_origin(tmp_path)
+    calls: list = []
+    _github_faking_run(monkeypatch, calls)
+
+    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
+    tid = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="continue spec 035",
+        deliver=True, target_branch="feat/spec-035",
+    )
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done"
+    assert t.pr_url == "https://github.com/acme/widgets/pull/7"
+    # prep put the workspace on the pinned branch and delivery STAYED on it
+    assert _branch(repo) == "feat/spec-035"
+    import json as _json
+    delivery_verdict = _json.loads(t.result_json)["delivery"]
+    assert delivery_verdict["branch"] == "feat/spec-035"
+    assert delivery_verdict["delivered"] is True
+    # the branch (not some derived feat/* fork) reached origin
+    refs = subprocess.run(
+        ["git", "ls-remote", "--heads", origin], capture_output=True, text=True,
+    ).stdout
+    assert "feat/spec-035" in refs
+
+
+async def test_direct_task_with_unresolvable_base_branch_fails_loud_before_the_engine_runs(
+    store, tmp_path, monkeypatch
+):
+    """PR-2 advisory (b): a bogus base_branch fails the task AT DISPATCH with
+    an actionable message — the engine never runs, and no silent fresh-branch
+    PR arises from downstream diff-range/PR-base skew."""
+    origin, repo = _clone_with_origin(tmp_path)
+    runner_calls: list = []
+
+    async def runner(req: EngineRequest):
+        runner_calls.append(req.goal)
+        return {"status": "ok", "workspaceDir": req.workspace_dir}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="add the widget",
+        deliver=True, base_branch="release/9.9",
+    )
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert "base_branch 'release/9.9'" in (t.error or "")
+    assert "does not resolve" in (t.error or "")
+    assert "Push the base branch" in (t.error or "")  # actionable, not just loud
+    assert runner_calls == []  # fails FAST — the agent never launched
+    assert t.pr_url is None
+
+
+async def test_pinned_target_branch_miss_settles_failed_not_delivered(
+    store, tmp_path, monkeypatch
+):
+    """PR-2 advisory (a): the caller asked to CONTINUE target_branch; a
+    delivery that landed anywhere else — even with a green PR — broke that
+    contract and must settle 'failed', naming both branches. Settling 'done'
+    would silently degrade continue-this-branch into a fresh-branch PR."""
+    repo = str(tmp_path / "wsx")
+    os.makedirs(repo)
+    _init_repo(repo)
+
+    async def fake_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
+        return branch
+
+    async def landed_elsewhere_deliver(**kwargs):
+        return {"delivered": True, "branch": "feat/add-the-widget-endpoint",
+                "committed": True, "pushed": True,
+                "pr_url": "https://github.com/acme/widgets/pull/9", "error": None}
+
+    monkeypatch.setattr("devclaw.task_queue.prepare_workspace", fake_prep)
+    monkeypatch.setattr("devclaw.task_queue.deliver_change", landed_elsewhere_deliver)
+
+    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
+    tid = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="continue spec 035",
+        deliver=True, target_branch="feat/spec-035",
+    )
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert "pinned target_branch 'feat/spec-035'" in (t.error or "")
+    assert "feat/add-the-widget-endpoint" in (t.error or "")
+    assert "fresh-branch" in (t.error or "")
+    # the wrong-branch PR is named in the error for the human, not recorded as
+    # this task's delivery artifact
+    assert "pull/9" in (t.error or "")
+    assert t.pr_url is None
+
+
+async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_shape(
+    store, tmp_path, monkeypatch
+):
+    """Goal-path/byte-unaffected pin: a task submitted WITHOUT branch params
+    (exactly what the goal layer and program children do) triggers no prep
+    subprocess and calls deliver_change with the LEGACY kwarg shape — a
+    pre-PR-2 test stub signature (no base_branch/target_branch) still works."""
+    repo = str(tmp_path / "wsy")
+    os.makedirs(repo)
+    _init_repo(repo)
+    prep_calls: list = []
+
+    async def fake_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
+        prep_calls.append(branch)
+        return branch
+
+    # Deliberately the OLD signature: extra kwargs would raise TypeError here.
+    async def legacy_deliver(*, workspace_dir, task_id, goal, kind=None,
+                             verify=None, title=None, advisories=None):
+        return {"delivered": True, "branch": "devclaw/x", "committed": True,
+                "pushed": True, "pr_url": "https://github.com/acme/w/pull/3",
+                "error": None}
+
+    monkeypatch.setattr("devclaw.task_queue.prepare_workspace", fake_prep)
+    monkeypatch.setattr("devclaw.task_queue.deliver_change", legacy_deliver)
+
+    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
+    tid = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="add feature",
+        deliver=True,
+    )
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done"
+    assert t.pr_url == "https://github.com/acme/w/pull/3"
+    assert prep_calls == []  # no branch params → the wire is fully inert
+
+
+async def test_target_branch_on_base_or_default_is_rejected_before_any_push(
+    store, tmp_path, monkeypatch
+):
+    """Invariant-guard finding on PR-2: target_branch == base_branch (or the
+    remote default) would put the workspace ON the base itself and delivery's
+    branch-reuse mode would push unreviewed commits STRAIGHT to it, failing
+    only afterwards on `gh pr create` — loud but already irreversible. The
+    contract is rejected at prep: the engine never runs, prepare_workspace is
+    never called, nothing is ever pushed."""
+    origin, repo = _clone_with_origin(tmp_path)
+    runner_calls: list = []
+    prep_calls: list = []
+
+    async def runner(req: EngineRequest):
+        runner_calls.append(req.goal)
+        return {"status": "ok", "workspaceDir": req.workspace_dir}
+
+    async def recording_prep(*a, **kw):
+        prep_calls.append((a, kw))
+
+    monkeypatch.setattr("devclaw.task_queue.prepare_workspace", recording_prep)
+
+    q = TaskQueue(store, runner=runner)
+
+    # target == remote default (main): rejected.
+    tid = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="tweak on main",
+        deliver=True, target_branch="main",
+    )
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert "default branch" in (t.error or "")
+    assert "never pushes" in (t.error or "")
+
+    # target == base (non-default): rejected before the base is even fetched.
+    tid2 = q.submit(
+        kind="implement_feature", workspace_dir=repo, goal="tweak on release",
+        deliver=True, base_branch="release/1.0", target_branch="release/1.0",
+    )
+    await q.drain()
+    t2 = store.get_task(tid2)
+    assert t2.status == "failed"
+    assert "equals base_branch" in (t2.error or "")
+
+    assert runner_calls == []   # the agent never launched for either
+    assert prep_calls == []     # the workspace was never put on the base
+    # And the real origin's main is untouched — no push ever happened.
+    out = subprocess.run(
+        ["git", "rev-parse", "main"], cwd=origin, capture_output=True, text=True,
+    )
+    assert out.returncode == 0

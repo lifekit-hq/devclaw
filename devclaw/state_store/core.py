@@ -473,6 +473,13 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 # GitHub state so recurrence can reopen and age-out can close.
                 "ALTER TABLE problems ADD COLUMN issue_number INTEGER",
                 "ALTER TABLE problems ADD COLUMN issue_state TEXT",
+                # Branch-target delivery seam wire (v1-helper-resurface P1,
+                # PR-2): the caller-chosen PR base and the pinned delivery
+                # branch a direct ``dispatch_task`` carries through to
+                # ``prepare_workspace`` + ``deliver_change``. NULL on goal-path
+                # rows and pre-existing rows — byte-identical legacy behavior.
+                "ALTER TABLE tasks ADD COLUMN base_branch TEXT",
+                "ALTER TABLE tasks ADD COLUMN target_branch TEXT",
             ):
                 try:
                     self._db.execute(sql)
@@ -535,14 +542,17 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         scaffold: bool = False,
         plan_key: Optional[str] = None,
         strictness: str = "trust",
+        base_branch: Optional[str] = None,
+        target_branch: Optional[str] = None,
     ) -> None:
         with self._lock:
             self._db.execute(
                 """INSERT INTO tasks
                      (id, kind, status, workspace_dir, goal, notify_url, created_at,
                       program_id, depends_on, order_idx, milestone, verify_cmd, deliver,
-                      title, parent_goal_id, scaffold, plan_key, strictness)
-                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      title, parent_goal_id, scaffold, plan_key, strictness,
+                      base_branch, target_branch)
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     id,
                     kind,
@@ -561,6 +571,8 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                     1 if scaffold else 0,
                     plan_key,
                     strictness if strictness in ("trust", "strict") else "trust",
+                    base_branch,
+                    target_branch,
                 ),
             )
             self._commit()

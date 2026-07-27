@@ -51,6 +51,7 @@ async def prepare_workspace(
     workspace_dir: str,
     repo_url: str | None = None,
     branch: str | None = None,
+    base_branch: str | None = None,
 ) -> str:
     """Ensure ``workspace_dir`` is a pristine checkout of either the repo's
     default branch (when ``branch`` is None) OR the named ``branch`` at its
@@ -67,6 +68,13 @@ async def prepare_workspace(
     branch at latest origin; otherwise it is fetched + fast-forwarded to its
     own remote tip (preserving the agent's accumulated work) and rebased onto
     the latest default-branch tip so a long-running goal still tracks main.
+
+    ``base_branch`` (v1-helper-resurface P1, proposal O3) only matters when a
+    named ``branch`` does NOT exist on origin yet: the fresh branch is created
+    off ``origin/<base_branch>`` instead of the remote default, so a direct
+    task pinning ``target_branch`` + a non-default ``base_branch`` starts from
+    the base it will PR back to. None (every goal-path caller) ⇒ today's
+    create-off-default behavior, byte-identical.
 
     Injected into the goal tick so unit tests pass a no-op.
     """
@@ -132,11 +140,15 @@ async def prepare_workspace(
             raise WorkspaceError(f"checkout goal branch {branch} failed: {out[-300:]}")
     else:
         # First item of the goal — branch from origin/<default> so the goal
-        # starts at the same point a single-PR rerun would.
+        # starts at the same point a single-PR rerun would. A direct task's
+        # caller-chosen base (v1-helper-resurface O3) wins when provided.
+        start_ref = f"origin/{base_branch or default_branch}"
         rc, out = await _run(
-            "git", "checkout", "-f", "-B", branch, f"origin/{default_branch}",
+            "git", "checkout", "-f", "-B", branch, start_ref,
             cwd=workspace_dir,
         )
         if rc != 0:
-            raise WorkspaceError(f"create goal branch {branch} failed: {out[-300:]}")
+            raise WorkspaceError(
+                f"create branch {branch} from {start_ref} failed: {out[-300:]}"
+            )
     return branch

@@ -214,6 +214,49 @@ def _ls_remote_ok_sync(repo_url: str) -> bool:
     return p.returncode == 0
 
 
+def _base_branch_error_sync(host_dir: str, base_branch: str) -> str | None:
+    """Validate a caller-chosen PR base at the dispatch surface
+    (v1-helper-resurface PR-2): fetch origin, then require
+    ``origin/<base_branch>`` to resolve. Returns None when the base is good,
+    else the actionable failure message the task fails with.
+
+    Deliberately NOT best-effort, unlike the diff/baseline helpers above: a
+    bogus base that slipped past dispatch surfaces downstream as diff-range /
+    PR-base skew (``_default_base_ref`` silently falls through to the remote
+    default), which is exactly the quiet degrade this check exists to prevent.
+    ``GIT_TERMINAL_PROMPT=0`` for the same headless-host fail-fast rationale
+    as :func:`_ls_remote_ok_sync`."""
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", host_dir, *args],
+            capture_output=True, text=True, timeout=120,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+
+    try:
+        fetch = run("fetch", "origin", "--prune")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"base_branch '{base_branch}' could not be validated: git fetch failed ({exc})"
+    if fetch.returncode != 0:
+        tail = (fetch.stdout + fetch.stderr).strip()[-300:]
+        return (
+            f"base_branch '{base_branch}' could not be validated: git fetch "
+            f"origin failed in the workspace: {tail}"
+        )
+    try:
+        probe = run("rev-parse", "--verify", "--quiet", f"refs/remotes/origin/{base_branch}")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"base_branch '{base_branch}' could not be validated: {exc}"
+    if probe.returncode != 0:
+        return (
+            f"base_branch '{base_branch}' does not resolve on the workspace's "
+            f"origin (no origin/{base_branch} after fetch) — the PR base and "
+            "diff range would silently skew to the default branch. Push the "
+            "base branch to origin first, or dispatch with an existing base."
+        )
+    return None
+
+
 def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
     """Commit the interrupted attempt's uncommitted work as a WIP snapshot
     before a usage-limit requeue. The workspace survives the requeue untouched
