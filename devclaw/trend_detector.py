@@ -231,7 +231,7 @@ class TrendDetector:
     async def run_per_goal(self, *, goal_id: str, workspace_dir: str) -> None:
         """Run all per-project signals scoped to one goal's workspace. Called
         inside ``goal/tick.py``'s per-goal loop. Inherits the active tracer."""
-        from .bookmark import git_head_sha
+        from .bookmark import git_head_sha, is_ancestor_of_head
 
         scope_key = _scope_key_for_project(workspace_dir)
         # Seed the trend bookmark on first observation of this workspace so
@@ -244,6 +244,28 @@ class TrendDetector:
             if seeded is not None:
                 self._store.set_trend_bookmark(workspace_dir, seeded)
                 bookmark = seeded
+        elif not is_ancestor_of_head(workspace_dir, bookmark):
+            # The workspace is force-reset between goal actions (checkout
+            # -f -B off origin; goal branches squash-merged and recreated),
+            # so a persisted bookmark is frequently no longer an ancestor of
+            # HEAD. Diffing from a divergent base re-reports long-existing
+            # paths as added → D1/D2/D3 re-fire on old content forever.
+            # Re-seed to current HEAD — identical semantics to the
+            # first-observation seed above: signals see bookmark == HEAD
+            # and stay quiet this heartbeat.
+            reseeded = git_head_sha(workspace_dir)
+            if reseeded is not None:
+                self._store.set_trend_bookmark(workspace_dir, reseeded)
+                _trace.record_note(
+                    f"trend_detector: bookmark {bookmark[:12]} diverged from "
+                    f"HEAD in {workspace_dir}; re-seeded to {reseeded[:12]}"
+                )
+                bookmark = reseeded
+            else:
+                # HEAD unreadable too — defer bookmark-aware signals this
+                # heartbeat rather than diff from a divergent base. The
+                # stale bookmark stays persisted; next heartbeat retries.
+                bookmark = None
         ctx = SignalContext(
             scope="per_project",
             workspace_dir=workspace_dir,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -537,6 +538,125 @@ async def test_detector_does_not_advance_bookmark_for_non_bookmark_signal(tmp_pa
     # Bookmark was seeded but NOT advanced — still equals the seed value.
     assert store.get_trend_bookmark(str(workspace)) == "a" * 40
     store.close()
+
+
+# ---- bookmark divergence (workspace force-reset between goal actions) ------
+
+
+def _git(workspace: Path, *args: str) -> str:
+    """Run git in a real test repo. Inline identity config so commits work
+    on a bare CI user; check=True — a fixture-setup git failure should be
+    loud, not swallowed."""
+    proc = subprocess.run(
+        ["git", "-C", str(workspace),
+         "-c", "user.email=test@test", "-c", "user.name=test", *args],
+        capture_output=True, text=True, check=True,
+    )
+    return proc.stdout.strip()
+
+
+def _commit_file(workspace: Path, relpath: str, content: str, msg: str) -> str:
+    """Write a file, commit it, return the new HEAD SHA."""
+    target = workspace / relpath
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content)
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-m", msg)
+    return _git(workspace, "rev-parse", "HEAD")
+
+
+@pytest.mark.asyncio
+async def test_diverged_bookmark_reseeds_instead_of_refiring(tmp_path):
+    """A bookmark taken on an abandoned goal-branch tip (workspaces are
+    force-reset between goal actions; goal branches get squash-merged and
+    recreated off new main) is no longer an ancestor of HEAD. The detector
+    must re-seed it to HEAD — same semantics as the first-observation seed —
+    instead of letting D1/D2/D3 diff from the divergent base and re-report
+    long-existing paths as newly added forever (live: closeloop-bench's
+    trends.md flagged the same 'backend' dir on 07-12, 07-23 and 07-24)."""
+    from devclaw.trend_signals import D3NewArchitecturalSurface
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    _git(workspace, "init", "-b", "main")
+    _commit_file(workspace, "README.md", "hello\n", "c1")
+    # Yesterday's goal-branch tip — where the bookmark was taken.
+    _git(workspace, "checkout", "-b", "goal-old")
+    stale = _commit_file(workspace, "scratch.txt", "wip\n", "goal wip")
+    # Meanwhile main moved on (a squash-merge landed backend/) and the
+    # workspace was force-reset onto it: stale is NOT an ancestor of HEAD.
+    _git(workspace, "checkout", "main")
+    head = _commit_file(workspace, "backend/app.py", "app\n", "add backend")
+
+    caller = _CountingCaller()
+    detector, store, sent, _ = _detector_for(
+        tmp_path=tmp_path, signals=[D3NewArchitecturalSurface()], caller=caller,
+    )
+    store.set_trend_bookmark(str(workspace), stale)
+
+    await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
+
+    # Re-seeded to HEAD; D3 saw bookmark == HEAD → no fire, zero LLM calls.
+    assert store.get_trend_bookmark(str(workspace)) == head
+    assert caller.calls == 0
+    assert sent == []
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_valid_ancestor_bookmark_is_not_reseeded(tmp_path):
+    """A bookmark that IS still an ancestor of HEAD keeps its observation
+    window — no re-seed, signals see the original bookmark."""
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    _git(workspace, "init", "-b", "main")
+    old = _commit_file(workspace, "README.md", "hello\n", "c1")
+    _commit_file(workspace, "notes.txt", "more\n", "c2")
+
+    sig = _BookmarkAwareSignal(will_fire=False)
+    caller = _CountingCaller()
+    detector, store, _, _ = _detector_for(
+        tmp_path=tmp_path, signals=[sig], caller=caller,
+    )
+    store.set_trend_bookmark(str(workspace), old)
+
+    await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
+
+    assert store.get_trend_bookmark(str(workspace)) == old
+    assert sig.observed_bookmark == old
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_unknown_sha_bookmark_reseeds_without_raising(tmp_path):
+    """A bookmark pointing at an object the repo no longer knows (garbage
+    collected, or state copied between hosts) counts as diverged: re-seed to
+    HEAD, no exception out of the heartbeat path."""
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    _git(workspace, "init", "-b", "main")
+    head = _commit_file(workspace, "README.md", "hello\n", "c1")
+
+    sig = _BookmarkAwareSignal(will_fire=False)
+    caller = _CountingCaller()
+    detector, store, _, _ = _detector_for(
+        tmp_path=tmp_path, signals=[sig], caller=caller,
+    )
+    store.set_trend_bookmark(str(workspace), "e" * 40)
+
+    await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
+
+    assert store.get_trend_bookmark(str(workspace)) == head
+    assert sig.observed_bookmark == head
+    store.close()
+
+
+def test_is_ancestor_of_head_never_raises_outside_a_git_repo(tmp_path):
+    """The ancestry check is defensive: a non-git dir (or any git failure)
+    returns False — treated as 're-seed', never an exception."""
+    from devclaw.bookmark import is_ancestor_of_head
+
+    assert is_ancestor_of_head(str(tmp_path), "a" * 40) is False
 
 
 @pytest.mark.asyncio
