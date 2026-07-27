@@ -101,6 +101,18 @@ class Task:
     #: dial flip applies to the NEXT dispatch, not a task already running.
     #: Defaulted so existing rows/tests read as advisory ("trust").
     strictness: str = "trust"
+    #: Caller-chosen PR base for a direct ``dispatch_task`` (v1-helper-resurface
+    #: P1, PR-2). Validated against origin at launch; threaded into
+    #: ``deliver_change(base_branch=...)`` (diff range + ``gh pr create
+    #: --base``). None (the goal path and all pre-existing rows) ⇒ legacy
+    #: remote-default behavior.
+    base_branch: Optional[str] = None
+    #: Caller-pinned delivery branch for a direct ``dispatch_task`` (same seam):
+    #: the launch step preps the workspace ONTO it, and delivery must land on
+    #: it — a delivery that lands anywhere else fails the task (the
+    #: continue-this-branch contract never silently degrades into a
+    #: fresh-branch PR). None ⇒ today's auto-derived branch.
+    target_branch: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -241,6 +253,8 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         strictness=(
             r["strictness"] if "strictness" in r.keys() and r["strictness"] else "trust"
         ),
+        base_branch=r["base_branch"] if "base_branch" in r.keys() else None,
+        target_branch=r["target_branch"] if "target_branch" in r.keys() else None,
     )
 
 

@@ -127,3 +127,24 @@ async def test_review_repository_alias_defaults_goal_when_no_focus(capture_submi
     await _tools.review_repository(workspace_dir="/tmp/wsp")
     (call,) = capture_submit
     assert call["goal"] == "general code review"
+
+
+async def test_dispatch_task_forwards_branch_targets_to_submit(capture_submit):
+    """v1-helper-resurface PR-2: the MCP surface threads base_branch /
+    target_branch into queue.submit — and omitting them submits None (the
+    byte-identical legacy shape)."""
+    await _tools.dispatch_task(
+        kind="implement_feature",
+        workspace_dir="/tmp/wsp",
+        goal="continue spec 035",
+        open_pr=True,
+        base_branch="develop",
+        target_branch="feat/spec-035",
+    )
+    await _tools.dispatch_task(
+        kind="implement_feature", workspace_dir="/tmp/wsp", goal="plain",
+    )
+    first, second = capture_submit
+    assert first["base_branch"] == "develop"
+    assert first["target_branch"] == "feat/spec-035"
+    assert second["base_branch"] is None and second["target_branch"] is None

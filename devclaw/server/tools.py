@@ -29,6 +29,8 @@ async def dispatch_task(
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
+    base_branch: Optional[str] = None,
+    target_branch: Optional[str] = None,
 ) -> str:
     """One-shot dispatch of a code task to OpenHands in the given workspace_dir.
     Returns a task_id immediately; the task runs asynchronously. Poll
@@ -52,6 +54,18 @@ async def dispatch_task(
     ``done``, DevClaw commits it to a branch, pushes, and opens a PR (best-effort;
     needs git push auth + a GitHub remote), recording the PR URL on the task.
 
+    Branch targeting (both optional; defaults = today's behavior — a fresh
+    auto-named branch, PR to the repo's default branch):
+      - ``target_branch`` — CONTINUE this branch: before the agent runs, the
+        workspace is force-checked-out to it (fetched to its origin tip if it
+        exists, else created off ``base_branch``; uncommitted local changes are
+        discarded), and the delivery must land on it — reusing its single open
+        PR when one exists. Delivery landing anywhere else fails the task.
+        Also selects the branch a ``review_repository`` task reviews.
+      - ``base_branch`` — the PR base and diff range (e.g. "develop"). It must
+        resolve on the workspace's origin; a base that doesn't fails the task
+        up front with an actionable message.
+
     Prefer this over the older ``implement_feature`` / ``fix_bug`` /
     ``review_repository`` tools — those are kept as back-compat aliases and
     forward here."""
@@ -65,6 +79,8 @@ async def dispatch_task(
         notify_url=notify_url,
         verify_cmd=None if is_review else verify_cmd,
         deliver=False if is_review else open_pr,
+        base_branch=base_branch,
+        target_branch=target_branch,
     )
     return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
 

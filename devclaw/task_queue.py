@@ -49,12 +49,17 @@ from .quality.browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .quality.gate_policy import Consequence, gate_consequence
 from .quality.reachability import judge_reachability
 from .engine.sandcastle import run_sandcastle, sandbox_owner_id, sweep_orphan_sandboxes
+# Module globals on purpose (like deliver_change) so tests patch them on THIS
+# namespace: the direct-dispatch branch-target wire (v1-helper-resurface PR-2)
+# preps a caller-pinned target_branch before the engine runs.
+from .engine.workspace import WorkspaceError, prepare_workspace
 from .dispatch_gate import operator_block
 from .state_store import Program, StateStore, Task, TaskKind, _now_ms
 # Leaf concerns split out of this module. The git ``_sync`` helpers are re-exported
 # here because tests import them from ``task_queue`` and patch ``_wip_snapshot_sync``
 # on this namespace; the async wrappers below look them up as module globals.
 from .task_git import (  # noqa: F401
+    _base_branch_error_sync,
     _git_commit_exists_sync,
     _git_diff_sync,
     _git_head_sync,
@@ -236,6 +241,13 @@ async def _git_commit_exists(host_dir: str, sha: str) -> bool:
 async def _git_reset_clean(host_dir: str, sha: str) -> bool:
     """Async wrapper — same thread-offload rationale as :func:`_git_diff`."""
     return await asyncio.to_thread(_git_reset_clean_sync, host_dir, sha)
+
+
+async def _base_branch_error(host_dir: str, base_branch: str) -> Optional[str]:
+    """Async wrapper for the dispatch-surface base validation (PR-2 advisory):
+    None when ``origin/<base_branch>`` resolves after a fetch, else the
+    actionable message the task fails with."""
+    return await asyncio.to_thread(_base_branch_error_sync, host_dir, base_branch)
 
 
 async def _wip_snapshot(host_dir: str, task_id: str) -> str:
@@ -589,10 +601,20 @@ class TaskQueue(_NotifyMixin):
         parent_goal_id: Optional[str] = None,
         scaffold: bool = False,
         strictness: str = "trust",
+        base_branch: Optional[str] = None,
+        target_branch: Optional[str] = None,
         pump: bool = True,
     ) -> str:
         """Create a task row (status 'pending') and, by default, immediately
         reconcile execution against it (claim + launch, up to the caps).
+
+        ``base_branch`` / ``target_branch`` (v1-helper-resurface P1, PR-2) are
+        the direct-dispatch branch targets: the launch step preps the workspace
+        onto ``target_branch`` (creating it off ``base_branch`` when absent on
+        origin) and delivery must land on it; ``base_branch`` is validated
+        against origin before the engine runs and becomes the PR base / diff
+        range. Both None (every goal-path caller) ⇒ byte-identical legacy
+        behavior — no prep, no validation, no extra delivery kwargs.
 
         ``pump=False`` (PR7 — the dispatch/pump split): create the row ONLY,
         no claim, no launch. ``_pump()`` synchronously claims PENDING work —
@@ -617,6 +639,8 @@ class TaskQueue(_NotifyMixin):
             parent_goal_id=parent_goal_id,
             scaffold=scaffold,
             strictness=strictness,
+            base_branch=base_branch,
+            target_branch=target_branch,
         )
         if pump:
             self._pump()
@@ -886,6 +910,48 @@ class TaskQueue(_NotifyMixin):
         self._running_tasks[task_id] = task
         task.add_done_callback(lambda _t, tid=task_id: self._running_tasks.pop(tid, None))
 
+    async def _prep_branch_target(
+        self,
+        workspace_dir: str,
+        *,
+        base_branch: Optional[str],
+        target_branch: Optional[str],
+    ) -> Optional[str]:
+        """Direct-dispatch branch-target prep (v1-helper-resurface P1, PR-2).
+        Returns None on success, else the failure message the task settles
+        with — the engine must not run when the pinned contract can't be set up.
+
+        Two steps, both loud:
+        - ``base_branch`` set → verify it resolves as ``origin/<base>`` after a
+          fetch (advisory b: a bogus base fails HERE with an actionable
+          message, instead of surfacing downstream as diff-range/PR-base skew).
+        - ``target_branch`` set → ``prepare_workspace(branch=target_branch)``
+          puts the workspace ON it (created off ``base_branch`` when it doesn't
+          exist on origin yet — proposal O3), mirroring how the goal layer
+          preps ``goal/<id>`` before each action.
+
+        Assumes an already-known workspace (proposal O7): no repo_url is
+        passed, so a non-repo workspace fails with prepare_workspace's own
+        actionable message rather than cloning from scratch (that ergonomic is
+        P3)."""
+        if base_branch:
+            err = await _base_branch_error(workspace_dir, base_branch)
+            if err:
+                return err
+        if target_branch:
+            try:
+                await prepare_workspace(
+                    workspace_dir, branch=target_branch, base_branch=base_branch
+                )
+            except WorkspaceError as err:
+                return f"could not prepare target_branch '{target_branch}': {err}"
+            except Exception as err:  # never wedge the queue on a prep surprise
+                return (
+                    f"could not prepare target_branch '{target_branch}': "
+                    f"{err.__class__.__name__}: {err}"
+                )
+        return None
+
     async def _execute(
         self,
         task_id: str,
@@ -909,9 +975,34 @@ class TaskQueue(_NotifyMixin):
         # pushed straight to main.
         row = self._store.get_task(task_id)
         deliver = bool(row and row.deliver)
-        success = await self._run_and_settle(
-            task_id, kind, workspace_dir, goal, defer_done=deliver
-        )
+        # Branch-target wire (v1-helper-resurface P1, PR-2) — DIRECT path only:
+        # goal-path and program-child rows never carry these, so for them every
+        # line below is inert (no prep subprocess, legacy deliver_change call).
+        base_branch = (row.base_branch or None) if row else None
+        target_branch = (row.target_branch or None) if row else None
+
+        prep_failure: Optional[str] = None
+        if (base_branch or target_branch) and not (row and row.pause_count > 0):
+            # Validate the base + prep the pinned branch BEFORE the engine runs
+            # (mirrors the goal layer prepping goal/<id> at dispatch). Skipped
+            # on a pause-resume re-run: the workspace deliberately survives a
+            # requeue untouched (see _run_and_settle's resume brief) — re-prep
+            # would reset the branch to its origin tip and wipe the wip
+            # snapshot; base/target were already validated on the first run.
+            prep_failure = await self._prep_branch_target(
+                workspace_dir, base_branch=base_branch, target_branch=target_branch
+            )
+        if prep_failure is not None:
+            # Fail loudly and FAST — the engine never runs against a workspace
+            # that isn't on the contract the caller pinned (a bogus base would
+            # otherwise surface downstream as silent diff-range/PR-base skew).
+            self._store.mark_failed(task_id, prep_failure)
+            self._check_and_trip_breaker(workspace_dir, task_id)
+            success: Optional[dict] = None
+        else:
+            success = await self._run_and_settle(
+                task_id, kind, workspace_dir, goal, defer_done=deliver
+            )
         if success is _PAUSED:
             # Paused for a quota limit — task is back to 'pending', global pause
             # holds dispatch. Don't deliver/notify/settle; the gated _pump will
@@ -930,12 +1021,21 @@ class TaskQueue(_NotifyMixin):
             pr_url = None
             failure: Optional[str] = None
             delivery: dict = {}
+            # Only-when-set on purpose (blank-safe): the legacy call shape stays
+            # byte-identical for goal/program tasks AND for every existing test
+            # stub of deliver_change that predates the branch-target kwargs.
+            branch_kwargs: dict = {}
+            if base_branch:
+                branch_kwargs["base_branch"] = base_branch
+            if target_branch:
+                branch_kwargs["target_branch"] = target_branch
             try:
                 delivery = await deliver_change(
                     workspace_dir=workspace_dir, task_id=task_id, goal=goal,
                     kind=kind, verify=verify,
                     title=(row.title if row else None),
                     advisories=advisories,
+                    **branch_kwargs,
                 )
                 pr_url = delivery.get("pr_url")
                 failure = delivery_failed(delivery)
@@ -948,7 +1048,25 @@ class TaskQueue(_NotifyMixin):
                 # result so the goal poller reads the PR/branch/push state, not
                 # just a bare pr_url column.
                 success["delivery"] = delivery
-            if failure is not None and not pr_url:
+            # Pinned-target miss is LOUD (PR-2 advisory a): the caller asked to
+            # continue target_branch; a delivery that landed anywhere else broke
+            # that contract even if it opened a perfectly green PR — settling
+            # 'done' here would silently degrade "continue this branch" into a
+            # fresh-branch PR. A benign no-op (nothing shipped, branch None)
+            # is not a miss — nothing landed anywhere.
+            landed = delivery.get("branch")
+            target_miss = bool(
+                failure is None and target_branch and landed and landed != target_branch
+            )
+            if target_miss:
+                failure = (
+                    f"pinned target_branch '{target_branch}' was missed: delivery "
+                    f"landed on '{landed}'"
+                    + (f" (PR: {pr_url})" if pr_url else "")
+                    + " — the continue-this-branch contract must not silently "
+                    "degrade into a fresh-branch PR"
+                )
+            if failure is not None and (target_miss or not pr_url):
                 # A requested delivery that BROKE must not settle 'done': a
                 # done-without-PR row reads as shipped to every poller upstream
                 # (the goal layer plans its next action off it — the exact
