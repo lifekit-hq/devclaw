@@ -503,3 +503,179 @@ async def test_no_changes_delivery_still_settles_done(store, tmp_path):
     # the delivery verdict rides along in the persisted result as evidence
     import json as _json
     assert "no changes to deliver" in _json.loads(t.result_json)["delivery"]["error"]
+
+
+# ---- branch-target delivery seam (v1-helper-resurface P1) -------------------
+
+
+def _clone_with_origin(tmp_path):
+    """The bare-origin + clone fixture the engineer-commit tests use, factored:
+    a local bare origin, a configured clone, one 'base' commit pushed."""
+    origin = str(tmp_path / "origin.git")
+    subprocess.run(["git", "init", "--bare", "-q", origin], check=True)
+    repo = str(tmp_path / "repo")
+    subprocess.run(["git", "clone", "-q", origin, repo], check=True)
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (tmp_path / "repo" / "base.txt").write_text("base\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "push", "-q", "origin", "HEAD")
+    return origin, repo
+
+
+def _github_faking_run(monkeypatch, calls, *, existing_pr=None, push_fails=False,
+                       create_fails=False):
+    """Wrap delivery._run: git stays REAL (real branches, real pushes to the
+    local bare origin), but the remote LOOKS like GitHub and ``gh`` is faked —
+    the existing tests never reach the gh path, and this is the only seam that
+    lets a test observe the ``gh pr create`` argv."""
+    real_run = getattr(delivery._run, "_devclaw_real", delivery._run)
+
+    async def fake_run(prog, *args, cwd):
+        calls.append((prog, *args))
+        if prog == "git" and args[:3] == ("remote", "get-url", "origin"):
+            return 0, "https://github.com/acme/widgets.git"
+        if push_fails and prog == "git" and args and args[0] == "push":
+            return 1, "remote rejected"
+        if prog == "gh" and args[:2] == ("pr", "list"):
+            return 0, existing_pr or ""
+        if prog == "gh" and args[:2] == ("pr", "create"):
+            if create_fails:
+                return 1, "gh: base branch not found"
+            return 0, "https://github.com/acme/widgets/pull/7"
+        return await real_run(prog, *args, cwd=cwd)
+
+    fake_run._devclaw_real = real_run  # so re-patching in one test never chains
+    monkeypatch.setattr(delivery, "_run", fake_run)
+
+
+async def test_deliver_target_branch_stays_on_pinned_branch_and_reuses_its_pr(tmp_path, monkeypatch):
+    """v1-helper-resurface P1 (O4): a caller-pinned ``target_branch`` the
+    workspace is already on rides the SAME reuse machinery as goal branches —
+    delivery stays on the pinned branch (no fresh feat/* fork from the
+    engineer's commit subject) and reuses its existing open PR instead of
+    gh-pr-create'ing over it."""
+    origin, repo = _clone_with_origin(tmp_path)
+    # Simulate prepare_workspace having checked out the caller's branch.
+    _git(repo, "checkout", "-q", "-b", "feat/spec-035")
+    (tmp_path / "repo" / "feature.txt").write_text("agent change\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(api): add the widget endpoint")
+
+    calls = []
+    existing = "https://github.com/acme/widgets/pull/41"
+    _github_faking_run(monkeypatch, calls, existing_pr=existing)
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="abcd1234ef", goal="continue spec 035",
+        kind="implement_feature", target_branch="feat/spec-035",
+    )
+
+    assert r["committed"] is True and r["pushed"] is True and r["delivered"] is True
+    # CRITICAL: stays on the pinned branch — the engineer-commit-derived
+    # feat/add-the-widget-endpoint fork never happens.
+    assert r["branch"] == "feat/spec-035"
+    assert _branch(repo) == "feat/spec-035"
+    # The pinned branch's single PR is REUSED — no `gh pr create` call at all.
+    assert r["pr_url"] == existing
+    assert not [c for c in calls if c[:3] == ("gh", "pr", "create")]
+    refs = subprocess.run(
+        ["git", "ls-remote", "--heads", origin], capture_output=True, text=True,
+    ).stdout
+    assert "feat/spec-035" in refs and "feat/add-the-widget-endpoint" not in refs
+
+
+async def test_deliver_base_branch_sets_pr_base_and_grounds_the_diff_range(tmp_path, monkeypatch):
+    """v1-helper-resurface P1: a caller-chosen ``base_branch`` is threaded into
+    BOTH halves of the seam — `gh pr create --base <it>` AND the ahead-count/
+    diff base ref. The setup makes the two bases disagree: HEAD == origin/main
+    exactly (fully pushed) but 1 commit ahead of origin/develop — under
+    today's default base this delivery would no-op with 'no changes to
+    deliver'; shipping at all proves the range used develop."""
+    origin, repo = _clone_with_origin(tmp_path)
+    # develop stays at the base commit; the default branch gains one more,
+    # fully pushed (so ahead-of-default == 0).
+    _git(repo, "branch", "develop")
+    _git(repo, "push", "-q", "origin", "develop")
+    (tmp_path / "repo" / "feature.txt").write_text("agent change\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(api): add the widget endpoint")
+    _git(repo, "push", "-q", "origin", "HEAD")
+
+    calls = []
+    _github_faking_run(monkeypatch, calls)
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="abcd1234ef", goal="add the widget",
+        kind="implement_feature", base_branch="develop",
+    )
+
+    assert r["delivered"] is True and r["error"] is None
+    # the change was found relative to origin/develop (else: no changes) and
+    # the branch derives from the commit that range surfaced.
+    assert r["branch"] == "feat/add-the-widget-endpoint"
+    creates = [c for c in calls if c[:3] == ("gh", "pr", "create")]
+    assert len(creates) == 1
+    argv = creates[0]
+    assert argv[argv.index("--base") + 1] == "develop"
+    assert r["pr_url"] == "https://github.com/acme/widgets/pull/7"
+
+
+async def test_deliver_omitted_branch_params_keeps_legacy_behavior(tmp_path, monkeypatch):
+    """v1-helper-resurface P1 (O5): with base_branch/target_branch omitted the
+    delivery is byte-identical to today — a fresh engineer-derived branch, and
+    `gh pr create` carries NO --base flag (GitHub defaults to the repo's
+    default branch)."""
+    origin, repo = _clone_with_origin(tmp_path)
+    (tmp_path / "repo" / "feature.txt").write_text("agent change\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(api): add the widget endpoint")
+
+    calls = []
+    _github_faking_run(monkeypatch, calls)
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="abcd1234ef", goal="add the widget",
+        kind="implement_feature",
+    )
+
+    assert r["delivered"] is True and r["pushed"] is True
+    assert r["branch"] == "feat/add-the-widget-endpoint"  # fresh derived branch, as always
+    creates = [c for c in calls if c[:3] == ("gh", "pr", "create")]
+    assert len(creates) == 1 and "--base" not in creates[0]
+    assert r["pr_url"] == "https://github.com/acme/widgets/pull/7"
+
+
+async def test_deliver_failure_on_caller_chosen_branch_still_fails_closed(tmp_path, monkeypatch):
+    """#183 unchanged through the seam: a push failure on a caller-pinned
+    target_branch — and a pr-create failure under a caller-chosen base_branch
+    — is a BROKEN delivery (`delivery_failed` truthy → the task settles
+    'failed'), never a silent success."""
+    from devclaw.delivery import delivery_failed
+
+    origin, repo = _clone_with_origin(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "feat/spec-035")
+    (tmp_path / "repo" / "feature.txt").write_text("agent change\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(api): add the widget endpoint")
+
+    # push breaks on the pinned branch
+    _github_faking_run(monkeypatch, [], push_fails=True)
+    r = await deliver_change(
+        workspace_dir=repo, task_id="t1", goal="continue spec 035",
+        kind="implement_feature", target_branch="feat/spec-035",
+    )
+    assert r["pushed"] is False and r["pr_url"] is None
+    assert "push failed" in (r["error"] or "")
+    assert delivery_failed(r)  # broken, not benign → the task settles failed
+
+    # gh pr create breaks under a caller-chosen base (no existing PR to reuse)
+    _github_faking_run(monkeypatch, [], create_fails=True)
+    r2 = await deliver_change(
+        workspace_dir=repo, task_id="t1", goal="continue spec 035",
+        kind="implement_feature", target_branch="feat/spec-035", base_branch="develop",
+    )
+    assert r2["pr_url"] is None
+    assert "gh pr create failed" in (r2["error"] or "")
+    assert delivery_failed(r2)

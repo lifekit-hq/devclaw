@@ -238,10 +238,21 @@ async def _find_pr_for_branch(workspace_dir: str, branch: str) -> str | None:
     return out.strip() or None
 
 
-async def _default_base_ref(workspace_dir: str) -> str | None:
-    """The remote's default branch as a local ref (e.g. 'origin/main'), or None
-    if there's no usable origin tracking ref. Used to tell whether the agent
-    committed its change to a branch (HEAD ahead of base)."""
+async def _default_base_ref(workspace_dir: str, base_branch: str | None = None) -> str | None:
+    """The base ref for the ahead-count/diff range as a local ref (e.g.
+    'origin/main'), or None if there's no usable ref. Used to tell whether the
+    agent committed its change to a branch (HEAD ahead of base).
+
+    ``base_branch`` (the v1-helper-resurface delivery seam) is a caller-chosen
+    PR base: when set, its origin tracking ref (or, failing that, the local
+    branch) wins; when unset — or when the chosen base doesn't resolve in this
+    workspace — behavior falls through to the remote-default lookup, exactly
+    today's ``origin/HEAD`` → ``main`` → ``master`` chain."""
+    if base_branch:
+        for cand in (f"origin/{base_branch}", base_branch):
+            rc, _ = await _run("git", "rev-parse", "--verify", "--quiet", cand, cwd=workspace_dir)
+            if rc == 0:
+                return cand
     rc, out = await _run(
         "git", "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD", cwd=workspace_dir
     )
@@ -285,6 +296,8 @@ async def deliver_change(
     verify: dict | None = None,
     title: str | None = None,
     advisories: list | None = None,
+    base_branch: str | None = None,
+    target_branch: str | None = None,
 ) -> dict:
     """Commit the workspace's change to a branch and (best-effort) push + open a PR.
     Returns a verdict dict; never raises. ``kind`` shapes the conventional-commit
@@ -292,7 +305,16 @@ async def deliver_change(
     ``title`` is the PLANNER's chosen PR title (see Action.title / plan.md
     §Production-ready C7). When present and non-empty it wins over the
     engineer's own commit subject and the goal-derived heuristic — the diff-
-    scope suffix from ``_scope_suffix`` still applies for grounding."""
+    scope suffix from ``_scope_suffix`` still applies for grounding.
+
+    ``base_branch`` / ``target_branch`` are the v1-helper-resurface delivery
+    seam (docs/proposals/v1-helper-resurface.md §3): ``base_branch`` is a
+    caller-chosen PR base — it becomes the ahead-count/diff base ref and the
+    ``gh pr create --base``; ``target_branch`` pins the delivery branch — when
+    the workspace is already ON it, delivery stays there and reuses its single
+    PR (the same machinery goal branches use, no new reuse logic). Both default
+    to None ⇒ byte-identical legacy behavior (fresh derived branch → the
+    remote's default base)."""
     result: dict = {"delivered": False, "branch": None, "committed": False,
                     "pushed": False, "pr_url": None, "error": None}
 
@@ -305,9 +327,10 @@ async def deliver_change(
     dirty = rc == 0 and bool(status.strip())
 
     # The agent may have committed its change to its own branch, leaving a CLEAN
-    # working tree — that is still a delivery. Detect commits ahead of the
-    # remote's default branch and ship them, rather than reporting "no changes".
-    base = await _default_base_ref(workspace_dir)
+    # working tree — that is still a delivery. Detect commits ahead of the base
+    # (caller-chosen ``base_branch``, else the remote's default branch) and ship
+    # them, rather than reporting "no changes".
+    base = await _default_base_ref(workspace_dir, base_branch)
     ahead = 0
     if base:
         rc_a, cnt = await _run(
@@ -320,14 +343,17 @@ async def deliver_change(
         result["error"] = "no changes to deliver"
         return result
 
-    # Detect goal-branch mode: prepare_workspace(branch="goal/<id>") put the
-    # workspace on the goal branch BEFORE the agent ran. In that case all
-    # commits the agent made are already on the goal branch — we push it
-    # as-is (no new branch), and the goal's single PR is reused across items.
-    # Legacy mode (workspace on the default branch or off-goal) creates a
-    # per-task branch the way it always has.
+    # Detect branch-reuse mode: prepare_workspace(branch=...) put the workspace
+    # on its delivery branch BEFORE the agent ran — either a goal branch
+    # (``goal/<id>``) or a caller-pinned ``target_branch`` (the v1-helper
+    # delivery seam). In that case all commits the agent made are already on
+    # that branch — we push it as-is (no new branch), and its single PR is
+    # reused across deliveries. Legacy mode (workspace on the default branch,
+    # off-goal, and unpinned) creates a per-task branch the way it always has.
     current = await _current_branch(workspace_dir)
-    goal_mode = bool(current and current.startswith("goal/"))
+    goal_mode = bool(current) and (
+        current.startswith("goal/") or (target_branch is not None and current == target_branch)
+    )
 
     # Prefer the ENGINEER's own commit for the title / branch / PR body — so the
     # delivery reads as "what changed", not the task instruction. The _COMMIT_CODA
@@ -434,8 +460,11 @@ async def deliver_change(
         pr_title = title
         if not pr_title.rstrip().endswith(")"):
             pr_title = pr_title + _scope_suffix(files_stat)
+        # A caller-chosen ``base_branch`` becomes the PR base; absent, gh
+        # defaults the base to the repo's default branch (today's behavior).
+        base_args = ("--base", base_branch) if base_branch else ()
         rc, out = await _run(
-            "gh", "pr", "create", "--head", branch,
+            "gh", "pr", "create", *base_args, "--head", branch,
             "--title", pr_title,
             "--body", _pr_body(goal, task_id, verify, files_stat, changes=changes, advisories=advisories),
             cwd=workspace_dir,
