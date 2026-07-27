@@ -114,12 +114,19 @@ async def prepare_workspace(
         "git", "rev-parse", "--verify", "--quiet", f"origin/{branch}",
         cwd=workspace_dir,
     )
+    # Both checkouts force (-f): harness writes between actions (e.g. the
+    # trend detector appending to a TRACKED .devclaw/trends.md) leave
+    # tracked-file modifications that `clean -fdx` can't touch, and an
+    # unforced `checkout -B` refuses to overwrite them — wedging the goal on
+    # its own mechanism output. Pristine means pristine: local dirt never
+    # survives prep, whatever produced it.
     if rc_remote == 0:
         # Branch exists on origin — check it out and reset to its tip so we
         # have ALL prior items' commits. (A force-reset is safe because we
         # never write to this branch except via push from devclaw itself.)
         rc, out = await _run(
-            "git", "checkout", "-B", branch, f"origin/{branch}", cwd=workspace_dir,
+            "git", "checkout", "-f", "-B", branch, f"origin/{branch}",
+            cwd=workspace_dir,
         )
         if rc != 0:
             raise WorkspaceError(f"checkout goal branch {branch} failed: {out[-300:]}")
@@ -127,7 +134,7 @@ async def prepare_workspace(
         # First item of the goal — branch from origin/<default> so the goal
         # starts at the same point a single-PR rerun would.
         rc, out = await _run(
-            "git", "checkout", "-B", branch, f"origin/{default_branch}",
+            "git", "checkout", "-f", "-B", branch, f"origin/{default_branch}",
             cwd=workspace_dir,
         )
         if rc != 0:
