@@ -16,12 +16,12 @@ the cognitive half is the movable part).
 
 ## A. quality/ — worker / gate-layer (instrument: `measure_passrate`)
 
-### A1. Adversarial review gate + panel + degradation ladder — **H (cognitive core)** — *locked shed-candidate #1*
-- `devclaw/quality/__init__.py` — `review_diff`, `_review_panel_core`, `review_panel` + degradation ladder; wired in `task_queue._review_failure`, enable check `_review_gate_enabled`.
+### A1. Adversarial review gate + degradation ladder — **H (cognitive core)** — *locked shed-candidate #1*
+- `devclaw/quality/__init__.py` — `review_diff`, `review_gate` (single reviewer wrapped in the degradation ladder); wired in `task_queue._review_failure`, enable check `_review_gate_enabled`.
 - What: after verify+integrity pass, a Claude pass reads the diff vs the ticket and returns approve/request_changes; `request_changes` re-enters the retry loop.
-- Cost: **1 Claude call per successful code task** (N calls at `DEVCLAW_REVIEW_PANEL_N>=2`; per-file fan-out on the degrade ladder can burst up to `DEVCLAW_REVIEW_DEGRADE_MAX_FILES`=40 calls). ~756 LOC. Heavy misfire history: #210 (timeout→fail-closed→burned retries), #224 (generated-diff crash), #227 (reviewed wrong repo), #245 (quota sub-quorum misread as defect), #254 (panel), #281 (ladder).
-- Structural part (never-shed): the fail-closed contract — unparseable/crash/sub-quorum RAISES, never approves. Cognitive part (shed): the review judgment itself, panel fan-out, lens prompts, the `filter_reviewable_diff` generated-file heuristic.
-- A/B: mostly already — `DEVCLAW_REVIEW_PANEL_N=1` is byte-identical single reviewer; per-project `review_gate` registry override turns it fully off; `DEVCLAW_REVIEW_DEGRADE*`. Gap: no single env kills the base gate — a `DEVCLAW_REVIEW_GATE` env would complete the seam.
+- Cost: **1 Claude call per successful code task** (per-file fan-out on the degrade ladder can burst up to `DEVCLAW_REVIEW_DEGRADE_MAX_FILES`=40 calls). Heavy misfire history: #210 (timeout→fail-closed→burned retries), #224 (generated-diff crash), #227 (reviewed wrong repo), #245 (quota sub-quorum misread as defect), #281 (ladder). *The N≥2 diverse-lens panel (#254) was deleted 2026-07-28 (#409) — measured dead at N=1 for weeks.*
+- Structural part (never-shed): the fail-closed contract — unparseable/crash RAISES, never approves. Cognitive part (shed): the review judgment itself, the `filter_reviewable_diff` generated-file heuristic.
+- A/B: per-project `review_gate` registry override turns it fully off; `DEVCLAW_REVIEW_DEGRADE*`. Gap: no single env kills the base gate — a `DEVCLAW_REVIEW_GATE` env would complete the seam.
 
 ### A2. Browser-E2E gate — **H**
 - `devclaw/quality/browser_gate.py` (~277 LOC); wired `task_queue._browser_gate_failure`, `_browser_gate_mode`.
@@ -135,7 +135,7 @@ this list only orders the experiments, it authorizes nothing.**
 
 | # | Candidate | Off-switch (A/B seam) | Cost saved | Instrument |
 |---|---|---|---|---|
-| **1** | **Adversarial review gate / panel** (A1) — *locked* | `DEVCLAW_REVIEW_PANEL_N`, registry `review_gate`, `DEVCLAW_REVIEW_DEGRADE*` (gap: no base-gate env) | 1–N Claude calls per successful code task — biggest steady-state gate-layer burn | `measure_passrate` |
+| **1** | **Adversarial review gate** (A1) — *locked* | registry `review_gate`, `DEVCLAW_REVIEW_DEGRADE*` (gap: no base-gate env) | 1 Claude call per successful code task — biggest steady-state gate-layer burn | `measure_passrate` |
 | 2 | Retry loop + attempt-history scaffolding (C1) | `DEVCLAW_MAX_RETRIES=0` | Highest per-run cost (full re-run + gate stack per retry); trivial on/off | `measure_passrate` |
 | 3 | Investigate/world-research stack (B4) | `DEVCLAW_GOAL_INVESTIGATE=0` | 1 dispatch + 1–2 calls per goal | `sandbox_e2e` / `dry_world_research` |
 | 4 | Decomposer up-front checklist (B3) | `DEVCLAW_GOAL_DECOMPOSE=0` | 1 deep-tier call per goal | `run_all` / `dry_decompose` |

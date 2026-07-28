@@ -91,6 +91,12 @@ A new public repo containing the gate as a standalone tool:
 
 ## 4. Slices (per the sizing rule — firm P1 only at lock)
 
+> **Note (2026-07-28, #409):** the `review_panel` diverse-lens fan-out named
+> below was deleted from devclaw (measured dead at N=1 for weeks); the review
+> core is now `review_diff` + `review_gate` (single reviewer + degrade ladder).
+> No action here — this proposal is P3-frozen; update the symbol list at
+> graduation.
+
 - **P1 (firmed at lock):** `lifekit-hq/portcullis` scaffold + the review core
   (`review_diff` / `review_panel` / `format_feedback` + prompts + the **whole
   loom substrate**, per O5) runnable standalone on an arbitrary diff via a
