@@ -12,13 +12,13 @@ Coding agents are excellent at *tasks* and unreliable at *goals*. Prompting one 
 
 *Both screenshots are the live operator console (`/console`) driving real repositories — not a mockup.*
 
-**Measured, not vibes.** The first measured pass-rate run (real docker sandbox, real `claude`, a production .NET repo): **5/5 tickets shipped and gate-verified** — four net-new API features and one hardening fix, delivered as PRs, **+19 net-new tests, zero existing tests deleted/skipped/weakened, zero regressions**. Honest scope: small-to-medium machine-verifiable backend tasks; UI and ambiguous specs still need a human (see `evals/`).
+**Measured, not vibes.** The first pass-rate probe — real docker sandbox, real `claude`, one production .NET repo (`lifekit-dashboard`) — shipped **5/5 tickets gate-verified**: four net-new API features and one hardening fix, delivered as PRs, **+19 net-new tests, zero existing tests deleted/skipped/weakened, zero regressions**. That is a single-repo, n=5, gate-verified-**at-ship** measurement — the precursor to the formal **v0.1 proof** (10 tickets across ≥2 repos, scored *merged-without-rework* ≥6/10), whose verdict is still **pending** (see [`ROADMAP.md`](./ROADMAP.md) and `evals/`). Honest scope: small-to-medium machine-verifiable backend tasks; UI and ambiguous specs still need a human.
 
-> **DevClaw is the chef.** The waiter — an [OpenClaw](https://openclaw.ai) chat agent, the user-facing assistant — takes orders and translates chat into structured MCP tool calls; devclaw cooks. It owns the **craft of software development as a service**: durable goals, planning, decomposition, sandbox execution (via [OpenHands](https://github.com/All-Hands-AI/OpenHands), the open-source coding-agent SDK), pre-PR adversarial review, gate verification, durable Tailscale deploys, and grounded direction evaluation. devclaw never talks to the user directly.
+> **DevClaw is the chef.** The waiter — an [OpenClaw](https://openclaw.ai) chat agent, the user-facing assistant — takes orders and translates chat into structured MCP tool calls; devclaw cooks. It owns the **craft of software development as a service**: durable goals, planning, decomposition, sandbox execution (via [OpenHands](https://github.com/All-Hands-AI/OpenHands), the open-source coding-agent SDK), pre-PR adversarial review, gate verification, and grounded direction evaluation. (An experimental Tailscale deploy path exists but is not yet load-bearing — it can't yet host the owner's stack; see #401.) devclaw never talks to the user directly.
 
 Cognition is always `claude` over a Pro/Max OAuth session — **no `ANTHROPIC_API_KEY`, no metered billing** for autonomous runs.
 
-It is **not** a chatbot and **not** a rebuild of OpenHands. OpenHands owns the agent loop (tool use, code edits, git). DevClaw owns everything *around* it: durable goals + direction evaluation, decomposition, state, isolation, observability, delivery, and deploy.
+It is **not** a chatbot and **not** a rebuild of OpenHands. OpenHands owns the agent loop (tool use, code edits, git). DevClaw owns everything *around* it: durable goals + direction evaluation, decomposition, state, isolation, observability, and delivery. (Durable deploy is an experimental path, not yet in production — #401.)
 
 ```
 Denys
@@ -90,7 +90,7 @@ The day we swap claude-code for another harness, the entire skill/hook system su
 | Goal → tasks decomposition, direction eval, review gate | DevClaw |
 | Task/program state | DevClaw state store (SQLite) |
 | Per-task isolation | DevClaw sandcastle runner (`docker run`) |
-| Durable hosting / handoff | DevClaw deploy (Tailscale, reboot-surviving) |
+| Durable hosting / handoff | DevClaw deploy (Tailscale) — **experimental**, not yet hosting the owner's stack (#401) |
 | Interface to the waiter | DevClaw FastMCP server |
 
 The full rationale — including why OpenHands and sandbox isolation are **orthogonal** layers (the agent vs. the box it runs in), and why this calls `docker run` directly instead of depending on `@ai-hero/sandcastle` — lives in [`docs/decisions/0001-openhands-engine.md`](./docs/decisions/0001-openhands-engine.md).
@@ -123,7 +123,7 @@ devclaw/
 │   └── workspace.py    #   per-action pristine git checkout (devclaw owns it)
 ├── delivery/           # how shipped changes REACH the owner:
 │   ├── __init__.py     #   engineer-authored commit → branch → push → PR
-│   ├── deploy.py       #   durable Tailscale deploy hosting (reboot-surviving)
+│   ├── deploy.py       #   Tailscale deploy hosting — experimental; launcher supports Python/static only (#401)
 │   └── repo.py         #   gh repo creation (for create_repo)
 ├── quality/            # gates that judge the work past the green test gate:
 │   ├── __init__.py     #   pre-PR adversarial diff review (claude)
@@ -286,9 +286,9 @@ The human surface for supervising the fleet — a React SPA (Vite + TypeScript, 
 
 The console reads generated views and JSON projections — it never mutates state outside the same MCP-tool verbs the waiter uses. Rebuild with `npm --prefix devclaw/server/console run build`.
 
-### Durable deploy hosting
+### Deploy hosting (experimental — not yet in production)
 
-The handoff for an `achieved` goal: a running product the owner opens, not a diff to read.
+The *intended* handoff for an `achieved` goal is a running product the owner opens, not a diff to read. **Status:** the plumbing below is built and the auto-fire path is wired, but it has never run end-to-end in production (`list_deploys` returns `[]`), and the in-container launcher currently recognizes only Python-FastAPI (`backend/requirements.txt`) or static (`frontend/`) repos — the owner's real stack (.NET 9 / Angular 21 / Postgres) is not yet hostable. Making the deploy contract repo-declared (Dockerfile/compose) instead of launcher-inferred is tracked in **#401**.
 
 | Tool | Does |
 |---|---|
@@ -364,7 +364,7 @@ To validate the **real** pipeline (a logged-in `claude` driving OpenHands in a d
 
 ## Status
 
-DevClaw is the live runtime. As of mid-2026 it serves as the chef behind an OpenClaw waiter agent, driving real repositories daily: the durable goal layer + Tailscale deploys carry the load, the goal↔program unification (ADR 0003, "one primitive, one dial") is landed, and the operator console is the deployed human surface. Earlier drift (the spec-kit elicitation flow, the preview hosting module) was removed rather than maintained.
+DevClaw is the live runtime. As of mid-2026 it serves as the chef behind an OpenClaw waiter agent, driving real repositories daily: the durable goal layer carries the load, the goal↔program unification (ADR 0003, "one primitive, one dial") is landed, and the operator console is the deployed human surface. The Tailscale deploy path is built but **not yet exercised in production** (#401). Earlier drift (the spec-kit elicitation flow, the preview hosting module) was removed rather than maintained.
 
 ## What this is NOT
 
