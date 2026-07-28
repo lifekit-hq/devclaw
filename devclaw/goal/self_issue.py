@@ -52,12 +52,18 @@ SELF_FILED_LABEL = "devclaw:self-filed"
 _CLASS_PREFIX = "class:"
 
 #: Stage 2 (P2 — FIX pickup) labels + concurrency. A human opt-in ``accepted``
-#: label (O5) on a self-filed issue is the ONLY thing devclaw picks up — it never
-#: starts modifying itself unprompted. ``devclaw:fixing`` marks an issue already
-#: claimed by a self-fix goal: a visible, restart-safe concurrency signal. There is
-#: NO auto-merge in P2 — the goal opens a PR a HUMAN merges (proposal §5A; the tiered
-#: blast-radius classifier is deferred to P2.1/P2.2).
+#: label (O5, amended 2026-07-28) is what arms an issue; devclaw never starts
+#: modifying itself unprompted. Two intakes qualify: ``accepted`` on a
+#: ``devclaw:self-filed`` issue (the original O5), or ``accepted`` on a
+#: human-filed issue explicitly marked ``devclaw:pickup`` (the O5 amendment —
+#: widens reach to the hand-triaged backlog; ``devclaw:self-filed`` keeps its
+#: provenance meaning and is never applied to human-filed issues).
+#: ``devclaw:fixing`` marks an issue already claimed by a self-fix goal: a
+#: visible, restart-safe concurrency signal shared across both intakes. There is
+#: NO auto-merge in P2 — the goal opens a PR a HUMAN merges (proposal §5A; the
+#: tiered blast-radius classifier is deferred to P2.1/P2.2).
 ACCEPTED_LABEL = "accepted"
+PICKUP_LABEL = "devclaw:pickup"
 FIXING_LABEL = "devclaw:fixing"
 #: how many self-fix goals may be in flight at once. Concurrency 1 = serialize
 #: self-modification: parallel self-fixes multiply the self-brick surface and muddy
@@ -444,11 +450,14 @@ async def run_self_fix_pickup(
     gh: Optional[GhAdapter] = None,
     concurrency: int = SELF_FIX_CONCURRENCY,
 ) -> SelfFixResult:
-    """Pick up human-``accepted`` self-filed issues → open ONE ``one_shot`` self-fix
-    goal each (up to ``concurrency``), and claim them with ``FIXING_LABEL``. ZERO LLM
-    to detect (a ``gh issue list`` + pure selection); env-gated on ``DEVCLAW_SELF_REPO``
-    (unset ⇒ no-op, shells nothing — the default + every test path); best-effort —
-    a GitHub or admission failure logs and is skipped, never wedges the cycle edge.
+    """Pick up human-``accepted`` issues from BOTH intakes — self-filed
+    (``devclaw:self-filed``) and human-handoff (``devclaw:pickup``, the O5
+    amendment) — → open ONE ``one_shot`` self-fix goal each (up to
+    ``concurrency``, shared across both intakes), and claim them with
+    ``FIXING_LABEL``. ZERO LLM to detect (``gh issue list`` + pure selection);
+    env-gated on ``DEVCLAW_SELF_REPO`` (unset ⇒ no-op, shells nothing — the
+    default + every test path); best-effort — a GitHub or admission failure logs
+    and is skipped, never wedges the cycle edge.
 
     ``create_goal`` is ``GoalService.create_goal`` (injected, so this module never
     touches the goal store): a re-pick of an issue whose goal already exists raises
@@ -460,9 +469,16 @@ async def run_self_fix_pickup(
     gh = gh or GhCli()
 
     try:
+        # ``--label`` repeated is AND semantics, so the two intakes are two
+        # queries; an issue carrying both markers must not be picked twice.
         issues = await gh.list_issues(
             repo, labels=[ACCEPTED_LABEL, SELF_FILED_LABEL], state="open"
         )
+        seen = {i.get("number") for i in issues}
+        handoff = await gh.list_issues(
+            repo, labels=[ACCEPTED_LABEL, PICKUP_LABEL], state="open"
+        )
+        issues += [i for i in handoff if i.get("number") not in seen]
     except Exception as exc:  # noqa: BLE001 — a list hiccup never wedges the edge
         sys.stderr.write(f"self-fix: list issues failed on {repo}: {exc}\n")
         return result

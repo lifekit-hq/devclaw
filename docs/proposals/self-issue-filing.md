@@ -154,9 +154,19 @@ dev-loop where it belongs.
   backlog taxonomy; self-filed issues get triaged into it.)
 - **O4 — Noise budget. RESOLVED.** <=3 new issues/cycle; suppressed ones **named**
   in the cycle-report line (never a silent truncation).
-- **O5 — Stage-2 start trigger. RESOLVED (Stage 2).** Human opt-in via an
-  `accepted` label; devclaw never *starts* modifying itself unprompted. (Distinct
-  from §3, which is about the *merge*, not the start.)
+- **O5 — Stage-2 start trigger. RESOLVED (Stage 2); AMENDED 2026-07-28.**
+  Human opt-in via an `accepted` label; devclaw never *starts* modifying itself
+  unprompted. (Distinct from §3, which is about the *merge*, not the start.)
+  *Amendment (Denys, 2026-07-28 — explicit reopen per spec-lifecycle):* the
+  original line restricted pickup to `accepted` on **self-filed** issues, which
+  made the hand-triaged backlog invisible to the loop. Pickup now accepts a
+  second intake: `accepted` + **`devclaw:pickup`** on a human-filed issue (the
+  human-handoff marker). The human opt-in gate is unchanged — both intakes
+  require a deliberate label; `devclaw:self-filed` keeps its provenance meaning
+  and is never applied to human-filed issues. Concurrency is shared across both
+  intakes. Named tests: `test_pickup_accepts_human_filed_issue_with_pickup_label`,
+  `test_pickup_dedupes_issue_carrying_both_markers`,
+  `test_pickup_concurrency_shared_across_intakes`.
 - **O6 — Self-repo recognition + merge seam. RESOLVED (mechanism) / REOPENED
   (policy).** Recognize self by **slug** `lifekit-hq/devclaw` (`DEVCLAW_SELF_REPO`) via
   `parse_owner_repo`; the refusal seam lives in **`goal/merge.py`** (the proposal's
@@ -172,8 +182,10 @@ dev-loop where it belongs.
 Per `spec-lifecycle.md` "Sizing novel work", this firms the **P2 slice boundary**
 only; P3 stays named-but-unsized. The end-to-end FIX flow and what's in vs out:
 
-- **Start (O5, resolved).** A human applies the `accepted` label to a
-  `devclaw:self-filed` issue. Nothing self-modifying starts without it.
+- **Start (O5, resolved; amended 2026-07-28).** A human applies the `accepted`
+  label to a `devclaw:self-filed` issue — or, since the O5 amendment, to any
+  issue explicitly marked `devclaw:pickup`. Nothing self-modifying starts
+  without a deliberate human label.
 - **Pickup mechanism (firmed).** On the **same once-per-cycle mechanical edge** that
   files/closes (`cycle_report.py` / `_maybe_emit_cycle_report`), scan for
   `accepted` + `devclaw:self-filed` issues with **no active goal**, and open **one
