@@ -52,13 +52,14 @@ def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _tick(store, goal_id, planner, evaluator, engine, notifier, *, eval_every=99, verify_done=True, summary_caller=None, merger=None, remote_checker=None):
+async def _tick(store, goal_id, planner, evaluator, engine, notifier, *, eval_every=99, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         planner_caller=planner, evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
         eval_every=eval_every, verify_done=verify_done, summary_caller=summary_caller,
         merger=merger, remote_checker=remote_checker,
+        mergeability_probe=mergeability_probe,
     )
 
 
@@ -72,6 +73,20 @@ class RecordingMerger:
     async def __call__(self, pr_url: str) -> bool:
         self.merged.append(pr_url)
         return self._ok
+
+
+class RecordingProbe:
+    """A fake mergeability probe (#394): records the PR urls it was asked
+    about and returns a fixed verdict (True=CONFLICTING, False=mergeable,
+    None=could-not-tell)."""
+
+    def __init__(self, verdict=None):
+        self.asked: list[str] = []
+        self._verdict = verdict
+
+    async def __call__(self, pr_url: str):
+        self.asked.append(pr_url)
+        return self._verdict
 
 
 class RecordingSummarizer:
@@ -1163,6 +1178,175 @@ async def test_legacy_dispatch_without_addresses_still_auto_merges(tmp_path, mon
     await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == ["https://github.com/o/r/pull/9"]
+
+
+# ---- #394: total merge-policy resolution + settle-time mergeability --------
+
+
+@pytest.mark.asyncio
+async def test_checklist_mode_merge_skip_is_logged_legibly(tmp_path, monkeypatch):
+    """#394 done-when 3 (the closeloop PR #8 hole): a checklist-mode delivery
+    skips auto-merge BY DESIGN, but the skip must be legible — a night of
+    gate-green deliveries with automerge ON and no 'auto-merged'/'auto-merge
+    failed'/'skipped' line anywhere forced the owner to infer 'it silently
+    never engaged' (2026-07-28 morning). The skip resolves as an explicit
+    logged reason, and the planner detail carries it too."""
+    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight(
+            "devclaw", "implement_feature", "t1", "task", "add /health",
+            addresses=["scaffold"],
+        ),
+    ))
+    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="ok",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+    notifier, merger = RecordingNotifier(), RecordingMerger()
+
+    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+
+    assert merger.merged == []  # the pillar-2 skip itself is unchanged
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "auto-merge skipped (checklist-mode" in log
+    assert "https://github.com/o/r/pull/9" in log
+    assert "auto-merge skipped (checklist-mode" in planner.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_automerge_off_green_pr_skip_is_logged_legibly(tmp_path):
+    """#394 totality: when no merger is resolved (automerge off globally, or a
+    project's own ``automerge: false`` override — indistinguishable by the
+    tick, both arrive as merger=None), a gate-green delivery's PR still
+    resolves legibly as skipped instead of falling through in silence."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", _delivery_status())
+    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="added /health",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+
+    await _tick(store, "g", planner, evaluator, engine, RecordingNotifier(), merger=None)
+
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "auto-merge skipped (auto-merge is off for this repo)" in log
+
+
+@pytest.mark.asyncio
+async def test_conflicting_pr_at_settle_pings_owner_and_grounds_planner(tmp_path, monkeypatch):
+    """#394 done-when 1: a delivery whose PR is CONFLICTING at settle is a
+    degraded delivery and must be LOUD — an owner ping naming the conflict and
+    a planner detail that says the PR cannot land — never a silent `done`
+    indistinguishable from a landable one (closeloop-bench PR #8 accumulated
+    three such deliveries overnight, 2026-07-28)."""
+    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight(
+            "devclaw", "implement_feature", "t1", "task", "add /health",
+            addresses=["scaffold"],  # checklist-mode: PR stays open → probed
+        ),
+    ))
+    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="ok",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+    notifier, probe = RecordingNotifier(), RecordingProbe(verdict=True)
+
+    await _tick(store, "g", planner, evaluator, engine, notifier,
+                merger=RecordingMerger(), mergeability_probe=probe)
+
+    assert probe.asked == ["https://github.com/o/r/pull/9"]
+    pings = [m for m in notifier.sent if "cannot land" in m]
+    assert pings, f"expected an owner ping for a CONFLICTING PR, got {notifier.sent}"
+    assert "https://github.com/o/r/pull/9" in pings[0]
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "CONFLICTING" in log
+    assert "mergeable=CONFLICTING" in planner.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_mergeable_open_pr_at_settle_stays_quiet(tmp_path):
+    """The probe's False (cleanly mergeable) and None (could-not-tell) verdicts
+    add nothing: no ping, no conflict log line — the probe only ever speaks on
+    a definite CONFLICTING, so a gh hiccup can't cry wolf."""
+    for verdict in (False, None):
+        goal_id = f"g{verdict}"
+        store = _store(tmp_path, Clock())
+        seed_goal(tmp_path, goal_id)
+        store.save_status(goal_id, GoalStatus(
+            phase="in_flight", lifecycle="executing",
+            in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "x"),
+        ))
+        planner, notifier = FakeClaude(ACT_FEATURE), RecordingNotifier()
+        engine = FakeEngine(poll_result=PollResult(
+            terminal=True, status="done", detail="ok",
+            pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+        ))
+
+        await _tick(store, goal_id, planner, FakeClaude(), engine, notifier,
+                    merger=None, mergeability_probe=RecordingProbe(verdict=verdict))
+
+        assert not any("cannot land" in m for m in notifier.sent)
+        assert "CONFLICTING" not in (tmp_path / goal_id / "log.md").read_text()
+        assert "CONFLICTING" not in planner.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_failed_merge_of_conflicting_pr_pages_owner_once(tmp_path, monkeypatch):
+    """One page per event: when the merge was attempted and failed AND the
+    probe then confirms the PR is CONFLICTING, the owner hears the (earlier,
+    actionable) 'auto-merge failed — merge it by hand' ping only — the
+    conflict fact rides the log + planner detail, not a second page."""
+    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", _delivery_status())
+    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="added /health",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+    notifier, probe = RecordingNotifier(), RecordingProbe(verdict=True)
+
+    await _tick(store, "g", planner, evaluator, engine, notifier,
+                merger=RecordingMerger(ok=False), mergeability_probe=probe)
+
+    assert any("auto-merge failed" in m.lower() for m in notifier.sent)
+    assert not any("cannot land" in m for m in notifier.sent)
+    # the conflict is still fully legible where it matters:
+    assert "CONFLICTING" in (tmp_path / "g" / "log.md").read_text()
+    assert "mergeable=CONFLICTING" in planner.last_prompt
+
+
+@pytest.mark.asyncio
+async def test_merged_pr_is_not_probed_for_conflicts(tmp_path, monkeypatch):
+    """A PR the tick just auto-merged is definitionally landable — the probe
+    must not burn a gh call (or worse, ping) on it."""
+    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", _delivery_status())
+    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="added /health",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+    probe = RecordingProbe(verdict=True)
+
+    await _tick(store, "g", planner, evaluator, engine, RecordingNotifier(),
+                merger=RecordingMerger(ok=True), mergeability_probe=probe)
+
+    assert probe.asked == []
 
 
 @pytest.mark.asyncio

@@ -758,13 +758,26 @@ async def _resolve_polling_action(
     # per goal" guarantee on item 1). Skip auto-merge in that case — the
     # done-gate is the natural moment for a single human review of the
     # cumulative work.
+    # #394 totality: every gate-green delivery that produced a PR resolves to
+    # exactly ONE of merged | left-for-owner(reason) | skipped(reason), and the
+    # resolution is always visible in the goal log. The two skip paths below
+    # used to fall through in silence — the 2026-07-28 morning: automerge ON
+    # fleet-wide, a night of checklist-mode deliveries on closeloop PR #8, and
+    # neither an "auto-merged" nor an "auto-merge failed" line anywhere,
+    # because the checklist-mode exception (and, for a project whose own
+    # ``automerge: false`` override resolved the merger to None, the off
+    # switch) never said so. An owner who flipped automerge on must never have
+    # to infer "it silently didn't engage" from an open PR and an empty log.
     in_checklist_dispatch = bool(addresses)
     merged_now = False
-    if (
-        ctx.merger is not None
-        and poll.status == "done" and poll.gate_passed and poll.pr_url
-        and not in_checklist_dispatch
-    ):
+    merge_failed_pinged = False  # an OWNER ping already fired for this PR this settle
+    merge_skip = ""  # non-empty ⇒ this green delivery's PR was deliberately not merged
+    green_pr = bool(poll.status == "done" and poll.gate_passed and poll.pr_url)
+    if green_pr and in_checklist_dispatch:
+        merge_skip = "checklist-mode: shared goal-branch PR stays open for the done-gate"
+    elif green_pr and ctx.merger is None:
+        merge_skip = "auto-merge is off for this repo"
+    elif green_pr:
         if await ctx.merger(poll.pr_url):
             merged_now = True
             ctx.store.append_log(goal_id, f"auto-merged {poll.pr_url}")
@@ -774,6 +787,7 @@ async def _resolve_polling_action(
                 summarize=ctx.summary_caller,
             )
         else:
+            merge_failed_pinged = True
             ctx.store.append_log(goal_id, f"auto-merge failed, left for review: {poll.pr_url}")
             # Loud, not silent (2026-07-17): automerge is ENABLED for this goal
             # but the merge did not land (failing/pending checks, a conflict, a gh
@@ -789,6 +803,45 @@ async def _resolve_polling_action(
                 f"Please merge it by hand: {poll.pr_url}",
                 summarize=ctx.summary_caller,
             )
+    if merge_skip:
+        # skipped(reason) — one legible line, log-only (no ping: a skip is
+        # configured behavior, not a needs-you event; the conflict probe below
+        # is what escalates when the skipped PR also cannot land).
+        ctx.store.append_log(goal_id, f"auto-merge skipped ({merge_skip}): {poll.pr_url}")
+
+    # ---- mergeability probe (#394) -----------------------------------------
+    # A delivery whose PR is CONFLICTING at settle is a degraded delivery and
+    # must be loud — today it settles `done` indistinguishably from a landable
+    # one (both live 2026-07-28 instances: closeloop-bench PR #8 accumulated
+    # three gate-green deliveries on a branch that structurally conflicted
+    # with main after PR #7's squash-merge; fs PR #329 was CONFLICTING at
+    # open and reported success anyway). One cheap gh read per settled PR
+    # that is still open; best-effort — an unknown verdict (probe None, gh
+    # hiccup) stays silent rather than crying wolf. Programs are excluded:
+    # their PR stacks were just reconciled above, per-PR, with reasons.
+    conflicting: "bool | None" = None
+    if (
+        ctx.mergeability_probe is not None
+        and poll.status == "done" and poll.pr_url and not merged_now
+        and ref.ref_kind != "program"
+    ):
+        conflicting = await ctx.mergeability_probe(poll.pr_url)
+        if conflicting:
+            ctx.store.append_log(
+                goal_id, f"PR is CONFLICTING with its base — cannot land as-is: {poll.pr_url}"
+            )
+            # One page per event: the failed-merge branch above already sent an
+            # OWNER ping for this same PR ("merge it by hand") — the conflict
+            # fact still lands in the log + planner detail, but a second page
+            # for the same delivery would just be noise.
+            if not merge_failed_pinged:
+                await _notify(
+                    ctx.notifier, NotifyLevel.OWNER,
+                    f"⚠️ [{goal_id}] delivered PR cannot land — {_action_label(ref)} "
+                    f"shipped, but its PR conflicts with the base branch and will not "
+                    f"merge as-is. It needs a rebase or hand-resolution: {poll.pr_url}",
+                    summarize=ctx.summary_caller,
+                )
 
     # Program settle: a finished program leaves a STACK of PRs the single-PR
     # auto-merge above can't touch (no single gate verdict). Reconcile the
@@ -818,10 +871,19 @@ async def _resolve_polling_action(
     if reconcile_summary:
         pr_state = " pr_stack reconciled:\n" + "\n".join(f"  - {line}" for line in reconcile_summary)
     elif poll.pr_url:
-        pr_state = (
-            " pr_state=merged" if merged_now
-            else " pr_state=open (unmerged — owner review pending)"
-        )
+        if merged_now:
+            pr_state = " pr_state=merged"
+        else:
+            pr_state = " pr_state=open (unmerged — owner review pending)"
+            if merge_skip:
+                pr_state += f" · auto-merge skipped ({merge_skip})"
+            if conflicting:
+                # Ground the planner in the PR's real landability, not just its
+                # openness — a conflicting PR must not read as shippable work.
+                pr_state += (
+                    " · mergeable=CONFLICTING — cannot land without a rebase/"
+                    "conflict resolution"
+                )
     finished_detail = f"tool={ref.tool} id={ref.id} status={poll.status}{ev_str}{pr_state}\n{poll.detail}"
 
     return new_status, finished_detail

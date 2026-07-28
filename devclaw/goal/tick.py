@@ -134,6 +134,7 @@ async def tick_goal(
     world_research_caller: "ClaudeCaller | None" = None,
     trend_detector: "object | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
+    mergeability_probe: "_merge.MergeabilityProbe | None" = None,
 ) -> Outcome:
     """Run one heartbeat and record a single ``tick`` trace event with the
     incoming (lifecycle, phase) and outgoing outcome — the only place the trace
@@ -168,6 +169,7 @@ async def tick_goal(
                 decomposer_caller=decomposer_caller,
                 world_research_caller=world_research_caller,
                 remote_checker=remote_checker,
+                mergeability_probe=mergeability_probe,
             )
         except IllegalTransition as exc:
             # A handler proposed an (event, target) the LEGAL table doesn't permit
@@ -246,6 +248,7 @@ async def _tick_goal_impl(
     decomposer_caller: "ClaudeCaller | None" = None,
     world_research_caller: "ClaudeCaller | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
+    mergeability_probe: "_merge.MergeabilityProbe | None" = None,
 ) -> Outcome:
     """Run one heartbeat. Reads the goal's status, classifies it into a
     :class:`Phase`, dispatches to the matching handler.
@@ -270,6 +273,7 @@ async def _tick_goal_impl(
         decomposer_caller=decomposer_caller,
         world_research_caller=world_research_caller,
         remote_checker=remote_checker,
+        mergeability_probe=mergeability_probe,
     )
 
     status = store.load_status(goal_id)
@@ -796,6 +800,7 @@ async def tick_all(
     trend_detector: "object | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     triage_caller: "ClaudeCaller | None" = None,
+    mergeability_probe: "_merge.MergeabilityProbe | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal. One goal's failure never stops the others, and a usage
     limit pauses the whole layer (0 tokens) rather than crashing per-goal.
@@ -946,6 +951,7 @@ async def tick_all(
                     summary_caller=summary_caller, merger=goal_merger,
                     trend_detector=trend_detector,
                     remote_checker=remote_checker,
+                    mergeability_probe=mergeability_probe,
                 )
         except Exception as exc:  # noqa: BLE001 — isolate per-goal blast radius
             # the goal's OWN cognition (claude --print) hitting a limit pauses the
