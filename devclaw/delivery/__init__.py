@@ -21,6 +21,8 @@ import asyncio
 import os
 import re
 
+from ..git_identity import git_identity_env
+
 
 # conventional-commit type per task kind — so a delivered PR reads `feat: …` /
 # `fix: …` instead of a raw goal string dumped into the title.
@@ -192,12 +194,15 @@ def _pr_body(
     return "\n".join(parts)
 
 
-async def _run(prog: str, *args: str, cwd: str) -> tuple[int, str]:
+async def _run(
+    prog: str, *args: str, cwd: str, env_extra: dict[str, str] | None = None
+) -> tuple[int, str]:
     """Run a command, return (exit_code, combined-output). Never raises."""
     try:
         proc = await asyncio.create_subprocess_exec(
             prog, *args, cwd=cwd,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            env={**os.environ, **env_extra} if env_extra else None,
         )
     except OSError as exc:
         return 127, f"{prog} not runnable: {exc}"
@@ -411,9 +416,11 @@ async def deliver_change(
     if dirty:
         await _run("git", "add", "-A", cwd=workspace_dir)
         msg = f"{title}\n\nDelivered by devclaw (task {task_id})."
+        # Identity via GIT_* env (not -c): env beats every config level, so an
+        # ambient/leaked identity can't author devclaw's delivery commit.
         rc, out = await _run(
-            "git", "-c", "user.email=devclaw@local", "-c", "user.name=devclaw",
-            "commit", "-m", msg, cwd=workspace_dir,
+            "git", "commit", "-m", msg, cwd=workspace_dir,
+            env_extra=git_identity_env(),
         )
         if rc != 0:
             result["error"] = f"commit failed: {out}"

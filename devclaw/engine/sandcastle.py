@@ -40,6 +40,7 @@ from pathlib import Path
 from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
 from ..claude_trust import write_trusted_copy
+from ..git_identity import git_identity_env
 
 SANDBOX_IMAGE = os.environ.get("DEVCLAW_SANDBOX_IMAGE", "devclaw-sandbox:latest")
 DOCKER_BIN = os.environ.get("DEVCLAW_DOCKER_BIN", "docker")
@@ -417,6 +418,11 @@ def _build_docker_args(
         f"{CONTAINER_CLAUDE_DIR}/shell-snapshots:rw,exec",
         "-e",
         "OPENHANDS_SUPPRESS_BANNER=1",
+        # Pin git authorship to devclaw for every commit the agent makes in
+        # here: env beats every git config level, so an identity baked into the
+        # image or leaked through a mount can't put the owner's name on agent
+        # commits. The worker's own "Co-Authored-By: Claude …" trailer stays.
+        *(part for k, v in git_identity_env().items() for part in ("-e", f"{k}={v}")),
         sandbox_image or SANDBOX_IMAGE,
         payload,
     ]

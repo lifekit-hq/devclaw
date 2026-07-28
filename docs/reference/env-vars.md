@@ -99,6 +99,8 @@ session quota, not a bill.**
 | `DEVCLAW_RUNNER_PYTHON` | derived | Python interpreter the host engine spawns the runner with. |
 | `DEVCLAW_SKILLS_DIR` | `/opt/devclaw/skills` | (In-sandbox, read by `openhands-runner/runner.py`.) Universal skill bundles baked into the sandbox image, prepended per task kind. |
 | `DEVCLAW_HOOKS_DIR` | `/opt/devclaw/hooks` | (In-sandbox.) Universal pre/post hook `.sh` files, run alongside any per-repo `.agent/hooks/`. |
+| `DEVCLAW_GIT_NAME` | `devclaw` | Git author/committer **name** for every commit devclaw produces (worker in sandbox + host engine via `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env, delivery's own commit via `-c`). Env beats every git config level, so ambient/leaked identities can't author devclaw's commits. The worker's `Co-Authored-By: Claude …` trailer is unaffected. |
+| `DEVCLAW_GIT_EMAIL` | `devclaw@local` | Git author/committer **email** for the same. Point at a machine account's GitHub noreply address (`<id>+<user>@users.noreply.github.com`) to link commits to a real GitHub profile. |
 
 ## Auth (Pro OAuth posture)
 
