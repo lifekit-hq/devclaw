@@ -19,11 +19,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import os
 import re
-import time
-from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from ..llm_call import PlannerError, claude_with_model, extract_json
@@ -170,72 +167,16 @@ def filter_reviewable_diff(diff: str) -> str:
     return "".join(kept)
 
 
-# ---------------------------------------------------------------------------
-# Review panel — diverse-lens fan-out (opt-in via DEVCLAW_REVIEW_PANEL_N).
-#
-# One reviewer is correlated with itself: N copies of the same prompt miss the
-# same defects. The panel's value is DIVERSE LENSES — each panelist reads the
-# same diff under a distinct emphasis, so a bug one lens is blind to another
-# catches. The base review-gate prompt (with its #227 grounding clause) is
-# ALWAYS the spine; a lens only ADDS a focus block, never removes the grounding.
-# ---------------------------------------------------------------------------
-
-#: Distinct review emphases, in priority order. For N panelists we take the
-#: first N (round-robin if N exceeds the list). `meets_acceptance_criteria`
-#: leverages the per-task acceptance criteria carried in the goal/ticket string
-#: (shape B, #252).
-_REVIEW_LENSES: tuple[str, ...] = (
-    "correctness",
-    "regression_risk",
-    "meets_acceptance_criteria",
-)
-
-_LENS_INSTRUCTIONS: dict[str, str] = {
-    "correctness": (
-        "PANEL LENS — CORRECTNESS. You are one reviewer on an adversarial panel; "
-        "concentrate your scrutiny on CORRECTNESS: logic errors, off-by-one and "
-        "boundary mistakes, null/empty/error-path handling, incorrect API or "
-        "contract use, race conditions, and any path on which the change produces "
-        "a wrong result. Still report other issues you notice, but hunt hardest here."
-    ),
-    "regression_risk": (
-        "PANEL LENS — REGRESSION RISK. You are one reviewer on an adversarial "
-        "panel; concentrate your scrutiny on REGRESSION RISK: behaviour this change "
-        "could break OUTSIDE the diff — altered shared contracts, removed or renamed "
-        "symbols still referenced elsewhere, changed defaults, side effects on "
-        "unrelated call sites, and behaviour the passing gate does not exercise. "
-        "Still report other issues you notice, but hunt hardest here."
-    ),
-    "meets_acceptance_criteria": (
-        "PANEL LENS — ACCEPTANCE CRITERIA. You are one reviewer on an adversarial "
-        "panel; concentrate your scrutiny on whether the change MEETS THE TICKET'S "
-        "ACCEPTANCE CRITERIA: read the acceptance criteria / done-when conditions "
-        "carried in the ticket above and verify each one is actually satisfied by "
-        "the diff. A criterion left unmet, stubbed, or only partially implemented is "
-        "a blocker. Still report other issues you notice, but hunt hardest here."
-    ),
-}
-
-
 def build_review_prompt(
     *,
     goal: str,
     kind: str,
     diff: str,
     repo_context: Optional[str] = None,
-    lens: Optional[str] = None,
 ) -> str:
     from .prompts import load_prompt
 
     parts = [load_prompt("review-gate")]
-    # A lens only ADDS a focus block after the base contract — the grounding
-    # clause and the two-axis hunt in review-gate.md stay intact for every
-    # panelist. `lens is None` (the default / single-reviewer path) is
-    # byte-identical to the pre-panel prompt.
-    if lens is not None:
-        instruction = _LENS_INSTRUCTIONS.get(lens)
-        if instruction:
-            parts.append(instruction)
     parts.append(f"TICKET ({kind}):\n{goal}")
     if repo_context and repo_context.strip():
         parts.append(
@@ -340,92 +281,6 @@ async def review_diff(
     return validate_review(parsed)
 
 
-# ---------------------------------------------------------------------------
-# Review panel — durable, stateful analog of an ephemeral adversarial fan-out.
-# Opt-in via DEVCLAW_REVIEW_PANEL_N (default 1 = today's single reviewer).
-# ---------------------------------------------------------------------------
-
-def _panel_n() -> int:
-    """Panelist count from ``DEVCLAW_REVIEW_PANEL_N``, clamped to >=1. Default 1
-    keeps the gate byte-identical to the single-reviewer behaviour until an
-    operator opts in. Unparseable / <1 → 1 (never zero reviewers)."""
-    raw = os.environ.get("DEVCLAW_REVIEW_PANEL_N", "1")
-    try:
-        n = int(raw)
-    except (TypeError, ValueError):
-        return 1
-    return max(1, n)
-
-
-def _lenses_for(n: int) -> list[str]:
-    """The lens each of ``n`` panelists reviews under. Capped to ``n`` distinct
-    lenses; when ``n`` exceeds the lens list they're reused round-robin. (N==1
-    never reaches here — it delegates to ``review_diff`` for byte-identity.)"""
-    return [_REVIEW_LENSES[i % len(_REVIEW_LENSES)] for i in range(n)]
-
-
-#: Vote fields NOT wired here mirror ``review_diff``'s per-call cost. The vote
-#: is what we persist; the aggregate is a projection over the votes.
-@dataclass
-class _PanelOutcome:
-    lens: str
-    result: Optional[dict]      # validated verdict dict, or None for a non-vote
-    vote: dict                  # the persisted record (lens/verdict/blocking_count/latency_ms/error)
-    raw: Optional[str] = None   # the model's raw response on failure (carries quota prose)
-
-
-async def _run_panelist(
-    *,
-    goal: str,
-    kind: str,
-    diff: str,
-    repo_context: Optional[str],
-    lens: str,
-    claude_caller: Callable[[str], Awaitable[str]],
-    record_vote: Optional[Callable[[dict], None]],
-) -> _PanelOutcome:
-    """One panelist: build the lens prompt, call the model, validate. A crash /
-    unparseable output is a NON-VOTE (``result=None``), never an approval — the
-    error and the raw response are captured so the aggregate can (a) reach the
-    fail-closed quorum decision and (b) preserve any usage-limit prose for the
-    queue's quota classifier. The vote is recorded regardless of outcome."""
-    started = time.monotonic()
-    vote: dict = {
-        "lens": lens,
-        "verdict": None,
-        "blocking_count": 0,
-        "latency_ms": None,
-        "error": None,
-    }
-    result: Optional[dict] = None
-    raw_response: Optional[str] = None
-    try:
-        prompt = build_review_prompt(
-            goal=goal, kind=kind, diff=diff, repo_context=repo_context, lens=lens
-        )
-        raw = await claude_caller(prompt)
-        try:
-            parsed = json.loads(extract_json(raw))
-        except json.JSONDecodeError as err:
-            raise PlannerError(f"Review JSON parse failed: {err}", raw) from err
-        result = validate_review(parsed)
-        vote["verdict"] = result["verdict"]
-        vote["blocking_count"] = len(result["blocking"])
-    except Exception as err:  # noqa: BLE001 — a non-vote, NEVER an approval
-        vote["error"] = f"{err.__class__.__name__}: {err}"
-        raw_attr = getattr(err, "raw", None)
-        if isinstance(raw_attr, str) and raw_attr.strip():
-            raw_response = raw_attr
-    finally:
-        vote["latency_ms"] = int((time.monotonic() - started) * 1000)
-        if record_vote is not None:
-            try:
-                record_vote(dict(vote))
-            except Exception:  # noqa: BLE001 — telemetry never breaks the gate
-                pass
-    return _PanelOutcome(lens=lens, result=result, vote=vote, raw=raw_response)
-
-
 def _dedup_issues(issues: list[dict]) -> list[dict]:
     """Union issues, deduped by (location, severity) — the first occurrence
     wins. Deterministic order (insertion) so the aggregate is stable."""
@@ -440,118 +295,6 @@ def _dedup_issues(issues: list[dict]) -> list[dict]:
     return out
 
 
-def _panel_summary(outcomes: list[_PanelOutcome], verdict: str, n_blocking: int) -> str:
-    """One-line human read of the aggregate: verdict, each lens's own verdict."""
-    per_lens = ", ".join(
-        f"{o.lens}={o.vote.get('verdict')}" for o in outcomes if o.result is not None
-    )
-    head = (
-        f"diverse-lens review panel ({len(outcomes)} reviewers): {verdict}"
-        f" — {n_blocking} unioned blocking issue(s)"
-    )
-    return f"{head}. Lens verdicts: {per_lens}." if per_lens else head
-
-
-async def _review_panel_core(
-    *,
-    goal: str,
-    kind: str,
-    diff: str,
-    repo_context: Optional[str] = None,
-    claude_caller: Callable[[str], Awaitable[str]] = review_caller,
-    record_vote: Optional[Callable[[dict], None]] = None,
-    n: Optional[int] = None,
-) -> dict:
-    """Adversarial review PANEL — a drop-in for ``review_diff`` returning the
-    identical ``{verdict, summary, issues, blocking}`` dict shape.
-
-    ``n`` panelists (default ``DEVCLAW_REVIEW_PANEL_N``, default 1) review the
-    SAME diff in parallel under DIVERSE LENSES; their blocking issues are unioned
-    (evidence wins), so the panel is strictly >= as strict as the single reviewer
-    — it can only catch MORE, never ship a bug the single reviewer would have
-    caught.
-
-    Fail-CLOSED invariants (never weakened):
-      - N==1 is byte-identical to ``review_diff`` today, INCLUDING that an
-        unparseable/crashing model RAISES (the queue then fails closed + fast,
-        #186) — it never becomes an approval.
-      - For N>=2, a panelist crash / unparseable output is a NON-VOTE. If fewer
-        than a quorum (``ceil(N/2)``, min 1) of valid votes come back, the panel
-        RAISES ``PlannerError`` — mirroring #186 (unreviewable ⇒ fail closed AND
-        fast, no futile agent retry). A crash NEVER yields ``approve``. The raise
-        carries the panelists' raw responses so a session-limit sub-quorum is
-        classified as quota by the queue and PAUSES rather than fails (#245).
-    """
-    if n is None:
-        n = _panel_n()
-    n = max(1, n)
-
-    # N==1 → the single generic reviewer, unchanged. ``review_diff`` owns the
-    # empty/generated short-circuit AND the fail-closed raise on a bad verdict,
-    # so this branch is byte-identical to the pre-panel gate.
-    if n == 1:
-        return await review_diff(
-            goal=goal, kind=kind, diff=diff,
-            repo_context=repo_context, claude_caller=claude_caller,
-        )
-
-    # Empty / purely-generated diff short-circuits ONCE, before spawning any
-    # panelist (same effect as review_diff's short-circuit; done here so the
-    # panel never fans out N model calls over nothing).
-    if not filter_reviewable_diff(diff).strip():
-        return {
-            "verdict": "approve",
-            "summary": "no hand-written changes to review "
-            "(diff is entirely generated/lock/vendored files)",
-            "issues": [],
-            "blocking": [],
-        }
-
-    lenses = _lenses_for(n)
-    outcomes: list[_PanelOutcome] = await asyncio.gather(
-        *(
-            _run_panelist(
-                goal=goal, kind=kind, diff=diff, repo_context=repo_context,
-                lens=lens, claude_caller=claude_caller, record_vote=record_vote,
-            )
-            for lens in lenses
-        )
-    )
-
-    valid = [o for o in outcomes if o.result is not None]
-    quorum = max(1, math.ceil(n / 2))
-    if len(valid) < quorum:
-        # Fail CLOSED + FAST: the panel could not produce a trustworthy verdict.
-        # RAISE (not return request_changes) so the queue's crash path fails the
-        # task WITHOUT an agent retry — re-running reproduces the same diff and
-        # re-crashes identically (#186 unreviewable-fails-closed-and-fast). Carry
-        # every panelist's raw response so a usage-limit sub-quorum is classified
-        # as quota and PAUSES rather than being read as a permanent defect (#245).
-        errs = [o.vote["error"] for o in outcomes if o.vote.get("error")]
-        raws = [o.raw for o in outcomes if o.raw]
-        msg = (
-            f"review panel could not reach quorum — {len(valid)} of {n} reviewers "
-            f"produced a valid verdict (needed {quorum}); reviewer errors: "
-            f"{' | '.join(errs) if errs else 'none'}. The diff was not reliably "
-            "reviewed, so it must not ship on the panel's silence — split it into "
-            "smaller commits or review it by hand."
-        )
-        raise PlannerError(msg, "\n".join(raws) if raws else None)
-
-    # Evidence-wins union: every valid panelist's issues, deduped by
-    # (location, severity). Blocking is the blocker/major subset — so a single
-    # panelist's blocker forces request_changes (>= today's strictness).
-    merged_issues = _dedup_issues([i for o in valid for i in o.result["issues"]])
-    blocking = [i for i in merged_issues if i["severity"] in ("blocker", "major")]
-    verdict = "request_changes" if blocking else "approve"
-    return {
-        "verdict": verdict,
-        "summary": _panel_summary(outcomes, verdict, len(blocking)),
-        "issues": merged_issues,
-        "blocking": blocking,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Cognition-TIMEOUT degradation ladder (systemic fix #5).
 #
@@ -562,8 +305,8 @@ async def _review_panel_core(
 # it gives up on the WHOLE diff without trying anything cheaper first. This ladder
 # adds ONE degradation rung *before* that hard fail: when the full-diff review
 # times out, split the diff into one sub-diff PER FILE and review each
-# independently, then UNION the verdicts with the exact evidence-wins semantics
-# the panel already uses (a single sub-review's blocker forces request_changes).
+# independently, then UNION the verdicts with evidence-wins semantics (a single
+# sub-review's blocker forces request_changes).
 # Each per-file review is smaller, so it fits the budget where the whole diff did
 # not — a legitimate large diff can still earn a real verdict.
 #
@@ -693,17 +436,16 @@ def _split_diff_by_file(diff: str) -> list[str]:
 
 
 def _aggregate_file_reviews(results: list[dict], *, n_files: int) -> dict:
-    """Union per-file sub-review verdicts into one, with the SAME evidence-wins
-    semantics the panel uses: issues are unioned + deduped by (location,
-    severity), the blocking subset is the blocker/major issues, and the verdict is
-    request_changes iff any blocking issue exists. So a single file's blocker
-    still forces request_changes.
+    """Union per-file sub-review verdicts into one, with evidence-wins semantics:
+    issues are unioned + deduped by (location, severity), the blocking subset is
+    the blocker/major issues, and the verdict is request_changes iff any blocking
+    issue exists. So a single file's blocker still forces request_changes.
 
     IMPORTANT — this is NOT strictly >= as strict as a whole-diff review: reviewing
     each file in ISOLATION loses cross-file context, so a regression that only
     shows up across files (a symbol renamed in one file but still referenced in
-    another — the ``regression_risk`` lens's target) can pass per-file where a
-    whole-diff review would have blocked it. This is an accepted thoroughness
+    another) can pass per-file where a whole-diff review would have blocked it.
+    This is an accepted thoroughness
     trade-off, engaged ONLY on a path that otherwise hard-fails the diff outright:
     a degraded real verdict on most of the diff beats no verdict at all, and every
     fail-closed guarantee (a sub-review that can't produce a verdict still raises →
@@ -724,29 +466,28 @@ def _aggregate_file_reviews(results: list[dict], *, n_files: int) -> dict:
     }
 
 
-async def review_panel(
+async def review_gate(
     *,
     goal: str,
     kind: str,
     diff: str,
     repo_context: Optional[str] = None,
     claude_caller: Callable[[str], Awaitable[str]] = review_caller,
-    record_vote: Optional[Callable[[dict], None]] = None,
-    n: Optional[int] = None,
 ) -> dict:
-    """The wired review entry — the diverse-lens panel (:func:`_review_panel_core`)
-    wrapped in the cognition-timeout degradation ladder.
+    """The wired review entry — the single adversarial reviewer
+    (:func:`review_diff`) wrapped in the cognition-timeout degradation ladder.
 
-    The happy path is byte-identical to the panel: this just returns
-    ``_review_panel_core(...)``. Only when that call raises a TIMEOUT does the
-    ladder engage — it re-reviews the diff one file at a time and unions the
-    verdicts (see the ladder note above). Every fail-closed invariant is
-    preserved; the ladder can only turn a whole-diff timeout into a real per-file
-    verdict OR fall through to the same fail-closed raise, never into an approval."""
+    The happy path is byte-identical to ``review_diff``: this just returns it.
+    Only when that call raises a TIMEOUT (or a non-quota unparseable-verdict
+    crash) does the ladder engage — it re-reviews the diff one file at a time and
+    unions the verdicts (see the ladder note above). Every fail-closed invariant
+    is preserved; the ladder can only turn a whole-diff timeout into a real
+    per-file verdict OR fall through to the same fail-closed raise, never into an
+    approval."""
     try:
-        return await _review_panel_core(
+        return await review_diff(
             goal=goal, kind=kind, diff=diff, repo_context=repo_context,
-            claude_caller=claude_caller, record_vote=record_vote, n=n,
+            claude_caller=claude_caller,
         )
     except PlannerError as err:
         # A TIMEOUT or a non-quota UNPARSEABLE-VERDICT crash triggers the ladder
@@ -765,7 +506,7 @@ async def review_panel(
         # many model calls is its own hazard) and fail closed; a human splits it.
         if len(sub_diffs) > _degrade_max_files():
             raise
-        # Review each file's sub-diff independently through the SAME panel core.
+        # Review each file's sub-diff independently through the SAME reviewer.
         # A sub-review that RAISES (still times out on one huge file, or
         # unparseable) must propagate straight out of the ladder → the whole diff
         # fails closed (never approved), carrying its raw response for the queue's
@@ -775,9 +516,9 @@ async def review_panel(
         # gather raises but ORPHANS the siblings — hence explicit tasks + cancel.)
         tasks = [
             asyncio.ensure_future(
-                _review_panel_core(
+                review_diff(
                     goal=goal, kind=kind, diff=sub, repo_context=repo_context,
-                    claude_caller=claude_caller, record_vote=record_vote, n=n,
+                    claude_caller=claude_caller,
                 )
             )
             for sub in sub_diffs

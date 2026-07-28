@@ -18,7 +18,7 @@ failure modes are all closed.
 
 | Module | Job |
 |---|---|
-| `__init__.py` | The adversarial diff-review gate: `review_diff` (one reviewer), `review_panel` (N reviewers under **diverse lenses** — correctness, regression risk, acceptance criteria — with unioned blocking issues and fail-closed sub-quorum), `format_feedback` (verdict → retry brief). Includes the cognition-timeout **degradation ladder**: an oversized diff is split per file and the verdicts unioned, still fail-closed end to end (#281). |
+| `__init__.py` | The adversarial diff-review gate: `review_diff` (the single reviewer), `review_gate` (the wired entry — `review_diff` wrapped in the degradation ladder), `format_feedback` (verdict → retry brief). Includes the cognition-timeout **degradation ladder**: an oversized diff is split per file and the verdicts unioned, still fail-closed end to end (#281). |
 | `browser_gate.py` | Browser-E2E verification: a change touching web-UI paths must carry a passing **real-browser** Playwright run in the verify output, or it fails closed. Pure parsing — no LLM. |
 | `reachability.py` | The gate's grounded escape valve: an independent judge may clear a browser-gate block **only** on an affirmatively proven "this UI isn't rendered in the running app". Uncertain / crash / reachable → the block stands. |
 | `eval_judge.py` | Failure-analysis judge for eval runs — turns "what went wrong?" into a tagged verdict. |
@@ -66,8 +66,8 @@ moves to its own repo, those three seams are the entire integration surface.
 
 One call site: `task_queue.py` runs the gates in the settle path, in order —
 verify gate (green tests) → `test_integrity` (nobody weakened the tests) →
-`review_panel` (adversarial review) → `browser_gate` (+ `reachability`
+`review_gate` (adversarial review) → `browser_gate` (+ `reachability`
 escape valve). Any failure feeds back into the retry brief; the terminal
 failure escalates to a human. Tests: `tests/test_review_gate*.py`,
-`tests/test_review_panel.py`, `tests/test_browser_gate*.py`,
+`tests/test_review_degrade_ladder.py`, `tests/test_browser_gate*.py`,
 `tests/test_eval_judge.py`, `tests/test_quality_package.py`.
