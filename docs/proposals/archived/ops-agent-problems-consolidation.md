@@ -20,9 +20,9 @@
   watchdog only when a second target lands. No code now. Superseded by that
   understanding; no replacement proposal is scheduled.
 - **Date opened:** 2026-07-22 · **Abandoned:** 2026-07-22 · **Authors:** Denys + Claude
-- **Relates to:** [ADR 0006](../decisions/0006-continuous-eval-projection.md)
+- **Relates to:** [ADR 0006](../../decisions/0006-continuous-eval-projection.md)
   (the cycle report — devclaw's own self-report, unaffected) and
-  [ADR 0004](../decisions/0004-eval-workbench.md) (the workbench). Neither reopened.
+  [ADR 0004](../../decisions/0004-eval-workbench.md) (the workbench). Neither reopened.
 
 ## 1. Context — two things that look like one
 
@@ -88,7 +88,7 @@ Keep both agents; **consolidate the record and draw the line**:
   *ops-agent detects + acts + records-to-`problems` → cycle report reads `problems`
   and reports.* Three stores collapse toward one.
 
-This is the [ADR 0004](../decisions/0004-eval-workbench.md)/0006 observability
+This is the [ADR 0004](../../decisions/0004-eval-workbench.md)/0006 observability
 plane finishing its own thesis (eval = a projection over one event stream) by
 pulling the last out-of-band record — the ops-agent's — into it.
 

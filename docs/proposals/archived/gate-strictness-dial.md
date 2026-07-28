@@ -1,6 +1,6 @@
 # Proposal — Gate strictness dial: advisory-by-default gates with a per-goal opt-in to fail closed
 
-- **Status:** **GRADUATED → [ADR 0007](../decisions/0007-gate-strictness-dial.md)**
+- **Status:** **GRADUATED → [ADR 0007](../../decisions/0007-gate-strictness-dial.md)**
   — 2026-07-22, the same day the draft landed: drafted, clarified (all five
   `[OPEN]` items resolved by Denys, §5), locked, tranche scheduled, graduated.
   The ADR is canonical from here on; this doc keeps the full narrative + the
