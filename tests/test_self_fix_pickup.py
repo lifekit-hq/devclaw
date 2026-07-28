@@ -1,10 +1,13 @@
 """Self-issue-filing Stage 2 (P2 — FIX pickup) — named regression tests.
 
 Each pins one property the pickup exists to guarantee: pick up ONLY human-
-``accepted`` self-filed issues, open exactly one ``one_shot`` self-fix goal per
-issue and claim it with ``devclaw:fixing``, honour the concurrency cap, self-heal a
-re-pick idempotently (``FileExistsError``), and — the zero-token / no-egress guard —
-do nothing at all when the self-repo isn't configured. NO auto-merge is exercised
+``accepted`` issues from the two sanctioned intakes — ``devclaw:self-filed`` and
+the human-handoff ``devclaw:pickup`` marker (O5 amendment, 2026-07-28) — open
+exactly one ``one_shot`` self-fix goal per issue and claim it with
+``devclaw:fixing``, honour the concurrency cap ACROSS both intakes, dedupe an
+issue carrying both markers, self-heal a re-pick idempotently
+(``FileExistsError``), and — the zero-token / no-egress guard — do nothing at
+all when the self-repo isn't configured. NO auto-merge is exercised
 anywhere: P2 opens a PR a human merges (proposal §5A). The GitHub side and goal
 creation are both fakes, so tests never shell out and never touch the goal store.
 See ``devclaw/goal/self_issue.py`` (Stage 2 section) + the wiring in
@@ -23,13 +26,16 @@ from devclaw.goal import self_issue as si
 class FakeGh:
     """Records the two Stage-2 calls; returns a canned issue list."""
 
-    def __init__(self, issues=None):
+    def __init__(self, issues=None, by_labels=None):
         self._issues = issues or []
+        self._by_labels = by_labels  # optional {tuple(labels): [issues]} per-query map
         self.listed: list = []
         self.marked: list = []
 
     async def list_issues(self, repo, *, labels, state="open"):
         self.listed.append((repo, tuple(labels), state))
+        if self._by_labels is not None:
+            return list(self._by_labels.get(tuple(labels), []))
         return list(self._issues)
 
     async def mark_fixing(self, repo, number, *, label, comment):
@@ -52,12 +58,15 @@ class SpyCreate:
         return {"id": goal_id}
 
 
-def _issue(number, *, title="a bug", body="", accepted=True, self_filed=True, fixing=False):
+def _issue(number, *, title="a bug", body="", accepted=True, self_filed=True,
+           pickup=False, fixing=False):
     labels = []
     if accepted:
         labels.append({"name": si.ACCEPTED_LABEL})
     if self_filed:
         labels.append({"name": si.SELF_FILED_LABEL})
+    if pickup:
+        labels.append({"name": si.PICKUP_LABEL})
     if fixing:
         labels.append({"name": si.FIXING_LABEL})
     return {"number": number, "title": title, "body": body, "labels": labels}
@@ -153,3 +162,58 @@ def test_pickup_gh_list_failure_is_swallowed():
     spy = SpyCreate()
     res = asyncio.run(si.run_self_fix_pickup(spy, repo="lifekit-hq/devclaw", gh=gh))
     assert spy.calls == [] and res.picked == []  # logged + swallowed, edge intact
+
+
+# ---- the O5 amendment: human-handoff intake (devclaw:pickup) ----------------
+
+def _both_intakes(self_filed_issues, handoff_issues):
+    return FakeGh(by_labels={
+        (si.ACCEPTED_LABEL, si.SELF_FILED_LABEL): self_filed_issues,
+        (si.ACCEPTED_LABEL, si.PICKUP_LABEL): handoff_issues,
+    })
+
+
+def test_pickup_accepts_human_filed_issue_with_pickup_label():
+    """A human-filed issue armed with accepted + devclaw:pickup is picked up
+    exactly like a self-filed one (O5 amendment, 2026-07-28)."""
+    gh = _both_intakes([], [_issue(401, title="deploy launcher gap",
+                                   self_filed=False, pickup=True)])
+    spy = SpyCreate()
+    res = asyncio.run(si.run_self_fix_pickup(spy, repo="lifekit-hq/devclaw", gh=gh))
+
+    assert [g for _, g in res.picked] == ["self-fix-issue-401"]
+    assert gh.marked == [(401, si.FIXING_LABEL)]
+    # both intakes were queried, self-filed first.
+    assert [labels for _, labels, _ in gh.listed] == [
+        (si.ACCEPTED_LABEL, si.SELF_FILED_LABEL),
+        (si.ACCEPTED_LABEL, si.PICKUP_LABEL),
+    ]
+
+
+def test_pickup_dedupes_issue_carrying_both_markers():
+    """An issue labelled self-filed AND pickup appears in both queries but must
+    spawn exactly one goal and one claim."""
+    both = _issue(7, pickup=True)
+    gh = _both_intakes([both], [both])
+    spy = SpyCreate()
+    res = asyncio.run(si.run_self_fix_pickup(spy, repo="lifekit-hq/devclaw", gh=gh))
+
+    assert res.picked == [(7, "self-fix-issue-7")]
+    assert len(spy.calls) == 1
+    assert gh.marked == [(7, si.FIXING_LABEL)]
+
+
+def test_pickup_concurrency_shared_across_intakes():
+    """One in-flight self-filed fix consumes the whole concurrency-1 budget —
+    a fresh handoff issue must NOT be picked this cycle (serialize
+    self-modification, proposal 5A; the cap is global, not per-intake)."""
+    gh = _both_intakes(
+        [_issue(1, fixing=True)],
+        [_issue(2, self_filed=False, pickup=True)],
+    )
+    spy = SpyCreate()
+    res = asyncio.run(si.run_self_fix_pickup(spy, repo="lifekit-hq/devclaw", gh=gh))
+
+    assert res.picked == []
+    assert spy.calls == []
+    assert gh.marked == []
