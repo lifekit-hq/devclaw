@@ -1,7 +1,7 @@
 # ADR 0007 — Gate strictness dial: advisory-by-default gates, per-goal strict opt-in
 
 - **Status:** accepted 2026-07-22 (Denys). Tranche scheduled the same day —
-  graduated from [`../proposals/gate-strictness-dial.md`](../proposals/gate-strictness-dial.md)
+  graduated from [`../proposals/archived/gate-strictness-dial.md`](../proposals/archived/gate-strictness-dial.md)
   under the spec lifecycle. This record freezes the *decision and rationale*;
   the proposal keeps the full narrative + the five clarify-step resolutions.
 - **Recalibrates:** the "loud failure over silent degradation" invariant

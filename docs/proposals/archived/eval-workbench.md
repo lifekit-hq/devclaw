@@ -1,6 +1,6 @@
 # Proposal — Eval-driven guardrail proportioning + the living eval workbench
 
-- **Status:** **GRADUATED → [ADR 0004](../decisions/0004-eval-workbench.md)**
+- **Status:** **GRADUATED → [ADR 0004](../../decisions/0004-eval-workbench.md)**
   — tranche scheduled 2026-07-20 (the mission-control packaging borrow, which
   this was sequenced after, completed the same day). The ADR is canonical from
   here on; this doc is history — the full narrative, the clarify-step Q&A

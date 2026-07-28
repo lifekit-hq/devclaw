@@ -1,6 +1,6 @@
 # Proposal — Continuous evaluation as a projection of the live event stream
 
-- **Status:** **GRADUATED → [ADR 0006](../decisions/0006-continuous-eval-projection.md)**
+- **Status:** **GRADUATED → [ADR 0006](../../decisions/0006-continuous-eval-projection.md)**
   — 2026-07-21, the same evening the draft landed: clarify step (all seven
   `[OPEN]` items answered by Denys, resolutions in §5), lock, tranche
   scheduled, graduation. The ADR is canonical from here on; this doc keeps
@@ -10,10 +10,10 @@
   default — Denys's call). This proposal keeps the original "night"/"clean-night
   rate" wording as its locked snapshot; the shipped names (`cycle_reports`,
   `cycle_key`, `DEVCLAW_RUN_CYCLE_*`, `/evals/cycles.json`, clean-cycle rate)
-  live in [ADR 0006](../decisions/0006-continuous-eval-projection.md)'s Naming note.
+  live in [ADR 0006](../../decisions/0006-continuous-eval-projection.md)'s Naming note.
 - **Date opened:** 2026-07-21 · **Locked:** 2026-07-21 · **Graduated:** 2026-07-21
 - **Authors:** Denys + Claude (conversation of 2026-07-21)
-- **Supersedes / relates:** amends the *shape* of [ADR 0004](../decisions/0004-eval-workbench.md)
+- **Supersedes / relates:** amends the *shape* of [ADR 0004](../../decisions/0004-eval-workbench.md)
   step 2 (the `eval_runs` table / console "Evals" tab) — see §4; absorbs the
   "nightly self-report" idea from the same conversation; touches the parked
   event-driven-loop seed only at a seam (§7). ADR 0004's phases and its 2×2

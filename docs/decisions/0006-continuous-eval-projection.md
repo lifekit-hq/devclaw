@@ -1,7 +1,7 @@
 # ADR 0006 — Continuous evaluation as a projection of the live event stream
 
 - **Status:** accepted 2026-07-21 (Denys). Tranche scheduled the same evening —
-  graduated from [`../proposals/continuous-eval-projection.md`](../proposals/continuous-eval-projection.md)
+  graduated from [`../proposals/archived/continuous-eval-projection.md`](../proposals/archived/continuous-eval-projection.md)
   under the spec lifecycle. This record freezes the *decision and rationale*;
   system snapshots inside reflect their writing date.
 - **Amends:** [ADR 0004](./0004-eval-workbench.md) step 2 only — the workbench
