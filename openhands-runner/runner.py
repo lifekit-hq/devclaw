@@ -880,6 +880,63 @@ def _provision_toolchain(workspace_dir: str) -> dict | None:
     }
 
 
+def _resync_mise_env(workspace_dir: str) -> None:
+    """Re-derive the mise-provisioned toolchain env and re-apply it to
+    ``os.environ`` RIGHT BEFORE the verify gate.
+
+    The pre-agent :func:`_provision_toolchain` export is a NO-OP for a repo that
+    pins its SDK the native way — a .NET project with a ``.csproj``/``.sln`` but
+    no ``global.json``/``.mise.toml`` declares nothing ``_detect_toolchain``
+    recognizes, so nothing is installed up front. The agent then declares +
+    installs the toolchain itself mid-task (writes a ``mise.toml``, ``mise
+    install``), but that happened AFTER our pre-agent env snapshot — so the
+    gate's raw ``dotnet test`` exits 127 ("command not found") even though the
+    SDK is installed. Re-syncing here closes the gap structurally (ADR 0005's
+    own intent: "the agent's shells AND the verify gate inherit the same
+    toolchain").
+
+    Two mechanisms, both best-effort — mise absent / no config / any error leaves
+    the env untouched and the gate still runs (a genuinely missing toolchain then
+    fails the gate LOUDLY, never a silent skip):
+      - put mise's shims dir on PATH (cwd-robust: a shim resolves the tool
+        version from whichever config is nearest at exec time, so it works even
+        when the gate ``cd``s into a subdir before invoking the tool);
+      - fold in ``mise env --json`` (``DOTNET_ROOT`` + tool bin dirs) for the
+        workspace's now-current config.
+    The OAuth-only denylist is re-applied (a workspace ``.mise.toml`` ``[env]``
+    table must not reintroduce a metered key after ``_refuse_api_key`` passed).
+    """
+    if shutil.which("mise") is None:
+        return
+    # 1) Fold in `mise env --json` (DOTNET_ROOT + the tool bin dirs it prepends
+    #    to PATH) for the workspace's now-current config. Best-effort.
+    try:
+        envp = _mise_run(["env", "--json"], workspace_dir, 60)
+    except (subprocess.TimeoutExpired, OSError):
+        envp = None
+    if envp is not None and envp.returncode == 0:
+        try:
+            env_map = json.loads(envp.stdout or "{}")
+        except json.JSONDecodeError:
+            env_map = None
+        if isinstance(env_map, dict):
+            for key, value in env_map.items():
+                if key in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+                    continue
+                if isinstance(value, str):
+                    os.environ[key] = value
+    # 2) Prepend mise's shims dir LAST so it always wins — cwd-robust tool
+    #    resolution that survives even if `mise env` returned no PATH (a config
+    #    mise couldn't resolve from the workspace root). Done after (1) so the
+    #    mise-env PATH can't clobber it.
+    mise_data = os.environ.get("MISE_DATA_DIR") or os.path.expanduser(
+        "~/.local/share/mise"
+    )
+    shims = os.path.join(mise_data, "shims")
+    if os.path.isdir(shims) and shims not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = shims + os.pathsep + os.environ.get("PATH", "")
+
+
 def _refuse_api_key() -> None:
     """Refuse to run if an API key snuck into the env — preserves the
     Pro-subscription cost model (memory: pro-subscription-is-the-design)."""
@@ -1211,6 +1268,11 @@ def main() -> None:
         report_path = os.path.join(workspace_dir, _BROWSER_REPORT_REL)
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
         os.environ["PLAYWRIGHT_JSON_OUTPUT_NAME"] = report_path
+        # Re-sync the mise toolchain env so a gate like `dotnet test` finds an
+        # SDK the agent provisioned mid-task (a .csproj/.sln repo the pre-agent
+        # step couldn't detect). MUST run before _run_verify, which inherits
+        # os.environ. Best-effort — see _resync_mise_env.
+        _resync_mise_env(workspace_dir)
         verify = _run_verify(verify_cmd, workspace_dir)
         browser_report = _read_browser_report(workspace_dir)
         if browser_report is not None:

@@ -273,3 +273,77 @@ def test_docker_args_mount_the_project_toolchain_cache():
     expected = f"{sc._toolchain_volume_name('/host/ws')}:{sc.CONTAINER_MISE_DATA}"
     assert expected in args
     assert args[args.index(expected) - 1] == "-v"
+
+
+# ---- verify-gate mise re-sync (the .csproj/.sln regression) --------------
+# A .NET repo that pins its SDK in a .csproj/.sln (no global.json/.mise.toml)
+# declares nothing _detect_toolchain sees → pre-agent provisioning is a no-op.
+# The agent then wires mise itself mid-task, but the verify gate inherited the
+# STALE pre-agent env, so `dotnet test` exited 127. _resync_mise_env re-applies
+# the current mise env right before the gate. (Reproduces the 2026-07-28 v0.1
+# smoke failure on lifekit-hq/lifekit-dashboard.)
+
+
+def test_resync_mise_env_puts_shims_on_path_and_folds_env(
+    runner, tmp_path, monkeypatch, restore_env
+):
+    shims = tmp_path / "mise" / "shims"
+    shims.mkdir(parents=True)
+    monkeypatch.setenv("MISE_DATA_DIR", str(tmp_path / "mise"))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.delenv("DOTNET_ROOT", raising=False)
+    monkeypatch.setattr(runner.shutil, "which", lambda _: "/usr/local/bin/mise")
+
+    def fake_run(argv, **kwargs):
+        assert argv[:2] == ["mise", "env"]
+        return subprocess.CompletedProcess(
+            argv, 0,
+            stdout=json.dumps({"DOTNET_ROOT": "/ws/.dotnet", "PATH": "/ws/.dotnet:/usr/bin"}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    runner._resync_mise_env(str(tmp_path))
+    # shims dir prepended (cwd-robust tool resolution for `cd backend && dotnet test`)
+    assert os.environ["PATH"].split(os.pathsep)[0] == str(shims)
+    # mise env folded in (DOTNET_ROOT so the SDK is locatable)
+    assert os.environ["DOTNET_ROOT"] == "/ws/.dotnet"
+
+
+def test_resync_mise_env_is_a_noop_without_mise(runner, tmp_path, monkeypatch, restore_env):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    before = os.environ["PATH"]
+
+    def _boom(*a, **k):  # pragma: no cover - assertion IS that it's unreached
+        raise AssertionError("_resync ran a subprocess with no mise on PATH")
+
+    monkeypatch.setattr(runner.shutil, "which", lambda _: None)
+    monkeypatch.setattr(runner.subprocess, "run", _boom)
+    runner._resync_mise_env(str(tmp_path))
+    assert os.environ["PATH"] == before  # untouched
+
+
+def test_resync_mise_env_reapplies_oauth_denylist(runner, tmp_path, monkeypatch, restore_env):
+    monkeypatch.setattr(runner.shutil, "which", lambda _: "/usr/local/bin/mise")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(
+        runner.subprocess, "run",
+        lambda argv, **k: subprocess.CompletedProcess(
+            argv, 0, stdout=json.dumps({"ANTHROPIC_API_KEY": "sk-leak", "DOTNET_ROOT": "/x"}), stderr=""
+        ),
+    )
+    runner._resync_mise_env(str(tmp_path))
+    assert "ANTHROPIC_API_KEY" not in os.environ  # a workspace .mise.toml can't reintroduce a key
+    assert os.environ.get("DOTNET_ROOT") == "/x"
+
+
+def test_resync_mise_env_survives_mise_env_failure(runner, tmp_path, monkeypatch, restore_env):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    before = dict(os.environ)
+    monkeypatch.setattr(runner.shutil, "which", lambda _: "/usr/local/bin/mise")
+    monkeypatch.setattr(
+        runner.subprocess, "run",
+        lambda argv, **k: subprocess.CompletedProcess(argv, 1, stdout="", stderr="mise boom"),
+    )
+    runner._resync_mise_env(str(tmp_path))  # must not raise
+    assert os.environ.get("DOTNET_ROOT") == before.get("DOTNET_ROOT")
