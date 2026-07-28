@@ -393,8 +393,11 @@ wrong-codebase review bug and its siblings, fixed 2026-07-13).
 
 ### OAuth and billing
 
-`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are **actively stripped** at the
-planner, host engine, and sandbox. A stray key must never silently flip an
+`ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are **actively stripped** — both
+keys `env.pop`'d — at all **five** first-party call sites, the authoritative
+enforcement list: `devclaw/cognition.py`, `devclaw/llm_call.py`,
+`devclaw/engine/host.py`, `devclaw/engine/sandcastle.py`, and
+`openhands-runner/runner.py`. A stray key must never silently flip an
 autonomous run onto metered billing.
 
 ### Model-agnostic worker layer

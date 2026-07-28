@@ -72,12 +72,7 @@ The universal layer is itself split by **nature**, not by kind:
 
 #### Model-agnostic invariants
 
-The skill/hook system is deliberately neutral about which agent runs inside the sandbox. Today it's `claude-code` + `claude-agent-acp`; tomorrow it could be `codex`, `gemini-cli`, an open-source agent, anything that can read files and call tools. To keep this true, the following are invariants — do NOT add code that violates them:
-
-- **Skills are plain markdown.** No frontmatter with model-specific fields. No `Skill(name=…)` tool invocations in the prompt — that's Claude's native skill system, not ours. Any LLM that can read a markdown file at the start of its conversation can consume our skills.
-- **Hooks are bash, not settings.json entries.** Hooks live as `.sh` files in `/opt/devclaw/hooks/` or `<repo>/.agent/hooks/`. `runner.py` invokes them directly. Do not move them into a `settings.json` (Claude-Code-specific) or any other harness-native config.
-- **Use MCP, not vendor-specific tool wiring.** MCP is the one cross-tool standard (Cline, Cursor, Zed, Claude Code all support it). Tools we want every agent to have go through MCP, not through Claude-Code plugins or commands.
-- **Per-repo discovery is `ls .agent/skills/` + `cat`, not an agent-specific catalog API.** Any agent with file-read can find them.
+The skill/hook system is deliberately neutral about which agent runs inside the sandbox. Today it's `claude-code` + `claude-agent-acp`; tomorrow it could be `codex`, `gemini-cli`, an open-source agent, anything that can read files and call tools. Keeping that true is an invariant: skills stay plain markdown (no model-specific frontmatter, no native `Skill(…)` calls), hooks stay bash `.sh` files invoked by `runner.py` (never a `settings.json`), cross-tool capability rides MCP rather than vendor wiring, and per-repo discovery is `ls .agent/skills/` + `cat` — any agent with file-read can consume all of it. Canonical statement + do-not-violate detail: [`docs/architecture.md`](./docs/architecture.md) §Invariants.
 
 The day we swap claude-code for another harness, the entire skill/hook system survives — and the agent command is already a config seam, not a code change: set `DEVCLAW_ACP_COMMAND` (default `claude-agent-acp`; the runner shlex-splits it) to point at any ACP-speaking agent. The residual claude-coupling is the plumbing around the call — the `acp_env` vars, the `~/.claude` auth mounts, `DEVCLAW_EXEC_MODEL`'s claude model ids, the auth/rate-limit classifiers — plus baking the alternate binary into the sandbox image (see `docs/reference/env-vars.md`).
 
@@ -205,7 +200,7 @@ Both modes share every gate, the delivery contract, and the close discipline. `s
 4. **Direction evaluation** (periodic LLM call) — every `DEVCLAW_GOAL_EVAL_EVERY` deliveries, judge whether the *delivered work* is achieving the objective; corrections are fed back as steering, a hard verdict blocks.
 5. **Done-gate** — the planner's `done` is only a *proposal*; it triggers a read-only `review_repository` against the firmed `done_when` + `stub_acceptable`, and the goal closes **only if the evaluator confirms `achieved`** from that review. "Done" is gated on grounded evaluation, not on counting PRs.
 
-The zero-token idle guard is load-bearing: an idle goal and an in-flight-still-running goal cost **0 `claude` calls** (the heartbeat is mechanism; cognition runs only when there's real work).
+The zero-token idle guard is load-bearing: an idle goal and an in-flight-still-running goal cost **0 `claude` calls** (the heartbeat is mechanism; cognition runs only when there's real work). Canonical: [`docs/architecture.md`](./docs/architecture.md) §Invariants.
 
 ### Dry-run cognition (debug — pure, no side effects)
 
@@ -302,15 +297,17 @@ Tailscale wiring is best-effort + graceful-degradation: `deploy_project` attempt
 
 Built to run unattended, and to ship code worth merging:
 
-- **Survives usage limits.** A quota / rate-limit pause is *classified*, not treated as a failure: the task is requeued and a single account-wide `paused_until` gates **both** the task queue and the goal heartbeat, which auto-resume when the cap resets — zero tokens while paused, the owner pinged once.
-- **Mechanical blocks self-heal.** Every block carries a structured `blocked_kind`; the two re-checkable mechanical kinds auto-heal with zero LLM cost (a corrupt contract file heals when it parses again; an unreachable repo re-checks via `git ls-remote` on capped exponential backoff), damped by a per-goal heal budget so a flapping condition can't burn quota. Question/bug blocks stay human-gated: `resume_goal` re-attempts the same contract once you've fixed the blocker; `steer_goal` changes direction.
-- **No-progress watchdog.** An executing goal that ships nothing for `DEVCLAW_GOAL_NO_PROGRESS_S` (default 6h) pings the owner once — a zero-token wall-clock check that complements the per-task timeout.
-- **In-house quality gate (no third-party QC).** The engineer is briefed to *audit before extending*, and the verify gate runs a **test-integrity** check that fails the gate on deleted / skipped / weakened tests, closing the "go green by gutting the tests" path.
-- **Pre-PR review gate — green means *reviewed*.** A green gate proves behaviour, not quality; it can't see a dead-code line or a frontend change it never exercises. So after the gate + test-integrity pass and **before** the PR opens, a separate `claude` pass *reads the diff* against the ticket + quality bar and returns `approve` / `request_changes`. A `request_changes` verdict feeds its located issues back through the same retry loop as a gate failure (then escalates).
+- **Survives usage limits.** A quota / rate-limit pause is *classified*, not treated as a failure: WIP is preserved, one account-wide pause gates both the task queue and the goal heartbeat, and both auto-resume when the cap resets — zero tokens while paused, the owner pinged once.
+- **Mechanical blocks self-heal.** Every block carries a structured kind; the re-checkable mechanical ones (a corrupt contract file, an unreachable repo) auto-heal at zero LLM cost, damped so a flapping condition can't burn quota. Question / bug blocks stay human-gated: `resume_goal` re-attempts the same contract once you've fixed the blocker; `steer_goal` changes direction.
+- **No-progress watchdog.** An executing goal that ships nothing for a bounded wall-clock window pings the owner once — a zero-token check that complements the per-task timeout.
+- **In-house quality gate (no third-party QC).** The engineer is briefed to *audit before extending*, and the verify gate runs a **test-integrity** check that fails on deleted / skipped / weakened tests, closing the "go green by gutting the tests" path.
+- **Pre-PR review gate — green means *reviewed*.** A green gate proves behaviour, not quality; it can't see a dead-code line or a frontend change it never exercised. So before the PR opens, a separate `claude` pass *reads the diff* against the ticket + quality bar and returns `approve` / `request_changes`, feeding located issues back through the retry loop (then escalating).
+
+Canonical statement of these as fail-closed invariants — with the enforcing call sites and issue history: [`docs/architecture.md`](./docs/architecture.md) §Invariants.
 
 ## Auth (the design constraint)
 
-DevClaw inherits a `claude` OAuth session — it never uses an API key. `ANTHROPIC_API_KEY` is **actively refused** at both the host (planner) and sandbox layers so a stray key can't silently switch autonomous runs onto metered billing. All you need is a logged-in `claude` CLI: the planner shells out to it, and the per-task sandbox bind-mounts an explicit allowlist under `~/.claude` **read-only** (the credential token + `.claude.json` identity by default; nothing else).
+DevClaw inherits a `claude` OAuth session — it never uses an API key. `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are **actively stripped** at every host- and sandbox-side call site so a stray key can't silently switch autonomous runs onto metered billing. All you need is a logged-in `claude` CLI: the planner shells out to it, and the per-task sandbox bind-mounts an explicit allowlist under `~/.claude` **read-only** (the credential token + `.claude.json` identity by default; nothing else). Canonical enforcement list: [`docs/architecture.md`](./docs/architecture.md) §Invariants.
 
 ## Run it
 
