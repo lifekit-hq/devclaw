@@ -131,7 +131,63 @@ One coherent last-mile contract, mostly composition of existing parts:
   (and is visible via the ledger) so an automerge-on owner never infers from
   silence. (Resolved as the stated default; flagged for Denys's veto.)
 
-## 6. Explicitly not proposed
+## 6. Prior art — wheelhouse's auto-merge gate (steals for the P1 tranche)
+
+*Added 2026-07-28, post-lock. Detail-level input for the P1 tranche only — it
+does not reopen any §5 resolution. Source: teardown of
+[kunchenguid/wheelhouse](https://github.com/kunchenguid/wheelhouse) (vault:
+`projects/devclaw/wheelhouse-teardown-2026-07-28.md`), whose scan-time
+auto-merge is the most elaborated fail-closed version of exactly the O1
+contract: unattended merge with a post-hoc human safety net.*
+
+**Adopt into P1 (mechanics, no policy change):**
+
+- **Head-bound verdict.** Wheelhouse binds its merge-authorizing verdict to the
+  exact (head SHA, base, vision revision) and refuses any stale binding. P1
+  equivalent: `merged` may only resolve for the **exact head SHA the gates
+  passed**; if the PR head moved after settle, resolve
+  `left-for-owner(head-moved)`. This is #393's freshness class applied at the
+  merge boundary.
+- **Live re-read immediately before the merge call.** Wheelhouse re-reads head,
+  base, mergeability, checks, escape label, and card activity right before its
+  (already-authorized) merge, and any uncertainty leaves the PR for normal
+  review. P1 equivalent: between gate-green and `gh pr merge`, one cheap
+  re-read of head / mergeability / owner activity; **any surprise or read
+  failure resolves `left-for-owner(reason)`, never a retry loop and never a
+  silent skip**. Fail-closed at the last inch, consistent with §1's
+  CONFLICTING-PR morning.
+- **Owner activity wins.** Wheelhouse lets a maintainer action taken during the
+  gate window beat the machine's merge. P1 equivalent: owner comment / review /
+  push on the PR after delivery ⇒ `left-for-owner(owner-active)`. The human
+  outranks the loop without touching any switch.
+- **Per-PR escape hatch.** `wheelhouse:no-auto-merge` on a target PR stops one
+  pending automatic merge without disabling the feature. P1 equivalent: a
+  `devclaw:no-auto-merge` label checked in the pre-merge re-read ⇒
+  `left-for-owner(owner-hold)`. Today the only opt-out is repo-wide
+  (`Project.automerge`); this is the missing one-PR granularity, mechanical and
+  zero-LLM. *(New affordance — flagged for Denys's veto, same footing as O5.)*
+- **Merge evidence is durable.** Every wheelhouse auto-merge appends its
+  qualifying evidence to a closed ledger issue. P1 equivalent: the delivery
+  record behind the O3 ledger stores *why* the merge was authorized (gate
+  verdicts, head SHA, resolution enum value + reason) — the ledger line is a
+  projection of stored evidence, not a log grep.
+- **Never auto-revert.** Convergent with the locked O1 posture (done-gate +
+  ledger are the net, not rollback); named here so the tranche doesn't invent
+  one.
+
+**Declined (with reasons — they compensate for weaknesses devclaw doesn't have):**
+
+- **Size caps (≤20 files / ≤1,000 lines) and sensitive-path exclusion lists.**
+  Wheelhouse merges *other people's* PRs on the strength of a lightweight
+  advisory triage, so it bounds blast radius by diff shape. devclaw merges its
+  **own** deliveries after the full always-hard verify/integrity/done stack has
+  read the entire diff; re-bounding by size would second-guess the gates and
+  contradict the locked "gate-green ⇒ merge" totality (§5 O1/O2).
+- **VISION.md-alignment + A/B/C behavior-class verdict.** That's wheelhouse
+  rebuilding, at merge time, the intent-conformance check devclaw already runs
+  as the firmed `done_when` + evaluator. No merge-time cognition — §7 stands.
+
+## 7. Explicitly not proposed
 
 - No new gate, no weakening of any existing gate (verify/integrity/done stay
   always-hard; fail-closed semantics untouched).
