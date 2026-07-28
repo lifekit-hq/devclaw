@@ -24,7 +24,6 @@ general so a future ``needs_answer`` wire is one allowlist entry away.
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
@@ -203,8 +202,9 @@ def default_caller() -> ClaudeCaller:
     return claude_with_model(TRIAGE_MODEL, role="triage")
 
 
-#: enable flag for the whole interceptor. Default ON — the propose loop is the
-#: point; ``0``/``false`` reverts every eligible ping to the raw path. Read as a
-#: literal so the env-vars doc-sync test sees it.
+#: enable flag for the whole interceptor. ON — the propose loop is the point.
+_SELF_TRIAGE_ENABLED = True
+
+
 def enabled() -> bool:
-    return os.environ.get("DEVCLAW_SELF_TRIAGE", "1").strip().lower() not in ("0", "false", "")
+    return _SELF_TRIAGE_ENABLED

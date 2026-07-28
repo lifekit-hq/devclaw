@@ -45,8 +45,8 @@ from ..loom import trace as _trace
 #: (the closeloop-bench 2026-07-18 pattern where a hand-written "CIRCUIT BREAKER"
 #: clause in the task prose was the only — and unreliable — brake on a 4th
 #: identical attempt). Mirrors the per-workspace breaker's 3-failure instinct
-#: (task_queue._check_and_trip_breaker). Env-overridable; ``<= 0`` disables it.
-ITEM_MAX_ATTEMPTS = int(os.environ.get("DEVCLAW_ITEM_MAX_ATTEMPTS", "3"))
+#: (task_queue._check_and_trip_breaker). ``<= 0`` disables it.
+ITEM_MAX_ATTEMPTS = 3
 
 #: reality-anchored acceptance asserts (#2/#4, ADR 0003) — the mechanical
 #: cross-check under the LLM review gate. On by default; set
