@@ -31,6 +31,7 @@ fires once the program terminates (one program in, one notify out).
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import json
 import os
@@ -1249,6 +1250,27 @@ class TaskQueue(_NotifyMixin):
         except Exception as err:  # noqa: BLE001 — observability, not correctness
             sys.stderr.write(f"task-queue: gate-advisory record failed: {err}\n")
 
+    def _append_task_event(
+        self, task_id: str, program_id: Optional[str], event: EngineEvent
+    ) -> None:
+        """Persist one engine event onto the append-only StateStore log, tagged
+        with its ``task_id`` + ``program_id``. Passed to the engine per attempt
+        as ``functools.partial(self._append_task_event, task_id, program_id)``
+        (was an inline closure in ``_run_and_settle`` capturing exactly those two
+        vars + ``self``; lifting it keeps that byte-identical). Event writes must
+        NEVER crash the run — a persistence hiccup logs to stderr and is swallowed."""
+        try:
+            self._store.append_event(
+                task_id=task_id,
+                program_id=program_id,
+                type=event.type,
+                source=event.source,
+                payload_json=json.dumps(event.payload),
+                ts=int(event.ts) if isinstance(event.ts, (int, float)) else _now_ms(),
+            )
+        except Exception as err:  # event writes must never crash the run
+            sys.stderr.write(f"task-queue: append_event failed task={task_id}: {err}\n")
+
     async def _run_and_settle(
         self, task_id: str, kind: TaskKind, workspace_dir: str, goal: str,
         *, defer_done: bool = False,
@@ -1258,6 +1280,25 @@ class TaskQueue(_NotifyMixin):
         gate passes, it does NOT mark the task done — it returns the winning result
         dict and leaves the task 'running', so the caller can deliver then settle
         'done' atomically (see _execute). Failures/timeouts always settle here."""
+        # ── The settle cascade juggles THREE ORTHOGONAL AXES. Do not conflate
+        #    them, and do not reorder the routing below — the ordering is
+        #    load-bearing (2026-07-20 night-incident regression surface, #407).
+        #
+        #    Axis 1 — GATE VERDICT: verify → test_integrity → review → browser,
+        #      a STRICT SHORT-CIRCUIT chain over ONE computed diff. review runs
+        #      only if integrity passed; browser only if both passed. Flattening
+        #      it recomputes the diff and surfaces lower-priority findings.
+        #    Axis 2 — FAILURE-STRING CLASSIFICATION: classify_failure() reads the
+        #      terminal failure text to pause on quota/auth (usage-limit path).
+        #    Axis 3 — MARKER-BASED FAST-FAIL ROUTING: _WORKER_BLOCKED_MARKER and
+        #      _REVIEW_CRASH_MARKER route specific failures without a retry.
+        #
+        #    LOAD-BEARING ORDERING (below): _WORKER_BLOCKED_MARKER is checked
+        #    BEFORE classify_failure, which is checked BEFORE _REVIEW_CRASH_MARKER.
+        #    The SAME review-crash string is a PAUSE or a FAST-FAIL depending on
+        #    which classifier claims it first — reordering silently changes the
+        #    outcome. Leave the order as written.
+        #
         # Resolve program_id + the verify gate once so on_event doesn't re-query.
         row = self._store.get_task(task_id)
         program_id = row.program_id if row else None
@@ -1295,18 +1336,10 @@ class TaskQueue(_NotifyMixin):
             "is actually there; do not redo work that is already present.\n\n"
         )
 
-        def on_event(event: EngineEvent) -> None:
-            try:
-                self._store.append_event(
-                    task_id=task_id,
-                    program_id=program_id,
-                    type=event.type,
-                    source=event.source,
-                    payload_json=json.dumps(event.payload),
-                    ts=int(event.ts) if isinstance(event.ts, (int, float)) else _now_ms(),
-                )
-            except Exception as err:  # event writes must never crash the run
-                sys.stderr.write(f"task-queue: append_event failed task={task_id}: {err}\n")
+        # Per-attempt event sink: the lifted _append_task_event bound method,
+        # pre-bound to this task's (task_id, program_id) so the engine calls it
+        # with just the event. Same three captured vars as the old closure.
+        on_event = functools.partial(self._append_task_event, task_id, program_id)
 
         # Baseline for the post-gate diff. The agent is asked to COMMIT its work
         # (goal-branch mode lands commits directly on goal/<id>), so the tree can

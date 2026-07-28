@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from devclaw.engine import EngineRequest
+from devclaw.engine import EngineEvent, EngineRequest
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 
@@ -21,6 +21,36 @@ def _ok_runner(seen: list[str]):
         seen.append(req.goal)
         return {"status": "ok", "workspaceDir": req.workspace_dir, "message": "done"}
     return runner
+
+
+# ---- lifted on_event bound method (#407 PR-1) ----
+
+
+async def test_on_event_lifted_still_tags_task_and_program_id(store):
+    """The per-attempt event sink is now the bound method ``_append_task_event``
+    pre-bound via ``functools.partial(self._append_task_event, task_id,
+    program_id)`` (lifted from an inline closure, #407 PR-1). Byte-for-byte the
+    same behavior must hold: an engine event streamed during the run lands on the
+    append-only log carrying BOTH the correct ``task_id`` and ``program_id``."""
+    store.create_task(
+        id="t1", kind="implement_feature", workspace_dir="/ws", goal="g",
+        program_id="prog_42",
+    )
+    store.claim_pending("t1")  # running — the state _run_and_settle settles from
+
+    async def emitting_runner(req: EngineRequest):
+        # The engine streams one observation back through the on_event sink,
+        # exercising the partial-bound _append_task_event.
+        req.on_event(EngineEvent(id=None, type="log", source="agent", ts=1, payload={"m": "hi"}))
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "message": "done"}
+
+    q = TaskQueue(store, runner=emitting_runner)
+    await q._run_and_settle("t1", "implement_feature", "/ws", "g")
+
+    logged = [e for e in store.list_events(task_id="t1") if e.type == "log"]
+    assert logged, "the streamed engine event was not persisted"
+    assert logged[0].task_id == "t1"
+    assert logged[0].program_id == "prog_42"
 
 
 # ---- crash recovery ----
