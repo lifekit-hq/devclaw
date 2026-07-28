@@ -40,7 +40,7 @@ WorkspacePrep = Callable[[str, "str | None", "str | None"], Awaitable[str]]
 
 
 #: deliveries between periodic direction evaluations (0 → only at the done-gate)
-EVAL_EVERY = int(os.environ.get("DEVCLAW_GOAL_EVAL_EVERY", "3"))
+EVAL_EVERY = 3
 
 
 #: wall-clock seconds an EXECUTING goal may go without a delivery before the

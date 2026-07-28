@@ -45,18 +45,12 @@ from ..loom import trace as _trace
 #: (the closeloop-bench 2026-07-18 pattern where a hand-written "CIRCUIT BREAKER"
 #: clause in the task prose was the only — and unreliable — brake on a 4th
 #: identical attempt). Mirrors the per-workspace breaker's 3-failure instinct
-#: (task_queue._check_and_trip_breaker). Env-overridable; ``<= 0`` disables it.
-ITEM_MAX_ATTEMPTS = int(os.environ.get("DEVCLAW_ITEM_MAX_ATTEMPTS", "3"))
+#: (task_queue._check_and_trip_breaker). ``<= 0`` disables it.
+ITEM_MAX_ATTEMPTS = 3
 
 #: reality-anchored acceptance asserts (#2/#4, ADR 0003) — the mechanical
-#: cross-check under the LLM review gate. On by default; set
-#: ``DEVCLAW_ITEM_ASSERTS=0`` to disable enforcement entirely (the operator
-#: kill-switch, if a mis-authored assert wedges a live goal — the item then
-#: falls back to gate-only verification, today's pre-#2/#4 behavior). Off means
-#: asserts are still parsed/persisted, just not checked.
-ITEM_ASSERTS_ENABLED = os.environ.get("DEVCLAW_ITEM_ASSERTS", "1").strip().lower() not in (
-    "0", "false", "no", "off",
-)
+#: cross-check under the LLM review gate. On: a failing assert fails the settle.
+ITEM_ASSERTS_ENABLED = True
 #: cap on bytes read per grep assert — a runaway generated file (a lockfile,
 #: a bundle) shouldn't stall the settle tick reading megabytes. A real
 #: acceptance marker lives near the top; 2 MB is generous.
