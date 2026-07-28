@@ -99,7 +99,8 @@ Concretely:
 ## 3. What already exists vs what's new (honest inventory)
 
 **Exists, reused untouched:** fingerprint/normalize/UPSERT (`state_store/problems.py`),
-cycle-recurrence gate (`problem_cycles`, min_cycles=3), Stage-1 FILE + labels +
+cycle-recurrence gate (`problem_cycles`, min_cycles — default 2 since the
+2026-07-28 O1 amendment in `self-issue-filing.md`), Stage-1 FILE + labels +
 issue linkage, Stage-2 propose-only pickup, CLOSE/age-out, console lifecycle
 tracker, the notifier plumbing to Telegram, trend signals + retrospective +
 cooldowns.
@@ -134,8 +135,11 @@ Telegram-noise re-tier (`[OPEN] O2`), and tests.
 - **[RESOLVED] O3 — cross-repo trends.** Target-project trends file on the
   **self-repo with the project named in the body** until the
   issue-driven-pipelines manifest arc revives. No multi-repo filing in P1.
-- **[RESOLVED] O4 — recurrence gate.** Same `min_cycles=3` as mechanical
-  problems — one rule; signal cooldowns already damp volume.
+- **[RESOLVED] O4 — recurrence gate.** Same threshold as mechanical
+  problems — one rule; signal cooldowns already damp volume. (That shared
+  default moved 3→2 in the 2026-07-28 `self-issue-filing.md` O1 amendment —
+  grounded on 7 live cycles where 3 was never reached; this O4 deliberately
+  inherits it rather than pinning its own number.)
 - **[RESOLVED] O5 — harness-self trends.** Included — same intake, filing on
   the self-repo (the H4 "tighten the firming prompt" class becomes a tracked
   Issue instead of a forgotten note).

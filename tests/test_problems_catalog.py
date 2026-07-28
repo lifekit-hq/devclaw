@@ -303,3 +303,45 @@ def test_recording_a_problem_makes_no_cognition_call(tmp_path):
     store._state.mark_failed("t", "boom")
     store._state.set_global_pause(_pause_until(), "quota: out of usage")
     assert claude.calls == 0  # pure mechanism — no LLM anywhere on these paths
+
+
+# ---- #340: the kind is part of the fingerprint IDENTITY, normalized ---------
+
+
+def test_kind_variable_bits_fingerprint_to_one_row(tmp_path):
+    """#340 revival: a kind carrying variable bits (a timeout value, a branch
+    name, a path) must not mint a new fingerprint per occurrence — that starved
+    the cross-cycle survival count and kept self-issue filing at zero forever
+    (live 2026-07-28: same root cause split across 4+ rows). The kind is
+    normalized for IDENTITY; the stored column keeps the raw text."""
+    store = _store(tmp_path)
+    store.record_problem(
+        category="task_fail",
+        kind="task exceeded the 3600s wall-clock timeout with no terminal result",
+        message="task exceeded the 3600s wall-clock timeout", recovered=False,
+    )
+    store.record_problem(
+        category="task_fail",
+        kind="task exceeded the 7200s wall-clock timeout with no terminal result",
+        message="task exceeded the 7200s wall-clock timeout", recovered=False,
+    )
+    assert store.count_problems() == 1
+    row = store.list_problems()[0]
+    assert row["count"] == 2
+    # display column keeps a raw sample of the kind
+    assert "wall-clock timeout" in row["kind"]
+
+
+def test_kind_long_tail_beyond_identity_cap_is_one_row(tmp_path):
+    """The kind's identity is capped (80 normalized chars): call sites that
+    derive kind from message text (task_fail passes the error's first line)
+    carry a variable tail past the class-identifying head — the cap drops it."""
+    store = _store(tmp_path)
+    head = "review gate crashed (failing closed): PlannerError: no JSON object found in planner response"
+    msg = "review gate crashed on the nightly delivery"
+    store.record_problem(category="task_fail", kind=head + " — model response: Reported",
+                         message=msg, recovered=False)
+    store.record_problem(category="task_fail", kind=head + " — model response: **Verdict",
+                         message=msg, recovered=False)
+    assert store.count_problems() == 1
+    assert store.list_problems()[0]["count"] == 2

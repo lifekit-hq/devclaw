@@ -55,9 +55,11 @@ async def test_list_problems_filters_by_category(store):
 
 
 async def test_list_problems_respects_limit(store):
-    for i in range(5):
+    # letter-distinct kinds/messages: numbered variants would normalize to ONE
+    # fingerprint since the #340 identity change (numbers are variable bits).
+    for name in ("alpha", "beta", "gamma", "delta", "epsilon"):
         store.record_problem(
-            category="cognition", kind=f"k{i}", message=f"distinct problem {i}", recovered=False
+            category="cognition", kind=f"kind {name}", message=f"distinct problem {name}", recovered=False
         )
 
     out = json.loads(await _tools.list_problems(limit=2))

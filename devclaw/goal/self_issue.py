@@ -34,10 +34,16 @@ from typing import Callable, Optional, Protocol
 from ..state_store.problems import PROBLEM_CATEGORIES
 
 # ---- tunables (env-overridable) --------------------------------------------
-#: distinct run-cycles a problem must survive before it earns an issue (O1 —
-#: rescues the ops-agent O4 TREND_REPEAT_THRESHOLD=3). A one-night burst is one
-#: cycle; three cycles running is a real, file-worthy problem.
-RECURRENCE_THRESHOLD = int(os.environ.get("DEVCLAW_SELF_ISSUE_MIN_CYCLES", "3"))
+#: distinct run-cycles a problem must survive before it earns an issue (O1,
+#: amended 2026-07-28). A one-night burst is one cycle; surviving A SECOND
+#: distinct cycle means it outlived a whole fix-day — file it. The original 3
+#: (rescued from ops-agent O4 TREND_REPEAT_THRESHOLD) proved unreachable in
+#: production: 7 live cycles, 93 problems, max cross-cycle survival 2, ZERO
+#: filed — the session-led fix loop repairs real recurrences in ~a day, so a
+#: 3-cycle bar means devclaw only ever files problems humans already fixed.
+RECURRENCE_THRESHOLD = int(os.environ.get("DEVCLAW_SELF_ISSUE_MIN_CYCLES", "2"))
+#: one cycle-day: the membership window each cycle close marks problems over.
+DAY_MS = 24 * 3600 * 1000
 #: quiet span after which an open self-filed issue auto-closes as stale (O2 /
 #: backlog #259 age-out). Cycles are ~daily, so K cycles ≈ K days.
 _QUIET_DAYS = int(os.environ.get("DEVCLAW_SELF_ISSUE_QUIET_DAYS", "3"))
@@ -296,9 +302,16 @@ async def run_self_issue_filing(
         return result
     gh = gh or GhCli()
 
-    # 1) record this cycle's membership for everything active in the window, then
-    #    decide filing off the now-current cross-cycle count.
-    active = store.problems_active_in_window(start_ms, end_ms)
+    # 1) record this cycle's membership for everything active in the CYCLE-DAY,
+    #    then decide filing off the now-current cross-cycle count. The membership
+    #    window is the full day ending at cycle close, NOT just the nightly run
+    #    window (#340): problems hit by daytime work — steered runs, direct
+    #    tasks, MCP-driven dispatches — land outside [start_ms, end_ms] and were
+    #    invisible to filing forever, no matter how often they recurred. Cycles
+    #    close daily, so day-wide windows tile the timeline with no gaps.
+    #    ``min`` keeps an already-wider report window intact.
+    member_start = min(start_ms, end_ms - DAY_MS)
+    active = store.problems_active_in_window(member_start, end_ms)
     new_budget = per_cycle_cap
     for p in active:
         fp = p.get("fingerprint", "")

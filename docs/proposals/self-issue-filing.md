@@ -138,11 +138,30 @@ dev-loop where it belongs.
 
 ## 5. Clarify decisions (RESOLVED 2026-07-22 unless marked reopened)
 
-- **O1 — Recurrence threshold. RESOLVED.** File when a problem is in **>=3 distinct
-  cycles AND `terminal_count > 0`** (self-healed-only blocks never qualify). Needs a
-  **new small `problem_cycles(fingerprint, cycle_key)` table** — raw `count` can't
-  express cross-cycle survival. `3` is a tunable constant (rescues O4's
-  `TREND_REPEAT_THRESHOLD=3`).
+- **O1 — Recurrence threshold. RESOLVED; AMENDED 2026-07-28 (explicit reopen
+  per spec-lifecycle — issue #340, the FILE-half revival).** File when a problem
+  is in **>=2 distinct cycles AND `terminal_count > 0`** (self-healed-only blocks
+  never qualify). Needs a **new small `problem_cycles(fingerprint, cycle_key)`
+  table** — raw `count` can't express cross-cycle survival. The threshold is a
+  tunable (`DEVCLAW_SELF_ISSUE_MIN_CYCLES`).
+  *Amendment rationale (grounded, live VPS 2026-07-28):* the original `3`
+  (rescued from ops-agent O4's `TREND_REPEAT_THRESHOLD=3`) proved unreachable in
+  production — 7 cycles, 93 problems (84 terminal), **max cross-cycle survival
+  2, zero issues filed**. Two structural starvations, both fixed in the same
+  tranche: (a) cycle membership only covered the nightly **run window**, so
+  problems hit by daytime work (steered runs, direct tasks) never joined any
+  cycle — membership now spans the full cycle-day, tiling the timeline; (b) the
+  dedup fingerprint used the RAW `kind`, and call sites embed variable bits in
+  it (timeout seconds, workspace paths, goal-branch names, error first-lines),
+  so one root cause minted a new fingerprint per occurrence — the kind is now
+  normalized for identity (80-char cap) like the message already was. Known
+  residual: free-text variance beyond placeholders (a model-response tail) can
+  still split a class; its live exhibits were one-off bugs already hand-fixed
+  (#382), so it is not load-bearing. `2` = "survived one whole fix-day
+  boundary": anything slower loses the race against the session-led fix loop
+  and only ever files problems humans already fixed. This amendment also flows
+  through to `observation-resolution.md` O4, which pins "same threshold as
+  mechanical problems".
 - **O2 — Idempotency + lifecycle. RESOLVED (+ auto-close pulled into P1).** One
   issue per `fingerprint`; nullable `issue_number` / `issue_state` on `problems`;
   comment on open-recurrence, reopen on new-cycle-recurrence. **Auto-close on
