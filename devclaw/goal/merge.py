@@ -34,6 +34,13 @@ if TYPE_CHECKING:
 #: takes a PR url, returns True iff it was merged.
 Merger = Callable[[str], Awaitable[bool]]
 
+#: takes a PR url, returns True iff GitHub reports it CONFLICTING with its
+#: base, False iff it is cleanly mergeable, None when it cannot tell (gh
+#: missing/erroring, or GitHub still computing mergeability). None means
+#: "say nothing", never "all clear" — the settle path only speaks on a
+#: definite CONFLICTING.
+MergeabilityProbe = Callable[[str], Awaitable[Optional[bool]]]
+
 #: the devclaw-wide default when a project has no override of its own.
 AUTOMERGE_ENABLED = False
 #: the devclaw-wide default merge strategy — a project may override it.
@@ -169,6 +176,30 @@ async def merge_pr(pr_url: str, strategy: str = DEFAULT_MERGE_STRATEGY) -> bool:
         )
         return False
     return True
+
+
+async def pr_conflicting(pr_url: str) -> Optional[bool]:
+    """The production :data:`MergeabilityProbe`: one ``gh pr view`` asking
+    GitHub whether the PR is CONFLICTING with its base. Best-effort and
+    never raises — any failure (no gh, network, an unparseable answer, or
+    GitHub's transient ``UNKNOWN`` while it recomputes mergeability) returns
+    None, and the caller stays silent rather than guessing. Lives here (not
+    in tick_settle) for the same reason the merger does: the gh subprocess
+    stays out of the tick so it remains a pure unit under test; goal_service
+    binds this, tests inject a fake."""
+    if not pr_url:
+        return None
+    rc, out = await _run_gh(
+        "gh", "pr", "view", pr_url, "--json", "mergeable", "-q", ".mergeable"
+    )
+    if rc != 0:
+        return None
+    verdict = out.strip().upper()
+    if verdict == "CONFLICTING":
+        return True
+    if verdict == "MERGEABLE":
+        return False
+    return None
 
 
 def default_merger(strategy: str = DEFAULT_MERGE_STRATEGY) -> Merger:

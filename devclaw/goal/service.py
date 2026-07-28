@@ -412,6 +412,7 @@ class GoalService:
             trend_detector=self._trend_detector(),
             remote_checker=self._remote_checker(),
             triage_caller=self._triage(),
+            mergeability_probe=goal_merge.pr_conflicting,
         )
         return {gid: o.value for gid, o in outcomes.items()}
 
@@ -427,6 +428,7 @@ class GoalService:
                 summary_caller=self._summary(), merger=self._merger(goal),
                 trend_detector=self._trend_detector(),
                 remote_checker=self._remote_checker(),
+                mergeability_probe=goal_merge.pr_conflicting,
             )
         return outcome.value
 

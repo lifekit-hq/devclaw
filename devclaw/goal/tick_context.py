@@ -268,6 +268,13 @@ class TickContext:
     #: goal_service binds the gh-backed checker, tests inject a fake — the
     #: same subprocess-free-tick seam as ``merger``.
     remote_checker: "_remote_checks.RemoteChecker | None" = None
+    #: post-settle mergeability probe (#394): asks GitHub whether a delivered
+    #: PR is CONFLICTING with its base so the settle can say "this cannot
+    #: land" loudly instead of settling a conflicting delivery
+    #: indistinguishably from a landable one. None → skipped (legacy
+    #: behaviour); goal_service binds the gh-backed probe, tests inject a
+    #: fake — the same subprocess-free-tick seam as ``merger``.
+    mergeability_probe: "_merge.MergeabilityProbe | None" = None
 
 
 # ---- per-goal tick serialization (Tranche 1/PR8) ---------------------------
