@@ -1,9 +1,12 @@
 # Proposal — observation resolution: one lifecycle for trends + problems, notify-only operation
 
-- **Status:** **DRAFT — 2026-07-27.** Written from a live investigation of the
+- **Status:** **P1 LOCKED (direction) — 2026-07-27.** All five `[OPEN]`s were
+  answered by Denys the same evening (clarify step run in conversation; each
+  resolution recorded inline in §5 below — all five took the recommended
+  option). Drafted earlier the same day from a live investigation of the
   running instance (trends.md files read on the VPS, problems catalog + filing
-  code read on `main`). The `[OPEN]` items below are the clarify step — this
-  cannot lock until each has an answer or an explicit deferral-with-owner.
+  code read on `main`). P1 build greenlit by Denys ("can we do two, three and
+  four"); P2 named-but-unsized, shaped by the O2 answer.
 - **Date opened:** 2026-07-27 · **Authors:** Denys (ask) + Claude (draft)
 - **The ask, verbatim in spirit:** "we have trends, we have problems, we have a
   lot of different sources of truth. I want you somehow to address those
@@ -119,24 +122,23 @@ Telegram-noise re-tier (`[OPEN] O2`), and tests.
   self-issue-filing P2.1/P2.2 so there is exactly one place deciding merge
   autonomy.
 
-## 5. `[OPEN]` — the clarify step (answers required before LOCK)
+## 5. Clarify step — all `[OPEN]`s RESOLVED (Denys, 2026-07-27 evening)
 
-- **[OPEN] O1 — category vocabulary.** Add `"trend"` to `PROBLEM_CATEGORIES`
-  (recommended: distinct category keeps `list_problems(category=…)` filters and
-  the console breakdown honest), or map trends onto existing categories?
-- **[OPEN] O2 — the Telegram cut.** (a) per-fire posts stop entirely for
-  no-action trends (digest only), (b) stop for ALL trends (first ping = the
-  filed Issue), or (c) keep today's per-fire posts and only ADD resolution
-  pings? Recommended: (a).
-- **[OPEN] O3 — cross-repo trends.** Confirm the §2.2 rule (target-project
-  trends file on the self-repo until the manifest arc revives). Alternative:
-  drop cross-repo trend filing entirely for P1.
-- **[OPEN] O4 — recurrence gate for trends.** Same `min_cycles=3` as mechanical
-  problems (recommended — one rule, and signal cooldowns already damp volume),
-  or a lower/higher gate for trend-sourced problems?
-- **[OPEN] O5 — harness-self trends.** They live in the vault
-  (`~/memory/projects/devclaw/trends.md`) and describe devclaw itself — same
-  intake to the self-repo (recommended), or excluded?
+- **[RESOLVED] O1 — category vocabulary.** Add `"trend"` to
+  `PROBLEM_CATEGORIES` — a distinct category keeps `list_problems(category=…)`
+  filters and the console breakdown honest.
+- **[RESOLVED] O2 — the Telegram cut.** Option (a): per-fire posts stop for
+  **no-action** trends (they remain in trends.md + console); actionable trends
+  surface as state changes — "issue filed" and "resolved" pings. This answer
+  defines P2's shape; the re-tier itself stays the P2 slice.
+- **[RESOLVED] O3 — cross-repo trends.** Target-project trends file on the
+  **self-repo with the project named in the body** until the
+  issue-driven-pipelines manifest arc revives. No multi-repo filing in P1.
+- **[RESOLVED] O4 — recurrence gate.** Same `min_cycles=3` as mechanical
+  problems — one rule; signal cooldowns already damp volume.
+- **[RESOLVED] O5 — harness-self trends.** Included — same intake, filing on
+  the self-repo (the H4 "tighten the firming prompt" class becomes a tracked
+  Issue instead of a forgotten note).
 
 ## 6. Invariants (references, not restatements)
 
