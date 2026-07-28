@@ -1,7 +1,10 @@
 # Proposal — quality-gate extraction: the fail-closed review gate as a fork-and-own tool
 
-- **Status:** **DRAFT** — clarify step pending; every `[OPEN]` below needs an answer
-  or an explicit deferral-with-owner before this can flip to LOCKED.
+- **Status:** **LOCKED (direction)** — 2026-07-28, same-day clarify: all 8
+  `[OPEN]`s resolved by Denys (O2/O3/O6/O7 in conversation, O1/O4/O5/O8 via
+  structured questions), recorded in §5. Locking commits direction only;
+  tranche scheduling stays Denys's call. The extracted repo is
+  **`lifekit-hq/portcullis`** (MIT).
 - **Invariant impact:** none inside devclaw for the P1 slice (devclaw's embedded
   gate is untouched; the extraction is a new artifact). The OAuth-only question
   applies to the **new** repo and is decided at `[OPEN] O3`, not silently
@@ -23,7 +26,7 @@
     This proposal's admission ticket is the **second-consumer test**: the gate
     is the only devclaw piece with a live second consumer today (Denys's other
     repos' PRs). If `[OPEN] O6` can't name one concretely, this proposal should
-    be abandoned, not locked.
+    be abandoned, not locked. *(Bar passed at clarify: O6 = finance-sentry.)*
   - [`self-issue-filing.md`](./self-issue-filing.md) Stage-2 lock — `quality/`
     + gate prompts sit in the **human-gated core** of the self-merge
     blast-radius tiers. Extraction moves the files, not the classification
@@ -88,53 +91,53 @@ A new public repo containing the gate as a standalone tool:
 
 ## 4. Slices (per the sizing rule — firm P1 only at lock)
 
-- **P1 (proposed shape, firmed at lock):** repo scaffold + the review core
-  (`review_diff` / `review_panel` / `format_feedback` + prompts + the needed
-  loom modules per O5) runnable standalone on an arbitrary diff via the O2
-  interface, with its own test suite (stubbed caller, same style as
-  `tests/test_review_gate*.py`) + ONE non-devclaw consumer actually running it
-  (per O6). Sizing: **~2–3 PRs, end-of-week cap.**
+- **P1 (firmed at lock):** `lifekit-hq/portcullis` scaffold + the review core
+  (`review_diff` / `review_panel` / `format_feedback` + prompts + the **whole
+  loom substrate**, per O5) runnable standalone on an arbitrary diff via a
+  **CLI** (O2), with its own test suite (stubbed caller, same style as
+  `tests/test_review_gate*.py`) + **finance-sentry** actually running it
+  pre-merge (O6). Sizing: **~2–3 PRs, end-of-week cap.**
 - **P2 (named, unsized):** GitHub Action wrapper (wheelhouse-pattern OAuth
   secret), README-as-product, fork-and-own config surface.
 - **P3 (named, unsized):** dependency inversion — devclaw consumes the
-  published package (one source of truth, kills divergence) — plus fleet
-  registration if O7 defers it out of P1. Gets its own invariant-guard pass.
+  published package, including loom (one source of truth, kills divergence and
+  retires devclaw's frozen copies). Gets its own invariant-guard pass.
 
-## 5. `[OPEN]` items (the clarify step — all must resolve before LOCK)
+## 5. `[OPEN]` items — RESOLVED (clarify step, Denys, 2026-07-28)
 
-- **`[OPEN] O1` — Name, org, license.** Repo name (candidate wanted — the
-  wheelhouse teardown suggests naming matters for fork-and-own adoption), under
-  `lifekit-hq` or personal, license (MIT?).
-- **`[OPEN] O2` — P1 interface: CLI-first or Action-first?** Recommended:
-  CLI-first (`pipx`-able, runs in any CI, no Actions coupling; the Action is a
-  thin P2 wrapper). Action-first optimizes adoption but front-loads the OAuth
-  question.
-- **`[OPEN] O3` — Auth posture of the NEW repo.** devclaw strips
-  `ANTHROPIC_API_KEY` everywhere (autonomous runs must never silently go
-  metered). A standalone tool's users may *want* API-key billing. Options:
-  inherit OAuth-only; allow both with an explicit flag; caller-injected only
-  (the seam already allows it). Recommended: OAuth-default with explicit
-  opt-in for API key — but this is a real posture decision, not a default.
-- **`[OPEN] O4` — Divergence control between embedded and extracted gate until
-  P3 lands.** Options: freeze the embedded copy (changes go to the new repo
-  first, ported back); or accept short-lived drift with a named re-sync owner.
-  The goalclaw lesson lives here — pick one explicitly.
-- **`[OPEN] O5` — How much of loom moves?** Recommended: absorb only
-  `test_integrity` + `limits` into the new repo (pure stdlib, small); loom
-  itself stays devclaw's substrate and is NOT separately published (N=1).
-- **`[OPEN] O6` — Name the second consumer.** finance-sentry or lifekit-stack,
-  which pipeline, and who wires it in P1. If neither can be named, abandon
-  (see the goalclaw line in the header).
-- **`[OPEN] O7` — Scope boundary of the extraction.** Recommended: review core
-  only; `browser_gate.py` / `reachability.py` (Playwright-verify-shaped
-  inputs), `eval_judge.py` / `evals.py` (devclaw's eval loop) stay behind —
-  they're devclaw-shaped, not general. Counter-argument: the browser gate is
-  the most *distinctive* piece.
-- **`[OPEN] O8` — Fleet registration timing + blast-radius classification.**
-  Register the new repo as a devclaw project in P1 or after P2? And does the
-  extracted gate inherit the self-issue-filing "human-gated core"
-  classification (recommended: yes — a gate that gates the loop must not be
-  auto-merged by the loop, wherever it lives)?
+- **O1 — Name, org, license? → `lifekit-hq/portcullis`, MIT.** The castle gate
+  that drops shut when anything fails — fail-closed by construction, which is
+  the product's one-line pitch.
+- **O2 — CLI-first or Action-first? → CLI-first.** `pipx`-able, runs in any
+  CI; the GitHub Action is a thin P2 wrapper.
+- **O3 — Auth posture of the new repo? → OAuth-default, explicit API-key
+  opt-in.** Default behavior matches devclaw's posture (subscription OAuth,
+  never silently metered); a deliberate flag enables API-key billing for
+  standalone users. The caller-injection seam stays for embedders.
+- **O4 — Divergence control until P3? → Freeze the embedded copy.** Gate (and
+  loom, per O5) changes land in portcullis first and are ported back to
+  devclaw mechanically; portcullis is canonical from day one. The port-back
+  ritual dies at P3.
+- **O5 — How much of loom moves? → Loom moves ENTIRELY.** (Denys overrode the
+  absorb-two-modules recommendation.) The whole substrate
+  (`test_integrity`, `limits`, `trace`) becomes part of portcullis — shipped
+  inside it, not separately published. devclaw's `loom/` copy stays in place
+  but frozen under the O4 rule until the P3 inversion imports it back from
+  portcullis and deletes the copy. P1 still leaves devclaw's tree untouched;
+  "moves" means portcullis is canonical, not that devclaw's copy vanishes
+  early.
+- **O6 — Second consumer? → finance-sentry.** Its PRs run the portcullis CLI
+  pre-merge as part of the P1 slice; wiring is part of P1's definition of
+  done. The goalclaw admission bar is passed.
+- **O7 — Scope boundary? → Review core only.** `browser_gate.py` /
+  `reachability.py` / `eval_judge.py` / `evals.py` stay devclaw-side —
+  devclaw-shaped inputs, not general. Revisit the browser gate only after
+  portcullis has external users asking for it.
+- **O8 — Fleet registration + blast radius? → Register at P1 close,
+  human-gated.** Once P1 ships, portcullis is registered as a devclaw project
+  (the loop maintains its own published tooling); it inherits the
+  self-issue-filing **human-gated core** classification — the loop never
+  auto-merges the gate that gates it, wherever the gate lives.
 
 ## 6. Explicitly not proposed
 
