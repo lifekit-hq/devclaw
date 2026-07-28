@@ -1,7 +1,14 @@
 # Proposal — delivery last-mile: the "PR merges, I get told, the goal pursues" contract
 
-- **Status:** **DRAFT** — skeleton opened 2026-07-28; `[OPEN]` items await the clarify
-  step (no code before lock).
+- **Status:** **LOCKED (direction)** — 2026-07-28, same-day clarify: all 5 `[OPEN]`s
+  resolved by Denys in conversation, recorded in §5. Locking commits direction only;
+  tranche scheduling stays Denys's call.
+- **⚠ Invariant amendment (headline, per spec-lifecycle):** the O1 resolution
+  **amends [ADR 0007](../decisions/0007-gate-strictness-dial.md)'s backstop premise
+  for automerge-on repos**: under `trust`, a gate-green delivery auto-merges *even
+  when advisory findings survived*. The pre-merge human backstop is replaced by the
+  done-gate review + the owner ledger (findings surfaced loudly *after* landing, §3.3).
+  On automerge-off repos the ADR 0007 premise stands unchanged.
 - **Date opened:** 2026-07-28 · **Authors:** Denys + Claude
 - **Grounded on:** the 2026-07-28 morning-after evidence (below) — live prod env
   verified (`DEVCLAW_GOAL_AUTOMERGE=1` in the running container), `merge.py` /
@@ -70,11 +77,13 @@ One coherent last-mile contract, mostly composition of existing parts:
    resolution is *always* visible (goal log + notify tier by severity). No path
    where automerge-is-on ends in an open PR with no explanation. (Mechanical half
    = #394.)
-2. **Merge policy reconciles with the strictness dial.** Candidate shape:
-   auto-merge composes with `strict` naturally (surviving findings fail closed, so
-   gate-green means clean); under `trust`, an advisory-flagged delivery is exactly
-   the case the human backstop was designed for → `left-for-owner` with the
-   findings attached, not an unconditional merge. `[OPEN] O2` decides.
+2. **Merge policy is dial-consistent without merge-time dial logic** (resolved
+   O1+O2): gate-green ⇒ merge, on any repo whose ops-scope switch is on. Under
+   `strict`, surviving findings already fail closed upstream, so every delivered
+   PR is clean by construction; under `trust`, advisory findings ship *and merge*
+   — the done-gate is the safety net, and the findings ride the owner ledger
+   (§3.3) so they are seen loudly after landing rather than gating before it.
+   See the invariant-amendment headline above.
 3. **A "shipped overnight" owner report.** Extend the existing cycle report (or a
    sibling notification at window close) with the PR ledger: merged (with one-line
    summaries), awaiting-owner (with *why* — conflict, advisory findings, policy),
@@ -87,34 +96,40 @@ One coherent last-mile contract, mostly composition of existing parts:
 
 ## 4. Slices (per the sizing rule — firm P1 only at lock)
 
-- **P1 (candidate):** total merge-policy resolution + the owner ledger in the
-  cycle report. Composition + projection; no new gates, no tick-path LLM.
-- **P2 (named-unsized):** strictness-aware merge policy (the O2 outcome), if it
-  isn't already folded into P1 by the clarify step.
+- **P1 (firmed at lock):** total merge-policy resolution (`merged |
+  left-for-owner(reason) | skipped(reason)`, per §5 O1/O2/O4/O5) + the PR ledger
+  on the cycle report (O3). Composition + projection; no new gates, no tick-path
+  LLM. Sizing: ~2 PRs (policy resolution + ledger), end-of-week cap.
+- ~~P2 strictness-aware merge policy~~ — dissolved by the O1+O2 resolution (no
+  merge-time dial logic exists to build).
 - Out of scope here: #393/#394 (independent mechanical fixes), console file-a-task
   + direct-task visibility (v1-helper P2), work-item provenance
   (issue-driven-pipelines).
 
-## 5. `[OPEN]` items — the clarify step (all must resolve before LOCK)
+## 5. `[OPEN]` items — RESOLVED (clarify step, Denys in conversation, 2026-07-28)
 
-- **[OPEN] O1 — What does "merge" mean under `trust`?** Auto-merge an
-  advisory-flagged PR (done-gate as sole safety net), or always `left-for-owner`
-  when any advisory finding survived? The ADR 0007 backstop premise says the
-  latter; the hands-off decision-2 vision says the former. Owner call.
-- **[OPEN] O2 — Does auto-merge stay a repo/ops switch, or become
-  strictness-coupled?** Today it's env + per-project. Coupling it to the goal's
-  dial (`strict` ⇒ eligible, `trust` ⇒ owner-merge) is cleaner but moves a
-  deploy-scope decision into goal scope — the exact thing `merge.py`'s docstring
-  argues against.
-- **[OPEN] O3 — Where does the owner ledger live?** Extend the ADR 0006 cycle
-  report vs a separate "deliveries awaiting you" notification vs console-only
-  (P2 of v1-helper). One home, not three.
-- **[OPEN] O4 — Goal-less direct tasks: merge policy?** `dispatch_task` deliveries
-  currently never consider automerge. Same policy as goals (resolved per-project)?
-  Or always `left-for-owner` since no done-gate safety net exists on that path?
-- **[OPEN] O5 — The checklist-mode skip's legibility.** Keeping the pillar-2 skip
-  is right (shared goal-branch PR); should it log/notify `skipped(checklist-mode)`
-  so an automerge-on owner isn't left inferring silence?
+- **O1 — What does "merge" mean under `trust`? → Auto-merge anyway.** The
+  hands-off decision-2 vision wins: gate-green merges even with surviving
+  advisory findings; the done-gate is the safety net and the findings surface
+  loudly in the owner ledger post-merge. This is the invariant amendment in the
+  headline above. (Denys chose this over the recommended left-for-owner.)
+- **O2 — Where does the switch live? → Keep ops-scope, no goal-level field.**
+  `DEVCLAW_GOAL_AUTOMERGE` + the per-project override remain THE eligibility
+  switch. With O1, no merge-time strictness logic is needed at all: `strict`
+  already fails findings closed upstream, so the dial does its work at the gate,
+  not at merge. The 2026-07-05 no-goal-field lesson stands.
+- **O3 — Owner-ledger home? → Extend the ADR 0006 cycle report.** One home: the
+  existing cycle-close notification gains a PR-ledger section (merged w/
+  one-liners; awaiting-owner w/ reason incl. surviving findings; goal-less
+  direct-task deliveries). No second notification stream.
+- **O4 — Goal-less direct tasks? → Always `left-for-owner`.** The ADR 0011 path
+  never auto-merges: no done-gate net exists behind it, and caller-pinned target
+  branches are where a surprise merge hurts most. Its deliveries appear in the
+  ledger instead.
+- **O5 — Checklist-mode skip legibility? → Yes, log it.** The pillar-2 skip
+  stays, but resolves as an explicit `skipped(checklist-mode)` in the goal log
+  (and is visible via the ledger) so an automerge-on owner never infers from
+  silence. (Resolved as the stated default; flagged for Denys's veto.)
 
 ## 6. Explicitly not proposed
 
