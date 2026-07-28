@@ -36,6 +36,7 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
@@ -47,6 +48,7 @@ from .planner import PlannedTask, PlannerError, plan_program
 from .quality import format_feedback, review_gate
 from .quality.browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .quality.gate_policy import Consequence, gate_consequence
+from .quality.gate_pipeline import GateInput, GateVerdict, run_pipeline
 from .quality.reachability import judge_reachability
 from .engine.sandcastle import run_sandcastle, sandbox_owner_id, sweep_orphan_sandboxes
 # Module globals on purpose (like deliver_change) so tests patch them on THIS
@@ -356,6 +358,109 @@ def _browser_gate_failure(
         "before it ships — add or repair the Playwright spec that exercises this "
         "change in the running app, and make the verify gate run it."
     )
+
+
+# ── Gate objects (#407 PR3) ─────────────────────────────────────────────────
+# Thin, pure adapters that wrap the four existing gate functions/methods as
+# `Gate` verdict producers for `run_pipeline`. Each one only READS the run
+# artifacts (the runner verify dict + the shared diff) and returns a verdict —
+# no row mutation, no store writes: the single-writer TaskQueue keeps every
+# mark_*/requeue/set_global_pause. The wrapped functions are UNCHANGED, so the
+# verdicts are byte-identical to the inline ladder they replace.
+#
+# `applies()` is uniformly True here: today all four gates always participate,
+# self-skipping internally (a disabled/non-reviewable/scaffold/backend gate
+# returns None → a passing verdict, exactly as the inline ladder did). The
+# predicate is the real seam a future gate can use to opt out cheaply; the
+# STRICT ORDERING (review only after integrity, browser only after both) comes
+# from run_pipeline's short-circuit, not from applies().
+
+
+@dataclass
+class _VerifyGate:
+    """Always-hard (ADR 0007) verify_cmd gate: the runner's own verify sub-result.
+    Fails CLOSED on a ran-and-not-passed verify; never dial-able. Reads no diff,
+    so a verify failure short-circuits the pipeline before any ``git diff`` runs."""
+
+    gate_id: str = "verify"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        verify = gi.verify
+        if verify and verify.get("ran") and not verify.get("passed"):
+            return GateVerdict.failed(self.gate_id, _verify_failure_summary(verify))
+        return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
+class _IntegrityGate:
+    """Always-hard test-integrity scan over the shared diff. Fails CLOSED (the
+    dial never loosens it); never dial-able. First consumer of the shared diff."""
+
+    gate_id: str = "test_integrity"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        failure = _integrity_failure(diff, gi.workspace_dir)
+        if failure is not None:
+            return GateVerdict.failed(self.gate_id, failure)
+        return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
+class _ReviewGate:
+    """Adversarial pre-PR review over the shared diff (runs only after integrity
+    passed, via the short-circuit). Dial-able (ADR 0007): a surviving finding can
+    advise-and-ship under `trust`. A review CRASH also surfaces here as a non-ok
+    verdict — the queue's fast-fail marker routing (Axis 3) handles it downstream,
+    unchanged."""
+
+    queue: "TaskQueue"
+    gate_id: str = "review"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        failure = await self.queue._review_failure(
+            gi.kind, gi.goal, diff, gi.workspace_dir, scaffold=gi.scaffold
+        )
+        if failure is not None:
+            return GateVerdict.failed(self.gate_id, failure, dialable=True)
+        return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
+class _BrowserGate:
+    """Browser-E2E gate over the shared diff (runs only after integrity + review
+    passed). The reasoned reachability escape valve stays INSIDE this gate: a
+    would-be block is cleared ONLY when the independent grounded judge affirms the
+    changed UI is not rendered in the running app. Dial-able (ADR 0007)."""
+
+    queue: "TaskQueue"
+    gate_id: str = "browser"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        failure = _browser_gate_failure(
+            gi.verify, diff, gi.workspace_dir, mode=gi.browser_mode
+        )
+        if failure is not None and await self.queue._browser_reachability_clears(
+            gi.verify, diff, gi.workspace_dir
+        ):
+            failure = None
+        if failure is not None:
+            return GateVerdict.failed(self.gate_id, failure, dialable=True)
+        return GateVerdict.passed(self.gate_id)
 
 
 class TaskQueue(_NotifyMixin):
