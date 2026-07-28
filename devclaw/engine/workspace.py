@@ -13,6 +13,7 @@ merged since the last action.
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 
 
@@ -47,6 +48,113 @@ async def _default_branch(workspace_dir: str) -> str:
     return "main"
 
 
+async def _merged_pr_head(
+    workspace_dir: str, branch: str, base_branch: str
+) -> str | None:
+    """The head SHA of the most recently MERGED GitHub PR from ``branch``
+    INTO ``base_branch``, or None when there is none / it cannot be
+    determined. This is the #394 re-seed signal: git alone cannot tell that a
+    squash-merge landed a branch's content (the squashed commit is
+    patch-equivalent to nothing on the branch), so we ask GitHub. The
+    ``--base`` filter matters: a PR merged into some OTHER branch says
+    nothing about this branch's standing versus the base we would re-seed
+    from. Best-effort and never raises — any failure (non-GitHub remote, no
+    gh, network, unparseable output) returns None and prep behaves exactly
+    as before. Module global so tests patch it here; the remote-url gate
+    keeps the suite's file-remote fixtures at zero gh subprocesses."""
+    rc, url = await _run("git", "remote", "get-url", "origin", cwd=workspace_dir)
+    if rc != 0 or "github.com" not in url:
+        return None
+    rc, out = await _run(
+        "gh", "pr", "list", "--head", branch, "--base", base_branch,
+        "--state", "merged",
+        "--limit", "1", "--json", "headRefOid", "--jq", ".[0].headRefOid",
+        cwd=workspace_dir,
+    )
+    if rc != 0:
+        return None
+    sha = out.strip()
+    return sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None
+
+
+async def _reseed_merged_branch(
+    workspace_dir: str, branch: str, default_branch: str, merged_head: str,
+) -> bool:
+    """Re-seed ``branch`` after its PR merged (#394 done-when 2): a goal
+    branch whose PR was squash-merged conflicts with the default branch *by
+    construction* from the next delivery on — the branch still carries the
+    pre-squash commits main now contains in squashed form (the closeloop-bench
+    PR #8 morning: three gate-green deliveries piled onto a spent branch, none
+    could land). Returns True when the workspace is ready on a re-seeded
+    ``branch``; False means "no safe re-seed — fall back to today's
+    reset-to-remote-tip", in which case delivery still works and the settle-
+    time mergeability probe makes any conflict loud.
+
+    Two shapes, both reconciling the REMOTE too (delivery pushes plain, so a
+    local-only re-seed would break the next push):
+
+    - **Fully landed** (remote tip == the merged PR's head): the branch is
+      spent. Delete it on origin — the same end state auto-merge's
+      ``--delete-branch`` leaves — and start fresh from the default branch.
+      Remote delete goes FIRST: if it is refused, keep today's behavior
+      rather than leave a re-seeded local racing a stale remote.
+    - **Tip moved past the merged head** (a delivery landed after the owner
+      merged): rebase only the post-merge commits onto the default tip and
+      force-with-lease the remote to match. Any rebase conflict or push
+      refusal reverts to the remote tip — conservative, never half-done.
+    """
+    rc, tip = await _run("git", "rev-parse", f"origin/{branch}", cwd=workspace_dir)
+    if rc != 0:
+        return False
+    tip = tip.strip()
+
+    if tip == merged_head:
+        rc, _ = await _run("git", "push", "origin", "--delete", branch, cwd=workspace_dir)
+        if rc != 0:
+            return False
+        rc, out = await _run(
+            "git", "checkout", "-f", "-B", branch, f"origin/{default_branch}",
+            cwd=workspace_dir,
+        )
+        if rc != 0:
+            raise WorkspaceError(
+                f"re-seed of merged goal branch {branch} failed: {out[-300:]}"
+            )
+        return True
+
+    # Post-merge commits exist beyond the merged head. Only rebase history we
+    # understand: the merged head must be an ancestor of the remote tip.
+    rc, _ = await _run(
+        "git", "merge-base", "--is-ancestor", merged_head, tip, cwd=workspace_dir
+    )
+    if rc != 0:
+        return False
+    rc, _ = await _run(
+        "git", "checkout", "-f", "-B", branch, f"origin/{branch}", cwd=workspace_dir
+    )
+    if rc != 0:
+        return False
+    rc, _ = await _run(
+        "git", "rebase", "--onto", f"origin/{default_branch}", merged_head, branch,
+        cwd=workspace_dir,
+    )
+    if rc != 0:
+        await _run("git", "rebase", "--abort", cwd=workspace_dir)
+        await _run(
+            "git", "checkout", "-f", "-B", branch, f"origin/{branch}", cwd=workspace_dir
+        )
+        return False
+    rc, _ = await _run(
+        "git", "push", "--force-with-lease", "origin", branch, cwd=workspace_dir
+    )
+    if rc != 0:
+        await _run(
+            "git", "checkout", "-f", "-B", branch, f"origin/{branch}", cwd=workspace_dir
+        )
+        return False
+    return True
+
+
 async def prepare_workspace(
     workspace_dir: str,
     repo_url: str | None = None,
@@ -65,9 +173,15 @@ async def prepare_workspace(
     branching off origin/main and re-implementing the foundation (the
     2026-06-26 finance-sentry-mcp-v3 PR-fan-out failure). When the goal
     branch doesn't exist yet (first item) it is created from the default
-    branch at latest origin; otherwise it is fetched + fast-forwarded to its
-    own remote tip (preserving the agent's accumulated work) and rebased onto
-    the latest default-branch tip so a long-running goal still tracks main.
+    branch at latest origin; otherwise it is fetched + reset to its own
+    remote tip (preserving the agent's accumulated work) — EXCEPT when that
+    branch's PR has since been MERGED (#394): a squash-merged branch
+    conflicts with the default branch by construction, so prep re-seeds it
+    (fully-landed branch → deleted on origin + recreated fresh from the
+    default tip; post-merge commits → rebased onto the default tip, remote
+    force-with-lease'd to match) so delivery N+1 starts landable. See
+    :func:`_reseed_merged_branch`; every non-understood shape falls back to
+    the plain reset-to-remote-tip.
 
     ``base_branch`` (v1-helper-resurface P1, proposal O3) only matters when a
     named ``branch`` does NOT exist on origin yet: the fresh branch is created
@@ -129,6 +243,25 @@ async def prepare_workspace(
     # its own mechanism output. Pristine means pristine: local dirt never
     # survives prep, whatever produced it.
     if rc_remote == 0:
+        # #394: if this branch's PR has merged since the last prep, the branch
+        # is spent (or carries a spent base) — re-seed so the next delivery
+        # starts landable instead of piling onto a structurally-conflicting
+        # branch. Best-effort: no merged PR / no GitHub / any doubt → the
+        # plain reset below, exactly the pre-#394 behavior.
+        #
+        # HARD-SCOPED to devclaw's own ``goal/<id>`` namespace: the re-seed
+        # deletes and force-pushes REMOTE branches, and the only branches
+        # devclaw is the sole writer of are the ones GoalBranchStrategy mints
+        # (``goal/{goal_id}``). The ADR 0011 direct-task path routes
+        # arbitrary HUMAN-owned ``target_branch`` names through this same
+        # prep — a merged-then-reused feature branch there must never be
+        # deleted or history-rewritten out from under its owner.
+        if branch.startswith("goal/"):
+            merged_head = await _merged_pr_head(workspace_dir, branch, default_branch)
+            if merged_head is not None and await _reseed_merged_branch(
+                workspace_dir, branch, default_branch, merged_head
+            ):
+                return branch
         # Branch exists on origin — check it out and reset to its tip so we
         # have ALL prior items' commits. (A force-reset is safe because we
         # never write to this branch except via push from devclaw itself.)
