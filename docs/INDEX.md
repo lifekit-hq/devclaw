@@ -28,7 +28,7 @@ docs/
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** Part I: the one-sitting mental model (five layers, two chains, the heartbeat, one task's journey, where state lives). Part II: the **locked contract** — per-layer contracts, the invariants (incl. grounded cognition, auto-heal), testability/replaceability, the question tree, the code map. | **CURRENT** — written 2026-07-13 (merged from `how-it-really-works.md` + `architecture-layers.md`), re-verified 2026-07-27. Load-bearing claims checked against main during the docs audits; change history in git. |
+| [`architecture.md`](./architecture.md) | **Start here.** Part I: the one-sitting mental model (five layers, two chains, the heartbeat, one task's journey, where state lives). Part II: the **locked contract** — per-layer contracts, the invariants (incl. grounded cognition, auto-heal), testability/replaceability, the question tree, the code map. | **CURRENT** — written 2026-07-13 (merged from `how-it-really-works.md` + `architecture-layers.md`), re-verified 2026-07-28. Load-bearing claims checked against main during the docs audits; change history in git. |
 
 ## Flows
 
