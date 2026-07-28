@@ -16,6 +16,8 @@ from __future__ import annotations
 import os
 import subprocess
 
+from .git_identity import git_identity_env
+
 #: Generic manifest / entrypoint files worth grounding the reviewer on — one per
 #: common ecosystem (Python, Node, .NET, Go, Rust, Java) plus the repo's own
 #: convention docs and a verify entrypoint. Deliberately NOT tuned to any single
@@ -271,10 +273,11 @@ def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
     timeout, nothing to commit, git error) — the caller logs it and proceeds
     with the requeue either way; a snapshot hiccup must never block the pause
     path."""
-    def run(*args: str) -> subprocess.CompletedProcess:
+    def run(*args: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", "-C", host_dir, *args],
             capture_output=True, text=True, timeout=30,
+            env={**os.environ, **env_extra} if env_extra else None,
         )
 
     try:
@@ -286,10 +289,12 @@ def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
         add = run("add", "-A")
         if add.returncode != 0:
             return f"git add failed: {(add.stderr or '').strip()[:120]}"
+        # Identity via GIT_* env (not -c): env beats every config level, so an
+        # ambient/leaked identity can't author devclaw's snapshot commit.
         commit = run(
-            "-c", "user.email=devclaw@local", "-c", "user.name=devclaw",
             "commit", "-m",
             f"wip(devclaw): interrupted by usage limit (task {task_id[:8]})",
+            env_extra=git_identity_env(),
         )
         if commit.returncode != 0:
             return f"git commit failed: {(commit.stderr or '').strip()[:120]}"

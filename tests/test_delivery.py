@@ -532,7 +532,7 @@ def _github_faking_run(monkeypatch, calls, *, existing_pr=None, push_fails=False
     lets a test observe the ``gh pr create`` argv."""
     real_run = getattr(delivery._run, "_devclaw_real", delivery._run)
 
-    async def fake_run(prog, *args, cwd):
+    async def fake_run(prog, *args, cwd, **kw):
         calls.append((prog, *args))
         if prog == "git" and args[:3] == ("remote", "get-url", "origin"):
             return 0, "https://github.com/acme/widgets.git"
@@ -544,7 +544,7 @@ def _github_faking_run(monkeypatch, calls, *, existing_pr=None, push_fails=False
             if create_fails:
                 return 1, "gh: base branch not found"
             return 0, "https://github.com/acme/widgets/pull/7"
-        return await real_run(prog, *args, cwd=cwd)
+        return await real_run(prog, *args, cwd=cwd, **kw)
 
     fake_run._devclaw_real = real_run  # so re-patching in one test never chains
     monkeypatch.setattr(delivery, "_run", fake_run)

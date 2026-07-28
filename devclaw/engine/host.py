@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
+from ..git_identity import git_identity_env
 
 _REPO = Path(__file__).resolve().parents[1]
 # the in-sandbox runner, run here on the host
@@ -37,6 +38,13 @@ def _strip_api_keys(env: dict[str, str]) -> dict[str, str]:
     clean.pop("ANTHROPIC_API_KEY", None)
     clean.pop("ANTHROPIC_AUTH_TOKEN", None)
     return clean
+
+
+def _runner_env() -> dict[str, str]:
+    """The host runner's process env: the host env minus API keys (OAuth-only
+    invariant), plus devclaw's pinned git identity so the agent's commits are
+    authored by devclaw on this engine exactly as in the sandbox."""
+    return {**_strip_api_keys(dict(os.environ)), **git_identity_env()}
 
 
 async def run_host(req: EngineRequest) -> EngineResult:
@@ -60,7 +68,7 @@ async def run_host(req: EngineRequest) -> EngineResult:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=STREAM_LINE_LIMIT,  # event lines can exceed asyncio's 64 KiB default
-            env=_strip_api_keys(dict(os.environ)),
+            env=_runner_env(),
         )
     except OSError as exc:
         return {
