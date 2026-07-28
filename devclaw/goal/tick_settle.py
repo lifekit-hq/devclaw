@@ -49,8 +49,14 @@ from ..loom import trace as _trace
 ITEM_MAX_ATTEMPTS = 3
 
 #: reality-anchored acceptance asserts (#2/#4, ADR 0003) — the mechanical
-#: cross-check under the LLM review gate. On: a failing assert fails the settle.
-ITEM_ASSERTS_ENABLED = True
+#: cross-check under the LLM review gate. On by default; set
+#: ``DEVCLAW_ITEM_ASSERTS=0`` to disable enforcement entirely (the operator
+#: kill-switch, if a mis-authored assert wedges a live goal — the item then
+#: falls back to gate-only verification, today's pre-#2/#4 behavior). Off means
+#: asserts are still parsed/persisted, just not checked.
+ITEM_ASSERTS_ENABLED = os.environ.get("DEVCLAW_ITEM_ASSERTS", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
 #: cap on bytes read per grep assert — a runaway generated file (a lockfile,
 #: a bundle) shouldn't stall the settle tick reading megabytes. A real
 #: acceptance marker lives near the top; 2 MB is generous.
