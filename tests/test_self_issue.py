@@ -15,7 +15,7 @@ import asyncio
 
 from devclaw.goal import self_issue as si
 from devclaw.state_store import StateStore
-from devclaw.state_store.problems import normalize
+from devclaw.state_store.problems import fingerprint_for, normalize
 
 DAY_MS = 24 * 3600 * 1000
 
@@ -84,7 +84,7 @@ def _seed(store, *, category, kind, message, terminal=True, last_seen_ms, prior_
     store.record_problem(
         category=category, kind=kind, message=message, recovered=(not terminal)
     )
-    fp = f"{category}|{kind}|{normalize(message)}"
+    fp = fingerprint_for(category, kind, message)
     store._db.execute(
         "UPDATE problems SET last_seen_ms = ?, first_seen_ms = ? WHERE fingerprint = ?",
         (last_seen_ms, last_seen_ms, fp),
@@ -146,7 +146,7 @@ def test_age_out_closes_stale_open_issue(tmp_path):
 def test_noise_cap_limits_new_issues_and_names_suppressed(tmp_path):
     store = _store(tmp_path)
     for i in range(5):
-        _seed(store, category="task_fail", kind=f"k{i}", message=f"fail number {i}",
+        _seed(store, category="task_fail", kind=f"kind {chr(97 + i)}", message=f"fail flavor {chr(97 + i)}",
               last_seen_ms=1500, prior_cycles=("2026-07-01", "2026-07-02"))
     gh = FakeGh()
     res = asyncio.run(si.run_self_issue_filing(
@@ -165,3 +165,40 @@ def test_no_op_and_no_egress_when_self_repo_unset(tmp_path, monkeypatch):
     res = asyncio.run(si.run_self_issue_filing(
         store, cycle_key="2026-07-03", start_ms=1000, end_ms=2000, now_ms=2000, gh=gh))
     assert res.filed == [] and gh.created == [] and gh.labels == []
+
+
+# ---- #340 revival: reachable threshold + full-day membership ----------------
+
+
+def test_default_threshold_files_on_second_distinct_cycle():
+    """#340 (O1 amendment, 2026-07-28): the default recurrence bar is TWO
+    distinct cycles — surviving one whole fix-day boundary is the signal. The
+    original 3 proved unreachable live (7 cycles, 93 problems, max survival 2,
+    zero filed): the session-led fix loop repairs real recurrences in ~a day,
+    so a 3-cycle bar only ever fires on problems humans already fixed."""
+    base = {"terminal_count": 1, "issue_state": None}
+    assert si.RECURRENCE_THRESHOLD == 2
+    assert si.should_file(base, 2) is True
+    assert si.should_file(base, 1) is False
+
+
+def test_daytime_problem_joins_cycle_membership_and_files(tmp_path):
+    """#340: cycle membership covers the full CYCLE-DAY, not just the nightly
+    run window. A problem hit by daytime work (steered runs, direct tasks) has
+    ``last_seen`` outside [start_ms, end_ms] and was invisible to filing
+    forever — now it joins the cycle like any night-window problem."""
+    store = _store(tmp_path)
+    start, end = 10 * DAY_MS, 10 * DAY_MS + 7 * 3600 * 1000  # a 7h run window
+    daytime = start - 5 * 3600 * 1000  # five hours BEFORE the window opened
+    _seed(store, category="task_fail", kind="daytime failure",
+          message="broken during a steered daytime run",
+          last_seen_ms=daytime, prior_cycles=("2026-07-01",))
+    gh = FakeGh()
+
+    res = asyncio.run(si.run_self_issue_filing(
+        store, cycle_key="2026-07-02", start_ms=start, end_ms=end, now_ms=end,
+        repo="lifekit-hq/devclaw", gh=gh, threshold=2,
+    ))
+
+    assert len(gh.created) == 1
+    assert res.filed == [101]

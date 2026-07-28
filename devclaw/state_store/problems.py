@@ -28,8 +28,8 @@ row with ``count`` incremented, not two rows — otherwise the table grows witho
 bound (the #250 lesson). :func:`normalize` strips the variable bits of a failure
 message (uuids, paths, goal/task ids, numbers, timestamps) so "lost ref for
 program 3f9a…" and "lost ref for program 88bc…" fingerprint identically. The
-fingerprint is ``category | kind | normalize(message)`` and the write is an
-UPSERT keyed on it.
+fingerprint is ``category | normalize(kind) | normalize(message)``
+(:func:`fingerprint_for`) and the write is an UPSERT keyed on it.
 
 This module is the capture + dedup + count mechanism plus the Stage-1 accessors
 that link a problem to its filed Issue. The recurrence/age-out/label *decisions*
@@ -92,6 +92,27 @@ def normalize(message: Optional[str], *, max_len: int = NORMALIZE_MAX_LEN) -> st
     s = _NUM.sub("<n>", s)
     s = _WS.sub(" ", s).strip()
     return s[:max_len]
+
+
+#: identity cap for the KIND component of the fingerprint — deliberately
+#: tighter than the message cap. Some call sites derive ``kind`` from message
+#: text (task_fail passes the error's first line), so a long kind carries the
+#: same variable tail the message does; 80 chars keeps the class-identifying
+#: head and drops the tail.
+_KIND_ID_MAX_LEN = 80
+
+
+def fingerprint_for(category: Optional[str], kind: Optional[str], message: Optional[str]) -> str:
+    """The dedup identity of one problem: ``category | normalize(kind) |
+    normalize(message)``. The kind is normalized too (#340): call sites embed
+    variable bits in it — a timeout seconds value, a workspace path, a goal
+    branch name — and an un-normalized kind minted a NEW fingerprint per
+    occurrence, so the SAME root cause never accrued the cross-cycle survival
+    count that gates self-issue filing (live 2026-07-28: 93 problems over 7
+    cycles, max survival 2, zero filed). The stored ``kind`` column keeps the
+    raw text for display; only the identity normalizes."""
+    cat = (category or "other").strip()[:32] or "other"
+    return f"{cat}|{normalize(kind, max_len=_KIND_ID_MAX_LEN)}|{normalize(message)}"
 
 
 #: the fixed category vocabulary (the schema's ``category`` column). "other" is
@@ -166,7 +187,7 @@ class ProblemsMixin:
             cat = (category or "other").strip()[:32] or "other"
             k = (kind or "").strip().replace("\n", " ")[:120]
             summary = normalize(message)
-            fingerprint = f"{cat}|{k}|{summary}"
+            fingerprint = fingerprint_for(category, kind, message)
             sample = (message or "").strip().replace("\n", " ")[:500]
             now = _now_ms()
             rec = 1 if recovered else 0
@@ -263,7 +284,7 @@ class ProblemsMixin:
 
     def problem_cycle_count(self, fingerprint: str) -> int:
         """Distinct run-cycles this problem has been active in — the recurrence
-        signal that gates filing (O1: ``>= 3``)."""
+        signal that gates filing (O1 — default 2 since the 2026-07-28 amendment)."""
         with self._lock:
             row = self._db.execute(
                 "SELECT COUNT(DISTINCT cycle_key) AS n FROM problem_cycles "
