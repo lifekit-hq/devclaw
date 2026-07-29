@@ -937,6 +937,37 @@ def _resync_mise_env(workspace_dir: str) -> None:
         os.environ["PATH"] = shims + os.pathsep + os.environ.get("PATH", "")
 
 
+def _ensure_mise_shims_on_path() -> None:
+    """Prepend mise's shims dir to PATH so the AGENT's shells find a toolchain it
+    provisions itself mid-task.
+
+    The verify-gate twin of this (re-syncing the gate's env) is a separate
+    concern; this is the agent side. For a repo that pins its SDK the native way
+    — a .NET project with a ``.csproj``/``.sln`` but no ``global.json``/
+    ``.mise.toml`` — :func:`_detect_toolchain` sees nothing, so the pre-agent
+    :func:`_provision_toolchain` is a no-op and never puts mise shims on PATH.
+    The agent's shell then inherits the bare image PATH, hits ``dotnet: command
+    not found``, and (2026-07-29 v0.1 smoke, lifekit-hq/lifekit-dashboard) can
+    derail into "fixing" the environment instead of doing the ticket.
+
+    Prepending the shims dir up front is cwd-robust and harmless when empty: a
+    shim resolves its tool+version lazily at exec time from whichever config is
+    nearest, so once the agent runs ``mise install`` the tool is immediately on
+    PATH — no ``PATH=…/shims:$PATH`` hand-prefixing. Deliberately does NOT gate
+    on the dir existing yet (mise creates it at install time, AFTER this runs).
+    Best-effort: no mise ⇒ PATH untouched; idempotent (won't double-prepend).
+    """
+    if shutil.which("mise") is None:
+        return
+    mise_data = os.environ.get("MISE_DATA_DIR") or os.path.expanduser(
+        "~/.local/share/mise"
+    )
+    shims = os.path.join(mise_data, "shims")
+    path = os.environ.get("PATH", "")
+    if shims not in path.split(os.pathsep):
+        os.environ["PATH"] = shims + os.pathsep + path
+
+
 def _refuse_api_key() -> None:
     """Refuse to run if an API key snuck into the env — preserves the
     Pro-subscription cost model (memory: pro-subscription-is-the-design)."""
@@ -1046,6 +1077,12 @@ def main() -> None:
                 "payload": provisioned,
             }
         )
+
+    # Put mise's shims dir on PATH BEFORE the agent starts, so a toolchain the
+    # agent provisions itself mid-task (a .csproj/.sln repo the pre-agent step
+    # can't detect) lands on its shell PATH without hand-prefixing. MUST run
+    # before the ACPAgent below reads os.environ["PATH"] into acp_env.
+    _ensure_mise_shims_on_path()
 
     # Drop the sandbox-only MCP config into the workspace so claude auto-
     # discovers it at project scope. The image bakes /opt/devclaw/sandbox-mcp.json
