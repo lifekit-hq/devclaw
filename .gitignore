@@ -59,3 +59,4 @@ devclaw/server/console/dist/
 # Real proof baskets may reference private-product internals — keep only the template
 evals/baskets/*.json
 !evals/baskets/*.example.json
+/.devclaw/
