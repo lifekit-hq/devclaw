@@ -33,6 +33,7 @@ import re
 from typing import Awaitable, Callable, Optional
 
 from .models import ClauseVerdict, EvalResult, Goal, GoalStatus, is_standing
+from .prompt_budget import cap_deliveries, cap_log
 
 # The review gate's workspace-snapshot collector (#227), reused to ground the
 # evaluator. Imported as a module global so tests patch it on THIS module —
@@ -198,9 +199,9 @@ def build_prompt(
         ]
     parts += [
         "\n## What has actually shipped (grounded deliveries)",
-        deliveries or "(nothing delivered yet)",
+        cap_deliveries(deliveries) or "(nothing delivered yet)",
         "\n## Recent event log",
-        recent_log or "(no events yet)",
+        cap_log(recent_log) or "(no events yet)",
     ]
     if review_report:
         parts += [
