@@ -100,6 +100,121 @@ def test_translations_combine_across_files(runner, tmp_path):
     )
 
 
+# ---- generic marker-file table (#424) ----
+# A repo that pins its SDK any way OTHER than mise-native / global.json /
+# package.json engines (a .NET .csproj, a Go go.mod, a Rust Cargo.toml, a
+# versioned pyproject/.python-version) declared NOTHING the detector saw, so
+# pre-agent provisioning was a no-op and the agent had to self-wire mid-task —
+# the 2026-07-29 v0.1 smoke derail. dotnet/go/rust are absent from the base
+# image → marker presence provisions them (version parsed, else `latest`);
+# python lives in the base → only an explicit version pin provisions it.
+
+
+def test_csproj_without_global_json_provisions_dotnet_from_target_framework(runner, tmp_path):
+    """The smoke case: a .NET project pinned via a .csproj with no global.json.
+    <TargetFramework>net9.0</TargetFramework> → dotnet 9.0, provisioned
+    pre-agent instead of relying on the agent noticing it must self-wire."""
+    (tmp_path / "App.csproj").write_text(
+        "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+        "  <PropertyGroup><TargetFramework>net9.0</TargetFramework></PropertyGroup>\n"
+        "</Project>\n"
+    )
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"dotnet": "9.0"})
+
+
+def test_csproj_in_immediate_subdir_is_detected(runner, tmp_path):
+    """lifekit-dashboard verifies with `cd backend && dotnet test`, so its
+    .csproj is one level down — depth-1 scan must find it (root-only detection
+    would make the smoke fix a no-op for exactly the layout it targets)."""
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "Api.csproj").write_text(
+        "<Project><PropertyGroup><TargetFramework>net8.0</TargetFramework>"
+        "</PropertyGroup></Project>"
+    )
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"dotnet": "8.0"})
+
+
+def test_sln_without_parseable_framework_degrades_to_latest(runner, tmp_path):
+    """A bare .sln (or a .csproj whose TargetFramework isn't netX.Y) still
+    declares dotnet — version resolution degrades to `latest` (mise picks a
+    default) rather than erroring."""
+    (tmp_path / "Solution.sln").write_text("Microsoft Visual Studio Solution File\n")
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"dotnet": "latest"})
+
+
+def test_global_json_version_wins_over_sibling_csproj(runner, tmp_path):
+    """Idiomatic translator precedence: when both global.json (pins 9.0) and a
+    .csproj (net8.0) declare dotnet, the global.json pin wins via setdefault."""
+    (tmp_path / "global.json").write_text('{"sdk": {"version": "9.0.203"}}')
+    (tmp_path / "App.csproj").write_text(
+        "<Project><PropertyGroup><TargetFramework>net8.0</TargetFramework>"
+        "</PropertyGroup></Project>"
+    )
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"dotnet": "9.0"})
+
+
+def test_go_mod_translates_go_directive(runner, tmp_path):
+    (tmp_path / "go.mod").write_text("module example.com/x\n\ngo 1.22\n\nrequire ()\n")
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"go": "1.22"})
+
+
+def test_bare_go_mod_degrades_to_latest(runner, tmp_path):
+    """A go.mod with no `go` directive still declares Go → `latest`."""
+    (tmp_path / "go.mod").write_text("module example.com/x\n")
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"go": "latest"})
+
+
+def test_cargo_toml_translates_to_rust_latest(runner, tmp_path):
+    (tmp_path / "Cargo.toml").write_text("[package]\nname = \"x\"\nversion = \"0.1.0\"\n")
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"rust": "latest"})
+
+
+def test_python_version_file_pins_python(runner, tmp_path):
+    """`.python-version` is an explicit pin → provision that python (unlike a
+    version-less pyproject, which the base python satisfies)."""
+    (tmp_path / ".python-version").write_text("3.12\n")
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"python": "3.12"})
+
+
+def test_pyproject_requires_python_pins_minimum(runner, tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\nname = \"x\"\nrequires-python = \">=3.11\"\n"
+    )
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {"python": "3.11"})
+
+
+def test_versionless_pyproject_declares_nothing(runner, tmp_path):
+    """python lives in the base image, so a pyproject with no requires-python is
+    already satisfied — no forced `latest` install (contrast dotnet/go/rust)."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = \"x\"\n")
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {})
+
+
+def test_marker_scan_skips_vendored_and_hidden_dirs(runner, tmp_path):
+    """A go.mod under vendor/ or a .csproj under node_modules/ is a dependency's
+    declaration, not the project's — never provisioned off it."""
+    (tmp_path / "vendor").mkdir()
+    (tmp_path / "vendor" / "go.mod").write_text("module dep\n\ngo 1.20\n")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "Dep.csproj").write_text(
+        "<Project><TargetFramework>net6.0</TargetFramework></Project>"
+    )
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "go.mod").write_text("module h\n\ngo 1.19\n")
+    assert runner._detect_toolchain(str(tmp_path)) == (False, {})
+
+
+def test_mise_native_still_wins_over_markers(runner, tmp_path):
+    """A mise-native file short-circuits BEFORE the marker table — a repo with
+    both .mise.toml and a .csproj stays (True, {}), mise reading its own file."""
+    (tmp_path / ".mise.toml").write_text("[tools]\ndotnet = \"9.0\"\n")
+    (tmp_path / "App.csproj").write_text(
+        "<Project><TargetFramework>net8.0</TargetFramework></Project>"
+    )
+    assert runner._detect_toolchain(str(tmp_path)) == (True, {})
+
+
 # ---- provisioning ----
 
 
