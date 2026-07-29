@@ -47,13 +47,33 @@ def test_onboard_writes_all_four_docs_as_drafts(runner):
     assert "FOCUS-TOKEN" in wrapped
 
 
-def test_onboard_is_read_only_except_the_four_docs(runner):
+def test_onboard_is_read_only_except_the_onboarding_artifacts(runner):
     wrapped = runner._wrap_goal("onboard", "")
     assert "READ ONLY" in wrapped
-    # writes limited to the doc set — every other file (source, build, config)
-    # is off-limits so onboarding never mutates behaviour.
-    assert "EXCEPT the four documents" in wrapped
+    # writes limited to the onboarding artifact set (four docs + the
+    # dev-container Dockerfile) — every other file (source, build, config) is
+    # off-limits so onboarding never mutates behaviour.
+    assert "EXCEPT the onboarding artifacts" in wrapped
+    assert ".devcontainer/Dockerfile" in wrapped
     assert "do not change" in wrapped or "Do NOT modify" in wrapped
+
+
+def test_onboard_authors_devcontainer_dev_environment_when_absent(runner):
+    """Onboarding establishes the project's dev-environment boilerplate — a
+    `.devcontainer/Dockerfile` a human and the agent SHARE — created only when
+    the repo has none (non-clobber, like the docs). It must be a DEV image (SDK
+    present, not a slim prod image) and toolchain-only (no app COPY, no agent
+    tooling) so devclaw can compose its harness on top."""
+    wrapped = runner._wrap_goal("onboard", "")
+    lower = wrapped.lower()
+    assert ".devcontainer/Dockerfile" in wrapped
+    # dev image, explicitly NOT a slim production image
+    assert "dev image" in lower and "production" in lower
+    # created only when absent — same non-clobber discipline as the docs
+    assert "only when the repo has none" in lower or "leave it unchanged" in lower
+    # composition contract: toolchain only, base debian, harness added by devclaw
+    assert "toolchain only" in lower
+    assert "debian" in lower
 
 
 def test_onboard_covers_the_agents_md_comprehension_surface(runner):
