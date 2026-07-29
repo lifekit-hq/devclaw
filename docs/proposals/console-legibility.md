@@ -1,10 +1,16 @@
 # Proposal — console legibility: brief-by-default tracing + state honesty
 
-- **Status:** **DRAFT** — 2026-07-29. Captured from a live dogfood walkthrough of
-  the console with Denys (this session — he clicked through tasks, goal activity,
-  the timeline, evals, the projects page, and the problems page and narrated what
-  was missing or wrong). The `[OPEN]`s in §6 must be resolved (or deferred-with-
-  owner) before any *lockable* slice flips to LOCKED.
+- **Status:** **P1 LOCKED (direction)** — 2026-07-29. Captured from a live dogfood
+  walkthrough of the console with Denys (this session — he clicked through tasks,
+  goal activity, the timeline, evals, the projects page, and the problems page and
+  narrated what was missing or wrong). Same-day clarify: the P1-relevant `[OPEN]`s
+  (§6 `[OPEN-1..3]`) are resolved — Denys locked on the recommended answers while
+  heading to sleep; `[OPEN-4/5]` are deferred-with-owner to the P2/P3 slices they
+  belong to (the clarify decides the P1 boundary, not the whole arc). Locking
+  commits direction only; tranche scheduling stays Denys's call, and a locked line
+  is reopenable — edit here, don't silently diverge. The state-honesty *correctness*
+  half remains out of lock scope (already executing via the `console-state-honesty`
+  self-goal).
 - **Date opened:** 2026-07-29 · **Authors:** Denys + Claude
 - **Scope note / what's already moving:** the **state-honesty *correctness* fixes**
   (the project count mismatch + the Problems-page windowing/resolution) are
@@ -122,25 +128,33 @@ truthful derivation*, rarely new instrumentation.
 - **P3 (named, unsized):** evals-page depth — brief + informative run view over
   `eval_outcomes`, deep logs on drill-down.
 
-## §6 — `[OPEN]` items (mandatory clarify before LOCK of P1)
+## §6 — `[OPEN]` items — resolutions (P1 clarify)
 
-- **`[OPEN-1]` Who writes the "brief" for the live view?** Mechanical rollup
-  (zero-token, groups event `title`s) vs the existing summary cognition (richer,
-  but LLM). *Recommendation: mechanical rollup for anything live/idle (invariant-
-  forced); summary-cognition only to enrich settled deliveries. This is the lock's
-  central decision.*
-- **`[OPEN-2]` Default granularity.** What's the "bigger picture" unit shown by
-  default — a rolling "current activity" line, per-phase, per-delivery? How much
-  collapses before the operator has to expand.
-- **`[OPEN-3]` Deep-trace retention.** The raw ACP stream is verbose; how long is
-  it kept / is it capped (ties to #259 observability retention). Progressive
-  disclosure is only honest if the deep layer is actually there when clicked.
-- **`[OPEN-4]` (P2) "Active" definition + archive semantics.** Has-a-non-terminal-
-  goal vs activity-within-N-days vs explicit archive; and is archive a soft flag
-  or does it unlink the driving goal. (Interacts with the stale project↔goal link
-  on cancel+refile.)
-- **`[OPEN-5]` (P3) Eval "brief" fields.** What "brief + informative" means for one
-  eval run — which fields are the front page vs the drill-down.
+- **`[OPEN-1]` Who writes the "brief" for the live view? — RESOLVED.** **Mechanical
+  rollup** for anything live/idle: collapse a run of ACP events into a plain line
+  from their `title`s (*"read 6 files · ran the build · edited 2 components"*),
+  **zero tokens, no tick-path cognition** (the zero-token idle guard forces this —
+  it's not just the cheaper option, it's the only invariant-legal one for a live
+  view). The existing per-delivery **summary cognition** (`goal/summary.py`) may
+  enrich a *settled* delivery post-hoc (already paid for), but must never gate the
+  live/idle view. This is the lock's central decision.
+- **`[OPEN-2]` Default granularity — RESOLVED.** Default unit = **the brief per
+  timeline phase / per delivery**, plus a single rolling **"current activity"**
+  rollup line while a task is `in_flight`. Everything else (the raw ACP event
+  list, the per-phase trace) is **expand-on-click**, never shown by default.
+- **`[OPEN-3]` Deep-trace retention — RESOLVED (deferral-with-owner to #259).** P1
+  renders the deep layer from **whatever the event store already holds** — it adds
+  no new retention policy. Capping/retention of the verbose ACP stream is
+  **#259's** job (observability retention); P1 just must degrade gracefully when a
+  very old trace has already aged out (show "trace no longer retained", not a
+  broken expand).
+- **`[OPEN-4]` (P2) "Active" definition + archive semantics — DEFERRED** to the P2
+  slice (not needed for the P1 lock). Has-a-non-terminal-goal vs
+  activity-within-N-days vs explicit archive; soft flag vs unlinking the driving
+  goal. (Interacts with the stale project↔goal link on cancel+refile.)
+- **`[OPEN-5]` (P3) Eval "brief" fields — DEFERRED** to the P3 slice. What "brief +
+  informative" means for one eval run — which fields are the front page vs the
+  drill-down.
 
 ## The hard rule (spec-lifecycle)
 
