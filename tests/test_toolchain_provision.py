@@ -347,3 +347,56 @@ def test_resync_mise_env_survives_mise_env_failure(runner, tmp_path, monkeypatch
     )
     runner._resync_mise_env(str(tmp_path))  # must not raise
     assert os.environ.get("DOTNET_ROOT") == before.get("DOTNET_ROOT")
+
+
+# ---- agent-shell mise shims on PATH (the .csproj/.sln agent-derail) ---------
+# A .NET repo that pins its SDK in a .csproj/.sln (no global.json/.mise.toml)
+# declares nothing _detect_toolchain sees → pre-agent _provision_toolchain is a
+# no-op and never puts mise shims on PATH. Without _ensure_mise_shims_on_path the
+# agent's shell inherits the bare image PATH, hits `dotnet: command not found`,
+# and derails into editing AGENTS.md instead of the ticket (2026-07-29 v0.1 smoke
+# on lifekit-hq/lifekit-dashboard). Twin of the verify-gate re-sync (#421).
+
+
+def test_ensure_mise_shims_prepends_shims_dir_for_native_sdk_repo(
+    runner, tmp_path, monkeypatch, restore_env
+):
+    monkeypatch.setenv("MISE_DATA_DIR", str(tmp_path / "mise"))
+    monkeypatch.setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+    monkeypatch.setattr(runner.shutil, "which", lambda _: "/usr/local/bin/mise")
+
+    runner._ensure_mise_shims_on_path()
+
+    shims = str(tmp_path / "mise" / "shims")
+    # shims dir prepended (so `dotnet` resolves once the agent `mise install`s it)
+    assert os.environ["PATH"].split(os.pathsep)[0] == shims
+    # deliberately added even though it does not exist yet — mise creates it at
+    # install time, AFTER this runs; a shim resolves the version lazily at exec.
+    assert not os.path.isdir(shims)
+
+
+def test_ensure_mise_shims_is_a_noop_without_mise(
+    runner, monkeypatch, restore_env
+):
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr(runner.shutil, "which", lambda _: None)
+
+    runner._ensure_mise_shims_on_path()
+
+    assert os.environ["PATH"] == "/usr/bin"  # untouched
+
+
+def test_ensure_mise_shims_is_idempotent(
+    runner, tmp_path, monkeypatch, restore_env
+):
+    monkeypatch.setenv("MISE_DATA_DIR", str(tmp_path / "mise"))
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setattr(runner.shutil, "which", lambda _: "/usr/local/bin/mise")
+
+    runner._ensure_mise_shims_on_path()
+    runner._ensure_mise_shims_on_path()
+
+    shims = str(tmp_path / "mise" / "shims")
+    # prepended exactly once, not stacked
+    assert os.environ["PATH"].split(os.pathsep).count(shims) == 1
+    assert os.environ["PATH"].split(os.pathsep)[0] == shims
