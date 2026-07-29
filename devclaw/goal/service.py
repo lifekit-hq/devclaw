@@ -814,9 +814,15 @@ class GoalService:
             # prep-recheck backoff window (see tick_guards._autoheal_corrupt_doc
             # / _autoheal_prep) — the damping cap protects against unattended
             # flapping, and the owner just attended.
+            # blocked_on="" so the answered question stops showing as live in
+            # get_goal/list_goals/the console — resume_goal already clears it,
+            # steer_goal used to leak it (a HUMAN answering via steer resolves
+            # the reason exactly as a resume does). blocked_kind is cleared by
+            # the store's non-blocked-write normalization; blocked_on is not, so
+            # it must be cleared here explicitly.
             self._goal_store.transition(
                 goal_id, Event.UNBLOCK,
-                replace(s, phase="idle", actions_dispatched=0,
+                replace(s, phase="idle", blocked_on="", actions_dispatched=0,
                         heal_attempts=0, next_heal_at=None),
                 expect=s,
             )
