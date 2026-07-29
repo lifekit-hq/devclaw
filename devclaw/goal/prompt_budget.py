@@ -1,0 +1,80 @@
+"""Prompt-size budget helpers shared across the cognition callers.
+
+The #422 class: a prompt section bounded by ROW COUNT but NOT by SIZE grows
+unbounded over a goal's life, and a handful of fat rows push the assembled
+``claude --print`` prompt past the point where time-to-first-token climbs into
+the cognition timeout (default 180 s). The call then fires the timeout having
+produced ZERO output (self-filed ``timeout input_chars=… bytes_out=0
+first_byte_ms=none``), and it RECURS because the next tick re-sends the same
+bloated prompt and re-times-out identically.
+
+#426 capped the planner's ``recent_log`` in place; this module is the shared
+home so every caller embedding the same growing sections caps them the SAME way
+instead of each re-discovering the fix (the doctrine: fix the class, not the
+instance). #431 brought the evaluator on board — its prompt embeds the same
+unbounded ``recent_log`` plus a ``deliveries`` tail that likewise grows over a
+long goal's life.
+
+Every cap TAIL-KEEPS: the most-recent content is what the next reasoning step
+turns on, so oversized input keeps its tail behind a truncation marker. Small or
+empty input passes through BYTE-IDENTICAL, so existing call sites and test stubs
+are unaffected (and ``""`` stays ``""`` to preserve callers' ``or "(fallback)"``).
+
+Scope note — these cap UNBOUNDED CONTEXT sections only. They are NOT a general
+prompt ceiling: you must never blind-truncate an assembled prompt (it would risk
+cutting the JSON-output contract at the tail — the very "No JSON object found"
+crash class), never truncate a diff under review (you can't shrink the thing you
+are reviewing — the review gate's oversized-diff case is deliberately
+fail-closed, #186/#382), and never elide fixed instruction text.
+"""
+
+from __future__ import annotations
+
+
+def cap_section(text: str, *, keep: int, marker: str) -> str:
+    """Tail-keep ``text`` to at most ``keep`` chars behind ``marker``. Input at
+    or under the budget passes through byte-identical (so ``""`` stays ``""``)."""
+    if len(text) <= keep:
+        return text
+    return "\n".join((marker, text[-keep:]))
+
+
+#: 24 KB ≈ 6k tokens — ample for real recent history, an order of magnitude under
+#: the timeout-inducing size, with headroom under the same budget for the other
+#: (small / already-bounded) prompt sections.
+LOG_KEEP = 24_000
+
+#: Rendered as its own line where content was elided, so the model knows it is
+#: reading the TAIL of the log, not the whole history. Text kept identical to the
+#: planner's original #426 marker so its cap stays a pure refactor.
+LOG_TRUNCATION_MARKER = (
+    "[…older log lines elided to fit the planning budget: most-recent events "
+    "kept — the full history is in the goal log / task records]"
+)
+
+
+def cap_log(recent_log: str) -> str:
+    """Bound a recent-history (log) section before it rides into a cognition
+    prompt. Tail-kept (newest events are what the next action turns on); small or
+    empty logs pass through byte-identical."""
+    return cap_section(recent_log, keep=LOG_KEEP, marker=LOG_TRUNCATION_MARKER)
+
+
+#: Same budget as the log. ``deliveries`` (the grounded per-action shipped-summary
+#: tail) also grows unbounded over a long goal's life and rode into the evaluator
+#: prompt uncapped — the #431 evaluator-timeout half of the class.
+DELIVERIES_KEEP = 24_000
+
+DELIVERIES_TRUNCATION_MARKER = (
+    "[…older delivery summaries elided to fit the evaluation budget: most-recent "
+    "deliveries kept — the full record is in the goal deliveries view]"
+)
+
+
+def cap_deliveries(deliveries: str) -> str:
+    """Bound the grounded-deliveries section. Tail-kept (the most-recent
+    deliveries are the current state of the shipped work); small or empty passes
+    through byte-identical."""
+    return cap_section(
+        deliveries, keep=DELIVERIES_KEEP, marker=DELIVERIES_TRUNCATION_MARKER
+    )
