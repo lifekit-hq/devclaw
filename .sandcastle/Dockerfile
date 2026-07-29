@@ -8,8 +8,21 @@
 # Image is rebuilt whenever openhands-runner/ or this Dockerfile changes.
 # Build from the repo root:
 #   docker build -t devclaw-sandbox:latest -f .sandcastle/Dockerfile .
-
-FROM python:3.13-slim
+#
+# Composition (project-devcontainer path): BASE_IMAGE lets a project's OWN dev
+# image be the base so the agent runs inside the same environment a human dev
+# would (the project owns a .devcontainer/Dockerfile → devclaw builds it, then
+# builds THIS harness FROM it). The default BASE_IMAGE is the historical bare
+# base, so an unparameterized build stays on the same base (the harness layers
+# below gain an explicit python3 for the composition case — see that RUN — but
+# the default image's runtime behaviour is unchanged). The harness layer
+# below is therefore base-agnostic within one constraint: BASE_IMAGE must be
+# DEBIAN-based (apt) — every official language SDK image (dotnet/node/go/rust)
+# is. A non-debian base fails the build LOUD, never silently. The project's dev
+# image declares only its TOOLCHAIN (claude-free); this layer adds devclaw's
+# harness on top, so the project image stays model-agnostic and human-usable.
+ARG BASE_IMAGE=python:3.13-slim
+FROM ${BASE_IMAGE}
 
 ARG AGENT_UID=1000
 ARG AGENT_GID=1000
@@ -28,9 +41,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Node 20 (for claude CLI + claude-agent-acp), git for whatever the agent does,
 # ca-certificates so https works, plus a non-root agent user matching host UID.
+# python3 is installed explicitly (not assumed from the base): when BASE_IMAGE
+# is a project's dev image (e.g. dotnet/sdk) the base carries no python, and
+# runner.py IS python — so the harness must bring its own interpreter. On the
+# default python base this is a dormant extra; runner still resolves the base's
+# python3 via PATH (/usr/local/bin ahead of /usr/bin).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl git gnupg \
+      ca-certificates curl git gnupg python3 python3-pip \
  && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/* \
@@ -69,7 +87,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # its own venv. openhands-sdk pulls in a long tail of deps; the image is fat
 # but that's fine — it's built once per sandbox version.
 COPY openhands-runner/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# `python3 -m pip` (not bare `pip`): a project base may ship no `pip` shim, and
+# --break-system-packages tolerates a debian base's externally-managed marker
+# (a no-op on the non-managed default python image). Installs against whichever
+# python3 PATH resolves — the base's on the default image, debian's on a
+# project base.
+RUN python3 -m pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
 
 # Claude CLI + claude-agent-acp via npm. Pinned so image is reproducible.
 # @playwright/mcp is the MCP server the agent reaches Playwright through
