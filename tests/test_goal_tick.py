@@ -11,6 +11,7 @@ idle ticks/day.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -690,6 +691,88 @@ async def test_done_gate_review_off_track_steers_and_continues(tmp_path):
     assert s.phase == "idle"
     # the correction was steered back in for the next plan
     assert "add a test for /health" in store.unread_steering("g")
+    # companion to #430: with no unmerged-PR marker, keep-going is UNCHANGED —
+    # the block below must never false-fire on an ordinary off_track.
+
+
+@pytest.mark.asyncio
+async def test_done_gate_blocks_when_delivered_pr_is_open_and_unmerged(tmp_path):
+    """#430: a per-action goal whose green fix sits on an open, unmerged PR must
+    BLOCK for a merge — not re-dispatch. The done-gate reviews the default
+    branch, which lacks the PR's commits, so it re-finds the gaps that PR already
+    closed and 'keep going' re-dispatches the same fix forever (closeloop's
+    wasted night). The detection is mechanical (zero LLM beyond the eval that had
+    to run) and the marker is cleared on the block."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="verifying",
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+        open_unmerged_pr="https://github.com/o/r/pull/9",
+    ))
+    planner = FakeClaude(ACT)  # must NOT be consulted — no re-plan burned
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track",
+        "rationale": "NotificationDispatcherTests.cs still has zero coverage",
+        "corrections": ["add the missing dispatcher test"],
+    }))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="main lacks the fix"))
+    notifier = RecordingNotifier()
+
+    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.phase == "blocked"
+    assert s.blocked_kind == "needs_answer"     # human-gated, never auto-heals
+    assert "pull/9" in (s.blocked_on or "")
+    assert planner.calls == 0                    # no re-plan
+    assert engine.dispatched == []               # no re-dispatch of the same fix
+    assert not s.open_unmerged_pr                # marker cleared on the block
+    assert any("pull/9" in m for m in notifier.sent)  # owner pinged to merge
+
+
+@pytest.mark.asyncio
+async def test_settle_marks_open_unmerged_pr_when_auto_merge_off(tmp_path):
+    """#430 set-side: a green per-action delivery whose PR was NOT merged
+    (auto-merge off → merger=None) records the PR on the goal so the done-gate
+    can later detect the wrong-ref loop."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", _delivery_status())
+    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="added /health",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+    notifier = RecordingNotifier()
+
+    await _tick(store, "g", planner, evaluator, engine, notifier, merger=None)
+
+    assert store.load_status("g").open_unmerged_pr == "https://github.com/o/r/pull/9"
+
+
+@pytest.mark.asyncio
+async def test_settle_clears_open_unmerged_pr_when_pr_merges(tmp_path, monkeypatch):
+    """#430 clear-side: a green delivery that DID merge clears the marker, so a
+    later done-gate isn't misled into blocking on an already-landed PR."""
+    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    # Pre-seed a stale marker from a prior action; a merged delivery must clear it.
+    st = _delivery_status()
+    store.save_status("g", replace(st, open_unmerged_pr="https://github.com/o/r/pull/8"))
+    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="added /health",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+    notifier, merger = RecordingNotifier(), RecordingMerger()
+
+    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+
+    assert merger.merged == ["https://github.com/o/r/pull/9"]
+    assert store.load_status("g").open_unmerged_pr is None   # cleared on merge
 
 
 @pytest.mark.asyncio

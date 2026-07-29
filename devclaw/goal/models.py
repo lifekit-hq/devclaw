@@ -215,6 +215,12 @@ class GoalStatus:
     #: True once the no-progress watchdog has pinged the owner for the CURRENT stall;
     #: cleared on the next delivery so a later stall fires again (ping once per stall).
     no_progress_notified: bool = False
+    #: URL of a per-action green PR devclaw shipped but did NOT land (auto-merge
+    #: off or failed, legacy per-action mode). Set at settle, cleared when it
+    #: merges or when the done-gate blocks on it. The done-gate reads it to break
+    #: the #430 wrong-ref re-work loop: reviewing the default branch while the fix
+    #: sits on an unmerged PR → re-finding the closed gap → re-dispatching forever.
+    open_unmerged_pr: Optional[str] = None
     #: Append-only trail of phase transitions — one dict per entry-to-a-new-phase
     #: (``{"phase": str, "at": iso_ts}``). Written by the store on save_status
     #: whenever the phase changes; read by the console for the timeline

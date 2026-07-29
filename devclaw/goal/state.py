@@ -109,6 +109,7 @@ class GoalState:
                   last_eval_note        TEXT,
                   last_progress_at      TEXT,
                   no_progress_notified  INTEGER,
+                  open_unmerged_pr      TEXT,
                   in_flight_ref_id      TEXT,
                   in_flight_kind        TEXT,
                   in_flight_json        TEXT,
@@ -236,6 +237,7 @@ class GoalState:
                 "ALTER TABLE goal_status ADD COLUMN blocked_kind TEXT",
                 "ALTER TABLE goal_status ADD COLUMN heal_attempts INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN next_heal_at TEXT",
+                "ALTER TABLE goal_status ADD COLUMN open_unmerged_pr TEXT",
             ):
                 try:
                     self._store._db.execute(sql)
@@ -359,9 +361,9 @@ class GoalState:
                   heal_attempts, next_heal_at, "next",
                   last_plan_at, last_tick_at, actions_dispatched, deliveries_since_eval,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
-                  no_progress_notified, in_flight_ref_id, in_flight_kind,
+                  no_progress_notified, open_unmerged_pr, in_flight_ref_id, in_flight_kind,
                   in_flight_json, inbox_ingest_cursor, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -381,6 +383,7 @@ class GoalState:
                   last_eval_note        = excluded.last_eval_note,
                   last_progress_at      = excluded.last_progress_at,
                   no_progress_notified  = excluded.no_progress_notified,
+                  open_unmerged_pr      = excluded.open_unmerged_pr,
                   in_flight_ref_id      = excluded.in_flight_ref_id,
                   in_flight_kind        = excluded.in_flight_kind,
                   in_flight_json        = excluded.in_flight_json,
@@ -406,6 +409,7 @@ class GoalState:
                     status.last_eval_note,
                     status.last_progress_at,
                     1 if status.no_progress_notified else 0,
+                    status.open_unmerged_pr,
                     in_flight_ref_id,
                     in_flight_kind,
                     in_flight_json,
@@ -437,6 +441,10 @@ class GoalState:
         # on a still-BLOCKED goal without a full-row rewrite.
         "heal_attempts": "heal_attempts",
         "next_heal_at": "next_heal_at",
+        # #430: the settle path stamps the unmerged-PR marker column-only (after
+        # the atomic ACTION_SETTLED write, once the merge attempt's outcome is
+        # known) — a telemetry field derive_state never reads.
+        "open_unmerged_pr": "open_unmerged_pr",
     }
 
     def update_columns(self, goal_id: str, fields: dict) -> None:
@@ -920,6 +928,7 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         last_eval_note=row["last_eval_note"] or "",
         last_progress_at=row["last_progress_at"] or None,
         no_progress_notified=bool(row["no_progress_notified"]),
+        open_unmerged_pr=row["open_unmerged_pr"] or None,
         phase_history=phase_history,
         state=row["state"] or None,
         version=int(row["version"] or 0),
