@@ -457,6 +457,43 @@ def test_steer_goal_resets_dispatch_counter_on_blocked(tmp_path):
         db.close()
 
 
+def test_steer_goal_clears_blocked_on(tmp_path):
+    """steer_goal must clear blocked_on when unblocking — a HUMAN answering the
+    question resolves it, so get_goal/list_goals/the console must stop showing
+    the stale question as live (it fooled two readers on 2026-07-29). resume_goal
+    already clears it; steer_goal used to leak it because the store only
+    normalizes blocked_kind on a non-blocked write, not blocked_on."""
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+
+    goals_dir = tmp_path / "goals"
+    seed_goal(goals_dir, "g")
+
+    db = StateStore(str(tmp_path / "state.db"))
+    try:
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        svc = GoalService(TaskQueue(db), db, config=cfg)
+        svc._goal_store.save_status(
+            "g",
+            GoalStatus(
+                phase="blocked",
+                blocked_on="PR #9 open and unmerged — please merge or close",
+                blocked_kind="needs_answer",
+                actions_dispatched=5,
+            ),
+        )
+
+        svc.steer_goal("g", "merged it — carry on")
+
+        saved = svc._goal_store.load_status("g")
+        assert saved.phase == "idle"
+        assert not saved.blocked_on   # stale question no longer shown as live
+        assert not saved.blocked_kind  # store normalizes this on non-blocked write
+    finally:
+        db.close()
+
+
 # ---- resume_goal (the recovery verb — F7) -----------------------------------
 
 
