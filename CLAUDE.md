@@ -146,7 +146,7 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~1226 tests, all stubbed — no docker, no claude
+pytest        # ~1870 tests, all stubbed — no docker, no claude
 ```
 
 Engine modes (`DEVCLAW_ENGINE`): **unset** = OpenHands in a per-task docker sandbox
