@@ -415,3 +415,76 @@ def test_engine_result_cap_boundary_and_degenerate_single_line():
     assert capped_line.startswith(_ENGINE_RESULT_TRUNCATION_MARKER)
     assert capped_line.endswith("TAIL-END")
     assert len(capped_line) < len(one_line)
+
+
+def test_oversized_recent_log_is_tail_kept_and_bounds_the_prompt():
+    """#422: ``recent_log`` is bounded by ROW COUNT (n=20), not size, and a
+    single log row can embed a whole task detail — so a few fat settle rows
+    pushed the goal_planner prompt to 115 KB (self-filed ``timeout
+    input_chars=115498 bytes_out=0`` on finance-sentry-ui-library-v2, recurring
+    across two run-cycles as the next tick re-sent the same bloated prompt).
+    The log section is now tail-kept behind a marker: MOST-RECENT events survive
+    (that's what the next action turns on), the oldest are elided, and the
+    assembled prompt is bounded."""
+    from devclaw.goal.planner import _LOG_KEEP, _LOG_TRUNCATION_MARKER
+
+    early = "OLDEST-LOG-LINE-SENTINEL"
+    late = "MOST-RECENT-LOG-LINE-SENTINEL"
+    fat_log = (
+        early
+        + "\n"
+        + ("x" * (3 * _LOG_KEEP))
+        + "\n"
+        + late
+    )
+    p = build_prompt(_goal(), GoalStatus(), fat_log, "", "")
+    assert "## Recent history (log)" in p
+    # the tail (most recent) survives behind the marker; the oldest is elided
+    assert late in p
+    assert _LOG_TRUNCATION_MARKER in p
+    assert early not in p
+    assert fat_log not in p
+    # the whole assembled prompt is bounded, not 115 KB
+    assert len(p) < _LOG_KEEP + 20_000
+
+
+def test_small_recent_log_passes_through_byte_identical():
+    """A log under the budget reaches the prompt untouched — existing call sites
+    and stubs stay byte-unaffected. Marker absence is proven against the raw
+    template FIRST so the prompt assertion is non-vacuous (#234 lesson)."""
+    from devclaw.goal.planner import _LOG_TRUNCATION_MARKER, _cap_log
+    from devclaw.prompts import load_prompt
+
+    assert _LOG_TRUNCATION_MARKER not in load_prompt("goal-planner")
+
+    small = "t-1 dispatched\nt-1 → done (gate passed)\nplanner: act"
+    assert _cap_log(small) == small
+    p = build_prompt(_goal(), GoalStatus(), small, "", "")
+    assert small in p
+    assert _LOG_TRUNCATION_MARKER not in p
+
+
+def test_empty_recent_log_keeps_the_no_events_fallback():
+    """``_cap_log("")`` must stay "" so the caller's ``or "(no events yet)"``
+    fallback is preserved — an empty log renders the placeholder, not a bare
+    section."""
+    from devclaw.goal.planner import _cap_log
+
+    assert _cap_log("") == ""
+    p = build_prompt(_goal(), GoalStatus(), "", "", "")
+    assert "(no events yet)" in p
+
+
+def test_recent_log_cap_boundary():
+    """Exactly-at-budget passes through unchanged; one char over tail-keeps
+    behind the marker."""
+    from devclaw.goal.planner import _LOG_KEEP, _LOG_TRUNCATION_MARKER, _cap_log
+
+    at_budget = "x" * _LOG_KEEP
+    assert _cap_log(at_budget) == at_budget
+
+    over = at_budget + "Z"
+    capped = _cap_log(over)
+    assert capped.startswith(_LOG_TRUNCATION_MARKER)
+    assert capped.endswith("Z")
+    assert len(capped) < len(over) + len(_LOG_TRUNCATION_MARKER) + 2
