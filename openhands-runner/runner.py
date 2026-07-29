@@ -762,13 +762,144 @@ def _translate_package_json(workspace_dir: str) -> dict:
     return {"node": m.group(1)}
 
 
+#: Directories never scanned for marker files (vendored deps / build output /
+#: VCS): a ``.csproj`` under ``node_modules`` or a ``go.mod`` under ``vendor``
+#: is not the project's OWN declaration. Hidden dirs (``.git``/``.venv``/…) are
+#: skipped separately by the leading-dot check.
+_MARKER_SCAN_SKIP = {"node_modules", "obj", "bin", "vendor", "target", "dist"}
+
+
+def _iter_marker_files(workspace_dir: str, filename_globs: tuple) -> list:
+    """Paths matching any of ``filename_globs`` at the workspace ROOT or in an
+    immediate subdirectory (depth 1). Depth 1 covers the common monorepo layout
+    — ``backend/Foo.csproj``, ``services/api/go.mod`` — the smoke case needs
+    (lifekit-dashboard verifies with ``cd backend && dotnet test``, so its
+    ``.csproj`` is one level down) without walking vendored/build trees. PURE:
+    reads only the workspace's own declaration files, no host/process
+    inference. Deterministic order (sorted) so a multi-project repo resolves the
+    same version every run."""
+    roots = [workspace_dir]
+    try:
+        for entry in sorted(os.listdir(workspace_dir)):
+            full = os.path.join(workspace_dir, entry)
+            if (
+                os.path.isdir(full)
+                and not entry.startswith(".")
+                and entry not in _MARKER_SCAN_SKIP
+            ):
+                roots.append(full)
+    except OSError:
+        pass
+    hits: list = []
+    for root in roots:
+        for pat in filename_globs:
+            hits.extend(sorted(_glob.glob(os.path.join(root, pat))))
+    return hits
+
+
+def _dotnet_version_from_csproj(paths: list) -> "str | None":
+    """First ``<TargetFramework(s)>net<major.minor></…>`` across the given
+    ``.csproj`` files → ``"<major.minor>"`` (``net9.0`` → ``9.0``). Best-effort:
+    an unreadable file or a non-``netX.Y`` framework (``netstandard2.0``,
+    ``net48``) yields ``None`` — the caller then degrades the *version* to
+    ``latest`` (marker presence still declares dotnet; version parsing must
+    never error, per #424)."""
+    for path in paths:
+        try:
+            with open(path, encoding="utf-8-sig") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        m = re.search(r"<TargetFrameworks?>[^<]*?net(\d+\.\d+)", text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _go_version_from_gomod(path: str) -> "str | None":
+    """``go.mod`` ``go <x.y[.z]>`` directive → that version, else ``None``
+    (bare/unreadable go.mod → caller degrades to ``latest``)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    m = re.search(r"(?m)^go\s+(\d+\.\d+(?:\.\d+)?)", text)
+    return m.group(1) if m else None
+
+
+def _python_version_from_markers(py_version_paths: list, pyproject_paths: list) -> "str | None":
+    """Python version from an explicit pin: ``.python-version`` (bare version,
+    first line) wins, else ``pyproject.toml`` ``requires-python`` minimum
+    (``>=3.11`` → ``3.11``). ``None`` when no version is pinned — python lives
+    in the base image, so a version-LESS declaration is satisfied by the base
+    (no provisioning), unlike dotnet/go/rust which degrade to ``latest``."""
+    for path in py_version_paths:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                first = fh.readline().strip()
+        except OSError:
+            continue
+        m = re.match(r"(\d+\.\d+(?:\.\d+)?)", first)
+        if m:
+            return m.group(1)
+    for path in pyproject_paths:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        m = re.search(r'(?m)^\s*requires-python\s*=\s*["\'][^"\']*?(\d+\.\d+)', text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _detect_marker_tools(workspace_dir: str) -> dict:
+    """Generic marker-file → tool detection (#424): one data-driven table so a
+    new stack is a row, not a code path. FALLBACK to the idiomatic translators
+    (``global.json`` → dotnet, ``package.json`` → node): a version those already
+    declared wins, because :func:`_detect_toolchain` merges this with
+    ``setdefault``. dotnet/go/rust are absent from the base python+node image, so
+    marker presence with no parseable version degrades the version to ``latest``
+    (mise picks a sane default — never an error). python's version-less case
+    yields nothing (the base python satisfies it). PURE over the workspace's
+    declaration files."""
+    tools: dict = {}
+    if _iter_marker_files(workspace_dir, ("*.csproj", "*.sln")):
+        tools["dotnet"] = (
+            _dotnet_version_from_csproj(
+                _iter_marker_files(workspace_dir, ("*.csproj",))
+            )
+            or "latest"
+        )
+    go_mods = _iter_marker_files(workspace_dir, ("go.mod",))
+    if go_mods:
+        tools["go"] = _go_version_from_gomod(go_mods[0]) or "latest"
+    if _iter_marker_files(workspace_dir, ("Cargo.toml",)):
+        tools["rust"] = "latest"
+    py = _iter_marker_files(workspace_dir, (".python-version",))
+    pyproject = _iter_marker_files(workspace_dir, ("pyproject.toml",))
+    if py or pyproject:
+        version = _python_version_from_markers(py, pyproject)
+        if version:
+            tools["python"] = version
+    return tools
+
+
 def _detect_toolchain(workspace_dir: str) -> tuple:
     """``(native, tools)`` for the workspace's declared toolchain.
 
     ``native=True`` → a mise-native file is present; mise reads it as-is and
     ``tools`` stays empty. Otherwise ``tools`` maps tool→version translated
-    from idiomatic declarations. ``(False, {})`` → nothing declared:
-    provisioning is a zero-cost no-op (the base python+node image behavior).
+    from idiomatic declarations (``global.json`` → dotnet, ``package.json`` →
+    node) plus the generic marker-file table (#424: ``.csproj``/``.sln`` →
+    dotnet, ``go.mod`` → go, ``Cargo.toml`` → rust, ``pyproject.toml``/
+    ``.python-version`` → python). The idiomatic translators take precedence
+    over the marker table (``setdefault``): a ``global.json`` that pins a dotnet
+    version wins over the version parsed from a sibling ``.csproj``.
+    ``(False, {})`` → nothing declared: provisioning is a zero-cost no-op (the
+    base python+node image behavior).
     """
     for name in _MISE_NATIVE_FILES:
         if os.path.exists(os.path.join(workspace_dir, name)):
@@ -776,6 +907,8 @@ def _detect_toolchain(workspace_dir: str) -> tuple:
     tools: dict = {}
     tools.update(_translate_global_json(workspace_dir))
     tools.update(_translate_package_json(workspace_dir))
+    for tool, version in _detect_marker_tools(workspace_dir).items():
+        tools.setdefault(tool, version)
     return False, tools
 
 
