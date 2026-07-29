@@ -104,7 +104,10 @@ TASK_MAX_RETRIES = int(os.environ.get("DEVCLAW_MAX_RETRIES", "1"))
 #: task); a project may opt out via its registry `review_gate` override.
 REVIEW_GATE_ENABLED = True
 #: review applies only to code-producing kinds (a diff to read); review_repository
-#: is read-only and onboard writes only a comprehension doc.
+#: is read-only, and onboard writes only DRAFT artifacts — the four comprehension
+#: docs plus a create-only-when-absent `.devcontainer/Dockerfile` — which ship as
+#: `docs`-typed deliveries behind a human merge (the backstop for that
+#: build-relevant file), so neither needs the pre-PR adversarial review gate.
 _REVIEWABLE_KINDS = ("implement_feature", "fix_bug")
 
 #: Stable marker prefixed on the feedback string when the review gate CRASHED —

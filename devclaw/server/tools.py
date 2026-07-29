@@ -163,10 +163,11 @@ async def review_trends(scope: str = "harness_self", limit_chars: int = 5000) ->
 async def onboard(
     workspace_dir: str, focus: str = "", notify_url: Optional[str] = None
 ) -> str:
-    """Onboard a repository: analyze it and write a DRAFT documentation set so
-    future tasks + humans start informed. OpenHands inspects the workspace
-    READ-ONLY (it modifies no file except the four docs it writes) and captures
-    COMPREHENSION ONLY across four scoped documents:
+    """Onboard a repository: analyze it and write a DRAFT documentation set
+    (plus the project's dev-container boilerplate) so future tasks + humans
+    start informed and in the project's real environment. OpenHands inspects the
+    workspace READ-ONLY (it modifies no file except the five named onboarding
+    artifacts below) — four scoped COMPREHENSION docs plus one build artifact:
 
       - AGENTS.md      — agent-facing: stack, layout, build/run/test commands
                          (with the verify gate), conventions, gotchas.
@@ -177,6 +178,10 @@ async def onboard(
       - DECISIONS.md   — ADR-style entries reconstructed from git log + code +
                          prior docs. Empty-with-header is acceptable when
                          nothing is honestly inferrable.
+      - .devcontainer/Dockerfile — the DEV environment a human and the agent
+                         share (SDK/toolchain image); authored ONLY when the
+                         repo has none, so the agent runs in the project's real
+                         toolchain instead of re-deriving it per task.
 
     Closes the C6 gap (`plan.md` §Production-ready): a project with only
     AGENTS.md is undocumented from a human's point of view. The onboarding
