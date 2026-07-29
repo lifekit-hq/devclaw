@@ -133,6 +133,7 @@ class GoalStatusMixin:
             last_eval_note=fm.get("last_eval_note", "") or "",
             last_progress_at=fm.get("last_progress_at") or None,
             no_progress_notified=bool(fm.get("no_progress_notified", False)),
+            open_unmerged_pr=fm.get("open_unmerged_pr") or None,
             phase_history=history,
         )
 
@@ -286,7 +287,7 @@ class GoalStatusMixin:
         """Column-only telemetry update — ``last_tick_at`` / ``last_plan_at`` /
         ``last_progress_at`` / ``no_progress_notified`` / ``last_eval_verdict``
         / ``last_eval_at`` / ``last_eval_note`` / ``deliveries_since_eval`` /
-        ``heal_attempts`` / ``next_heal_at`` ONLY (see
+        ``heal_attempts`` / ``next_heal_at`` / ``open_unmerged_pr`` ONLY (see
         :data:`GoalState.STATUS_FIELD_COLUMNS`). NEVER a full-row
         rewrite, so it can never be the write that clobbers a concurrent
         phase/lifecycle/in_flight transition — this is the mechanism half of
@@ -406,6 +407,7 @@ class GoalStatusMixin:
             "last_eval_note": status.last_eval_note,
             "last_progress_at": status.last_progress_at,
             "no_progress_notified": status.no_progress_notified,
+            "open_unmerged_pr": status.open_unmerged_pr,
             "phase_history": [dict(e) for e in status.phase_history],
         }
         body = self._render_status_body(goal_id, status)

@@ -809,6 +809,21 @@ async def _resolve_polling_action(
         # is what escalates when the skipped PR also cannot land).
         ctx.store.append_log(goal_id, f"auto-merge skipped ({merge_skip}): {poll.pr_url}")
 
+    # #430: remember a per-action green PR we shipped but did NOT land (auto-merge
+    # off/failed), so the done-gate can tell it is reviewing a ref (the default
+    # branch) that cannot see the fix — and block for a merge instead of
+    # re-dispatching the same work forever (closeloop's wasted night). Cleared the
+    # moment such a PR merges. Checklist-mode is excluded: its shared-branch PR
+    # staying open until the done-gate is by design, and that gate reviews the
+    # goal branch (no wrong-ref trap). A column-only write AFTER the atomic
+    # settle (the merge attempt above is async, outside the transaction) — and
+    # its returned fresh-versioned status is threaded onward so _handle_executing's
+    # `expect=` still CAS's against the current version.
+    if green_pr and not in_checklist_dispatch:
+        new_status = ctx.store.update_status_fields(
+            goal_id, open_unmerged_pr=(None if merged_now else poll.pr_url)
+        )
+
     # ---- mergeability probe (#394) -----------------------------------------
     # A delivery whose PR is CONFLICTING at settle is a degraded delivery and
     # must be loud — today it settles `done` indistinguishably from a landable
