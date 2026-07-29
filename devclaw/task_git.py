@@ -259,6 +259,42 @@ def _base_branch_error_sync(host_dir: str, base_branch: str) -> str | None:
     return None
 
 
+def branch_staleness_sync(host_dir: str, base_branch: str) -> dict | None:
+    """How far HEAD has drifted from ``origin/<base_branch>``.
+
+    Returns ``{"commits_behind": int, "commits_ahead": int}`` when both
+    rev-list counts succeed, or ``None`` on any failure (not a repo, git
+    missing, timeout, non-integer output, non-zero exit). Strictly
+    best-effort — callers degrade to "proceed unchanged" on ``None``.
+
+    Assumes the caller already fetched ``origin`` and that
+    ``origin/<base_branch>`` resolves; this is NOT the fetch primitive
+    (use :func:`_base_branch_error_sync` for that validation step).
+
+    Blocking subprocess.run — same child-watcher rationale as
+    :func:`_git_diff_sync`. Never raises."""
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", host_dir, *args],
+            capture_output=True, text=True, timeout=30,
+        )
+
+    try:
+        behind = run("rev-list", "--count", f"HEAD..origin/{base_branch}")
+        ahead = run("rev-list", "--count", f"origin/{base_branch}..HEAD")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if behind.returncode != 0 or ahead.returncode != 0:
+        return None
+    try:
+        return {
+            "commits_behind": int(behind.stdout.strip()),
+            "commits_ahead": int(ahead.stdout.strip()),
+        }
+    except ValueError:
+        return None
+
+
 def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
     """Commit the interrupted attempt's uncommitted work as a WIP snapshot
     before a usage-limit requeue. The workspace survives the requeue untouched
