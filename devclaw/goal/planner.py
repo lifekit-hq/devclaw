@@ -84,6 +84,44 @@ def _cap_engine_result(detail: str) -> str:
     return "\n".join((_ENGINE_RESULT_TRUNCATION_MARKER, detail[-_ENGINE_RESULT_KEEP:]))
 
 
+#: Cap (chars) for the "recent history (log)" section of the plan prompt.
+#: ``recent_log`` is bounded by ROW COUNT (n=20) but NOT by size — and a single
+#: log row can embed a whole task detail, so a handful of fat settle rows push
+#: the assembled goal_planner prompt past the point where ``claude --print``'s
+#: time-to-first-token climbs into the cognition timeout (default 180 s). The
+#: call then fires the timeout having produced ZERO output — the #422 class: a
+#: self-filed ``timeout input_chars=115498 bytes_out=0`` on
+#: finance-sentry-ui-library-v2 that recurred across two run-cycles because the
+#: next tick re-sent the same bloated prompt and re-timed-out identically. The
+#: engine-result section is already capped above; the log is the remaining
+#: section that grows unbounded over a goal's life. 24 KB ≈ 6k tokens — ample
+#: for real recent history, an order of magnitude under the timeout-inducing
+#: size, and it leaves headroom under the same budget for the (also-capped)
+#: engine result and the small fixed sections.
+_LOG_KEEP = 24_000
+
+#: Rendered as its own line where content was elided, so the model knows it is
+#: reading the TAIL of the log, not the whole history.
+_LOG_TRUNCATION_MARKER = (
+    "[…older log lines elided to fit the planning budget: most-recent events "
+    "kept — the full history is in the goal log / task records]"
+)
+
+
+def _cap_log(recent_log: str) -> str:
+    """Bound the recent-history (log) section before it rides into the plan
+    prompt. Small logs pass through UNTOUCHED (byte-identical — existing call
+    sites and test stubs see no change, and "" stays "" so the caller's
+    ``or "(no events yet)"`` fallback is preserved). Oversized logs are
+    tail-kept: the MOST RECENT events are the ones the next action turns on, so
+    (unlike the engine result, whose verdict lives at its end) there is no
+    header line to preserve — the marker just flags that older lines were
+    elided."""
+    if len(recent_log) <= _LOG_KEEP:
+        return recent_log
+    return "\n".join((_LOG_TRUNCATION_MARKER, recent_log[-_LOG_KEEP:]))
+
+
 async def _collect_repo_context(workspace_dir: str) -> str:
     """Live workspace snapshot for the plan prompt — the same grounded facts the
     review gate gets (remote, branch, head, key-file probes, tracked top-level
@@ -190,7 +228,7 @@ def build_prompt(
         parts.append(f"last direction eval: {status.last_eval_verdict} — {status.last_eval_note}")
     parts += [
         "\n## Recent history (log)",
-        recent_log or "(no events yet)",
+        _cap_log(recent_log) or "(no events yet)",
     ]
     # Live workspace snapshot (triage F5): rendered BEFORE the discovery brief
     # — the brief is a creation-time artifact, this is the workspace now. ""
