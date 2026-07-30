@@ -26,7 +26,7 @@ from .tick_context import (
     _classify,
     _notify,
 )
-from .tick_guards import _block_on_lost_ref
+from .tick_guards import _block_on_lost_ref, _block_on_prep_failure
 from .tick_dispatch import _resolve_discovery
 from .tick_donegate import _resolve_done_gate
 from . import checklist as _checklist
@@ -37,6 +37,8 @@ from .models import Checklist, ChecklistItem, Goal, GoalStatus, InFlight, ItemAs
 from .store import GoalStore
 from .transitions import Event
 from ..loom import trace as _trace
+from ..engine.workspace import WorkspaceError
+from ..state_store import derive_failure_class
 
 
 #: structural per-item circuit breaker (#6): after this many FAILED settles of
@@ -688,6 +690,29 @@ async def _resolve_polling_action(
         gate_passed=poll.gate_passed, pr_url=poll.pr_url or "",
         diff_stats=poll.diff_stats,
     )
+
+    # ---- mechanical-setup failure → damped mechanical:prep breaker (#379) ---
+    # A toolchain-not-provisioned / git clone-fetch-clean / target-branch-prep
+    # failure is something the worker CANNOT fix by re-running the same
+    # instruction. Left as a plain settled-``failed`` it re-dispatches every
+    # tick — the finance-sentry-ui goal re-hit the identical trust/prep failure
+    # 119× purely because it wore a ``subprocess``/``engine_error`` label
+    # instead of ``mechanical:prep``. Route it to the SAME host-side prep block
+    # used at dispatch time so the existing damped auto-heal engages
+    # (PREP_HEAL_CAP + persisted backoff, then a human park via _autoheal_prep)
+    # instead of an amnesiac storm. This blocks the WHOLE goal — a setup failure
+    # is not an item-specific defect. Fail-CLOSED (the settle above already
+    # committed, so the ref can't re-adopt) and zero-token (pure mechanical
+    # bucketing + one owner ping). Rides a SEPARATE transition CAS'd against the
+    # just-settled ``new_status``, exactly like the item breaker below; checked
+    # BEFORE the item breaker so a mechanical failure takes the DAMPED
+    # (auto-healing) path, not the ``needs_answer`` human park.
+    if poll.status == "failed" and derive_failure_class(poll.detail) == "mechanical_setup":
+        return await _block_on_prep_failure(
+            goal_id, new_status,
+            WorkspaceError(poll.detail or "mechanical setup failure"),
+            store=ctx.store, notifier=ctx.notifier, summarize=ctx.summary_caller,
+        )
 
     # ---- structural per-item circuit breaker (#6) --------------------------
     # If this failed settle just tripped an addressed item to ``blocked``

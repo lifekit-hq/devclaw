@@ -158,6 +158,16 @@ def test_projection_hiccup_never_unsettles_the_task(store, monkeypatch, capsys):
 
 
 @pytest.mark.parametrize("error,expected", [
+    # mechanical SETUP failures (#379) — highest priority, routed to mechanical:prep
+    ("toolchain_provision_failed: `mise install` failed (exit 1)", "mechanical_setup"),
+    ("clone failed: fatal: repository not found", "mechanical_setup"),
+    ("fetch failed: could not read from remote repository", "mechanical_setup"),
+    ("could not prepare target_branch 'feat/x': git clean -fdx failed: EPERM",
+     "mechanical_setup"),
+    # fail-closed restraint: a bare "trust" mention in legitimate content must NOT
+    # be misbucketed as a setup failure (the external Claude-CLI trust-guard wording
+    # is deliberately not matched here — see rows.py _FAILURE_CLASS_RULES).
+    ("the user asked us to add a trust-score column to the table", "engine_error"),
     ("worker reported BLOCKED: repo has no test framework", "blocked:worker"),
     ("review gate crashed (failing closed): PlannerError: claude --print timed "
      "out after 180000ms.", "review_crash"),
