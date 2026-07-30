@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from .loom import trace as _trace
+from .loom.limits import FailureKind, classify_failure
 
 #: fallback (seconds) for the default cognition ceiling when
 #: ``DEVCLAW_COGNITION_TIMEOUT_S`` is unset or unusable.
@@ -62,6 +63,52 @@ PLANNER_TIMEOUT_MS = _cognition_timeout_ms_from_env(
     os.environ.get("DEVCLAW_COGNITION_TIMEOUT_S")
 )
 CLAUDE_BIN = os.environ.get("DEVCLAW_CLAUDE_BIN", "claude")
+
+#: Bounded retry for a TRANSIENT cognition failure — the clean-run fix
+#: (2026-07-30). The #1 wedge of an unattended run was the host-side
+#: ``claude --print`` call itself failing transiently: the CLI OOM-killed
+#: mid-call (``exited -9`` under host memory pressure — many 2g sandboxes + host
+#: cognition on one VPS), a timeout, or an ``overloaded``/network blip. Each used
+#: to raise straight through and dead-stop the goal + ping the owner. Now the one
+#: primitive retries the TRANSIENT class a bounded number of times with a short
+#: backoff, so a momentary hiccup becomes a recovered blip instead of a dead
+#: night. Bounded + backed-off so a PERSISTENT failure still fails (never an
+#: infinite burn); ONLY TRANSIENT retries (QUOTA/RATE/AUTH still pause, REAL still
+#: fails fast — see :func:`devclaw.loom.limits.classify_failure`). Env-configurable,
+#: fail-safe parse like the timeout above; ``0`` disables retries.
+_COGNITION_RETRIES_DEFAULT = 2
+
+
+def _cognition_retries_from_env(raw: str | None) -> int:
+    """Parse ``DEVCLAW_COGNITION_RETRIES`` → a non-negative retry count. Invalid
+    or negative → the default; ``0`` is honored (retries off). Never crashes
+    import — a typo in ``.env`` must not take cognition down."""
+    try:
+        n = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return _COGNITION_RETRIES_DEFAULT
+    return n if n >= 0 else _COGNITION_RETRIES_DEFAULT
+
+
+COGNITION_MAX_RETRIES = _cognition_retries_from_env(
+    os.environ.get("DEVCLAW_COGNITION_RETRIES")
+)
+#: backoff (seconds) before a transient retry: geometric base·4**attempt (5s,
+#: 20s, …) capped, unless the provider STATED a retry-after hint (then that
+#: wins, up to the cap). Kept short because a signal-death returns instantly —
+#: the common case recovers in seconds, not the full timeout.
+_COGNITION_RETRY_BASE_S = 5
+_COGNITION_RETRY_CAP_S = 60
+#: indirection so tests neutralize the real backoff sleep (no multi-second waits).
+_RETRY_SLEEP = asyncio.sleep
+
+
+def _retry_backoff_s(attempt: int, retry_after_s: int | None) -> float:
+    """Seconds to wait before retry ``attempt`` (0-indexed). A provider-stated
+    ``retry_after_s`` hint wins; otherwise geometric ``base·4**attempt``, capped."""
+    if retry_after_s and retry_after_s > 0:
+        return float(min(retry_after_s, _COGNITION_RETRY_CAP_S))
+    return float(min(_COGNITION_RETRY_BASE_S * (4 ** attempt), _COGNITION_RETRY_CAP_S))
 
 
 class PlannerError(Exception):
@@ -244,8 +291,59 @@ async def call_claude(
     role: str = "unknown",
     timeout_ms: int | None = None,
 ) -> str:
-    """Spawn ``claude --print --output-format json`` with the prompt and return
-    the response TEXT (the envelope's ``result`` field — callers parse their own
+    """Spawn ``claude --print`` and return the response text, with a bounded
+    retry on a TRANSIENT failure.
+
+    A single attempt is :func:`_call_claude_once` (the whole subprocess +
+    envelope path). Wrapping it here is the clean-run fix (2026-07-30): a
+    transient infra hiccup — the CLI OOM-killed mid-call (``exited -9``) under
+    host memory pressure, a timeout, an ``overloaded``/network blip — used to
+    raise straight to the caller and dead-stop the goal. Now it retries up to
+    :data:`COGNITION_MAX_RETRIES` times with a short backoff, so the run carries
+    on when the machine was only momentarily overwhelmed.
+
+    The fail-closed / pause invariants are untouched, by construction:
+    - ONLY a ``TRANSIENT`` classification retries. QUOTA / RATE / AUTH re-raise
+      on the FIRST failure so the caller's pause-and-resume machinery still fires
+      (retrying into a live usage cap would just burn it); a ``REAL`` bug fails
+      fast with its feedback.
+    - Classification is on the SAME ``str(exc)`` the downstream classifiers read,
+      so the quota-guard wording (see :func:`_call_claude_once`) still routes a
+      usage limit to a pause, never a retry.
+    - When the retries exhaust, the LAST error is raised exactly as a single
+      attempt would — the review gate still fails closed, the planner still
+      surfaces the error. Retries fire only on an already-failed real call, never
+      on an idle tick, so the zero-token idle guard is unaffected.
+    """
+    attempt = 0
+    while True:
+        try:
+            return await _call_claude_once(
+                prompt, model, role=role, timeout_ms=timeout_ms
+            )
+        except PlannerError as exc:
+            cls = classify_failure(str(exc))
+            if cls.kind is not FailureKind.TRANSIENT or attempt >= COGNITION_MAX_RETRIES:
+                raise
+            delay = _retry_backoff_s(attempt, cls.retry_after_s)
+            sys.stderr.write(
+                f"devclaw.cognition.retry role={role} kind=transient "
+                f"matched={cls.matched or 'transient'} "
+                f"attempt={attempt + 1}/{COGNITION_MAX_RETRIES} backoff_s={delay:g}\n"
+            )
+            attempt += 1
+            await _RETRY_SLEEP(delay)
+
+
+async def _call_claude_once(
+    prompt: str,
+    model: str | None = None,
+    *,
+    role: str = "unknown",
+    timeout_ms: int | None = None,
+) -> str:
+    """One ``claude --print --output-format json`` attempt: return the response
+    TEXT (the envelope's ``result`` field — callers parse their own
     YAML/JSON out of it, contract unchanged; stdout that doesn't parse as the
     envelope is returned raw, as before json mode). Real token usage + cost from
     the envelope flow into the cognition trace. ``model``
