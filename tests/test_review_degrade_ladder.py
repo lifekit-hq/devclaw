@@ -160,6 +160,59 @@ async def test_review_timeout_ladder_fails_closed_when_a_sub_review_still_times_
         )
 
 
+# ============================ signal-death (SIGKILL) degradation =======
+#
+# A ``claude --print`` KILLED BY A SIGNAL on an oversized diff surfaces as a
+# NEGATIVE exit code ("exited -9"), NOT a timeout and NOT unparseable JSON — so
+# before this fix it slipped past the ladder and hard-wedged the goal (the
+# 2026-07-30 morning symptom on console-state-honesty). It is the SAME
+# oversized-input death family as a timeout, so it now takes the SAME rung.
+
+_SIGKILL_MSG = "claude --print exited -9. stderr:\n\nstdout:\n"
+
+
+def _sigkill_on_full_diff(per_file):
+    """A caller KILLED BY SIGNAL on the whole-diff prompt (both files present),
+    otherwise delegating to ``per_file`` for a per-file sub-diff prompt."""
+    async def caller(prompt: str) -> str:
+        if "a/a.py" in prompt and "a/b.py" in prompt:
+            raise PlannerError(_SIGKILL_MSG)
+        return await per_file(prompt)
+    return caller
+
+
+async def test_review_signal_death_degrades_per_file_then_unions_verdicts():
+    """The whole-diff review is SIGKILLed ("exited -9") on an oversized diff. The
+    ladder now treats a signal death like a timeout — re-reviews per file and
+    unions the verdicts — instead of wedging the goal on a hard fail-closed."""
+    async def per_file(prompt: str) -> str:
+        if "a/a.py" in prompt:
+            return _blocker_json("a.py", "off-by-one")
+        return _approve_json()
+
+    result = await review_gate(
+        goal="g", kind="implement_feature", diff=_MULTI,
+        claude_caller=_sigkill_on_full_diff(per_file),
+    )
+    assert result["verdict"] == "request_changes"
+    assert any(i["location"] == "a.py" for i in result["blocking"])
+    assert "per-file" in result["summary"]
+
+
+async def test_review_signal_death_still_fails_closed_when_subreviews_also_die():
+    """A signal death that PERSISTS per-file RAISES through the ladder → the whole
+    diff still fails closed (never approved on the silence of a killed reviewer).
+    Degrading a signal death never manufactures an approval — #186 holds."""
+    async def always_sigkill(prompt: str) -> str:
+        raise PlannerError(_SIGKILL_MSG)
+
+    with pytest.raises(PlannerError, match="exited -9"):
+        await review_gate(
+            goal="g", kind="implement_feature", diff=_MULTI,
+            claude_caller=always_sigkill,
+        )
+
+
 async def test_review_ladder_disabled_reraises_timeout_without_fanning_out(monkeypatch):
     """DEVCLAW_REVIEW_DEGRADE=0 restores the pre-ladder gate exactly: a timeout
     re-raises immediately and NO per-file fan-out happens (the caller is invoked
