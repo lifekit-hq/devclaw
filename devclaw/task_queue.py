@@ -143,16 +143,16 @@ BROWSER_GATE_ENABLED = os.environ.get("DEVCLAW_GOAL_BROWSER_GATE", "1") not in (
 #: "strict" → a frontend change with no browser suite at all (`absent`) blocks,
 #: forcing E2E adoption; "flexible" (default) lets `absent` fall through with a
 #: loud log so a not-yet-E2E'd project isn't wedged. Mirrors CI_GATE_MODE. The
-#: per-project override is resolved in _browser_gate_mode (registry seam).
-BROWSER_GATE_MODE = os.environ.get("DEVCLAW_GOAL_BROWSER_GATE_MODE", "flexible")
+#: per-project override is resolved in _browser_gate_mode (registry seam); a PR
+#: flips this fleet default (formerly DEVCLAW_GOAL_BROWSER_GATE_MODE, #410 —
+#: never set off-default; project-scoped config now lives in the registry seam).
+BROWSER_GATE_MODE = "flexible"
 #: The reasoned escape valve for the browser gate's one false positive (a UI
-#: change not rendered in the running app — see quality/reachability.py). Default
+#: change not rendered in the running app — see quality/reachability.py). Always
 #: ON: it is strictly safe (can only RELAX a would-be block, and only on an
-#: affirmatively-grounded `reachable == "no"`). Set 0 to fall back to the pure
-#: mechanical gate. A disabled browser gate makes this moot (never consulted).
-BROWSER_REACHABILITY_ENABLED = os.environ.get(
-    "DEVCLAW_GOAL_BROWSER_REACHABILITY", "1"
-) not in ("0", "false", "")
+#: affirmatively-grounded `reachable == "no"`). A disabled browser gate makes
+#: this moot (never consulted). (Formerly DEVCLAW_GOAL_BROWSER_REACHABILITY, #410.)
+BROWSER_REACHABILITY_ENABLED = True
 #: Stable prefix on the browser-gate feed-back reason (parallels the review/
 #: integrity reasons) so the settle path and tests can recognise it.
 _BROWSER_GATE_MARKER = "browser gate (failing closed):"

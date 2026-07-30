@@ -51,11 +51,12 @@ Verdict semantics:
                       ``strict`` (under ``flexible``, the default, it logs loudly
                       and falls through so a not-yet-E2E'd project isn't wedged).
 
-``DEVCLAW_GOAL_BROWSER_GATE_MODE`` selects the stance (wired in a later change):
-``flexible`` (default — a project with no browser suite degrades to a loud log
-instead of a wedge) or ``strict`` (any frontend change with no passing browser
-run blocks). ``ran_failed``/``never_ran`` block in BOTH modes — those are
-evidence of a problem, not capability uncertainty.
+The stance is ``task_queue.BROWSER_GATE_MODE`` (fleet default ``flexible``),
+per-project overridable via the registry's ``browser_gate_mode``:
+``flexible`` (a project with no browser suite degrades to a loud log instead of
+a wedge) or ``strict`` (any frontend change with no passing browser run blocks).
+``ran_failed``/``never_ran`` block in BOTH modes — those are evidence of a
+problem, not capability uncertainty.
 
 Pure module — no subprocess, no I/O. The runner parses the artifact into
 ``browser_report`` in-sandbox; the settle path detects ``config_present`` on the

@@ -116,7 +116,7 @@ class Project:
     autodeploy: Optional[bool] = None     # DEVCLAW_GOAL_AUTODEPLOY
     review_gate: Optional[bool] = None    # devclaw default: task_queue.REVIEW_GATE_ENABLED
     verify_done: Optional[bool] = None    # DEVCLAW_GOAL_VERIFY_DONE
-    browser_gate_mode: Optional[str] = None  # DEVCLAW_GOAL_BROWSER_GATE_MODE: flexible|strict
+    browser_gate_mode: Optional[str] = None  # fleet default: task_queue.BROWSER_GATE_MODE (flexible|strict)
     #: per-project sandbox image (ADR 0005) — the exotic-needs escape hatch and
     #: the migration bridge (.NET projects pin devclaw-sandbox-dotnet:local
     #: until the mise path passes its live gate). None = the engine's

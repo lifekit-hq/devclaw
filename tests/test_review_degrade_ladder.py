@@ -23,6 +23,7 @@ import pytest
 from devclaw import task_queue
 from devclaw.engine import EngineRequest
 from devclaw.planner import PlannerError
+from devclaw import quality
 from devclaw.quality import review_diff, review_gate
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
@@ -214,10 +215,10 @@ async def test_review_signal_death_still_fails_closed_when_subreviews_also_die()
 
 
 async def test_review_ladder_disabled_reraises_timeout_without_fanning_out(monkeypatch):
-    """DEVCLAW_REVIEW_DEGRADE=0 restores the pre-ladder gate exactly: a timeout
-    re-raises immediately and NO per-file fan-out happens (the caller is invoked
-    once, for the whole diff)."""
-    monkeypatch.setenv("DEVCLAW_REVIEW_DEGRADE", "0")
+    """Disabling the ladder (_DEGRADE_ENABLED=False) restores the pre-ladder gate
+    exactly: a timeout re-raises immediately and NO per-file fan-out happens (the
+    caller is invoked once, for the whole diff)."""
+    monkeypatch.setattr(quality, "_DEGRADE_ENABLED", False)
     calls = {"n": 0}
 
     async def timing_out(prompt: str) -> str:
@@ -233,10 +234,10 @@ async def test_review_ladder_disabled_reraises_timeout_without_fanning_out(monke
 
 
 async def test_review_ladder_over_file_cap_fails_closed(monkeypatch):
-    """A diff with more files than DEVCLAW_REVIEW_DEGRADE_MAX_FILES is NOT degraded
-    (the fan-out would be too large a burst); it fails closed and a human splits
-    it. Cap=1 with a 2-file diff → the original timeout re-raises."""
-    monkeypatch.setenv("DEVCLAW_REVIEW_DEGRADE_MAX_FILES", "1")
+    """A diff with more files than the per-file fan-out cap (_DEGRADE_MAX_FILES_DEFAULT)
+    is NOT degraded (the fan-out would be too large a burst); it fails closed and a
+    human splits it. Cap=1 with a 2-file diff → the original timeout re-raises."""
+    monkeypatch.setattr(quality, "_DEGRADE_MAX_FILES_DEFAULT", 1)
 
     async def timing_out(prompt: str) -> str:
         raise PlannerError(_TIMEOUT_MSG)
