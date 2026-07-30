@@ -291,6 +291,20 @@ def _row_to_program(r: sqlite3.Row) -> Program:
 # test catching it. Basket report errors ride the same buckets — the reports
 # store the identical settle-path texts.
 _FAILURE_CLASS_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # A MECHANICAL SETUP failure (toolchain-not-provisioned, git clone/fetch/clean
+    # failure, target-branch prep failure) is something the worker CANNOT fix by
+    # re-running the same instruction — first in priority so a later bucket can't
+    # mis-claim it. Routes the goal loop to the damped mechanical:prep breaker
+    # instead of an amnesiac re-dispatch storm (#379: the finance-sentry-ui goal
+    # re-hit the identical trust/prep failure 119×). Markers are the CODE-OWNED
+    # settle-path strings (runner toolchain error + engine.workspace WorkspaceError
+    # + _prep_branch_target). The external Claude-CLI trust-guard wording is
+    # deliberately NOT matched here — a bare "trust" substring would false-positive
+    # on legitimate content, violating the fail-closed spirit; add it only once the
+    # exact guard string is confirmed from a real incident log.
+    ("mechanical_setup", ("toolchain_provision_failed", "clone failed:",
+                          "fetch failed:", "clean -fdx failed",
+                          "could not prepare target_branch")),
     ("blocked:worker", ("worker reported blocked:",)),
     ("review_crash", ("review gate crashed",)),
     ("review_rejected", ("code review requested changes",)),

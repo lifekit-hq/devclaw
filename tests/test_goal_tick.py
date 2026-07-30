@@ -427,6 +427,46 @@ async def test_refund_never_goes_negative(tmp_path):
     assert store.load_status("g").actions_dispatched == 0
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "detail",
+    [
+        "toolchain_provision_failed: mise install failed (exit 1)",
+        "clone failed: fatal: repository not found",
+        "could not prepare target_branch 'feat/x': git clean -fdx failed: permission denied",
+    ],
+)
+async def test_in_task_setup_failure_blocks_mechanical_prep_instead_of_redispatching(tmp_path, detail):
+    """#379: a mechanical SETUP failure inside a dispatched task (toolchain not
+    provisioned, git clone/clean failure, target-branch prep failure) is something
+    the worker CANNOT fix by re-running the same instruction. It must block the
+    goal on the DAMPED ``mechanical:prep`` breaker (auto-heal budget + backoff),
+    NOT re-dispatch a fresh sandbox with the same doomed instruction — the
+    finance-sentry-ui goal re-hit the identical failure 119× before this fix. Zero
+    planner calls: the goal blocks on the failed settle before any re-plan."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight", actions_dispatched=1,
+            in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
+        ),
+    )
+    planner, evaluator = FakeClaude(SLEEP), FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="failed", detail=detail))
+    notifier = RecordingNotifier()
+
+    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+
+    assert out is Outcome.BLOCKED
+    saved = store.load_status("g")
+    assert saved.phase == "blocked"
+    assert saved.blocked_kind == "mechanical:prep"   # the damped, auto-healing breaker
+    assert engine.dispatched == []                    # NO amnesiac re-dispatch storm
+    assert planner.calls == 0                          # blocked before any re-plan (zero-token)
+    assert notifier.sent                               # owner pinged once
+
+
 def test_steer_goal_resets_dispatch_counter_on_blocked(tmp_path):
     """steer_goal must zero actions_dispatched when unblocking so the dispatch
     cap doesn't re-fire on the very next tick after the human resolves the block."""
