@@ -225,6 +225,7 @@ class ProblemsMixin:
         category: Optional[str] = None,
         limit: int = 100,
         include_issue: bool = False,
+        since_ms: Optional[int] = None,
     ) -> list[dict]:
         """Distinct problems, most-frequent first (rides ``idx_problems_count``).
         The read side the future ranked report is built on; also the assertion
@@ -233,7 +234,12 @@ class ProblemsMixin:
         ``include_issue`` adds ``issue_number``/``issue_state`` (the
         self-issue-filing Stage-1 fields) so the console problem-lifecycle
         tracker (ADR 0009) can render *identified → filed → open → resolved*.
-        Default False keeps the existing MCP/test output byte-identical."""
+        Default False keeps the existing MCP/test output byte-identical.
+
+        ``since_ms`` restricts results to rows whose ``last_seen_ms`` is at or
+        after the given millisecond epoch timestamp, so callers can query only
+        problems seen in a recent window. Omit (or pass None) for the all-time
+        default query."""
         issue_cols = ", issue_number, issue_state" if include_issue else ""
         sql = (
             "SELECT fingerprint, category, kind, summary, sample_message, count, "
@@ -241,9 +247,15 @@ class ProblemsMixin:
             f"last_goal_id, last_task_id{issue_cols} FROM problems"
         )
         args: list[object] = []
+        conditions: list[str] = []
         if category:
-            sql += " WHERE category = ?"
+            conditions.append("category = ?")
             args.append(category)
+        if since_ms is not None:
+            conditions.append("last_seen_ms >= ?")
+            args.append(since_ms)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY count DESC, last_seen_ms DESC LIMIT ?"
         args.append(limit)
         with self._lock:
