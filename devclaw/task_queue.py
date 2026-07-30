@@ -65,6 +65,7 @@ from .state_store import Program, StateStore, Task, TaskKind, _now_ms
 # here because tests import them from ``task_queue`` and patch ``_wip_snapshot_sync``
 # on this namespace; the async wrappers below look them up as module globals.
 from .task_git import (  # noqa: F401
+    BRANCH_STALE_THRESHOLD,
     _base_branch_error_sync,
     _git_commit_exists_sync,
     _git_diff_sync,
@@ -128,13 +129,9 @@ _REVIEW_CRASH_MARKER = "review gate crashed (failing closed):"
 #: re-dispatch loop. It is NEVER treated as an approval (never settles ``done``);
 #: the reason rides the failure so the goal layer surfaces it to the owner.
 _WORKER_BLOCKED_MARKER = "worker reported BLOCKED:"
-#: How many commits behind origin/<base_branch> a work branch must be (with 0
-#: commits of its own) before the task is refused at prep time as stale.  A
-#: branch that is 0 ahead / N behind where N < threshold is young and not yet
-#: problematic; 0 ahead / N behind where N >= threshold means the branch was
-#: likely created off a very old base and any PR it produces will have massive
-#: conflict surface — fail it closed early with an actionable message.
-BRANCH_STALE_THRESHOLD = int(os.environ.get("DEVCLAW_BRANCH_STALE_THRESHOLD", "50"))
+#: ``BRANCH_STALE_THRESHOLD`` is defined next to the staleness probe in
+#: :mod:`devclaw.task_git` (imported above) so the prep-time refuse guard and the
+#: tick-path dispatch skip share ONE predicate; re-exported here for callers/tests.
 #: Browser-E2E gate (2026-07-17): after verify + integrity + review pass, a change
 #: that touched a web-UI path must have been exercised in a REAL browser (a passing
 #: Playwright run, proven via the runner's `browser_report` counts) before it ships

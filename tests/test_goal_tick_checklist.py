@@ -934,10 +934,13 @@ async def test_dispatch_without_failures_is_byte_identical(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_skipped_when_branch_has_zero_commits_ahead(tmp_path, monkeypatch):
-    """When the goal branch has 0 commits ahead of the default branch, dispatch
-    is skipped and SLEPT is returned — the goal stays in idle so the next tick
-    re-plans rather than launching a worker onto an empty branch."""
+async def test_dispatch_proceeds_when_branch_is_fresh_zero_ahead_zero_behind(tmp_path, monkeypatch):
+    """THE LIVELOCK REGRESSION (#439 invariant-guard finding): a brand-new goal
+    branch (first item) — and a post-merge re-seeded branch — is 0 ahead / 0
+    behind the default. The staleness skip must NOT fire on ``commits_ahead == 0``
+    alone, or the goal's first item never dispatches → nothing ever lands → the
+    branch stays 0-ahead forever (dead on arrival). A 0/0 branch is FRESH: it
+    dispatches normally."""
     from devclaw.goal import tick_dispatch
 
     store = _store(tmp_path)
@@ -945,10 +948,71 @@ async def test_dispatch_skipped_when_branch_has_zero_commits_ahead(tmp_path, mon
     store.write_checklist("g", _example_checklist())
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    async def _staleness_zero_ahead(workspace_dir, goal_id):
+    async def _staleness_fresh(workspace_dir, goal_id):
+        return {"commits_behind": 0, "commits_ahead": 0}
+
+    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_fresh)
+
+    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
+    engine = FakeEngine()
+
+    out = await tick_goal(
+        "g", store=store, engine=engine,
+        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
+    )
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1  # first item dispatched, no livelock
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_when_branch_is_young_below_stale_threshold(tmp_path, monkeypatch):
+    """A branch 0 ahead but only a FEW commits behind (< threshold) is young, not
+    stale — it dispatches. (The pre-fix code wrongly SLEPT here, treating any
+    0-ahead branch as 'nothing to do'.)"""
+    from devclaw.goal import tick_dispatch
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.write_checklist("g", _example_checklist())
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+
+    async def _staleness_young(workspace_dir, goal_id):
         return {"commits_behind": 3, "commits_ahead": 0}
 
-    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_zero_ahead)
+    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_young)
+
+    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
+    engine = FakeEngine()
+
+    out = await tick_goal(
+        "g", store=store, engine=engine,
+        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
+    )
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skipped_when_branch_is_hard_stale(tmp_path, monkeypatch):
+    """Only a HARD-STALE branch — 0 ahead AND >= BRANCH_STALE_THRESHOLD behind —
+    is skipped (SLEPT), mirroring the prep-time refuse guard. This is the genuine
+    'created off a very old base, a PR here is massive-conflict' case."""
+    from devclaw.goal import tick_dispatch
+    from devclaw.task_git import BRANCH_STALE_THRESHOLD
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.write_checklist("g", _example_checklist())
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+
+    async def _staleness_hard_stale(workspace_dir, goal_id):
+        return {"commits_behind": BRANCH_STALE_THRESHOLD, "commits_ahead": 0}
+
+    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_hard_stale)
 
     planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
@@ -963,7 +1027,7 @@ async def test_dispatch_skipped_when_branch_has_zero_commits_ahead(tmp_path, mon
     assert engine.dispatched == []  # engine was never called
     store.render_mirrors("g")
     log = (tmp_path / "g" / "log.md").read_text()
-    assert "nothing to do on this branch" in log
+    assert "hard-stale" in log
 
 
 @pytest.mark.asyncio

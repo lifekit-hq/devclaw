@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 
+from ..task_git import BRANCH_STALE_THRESHOLD
 from ..task_git import branch_staleness_sync as _branch_staleness_sync
 from ..task_git import _default_branch_sync
 from .tick_context import (
@@ -197,18 +198,29 @@ async def _dispatch_action(
         return await _block_on_prep_failure(
             goal_id, base, exc, store=store, notifier=notifier, summarize=summarize,
         )
-    # Staleness probe (goal-branch mode only): if the goal branch has 0 commits
-    # ahead of the default branch there is nothing for a new worker to build on
-    # — skip dispatch rather than launch an engine task that would re-attempt
-    # work that either already landed or was never pushed. Best-effort: a probe
-    # hiccup (None) lets dispatch proceed unchanged.
+    # Staleness probe (goal-branch mode only): skip dispatch only when the goal
+    # branch is HARD-STALE — 0 commits ahead of the default branch AND at least
+    # BRANCH_STALE_THRESHOLD commits behind it (created off a very old base, so a
+    # fresh worker would build a massive-conflict PR on top of already-moved-on
+    # main). This mirrors the prep-time refuse guard in task_queue's
+    # ``_prep_branch_target`` — the SAME predicate. It must NOT skip on
+    # ``commits_ahead == 0`` alone: a brand-new goal branch (first item) and a
+    # post-merge re-seeded branch are BOTH 0 ahead / 0 behind, and skipping those
+    # livelocks the goal (the first item never dispatches, so nothing ever lands,
+    # so the branch stays 0-ahead forever — invariant-guard finding on #439).
+    # Best-effort: a probe hiccup (None) lets dispatch proceed unchanged.
     if branch_for_dispatch is not None:
         staleness = await _branch_staleness(goal.workspace_dir, goal_id)
-        if staleness is not None and staleness["commits_ahead"] == 0:
+        if (
+            staleness is not None
+            and staleness["commits_ahead"] == 0
+            and staleness["commits_behind"] >= BRANCH_STALE_THRESHOLD
+        ):
             store.append_log(
                 goal_id,
-                f"staleness: {branch_for_dispatch} has 0 commits ahead of default"
-                " — nothing to do on this branch; skipping dispatch",
+                f"staleness: {branch_for_dispatch} is hard-stale — 0 commits ahead"
+                f" of default but {staleness['commits_behind']} behind"
+                f" (threshold {BRANCH_STALE_THRESHOLD}); skipping dispatch",
             )
             return Outcome.SLEPT
     # Atomic dispatch (PR7): task/program row creation + the DISPATCH

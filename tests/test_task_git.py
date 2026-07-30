@@ -117,3 +117,43 @@ def test_branch_staleness_sync_nonnumeric_stdout_returns_none(monkeypatch):
         _FakeSubprocess([(0, "not-a-number\n"), (0, "1\n")]),
     )
     assert task_git.branch_staleness_sync("/repo", "main") is None
+
+
+# ---------------------------------------------------------------------------
+# One REAL-git test (no stub): the fresh-goal-branch fact the #439 livelock
+# hinged on — a brand-new goal branch sitting at origin's default tip really
+# does read 0 ahead / 0 behind, so the dispatch predicate must proceed on it
+# (skip only on 0-ahead AND >= threshold-behind), never on 0-ahead alone.
+# ---------------------------------------------------------------------------
+
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), *args], check=True,
+                   capture_output=True, text=True)
+
+
+def test_branch_staleness_sync_fresh_goal_branch_reads_zero_zero(tmp_path):
+    """A goal branch created at origin/main's tip (the first-item / re-seeded
+    case) reads 0 ahead / 0 behind against the REAL probe — proving the stubbed
+    dispatch tests match production and the livelock predicate is sound."""
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(origin)],
+                   check=True, capture_output=True, text=True)
+    seed = tmp_path / "seed"
+    subprocess.run(["git", "clone", "-q", str(origin), str(seed)],
+                   check=True, capture_output=True, text=True)
+    _git(seed, "config", "user.email", "t@t")
+    _git(seed, "config", "user.name", "t")
+    (seed / "f.txt").write_text("base\n")
+    _git(seed, "add", "f.txt")
+    _git(seed, "commit", "-q", "-m", "base")
+    _git(seed, "push", "-q", "origin", "main")
+
+    # A worker workspace: clone origin, branch goal/g AT the default tip (exactly
+    # what workspace.prepare does for a fresh first item — 0 ahead / 0 behind).
+    ws = tmp_path / "ws"
+    subprocess.run(["git", "clone", "-q", str(origin), str(ws)],
+                   check=True, capture_output=True, text=True)
+    _git(ws, "checkout", "-q", "-b", "goal/g")
+
+    result = task_git.branch_staleness_sync(str(ws), "main")
+    assert result == {"commits_behind": 0, "commits_ahead": 0}

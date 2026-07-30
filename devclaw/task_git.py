@@ -259,6 +259,20 @@ def _base_branch_error_sync(host_dir: str, base_branch: str) -> str | None:
     return None
 
 
+#: How many commits behind ``origin/<base_branch>`` a work branch must be (with 0
+#: commits of its own) before it is treated as hard-stale.  A branch that is 0
+#: ahead / N behind where N < threshold is young and not yet problematic — a fresh
+#: or recently re-seeded branch ready to build on (a brand-new goal branch is
+#: exactly 0 ahead / 0 behind).  0 ahead / N behind where N >= threshold means the
+#: branch was likely created off a very old base and any PR it produces will have
+#: massive conflict surface.  Both the prep-time refuse guard
+#: (task_queue's ``_prep_branch_target``) and the tick-path dispatch skip (goal's
+#: ``tick_dispatch``) key off this SAME predicate — never on ``commits_ahead == 0``
+#: alone, which would strand every fresh 0/0 branch (livelock: a goal's first item
+#: never dispatches, so nothing lands, so it stays 0-ahead forever).
+BRANCH_STALE_THRESHOLD = int(os.environ.get("DEVCLAW_BRANCH_STALE_THRESHOLD", "50"))
+
+
 def branch_staleness_sync(host_dir: str, base_branch: str) -> dict | None:
     """How far HEAD has drifted from ``origin/<base_branch>``.
 
