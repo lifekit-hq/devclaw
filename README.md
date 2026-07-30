@@ -67,7 +67,7 @@ Same pattern as `AGENTS.md`: universal devclaw doctrine + per-repo project facts
 
 The universal layer is itself split by **nature**, not by kind:
 
-- **Doctrine — always-on.** `_common.md`, the `_writes-code/*` tier (quality bar, verify-gate coverage, verify-iterate, commit hygiene), and each `<kind>/*` tier. The runner concatenates these into the brief every task whether or not the agent thinks they apply — they're non-negotiable.
+- **Doctrine — always-on.** `_common.md`, the `_writes-code/*` tier (quality bar, verify-gate coverage, verify-iterate, repo-gate conflict, commit hygiene), and each `<kind>/*` tier. The runner concatenates these into the brief every task whether or not the agent thinks they apply — they're non-negotiable.
 - **Craft — self-selected.** How-to references in `openhands-runner/skills/craft/` (e.g. `frontend-design`, `playwright`) baked to `/opt/devclaw/skills/craft/`. These are **not** concatenated; `_common` points the agent at the dir and it `ls`/`cat`s only the guides a task calls for (progressive disclosure). Same discovery mechanism as per-repo `.agent/skills/` — no tagging or conditional-loading logic, plain `ls` + read.
 
 #### Model-agnostic invariants
