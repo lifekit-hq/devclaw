@@ -259,6 +259,84 @@ def _base_branch_error_sync(host_dir: str, base_branch: str) -> str | None:
     return None
 
 
+#: How many commits behind ``origin/<base_branch>`` a work branch must be (with 0
+#: commits of its own) before it is treated as hard-stale.  A branch that is 0
+#: ahead / N behind where N < threshold is young and not yet problematic — a fresh
+#: or recently re-seeded branch ready to build on (a brand-new goal branch is
+#: exactly 0 ahead / 0 behind).  0 ahead / N behind where N >= threshold means the
+#: branch was likely created off a very old base and any PR it produces will have
+#: massive conflict surface.  Both the prep-time refuse guard
+#: (task_queue's ``_prep_branch_target``) and the tick-path dispatch skip (goal's
+#: ``tick_dispatch``) key off this SAME predicate — never on ``commits_ahead == 0``
+#: alone, which would strand every fresh 0/0 branch (livelock: a goal's first item
+#: never dispatches, so nothing lands, so it stays 0-ahead forever).
+BRANCH_STALE_THRESHOLD = int(os.environ.get("DEVCLAW_BRANCH_STALE_THRESHOLD", "50"))
+
+
+def branch_staleness_sync(host_dir: str, base_branch: str) -> dict | None:
+    """How far HEAD has drifted from ``origin/<base_branch>``.
+
+    Returns ``{"commits_behind": int, "commits_ahead": int}`` when both
+    rev-list counts succeed, or ``None`` on any failure (not a repo, git
+    missing, timeout, non-integer output, non-zero exit). Strictly
+    best-effort — callers degrade to "proceed unchanged" on ``None``.
+
+    Assumes the caller already fetched ``origin`` and that
+    ``origin/<base_branch>`` resolves; this is NOT the fetch primitive
+    (use :func:`_base_branch_error_sync` for that validation step).
+
+    Blocking subprocess.run — same child-watcher rationale as
+    :func:`_git_diff_sync`. Never raises."""
+    def run(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", "-C", host_dir, *args],
+            capture_output=True, text=True, timeout=30,
+        )
+
+    try:
+        behind = run("rev-list", "--count", f"HEAD..origin/{base_branch}")
+        ahead = run("rev-list", "--count", f"origin/{base_branch}..HEAD")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if behind.returncode != 0 or ahead.returncode != 0:
+        return None
+    try:
+        return {
+            "commits_behind": int(behind.stdout.strip()),
+            "commits_ahead": int(ahead.stdout.strip()),
+        }
+    except ValueError:
+        return None
+
+
+def _default_branch_sync(host_dir: str) -> str:
+    """The remote's default branch name (sync variant). Falls back main\u2192master.
+
+    Used by the staleness probe in the dispatch path after ``prepare_ws`` has
+    already fetched origin (so ``refs/remotes/origin/HEAD`` is cached). Never
+    raises \u2014 falls back to ``'main'``."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", host_dir, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode == 0 and "/" in r.stdout:
+            return r.stdout.strip().rsplit("/", 1)[-1]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for cand in ("main", "master"):
+        try:
+            r = subprocess.run(
+                ["git", "-C", host_dir, "rev-parse", "--verify", "--quiet", f"origin/{cand}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                return cand
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return "main"
+
+
 def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
     """Commit the interrupted attempt's uncommitted work as a WIP snapshot
     before a usage-limit requeue. The workspace survives the requeue untouched
