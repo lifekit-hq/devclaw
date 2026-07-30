@@ -19,22 +19,22 @@ the cognitive half is the movable part).
 ### A1. Adversarial review gate + degradation ladder — **H (cognitive core)** — *locked shed-candidate #1*
 - `devclaw/quality/__init__.py` — `review_diff`, `review_gate` (single reviewer wrapped in the degradation ladder); wired in `task_queue._review_failure`, enable check `_review_gate_enabled`.
 - What: after verify+integrity pass, a Claude pass reads the diff vs the ticket and returns approve/request_changes; `request_changes` re-enters the retry loop.
-- Cost: **1 Claude call per successful code task** (per-file fan-out on the degrade ladder can burst up to `DEVCLAW_REVIEW_DEGRADE_MAX_FILES`=40 calls). Heavy misfire history: #210 (timeout→fail-closed→burned retries), #224 (generated-diff crash), #227 (reviewed wrong repo), #245 (quota sub-quorum misread as defect), #281 (ladder). *The N≥2 diverse-lens panel (#254) was deleted 2026-07-28 (#409) — measured dead at N=1 for weeks.*
+- Cost: **1 Claude call per successful code task** (per-file fan-out on the degrade ladder can burst up to `_DEGRADE_MAX_FILES_DEFAULT`=40 calls). Heavy misfire history: #210 (timeout→fail-closed→burned retries), #224 (generated-diff crash), #227 (reviewed wrong repo), #245 (quota sub-quorum misread as defect), #281 (ladder). *The N≥2 diverse-lens panel (#254) was deleted 2026-07-28 (#409) — measured dead at N=1 for weeks.*
 - Structural part (never-shed): the fail-closed contract — unparseable/crash RAISES, never approves. Cognitive part (shed): the review judgment itself, the `filter_reviewable_diff` generated-file heuristic.
-- A/B: per-project `review_gate` registry override turns it fully off; `DEVCLAW_REVIEW_DEGRADE*`. Gap: no single env kills the base gate — a `DEVCLAW_REVIEW_GATE` env would complete the seam.
+- A/B: per-project `review_gate` registry override turns it fully off; the degrade ladder is toggled by the `_DEGRADE_ENABLED` / `_DEGRADE_MAX_FILES_DEFAULT` constants (formerly `DEVCLAW_REVIEW_DEGRADE*`, inlined #410 — never set off-default). Gap: no single env kills the base gate — a `DEVCLAW_REVIEW_GATE` env would complete the seam.
 
 ### A2. Browser-E2E gate — **H**
 - `devclaw/quality/browser_gate.py` (~277 LOC); wired `task_queue._browser_gate_failure`, `_browser_gate_mode`.
 - What: a diff touching web-UI path globs must carry a passing Playwright `browser_report` (executed>0, 0 failed) or it fails closed and retries.
 - Cost: zero LLM (pure verdict fold). History: #264 birth, #278 library-only false-positive scoping, the cmn-tab-group 14h wedge.
 - Structural part: "UI must be exercised before it ships" fail-closed contract. Cognitive/movable: the hardcoded `DEFAULT_FRONTEND_GLOBS`/`DEFAULT_LIBRARY_GLOBS` path heuristics + flexible/strict decision — brittle glob taste a model could judge.
-- A/B: already — `DEVCLAW_GOAL_BROWSER_GATE=0`, `DEVCLAW_GOAL_BROWSER_GATE_MODE`.
+- A/B: `DEVCLAW_GOAL_BROWSER_GATE=0` kills the gate (env kill-switch); the flexible/strict stance is the per-project `browser_gate_mode` registry override over the `BROWSER_GATE_MODE` fleet default (formerly `DEVCLAW_GOAL_BROWSER_GATE_MODE`, inlined #410).
 
 ### A3. Browser-gate reachability judge — **C**
 - `devclaw/quality/reachability.py` (~116 LOC); wired `task_queue._browser_reachability_clears`.
 - What: a cognition call that can reason away A2's false positive (changed UI not rendered in the running app) — only runs on a proven `reachable=="no"` would-block path.
 - Cost: 1 Claude call, rare (zero-token on all other paths). A guardrail compensating for another guardrail's bluntness. Strictly safe to drop (can only relax a block).
-- A/B: already — `DEVCLAW_GOAL_BROWSER_REACHABILITY=0` (moot when A2 off).
+- A/B: always on — the strictly-safe (relax-only) valve was inlined from `DEVCLAW_GOAL_BROWSER_REACHABILITY` to `BROWSER_REACHABILITY_ENABLED=True` (#410); flip the constant to A/B it. Moot when A2 off.
 
 ### A4. eval_judge — out of scope (this IS the instrument)
 - `devclaw/quality/eval_judge.py` (~155 LOC). Offline scoring, not a runtime guardrail. ADR step 3 upgrades it. List, don't shed.
@@ -135,14 +135,14 @@ this list only orders the experiments, it authorizes nothing.**
 
 | # | Candidate | Off-switch (A/B seam) | Cost saved | Instrument |
 |---|---|---|---|---|
-| **1** | **Adversarial review gate** (A1) — *locked* | registry `review_gate`, `DEVCLAW_REVIEW_DEGRADE*` (gap: no base-gate env) | 1 Claude call per successful code task — biggest steady-state gate-layer burn | `measure_passrate` |
+| **1** | **Adversarial review gate** (A1) — *locked* | registry `review_gate`; `_DEGRADE_ENABLED` constant (gap: no base-gate env) | 1 Claude call per successful code task — biggest steady-state gate-layer burn | `measure_passrate` |
 | 2 | Retry loop + attempt-history scaffolding (C1) | `DEVCLAW_MAX_RETRIES=0` | Highest per-run cost (full re-run + gate stack per retry); trivial on/off | `measure_passrate` |
 | 3 | Investigate/world-research stack (B4) | `DEVCLAW_GOAL_INVESTIGATE=0` | 1 dispatch + 1–2 calls per goal | `sandbox_e2e` / `dry_world_research` |
 | 4 | Decomposer up-front checklist (B3) | `DEVCLAW_GOAL_DECOMPOSE=0` | 1 deep-tier call per goal | `run_all` / `dry_decompose` |
 | 5 | Direction-evaluator periodic cadence (B2, cognitive half) | `DEVCLAW_GOAL_EVAL_EVERY=0` (done-gate stays) | 1 call / N deliveries | goal-layer `run_all` |
 | 6 | Done-gate review-brief prose (B1, cognitive half only) | `DEVCLAW_GOAL_VERIFY_DONE` (contract stays via evaluator) | 1 sandbox dispatch + eval per done-proposal; shrink the 95-line rubric | `sandbox_e2e` |
 | 7 | Worker prompt scaffolding / skills / return-contract (D1) | empty `DEVCLAW_SKILLS_DIR` (no clean flag) | Per-task token bloat | `measure_passrate` |
-| 8 | Browser-gate reachability judge (A3) | `DEVCLAW_GOAL_BROWSER_REACHABILITY=0` | 1 call, rare paths only | `measure_passrate` |
+| 8 | Browser-gate reachability judge (A3) | `BROWSER_REACHABILITY_ENABLED` constant | 1 call, rare paths only | `measure_passrate` |
 | 9 | Firming phase (B5) | `DEVCLAW_GOAL_FIRMING=0` (default off) | Low incremental | `sandbox_e2e` |
 | 10 | Admission heuristics (B6) | no flag — needs one added | Zero LLM; code-shrink only | `run_all` |
 | 11 | Self-triage interceptor (B7) | `DEVCLAW_SELF_TRIAGE=0` | 1 call, very rare | telemetry only |

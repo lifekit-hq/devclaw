@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 from typing import Awaitable, Callable, Optional
 
@@ -327,38 +326,34 @@ def _dedup_issues(issues: list[dict]) -> list[dict]:
 #     timeout → the same crash-marker, no-agent-retry path (#186). Degradation
 #     NEVER manufactures a passing verdict.
 #
-# Opt-out via DEVCLAW_REVIEW_DEGRADE=0 (then a timeout re-raises immediately,
-# byte-identical to the pre-ladder gate). The per-file fan-out is bounded by
-# DEVCLAW_REVIEW_DEGRADE_MAX_FILES so a pathologically wide diff can't spray
+# Opt-out by flipping the _DEGRADE_ENABLED constant (then a timeout re-raises
+# immediately, byte-identical to the pre-ladder gate). The per-file fan-out is
+# bounded by _DEGRADE_MAX_FILES_DEFAULT so a pathologically wide diff can't spray
 # hundreds of model calls — over the cap it fails closed and a human splits it.
+# (Both were formerly env dials; inlined to PR-tuned constants in #410.)
 # ---------------------------------------------------------------------------
 
-#: Default per-file fan-out cap. A diff with more reviewable files than this is
-#: NOT degraded (the fan-out would be too large a burst); it fails closed and the
-#: owner splits the commit. Env-tunable via DEVCLAW_REVIEW_DEGRADE_MAX_FILES.
+#: Per-file fan-out cap. A diff with more reviewable files than this is NOT
+#: degraded (the fan-out would be too large a burst); it fails closed and the
+#: owner splits the commit. Tuned by PR (formerly DEVCLAW_REVIEW_DEGRADE_MAX_FILES,
+#: #410 — never set off-default in prod).
 _DEGRADE_MAX_FILES_DEFAULT = 40
+
+#: Whether the timeout degradation ladder runs. On by default; flip this constant
+#: (in a PR, or via monkeypatch in tests) to restore the pre-ladder behaviour
+#: exactly (a review timeout re-raises immediately). Formerly DEVCLAW_REVIEW_DEGRADE
+#: (#410 — never set off-default in prod).
+_DEGRADE_ENABLED = True
 
 
 def _degrade_enabled() -> bool:
-    """Whether the timeout degradation ladder runs. Default ON; an operator opts
-    out with ``DEVCLAW_REVIEW_DEGRADE=0`` (or false/no/off), which restores the
-    pre-ladder behaviour exactly (a review timeout re-raises immediately)."""
-    raw = os.environ.get("DEVCLAW_REVIEW_DEGRADE", "").strip().lower()
-    if not raw:
-        return True
-    return raw not in ("0", "false", "no", "off")
+    return _DEGRADE_ENABLED
 
 
 def _degrade_max_files() -> int:
-    """Per-file fan-out cap from ``DEVCLAW_REVIEW_DEGRADE_MAX_FILES``, clamped to
-    >=1. Unparseable / <1 → the default. Above the cap the ladder declines to
-    degrade and the diff fails closed."""
-    raw = os.environ.get("DEVCLAW_REVIEW_DEGRADE_MAX_FILES", "")
-    try:
-        v = int(str(raw).strip())
-    except (TypeError, ValueError):
-        return _DEGRADE_MAX_FILES_DEFAULT
-    return max(1, v)
+    """Per-file fan-out cap. Above it the ladder declines to degrade and the diff
+    fails closed."""
+    return _DEGRADE_MAX_FILES_DEFAULT
 
 
 #: Markers of an UNPARSEABLE-VERDICT review crash (the model returned no usable

@@ -270,7 +270,9 @@ def _base_branch_error_sync(host_dir: str, base_branch: str) -> str | None:
 #: ``tick_dispatch``) key off this SAME predicate — never on ``commits_ahead == 0``
 #: alone, which would strand every fresh 0/0 branch (livelock: a goal's first item
 #: never dispatches, so nothing lands, so it stays 0-ahead forever).
-BRANCH_STALE_THRESHOLD = int(os.environ.get("DEVCLAW_BRANCH_STALE_THRESHOLD", "50"))
+#: Tuned by PR, not env (formerly DEVCLAW_BRANCH_STALE_THRESHOLD, #410 — a
+#: breaker threshold never set off-default in prod).
+BRANCH_STALE_THRESHOLD = 50
 
 
 def branch_staleness_sync(host_dir: str, base_branch: str) -> dict | None:
