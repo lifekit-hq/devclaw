@@ -52,6 +52,9 @@ async def test_timeout_on_silent_hang_records_zero_bytes_and_no_first_byte(
     signature (an infra stall, NOT slow generation)."""
     fake = _fake_claude(tmp_path, "time.sleep(5)")
     monkeypatch.setattr(llm_call, "CLAUDE_BIN", str(fake))
+    # single-attempt: this pins the timeout DIAGNOSTIC, not the retry policy
+    # (transient retry-on-timeout is covered in tests/test_cognition_retry.py).
+    monkeypatch.setattr(llm_call, "COGNITION_MAX_RETRIES", 0)
 
     with pytest.raises(llm_call.PlannerError) as ei:
         await llm_call.call_claude("hello", role="review", timeout_ms=400)
@@ -78,6 +81,8 @@ async def test_timeout_after_partial_output_records_bytes_and_first_byte(
         "sys.stdout.write('partial'); sys.stdout.flush(); time.sleep(5)",
     )
     monkeypatch.setattr(llm_call, "CLAUDE_BIN", str(fake))
+    # single-attempt: pins the timeout DIAGNOSTIC, not retry (see the sibling test).
+    monkeypatch.setattr(llm_call, "COGNITION_MAX_RETRIES", 0)
 
     with pytest.raises(llm_call.PlannerError):
         await llm_call.call_claude("hello", role="review", timeout_ms=1000)
