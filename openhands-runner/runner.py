@@ -373,15 +373,14 @@ def _wrap_goal(kind: str, goal: str, workspace_dir: str | None = None) -> str:
     the repo also has no .agent/skills). Once the sandbox image ships skills,
     that fallback is dead path.
     """
-    skills = _load_skills(kind, workspace_dir=workspace_dir)
+    # Unknown kinds fall back to implement_feature for BOTH skill loading and
+    # the legacy template fallback — keeps the unknown-kind == implement_feature
+    # equivalence whether the skill dir is present or absent.
+    effective_kind = kind if kind in _KIND_WRAPPERS else "implement_feature"
+    skills = _load_skills(effective_kind, workspace_dir=workspace_dir)
     if skills:
         brief = f"{skills}\n\n---\n\n## Goal\n\n{goal}"
-        effective_kind = kind
     else:
-        # An unknown kind falls back to the implement_feature template — so it
-        # must also inherit implement_feature's return contract (keeps the
-        # unknown-kind == implement_feature equivalence the fallback promises).
-        effective_kind = kind if kind in _KIND_WRAPPERS else "implement_feature"
         brief = _KIND_WRAPPERS[effective_kind].format(goal=goal)
     # Structured return contract — code-writing kinds only. review_repository and
     # onboard already carry their own report contract (a written review / doc

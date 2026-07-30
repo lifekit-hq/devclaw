@@ -512,7 +512,7 @@ def _clone_with_origin(tmp_path):
     """The bare-origin + clone fixture the engineer-commit tests use, factored:
     a local bare origin, a configured clone, one 'base' commit pushed."""
     origin = str(tmp_path / "origin.git")
-    subprocess.run(["git", "init", "--bare", "-q", origin], check=True)
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", origin], check=True)
     repo = str(tmp_path / "repo")
     subprocess.run(["git", "clone", "-q", origin, repo], check=True)
     _git(repo, "config", "user.email", "t@t")

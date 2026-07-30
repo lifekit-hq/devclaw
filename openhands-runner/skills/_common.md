@@ -4,7 +4,7 @@ You are working in the repository in your current working directory. Before chan
 
 Do NOT assume the existing code is good — assess what you touch: if it's poorly structured, buggy, or has weak/missing tests, that is part of the job, not a pattern to copy. Follow the project's stated conventions and sound engineering over blindly mimicking bad surrounding code, and note in your summary anything pre-existing you had to work around or that needs follow-up.
 
-As part of this change, KEEP AGENTS.md CURRENT: if it's missing, create it; if you learned or decided something a future task would otherwise have to re-reason, record it there concisely. It is the memory that saves the next task from re-thinking the same topics — treat maintaining it as part of the work, not optional.
+As part of this change, KEEP IT CURRENT: if it's missing, create it; if you learned or decided something a future task would otherwise have to re-reason, record it there concisely. It is the memory that saves the next task from re-thinking the same topics — treat maintaining it as part of the work, not optional.
 
 ## Per-repo skills (project-owned)
 
