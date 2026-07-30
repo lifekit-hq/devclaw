@@ -36,6 +36,7 @@ import json
 import os
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
@@ -47,6 +48,7 @@ from .planner import PlannedTask, PlannerError, plan_program
 from .quality import format_feedback, review_gate
 from .quality.browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .quality.gate_policy import Consequence, gate_consequence
+from .quality.gate_pipeline import GateInput, GateVerdict, run_pipeline
 from .quality.reachability import judge_reachability
 from .engine.sandcastle import run_sandcastle, sandbox_owner_id, sweep_orphan_sandboxes
 # Module globals on purpose (like deliver_change) so tests patch them on THIS
@@ -359,6 +361,109 @@ def _browser_gate_failure(
         "before it ships — add or repair the Playwright spec that exercises this "
         "change in the running app, and make the verify gate run it."
     )
+
+
+# ── Gate objects (#407 PR3) ─────────────────────────────────────────────────
+# Thin, pure adapters that wrap the four existing gate functions/methods as
+# `Gate` verdict producers for `run_pipeline`. Each one only READS the run
+# artifacts (the runner verify dict + the shared diff) and returns a verdict —
+# no row mutation, no store writes: the single-writer TaskQueue keeps every
+# mark_*/requeue/set_global_pause. The wrapped functions are UNCHANGED, so the
+# verdicts are byte-identical to the inline ladder they replace.
+#
+# `applies()` is uniformly True here: today all four gates always participate,
+# self-skipping internally (a disabled/non-reviewable/scaffold/backend gate
+# returns None → a passing verdict, exactly as the inline ladder did). The
+# predicate is the real seam a future gate can use to opt out cheaply; the
+# STRICT ORDERING (review only after integrity, browser only after both) comes
+# from run_pipeline's short-circuit, not from applies().
+
+
+@dataclass
+class _VerifyGate:
+    """Always-hard (ADR 0007) verify_cmd gate: the runner's own verify sub-result.
+    Fails CLOSED on a ran-and-not-passed verify; never dial-able. Reads no diff,
+    so a verify failure short-circuits the pipeline before any ``git diff`` runs."""
+
+    gate_id: str = "verify"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        verify = gi.verify
+        if verify and verify.get("ran") and not verify.get("passed"):
+            return GateVerdict.failed(self.gate_id, _verify_failure_summary(verify))
+        return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
+class _IntegrityGate:
+    """Always-hard test-integrity scan over the shared diff. Fails CLOSED (the
+    dial never loosens it); never dial-able. First consumer of the shared diff."""
+
+    gate_id: str = "test_integrity"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        failure = _integrity_failure(diff, gi.workspace_dir)
+        if failure is not None:
+            return GateVerdict.failed(self.gate_id, failure)
+        return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
+class _ReviewGate:
+    """Adversarial pre-PR review over the shared diff (runs only after integrity
+    passed, via the short-circuit). Dial-able (ADR 0007): a surviving finding can
+    advise-and-ship under `trust`. A review CRASH also surfaces here as a non-ok
+    verdict — the queue's fast-fail marker routing (Axis 3) handles it downstream,
+    unchanged."""
+
+    queue: "TaskQueue"
+    gate_id: str = "review"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        failure = await self.queue._review_failure(
+            gi.kind, gi.goal, diff, gi.workspace_dir, scaffold=gi.scaffold
+        )
+        if failure is not None:
+            return GateVerdict.failed(self.gate_id, failure, dialable=True)
+        return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
+class _BrowserGate:
+    """Browser-E2E gate over the shared diff (runs only after integrity + review
+    passed). The reasoned reachability escape valve stays INSIDE this gate: a
+    would-be block is cleared ONLY when the independent grounded judge affirms the
+    changed UI is not rendered in the running app. Dial-able (ADR 0007)."""
+
+    queue: "TaskQueue"
+    gate_id: str = "browser"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        failure = _browser_gate_failure(
+            gi.verify, diff, gi.workspace_dir, mode=gi.browser_mode
+        )
+        if failure is not None and await self.queue._browser_reachability_clears(
+            gi.verify, diff, gi.workspace_dir
+        ):
+            failure = None
+        if failure is not None:
+            return GateVerdict.failed(self.gate_id, failure, dialable=True)
+        return GateVerdict.passed(self.gate_id)
 
 
 class TaskQueue(_NotifyMixin):
@@ -1471,85 +1576,67 @@ class TaskQueue(_NotifyMixin):
                         reason = (result.get("reason") or "").strip() or "no reason given"
                         last_failure = f"{_WORKER_BLOCKED_MARKER} {reason}"
                 else:
-                    # "done" means the verify gate passed, not that the agent said so.
-                    verify = result.get("verify")
-                    if verify and verify.get("ran") and not verify.get("passed"):
-                        last_failure = _verify_failure_summary(verify)
-                    else:
-                        # Gate passed — now the checks that READ the change. Compute
-                        # the diff once and share it between the test-integrity guard
-                        # and the adversarial review gate.
-                        # NB: git runs in THIS (host/server) process, so it needs the
-                        # workspace path as we see it — NOT the docker-bind host path.
-                        # `_translate_workspace_path` maps container→host for the
-                        # sandbox `-v` mount; using it here pointed git at a path that
-                        # doesn't exist in our mount namespace (`/srv/...`), so the
-                        # diff came back empty and BOTH guards silently no-op'd in
-                        # the deployed container. Use workspace_dir directly.
-                        diff = await _git_diff(workspace_dir, pre_run_sha)
-                        integrity = _integrity_failure(diff, workspace_dir)
-                        review_fb = (
-                            None if integrity is not None
-                            else await self._review_failure(
-                                kind, goal, diff, workspace_dir, scaffold=scaffold,
-                            )
-                        )
-                        # Browser-E2E gate: a change that touched a web-UI path must
-                        # carry a passing real-browser run (verify's browser_report),
-                        # else it fails CLOSED and retries — closing the "green unit
-                        # tests + static review, broken in the running app" hole.
-                        # Only when integrity + review already passed (short-circuit).
-                        browser_fb = (
-                            None if (integrity is not None or review_fb is not None)
-                            else _browser_gate_failure(
-                                verify, diff, workspace_dir,
-                                mode=self._browser_gate_mode(workspace_dir),
-                            )
-                        )
-                        # Reasoned escape valve: the mechanical gate fires on ANY
-                        # frontend file, which false-positives on a UI change not
-                        # rendered in the running app (a library component no route
-                        # imports yet). Before blocking, an INDEPENDENT grounded
-                        # judge may clear it — but ONLY on an affirmative, proven
-                        # "not reachable". Uncertain / crash / reachable → block
-                        # stands (fail closed). Runs only on the would-block path.
-                        if browser_fb is not None and await self._browser_reachability_clears(
-                            verify, diff, workspace_dir
-                        ):
-                            browser_fb = None
-                        if integrity is not None:
-                            # gate passed but the change weakened the tests — treat as
-                            # a gate failure so it retries with the tampering fed back.
-                            # Always-hard (ADR 0007): the dial never loosens this.
-                            last_failure = integrity
-                        elif review_fb is not None:
-                            # gate + tests fine, but review found a real defect — feed
-                            # the issues back through the SAME retry loop as a gate fail.
-                            last_failure = review_fb
-                            # ADR 0007: remember this was a DIAL-ABLE gate finding, so
-                            # if it survives every retry the exhaustion path can
-                            # advise-and-ship under `trust` (crash/quota variants
-                            # return earlier and never reach exhaustion).
-                            dialable_finding = ("review", review_fb)
-                        elif browser_fb is not None:
-                            # gate + tests + review fine, but a UI change was never
-                            # exercised in a browser — feed back so the agent adds the
-                            # E2E spec and runs it (fail closed, same retry loop).
-                            last_failure = browser_fb
-                            dialable_finding = ("browser", browser_fb)
-                        elif defer_done:
-                            # caller delivers, then settles 'done' WITH pr_url atomically
-                            _attach_diff_stats(result, diff)
-                            return result
-                        else:
-                            _attach_diff_stats(result, diff)
-                            self._store.mark_done(task_id, json.dumps(result))
-                            return None
-                        if dialable_finding is not None:
-                            # capture the last dial-able attempt's result+diff for a
-                            # possible trust-mode advise-and-ship at exhaustion below.
+                    # "done" means the verify gate passed, not that the agent said
+                    # so — then the checks that READ the change. Axis 1 (the gate
+                    # verdict) runs as an ORDERED, short-circuit PIPELINE over ONE
+                    # shared diff: verify → test_integrity → review → browser.
+                    # run_pipeline stops at the FIRST non-ok verdict, and that
+                    # short-circuit IS the strict ordering the cascade always had —
+                    # review runs only if integrity passed, browser only if both
+                    # passed. The diff is computed lazily inside GateInput and
+                    # memoised, so it is computed AT MOST ONCE and only when a
+                    # diff-reading gate runs — the verify gate never asks for it, so
+                    # a verify failure still short-circuits before any git diff runs.
+                    #
+                    # NB: git runs in THIS (host/server) process, so the diff needs
+                    # the workspace path as we see it — NOT the docker-bind host path
+                    # (`_translate_workspace_path` maps container→host for the
+                    # sandbox `-v` mount; using it here pointed git at `/srv/...`,
+                    # which doesn't exist in our mount namespace, so the diff came
+                    # back empty and BOTH read-the-change guards silently no-op'd in
+                    # the deployed container). Use workspace_dir directly.
+                    gate_input = GateInput(
+                        kind=kind,
+                        goal=goal,
+                        workspace_dir=workspace_dir,
+                        verify=result.get("verify"),
+                        scaffold=scaffold,
+                        browser_mode=self._browser_gate_mode(workspace_dir),
+                        diff_fn=lambda: _git_diff(workspace_dir, pre_run_sha),
+                    )
+                    verdict = await run_pipeline(
+                        gate_input,
+                        (
+                            _VerifyGate(),
+                            _IntegrityGate(),
+                            _ReviewGate(self),
+                            _BrowserGate(self),
+                        ),
+                    )
+                    if verdict is not None:
+                        # The first failing gate — feed its reason back through the
+                        # SAME retry loop as a gate fail. For a DIAL-ABLE gate (review
+                        # / browser) also remember the finding + this attempt's
+                        # result/diff so, if it survives every retry, the exhaustion
+                        # path can advise-and-ship under `trust` (crash/quota variants
+                        # return earlier via the marker/classify routing below and
+                        # never reach exhaustion). The always-hard gates (verify /
+                        # test_integrity) never set dialable, so the dial can never
+                        # loosen them.
+                        last_failure = verdict.reason
+                        if verdict.dialable:
+                            dialable_finding = (verdict.gate_id, verdict.reason)
                             last_gate_result = result
-                            last_gate_diff = diff
+                            last_gate_diff = await gate_input.diff()
+                    elif defer_done:
+                        # every gate passed — caller delivers, then settles 'done'
+                        # WITH pr_url atomically (see _execute).
+                        _attach_diff_stats(result, await gate_input.diff())
+                        return result
+                    else:
+                        _attach_diff_stats(result, await gate_input.diff())
+                        self._store.mark_done(task_id, json.dumps(result))
+                        return None
             # Worker honest-block: the engineer self-reported it cannot finish
             # (missing capability, contradictory/impossible instructions). Fail
             # FAST + CLOSED (never ship, never settle `done` — invariant #186) and
