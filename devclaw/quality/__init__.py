@@ -370,12 +370,24 @@ _REVIEW_UNPARSEABLE_MARKERS = (
     "must be a json object",
 )
 
+#: A ``claude --print`` process KILLED BY A SIGNAL surfaces as a negative exit
+#: code (``exited -9`` = SIGKILL, ``-15`` = SIGTERM) in the PlannerError message
+#: (``llm_call.py``: ``f"claude --print exited {proc.returncode}. …"``). A signal
+#: death is the process being torn down mid-call — OOM / watchdog kill on a diff
+#: too big to hold — i.e. the SAME oversized-input family as a timeout, NOT a
+#: clean nonzero exit. A quota/rate/auth crash always comes back as a *clean*
+#: nonzero exit carrying the usage wording, never a signal, so this never
+#: swallows a pausing failure.
+_KILLED_BY_SIGNAL_RE = re.compile(r"claude --print exited -\d+")
+
 
 def _is_degradable(err: Exception) -> bool:
     """True iff ``err`` is a review failure worth retrying by per-file split (#381).
 
-    Two triggers now, not one:
-    - a **TIMEOUT** (the original symptom), or
+    Three triggers now:
+    - a **TIMEOUT** (the original symptom),
+    - a **SIGNAL DEATH** (``exited -9``/``-15`` — the process killed mid-call, the
+      same oversized-input family as a timeout), or
     - an **unparseable-verdict crash** (no-JSON / parse-failed) that is NOT
       quota/rate/auth-shaped.
 
@@ -388,11 +400,14 @@ def _is_degradable(err: Exception) -> bool:
 
     A quota/rate/auth-shaped non-JSON is deliberately EXCLUDED — it must re-raise
     unchanged so the queue's pause-and-resume classifier sees it, instead of the
-    ladder spraying per-file calls into a live usage cap. (A timeout is never
-    quota-shaped, so this guard only matters for the new unparseable trigger.)"""
+    ladder spraying per-file calls into a live usage cap. (A timeout and a signal
+    death are never quota-shaped — quota is a clean nonzero exit with wording — so
+    this guard only matters for the unparseable trigger.)"""
     if not isinstance(err, PlannerError):
         return False
     if "timed out" in str(err).lower():
+        return True
+    if _KILLED_BY_SIGNAL_RE.search(str(err)):
         return True
     if not any(m in str(err).lower() for m in _REVIEW_UNPARSEABLE_MARKERS):
         return False
