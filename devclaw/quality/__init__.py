@@ -23,6 +23,7 @@ import re
 from typing import Awaitable, Callable, Optional
 
 from ..llm_call import PlannerError, claude_with_model, extract_json
+from ..loom.limits import SIGNAL_DEATH_PATTERN
 
 #: Adversarial code review is judgment-heavy — Sonnet is the right tier (matches
 #: the scope grill; heavier than the Haiku classification judge, lighter than the
@@ -373,7 +374,10 @@ _REVIEW_UNPARSEABLE_MARKERS = (
 #: clean nonzero exit. A quota/rate/auth crash always comes back as a *clean*
 #: nonzero exit carrying the usage wording, never a signal, so this never
 #: swallows a pausing failure.
-_KILLED_BY_SIGNAL_RE = re.compile(r"claude --print exited -\d+")
+#: The pattern is the single source of truth in :data:`devclaw.loom.limits.SIGNAL_DEATH_PATTERN`
+#: (the shared classifier now folds the same thing into TRANSIENT); import it so
+#: the gate's detector and the classifier can't drift.
+_KILLED_BY_SIGNAL_RE = re.compile(SIGNAL_DEATH_PATTERN)
 
 
 def _is_degradable(err: Exception) -> bool:

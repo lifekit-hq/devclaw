@@ -44,6 +44,12 @@ from devclaw.limits import (
     ("503 Service Unavailable", FailureKind.TRANSIENT),
     ("ECONNRESET: connection reset by peer", FailureKind.TRANSIENT),
     ("the request timed out after 90s", FailureKind.TRANSIENT),
+    # SIGNAL DEATH (#444 insight promoted from the review gate): a negative exit
+    # code = the cognition subprocess KILLED mid-call (kernel OOM / watchdog under
+    # host memory pressure), the same transient family as a timeout → retryable.
+    ("claude --print exited -9. stderr:  stdout: ", FailureKind.TRANSIENT),
+    ("claude --print exited -15. stderr: ", FailureKind.TRANSIENT),
+    ("review gate crashed (failing closed): PlannerError: claude --print exited -9. stderr:", FailureKind.TRANSIENT),
     # --- AUTH (broken login → pause + actionable ping, fixed re-probe) ---
     ("ACP error: Internal error: Failed to authenticate. API Error: 401 Invalid authentication credentials", FailureKind.AUTH),
     # the two REAL wordings from the 2026-07-20 unattended-night incident —
@@ -55,11 +61,32 @@ from devclaw.limits import (
     ("AssertionError: expected 200 got 401", FailureKind.REAL),
     ("ModuleNotFoundError: No module named 'fastapi'", FailureKind.REAL),
     ("AssertionError: expected 200 got 500", FailureKind.REAL),
+    # a CLEAN nonzero exit (positive) is a genuine failure, not a signal kill —
+    # it must stay REAL so the ``-\d+`` signal-death clause never widens to bugs:
+    ("claude --print exited 1. stderr: Traceback (most recent call last): ValueError", FailureKind.REAL),
     ("", FailureKind.REAL),
     (None, FailureKind.REAL),
 ])
 def test_classify(text, kind):
     assert classify_failure(text).kind is kind
+
+
+def test_signal_death_classifies_transient_not_terminal():
+    """#444 promoted: a ``claude --print`` killed by a signal (negative exit code,
+    e.g. -9 OOM-kill under host memory pressure) is the same transient family as a
+    timeout — retryable, NOT a terminal bug. Two guards must hold:
+    - a clean positive ``exited 1`` stays REAL (never widened into a retry);
+    - a signal death that ALSO carries usage/auth wording still PAUSES (the
+      pausing kinds are checked first), so a real quota cap is never swallowed
+      into a doomed retry loop."""
+    assert classify_failure("claude --print exited -9. stderr:").kind is FailureKind.TRANSIENT
+    assert classify_failure("claude --print exited -9").is_pausing is False
+    assert classify_failure("claude --print exited 1. stderr: boom").kind is FailureKind.REAL
+    # priority order protects the pausing kinds even if a signal-shaped string
+    # somehow co-occurs with usage wording (defense-in-depth; live crashes don't
+    # mix them — a quota crash is always a clean exit):
+    mixed = "claude --print exited -9. stdout: You've reached your usage limit"
+    assert classify_failure(mixed).kind is FailureKind.QUOTA
 
 
 def test_auth_beats_429_substring():
