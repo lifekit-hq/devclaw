@@ -72,6 +72,7 @@ from .task_git import (  # noqa: F401
     _git_reset_clean_sync,
     _review_repo_context_sync,
     _wip_snapshot_sync,
+    branch_staleness_sync as _branch_staleness_sync,
 )
 from .task_notify import _NotifyMixin
 
@@ -127,6 +128,13 @@ _REVIEW_CRASH_MARKER = "review gate crashed (failing closed):"
 #: re-dispatch loop. It is NEVER treated as an approval (never settles ``done``);
 #: the reason rides the failure so the goal layer surfaces it to the owner.
 _WORKER_BLOCKED_MARKER = "worker reported BLOCKED:"
+#: How many commits behind origin/<base_branch> a work branch must be (with 0
+#: commits of its own) before the task is refused at prep time as stale.  A
+#: branch that is 0 ahead / N behind where N < threshold is young and not yet
+#: problematic; 0 ahead / N behind where N >= threshold means the branch was
+#: likely created off a very old base and any PR it produces will have massive
+#: conflict surface — fail it closed early with an actionable message.
+BRANCH_STALE_THRESHOLD = int(os.environ.get("DEVCLAW_BRANCH_STALE_THRESHOLD", "50"))
 #: Browser-E2E gate (2026-07-17): after verify + integrity + review pass, a change
 #: that touched a web-UI path must have been exercised in a REAL browser (a passing
 #: Playwright run, proven via the runner's `browser_report` counts) before it ships
@@ -257,6 +265,13 @@ async def _base_branch_error(host_dir: str, base_branch: str) -> Optional[str]:
     None when ``origin/<base_branch>`` resolves after a fetch, else the
     actionable message the task fails with."""
     return await asyncio.to_thread(_base_branch_error_sync, host_dir, base_branch)
+
+
+async def _branch_staleness(host_dir: str, base_branch: str) -> Optional[dict]:
+    """Async wrapper around :func:`task_git.branch_staleness_sync`.
+    Returns ``{"commits_behind": int, "commits_ahead": int}`` or ``None`` on
+    any probe failure — callers treat None as "proceed unchanged" (best-effort)."""
+    return await asyncio.to_thread(_branch_staleness_sync, host_dir, base_branch)
 
 
 async def _wip_snapshot(host_dir: str, task_id: str) -> str:
@@ -1083,6 +1098,19 @@ class TaskQueue(_NotifyMixin):
                     f"could not prepare target_branch '{target_branch}': "
                     f"{err.__class__.__name__}: {err}"
                 )
+            if base_branch:
+                staleness = await _branch_staleness(workspace_dir, base_branch)
+                if (
+                    staleness is not None
+                    and staleness["commits_ahead"] == 0
+                    and staleness["commits_behind"] >= BRANCH_STALE_THRESHOLD
+                ):
+                    return (
+                        f"branch '{target_branch}' is hard-stale: 0 commits ahead of"
+                        f" '{base_branch}' but {staleness['commits_behind']} commits"
+                        f" behind (threshold {BRANCH_STALE_THRESHOLD}). Rebase the"
+                        f" branch onto the current '{base_branch}' before dispatching."
+                    )
         return None
 
     async def _execute(
