@@ -11,6 +11,7 @@ import datetime as _dt
 import json
 import mimetypes
 import os
+import time
 from pathlib import Path
 
 from starlette.requests import Request
@@ -632,7 +633,10 @@ async def problems_json(request: Request) -> Response:
     carries ``fix_goal_id`` so the console deep-links to that goal (its PR +
     human-merge surface). HONEST: ``fixing`` means "a fix goal is running / a PR
     opens for your review", never autonomous auto-fix (fixing is propose-only).
-    Params: ``category`` filter, ``limit`` (default 100, max 1000). Read-only —
+    Params: ``category`` filter, ``limit`` (default 100, max 1000),
+    ``since_ms`` (epoch-ms lower bound on ``last_seen_ms``; defaults to a
+    30-day lookback so the default view isn't the full lifetime pile; pass
+    ``since_ms=0`` to bypass the window and retrieve all-time). Read-only —
     a SELECT over ``problems`` plus one cheap goal-existence check per filed
     row; never wakes the goal loop."""
     from ..goal.self_issue import self_repo, self_fix_goal_id
@@ -640,10 +644,22 @@ async def problems_json(request: Request) -> Response:
     limit, err = _evals_limit(request)
     if err is not None:
         return err
+    _THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+    since_ms_param = request.query_params.get("since_ms")
+    if since_ms_param is not None:
+        try:
+            raw = int(since_ms_param)
+        except ValueError:
+            return Response("invalid since_ms: must be an integer", status_code=400)
+        # 0 (or negative) → caller wants all-time; positive → use as lower bound.
+        since_ms: int | None = raw if raw > 0 else None
+    else:
+        since_ms = int(time.time() * 1000) - _THIRTY_DAYS_MS
     rows = store.list_problems(
         category=request.query_params.get("category") or None,
         limit=limit,
         include_issue=True,
+        since_ms=since_ms,
     )
     for p in rows:
         stage = _problem_lifecycle(p)

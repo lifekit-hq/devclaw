@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchAllGoals, tokenQueryString, type GoalWithProject } from "../api";
+import { fetchAllGoals, fetchProjects, tokenQueryString, type GoalWithProject } from "../api";
 import { phaseColor, phaseIsLive } from "../status";
 import { relativeTime } from "../util/time";
 import { EmptyState, ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
@@ -9,11 +9,19 @@ export function Overview() {
   const nav = useNavigate();
   const qs = tokenQueryString();
   const [rows, setRows] = useState<GoalWithProject[] | null>(null);
+  const [projectCount, setProjectCount] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const load = () => fetchAllGoals().then((r) => alive && setRows(r)).catch((e) => alive && setErr(String(e)));
+    const load = () =>
+      Promise.all([fetchAllGoals(), fetchProjects()])
+        .then(([goals, projs]) => {
+          if (!alive) return;
+          setRows(goals);
+          setProjectCount(projs.length);
+        })
+        .catch((e) => alive && setErr(String(e)));
     load();
     const t = setInterval(load, 20000);
     return () => {
@@ -24,7 +32,7 @@ export function Overview() {
 
   const live = (rows ?? []).filter((g) => phaseIsLive(g.phase));
   const blocked = (rows ?? []).filter((g) => g.phase === "blocked");
-  const projects = new Set((rows ?? []).map((g) => g.projectId)).size;
+  const projects = projectCount ?? 0;
   const recent = [...(rows ?? [])]
     .filter((g) => !g.archived)
     .sort((a, b) => (b.lastUpdateMs ?? 0) - (a.lastUpdateMs ?? 0))
@@ -41,7 +49,7 @@ export function Overview() {
       {err && <ErrorNote>{err}</ErrorNote>}
       {!rows && !err && <Loading />}
 
-      {rows && (
+      {rows && projectCount !== null && (
         <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 30 }}>
             <Stat label="Projects" value={projects} />

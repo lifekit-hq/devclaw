@@ -42,8 +42,11 @@ def runner():
 @pytest.fixture
 def restore_env():
     """_provision_toolchain deliberately mutates os.environ (that's the export
-    contract); undo it so tests stay independent."""
+    contract); undo it so tests stay independent. Also clears MISE_GLOBAL_CONFIG_FILE
+    before each test so native-path absence assertions start from a known clean state
+    regardless of what the outer shell has set."""
     before = dict(os.environ)
+    os.environ.pop("MISE_GLOBAL_CONFIG_FILE", None)
     yield
     os.environ.clear()
     os.environ.update(before)
