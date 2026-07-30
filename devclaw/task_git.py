@@ -295,6 +295,34 @@ def branch_staleness_sync(host_dir: str, base_branch: str) -> dict | None:
         return None
 
 
+def _default_branch_sync(host_dir: str) -> str:
+    """The remote's default branch name (sync variant). Falls back main\u2192master.
+
+    Used by the staleness probe in the dispatch path after ``prepare_ws`` has
+    already fetched origin (so ``refs/remotes/origin/HEAD`` is cached). Never
+    raises \u2014 falls back to ``'main'``."""
+    try:
+        r = subprocess.run(
+            ["git", "-C", host_dir, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if r.returncode == 0 and "/" in r.stdout:
+            return r.stdout.strip().rsplit("/", 1)[-1]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for cand in ("main", "master"):
+        try:
+            r = subprocess.run(
+                ["git", "-C", host_dir, "rev-parse", "--verify", "--quiet", f"origin/{cand}"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if r.returncode == 0:
+                return cand
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return "main"
+
+
 def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
     """Commit the interrupted attempt's uncommitted work as a WIP snapshot
     before a usage-limit requeue. The workspace survives the requeue untouched

@@ -928,3 +928,132 @@ async def test_dispatch_without_failures_is_byte_identical(tmp_path):
     dispatched_action, _goal, _nu = engine.dispatched[0]
     assert dispatched_action.goal == "Create the csproj at backend/src/Foo.csproj"
     assert "PRIOR ATTEMPTS" not in dispatched_action.goal
+
+
+# ---- staleness probe (issue-393 wire-up) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_skipped_when_branch_has_zero_commits_ahead(tmp_path, monkeypatch):
+    """When the goal branch has 0 commits ahead of the default branch, dispatch
+    is skipped and SLEPT is returned — the goal stays in idle so the next tick
+    re-plans rather than launching a worker onto an empty branch."""
+    from devclaw.goal import tick_dispatch
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.write_checklist("g", _example_checklist())
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+
+    async def _staleness_zero_ahead(workspace_dir, goal_id):
+        return {"commits_behind": 3, "commits_ahead": 0}
+
+    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_zero_ahead)
+
+    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
+    engine = FakeEngine()
+
+    out = await tick_goal(
+        "g", store=store, engine=engine,
+        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
+    )
+
+    assert out is Outcome.SLEPT
+    assert engine.dispatched == []  # engine was never called
+    store.render_mirrors("g")
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "nothing to do on this branch" in log
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_when_branch_has_commits_ahead(tmp_path, monkeypatch):
+    """When the goal branch has commits ahead of default, dispatch proceeds
+    normally — the staleness probe is not a blocker."""
+    from devclaw.goal import tick_dispatch
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.write_checklist("g", _example_checklist())
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+
+    async def _staleness_ahead(workspace_dir, goal_id):
+        return {"commits_behind": 0, "commits_ahead": 4}
+
+    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_ahead)
+
+    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
+    engine = FakeEngine()
+
+    out = await tick_goal(
+        "g", store=store, engine=engine,
+        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
+    )
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1  # engine was called
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_when_staleness_probe_returns_none(tmp_path, monkeypatch):
+    """A probe hiccup (None return) must never block a legitimate dispatch —
+    the goal degrades to the pre-probe behavior (dispatch unchanged)."""
+    from devclaw.goal import tick_dispatch
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.write_checklist("g", _example_checklist())
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+
+    async def _staleness_hiccup(workspace_dir, goal_id):
+        return None  # probe failed
+
+    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_hiccup)
+
+    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
+    engine = FakeEngine()
+
+    out = await tick_goal(
+        "g", store=store, engine=engine,
+        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
+    )
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypatch):
+    """Legacy backlog-mode goals (no checklist, per-action delivery) never hit
+    the staleness probe — ``branch_for_dispatch`` is None for that path."""
+    from devclaw.goal import tick_dispatch
+
+    probe_calls: list = []
+
+    async def _staleness_recording(workspace_dir, goal_id):
+        probe_calls.append((workspace_dir, goal_id))
+        return {"commits_behind": 0, "commits_ahead": 0}
+
+    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_recording)
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")  # no checklist -> per-action mode
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+
+    legacy_act = json.dumps({
+        "decision": "act", "note": "do it",
+        "actions": [{"tool": "implement_feature", "goal": "do something", "open_pr": True}],
+    })
+    planner = FakeClaude(legacy_act, role="planner")
+    engine = FakeEngine()
+
+    out = await tick_goal(
+        "g", store=store, engine=engine,
+        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
+    )
+
+    assert probe_calls == []  # staleness probe was never invoked
+    assert out is Outcome.DISPATCHED  # dispatch still happened normally

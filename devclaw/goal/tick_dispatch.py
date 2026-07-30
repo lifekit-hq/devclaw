@@ -11,8 +11,11 @@ tick._tick_goal_impl / tick._handle_executing via the tick.py re-export facade.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 
+from ..task_git import branch_staleness_sync as _branch_staleness_sync
+from ..task_git import _default_branch_sync
 from .tick_context import (
     NotifyLevel,
     Outcome,
@@ -38,6 +41,29 @@ from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
+
+
+async def _branch_staleness(workspace_dir: str, goal_id: str) -> "dict | None":
+    """Best-effort commits-ahead/behind probe for ``goal/<goal_id>`` vs the
+    repo's default branch.
+
+    Called after ``prepare_ws`` (which has already fetched origin), so the
+    ``refs/remotes/origin/HEAD`` symbolic-ref is cached and
+    ``_default_branch_sync`` is a cheap read. Returns
+    ``{"commits_behind": int, "commits_ahead": int}`` or ``None`` on any
+    failure — callers degrade to "proceed unchanged". Module-level so tests
+    can patch ``_branch_staleness_sync`` / ``_default_branch_sync`` here.
+    Zero-LLM; never raises."""
+    def _probe() -> "dict | None":
+        try:
+            base = _default_branch_sync(workspace_dir)
+            return _branch_staleness_sync(workspace_dir, base)
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        return await asyncio.to_thread(_probe)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _flag_items_in_flight(store: GoalStore, goal_id: str, item_ids: list[str]) -> None:
@@ -171,6 +197,20 @@ async def _dispatch_action(
         return await _block_on_prep_failure(
             goal_id, base, exc, store=store, notifier=notifier, summarize=summarize,
         )
+    # Staleness probe (goal-branch mode only): if the goal branch has 0 commits
+    # ahead of the default branch there is nothing for a new worker to build on
+    # — skip dispatch rather than launch an engine task that would re-attempt
+    # work that either already landed or was never pushed. Best-effort: a probe
+    # hiccup (None) lets dispatch proceed unchanged.
+    if branch_for_dispatch is not None:
+        staleness = await _branch_staleness(goal.workspace_dir, goal_id)
+        if staleness is not None and staleness["commits_ahead"] == 0:
+            store.append_log(
+                goal_id,
+                f"staleness: {branch_for_dispatch} has 0 commits ahead of default"
+                " — nothing to do on this branch; skipping dispatch",
+            )
+            return Outcome.SLEPT
     # Atomic dispatch (PR7): task/program row creation + the DISPATCH
     # transition + the log row, as ONE transaction. A crash or CAS conflict
     # anywhere inside rolls the whole unit back — the single-task-orphan
