@@ -109,13 +109,15 @@ def test_craft_files_exist_and_are_well_formed(runner, skill_dir):
         assert text.startswith("# "), f"{p.name} lacks a top-level heading"
 
 
-def test_always_on_brief_shrank_after_craft_split(runner, skill_dir):
-    """Headline of the doctrine/craft split: the implement_feature brief is
-    materially smaller than the pre-split ~9.1k chars — the Playwright how-to
-    left the tier and the doctrine was sharpened. This also guards against
-    craft/ silently getting re-concatenated (which would balloon it again)."""
+def test_craft_stays_out_of_the_always_on_brief(runner, skill_dir):
+    """The doctrine/craft split kept the read-when-relevant craft/ how-tos
+    (Playwright, frontend-design ≈ 4.8k chars combined) OUT of the always-on
+    brief. This guards against craft/ silently getting re-concatenated, which
+    would balloon the brief past ~14k. The ceiling sits well below that while
+    leaving headroom for genuinely-added always-on doctrine (e.g. the #354
+    repo-gate-conflict skill, which grew the brief back to ~9.4k on purpose)."""
     brief = runner._load_skills("implement_feature")
-    assert len(brief) < 7500  # pre-split brief measured ~9166 chars
+    assert len(brief) < 11000  # craft re-concatenation would push it to ~14.3k
 
 
 def test_fix_bug_keeps_its_smallest_change_skill(runner, skill_dir):
