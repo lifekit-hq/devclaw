@@ -156,11 +156,31 @@ _RATE = re.compile(
 # (not bare 5xx codes): a bare "500"/"502" shows up in assertion messages like
 # "expected 200 got 500" and must NOT be mistaken for a server error. 529 is kept
 # because it's Anthropic's overloaded code and not a common assertion number.
+#
+# SIGNAL DEATH ("claude --print exited -9"/"-15") is TRANSIENT too: a negative
+# exit code means the cognition subprocess was KILLED mid-call — a kernel OOM /
+# watchdog tear-down under host memory pressure (many concurrent sandboxes + host
+# cognition sharing one VPS), not a clean failure. It's the same "the machine was
+# momentarily overwhelmed" family as a timeout, so it earns a short-backoff retry.
+# This promotes into the shared classifier the knowledge that until now lived only
+# in the review gate (#444). That gate's own detector re-uses the SAME source of
+# truth below (:data:`SIGNAL_DEATH_PATTERN`) so the two can't drift. Two guards
+# keep it safe: (1) only a NEGATIVE code (``-\d+``) matches, so a clean ``exited
+# 1`` bug stays REAL; (2) AUTH/QUOTA/RATE are checked BEFORE TRANSIENT in
+# classify_failure, and a usage/auth crash always comes back as a *clean* nonzero
+# exit carrying the wording (never a signal), so a pausing failure is never
+# swallowed into a retry.
+#: A ``claude --print`` process killed by a signal surfaces as a negative exit
+#: code in the ``PlannerError`` message (``f"claude --print exited {returncode}"``
+#: in :mod:`devclaw.llm_call`). Single source of truth: the review gate imports
+#: this to build its own detector (``quality/__init__.py`` ``_KILLED_BY_SIGNAL_RE``).
+SIGNAL_DEATH_PATTERN = r"claude --print exited -\d+"
+
 _TRANSIENT = re.compile(
     r"\boverloaded\b|overloaded_error|\b529\b|internal server error|"
     r"service unavailable|temporarily unavailable|bad gateway|gateway timeout|"
     r"econnreset|connection reset|connection refused|timed? ?out|timeout|"
-    r"network error|eai_again|temporary failure",
+    r"network error|eai_again|temporary failure|" + SIGNAL_DEATH_PATTERN,
     re.IGNORECASE,
 )
 
