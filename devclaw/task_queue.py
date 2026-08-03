@@ -50,7 +50,12 @@ from .quality.browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .quality.gate_policy import Consequence, gate_consequence
 from .quality.gate_pipeline import GateInput, GateVerdict, run_pipeline
 from .quality.reachability import judge_reachability
-from .engine.sandcastle import run_sandcastle, sandbox_owner_id, sweep_orphan_sandboxes
+from .engine.sandcastle import (
+    SANDBOX_MEMORY,
+    run_sandcastle,
+    sandbox_owner_id,
+    sweep_orphan_sandboxes,
+)
 # Module globals on purpose (like deliver_change) so tests patch them on THIS
 # namespace: the direct-dispatch branch-target wire (v1-helper-resurface PR-2)
 # preps a caller-pinned target_branch before the engine runs.
@@ -81,6 +86,59 @@ NOTIFY_BACKOFF_MS = (1000, 2000, 4000)
 MAX_CONCURRENT_PER_PROGRAM = int(os.environ.get("DEVCLAW_MAX_CONCURRENT_PER_PROGRAM", "2"))
 #: global cap on concurrently-running tasks across all programs — backpressure
 GLOBAL_MAX_CONCURRENT = int(os.environ.get("DEVCLAW_MAX_CONCURRENT", "4"))
+
+
+# ---- host-memory admission (the `claude --print` -9 OOM cure) ----------------
+# A COUNT cap (GLOBAL_MAX_CONCURRENT) plus a per-container `--memory` CEILING is
+# NOT the same as fitting the host: docker will start N containers each ALLOWED
+# 2g even when the box lacks N*2g (a --memory limit is a ceiling, not a
+# reservation). Under load the kernel's global OOM-killer then reaps the fattest
+# unbounded process — the host-side `claude --print` cognition running in the
+# root cgroup — as `exited -9`. #448/#449 classified that signal-death TRANSIENT
+# and retried it: survivable, but it never asked why the kernel was reaping us.
+# This gates dispatch on REAL free RAM so we never overcommit in the first place.
+# Mechanism, not appeasement (doctrine: fix the repo, don't appease it).
+def _parse_mem(text: str) -> int:
+    """Docker-style memory string (``2g`` / ``512m`` / ``2048k`` / raw bytes) →
+    bytes. Fail-safe: an unparseable value falls back to 2 GiB rather than
+    crashing import — a typo in ``.env`` must not take the queue down."""
+    s = str(text).strip().lower()
+    units = {"k": 1 << 10, "m": 1 << 20, "g": 1 << 30, "b": 1}
+    try:
+        if s and s[-1] in units:
+            return int(float(s[:-1]) * units[s[-1]])
+        return int(s)
+    except (ValueError, TypeError):
+        return 2 << 30
+
+
+#: per-sandbox memory ceiling in bytes — the SAME value the launcher hands to
+#: ``docker --memory`` (imported, so the two can't drift).
+SANDBOX_MEMORY_BYTES = _parse_mem(SANDBOX_MEMORY)
+#: headroom kept free for the host ``claude --print`` cognition + OS so it is not
+#: the OOM victim. Env-tunable per host (``DEVCLAW_COGNITION_MEM_RESERVE``); the
+#: floor to admit one more sandbox launch is sandbox-ceiling + this reserve.
+COGNITION_MEM_RESERVE_BYTES = _parse_mem(
+    os.environ.get("DEVCLAW_COGNITION_MEM_RESERVE", "1536m")
+)
+MEM_LAUNCH_FLOOR_BYTES = SANDBOX_MEMORY_BYTES + COGNITION_MEM_RESERVE_BYTES
+
+
+def host_mem_available_bytes() -> Optional[int]:
+    """Best-effort ``/proc/meminfo`` ``MemAvailable`` in bytes. Returns ``None``
+    on ANY failure (non-Linux host, missing field, parse error) so dispatch fails
+    OPEN — an unmeasurable host behaves exactly as before and is never wedged.
+    A module global on purpose: tests patch it on THIS namespace."""
+    try:
+        with open("/proc/meminfo", "r", encoding="ascii", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024  # value is in kB
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 #: heartbeat interval — the tick re-derives scheduling from DB state
 TICK_SECONDS = float(os.environ.get("DEVCLAW_TICK_SECONDS", "10"))
 #: per-task wall-clock cap (seconds). A run that exceeds it is cancelled — which
@@ -926,6 +984,16 @@ class TaskQueue(_NotifyMixin):
         if not self._store.has_active_work():
             return
         running = self._store.count_running()
+        # Host-memory admission budget: measured ONCE per pump, and only HERE —
+        # after the cheap-idle guard above, so an idle tick never reads /proc and
+        # the zero-cost-idle invariant holds. Only the real docker sandbox runner
+        # overcommits host RAM; under a stub/host runner (tests, dev, the CI suite)
+        # the gate is inert (None ⇒ fail open) and no /proc read happens off the
+        # sandbox path — so the suite is byte-unaffected by whatever RAM CI has.
+        self._mem_budget = (
+            host_mem_available_bytes() if self._engine_kind == "sandcastle" else None
+        )
+        self._mem_deny_logged = False
 
         # Standalone pending tasks (no deps) — oldest first, up to the global cap.
         # Workspace circuit-breaker skips dispatch to a workspace whose recent
@@ -936,7 +1004,10 @@ class TaskQueue(_NotifyMixin):
                     break
                 if self._workspace_break_active(t.workspace_dir):
                     continue
+                if not self._mem_can_launch():
+                    break  # not enough host RAM for another sandbox this tick
                 if self._store.claim_pending(t.id):
+                    self._mem_commit_launch()
                     running += 1
                     self._launch(t.id, t.kind, t.workspace_dir, t.goal, None)
 
@@ -953,6 +1024,33 @@ class TaskQueue(_NotifyMixin):
             if self._workspace_break_active(p.workspace_dir):
                 continue  # break holds new launches; in-flight tasks run to completion
             running = self._schedule_program(p, tasks, running)
+
+    def _mem_can_launch(self) -> bool:
+        """True if there's host RAM for one more sandbox — or if memory can't be
+        measured (fail OPEN: an unmeasurable host must never wedge the queue). On
+        denial, log ONCE per pump (loud, not a silent throttle), mirroring the
+        operator-hold logging pattern so a memory hold is visible in the logs."""
+        budget = getattr(self, "_mem_budget", None)
+        if budget is None or budget >= MEM_LAUNCH_FLOOR_BYTES:
+            return True
+        if not getattr(self, "_mem_deny_logged", False):
+            sys.stderr.write(
+                f"task-queue: dispatch held — host MemAvailable {budget >> 20}MB "
+                f"< floor {MEM_LAUNCH_FLOOR_BYTES >> 20}MB (sandbox "
+                f"{SANDBOX_MEMORY_BYTES >> 20}MB + reserve "
+                f"{COGNITION_MEM_RESERVE_BYTES >> 20}MB); deferring launches so the "
+                f"host claude --print isn't OOM-killed\n"
+            )
+            self._mem_deny_logged = True
+        return False
+
+    def _mem_commit_launch(self) -> None:
+        """Optimistically debit one sandbox's ceiling from this pump's budget so N
+        pending tasks can't all launch into RAM that only fits one (a fresh
+        container's RSS lags its start). The budget is re-measured from /proc each
+        pump, so a finished container's memory returns on the next tick."""
+        if getattr(self, "_mem_budget", None) is not None:
+            self._mem_budget -= SANDBOX_MEMORY_BYTES
 
     def _maybe_terminalize(self, program: Program, tasks: list[Task]) -> bool:
         """Mark the program done/failed (+ notify) if it has reached a terminal
@@ -1012,8 +1110,11 @@ class TaskQueue(_NotifyMixin):
             )
             if not deps_ready:
                 continue
+            if not self._mem_can_launch():
+                break  # host RAM exhausted — defer remaining launches to a later tick
             if not self._store.claim_pending(t.id):  # lost the race
                 continue
+            self._mem_commit_launch()
             running += 1
             running_in_prog += 1
             self._launch(t.id, t.kind, t.workspace_dir, t.goal, program.id)
