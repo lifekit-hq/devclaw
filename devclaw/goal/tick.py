@@ -9,8 +9,10 @@ or the Pro weekly quota dies (burned this way 2026-05-18).
 The evaluation tiers (mechanism gates cognition):
   1. progress check          — Python, every tick, 0 tokens (poll in-flight)
   2. per-delivery evidence    — in-proc, 0 tokens (write the grounded deliveries.md)
-  3. direction eval (periodic)— 1 LLM call every EVAL_EVERY deliveries / on steering
-  4. done-gate                — the planner's "done" is a proposal; it triggers a
+     (the per-tick direction eval that used to sit here was removed — demolition
+      P1, docs/proposals/cognition-demolition.md; direction is judged only at the
+      done-gate now, backed by the mechanical no-progress watchdog mid-flight.)
+  3. done-gate                — the planner's "done" is a proposal; it triggers a
                                 read-only review whose report the evaluator judges;
                                 only "achieved" actually closes the goal.
 
@@ -26,7 +28,6 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from . import checklist as _checklist
-from . import evaluator as _evaluator
 from . import merge as _merge
 from . import planner as _planner
 from . import remote_checks as _remote_checks
@@ -66,7 +67,6 @@ from .tick_context import (  # noqa: F401 (re-exported)
     WorkspacePrep,
     _ALTITUDES,
     _action_label,
-    _apply_corrections,
     _classify,
     _engine_kick,
     _notify,
@@ -388,59 +388,6 @@ async def _tick_goal_impl(
     raise RuntimeError(f"unhandled phase {phase} for goal {goal_id}")
 
 
-# ---- evaluation helpers ----------------------------------------------------
-
-
-async def _run_mid_flight_eval(
-    goal_id: str, goal: Goal, status: GoalStatus,
-    *, store: GoalStore, evaluator_caller: ClaudeCaller, notifier: Notifier,
-    summarize: "ClaudeCaller | None" = None,
-) -> "Outcome | None":
-    """Periodic, artifact-grounded direction check. Returns an Outcome to return
-    early (blocked) or None to keep going. Resets the delivery counter."""
-    # Ground the direction check in the goal's ACTUAL workspace (triage F3):
-    # a mid-flight "correction" inferred from the wrong repo is written into
-    # steering and burns real tasks, and a wrong-repo stalled/needs_human
-    # falsely blocks the goal. Best-effort — never raises. Zero-token guard
-    # holds: this runs only past the eval cadence gate, where cognition
-    # already fires; the git subprocess adds no LLM call and no idle cost.
-    repo_context = await _evaluator._repo_context(goal.workspace_dir)
-    try:
-        ev = await _evaluator.evaluate(
-            goal, status, store.recent_log(goal_id), store.recent_deliveries(goal_id),
-            claude_caller=evaluator_caller, spec=store.read_spec(goal_id),
-            repo_context=repo_context,
-        )
-    except _evaluator.GoalEvalError as exc:
-        store.append_log(goal_id, f"eval error: {exc}")
-        return None  # a bad eval must not stall the goal — continue to planning
-    now = store.now_iso()
-    base = replace(
-        status, last_eval_verdict=ev.verdict, last_eval_at=now,
-        last_eval_note=ev.rationale[:300], deliveries_since_eval=0,
-    )
-    store.append_log(goal_id, f"direction: {ev.verdict} — {ev.rationale[:200]}")
-    if ev.verdict in ("stalled", "needs_human"):
-        q = ev.question or ev.rationale or "direction evaluation flagged a problem"
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q, blocked_kind="needs_answer", next=""),
-            expect=status,
-        )
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] direction check ({ev.verdict}) — {q}", summarize=summarize)
-        return Outcome.BLOCKED
-    # Telemetry-only (verdict/note/counter reset) — no phase/lifecycle/in_flight
-    # change, so this goes through the column-only path, not a transition.
-    store.update_status_fields(
-        goal_id, last_eval_verdict=ev.verdict, last_eval_at=now,
-        last_eval_note=ev.rationale[:300], deliveries_since_eval=0,
-    )
-    _apply_corrections(store, goal_id, ev)
-    if ev.verdict == "off_track" and ev.corrections:
-        await _notify(notifier, NotifyLevel.TASK, f"🧭 [{goal_id}] course-correcting — {ev.rationale[:200]}")
-    return None
-
-
 # ---- registry-driven phase dispatch ----------------------------------------
 
 
@@ -661,21 +608,13 @@ async def _handle_executing(
         ctx.store.update_status_fields(goal_id, last_tick_at=ctx.store.now_iso())
         return Outcome.IDLE
 
-    # Periodic, artifact-grounded direction eval (mid-flight). Past the gate,
-    # and only when enough has shipped, judge direction from the grounded
-    # deliveries. Corrections become steering; a hard verdict blocks.
-    if ctx.eval_every > 0 and status.deliveries_since_eval >= ctx.eval_every:
-        blocked = await _run_mid_flight_eval(
-            goal_id, goal, status,
-            store=ctx.store, evaluator_caller=ctx.evaluator_caller, notifier=ctx.notifier,
-            summarize=ctx.summary_caller,
-        )
-        status = ctx.store.load_status(goal_id)  # eval may have written status + steering
-        if blocked is not None:
-            return blocked
-        rows = ctx.store.unread_steering_rows(goal_id)  # re-read
-        steering = "\n".join(line for _, line in rows)
-        status = ctx.store.load_status(goal_id)  # ingest (if any) may have bumped version again
+    # [demolition P1 — docs/proposals/cognition-demolition.md] The per-tick
+    # mid-flight direction evaluator was removed here: direction is no longer
+    # re-judged by an LLM every EVAL_EVERY deliveries (the 43%-unparseable
+    # off_track thrash). The mechanical brakes stand — the zero-token no-progress
+    # watchdog (tick_guards), the grounded done-gate (tick_donegate), and the
+    # per-item circuit breaker. `EVAL_EVERY`/`deliveries_since_eval`/`eval_every`
+    # are now inert cadence plumbing (P4 removes them).
 
     consume_ids = [rid for rid, _ in rows]
 

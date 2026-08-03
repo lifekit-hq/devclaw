@@ -963,83 +963,42 @@ async def test_done_gate_verified_wording_kept_when_review_grounded(tmp_path, mo
     assert not any("artifact-only" in m for m in notifier.sent)
 
 
-# ---- periodic direction evaluation -----------------------------------------
+# ---- periodic direction evaluation: CUT (demolition P1) --------------------
+# docs/proposals/cognition-demolition.md — the per-tick mid-flight direction
+# evaluator (`_run_mid_flight_eval`) is removed. Direction is no longer re-judged
+# by an LLM every EVAL_EVERY deliveries; the mechanical brakes stand (no-progress
+# watchdog, done-gate, per-item circuit breaker). The old fires-and-steers /
+# carries-repo-context / stalled-blocks tests are replaced by the contract below.
 
 
 @pytest.mark.asyncio
-async def test_midflight_eval_fires_on_delivery_cadence_and_steers(tmp_path):
+async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
+    """Demolition P1 regression: a long_lived executing goal that reaches the old
+    eval cadence makes ZERO mid-flight evaluator calls and is NEVER blocked by a
+    direction verdict — even when an evaluator wired to return the strongest old
+    trigger (`stalled`) is present. The goal proceeds to plan (momentum); the only
+    surviving direction cognition is the done-gate (tested in test_goal_donegate).
+    """
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    # a feature just finished → deliveries_since_eval hits the threshold this tick
+    # Past the old cadence threshold (deliveries_since_eval bumps 2→3, eval_every=3):
+    # under the old code this fired the mid-flight eval; now it must not.
     store.save_status("g", GoalStatus(
         phase="in_flight", deliveries_since_eval=2,
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
     ))
     planner = FakeClaude(ACT_FEATURE)
-    evaluator = FakeClaude(json.dumps({
-        "verdict": "off_track", "rationale": "drifting from objective",
-        "corrections": ["refocus on the API, not the UI"],
-    }))
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="did ui work"))
-    notifier = RecordingNotifier()
-
-    # delivery bumps 2→3; eval_every=3 → eval fires
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, eval_every=3)
-
-    assert evaluator.calls == 1
-    assert store.load_status("g").deliveries_since_eval == 0      # counter reset
-    assert store.load_status("g").last_eval_verdict == "off_track"
-    assert "refocus on the API" in store.recent_log("g") or \
-        "refocus on the API" in (tmp_path / "g" / "inbox.md").read_text()
-    # planner still ran afterward (momentum)
-    assert planner.calls == 1
-    assert out is Outcome.DISPATCHED
-
-
-@pytest.mark.asyncio
-async def test_midflight_eval_prompt_carries_repo_context(tmp_path):
-    """The default-config mid-flight direction eval gets the same workspace
-    grounding as the done-gate — its "corrections" are written into steering,
-    and a wrong-stack inference there burns real tasks or falsely blocks the
-    goal (triage F3 gap 2)."""
-    repo = seed_marker_repo(tmp_path)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", workspace_dir=str(repo))
-    store.save_status("g", GoalStatus(
-        phase="in_flight", deliveries_since_eval=2,
-        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
-    ))
-    planner = FakeClaude(ACT_FEATURE)
-    evaluator = FakeClaude(json.dumps({"verdict": "on_track", "rationale": "progressing"}))
+    # A `stalled` verdict WOULD have blocked the goal under the old mid-flight eval.
+    evaluator = FakeClaude(json.dumps({"verdict": "stalled", "rationale": "no real progress"}))
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="shipped"))
     notifier = RecordingNotifier()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, eval_every=3)
-
-    assert evaluator.calls == 1
-    prompt = evaluator.last_prompt
-    assert "## Repository context" in prompt
-    assert "global.json: file" in prompt   # first-hand facts from the ACTUAL workspace
-
-
-@pytest.mark.asyncio
-async def test_midflight_eval_stalled_blocks(tmp_path):
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", deliveries_since_eval=2,
-        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "x"),
-    ))
-    planner = FakeClaude(ACT_FEATURE)   # must NOT run — eval blocks first
-    evaluator = FakeClaude(json.dumps({"verdict": "stalled", "rationale": "no real progress over 3 PRs"}))
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="shipped but shallow"))
-    notifier = RecordingNotifier()
-
     out = await _tick(store, "g", planner, evaluator, engine, notifier, eval_every=3)
 
-    assert out is Outcome.BLOCKED
-    assert planner.calls == 0
-    assert store.load_status("g").phase == "blocked"
+    assert evaluator.calls == 0                       # the mid-flight cognition boundary is gone
+    assert out is not Outcome.BLOCKED                 # a direction verdict can no longer block mid-flight
+    assert store.load_status("g").phase != "blocked"
+    assert planner.calls == 1                          # momentum: the goal keeps going
 
 
 # ---- plain-language summarizer (owner messages rewritten; best-effort) ------
