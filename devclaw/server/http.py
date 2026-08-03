@@ -1401,6 +1401,130 @@ async def traces_json(request: Request) -> Response:
     return JSONResponse({"traces": rows, "count": len(rows), "limit": limit})
 
 
+# ── cognition transcripts (the FULL prompt + response of every claude --print
+# call). The trace EVENTS (/traces.json) carry names + 240-char previews; these
+# two routes carry the whole thing, so the console can show what cognition was
+# actually fed and said back — the same ground truth as the `devclaw trace_view`
+# CLI, reusing its stdlib parser so the wire format can't drift from disk.
+#
+# Pure read-only: they read `.md` files that already exist under the goals dir.
+# No goal/task/store write, no goal-loop wake, no LLM call, no subprocess — same
+# bar as get_trace ("never wakes the goal loop / pure SELECT").
+
+
+def _goals_dir() -> Path:
+    """The directory holding per-goal transcripts, resolved exactly as the live
+    GoalService does (``DEVCLAW_GOALS_DIR`` → ``self._cfg.goals_dir``). A module
+    accessor so http tests can monkeypatch the ``goals`` service and have these
+    routes follow it."""
+    return Path(goals._cfg.goals_dir)
+
+
+def _transcripts_dir(goal_id: str) -> Path:
+    """``<goals_dir>/<goal_id>/transcripts``. ``goal_id`` is validated by the
+    caller before it reaches here (no path separators / traversal)."""
+    return _goals_dir() / goal_id / "transcripts"
+
+
+def _valid_goal_id(goal_id: str) -> bool:
+    """A goal id is a single path segment — anything with a separator or a
+    parent-dir hop is rejected before it can compose a path outside the goals
+    dir."""
+    return bool(goal_id) and "/" not in goal_id and "\\" not in goal_id and ".." not in goal_id
+
+
+@mcp.custom_route("/goals/{goal_id}/transcripts.json", methods=["GET"])
+async def goal_transcripts_json(request: Request) -> Response:
+    """Index of a goal's cognition calls — one row per ``claude --print`` call,
+    oldest first, with size/cost/error metadata but NOT the full text (that's the
+    per-file route below). Reuses ``trace_view.load_dir`` so the parse can never
+    drift from what ``PersistentTracer.write_transcript`` emits.
+
+    A goal that has never run cognition (no transcripts dir yet) returns an empty
+    list, not a 404 — the console links here from a known goal and an empty index
+    is the honest answer. Read-only."""
+    from .. import trace_view
+
+    goal_id = request.path_params["goal_id"]
+    if not _valid_goal_id(goal_id):
+        return JSONResponse({"error": "bad_goal_id"}, status_code=400)
+    # Point straight at ``<goals_dir>/<goal_id>/transcripts`` rather than letting
+    # the resolver fall through to the goal dir — a goal dir that exists but has
+    # no transcripts subdir would otherwise glob its generated VIEW files
+    # (STATUS.md/log.md/inbox.md) as bogus rows. Absent subdir ⇒ empty index.
+    tdir = _transcripts_dir(goal_id)
+    transcripts = trace_view.load_dir(tdir) if tdir.is_dir() else []
+    rows = [
+        {
+            "seq": i,
+            "filename": t.filename,
+            "ts": t.ts,
+            "role": t.role,
+            "model": t.model,
+            "promptChars": t.prompt_chars,
+            "responseChars": t.response_chars,
+            "tokensIn": t.tokens_in,
+            "tokensOut": t.tokens_out,
+            "costUsd": t.cost_usd,
+            "error": t.error,
+        }
+        for i, t in enumerate(transcripts, 1)
+    ]
+    return JSONResponse({"transcripts": rows, "count": len(rows)})
+
+
+@mcp.custom_route("/goals/{goal_id}/transcripts/{filename}", methods=["GET"])
+async def goal_transcript_full(request: Request) -> Response:
+    """The FULL prompt + response of one cognition call — no truncation, that's
+    the whole point. ``filename`` must be a bare ``*.md`` basename inside this
+    goal's transcripts dir; anything with a path separator, a ``..`` hop, or a
+    non-``.md`` suffix is rejected (path-traversal guard), and the resolved path
+    is re-checked to live under the transcripts dir before it is read. Read-only."""
+    from .. import trace_view
+
+    goal_id = request.path_params["goal_id"]
+    filename = request.path_params["filename"]
+    if not _valid_goal_id(goal_id):
+        return JSONResponse({"error": "bad_goal_id"}, status_code=400)
+    # Reject traversal / nested paths / non-markdown up front — a transcript is
+    # always a flat ``<ts>-<role>.md`` basename.
+    if (
+        not filename
+        or "/" in filename
+        or "\\" in filename
+        or ".." in filename
+        or not filename.endswith(".md")
+    ):
+        return JSONResponse({"error": "bad_filename"}, status_code=400)
+
+    tdir = _transcripts_dir(goal_id).resolve()
+    target = (tdir / filename).resolve()
+    # Belt-and-suspenders: even after the string guard, prove the resolved path
+    # is inside the transcripts dir and is a real file before reading it.
+    if not (target == tdir / filename and target.parent == tdir and target.is_file()):
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    t = trace_view.parse_transcript(target)
+    return JSONResponse(
+        {
+            "filename": t.filename,
+            "ts": t.ts,
+            "role": t.role,
+            "model": t.model,
+            "goalId": t.goal_id,
+            "tokensIn": t.tokens_in,
+            "tokensOut": t.tokens_out,
+            "costUsd": t.cost_usd,
+            "error": t.error,
+            "promptChars": t.prompt_chars,
+            "responseChars": t.response_chars,
+            "prompt": t.prompt,
+            "response": t.response,
+            "extra": t.extra,
+        }
+    )
+
+
 @mcp.custom_route("/projects/{project_id}.json", methods=["GET"])
 async def project_json(request: Request) -> Response:
     """Project Detail feed — header (name, repo, preview) + active/archived goal
