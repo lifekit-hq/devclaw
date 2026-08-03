@@ -82,6 +82,7 @@ session quota, not a bill.**
 | `DEVCLAW_SANDBOX_IMAGE` | `devclaw-sandbox:latest` | Per-task sandbox image (built from `.sandcastle/Dockerfile`). A project can pin its own via the registry's per-project `sandbox_image` override (ADR 0005 escape hatch/migration bridge), which beats this default for that project's tasks. |
 | `DEVCLAW_DOCKER_BIN` | `docker` | docker binary to spawn. |
 | `DEVCLAW_SANDBOX_MEMORY` | `2g` | Hard per-container memory ceiling. `--memory-swap == --memory` disables swap growth. |
+| `DEVCLAW_COGNITION_MEM_RESERVE` | `1536m` | Host RAM kept free for the host-side `claude --print` cognition + OS when admitting sandbox launches. Dispatch defers a launch when `/proc/meminfo` MemAvailable would drop below `DEVCLAW_SANDBOX_MEMORY + this` — so N containers can't overcommit the box and get the host `claude` OOM-killed (`exited -9`). Sandbox engine only; fail-open if MemAvailable is unreadable. Size to the host. |
 | `DEVCLAW_SANDBOX_CPUS` | `2.0` | Per-container CPU limit. |
 | `DEVCLAW_HOST_CLAUDE_DIR` | `~/.claude` | Host path bind-mounted read-only into each sandbox. |
 | `DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST` | `.credentials.json,.claude.json` | Comma-separated entries **under** `~/.claude` to bind in. Default = the OAuth identity pair (token + identity — both needed for the ACP agentic loop). Add more only with intent; missing entries surface as docker bind errors, not silent skips. |
