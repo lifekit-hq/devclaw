@@ -357,6 +357,53 @@ export async function fetchTraces(goalId: string, limit = 200): Promise<TraceEve
   return (await r.json()).traces;
 }
 
+// ---- cognition transcripts (the FULL prompt + response of every claude --print
+// call). The trace EVENTS above carry names + previews; these carry the whole
+// text. Backend: server/http.py GET /goals/{id}/transcripts.json (index) and
+// /goals/{id}/transcripts/{filename} (one call in full). Read-only. -----------
+
+/** One row of a goal's cognition index — a single ``claude --print`` call.
+ *  `filename` is the on-disk basename you pass to fetchTranscript. Token/cost
+ *  fields are strings (or "") because they're passed through from the transcript
+ *  header verbatim — the source of truth, un-coerced. */
+export interface TranscriptRow {
+  seq: number;
+  filename: string;
+  ts: string;
+  role: string;
+  model: string;
+  promptChars: number;
+  responseChars: number;
+  tokensIn: string;
+  tokensOut: string;
+  costUsd: string;
+  error: string;
+}
+
+/** One cognition call in FULL — every byte of prompt and response, no
+ *  truncation (that's the whole point of this surface). */
+export interface TranscriptFull extends TranscriptRow {
+  goalId: string;
+  prompt: string;
+  response: string;
+  extra: Record<string, string>;
+}
+
+export async function fetchTranscripts(goalId: string): Promise<TranscriptRow[]> {
+  const r = await fetch(`/goals/${encodeURIComponent(goalId)}/transcripts.json${tokenQS()}`);
+  if (!r.ok) throw new Error(`transcripts ${goalId}: ${r.status}`);
+  return (await r.json()).transcripts as TranscriptRow[];
+}
+
+export async function fetchTranscript(goalId: string, filename: string): Promise<TranscriptFull> {
+  const r = await fetch(
+    `/goals/${encodeURIComponent(goalId)}/transcripts/${encodeURIComponent(filename)}${tokenQS()}`,
+  );
+  if (r.status === 404) throw new Error(`transcript not found: ${filename}`);
+  if (!r.ok) throw new Error(`transcript ${filename}: ${r.status}`);
+  return (await r.json()) as TranscriptFull;
+}
+
 // ---- problems catalog / lifecycle (ADR 0009 P2) ---------------------------
 
 export type ProblemStage = "identified" | "filed" | "fixing" | "resolved";
