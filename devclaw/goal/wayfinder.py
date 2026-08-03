@@ -227,3 +227,54 @@ def parse_map(issues: list[dict]) -> Optional[WayfinderMap]:
         out_of_scope=tuple(_section_items(mbody, "Out of scope")),
         tickets=tuple(sorted(tickets, key=lambda t: t.number)),
     )
+
+
+# ---- serialization (JSON-friendly dicts; the map-cache round-trip) ----------
+
+
+def map_to_dict(m: WayfinderMap) -> dict:
+    """A JSON-serializable dict of the map — the on-disk shape of the control
+    plane's cached last-read snapshot (see ``GoalStore.write_wayfinder_map``)."""
+    return {
+        "map_number": m.map_number,
+        "destination": m.destination,
+        "notes": m.notes,
+        "out_of_scope": list(m.out_of_scope),
+        "tickets": [
+            {
+                "number": t.number,
+                "title": t.title,
+                "kind": t.kind,
+                "state": t.state,
+                "blocked_by": list(t.blocked_by),
+                "resolution": t.resolution,
+            }
+            for t in m.tickets
+        ],
+    }
+
+
+def map_from_dict(d: dict) -> WayfinderMap:
+    """Inverse of :func:`map_to_dict`. Total and tolerant: missing fields take
+    empty defaults and non-dict tickets are dropped, so a partially-written or
+    version-skewed cache round-trips rather than raising (the caller already
+    treats a bad cache as no-cache)."""
+    tickets = tuple(
+        WayfinderTicket(
+            number=int(t.get("number", 0)),
+            title=str(t.get("title", "")),
+            kind=str(t.get("kind", "")),
+            state=str(t.get("state", "open")),
+            blocked_by=tuple(int(b) for b in (t.get("blocked_by") or ())),
+            resolution=str(t.get("resolution", "")),
+        )
+        for t in (d.get("tickets") or [])
+        if isinstance(t, dict)
+    )
+    return WayfinderMap(
+        map_number=int(d.get("map_number", 0)),
+        destination=str(d.get("destination", "")),
+        notes=str(d.get("notes", "")),
+        out_of_scope=tuple(str(x) for x in (d.get("out_of_scope") or ())),
+        tickets=tickets,
+    )

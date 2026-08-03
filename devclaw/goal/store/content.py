@@ -485,6 +485,47 @@ class GoalContentMixin:
             return None
         return parsed if isinstance(parsed, dict) else None
 
+    # ---- wayfinder map cache (demolition P2 — the last-read snapshot) ------
+    #
+    # docs/proposals/cognition-demolition.md. The control plane READS the
+    # worker-owned wayfinder map off the target repo's tracker; this row is its
+    # cached last-known snapshot, so a transient `gh` read failure falls back to
+    # it instead of misreading the goal as un-charted. Row-only, machine-read
+    # (like block_options/repo_analysis) — never a human artifact.
+
+    def write_wayfinder_map(self, goal_id: str, m: "WayfinderMap") -> None:  # type: ignore[name-defined]
+        """Cache the last-read wayfinder plan-map for ``goal_id``."""
+        import json
+
+        from ..wayfinder import map_to_dict
+
+        self._goal_state.write_doc(
+            goal_id, "wayfinder_map", json.dumps(map_to_dict(m)), _now_ms()
+        )
+
+    def read_wayfinder_map(self, goal_id: str) -> "WayfinderMap | None":  # type: ignore[name-defined]
+        """The cached last-read map, or None when nothing is cached yet. A
+        garbled row degrades to None and never raises — the cache is a
+        convenience fallback, not a gating contract; the caller blocks legibly
+        (#185/#188) when neither a live read nor a cache is available."""
+        import json
+
+        from ..wayfinder import map_from_dict
+
+        content = self._goal_state.read_doc(goal_id, "wayfinder_map")
+        if not content:
+            return None
+        try:
+            parsed = json.loads(content)
+        except (ValueError, TypeError):
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        try:
+            return map_from_dict(parsed)
+        except (ValueError, TypeError, KeyError):
+            return None
+
     def load_effective_goal(self, goal_id: str, *, on_corrupt: str = "raise") -> Goal:
         """The goal as it currently is, with firming's outputs overlaid on the
         original ``goal.yaml`` facts. Use this everywhere cognition + gating
