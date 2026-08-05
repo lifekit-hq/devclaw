@@ -51,6 +51,22 @@ from ..model_tiers import model_for as _model_for
 GOAL_EVAL_MODEL = _model_for("goal_eval")
 
 
+#: The done-gate de-fat (structural-root-2026-08-05). At the done-gate the
+#: decision is "does the repo's END STATE satisfy done_when?" — answered from the
+#: fresh read-only repo review + the repository-context snapshot, NOT from the
+#: goal's re-fed diary. That diary — the ``## Recent event log`` (cap 24K) + the
+#: ``## What has actually shipped`` deliveries record (cap 24K) — is ~half of the
+#: 105K done-gate prompt that OOMs/times out (`input_chars=105182` in the live
+#: catalog), and it is a stateless-control-plane reflex: the journey and the
+#: agent's own delivery CLAIMS are not evidence a clause is met (the prompt itself
+#: already ranks them "secondary … claims do not count"). When ON, the done-gate
+#: prompt omits both. Default OFF — flip per box after the prompt-anatomy view
+#: (#467) confirms the diary is dead weight (mirrors the flag-gated planner cut,
+#: #463). Dropping only *claim/history* context can never loosen the gate — the
+#: repo review is still required for every clause — so this fails toward CLOSED.
+DONEGATE_LEAN = os.environ.get("DEVCLAW_DONEGATE_LEAN", "0") == "1"
+
+
 class GoalEvalError(Exception):
     def __init__(self, message: str, raw: str | None = None) -> None:
         super().__init__(message)
@@ -124,9 +140,14 @@ def build_prompt(
     at_done_gate: bool = False,
     spec: str = "",
     repo_context: Optional[str] = None,
+    lean_done_gate: bool = False,
 ) -> str:
     from ..prompts import load_prompt
     from ..loom.untrusted import UNTRUSTED_NOTE, fence_untrusted
+
+    # De-fat: at the done-gate, omit the re-fed diary (deliveries + event log) and
+    # judge the repo END STATE from the review + repo_context (see DONEGATE_LEAN).
+    lean = at_done_gate and lean_done_gate
 
     backlog = "\n".join(f"  - {b}" for b in goal.backlog) or "  (none listed)"
     parts = [load_prompt("goal-evaluator")]
@@ -208,12 +229,25 @@ def build_prompt(
             "source of truth for repo identity and which files exist)",
             repo_context.strip(),
         ]
-    parts += [
-        "\n## What has actually shipped (grounded deliveries)",
-        cap_deliveries(deliveries) or "(nothing delivered yet)",
-        "\n## Recent event log",
-        cap_log(recent_log) or "(no events yet)",
-    ]
+    if lean:
+        # The done decision is about the repo's END STATE, not the journey: the
+        # delivery record and event log (the two 24K-capped diary blocks that
+        # dominate the prompt) are omitted here. The prompt's own rules already
+        # rank them "secondary … claims do not count" — so this drops non-evidence,
+        # never a clause's grounding, and can only fail toward CLOSED.
+        parts.append(
+            "\n(The delivery record and event log are intentionally omitted at "
+            "this gate. Judge every done_when clause from the fresh repo review "
+            "and the repository context above — the agent's delivery claims and "
+            "the event history are NOT evidence that a clause is satisfied.)"
+        )
+    else:
+        parts += [
+            "\n## What has actually shipped (grounded deliveries)",
+            cap_deliveries(deliveries) or "(nothing delivered yet)",
+            "\n## Recent event log",
+            cap_log(recent_log) or "(no events yet)",
+        ]
     if review_report:
         parts += [
             "\n## Fresh read-only review of the current repo vs done_when",
@@ -569,16 +603,20 @@ async def evaluate(
     at_done_gate: bool = False,
     spec: str = "",
     repo_context: Optional[str] = None,
+    lean_done_gate: Optional[bool] = None,
 ) -> EvalResult:
     """Run the direction evaluation. ``claude_caller`` is injected so tests stub
     the LLM. Pass ``review_report`` + ``at_done_gate`` when judging a done proposal;
     ``spec`` (the waiter-provided scope contract) when one exists, so done is
     judged against it; ``repo_context`` (the :func:`_repo_context` workspace
-    snapshot) so repo identity is first-hand, never inferred."""
+    snapshot) so repo identity is first-hand, never inferred. ``lean_done_gate``
+    (default = the :data:`DONEGATE_LEAN` env flag; read at call time so tests can
+    monkeypatch it) omits the re-fed diary at the done-gate."""
+    lean = DONEGATE_LEAN if lean_done_gate is None else lean_done_gate
     prompt = build_prompt(
         goal, status, recent_log, deliveries,
         review_report=review_report, at_done_gate=at_done_gate, spec=spec,
-        repo_context=repo_context,
+        repo_context=repo_context, lean_done_gate=lean,
     )
     raw = await claude_caller(prompt)
     try:
