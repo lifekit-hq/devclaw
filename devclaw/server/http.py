@@ -1525,6 +1525,51 @@ async def goal_transcript_full(request: Request) -> Response:
     )
 
 
+# ── worker execution trace (the WORKER's turn-by-turn run of one task) ────────
+# The mirror of the cognition-transcript surface above, one layer down: the
+# cognition routes show the CONTROL-PLANE claude --print calls; this shows the
+# WORKER's actual in-sandbox execution. The full turn log is already captured in
+# the append-only events table (one row per SDK ActionEvent/ObservationEvent/
+# MessageEvent) — this route reads it back POST-HOC (the SSE /goals/{id}/events
+# stream is live-only, pinned to the current in_flight ref) and decodes each raw
+# event into readable {title, summary, detail, raw} via worker_events. Read-only
+# observability, same bar as get_trace: no state write, no goal-loop wake, no
+# LLM/subprocess.
+
+
+def _valid_task_id(task_id: str) -> bool:
+    """A task id is an opaque handle used only as a parameterized SQL bind —
+    reject the obviously-malformed (empty / path-shaped) for hygiene."""
+    return bool(task_id) and "/" not in task_id and "\\" not in task_id and ".." not in task_id
+
+
+@mcp.custom_route("/tasks/{task_id}/events.json", methods=["GET"])
+async def task_events_json(request: Request) -> Response:
+    """Turn-by-turn execution trace of ONE task — the worker's actual run,
+    readable AFTER it settles. Decodes each stored OpenHands event into a
+    readable row (agent message text / tool action / observation output), with
+    the full untruncated ``raw`` payload attached so nothing is hidden (the #455
+    guarantee). ``?since=<id>`` resumes after a cursor; ``?limit=<n>`` (default
+    500, capped 1000) bounds one page and ``nextCursor`` is set when more remain.
+    A task that never emitted events returns an empty list, not a 404. Read-only."""
+    from . import worker_events
+
+    task_id = request.path_params["task_id"]
+    if not _valid_task_id(task_id):
+        return JSONResponse({"error": "bad_task_id"}, status_code=400)
+    q = request.query_params
+    since = int(q["since"]) if q.get("since", "").isdigit() else None
+    limit = int(q["limit"]) if q.get("limit", "").isdigit() else 500
+    limit = max(1, min(limit, 1000))
+    try:
+        events = store.list_events(task_id=task_id, since_id=since, limit=limit)
+    except Exception as err:  # noqa: BLE001 — read-only surface, degrade to 500 not crash
+        return JSONResponse({"error": str(err)}, status_code=500)
+    rows = [worker_events.decode_event(ev) for ev in events]
+    next_cursor = events[-1].id if len(events) == limit else None
+    return JSONResponse({"events": rows, "count": len(rows), "nextCursor": next_cursor})
+
+
 @mcp.custom_route("/projects/{project_id}.json", methods=["GET"])
 async def project_json(request: Request) -> Response:
     """Project Detail feed — header (name, repo, preview) + active/archived goal
