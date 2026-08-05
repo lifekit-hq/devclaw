@@ -1504,7 +1504,14 @@ async def goal_transcript_full(request: Request) -> Response:
     if not (target == tdir / filename and target.parent == tdir and target.is_file()):
         return JSONResponse({"error": "not_found"}, status_code=404)
 
+    from . import prompt_anatomy
+
     t = trace_view.parse_transcript(target)
+    # Byte-anatomy of the prompt: which sections are instructions we author vs
+    # goal state re-fed into every stateless call (the "why is this 105 KB"
+    # answer, made visible on the surface the operator already reads). Pure,
+    # post-hoc, never-raises — no change to the capture path.
+    anatomy = prompt_anatomy.to_dict(prompt_anatomy.anatomize(t.prompt, t.role))
     return JSONResponse(
         {
             "filename": t.filename,
@@ -1520,6 +1527,7 @@ async def goal_transcript_full(request: Request) -> Response:
             "responseChars": t.response_chars,
             "prompt": t.prompt,
             "response": t.response,
+            "anatomy": anatomy,
             "extra": t.extra,
         }
     )

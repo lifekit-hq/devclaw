@@ -380,12 +380,33 @@ export interface TranscriptRow {
   error: string;
 }
 
+/** One section of a prompt's byte-anatomy — a top-level ``## `` span classified
+ *  as instruction (what we author) vs data (goal state re-fed into the call).
+ *  `dataKind` names the re-fed source (log / deliveries / review_report / …). */
+export interface PromptSection {
+  header: string;
+  chars: number;
+  category: "instruction" | "data";
+  dataKind: string | null;
+}
+
+/** The byte-anatomy of a cognition prompt: how the total splits between
+ *  instructions and re-fed goal state — the "why is this 105 KB" answer. */
+export interface PromptAnatomy {
+  totalChars: number;
+  instructionChars: number;
+  dataChars: number;
+  sections: PromptSection[];
+}
+
 /** One cognition call in FULL — every byte of prompt and response, no
- *  truncation (that's the whole point of this surface). */
+ *  truncation (that's the whole point of this surface), plus the prompt's
+ *  section byte-anatomy. */
 export interface TranscriptFull extends TranscriptRow {
   goalId: string;
   prompt: string;
   response: string;
+  anatomy: PromptAnatomy;
   extra: Record<string, string>;
 }
 

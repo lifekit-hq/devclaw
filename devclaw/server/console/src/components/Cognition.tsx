@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   fetchTranscript,
   fetchTranscripts,
+  type PromptAnatomy,
   type TranscriptFull,
   type TranscriptRow,
 } from "../api";
@@ -228,6 +229,9 @@ function TranscriptDetail({
               ERROR: {full.error}
             </div>
           )}
+          {full.anatomy && full.anatomy.totalChars > 0 && (
+            <AnatomyPanel anatomy={full.anatomy} />
+          )}
           <Block label="Prompt" text={full.prompt} />
           <Block
             label="Response"
@@ -236,6 +240,54 @@ function TranscriptDetail({
           />
         </div>
       )}
+    </div>
+  );
+}
+
+// AnatomyPanel — the byte-anatomy of the prompt: how the total splits between
+// instructions we author and goal state re-fed into every stateless call. The
+// answer to "why is this prompt 105 KB, and is it OUR bloat or the diary we push
+// back in?". Sorted biggest-first so the offender is at the top.
+function AnatomyPanel({ anatomy }: { anatomy: PromptAnatomy }) {
+  const total = anatomy.totalChars || 1;
+  const dataPct = Math.round((anatomy.dataChars / total) * 100);
+  const rows = [...anatomy.sections].sort((a, b) => b.chars - a.chars);
+  const DATA = "var(--red, #d9534f)";
+  const INSTR = "var(--accent, #5b8def)";
+
+  return (
+    <div>
+      <div className="eyebrow" style={{ marginBottom: 6 }}>Prompt anatomy</div>
+      <div className="mono muted" style={{ fontSize: 11.5, marginBottom: 8 }}>
+        instructions {human(anatomy.instructionChars)} · re-fed data {human(anatomy.dataChars)} ({dataPct}%) · total {human(anatomy.totalChars)}
+      </div>
+      {/* whole-prompt split bar */}
+      <div style={{ display: "flex", height: 8, borderRadius: 4, overflow: "hidden", marginBottom: 10 }}>
+        <div style={{ width: `${(anatomy.instructionChars / total) * 100}%`, background: INSTR }} />
+        <div style={{ width: `${(anatomy.dataChars / total) * 100}%`, background: DATA }} />
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {rows.map((s, i) => {
+          const pct = (s.chars / total) * 100;
+          const isData = s.category === "data";
+          return (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <span style={{ flex: "0 0 46%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span style={{ color: isData ? DATA : INSTR, fontWeight: 600 }}>
+                  {isData ? (s.dataKind ?? "data") : "instr"}
+                </span>
+                <span className="muted" style={{ marginLeft: 6 }}>{s.header}</span>
+              </span>
+              <span style={{ flex: 1, height: 6, background: "var(--border)", borderRadius: 3, overflow: "hidden" }}>
+                <span style={{ display: "block", width: `${pct}%`, height: "100%", background: isData ? DATA : INSTR }} />
+              </span>
+              <span className="mono muted" style={{ flex: "0 0 78px", textAlign: "right" }}>
+                {human(s.chars)} · {pct.toFixed(0)}%
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

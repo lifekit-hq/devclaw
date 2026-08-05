@@ -157,6 +157,34 @@ def test_transcript_full_roundtrips_huge_prompt_untruncated(tmp_path, monkeypatc
     assert body["response"] == "- [ ] step one"
 
 
+def test_transcript_full_carries_prompt_byte_anatomy(tmp_path, monkeypatch):
+    """The full endpoint attaches the prompt's section byte-anatomy — instructions
+    we author vs goal state re-fed into the call — so the console can show WHY a
+    prompt is huge, not just THAT it is. Mirrors the assembler's ## headers."""
+    goals_dir = tmp_path / "goals"
+    headered = (
+        "You are the evaluator. Judge hard.\n"
+        "\n## Goal\nobjective: ship /health\n"
+        "\n## Recent event log\n" + ("event happened\n" * 500) +
+        "\n## What has actually shipped (grounded deliveries)\n" + ("a PR merged\n" * 500)
+    )
+    _write(goals_dir, "g1", "evaluator", headered, "{}", tokens_in=20, tokens_out=2)
+    _point_goals_at(monkeypatch, goals_dir)
+    _, index = _get(http_mod.goal_transcripts_json, {"goal_id": "g1"})
+    fname = index["transcripts"][0]["filename"]
+
+    status, body = _get(http_mod.goal_transcript_full, {"goal_id": "g1", "filename": fname})
+    assert status == 200
+    an = body["anatomy"]
+    # anatomy is computed on the parsed prompt — self-consistent with promptChars
+    assert an["totalChars"] == body["promptChars"]
+    assert an["instructionChars"] + an["dataChars"] == an["totalChars"]
+    # the re-fed log + deliveries are the bulk — the finding the surface exposes
+    assert an["dataChars"] > an["instructionChars"]
+    kinds = {s["dataKind"] for s in an["sections"] if s["category"] == "data"}
+    assert {"log", "deliveries"} <= kinds
+
+
 def test_transcript_full_carries_error_and_empty_response(tmp_path, monkeypatch):
     goals_dir = tmp_path / "goals"
     _seed_run(goals_dir)
