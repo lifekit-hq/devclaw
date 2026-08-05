@@ -121,6 +121,22 @@ def test_craft_stays_out_of_the_always_on_brief(runner, skill_dir):
     assert len(brief) < 13000  # craft re-concatenation would push it to ~17k
 
 
+def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
+    """Locks the 2026-08-05 worker-brief shrink (trust the agent, shrink the
+    prompt): the general-engineering spoon-feeding in _common / quality-bar /
+    verify-iterate was compressed (~12.2k → ~10.9k) while every devclaw-specific
+    contract + guardrail (verify-gate coverage, repo-gate-conflict, PLAN.md,
+    commit) stayed. A regression above this ceiling means the spoon-feeding prose
+    crept back — recompress it, don't raise the bar."""
+    brief = runner._load_skills("implement_feature")
+    assert len(brief) < 11_400
+    # the guardrails the compression must never drop (the anti-#358 rules + the
+    # pull-doctrine live on regardless of how tight the prose gets)
+    assert "Never weaken or delete an existing test" in brief
+    assert "no-op code" in brief
+    assert "AGENTS.md" in brief
+
+
 def test_fix_bug_keeps_its_smallest_change_skill(runner, skill_dir):
     bundle = runner._load_skills("fix_bug")
     assert "smallest change" in bundle.lower()
