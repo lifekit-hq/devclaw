@@ -41,7 +41,7 @@ docs/
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`reference/env-vars.md`](./reference/env-vars.md) | Single source of truth for every env var the runtime reads, grouped by purpose. | **CURRENT** — written/verified across the 2026-07-13 → 2026-07-30 tranches, re-verified 2026-07-30 (added `DEVCLAW_COGNITION_RETRIES`). Doc↔code parity is enforced by `tests/test_env_vars_doc_sync.py` (bidirectional) — the load-bearing guarantee this row exists for. Change history in git. |
+| [`reference/env-vars.md`](./reference/env-vars.md) | Single source of truth for every env var the runtime reads, grouped by purpose. | **CURRENT** — written/verified across the 2026-07-13 → 2026-07-30 tranches, re-verified 2026-08-05 (added `DEVCLAW_DONEGATE_LEAN`, the done-gate de-fat flag). Doc↔code parity is enforced by `tests/test_env_vars_doc_sync.py` (bidirectional) — the load-bearing guarantee this row exists for. Change history in git. |
 
 ## Runbooks
 

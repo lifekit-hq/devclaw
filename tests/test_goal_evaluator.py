@@ -70,6 +70,95 @@ async def test_evaluate_roundtrip_with_injected_caller():
     assert calls["n"] == 1
 
 
+# ── done-gate de-fat (DONEGATE_LEAN) — omit the re-fed diary at the done-gate ──
+
+_BIG_LOG = "an event happened\n" * 3000        # ~fat re-fed history
+_BIG_DELIVERIES = "shipped a PR\n" * 3000        # ~fat delivery record
+
+
+def test_done_gate_lean_omits_diary_but_keeps_grounding():
+    lean = build_prompt(
+        _goal(), GoalStatus(), _BIG_LOG, _BIG_DELIVERIES,
+        review_report="## Per-clause evidence\n/health exists and is tested",
+        repo_context="remote: github.com/o/r\nhead: abc123",
+        at_done_gate=True, lean_done_gate=True,
+    )
+    # the two diary sections are gone
+    assert "## Recent event log" not in lean
+    assert "## What has actually shipped" not in lean
+    assert "an event happened" not in lean and "shipped a PR" not in lean
+    # the omission is stated, not silent
+    assert "intentionally omitted at this gate" in lean
+    # grounding the gate actually needs is still present
+    assert "done_when:" in lean
+    assert "Repository context" in lean
+    assert "Fresh read-only review" in lean and "/health exists" in lean
+
+
+def test_done_gate_lean_off_keeps_the_diary_unchanged():
+    full = build_prompt(
+        _goal(), GoalStatus(), _BIG_LOG, _BIG_DELIVERIES,
+        at_done_gate=True, lean_done_gate=False,
+    )
+    assert "## Recent event log" in full
+    assert "## What has actually shipped" in full
+    assert "an event happened" in full and "shipped a PR" in full
+
+
+def test_lean_only_applies_at_the_done_gate():
+    """The on-demand direction check (at_done_gate=False) still gets the history —
+    lean is a done-gate-only de-fat, never a blanket context strip."""
+    prompt = build_prompt(
+        _goal(), GoalStatus(), _BIG_LOG, _BIG_DELIVERIES,
+        at_done_gate=False, lean_done_gate=True,
+    )
+    assert "## Recent event log" in prompt
+    assert "## What has actually shipped" in prompt
+
+
+def test_lean_done_gate_is_a_large_byte_cut_of_refed_data():
+    """The point, measured with the anatomy decoder: leaning drops the log +
+    deliveries data sections and shrinks the prompt by the diary's bulk."""
+    from devclaw.server.prompt_anatomy import anatomize
+
+    args = (_goal(), GoalStatus(), _BIG_LOG, _BIG_DELIVERIES)
+    kw = dict(review_report="## Per-clause evidence\nok",
+              repo_context="remote: x", at_done_gate=True)
+    full = build_prompt(*args, lean_done_gate=False, **kw)
+    lean = build_prompt(*args, lean_done_gate=True, **kw)
+    assert len(lean) < len(full) - 40_000        # ~two 24K-capped blocks gone
+    lean_kinds = {s.data_kind for s in anatomize(lean, "evaluator").sections if s.category == "data"}
+    assert "log" not in lean_kinds and "deliveries" not in lean_kinds
+    full_kinds = {s.data_kind for s in anatomize(full, "evaluator").sections if s.category == "data"}
+    assert {"log", "deliveries"} <= full_kinds
+
+
+@pytest.mark.asyncio
+async def test_evaluate_reads_the_donegate_lean_env_flag_at_call_time(monkeypatch):
+    """evaluate() defers to the DONEGATE_LEAN module flag (read at call time, so a
+    box env flip takes effect without a re-import) — and only at the done-gate."""
+    import devclaw.goal.evaluator as ev_mod
+
+    seen: dict[str, str] = {}
+
+    async def caller(prompt: str) -> str:
+        seen["prompt"] = prompt
+        return json.dumps({"verdict": "off_track", "rationale": "x",
+                           "corrections": ["[clause 1] add the test"]})
+
+    monkeypatch.setattr(ev_mod, "DONEGATE_LEAN", True)
+    await evaluate(_goal(), GoalStatus(), _BIG_LOG, _BIG_DELIVERIES,
+                   claude_caller=caller, review_report="## Per-clause evidence\nok",
+                   at_done_gate=True)
+    assert "## Recent event log" not in seen["prompt"]
+
+    monkeypatch.setattr(ev_mod, "DONEGATE_LEAN", False)
+    await evaluate(_goal(), GoalStatus(), _BIG_LOG, _BIG_DELIVERIES,
+                   claude_caller=caller, review_report="## Per-clause evidence\nok",
+                   at_done_gate=True)
+    assert "## Recent event log" in seen["prompt"]
+
+
 def test_review_report_extraction_skips_prompt_template_and_uses_filled_section():
     """The worker's captured stdout starts with a panel echoing the agent's
     brief — which itself contains the literal template ``## Per-clause
