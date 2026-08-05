@@ -28,6 +28,12 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from .loom import trace as _trace
+
+#: A bound, one-argument LLM caller: ``await caller(prompt) -> response``. The
+#: cognition callers are all this shape (``claude_with_model`` builds one). Lives
+#: here in the leaf so goal-layer modules type against it without importing a
+#: heavier module. (Relocated from the deleted goal/planner.py — demolition P3b.)
+ClaudeCaller = Callable[[str], Awaitable[str]]
 from .loom.limits import FailureKind, classify_failure
 
 #: fallback (seconds) for the default cognition ceiling when

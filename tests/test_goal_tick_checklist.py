@@ -195,7 +195,7 @@ async def test_settle_with_addresses_no_checklist_does_not_raise(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -302,7 +302,7 @@ async def test_decompose_disabled_writes_no_checklist(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(role="planner"), evaluator_caller=research,
+        evaluator_caller=research,
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
         decompose_enabled=False,
         decomposer_caller=decomposer,
@@ -325,7 +325,7 @@ async def test_decompose_enabled_writes_checklist_after_brief(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(role="planner"), evaluator_caller=research,
+        evaluator_caller=research,
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
         decompose_enabled=True,
         decomposer_caller=decomposer,
@@ -357,7 +357,7 @@ async def test_decompose_failure_falls_back_to_backlog_mode(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(role="planner"), evaluator_caller=research,
+        evaluator_caller=research,
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
         decompose_enabled=True,
         decomposer_caller=decomposer,
@@ -393,7 +393,6 @@ async def test_decompose_skipped_when_done_when_empty(tmp_path):
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(role="planner"),
         evaluator_caller=FakeClaude(_BRIEF, role="research"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
         decompose_enabled=True,
@@ -431,7 +430,7 @@ async def test_planner_action_with_addresses_flips_item_in_flight(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -475,7 +474,7 @@ async def test_settled_addressed_action_flips_item_done_with_evidence(tmp_path):
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -511,7 +510,7 @@ async def test_dispatch_uses_goal_branch_when_checklist_exists(tmp_path):
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=rec_prepare,
     )
 
@@ -541,7 +540,7 @@ async def test_dispatch_uses_default_branch_when_no_checklist(tmp_path):
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=rec_prepare,
     )
 
@@ -574,7 +573,7 @@ async def test_review_repository_dispatch_does_not_use_goal_branch(tmp_path):
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=rec_prepare,
     )
 
@@ -604,7 +603,7 @@ async def test_done_gate_review_uses_goal_branch_when_checklist_exists(tmp_path)
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=rec_prepare,
     )
 
@@ -657,7 +656,7 @@ async def test_dispatch_derives_scaffold_flag_from_addressed_item(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -681,7 +680,7 @@ async def test_dispatch_does_not_scaffold_a_logic_item(tmp_path):
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -706,7 +705,7 @@ async def test_dispatch_no_scaffold_in_backlog_mode(tmp_path):
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -740,7 +739,7 @@ async def test_settled_addressed_action_gate_failed_reverts_to_not_started(tmp_p
 
     await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -785,7 +784,7 @@ async def test_repeated_item_failure_trips_breaker_and_blocks_goal(tmp_path, mon
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=notifier, prepare_ws=fake_prepare,
     )
 
@@ -891,7 +890,7 @@ async def test_redispatch_brief_carries_prior_attempt_digest(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -920,7 +919,7 @@ async def test_dispatch_without_failures_is_byte_identical(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -958,7 +957,7 @@ async def test_dispatch_proceeds_when_branch_is_fresh_zero_ahead_zero_behind(tmp
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -988,7 +987,7 @@ async def test_dispatch_proceeds_when_branch_is_young_below_stale_threshold(tmp_
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -1019,7 +1018,7 @@ async def test_dispatch_skipped_when_branch_is_hard_stale(tmp_path, monkeypatch)
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -1051,7 +1050,7 @@ async def test_dispatch_proceeds_when_branch_has_commits_ahead(tmp_path, monkeyp
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -1080,7 +1079,7 @@ async def test_dispatch_proceeds_when_staleness_probe_returns_none(tmp_path, mon
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
@@ -1115,7 +1114,7 @@ async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypat
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 

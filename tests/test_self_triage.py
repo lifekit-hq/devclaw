@@ -165,7 +165,7 @@ async def _tick(store, engine, notifier, *, triage_caller, planner=None, evaluat
     planner = planner or FakeClaude("{}")
     evaluator = evaluator or FakeClaude("{}")
     return await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
         triage_caller=triage_caller,
     ), planner, evaluator

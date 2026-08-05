@@ -43,10 +43,9 @@ def _store(tmp_path, clock):
 async def _thin_tick(store, goal_id, planner, evaluator, engine, notifier, *, thin=True, verify_done=True):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator, notifier=notifier,
+        evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
-        eval_every=99, verify_done=verify_done, thin_plan_enabled=thin,
-    )
+        eval_every=99, verify_done=verify_done, )
 
 
 # ---- the guardrail: thin idle / blocked ticks are zero-token ---------------

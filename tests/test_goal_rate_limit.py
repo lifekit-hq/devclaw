@@ -50,7 +50,7 @@ async def test_goal_cognition_rate_limit_pauses_layer(tmp_path):
     planner = RaisingClaude("API Error: 429 Too Many Requests")
 
     out = await tick_all(
-        store=store, engine=eng, planner_caller=planner, evaluator_caller=FakeClaude(),
+        store=store, engine=eng, evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
     )
 
@@ -67,7 +67,7 @@ async def test_tick_all_skips_all_cognition_while_paused(tmp_path):
     planner = RaisingClaude("must not be called")
 
     out = await tick_all(
-        store=store, engine=eng, planner_caller=planner, evaluator_caller=FakeClaude(),
+        store=store, engine=eng, evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
     )
 
@@ -83,7 +83,7 @@ async def test_expired_pause_clears_and_proceeds(tmp_path):
     planner = RaisingClaude("real bug: boom")  # non-limit → ERROR, proves we proceeded
 
     out = await tick_all(
-        store=store, engine=eng, planner_caller=planner, evaluator_caller=FakeClaude(),
+        store=store, engine=eng, evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
     )
 
@@ -121,8 +121,7 @@ class FlaggedPausableEngine(PausableEngine):
 
 async def _tick(store, eng, notifier, planner=None):
     return await tick_all(
-        store=store, engine=eng, planner_caller=planner or FakeClaude(),
-        evaluator_caller=FakeClaude(), notifier=notifier, prepare_ws=fake_prepare,
+        store=store, engine=eng, evaluator_caller=FakeClaude(), notifier=notifier, prepare_ws=fake_prepare,
         eval_every=99,
     )
 

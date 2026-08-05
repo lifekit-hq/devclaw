@@ -213,7 +213,7 @@ def _svc(tmp_path, db, notifier):
     evaluator = FakeClaude(role="evaluator")
     svc = GoalService(
         queue, db, config=cfg, notifier=notifier,
-        planner_caller=planner, evaluator_caller=evaluator,
+        evaluator_caller=evaluator,
     )
     return svc, planner, evaluator
 

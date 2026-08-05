@@ -33,7 +33,7 @@ def _store(tmp_path):
 async def _tick(store, goal_id, planner, evaluator, engine, notifier, *, world_research=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator, notifier=notifier,
+        evaluator_caller=evaluator, notifier=notifier,
         notify_url="", prepare_ws=fake_prepare, eval_every=99,
         world_research_caller=world_research,
     )

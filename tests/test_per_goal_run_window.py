@@ -39,7 +39,7 @@ async def test_windowed_out_goal_is_skipped_others_tick(tmp_path):
     engine = WindowEngine({"night"})
 
     out = await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
     )
 

@@ -44,7 +44,7 @@ def _store(tmp_path):
 async def _tick(store, goal_id, planner, engine):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), notify_url="http://relay",
         prepare_ws=fake_prepare, eval_every=99, verify_done=True,
     )

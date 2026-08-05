@@ -77,7 +77,6 @@ def _ctx(store: GoalStore, notifier: RecordingNotifier) -> TickContext:
     return TickContext(
         store=store,
         engine=FakeEngine(),
-        planner_caller=FakeClaude(),
         evaluator_caller=FakeClaude(),
         notifier=notifier,
         prepare_ws=fake_prepare,

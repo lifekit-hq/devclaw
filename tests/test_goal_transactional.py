@@ -164,7 +164,7 @@ async def test_crash_mid_dispatch_leaves_nothing(tmp_path):
 
     out = await tick_goal(
         "g", store=goal_store, engine=engine,
-        planner_caller=FakeClaude(ACT_FEATURE), evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
     )
 
@@ -200,7 +200,7 @@ async def test_crash_mid_settle_is_idempotent(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=conflicting_engine,
-        planner_caller=FakeClaude(SLEEP), evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
     )
 
@@ -217,7 +217,7 @@ async def test_crash_mid_settle_is_idempotent(tmp_path):
     clean_engine = FakeEngine(poll_result=poll_result)
     out2 = await tick_goal(
         "g", store=store, engine=clean_engine,
-        planner_caller=FakeClaude(SLEEP), evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
     )
 
@@ -280,7 +280,7 @@ async def test_dispatch_error_leaves_no_task_row(tmp_path):
 
     out = await tick_goal(
         "g", store=goal_store, engine=_RaisingEngine(queue, state),
-        planner_caller=FakeClaude(ACT_FEATURE), evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
     )
 
@@ -318,7 +318,7 @@ async def test_no_phantom_flag_items_on_aborted_dispatch(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(act_with_addresses), evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
     )
 
@@ -361,7 +361,7 @@ async def test_mirror_discipline_aborted_settle_leaves_files_untouched(tmp_path)
     status = store.load_status("g")
     ctx = TickContext(
         store=store, engine=engine,
-        planner_caller=FakeClaude(), evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
+        evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
     )
 
     with pytest.raises(TransitionConflict):
@@ -395,7 +395,7 @@ async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
     status = store.load_status("g")
     ctx = TickContext(
         store=store, engine=engine,
-        planner_caller=FakeClaude(), evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
+        evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
     )
 
     await _resolve_polling_action("g", goal, status, ctx)
@@ -506,7 +506,7 @@ async def test_run_atomic_rejects_yielding_coroutine(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=_YieldingEngine(),
-        planner_caller=FakeClaude(ACT_FEATURE), evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
     )
 

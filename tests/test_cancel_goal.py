@@ -122,7 +122,7 @@ async def test_cancelled_goal_is_skipped_on_tick(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator,
+        evaluator_caller=evaluator,
         notifier=notifier, notify_url="", prepare_ws=fake_prepare, eval_every=99,
     )
 

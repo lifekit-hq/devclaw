@@ -24,7 +24,6 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from . import evaluator as goal_evaluator
 from . import merge as goal_merge
-from . import planner as goal_planner
 from . import remote_checks as goal_remote_checks
 from . import research as goal_research
 from . import summary as goal_summary
@@ -108,7 +107,6 @@ class GoalService:
         store: StateStore,
         config: Optional[GoalConfig] = None,
         *,
-        planner_caller: Optional[ClaudeCaller] = None,
         evaluator_caller: Optional[ClaudeCaller] = None,
         summary_caller: Optional[ClaudeCaller] = None,
         triage_caller: Optional[ClaudeCaller] = None,
@@ -126,7 +124,6 @@ class GoalService:
         self._queue = queue
         self._store = store  # task/event store — read by tail_goal for live events
         self._engine = InProcessEngine(queue, store)
-        self._planner_caller = planner_caller  # bound lazily (avoids SDK import in tests)
         self._evaluator_caller = evaluator_caller
         self._summary_caller = summary_caller
         self._triage_caller = triage_caller
@@ -145,11 +142,6 @@ class GoalService:
         self._trend_detector_inst: "Optional[_trend_detector_mod.TrendDetector]" = None
 
     # ---- cognition callers (bound on first real use) -----------------------
-
-    def _planner(self) -> ClaudeCaller:
-        if self._planner_caller is None:
-            self._planner_caller = goal_planner.default_caller()
-        return self._planner_caller
 
     def _evaluator(self) -> ClaudeCaller:
         if self._evaluator_caller is None:
@@ -402,7 +394,7 @@ class GoalService:
     async def tick_all(self) -> dict:
         outcomes = await tick_all(
             store=self._goal_store, engine=self._engine,
-            planner_caller=self._planner(), evaluator_caller=self._evaluator(),
+            evaluator_caller=self._evaluator(),
             notifier=self._notifier, notify_url="",
             eval_every=self._cfg.eval_every, verify_done=self._cfg.verify_done,
             verify_done_resolver=self._verify_done_resolver(),
@@ -421,7 +413,7 @@ class GoalService:
         with _trace.tracer_scope(self._make_tracer(goal_id)):
             outcome = await tick_goal(
                 goal_id, store=self._goal_store, engine=self._engine,
-                planner_caller=self._planner(), evaluator_caller=self._evaluator(),
+                evaluator_caller=self._evaluator(),
                 notifier=self._notifier, notify_url="",
                 eval_every=self._cfg.eval_every, verify_done=self._verify_done(goal),
                 autodeploy=self._autodeploy(goal),
@@ -979,7 +971,7 @@ class GoalService:
         goal = self._goal_store.load_goal(goal_id)
         ctx = TickContext(
             store=self._goal_store, engine=self._engine,
-            planner_caller=self._planner(), evaluator_caller=self._evaluator(),
+            evaluator_caller=self._evaluator(),
             notifier=self._notifier, notify_url=self._cfg.notify_url,
             eval_every=self._cfg.eval_every, verify_done=self._verify_done(goal),
             autodeploy=self._autodeploy(goal),

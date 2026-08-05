@@ -19,7 +19,7 @@ from .tick_context import NotifyLevel, Outcome, TickContext, _notify
 from .engine import GoalEngineError
 from .models import Goal, GoalStatus
 from .notify import Notifier
-from .planner import ClaudeCaller
+from ..llm_call import ClaudeCaller
 from .store import GoalDocCorrupt, GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError

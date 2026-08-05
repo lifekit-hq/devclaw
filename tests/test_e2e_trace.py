@@ -45,7 +45,7 @@ EVAL_ACHIEVED = json.dumps({
 async def _tick(store, planner, evaluator, engine, notifier, *, verify_done=True):
     return await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator, notifier=notifier,
+        evaluator_caller=evaluator, notifier=notifier,
         notify_url="", prepare_ws=fake_prepare, verify_done=verify_done,
     )
 

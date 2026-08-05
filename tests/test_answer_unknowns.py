@@ -70,7 +70,6 @@ def _svc(tmp_path, db):
     svc = GoalService(
         queue, db, config=cfg,
         notifier=RecordingNotifier(),
-        planner_caller=FakeClaude(role="goal_planner"),
         evaluator_caller=FakeClaude(role="goal_evaluator"),
     )
     return svc, goals_dir

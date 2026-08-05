@@ -56,7 +56,7 @@ def _store(tmp_path, clock):
 async def _tick(store, goal_id, planner, evaluator, engine, notifier, *, eval_every=99, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator, notifier=notifier,
+        evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
         eval_every=eval_every, verify_done=verify_done, summary_caller=summary_caller,
         merger=merger, remote_checker=remote_checker,
@@ -174,7 +174,7 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
         return branch or "main"
 
     out = await tick_goal(
-        "g", store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        "g", store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="", prepare_ws=rec_prepare, eval_every=99,
     )
     assert out is Outcome.DISPATCHED
@@ -1543,7 +1543,7 @@ async def test_tick_all_resolves_merger_per_goal(tmp_path, monkeypatch):
     notifier = RecordingNotifier()
 
     await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
         merger_resolver=_resolver,
     )
@@ -1575,7 +1575,7 @@ async def test_tick_all_resolves_verify_done_per_goal(tmp_path):
     notifier = RecordingNotifier()
 
     await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
         verify_done_resolver=_vd_resolver,
     )
@@ -1605,7 +1605,7 @@ async def test_tick_all_resolves_autodeploy_per_goal(tmp_path):
     notifier = RecordingNotifier()
 
     await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
         autodeploy_resolver=_ad_resolver,
     )
@@ -1801,7 +1801,7 @@ async def _failing_prepare(
 async def _tick_prep(store, goal_id, planner, engine, notifier, *, prepare_ws):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(), notifier=notifier,
+        evaluator_caller=FakeClaude(), notifier=notifier,
         notify_url="http://relay", prepare_ws=prepare_ws, eval_every=99,
     )
 
@@ -3215,7 +3215,7 @@ async def test_trend_sweep_skips_cancelled_and_done_goals(tmp_path):
     engine, notifier = FakeEngine(), RecordingNotifier()
 
     await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
         trend_detector=td,
     )
@@ -3261,7 +3261,7 @@ async def test_tick_all_runs_trace_prune_on_cheap_path_with_zero_tokens(tmp_path
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3286,8 +3286,7 @@ async def test_trace_prune_failure_never_breaks_the_heartbeat(tmp_path):
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=ExplodingPruneEngine(), planner_caller=planner,
-        evaluator_caller=evaluator, notifier=notifier,
+        store=store, engine=ExplodingPruneEngine(), evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3307,7 +3306,7 @@ async def test_tick_all_runs_events_prune_on_cheap_path_with_zero_tokens(tmp_pat
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3332,8 +3331,7 @@ async def test_events_prune_failure_never_breaks_the_heartbeat(tmp_path):
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=ExplodingEventsPruneEngine(), planner_caller=planner,
-        evaluator_caller=evaluator, notifier=notifier,
+        store=store, engine=ExplodingEventsPruneEngine(), evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3352,7 +3350,7 @@ async def test_tick_all_runs_vacuum_on_cheap_path_with_zero_tokens(tmp_path):
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=engine, planner_caller=planner, evaluator_caller=evaluator,
+        store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3377,8 +3375,7 @@ async def test_vacuum_failure_never_breaks_the_heartbeat(tmp_path):
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=ExplodingVacuumEngine(), planner_caller=planner,
-        evaluator_caller=evaluator, notifier=notifier,
+        store=store, engine=ExplodingVacuumEngine(), evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3400,8 +3397,7 @@ async def test_tick_all_pings_owner_when_db_size_alerts_at_zero_tokens(tmp_path)
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=AlertingEngine(), planner_caller=planner,
-        evaluator_caller=evaluator, notifier=notifier,
+        store=store, engine=AlertingEngine(), evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3425,8 +3421,7 @@ async def test_no_db_size_ping_when_under_threshold(tmp_path):
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     await tick_all(
-        store=store, engine=QuietEngine(), planner_caller=planner,
-        evaluator_caller=evaluator, notifier=notifier,
+        store=store, engine=QuietEngine(), evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
@@ -3448,8 +3443,7 @@ async def test_db_size_alert_failure_never_breaks_the_heartbeat(tmp_path):
     planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=ExplodingAlertEngine(), planner_caller=planner,
-        evaluator_caller=evaluator, notifier=notifier,
+        store=store, engine=ExplodingAlertEngine(), evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
 

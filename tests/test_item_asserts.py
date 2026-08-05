@@ -243,7 +243,7 @@ def _seed_with_workspace(tmp_path, item: ChecklistItem):
                       pr_url="https://x/pr/1", gate_passed=True)
     ctx = TickContext(
         store=store, engine=FakeEngine(poll_result=poll),
-        planner_caller=FakeClaude(), evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
+        evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
     )
     return store, ws, ctx
 
@@ -304,7 +304,7 @@ def _seed_one_shot_program(tmp_path, items, poll):
     store.save_status("g", GoalStatus(phase="in_flight", lifecycle="executing", in_flight=ref))
     ctx = TickContext(
         store=store, engine=FakeEngine(poll_result=poll),
-        planner_caller=FakeClaude(), evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
+        evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
     )
     return store, ws, ctx
 

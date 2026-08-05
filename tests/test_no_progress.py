@@ -37,7 +37,7 @@ def _executing(store: GoalStore, **over) -> GoalStatus:
 async def _tick(store, *, notifier, engine=None, planner=None, window=WINDOW):
     return await tick_goal(
         "g", store=store, engine=engine or FakeEngine(),
-        planner_caller=planner or FakeClaude(), evaluator_caller=FakeClaude(),
+        evaluator_caller=FakeClaude(),
         notifier=notifier, prepare_ws=fake_prepare,
         no_progress_s=window, eval_every=99,
     )

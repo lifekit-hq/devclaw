@@ -72,7 +72,7 @@ def _discovery_in_flight():
 async def _tick(store, goal_id, planner, researcher, engine, notifier):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=researcher, notifier=notifier,
+        evaluator_caller=researcher, notifier=notifier,
         notify_url="", prepare_ws=fake_prepare, eval_every=99,
     )
 

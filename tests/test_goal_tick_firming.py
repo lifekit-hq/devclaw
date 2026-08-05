@@ -61,7 +61,7 @@ def _store(tmp_path):
 async def _tick(store, goal_id, planner, evaluator, engine, notifier):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator, notifier=notifier,
+        evaluator_caller=evaluator, notifier=notifier,
         notify_url="", prepare_ws=fake_prepare, eval_every=99,
     )
 
@@ -183,7 +183,7 @@ async def test_discovery_lands_in_firming_when_enabled(tmp_path, monkeypatch):
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator,
+        evaluator_caller=evaluator,
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
         eval_every=99,
     )
@@ -317,7 +317,6 @@ async def test_decomposer_prompt_carries_mechanical_repo_context_on_both_paths(t
     out = await tick_goal(
         "g", store=store,
         engine=FakeEngine(poll_result=PollResult(terminal=True, status="done", detail=REVIEW_DETAIL)),
-        planner_caller=FakeClaude(role="goal_planner"),
         evaluator_caller=FakeClaude("## Current state\ntight brief", role="goal_evaluator"),
         notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
         eval_every=99, decompose_enabled=True, decomposer_caller=capture_legacy,
@@ -339,8 +338,7 @@ async def test_decomposer_prompt_carries_mechanical_repo_context_on_both_paths(t
         decomposer_caller=capture_firming,
     )
     ctx = TickContext(
-        store=store, engine=FakeEngine(), planner_caller=FakeClaude(),
-        evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
+        store=store, engine=FakeEngine(), evaluator_caller=FakeClaude(), notifier=RecordingNotifier(),
         prepare_ws=fake_prepare,
     )
     await handler.run("g2", store.load_goal("g2"), store.load_status("g2"), ctx)
