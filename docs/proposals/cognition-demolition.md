@@ -224,14 +224,21 @@ dispatch the default."
   read the repo + `PLAN.md`, plan in-session, update `PLAN.md`, do the work, commit it on
   the delivery path. This is the rewrite of the (now-mooted) #460 wayfinder-issue skill for
   the file shape. Inert until P3 wires the brief. No control-plane code.
-- **P3 — the planner cut + tick rewire (the load-bearing PR, full invariant-guard).**
-  Make the **mechanical "advance the goal / maintain `PLAN.md`" dispatch the DEFAULT
-  executing path** for `long_lived` goals (mirror `_handle_one_shot_executing`'s
-  zero-LLM dispatch shape), and delete the planner path in `_handle_executing`. Delete
-  `planner.py` (goal-planner) + `goal-planner.md`. The light pull-brief lands at
-  `openhands-runner/runner.py:384`. **Re-run the eval vs the 2/2 baseline to prove the
-  pass-rate holds** — this is the merge gate. Migration order still load-bearing: the
-  worker skill (P2) must exist before the planner is cut (`[OPEN] O3`).
+- **P3 — the planner cut + tick rewire (the load-bearing change, full invariant-guard).**
+  A **mechanical "advance the goal / maintain `PLAN.md`" dispatch** for `long_lived` goals
+  (mirrors `_handle_one_shot_executing`'s zero-LLM shape), with the done-TRIGGER resolved
+  in O4 (worker session-`DONE` proposes; the grounded done-gate verifies). Lands in two
+  steps to de-risk the hot path:
+  - *P3a — additive + flag-gated:* the new path behind a default-off flag; the planner
+    stays the default fallback. Stub-tested (the zero-token idle guard + the ralph-loop
+    dispatch/verify cycle), no box needed. The light pull-brief lands at
+    `openhands-runner/runner.py:384`.
+  - *P3b — flip + delete:* after the box `measure_passrate` re-run proves the flagged path
+    holds the **2/2 baseline**, flip the default and delete `planner.py` + `goal-planner.md`.
+    The eval re-run is the merge gate for P3b.
+
+  Migration order still load-bearing (`[OPEN] O3`): the worker `PLAN.md` skill (P2, #462)
+  must land before the planner is cut.
 - **P4 — decomposer + firming relocation, summarizer removal, the three gates
   advisory→away.** The bulk of the prompt-corpus deletion (~75%). Decomposer is the OOM
   fish (`[OPEN] O7`) — relocate into the worker session with care, never before P3.
@@ -257,11 +264,26 @@ noted per item; the direction is LOCKED regardless (Denys, 2026-08-05).
   must NOT precede P2 (the worker `PLAN.md` skill exists), else the worker has no guidance
   to maintain the plan and durable-pursuit degrades in the gap. It's a written gate on the
   P3 tranche: land the skill (P2), then cut the planner (P3), same PR-order or stacked.
-- **[OPEN O4] Done-gate destination — reconcile with firming (deferred to P3/P4).** The
-  done-gate reads the goal's `done_when` (thin destination-agreement, `[OPEN] O5`) against
-  the repo; `PLAN.md` is available as context but is NOT the yardstick (the worker writes
-  it, so gating on it would be trusting the output on faith — §3a). Confirm at P3 that the
-  done-gate keeps reading `done_when`, not `PLAN.md`. Reconcile with foundation-checkpoint.
+- **[O4] Done-gate destination + done-TRIGGER — RESOLVED for P3 (2026-08-05).** Two parts:
+  - *Yardstick:* the done-gate reads the goal's `done_when` (thin destination-agreement,
+    `[OPEN] O5`) against the repo. `PLAN.md` is available as context but is NOT the
+    yardstick — the worker writes it, so gating on it would be trusting the output on faith
+    (§3a). The done-gate keeps reading `done_when`, not `PLAN.md`. (Reconcile firming's
+    `done_when` derivation with foundation-checkpoint at P4.)
+  - *Trigger (the planner-cut's real gap):* with no planner to propose "done", the worker's
+    **session-level** `STATUS: DONE` (its hand-back contract, `_RETURN_CONTRACT`) + its
+    acceptance-claim is a **cheap trigger** that *proposes* completion; the grounded
+    done-gate **verifies** it. Not-achieved → dispatch another "advance the goal / maintain
+    `PLAN.md`" session next cadence (a ralph-loop bounded by the no-progress watchdog + the
+    per-item circuit breaker). Session `BLOCKED`/partial → skip the (expensive) done-gate,
+    keep advancing. This is trust-in-verify-out precisely: trust the worker to advance and
+    to *raise its hand*; never trust its done-claim — the grounded gate is authoritative
+    (#358). The session-DONE trigger is a cheap gate ON the expensive gate, not a substitute
+    for it.
+  - *Landing shape:* P3 ships the mechanical long_lived advance path **flag-gated + additive**
+    — planner stays the default fallback until the box `measure_passrate` re-run proves the
+    new path holds the 2/2 baseline; only then flip the default and delete `planner.py` +
+    `goal-planner.md`. (Migration-order gate O3: the P2 `PLAN.md` skill — #462 — must land first.)
 - **[OPEN O5] Firming's fate — RESOLVED in direction (Denys, 2026-08-03), sizing deferred
   to P4.** Firming (516 py) is the clearest instance of the §3a disease: its up-front
   interrogation (`scope_grill`, `answer_unknowns` — a barrage of questions pushed at the
