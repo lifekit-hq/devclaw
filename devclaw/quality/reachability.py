@@ -70,15 +70,21 @@ def build_reachability_prompt(*, diff: str, repo_context: Optional[str] = None) 
     REPOSITORY CONTEXT block (the #227 shape — repo facts are the ONLY basis, and
     the contract already says 'absent ⇒ unknown') + the diff. Pure."""
     from .prompts import load_prompt
+    from ..loom.untrusted import UNTRUSTED_NOTE, fence_untrusted
 
     parts = [load_prompt("browser-reachability")]
+    # Same instruction/data boundary as the review gate: the DIFF is the worker's
+    # own output (the injection surface), so fence it; REPOSITORY CONTEXT is
+    # devclaw-generated grounding truth and stays unfenced (fix the CLASS — both
+    # dial-able review gates, one primitive).
+    parts.append(UNTRUSTED_NOTE)
     if repo_context and repo_context.strip():
         parts.append(
             "REPOSITORY CONTEXT (facts from the task workspace — the ONLY source of "
             "truth for routes, module imports, and which files/dirs exist):\n"
             + repo_context.strip()
         )
-    parts.append(f"DIFF UNDER REVIEW:\n{_clip(diff)}")
+    parts.append(fence_untrusted("DIFF UNDER REVIEW", _clip(diff)))
     return "\n\n".join(parts)
 
 
