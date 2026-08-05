@@ -113,11 +113,12 @@ def test_craft_stays_out_of_the_always_on_brief(runner, skill_dir):
     """The doctrine/craft split kept the read-when-relevant craft/ how-tos
     (Playwright, frontend-design ≈ 4.8k chars combined) OUT of the always-on
     brief. This guards against craft/ silently getting re-concatenated, which
-    would balloon the brief past ~14k. The ceiling sits well below that while
+    would balloon the brief past ~17k. The ceiling sits well below that while
     leaving headroom for genuinely-added always-on doctrine (e.g. the #354
-    repo-gate-conflict skill, which grew the brief back to ~9.4k on purpose)."""
+    repo-gate-conflict skill grew it to ~9.4k, then the demolition-P2 PLAN.md
+    skill to ~12.2k, both on purpose)."""
     brief = runner._load_skills("implement_feature")
-    assert len(brief) < 11000  # craft re-concatenation would push it to ~14.3k
+    assert len(brief) < 13000  # craft re-concatenation would push it to ~17k
 
 
 def test_fix_bug_keeps_its_smallest_change_skill(runner, skill_dir):
