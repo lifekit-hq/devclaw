@@ -404,6 +404,37 @@ export async function fetchTranscript(goalId: string, filename: string): Promise
   return (await r.json()) as TranscriptFull;
 }
 
+// ---- worker execution trace (the WORKER's turn-by-turn run of one task). The
+// cognition transcripts above are the CONTROL-PLANE claude --print calls; this
+// is the sandbox worker's actual execution — agent messages, tool actions,
+// observations — decoded from the captured events table. Backend: server/http.py
+// GET /tasks/{task_id}/events.json. Read-only. -------------------------------
+
+export type WorkerEventKind = "message" | "action" | "observation" | "error" | "other";
+
+/** One decoded worker turn. `detail` is the full extracted text; `raw` is the
+ *  complete untruncated OpenHands payload (nothing hidden — the #455 guarantee). */
+export interface WorkerEventRow {
+  id: number;
+  ts: number | null;
+  type: string;
+  source: string;
+  kind: WorkerEventKind;
+  title: string;
+  summary: string;
+  detail: string;
+  raw: unknown;
+}
+
+export async function fetchTaskEvents(
+  taskId: string,
+): Promise<{ events: WorkerEventRow[]; nextCursor: number | null }> {
+  const r = await fetch(`/tasks/${encodeURIComponent(taskId)}/events.json${tokenQS()}`);
+  if (!r.ok) throw new Error(`task events ${taskId}: ${r.status}`);
+  const b = await r.json();
+  return { events: b.events as WorkerEventRow[], nextCursor: b.nextCursor ?? null };
+}
+
 // ---- problems catalog / lifecycle (ADR 0009 P2) ---------------------------
 
 export type ProblemStage = "identified" | "filed" | "fixing" | "resolved";
