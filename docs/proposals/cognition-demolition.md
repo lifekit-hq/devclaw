@@ -197,6 +197,46 @@ This is the through-line that makes every cut coherent: each of the six cut call
 place we pre-chewed context out of distrust; the surviving done-gate + mechanical gates
 are where verification (earned distrust) stays.
 
+## 3b. The plan's shape — spec→plan→tasks, rolling-wave (Denys, 2026-08-05)
+
+Converged in the 2026-08-05 planning discussion (this session): the worker-owned
+plan is not one freeform `PLAN.md` but a **spec-kit-shaped set of durable
+artifacts in the repo** — *specify* (WHAT: the goal + acceptance), *plan* (HOW:
+architecture + the milestone map), *tasks* (the ordered, **checkable** list), and
+the always-hard gates as *verify*. The `tasks` layer is load-bearing: it makes
+"what's next / are we done" a **box-count, not an LLM call** — the mechanical
+progress signal that replaces the cut progress-evaluator and keeps the tick
+zero-token. This is the spec-kit *approach* re-expressed as plain-markdown worker
+skills — **not** the spec-kit tool (`.specify/` scaffold, `speckit-*` Claude-Code
+skills), which would blow the model-agnostic-worker invariant (the same "borrow
+the pattern, not the vendor wiring" move as the PLAN.md pivot). The 2026-07-22
+spec-kit decline does NOT bind this: that declined spec-kit as a home for
+*devclaw's own* dev specs (a second spec-home); here the artifacts live in the
+*target* repo and drive the *product's* goal execution — a different layer.
+
+- **Rolling-wave, not up-front waterfall.** The initial plan is COARSE
+  (architecture + milestone map + the load-bearing bets); each milestone is
+  planned DEEPLY — concrete research + concrete tasks — just-in-time as it is
+  reached, informed by what is already built. "Plan the shape to the end; plan
+  the detail one milestone ahead." Breaking every task up front for a months-long
+  goal is the fiction this avoids.
+- **Research at the altitude of the decision, and worker-side.** The coarse plan
+  gets architecture-level research (enough to not pick a doomed foundation); deep
+  concrete research is per-milestone. The bigger accuracy lever is SEQUENCING —
+  order milestones to build the riskiest architectural bet first (a thin spike)
+  and let reality validate it cheaply, rather than research-to-certainty on a
+  novel system. All research is the WORKER researching in-session (tools +
+  exploration, findings written into the artifacts) — NOT a resurrected
+  control-plane `research.py`/`world_research.py` brain (those PUSH/inject and
+  are the OOM; they stay on the cut list).
+- **Adaptive depth, ONE skill — not a strategy matrix.** The planning skill
+  sizes its ceremony to the goal (tiny/known → just build; big/known → coarse
+  plan + light research + per-milestone tasks; big/novel → + architecture
+  research + a de-risking spike; approach-unknown → a dedicated research pass
+  first). Start adaptive and PROVE where an explicit strategy dial is needed on a
+  real run — do not hardcode N strategies on spec (the "estimate the fog"
+  anti-pattern; keep the design light).
+
 ## 4. Keep / demote / cut
 
 | column | items | fate vs the thesis |
