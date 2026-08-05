@@ -68,6 +68,16 @@ AUTODEPLOY_ENABLED = True
 DECOMPOSE_ENABLED = os.environ.get("DEVCLAW_GOAL_DECOMPOSE", "0") not in ("0", "false", "")
 
 
+#: when True, a long_lived executing goal takes the THIN plan-state path
+#: (demolition P3, docs/proposals/cognition-demolition.md): zero per-tick planner
+#: cognition — the tick mechanically dispatches "advance the goal / maintain
+#: PLAN.md" worker sessions and lets the grounded done-gate judge completion.
+#: Default OFF so the per-tick planner stays the default until a box
+#: `measure_passrate` re-run proves the thin path holds the 2/2 baseline (P3b
+#: flips the default and deletes the planner).
+THIN_PLAN_ENABLED = os.environ.get("DEVCLAW_THIN_PLAN", "0") not in ("0", "false", "")
+
+
 class Outcome(str, Enum):
     IDLE = "idle"            # cheap check found nothing — 0 tokens
     IN_FLIGHT = "in_flight"  # dispatched action still running — 0 tokens
@@ -251,6 +261,7 @@ class TickContext:
     autodeploy: bool = AUTODEPLOY_ENABLED
     no_progress_s: int = NO_PROGRESS_S
     decompose_enabled: bool = DECOMPOSE_ENABLED
+    thin_plan_enabled: bool = THIN_PLAN_ENABLED
     summary_caller: "ClaudeCaller | None" = None
     merger: "_merge.Merger | None" = None
     #: Pillar 1 cognition caller for the decomposer. None → reuse

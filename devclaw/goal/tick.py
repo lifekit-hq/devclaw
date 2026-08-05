@@ -59,6 +59,7 @@ from .tick_context import (  # noqa: F401 (re-exported)
     DECOMPOSE_ENABLED,
     EVAL_EVERY,
     NO_PROGRESS_S,
+    THIN_PLAN_ENABLED,
     VERIFY_DONE,
     NotifyLevel,
     Outcome,
@@ -128,6 +129,7 @@ async def tick_goal(
     autodeploy: bool = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     decompose_enabled: bool = DECOMPOSE_ENABLED,
+    thin_plan_enabled: bool = THIN_PLAN_ENABLED,
     summary_caller: "ClaudeCaller | None" = None,
     merger: "_merge.Merger | None" = None,
     decomposer_caller: "ClaudeCaller | None" = None,
@@ -165,6 +167,7 @@ async def tick_goal(
                 eval_every=eval_every, verify_done=verify_done, autodeploy=autodeploy,
                 no_progress_s=no_progress_s,
                 decompose_enabled=decompose_enabled,
+                thin_plan_enabled=thin_plan_enabled,
                 summary_caller=summary_caller, merger=merger,
                 decomposer_caller=decomposer_caller,
                 world_research_caller=world_research_caller,
@@ -243,6 +246,7 @@ async def _tick_goal_impl(
     autodeploy: bool = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     decompose_enabled: bool = DECOMPOSE_ENABLED,
+    thin_plan_enabled: bool = THIN_PLAN_ENABLED,
     summary_caller: "ClaudeCaller | None" = None,
     merger: "_merge.Merger | None" = None,
     decomposer_caller: "ClaudeCaller | None" = None,
@@ -269,6 +273,7 @@ async def _tick_goal_impl(
         eval_every=eval_every, verify_done=verify_done, autodeploy=autodeploy,
         no_progress_s=no_progress_s,
         decompose_enabled=decompose_enabled,
+        thin_plan_enabled=thin_plan_enabled,
         summary_caller=summary_caller, merger=merger,
         decomposer_caller=decomposer_caller,
         world_research_caller=world_research_caller,
@@ -570,6 +575,116 @@ async def _handle_one_shot_executing(
     )
 
 
+def _advance_brief(goal: Goal, steering: str) -> str:
+    """The light pull-brief for a thin-path advance session (demolition P3).
+
+    Deliberately thin (§3a trust-the-input): the worker PULLS its context —
+    ``PLAN.md`` + the repo's ``AGENTS.md`` + the repo itself — the way a briefed
+    subagent explores, rather than being handed a pre-chewed dossier. The
+    PLAN.md worker skill teaches HOW to maintain the plan; this says only WHAT to
+    pursue and to advance it by one increment. Steering (an owner input, or the
+    done-gate's own corrections re-applied via ``_apply_corrections``) rides in
+    here for the worker to read — never applied by a planner, because there
+    isn't one."""
+    parts = [
+        "Advance this goal by one substantive, shippable increment, then stop.",
+        "First read PLAN.md (create and maintain it as you go) and the repo to "
+        "decide the next step yourself; implement it end to end and commit, "
+        "PLAN.md included.",
+        "",
+        f"Goal: {goal.objective}",
+    ]
+    if goal.done_when.strip():
+        parts += ["", f"Done when: {goal.done_when.strip()}"]
+    if steering.strip():
+        parts += ["", "Steering from the owner — incorporate it:", steering.strip()]
+    return "\n".join(parts)
+
+
+async def _handle_long_lived_advance(
+    goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
+) -> Outcome:
+    """The THIN long_lived executing path (demolition P3, flag-gated by
+    ``DEVCLAW_THIN_PLAN``) — ZERO per-tick planner cognition. The worker owns the
+    plan (``PLAN.md`` in the repo); the control plane only dispatches "advance
+    the goal / maintain PLAN.md" and lets the grounded done-gate judge done:
+
+      * a SUCCESSFUL advance session just settled → propose done. The done-gate
+        verifies against ``done_when``: ``achieved`` closes the goal; not-achieved
+        re-applies its own corrections as steering and returns the goal to idle,
+        so the NEXT cadence advances again with those corrections in hand — a
+        ralph-loop, not a re-review-every-tick spin (the done-gate only fires
+        after a real session settles, never on an idle tick);
+      * otherwise (a fresh cadence tick, or a FAILED/gate-failed settle) → gate
+        on work-present/cadence (the zero-token idle guard — a blocked goal
+        unblocks only on work, never the timer) and dispatch ONE advance session.
+
+    The done-TRIGGER is the worker's own session-success header — devclaw's
+    controlled ``status=done`` settle line (the same header the planner used to
+    read), NOT the worker's free-text self-report. It is a cheap trigger for the
+    expensive grounded gate, never a substitute for it: the worker's done-claim
+    is never trusted on faith (#358); the grounded done-gate is the authority."""
+    store = ctx.store
+    # A successful advance settled → propose done; the grounded done-gate decides.
+    # Read ONLY devclaw's controlled settle header — its FIRST line,
+    # "tool=… id=… status=…{gate/PR}" (tick_settle._resolve_polling_action). The
+    # worker's free-text narration follows the newline and must NOT be scanned:
+    # otherwise a worker could flip the control-plane's done-decision by writing
+    # "status=done" / "gate=FAILED" into its own summary — the exact #358 trust
+    # boundary this trigger exists to respect (never trust the worker's claim on
+    # faith; the grounded gate is the authority, the header is only a cheap
+    # trigger). invariant-guard reproduced the free-text crack, 2026-08-05.
+    header = finished_detail.split("\n", 1)[0] if finished_detail else ""
+    settled_ok = "status=done" in header and "gate=FAILED" not in header
+    if settled_ok:
+        now = store.now_iso()
+        base = replace(status, last_plan_at=now, last_tick_at=now)
+        store.append_log(goal_id, "thin: advance session settled — proposing done")
+        return await _open_done_gate(
+            goal_id, goal, base,
+            store=store, engine=ctx.engine, evaluator_caller=ctx.evaluator_caller,
+            notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
+            verify_done=ctx.verify_done, note="thin: advance session settled",
+            summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+            autodeploy=ctx.autodeploy,
+        )
+
+    # Steering + should_plan gate — mirrors the planner path's gate exactly so
+    # the zero-token idle guard is preserved: a blocked goal unblocks only on
+    # work, an idle goal plans only on work or a due cadence.
+    rows = store.unread_steering_rows(goal_id)
+    steering = "\n".join(line for _, line in rows)
+    # unread_steering_rows() may have lazily ingested inbox lines, bumping
+    # version; reload so the dispatch's expect= CAS's against the current row
+    # (same reason as _handle_executing).
+    status = store.load_status(goal_id)
+    work = bool(finished_detail) or bool(steering)
+    if status.phase == "blocked":
+        should_plan = work
+    else:
+        should_plan = work or store.cadence_due(goal, status)
+    if not should_plan:
+        store.update_status_fields(goal_id, last_tick_at=store.now_iso())
+        return Outcome.IDLE
+
+    consume_ids = [rid for rid, _ in rows]
+    now = store.now_iso()
+    base = replace(status, last_plan_at=now, last_tick_at=now)
+    action = Action(
+        engine="devclaw",
+        tool="implement_feature",
+        goal=_advance_brief(goal, steering),
+        verify_cmd=goal.verify_cmd,
+        open_pr=goal.open_pr,
+    )
+    return await _dispatch_action(
+        goal_id, goal, base, action,
+        store=store, engine=ctx.engine, notifier=ctx.notifier,
+        notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
+        summarize=ctx.summary_caller, consume_steering=consume_ids,
+    )
+
+
 async def _handle_executing(
     goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
 ) -> Outcome:
@@ -590,6 +705,13 @@ async def _handle_executing(
         # ADR 0003 stage 2: the one-shot dial replaces the per-tick planner
         # entirely — mechanical dispatch/done-proposal, zero LLM on this path.
         return await _handle_one_shot_executing(goal_id, goal, status, ctx)
+    if ctx.thin_plan_enabled:
+        # Demolition P3 (flag-gated, docs/proposals/cognition-demolition.md):
+        # the THIN long_lived path also runs zero per-tick planner cognition —
+        # mechanical "advance the goal / maintain PLAN.md" dispatch + the
+        # grounded done-gate. When the flag is OFF (default) the per-tick planner
+        # path below is byte-unchanged.
+        return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
     rows = ctx.store.unread_steering_rows(goal_id)
     steering = "\n".join(line for _, line in rows)
     # unread_steering_rows() may have lazily ingested new inbox.md lines,
