@@ -65,9 +65,41 @@ def test_skill_loads_for_code_writing_kinds_only(runner, skill_dir):
 
 
 def test_skill_teaches_the_plan_shape():
+    # spec->plan->tasks shape (2026-08-05 planning convergence): Destination
+    # (specify) + Decisions + Milestones (the coarse plan) + a checkable Tasks
+    # list (the box-checking progress signal) + Out of scope.
     text = _text()
-    for header in ("## Destination", "## Decisions so far", "## Next / open questions", "## Out of scope"):
+    for header in ("## Destination", "## Decisions so far", "## Milestones", "## Out of scope"):
         assert header in text, f"skill omits the {header!r} section of the plan shape"
+    assert "## Tasks" in text, "skill omits the per-milestone Tasks section"
+    # The old freeform 'Next / open questions' section was replaced by the
+    # structured Milestones + checkable Tasks shape — assert the swap actually
+    # happened (it's genuinely absent from the template, not a canned prior).
+    assert "## Next / open questions" not in text
+
+
+def test_skill_teaches_checkable_tasks_as_the_progress_signal():
+    # The 'tasks' layer is load-bearing: progress becomes reading a box, not an
+    # LLM re-plan. The skill must teach the checkbox convention explicitly.
+    text = _text()
+    assert "- [ ]" in text and "- [x]" in text, "skill must teach the checkable-task convention"
+    assert "without re-deriving" in text.lower(), "skill must frame the checklist as the progress signal"
+
+
+def test_skill_teaches_rolling_wave_and_adaptive_depth():
+    # Coarse-first / deep-just-in-time, de-risk-by-sequencing, and sizing the
+    # ceremony to the goal (the anti-'plan-everything-up-front' guidance).
+    lowered = _text().lower()
+    assert "rolling wave" in lowered, "skill must teach coarse-first / deep-just-in-time planning"
+    assert "de-risk" in lowered, "skill must teach ordering milestones to de-risk early"
+    assert "size the plan to the goal" in lowered, "skill must teach adaptive depth (size the ceremony to the goal)"
+
+
+def test_skill_teaches_done_is_the_whole_goal_not_one_increment():
+    # A big goal must not be declared done after a single increment; the worker
+    # owns honesty about what remains (the grounded done-gate is the authority).
+    lowered = _text().lower()
+    assert "not when your one increment is done" in lowered
 
 
 def test_skill_teaches_code_is_source_of_truth():
