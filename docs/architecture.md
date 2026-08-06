@@ -31,7 +31,7 @@ the technical sense — the rest is orchestration.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | tools, auth, dashboard, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | the goal state machine + the ~15-min tick |
-| 3 | **Cognition callers** | `goal/{planner,evaluator,decomposer,research,world_research,summary,triage}.py`, `goal/phases/firming.py`, `devclaw/planner.py`, `devclaw/elicitation.py` | one-shot `claude --print` prompt/parse calls |
+| 3 | **Cognition callers** | `goal/{evaluator,decomposer,research,world_research,summary,triage}.py`, `goal/phases/firming.py`, `devclaw/planner.py`, `devclaw/elicitation.py` | one-shot `claude --print` prompt/parse calls |
 | 4 | **TaskQueue + engine** | `task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `openhands-runner/runner.py` (inside the sandbox) | the in-sandbox agent turn-loop, skills, hooks, `verify_cmd` |
 
@@ -515,7 +515,7 @@ devclaw/
 ├── goal/            layer 2/3 — the heartbeat + cognition callers
 │   ├── tick.py + tick_{context,guards,dispatch,donegate,settle}.py   the loop
 │   ├── store/       GoalStore package (base · status[CAS] · content)
-│   ├── planner.py · evaluator.py · decomposer.py · research.py · transitions.py   cognition + the LEGAL table
+│   ├── evaluator.py · decomposer.py · research.py · transitions.py   cognition + the LEGAL table
 │   └── delivery_strategy.py · merge.py · engine.py                   dispatch seams
 ├── engine/          layer 4 — sandcastle.py (docker run --rm), host.py, stub.py
 ├── delivery/        commit → branch → push → PR; deploy.py; repo.py

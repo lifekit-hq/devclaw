@@ -59,15 +59,19 @@ async def _run_stub(out_dir: Path, ticks: int) -> Tracer:
     # tests/ is a sibling package under the repo root added to sys.path above.
     from tests.goal_fakes import Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal
 
-    PLAN_ACT = json.dumps({
-        "decision": "act", "note": "ship next",
-        "actions": [{"tool": "implement_feature", "goal": "add /health", "open_pr": True}],
+    EVAL_ACHIEVED = json.dumps({
+        "verdict": "achieved", "rationale": "all done_when met",
+        # The done-gate requires per-clause evidence — a bare "achieved" is
+        # downgraded by the validator; minimal clauses keep the stub run on
+        # the happy path (same shape as tests/test_e2e_trace.py).
+        "clauses": [
+            {"clause": "done_when met", "satisfied": True,
+             "evidence": "PR #1 merged with gate passed"},
+        ],
     })
-    PLAN_DONE = json.dumps({"decision": "done", "note": "all backlog shipped"})
-    EVAL_ACHIEVED = json.dumps({"verdict": "achieved", "rationale": "all done_when met"})
 
     # Fresh per invocation — accumulating log.md across runs would shift the
-    # planner-prompt hash even though the cognition is deterministic, hiding
+    # cognition-prompt hashes even though the cognition is deterministic, hiding
     # real changes behind harness noise.
     import shutil
     tmp = out_dir / "stub-goals"
@@ -90,23 +94,21 @@ async def _run_stub(out_dir: Path, ticks: int) -> Tracer:
         await tick_goal(
             "g", store=store,
             engine=FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo OK")),
-            planner_caller=FakeClaude(PLAN_ACT, role="planner"),
             evaluator_caller=FakeClaude("## Current state\nbare API", role="evaluator"),
             notifier=notifier, prepare_ws=fake_prepare,
         )
-        # 2) executing → dispatch
-        record_note("tick 2 — dispatch implement_feature")
+        # 2) executing → thin advance dispatch (mechanical — zero cognition)
+        record_note("tick 2 — thin advance dispatches implement_feature")
         await tick_goal(
             "g", store=store,
             engine=FakeEngine(
                 poll_result=PollResult(terminal=False, status="running"),
                 dispatch_ref=InFlight("devclaw", "implement_feature", "task_a", "task", "add /health"),
             ),
-            planner_caller=FakeClaude(PLAN_ACT, role="planner"),
             evaluator_caller=FakeClaude(role="evaluator"),
             notifier=notifier, prepare_ws=fake_prepare,
         )
-        # 3) action settles → delivery → planner says done → eval verdict achieved
+        # 3) action settles → delivery → the settle header proposes done → eval verdict achieved
         record_note("tick 3 — action settles green, done-gate evaluates")
         await tick_goal(
             "g", store=store,
@@ -114,10 +116,10 @@ async def _run_stub(out_dir: Path, ticks: int) -> Tracer:
                 terminal=True, status="done", detail="merged",
                 pr_url="https://example/pr/1", gate_passed=True,
             )),
-            planner_caller=FakeClaude(PLAN_DONE, role="planner"),
             evaluator_caller=FakeClaude(EVAL_ACHIEVED, role="evaluator"),
             notifier=notifier, prepare_ws=fake_prepare,
             verify_done=False,  # artifact-only done eval — no extra review dispatch
+            autodeploy=False,   # the verified close must not launch a real container
         )
     finally:
         set_tracer(None)

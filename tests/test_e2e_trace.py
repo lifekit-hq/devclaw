@@ -21,11 +21,6 @@ from devclaw.loom.trace import Tracer, set_tracer
 from tests.goal_fakes import Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal
 
 
-PLAN_ACT = json.dumps({
-    "decision": "act", "note": "ship the change",
-    "actions": [{"tool": "implement_feature", "goal": "add /health", "open_pr": True}],
-})
-PLAN_DONE = json.dumps({"decision": "done", "note": "all backlog shipped"})
 EVAL_ACHIEVED = json.dumps({
     "verdict": "achieved",
     "rationale": "all done_when met",
@@ -42,7 +37,7 @@ EVAL_ACHIEVED = json.dumps({
 })
 
 
-async def _tick(store, planner, evaluator, engine, notifier, *, verify_done=True):
+async def _tick(store, evaluator, engine, notifier, *, verify_done=True):
     return await tick_goal(
         "g", store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
@@ -54,10 +49,12 @@ async def _tick(store, planner, evaluator, engine, notifier, *, verify_done=True
 async def test_e2e_trace_captures_full_lifecycle(tmp_path, monkeypatch):
     """A goal advances from investigating to done over several ticks; the tracer
     sees every tick, every cognition call (with role), the dispatches, the
-    delivery, and the owner-altitude notifications. Asserts the *shape* of what
-    happened, not specific timing — refactors that preserve behavior preserve
-    the trace; refactors that change it (extra calls, missing dispatch, wrong
-    role label) fail this test loudly."""
+    delivery, and the owner-altitude notifications. On the thin path the only
+    cognition is evaluator-tier (discovery synthesis + the done-gate judgment);
+    the advance dispatch itself is mechanical — no planner role, ever. Asserts
+    the *shape* of what happened, not specific timing — refactors that preserve
+    behavior preserve the trace; refactors that change it (extra calls, missing
+    dispatch, wrong role label) fail this test loudly."""
     # The done-gate close runs best-effort auto-deploy (enabled=True default);
     # deploys are out of this test's scope, and unstubbed this launched a REAL
     # devclaw-deploy-g container on docker-enabled hosts (the 2026-07-14 leak).
@@ -82,20 +79,19 @@ async def test_e2e_trace_captures_full_lifecycle(tmp_path, monkeypatch):
         # 1) discovery settles → brief written → lifecycle flips to executing.
         researcher = FakeClaude("## Current state\nbare API", role="evaluator")
         engine_discovery = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo OK"))
-        out1 = await _tick(store, FakeClaude(PLAN_ACT, role="planner"), researcher, engine_discovery, notifier)
+        out1 = await _tick(store, researcher, engine_discovery, notifier)
         assert out1 is Outcome.ADVANCED
 
-        # 2) executing → plan one action → dispatch.
-        planner = FakeClaude(PLAN_ACT, role="planner")
+        # 2) executing → thin advance dispatch (mechanical — zero cognition).
         engine_dispatch = FakeEngine(
             poll_result=PollResult(terminal=False, status="running"),
             dispatch_ref=InFlight("devclaw", "implement_feature", "task_a", "task", "add /health"),
         )
-        out2 = await _tick(store, planner, FakeClaude(role="evaluator"), engine_dispatch, notifier)
+        out2 = await _tick(store, FakeClaude(role="evaluator"), engine_dispatch, notifier)
         assert out2 is Outcome.DISPATCHED
 
-        # 3) action settles green → delivery recorded → planner sees finished_detail and proposes done.
-        # The same tick chains: poll → record delivery → plan → done proposal → done-gate review dispatched.
+        # 3) action settles green → delivery recorded → the settle header
+        # triggers the done proposal on the same tick.
         engine_settle = FakeEngine(poll_result=PollResult(
             terminal=True, status="done", detail="merged", pr_url="https://x/pr/1", gate_passed=True,
         ))
@@ -103,7 +99,6 @@ async def test_e2e_trace_captures_full_lifecycle(tmp_path, monkeypatch):
         # the evaluator an "achieved" verdict so the goal closes cleanly.
         out3 = await _tick(
             store,
-            FakeClaude(PLAN_DONE, role="planner"),
             FakeClaude(EVAL_ACHIEVED, role="evaluator"),
             engine_settle, notifier, verify_done=False,
         )
@@ -111,7 +106,8 @@ async def test_e2e_trace_captures_full_lifecycle(tmp_path, monkeypatch):
 
         # Whatever the final-tick outcome, the trace must contain:
         #   - at least three tick events (the three we ran)
-        #   - a discovery cognition + a planner cognition + an evaluator cognition
+        #   - evaluator-tier cognition ONLY (discovery synthesis + done-gate);
+        #     the dispatch tick is mechanical — no planner role in the trace
         #   - a dispatch (the implement_feature one)
         #   - a delivery (the settled action)
         #   - at least one OWNER notification (start-of-executing or completion)
@@ -120,8 +116,8 @@ async def test_e2e_trace_captures_full_lifecycle(tmp_path, monkeypatch):
         assert {t["outcome"] for t in ticks} >= {"advanced", "dispatched"}
 
         cog_roles = tracer.cognition_by_role()
-        assert "evaluator" in cog_roles, cog_roles      # discovery synthesis uses the evaluator-tier caller
-        assert "planner" in cog_roles, cog_roles        # at least one planner call
+        assert "evaluator" in cog_roles, cog_roles      # discovery synthesis + done-gate judgment
+        assert "planner" not in cog_roles, cog_roles    # the planner was cut (demolition P3b)
 
         dispatches = tracer.by_kind("dispatch")
         assert any(d["tool"] == "implement_feature" for d in dispatches), dispatches

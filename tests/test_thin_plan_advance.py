@@ -1,25 +1,19 @@
-"""The THIN long_lived executing path (demolition P3, flag-gated by
-``DEVCLAW_THIN_PLAN`` → ``TickContext.thin_plan_enabled``).
+"""The THIN long_lived executing path (demolition P3b — the per-tick planner
+is CUT; this is now the ONLY long_lived executing path).
 
-With the flag ON, a long_lived executing goal runs ZERO per-tick planner
-cognition: the tick mechanically dispatches "advance the goal / maintain
-PLAN.md" worker sessions and lets the grounded done-gate judge completion. With
-the flag OFF (default), the per-tick planner path is byte-unchanged.
+A long_lived executing goal runs ZERO per-tick planner cognition: the tick
+mechanically dispatches "advance the goal / maintain PLAN.md" worker sessions
+and lets the grounded done-gate judge completion.
 
-The load-bearing assertions (mirroring the planner path's own guardrail):
-  * an idle / blocked thin tick spends ZERO tokens (planner AND evaluator at
-    calls == 0) — the Pro quota guarantee must survive the planner cut;
-  * a due / steered thin tick dispatches an advance session WITHOUT the planner;
+The load-bearing assertions (inheriting the old planner path's guardrail):
+  * an idle / blocked tick spends ZERO tokens (the evaluator at calls == 0,
+    nothing dispatched) — the Pro quota guarantee must survive the planner cut;
+  * a due / steered tick dispatches an advance session mechanically;
   * a successful advance settle PROPOSES done (opens the grounded done-gate)
-    without the planner;
-  * the flag OFF still runs the planner (additive + gated — no behavior change
-    until the operator opts in).
+    with no cognition of its own.
 """
 
 from __future__ import annotations
-
-import json
-from dataclasses import replace
 
 import pytest
 
@@ -30,17 +24,12 @@ from tests.goal_fakes import (
     Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal,
 )
 
-ACT_FEATURE = json.dumps(
-    {"decision": "act", "note": "feat",
-     "actions": [{"tool": "implement_feature", "goal": "add /health", "open_pr": True}]}
-)
-
 
 def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _thin_tick(store, goal_id, planner, evaluator, engine, notifier, *, thin=True, verify_done=True):
+async def _thin_tick(store, goal_id, evaluator, engine, notifier, *, verify_done=True):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
@@ -54,18 +43,17 @@ async def _thin_tick(store, goal_id, planner, evaluator, engine, notifier, *, th
 @pytest.mark.asyncio
 async def test_thin_idle_tick_spends_zero_tokens(tmp_path):
     """A long_lived thin tick with no work and a not-due cadence must plan
-    nothing — no planner, no evaluator, no dispatch. This is the quota guarantee
-    the planner cut must preserve."""
+    nothing — no cognition, no dispatch. This is the quota guarantee the
+    planner cut must preserve."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d")  # mode defaults to long_lived
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing", last_plan_at=store.now_iso()))
-    planner, evaluator, engine, notifier = FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IDLE
-    assert planner.calls == 0          # <-- the quota guardrail (no planner in the thin path)
-    assert evaluator.calls == 0
+    assert evaluator.calls == 0        # <-- the quota guardrail
     assert engine.dispatched == []
 
 
@@ -79,12 +67,11 @@ async def test_thin_blocked_tick_stays_idle_zero_tokens(tmp_path):
         phase="blocked", lifecycle="executing", blocked_on="need a decision",
         blocked_kind="needs_answer",
     ))
-    planner, evaluator, engine, notifier = FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IDLE
-    assert planner.calls == 0
     assert evaluator.calls == 0
     assert engine.dispatched == []
 
@@ -95,18 +82,17 @@ async def test_thin_blocked_tick_stays_idle_zero_tokens(tmp_path):
 @pytest.mark.asyncio
 async def test_thin_cadence_due_dispatches_advance_without_planner(tmp_path):
     """A due thin tick dispatches ONE 'advance the goal / maintain PLAN.md'
-    implement_feature session — mechanically, with no planner call."""
+    implement_feature session — mechanically, with no cognition call."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d", done_when="the /health endpoint returns 200")
     # last_plan_at unset → cadence is due.
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
-    planner, evaluator, engine, notifier = FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
-    assert planner.calls == 0          # <-- no planner cognition on the thin path
-    assert evaluator.calls == 0
+    assert evaluator.calls == 0        # <-- no cognition on the thin path
     assert len(engine.dispatched) == 1
     action, _goal, _url = engine.dispatched[0]
     assert action.tool == "implement_feature"
@@ -124,12 +110,12 @@ async def test_thin_steering_dispatches_advance_and_rides_into_brief(tmp_path):
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing", last_plan_at=store.now_iso()))
     store.append_steering("g", ["pause features, fix the failing CI first"])
-    planner, evaluator, engine, notifier = FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
-    assert planner.calls == 0
+    assert evaluator.calls == 0
     assert len(engine.dispatched) == 1
     action, _goal, _url = engine.dispatched[0]
     assert "failing CI" in action.goal   # steering rode into the advance brief
@@ -144,15 +130,15 @@ async def test_thin_steering_dispatches_advance_and_rides_into_brief(tmp_path):
 async def test_thin_successful_settle_proposes_done_via_gate(tmp_path):
     """When an advance session settles successfully (devclaw's own
     ``status=done`` header, gate not FAILED), the thin path PROPOSES done — it
-    opens the grounded done-gate (a review_repository dispatch) — with no planner
-    call. The done-gate, not the worker's claim, is the authority (#358)."""
+    opens the grounded done-gate (a review_repository dispatch) — with no
+    cognition call of its own. The done-gate, not the worker's claim, is the
+    authority (#358)."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", done_when="the repo builds green")
     store.save_status("g", GoalStatus(
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
     ))
-    planner = FakeClaude(ACT_FEATURE)
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="Agent: shipped the endpoint",
@@ -160,10 +146,10 @@ async def test_thin_successful_settle_proposes_done_via_gate(tmp_path):
     ))
     notifier = RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.VERIFYING          # the done-gate was opened
-    assert planner.calls == 0                # <-- proposed done with no planner
+    assert evaluator.calls == 0              # <-- proposed done with no cognition
     # the done-gate opens a read-only review of the repo
     assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
 
@@ -178,17 +164,15 @@ async def test_thin_failed_settle_does_not_propose_done(tmp_path):
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
     ))
-    planner = FakeClaude(ACT_FEATURE)
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="failed", detail="tests failed",
     ))
     notifier = RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
-    # No done-gate proposed off a failure; and still no planner cognition.
-    assert planner.calls == 0
+    # No done-gate proposed off a failure; and still zero cognition.
     assert evaluator.calls == 0
     assert not any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
 
@@ -206,14 +190,14 @@ async def test_thin_trigger_ignores_worker_free_text_not_the_header(tmp_path):
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
     ))
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="failed",
         detail="I could not finish, but I set status=done on ticket #3 and gate=passed locally",
     ))
     notifier = RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
     # The failed header wins over the worker's free-text 'status=done'.
     assert out is not Outcome.VERIFYING
@@ -231,7 +215,7 @@ async def test_thin_trigger_not_suppressed_by_worker_free_text_gate_failed(tmp_p
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
     ))
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", gate_passed=True,
         pr_url="https://github.com/o/r/pull/8",
@@ -239,26 +223,8 @@ async def test_thin_trigger_not_suppressed_by_worker_free_text_gate_failed(tmp_p
     ))
     notifier = RecordingNotifier()
 
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.VERIFYING
-    assert planner.calls == 0
+    assert evaluator.calls == 0
     assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
-
-
-# ---- additive + gated: flag OFF is the unchanged planner path ---------------
-
-
-@pytest.mark.asyncio
-async def test_flag_off_still_runs_the_planner(tmp_path):
-    """With the thin flag OFF (the default), a due long_lived tick runs the
-    per-tick planner exactly as before — the change is additive and gated."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="1d")
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
-    planner, evaluator, engine, notifier = FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    out = await _thin_tick(store, "g", planner, evaluator, engine, notifier, thin=False)
-
-    assert out is Outcome.DISPATCHED
-    assert planner.calls == 1            # <-- planner still drives when the flag is off

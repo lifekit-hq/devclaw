@@ -3,9 +3,9 @@ state machine (in_flight → verifying → done). Folded from goalclaw, extended
 the direction evaluator + done-gate.
 
 The single most important assertions in this layer: an idle tick and an
-in-flight-still-running tick must leave BOTH cognition callers (planner +
-evaluator) at calls == 0. If those ever go non-zero, the Pro quota dies under N
-idle ticks/day.
+in-flight-still-running tick must leave the one cognition caller (the
+evaluator) at calls == 0 and dispatch nothing. If that ever goes non-zero,
+the Pro quota dies under N idle ticks/day.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _tick(store, goal_id, planner, evaluator, engine, notifier, *, eval_every=99, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
+async def _tick(store, goal_id, evaluator, engine, notifier, *, eval_every=99, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
@@ -111,12 +111,11 @@ async def test_idle_tick_spends_zero_tokens(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IDLE
-    assert planner.calls == 0          # <-- the quota guardrail
     assert evaluator.calls == 0        # <-- evaluator must not fire on idle either
     assert engine.dispatched == []
     assert notifier.sent == []
@@ -129,14 +128,14 @@ async def test_in_flight_running_spends_zero_tokens(tmp_path):
     store.save_status(
         "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "start_program", "p1", "program")),
     )
-    planner, evaluator = FakeClaude(ACT), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IN_FLIGHT
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert engine.polls == 1
 
 
@@ -144,19 +143,19 @@ async def test_in_flight_running_spends_zero_tokens(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_first_tick_plans_and_dispatches(tmp_path):
+async def test_first_tick_dispatches_advance_session(tmp_path):
     store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")  # no STATUS yet → cadence due → plan
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    seed_goal(tmp_path, "g")  # no STATUS yet → cadence due → dispatch an advance
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
-    assert planner.calls == 1
-    assert evaluator.calls == 0
+    assert evaluator.calls == 0        # mechanical dispatch — zero cognition
     assert len(engine.dispatched) == 1
     action, goal, notify_url = engine.dispatched[0]
-    assert action.tool == "start_program"
+    assert action.tool == "implement_feature"
+    assert "Advance this goal" in action.goal and "PLAN.md" in action.goal
     assert notify_url == "http://relay"
     saved = store.load_status("g")
     assert saved.phase == "in_flight" and saved.in_flight is not None
@@ -166,7 +165,7 @@ async def test_first_tick_plans_and_dispatches(tmp_path):
 async def test_workspace_prepped_before_dispatch(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
     calls: list = []
 
     async def rec_prepare(ws, repo_url=None, branch=None):
@@ -185,13 +184,12 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_finished_action_records_delivery_and_replans(tmp_path):
+async def test_finished_action_records_delivery_and_proposes_done(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status(
         "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health")),
     )
-    planner = FakeClaude(ACT_FEATURE)
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="Agent summary: added /health",
@@ -199,34 +197,32 @@ async def test_finished_action_records_delivery_and_replans(tmp_path):
     ))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
-    assert out is Outcome.DISPATCHED
-    assert planner.calls == 1
-    assert "done" in planner.last_prompt           # finished result fed to planner
+    # A successful settle proposes done: the done-gate review is dispatched.
+    assert out is Outcome.VERIFYING
+    assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
     # grounded delivery captured + PR logged
     assert "added /health" in store.recent_deliveries("g")
     assert "PR https://github.com/o/r/pull/9" in store.recent_log("g")
     # Honest-wording contract (closeloop-bench 2026-07-05): the gate is named
-    # as the SANDBOX gate (not CI), and the planner is told the PR's real
-    # merge state instead of left to assume "gate=passed" means "merged".
+    # as the SANDBOX gate (not CI) in the durable log.
     assert "sandbox gate=passed" in store.recent_log("g")
-    assert "pr_state=open (unmerged — owner review pending)" in planner.last_prompt
 
 
 @pytest.mark.asyncio
-async def test_steering_triggers_plan_even_when_cadence_not_due(tmp_path):
+async def test_steering_triggers_advance_even_when_cadence_not_due(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
     (tmp_path / "g" / "inbox.md").write_text("pause features, fix the failing CI first\n")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
-    assert planner.calls == 1
-    assert "failing CI" in planner.last_prompt
+    action, _, _ = engine.dispatched[0]
+    assert "failing CI" in action.goal     # steering rode into the advance brief
     assert store.load_status("g").inbox_cursor == 1
 
 
@@ -238,12 +234,12 @@ async def test_blocked_goal_stays_idle_without_steering(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1h")
     store.save_status("g", GoalStatus(phase="blocked", blocked_on="which DB?", last_plan_at="2026-06-01T00:00:00+00:00"))
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IDLE
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
 
 
 @pytest.mark.asyncio
@@ -251,9 +247,9 @@ async def test_dispatch_cap_blocks_runaway(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")  # backlog 2 → cap = 4
     store.save_status("g", GoalStatus(phase="idle", actions_dispatched=4))
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     assert engine.dispatched == []
@@ -281,9 +277,8 @@ async def test_dispatch_cap_lifts_in_checklist_mode(tmp_path):
     # actions_dispatched=5 would trip the legacy backlog cap (=4) — but
     # checklist mode lifts the floor to 20+2=22, so this tick proceeds.
     store.save_status("g", GoalStatus(phase="idle", actions_dispatched=5))
-    planner = FakeClaude(ACT_FEATURE)
     engine = FakeEngine()  # dispatch only
-    out = await _tick(store, "g", planner, FakeClaude(), engine, RecordingNotifier())
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
 
     assert out is Outcome.DISPATCHED
     assert len(engine.dispatched) == 1
@@ -293,7 +288,7 @@ async def test_dispatch_cap_lifts_in_checklist_mode(tmp_path):
 async def test_dispatch_cap_still_blocks_when_checklist_exhausted(tmp_path):
     """The cap is checklist_size + small margin — a goal that's already
     dispatched more than every checklist item gets blocked, even in
-    checklist mode (the planner is genuinely looping)."""
+    checklist mode (the loop is genuinely spinning)."""
     from devclaw.goal.models import Checklist, ChecklistItem
 
     store = _store(tmp_path, Clock())
@@ -308,27 +303,10 @@ async def test_dispatch_cap_still_blocks_when_checklist_exhausted(tmp_path):
     store.save_status("g", GoalStatus(phase="idle", actions_dispatched=7))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(), notifier)
+    out = await _tick(store, "g", FakeClaude(), FakeEngine(), notifier)
 
     assert out is Outcome.BLOCKED
     assert any("(7)" in m for m in notifier.sent)
-
-
-@pytest.mark.asyncio
-async def test_planner_blocked_notifies(tmp_path):
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    planner = FakeClaude(json.dumps({"decision": "blocked", "question": "which auth provider?"}))
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
-
-    assert out is Outcome.BLOCKED
-    assert store.load_status("g").blocked_on == "which auth provider?"
-    assert any("auth provider" in m for m in notifier.sent)
-
-
-SLEEP = json.dumps({"decision": "sleep", "note": "waiting"})
 
 
 @pytest.mark.asyncio
@@ -351,7 +329,7 @@ async def test_verified_delivery_refunds_dispatch_cap(tmp_path):
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
 
-    await _tick(store, "g", FakeClaude(SLEEP), FakeClaude(), engine, RecordingNotifier())
+    await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
 
     assert store.load_status("g").actions_dispatched == 3
 
@@ -375,7 +353,7 @@ async def test_gateless_successful_settle_refunds_dispatch_cap(tmp_path):
         terminal=True, status="done", detail="repo analysis",
     ))
 
-    await _tick(store, "g", FakeClaude(SLEEP), FakeClaude(), engine, RecordingNotifier())
+    await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
 
     assert store.load_status("g").actions_dispatched == 3
 
@@ -402,7 +380,7 @@ async def test_unproductive_settle_keeps_dispatch_count(tmp_path, poll):
     )
     engine = FakeEngine(poll_result=poll)
 
-    await _tick(store, "g", FakeClaude(SLEEP), FakeClaude(), engine, RecordingNotifier())
+    await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
 
     assert store.load_status("g").actions_dispatched == 4
 
@@ -422,7 +400,7 @@ async def test_refund_never_goes_negative(tmp_path):
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
 
-    await _tick(store, "g", FakeClaude(SLEEP), FakeClaude(), engine, RecordingNotifier())
+    await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
 
     assert store.load_status("g").actions_dispatched == 0
 
@@ -443,7 +421,7 @@ async def test_in_task_setup_failure_blocks_mechanical_prep_instead_of_redispatc
     goal on the DAMPED ``mechanical:prep`` breaker (auto-heal budget + backoff),
     NOT re-dispatch a fresh sandbox with the same doomed instruction — the
     finance-sentry-ui goal re-hit the identical failure 119× before this fix. Zero
-    planner calls: the goal blocks on the failed settle before any re-plan."""
+    cognition: the goal blocks on the failed settle before any re-dispatch."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status(
@@ -452,18 +430,17 @@ async def test_in_task_setup_failure_blocks_mechanical_prep_instead_of_redispatc
             in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
         ),
     )
-    planner, evaluator = FakeClaude(SLEEP), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="failed", detail=detail))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     saved = store.load_status("g")
     assert saved.phase == "blocked"
     assert saved.blocked_kind == "mechanical:prep"   # the damped, auto-healing breaker
     assert engine.dispatched == []                    # NO amnesiac re-dispatch storm
-    assert planner.calls == 0                          # blocked before any re-plan (zero-token)
     assert notifier.sent                               # owner pinged once
 
 
@@ -556,9 +533,9 @@ def _resume_service(tmp_path):
 @pytest.mark.asyncio
 async def test_resume_goal_unblocks_without_steering_and_replans_next_tick(tmp_path):
     """resume_goal is the recovery verb: it must fire UNBLOCK without appending
-    a goal_steering row (a pure "blocker cleared" must never become a planner
+    a goal_steering row (a pure "blocker cleared" must never become a
     direction override — that was the F7 gap with steer_goal-as-only-unstick)
-    AND guarantee a re-plan on the very next tick even with a fresh
+    AND guarantee an advance on the very next tick even with a fresh
     last_plan_at + a long cadence — a bare UNBLOCK would park the goal until
     cadence (should_plan = work OR cadence_due, and resume adds no work)."""
     svc, db, goals_dir = _resume_service(tmp_path)
@@ -581,12 +558,12 @@ async def test_resume_goal_unblocks_without_steering_and_replans_next_tick(tmp_p
         assert saved.last_plan_at is None              # cadence_due → True on the next tick
         assert store.unread_steering_rows("g") == []   # NO steering row appended
 
-        planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
-        tick_out = await _tick(store, "g", planner, evaluator, engine, notifier)
+        evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+        tick_out = await _tick(store, "g", evaluator, engine, notifier)
 
-        assert tick_out is Outcome.DISPATCHED          # re-planned despite fresh last_plan_at + 30d cadence
-        assert planner.calls == 1
-        assert "NEW steering" not in planner.last_prompt
+        assert tick_out is Outcome.DISPATCHED          # advanced despite fresh last_plan_at + 30d cadence
+        action, _, _ = engine.dispatched[0]
+        assert "Steering from the owner" not in action.goal   # no steering row → clean advance brief
     finally:
         db.close()
 
@@ -638,8 +615,8 @@ def test_resume_goal_refuses_firming_blocked_and_points_to_answer_unknowns(tmp_p
 @pytest.mark.asyncio
 async def test_blocked_goal_costs_zero_cognition_until_resume_goal(tmp_path):
     """The zero-token guard holds around the new verb: a blocked goal costs 0
-    planner/evaluator calls tick after tick, and only resume_goal reopens the
-    cognition path."""
+    cognition calls and 0 dispatches tick after tick, and only resume_goal
+    reopens the advance path."""
     svc, db, goals_dir = _resume_service(tmp_path)
     try:
         seed_goal(goals_dir, "g", cadence="30d")
@@ -647,18 +624,18 @@ async def test_blocked_goal_costs_zero_cognition_until_resume_goal(tmp_path):
         store.save_status("g", GoalStatus(
             phase="blocked", blocked_on="cap hit", last_plan_at=store.now_iso(),
         ))
-        planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+        evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
         for _ in range(3):
-            out = await _tick(store, "g", planner, evaluator, engine, notifier)
+            out = await _tick(store, "g", evaluator, engine, notifier)
             assert out is Outcome.IDLE
-        assert planner.calls == 0 and evaluator.calls == 0   # blocked = 0 tokens
+        assert evaluator.calls == 0 and engine.dispatched == []   # blocked = 0 tokens
 
         svc.resume_goal("g")
-        out = await _tick(store, "g", planner, evaluator, engine, notifier)
+        out = await _tick(store, "g", evaluator, engine, notifier)
 
         assert out is Outcome.DISPATCHED
-        assert planner.calls == 1
+        assert len(engine.dispatched) == 1
     finally:
         db.close()
 
@@ -668,43 +645,15 @@ async def test_done_goal_is_skipped(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="done"))
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
-
-    assert out is Outcome.SKIP_DONE
-    assert planner.calls == 0 and evaluator.calls == 0
-
-
-# ---- the done-gate (the planner's "done" is only a proposal) ---------------
-
-
-@pytest.mark.asyncio
-async def test_planner_done_opens_verification_review(tmp_path):
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    planner = FakeClaude(json.dumps({"decision": "done", "note": "all backlog merged"}))
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, verify_done=True)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
-    assert out is Outcome.VERIFYING
-    assert evaluator.calls == 0            # eval runs when the review COMES BACK, not now
-    assert len(engine.dispatched) == 1
-    review_action, _, _ = engine.dispatched[0]
-    assert review_action.tool == "review_repository"
-    # The dispatched review brief MUST carry the strict per-clause directive — this
-    # is what closes the 2026-06-25 "stub-everything passed the done-gate" failure
-    # mode by ensuring both the reviewer (inside the sandbox) and the direction
-    # evaluator (in devclaw) speak the same per-clause-evidence vocabulary.
-    brief = review_action.goal
-    assert "DECOMPOSE" in brief and "atomic clauses" in brief
-    assert "Per-clause evidence" in brief
-    assert "not_yet_available" in brief or "stub" in brief.lower()  # the failure-mode warning
-    assert "Objective:" in brief and "Done when:" in brief
-    saved = store.load_status("g")
-    assert saved.phase == "verifying"
-    assert saved.in_flight is not None and saved.in_flight.is_done_check is True
+    assert out is Outcome.SKIP_DONE
+    assert evaluator.calls == 0
+
+
+# ---- the done-gate ("done" is only a proposal) -----------------------------
 
 
 @pytest.mark.asyncio
@@ -715,7 +664,6 @@ async def test_done_gate_review_achieved_closes_goal(tmp_path):
         phase="verifying",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
-    planner = FakeClaude(ACT)  # must NOT be called
     evaluator = FakeClaude(json.dumps({
         "verdict": "achieved",
         "rationale": "/health exists and is tested",
@@ -735,11 +683,10 @@ async def test_done_gate_review_achieved_closes_goal(tmp_path):
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo has /health + test"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DONE
     assert evaluator.calls == 1
-    assert planner.calls == 0               # the done-gate doesn't re-plan
     assert "repo has /health" in evaluator.last_prompt   # review report fed in
     assert store.load_status("g").phase == "done"
     assert any("complete (verified)" in m for m in notifier.sent)
@@ -753,7 +700,6 @@ async def test_done_gate_review_off_track_steers_and_continues(tmp_path):
         phase="verifying",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
-    planner = FakeClaude(ACT)
     evaluator = FakeClaude(json.dumps({
         "verdict": "off_track", "rationale": "/health is not tested",
         "corrections": ["add a test for /health"],
@@ -761,7 +707,7 @@ async def test_done_gate_review_off_track_steers_and_continues(tmp_path):
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="no test found"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.SLEPT             # not done
     s = store.load_status("g")
@@ -787,7 +733,6 @@ async def test_done_gate_blocks_when_delivered_pr_is_open_and_unmerged(tmp_path)
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
         open_unmerged_pr="https://github.com/o/r/pull/9",
     ))
-    planner = FakeClaude(ACT)  # must NOT be consulted — no re-plan burned
     evaluator = FakeClaude(json.dumps({
         "verdict": "off_track",
         "rationale": "NotificationDispatcherTests.cs still has zero coverage",
@@ -796,14 +741,13 @@ async def test_done_gate_blocks_when_delivered_pr_is_open_and_unmerged(tmp_path)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="main lacks the fix"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     s = store.load_status("g")
     assert s.phase == "blocked"
     assert s.blocked_kind == "needs_answer"     # human-gated, never auto-heals
     assert "pull/9" in (s.blocked_on or "")
-    assert planner.calls == 0                    # no re-plan
     assert engine.dispatched == []               # no re-dispatch of the same fix
     assert not s.open_unmerged_pr                # marker cleared on the block
     assert any("pull/9" in m for m in notifier.sent)  # owner pinged to merge
@@ -817,14 +761,14 @@ async def test_settle_marks_open_unmerged_pr_when_auto_merge_off(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier = RecordingNotifier()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=None)
+    await _tick(store, "g", evaluator, engine, notifier, merger=None)
 
     assert store.load_status("g").open_unmerged_pr == "https://github.com/o/r/pull/9"
 
@@ -839,14 +783,14 @@ async def test_settle_clears_open_unmerged_pr_when_pr_merges(tmp_path, monkeypat
     # Pre-seed a stale marker from a prior action; a merged delivery must clear it.
     st = _delivery_status()
     store.save_status("g", replace(st, open_unmerged_pr="https://github.com/o/r/pull/8"))
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == ["https://github.com/o/r/pull/9"]
     assert store.load_status("g").open_unmerged_pr is None   # cleared on merge
@@ -856,7 +800,11 @@ async def test_settle_clears_open_unmerged_pr_when_pr_merges(tmp_path, monkeypat
 async def test_done_gate_disabled_uses_artifact_eval(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    planner = FakeClaude(json.dumps({"decision": "done", "note": "done"}))
+    # A settled advance session is what proposes done on the thin path.
+    store.save_status("g", GoalStatus(
+        phase="in_flight",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
+    ))
     evaluator = FakeClaude(json.dumps({
         "verdict": "achieved",
         "rationale": "deliveries show done_when met",
@@ -873,9 +821,12 @@ async def test_done_gate_disabled_uses_artifact_eval(tmp_path):
             },
         ],
     }))
-    engine, notifier = FakeEngine(), RecordingNotifier()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="shipped", gate_passed=True,
+    ))
+    notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, verify_done=False)
+    out = await _tick(store, "g", evaluator, engine, notifier, verify_done=False)
 
     assert out is Outcome.DONE
     assert evaluator.calls == 1
@@ -899,7 +850,10 @@ async def test_done_gate_prompt_carries_repo_context_on_artifact_only_path(tmp_p
     repo = seed_marker_repo(tmp_path)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", workspace_dir=str(repo))
-    planner = FakeClaude(json.dumps({"decision": "done", "note": "done"}))
+    store.save_status("g", GoalStatus(
+        phase="in_flight",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
+    ))
     evaluator = FakeClaude(json.dumps({
         "verdict": "achieved",
         "rationale": "deliveries show done_when met",
@@ -910,9 +864,12 @@ async def test_done_gate_prompt_carries_repo_context_on_artifact_only_path(tmp_p
              "evidence": "HealthTests.cs:8 Health_Returns200 passing"},
         ],
     }))
-    engine, notifier = FakeEngine(), RecordingNotifier()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="shipped", gate_passed=True,
+    ))
+    notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, verify_done=False)
+    out = await _tick(store, "g", evaluator, engine, notifier, verify_done=False)
 
     assert out is Outcome.DONE
     prompt = evaluator.last_prompt
@@ -942,7 +899,6 @@ async def test_done_gate_verified_wording_kept_when_review_grounded(tmp_path, mo
         phase="verifying",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
-    planner = FakeClaude(ACT)  # must NOT be called
     evaluator = FakeClaude(json.dumps({
         "verdict": "achieved",
         "rationale": "/health exists and is tested",
@@ -956,7 +912,7 @@ async def test_done_gate_verified_wording_kept_when_review_grounded(tmp_path, mo
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo has /health + test"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DONE
     assert any("goal complete (verified)" in m for m in notifier.sent)
@@ -976,8 +932,10 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
     """Demolition P1 regression: a long_lived executing goal that reaches the old
     eval cadence makes ZERO mid-flight evaluator calls and is NEVER blocked by a
     direction verdict — even when an evaluator wired to return the strongest old
-    trigger (`stalled`) is present. The goal proceeds to plan (momentum); the only
-    surviving direction cognition is the done-gate (tested in test_goal_donegate).
+    trigger (`stalled`) is present. The goal keeps its momentum (the settled
+    session proposes done, opening the done-gate review); the only surviving
+    direction cognition is the done-gate itself, and it runs only when that
+    review comes back.
     """
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -987,18 +945,18 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
         phase="in_flight", deliveries_since_eval=2,
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
     ))
-    planner = FakeClaude(ACT_FEATURE)
     # A `stalled` verdict WOULD have blocked the goal under the old mid-flight eval.
     evaluator = FakeClaude(json.dumps({"verdict": "stalled", "rationale": "no real progress"}))
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="shipped"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, eval_every=3)
+    out = await _tick(store, "g", evaluator, engine, notifier, eval_every=3)
 
     assert evaluator.calls == 0                       # the mid-flight cognition boundary is gone
     assert out is not Outcome.BLOCKED                 # a direction verdict can no longer block mid-flight
     assert store.load_status("g").phase != "blocked"
-    assert planner.calls == 1                          # momentum: the goal keeps going
+    # momentum: the settled session proposed done — the done-gate review is out
+    assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
 
 
 # ---- plain-language summarizer (owner messages rewritten; best-effort) ------
@@ -1006,21 +964,22 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
 
 @pytest.mark.asyncio
 async def test_owner_notification_is_plain_summarized(tmp_path, monkeypatch):
-    """An OWNER-level message (a blocker) is rewritten by the summarizer before
-    it reaches the notifier; the owner sees the plain text, not the raw line."""
+    """An OWNER-level message (a blocker — here a corrupt contract file) is
+    rewritten by the summarizer before it reaches the notifier; the owner sees
+    the plain text, not the raw line."""
     monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    planner = FakeClaude(json.dumps({"decision": "blocked", "question": "which auth provider?"}))
+    (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-    summarizer = RecordingSummarizer("🟡 I need you to pick how people sign in.")
+    summarizer = RecordingSummarizer("🟡 A planning file broke; I paused the goal for you.")
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, summary_caller=summarizer)
+    out = await _tick(store, "g", evaluator, engine, notifier, summary_caller=summarizer)
 
     assert out is Outcome.BLOCKED
     assert len(summarizer.prompts) == 1                       # summarizer ran once
-    assert "auth provider" in summarizer.prompts[0]           # raw line fed in
-    assert notifier.sent == ["🟡 I need you to pick how people sign in."]  # plain text sent
+    assert "corrupted" in summarizer.prompts[0]               # raw line fed in
+    assert notifier.sent == ["🟡 A planning file broke; I paused the goal for you."]  # plain text sent
 
 
 @pytest.mark.asyncio
@@ -1030,10 +989,10 @@ async def test_summarizer_not_invoked_for_suppressed_task_dispatch(tmp_path, mon
     monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
     summarizer = RecordingSummarizer()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, summary_caller=summarizer)
+    out = await _tick(store, "g", evaluator, engine, notifier, summary_caller=summarizer)
 
     assert out is Outcome.DISPATCHED
     assert summarizer.prompts == []          # never summarized a suppressed message
@@ -1048,14 +1007,14 @@ async def test_idle_tick_never_invokes_summarizer(tmp_path, monkeypatch):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
     summarizer = RecordingSummarizer()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, summary_caller=summarizer)
+    out = await _tick(store, "g", evaluator, engine, notifier, summary_caller=summarizer)
 
     assert out is Outcome.IDLE
     assert summarizer.prompts == []
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
 
 
 @pytest.mark.asyncio
@@ -1069,12 +1028,11 @@ async def test_discovery_goes_straight_to_executing(tmp_path):
         phase="in_flight", lifecycle="investigating",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
     ))
-    planner = FakeClaude(ACT)
     researcher = FakeClaude("## Current state\nbare API")   # evaluator-tier = discovery synthesis
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo analysis"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, researcher, engine, notifier)
+    out = await _tick(store, "g", researcher, engine, notifier)
 
     assert out is Outcome.ADVANCED
     assert store.load_status("g").lifecycle == "executing"
@@ -1102,20 +1060,17 @@ async def test_green_delivery_auto_merges_when_enabled(tmp_path, monkeypatch):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == ["https://github.com/o/r/pull/9"]
     assert any("merged" in m.lower() for m in notifier.sent)
-    # The planner's finished-detail reflects the merge that just happened —
-    # built AFTER the auto-merge attempt, not before.
-    assert "pr_state=merged" in planner.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1128,14 +1083,14 @@ async def test_failed_auto_merge_pings_owner_loudly(tmp_path, monkeypatch):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger(ok=False)
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == ["https://github.com/o/r/pull/9"]  # the merge WAS attempted
     # …and its failure produced an OWNER-altitude ping (default floor) naming the
@@ -1143,8 +1098,6 @@ async def test_failed_auto_merge_pings_owner_loudly(tmp_path, monkeypatch):
     pings = [m for m in notifier.sent if "auto-merge failed" in m.lower()]
     assert pings, f"expected a loud owner ping on failed automerge, got {notifier.sent}"
     assert "https://github.com/o/r/pull/9" in pings[0]
-    # the planner is told the PR is still open (unmerged), not merged.
-    assert "pr_state=open" in planner.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1160,7 +1113,7 @@ async def test_merge_fires_on_a_passed_merger_even_with_global_flag_off(tmp_path
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
@@ -1169,7 +1122,7 @@ async def test_merge_fires_on_a_passed_merger_even_with_global_flag_off(tmp_path
 
     # A project override resolved this ON despite the global default being off —
     # simulated here by simply handing tick_goal a real merger regardless of flag.
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == ["https://github.com/o/r/pull/9"]
 
@@ -1180,8 +1133,8 @@ async def test_program_settle_reconciles_pr_stack(tmp_path, monkeypatch):
     (gate_passed=None), so the single-PR auto-merge can't touch them — the
     goal used to burn follow-up dispatches shepherding its own PRs and left
     zombies behind (2026-07-09: five open superseded closeloop PRs). The
-    settle hook must reconcile the stack in order and feed the REAL per-PR
-    outcome to the planner instead of 'unmerged — owner review pending'."""
+    settle hook must reconcile the stack in order and log the REAL per-PR
+    outcome instead of 'unmerged — owner review pending'."""
     calls = {}
 
     async def fake_reconcile(stack, *, workspace_dir, merger):
@@ -1195,21 +1148,21 @@ async def test_program_settle_reconciles_pr_stack(tmp_path, monkeypatch):
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight("devclaw", "start_program", "p1", "program", "ship CI/CD"),
     ))
-    planner, evaluator = FakeClaude(SLEEP), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="program done",
         pr_url="https://github.com/o/r/pull/66; https://github.com/o/r/pull/67",
         gate_passed=None,
     ))
 
-    await _tick(store, "g", planner, evaluator, engine, RecordingNotifier(), merger=RecordingMerger())
+    await _tick(store, "g", evaluator, engine, RecordingNotifier(), merger=RecordingMerger())
 
     assert calls["stack"] == [
         "https://github.com/o/r/pull/66", "https://github.com/o/r/pull/67",
     ]
-    assert "pr_stack reconciled" in planner.last_prompt
     log = (tmp_path / "g" / "log.md").read_text()
     assert "reconcile: https://github.com/o/r/pull/66: merged" in log
+    assert "reconcile: https://github.com/o/r/pull/67: merged" in log
 
 
 @pytest.mark.asyncio
@@ -1227,15 +1180,15 @@ async def test_program_settle_without_merger_leaves_stack_alone(tmp_path, monkey
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight("devclaw", "start_program", "p1", "program", "ship CI/CD"),
     ))
-    planner = FakeClaude(SLEEP)
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="program done",
         pr_url="https://github.com/o/r/pull/66", gate_passed=None,
     ))
 
-    await _tick(store, "g", planner, FakeClaude(), engine, RecordingNotifier(), merger=None)
+    await _tick(store, "g", FakeClaude(), engine, RecordingNotifier(), merger=None)
 
-    assert "pr_state=open (unmerged — owner review pending)" in planner.last_prompt
+    # boom above proves reconcile never ran; the log carries no reconcile rows.
+    assert "reconcile:" not in (tmp_path / "g" / "log.md").read_text()
 
 
 @pytest.mark.asyncio
@@ -1257,14 +1210,14 @@ async def test_checklist_mode_dispatch_is_not_auto_merged(tmp_path, monkeypatch)
             addresses=["scaffold"],  # ← Pillar 1 marker
         ),
     ))
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="ok",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     # Merger never invoked — the PR is the shared goal-branch PR.
     assert merger.merged == []
@@ -1287,14 +1240,14 @@ async def test_legacy_dispatch_without_addresses_still_auto_merges(tmp_path, mon
             addresses=[],  # ← legacy mode, no checklist
         ),
     ))
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="ok",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == ["https://github.com/o/r/pull/9"]
 
@@ -1309,7 +1262,7 @@ async def test_checklist_mode_merge_skip_is_logged_legibly(tmp_path, monkeypatch
     gate-green deliveries with automerge ON and no 'auto-merged'/'auto-merge
     failed'/'skipped' line anywhere forced the owner to infer 'it silently
     never engaged' (2026-07-28 morning). The skip resolves as an explicit
-    logged reason, and the planner detail carries it too."""
+    logged reason."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -1320,20 +1273,19 @@ async def test_checklist_mode_merge_skip_is_logged_legibly(tmp_path, monkeypatch
             addresses=["scaffold"],
         ),
     ))
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="ok",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == []  # the pillar-2 skip itself is unchanged
     log = (tmp_path / "g" / "log.md").read_text()
     assert "auto-merge skipped (checklist-mode" in log
     assert "https://github.com/o/r/pull/9" in log
-    assert "auto-merge skipped (checklist-mode" in planner.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1345,23 +1297,23 @@ async def test_automerge_off_green_pr_skip_is_logged_legibly(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
 
-    await _tick(store, "g", planner, evaluator, engine, RecordingNotifier(), merger=None)
+    await _tick(store, "g", evaluator, engine, RecordingNotifier(), merger=None)
 
     log = (tmp_path / "g" / "log.md").read_text()
     assert "auto-merge skipped (auto-merge is off for this repo)" in log
 
 
 @pytest.mark.asyncio
-async def test_conflicting_pr_at_settle_pings_owner_and_grounds_planner(tmp_path, monkeypatch):
+async def test_conflicting_pr_at_settle_pings_owner_and_logs_conflict(tmp_path, monkeypatch):
     """#394 done-when 1: a delivery whose PR is CONFLICTING at settle is a
     degraded delivery and must be LOUD — an owner ping naming the conflict and
-    a planner detail that says the PR cannot land — never a silent `done`
+    a log line that says the PR cannot land — never a silent `done`
     indistinguishable from a landable one (closeloop-bench PR #8 accumulated
     three such deliveries overnight, 2026-07-28)."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
@@ -1374,14 +1326,14 @@ async def test_conflicting_pr_at_settle_pings_owner_and_grounds_planner(tmp_path
             addresses=["scaffold"],  # checklist-mode: PR stays open → probed
         ),
     ))
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="ok",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, probe = RecordingNotifier(), RecordingProbe(verdict=True)
 
-    await _tick(store, "g", planner, evaluator, engine, notifier,
+    await _tick(store, "g", evaluator, engine, notifier,
                 merger=RecordingMerger(), mergeability_probe=probe)
 
     assert probe.asked == ["https://github.com/o/r/pull/9"]
@@ -1390,7 +1342,6 @@ async def test_conflicting_pr_at_settle_pings_owner_and_grounds_planner(tmp_path
     assert "https://github.com/o/r/pull/9" in pings[0]
     log = (tmp_path / "g" / "log.md").read_text()
     assert "CONFLICTING" in log
-    assert "mergeable=CONFLICTING" in planner.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1406,18 +1357,17 @@ async def test_mergeable_open_pr_at_settle_stays_quiet(tmp_path):
             phase="in_flight", lifecycle="executing",
             in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "x"),
         ))
-        planner, notifier = FakeClaude(ACT_FEATURE), RecordingNotifier()
+        notifier = RecordingNotifier()
         engine = FakeEngine(poll_result=PollResult(
             terminal=True, status="done", detail="ok",
             pr_url="https://github.com/o/r/pull/9", gate_passed=True,
         ))
 
-        await _tick(store, goal_id, planner, FakeClaude(), engine, notifier,
+        await _tick(store, goal_id, FakeClaude(), engine, notifier,
                     merger=None, mergeability_probe=RecordingProbe(verdict=verdict))
 
         assert not any("cannot land" in m for m in notifier.sent)
         assert "CONFLICTING" not in (tmp_path / goal_id / "log.md").read_text()
-        assert "CONFLICTING" not in planner.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1425,26 +1375,25 @@ async def test_failed_merge_of_conflicting_pr_pages_owner_once(tmp_path, monkeyp
     """One page per event: when the merge was attempted and failed AND the
     probe then confirms the PR is CONFLICTING, the owner hears the (earlier,
     actionable) 'auto-merge failed — merge it by hand' ping only — the
-    conflict fact rides the log + planner detail, not a second page."""
+    conflict fact rides the log, not a second page."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, probe = RecordingNotifier(), RecordingProbe(verdict=True)
 
-    await _tick(store, "g", planner, evaluator, engine, notifier,
+    await _tick(store, "g", evaluator, engine, notifier,
                 merger=RecordingMerger(ok=False), mergeability_probe=probe)
 
     assert any("auto-merge failed" in m.lower() for m in notifier.sent)
     assert not any("cannot land" in m for m in notifier.sent)
     # the conflict is still fully legible where it matters:
     assert "CONFLICTING" in (tmp_path / "g" / "log.md").read_text()
-    assert "mergeable=CONFLICTING" in planner.last_prompt
 
 
 @pytest.mark.asyncio
@@ -1455,14 +1404,14 @@ async def test_merged_pr_is_not_probed_for_conflicts(tmp_path, monkeypatch):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     probe = RecordingProbe(verdict=True)
 
-    await _tick(store, "g", planner, evaluator, engine, RecordingNotifier(),
+    await _tick(store, "g", evaluator, engine, RecordingNotifier(),
                 merger=RecordingMerger(ok=True), mergeability_probe=probe)
 
     assert probe.asked == []
@@ -1475,14 +1424,14 @@ async def test_failed_gate_is_not_auto_merged(tmp_path, monkeypatch):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="broke a test",
         pr_url="https://github.com/o/r/pull/9", gate_passed=False,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger()
 
-    await _tick(store, "g", planner, evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == []
 
@@ -1502,16 +1451,16 @@ async def test_auto_merge_off_by_default(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, merger=None)
+    out = await _tick(store, "g", evaluator, engine, notifier, merger=None)
 
-    assert out is Outcome.DISPATCHED  # settled + planned the next action normally
+    assert out is Outcome.VERIFYING   # settled normally → proposed done (no merge attempt)
     assert not any("merged" in m.lower() for m in notifier.sent)
 
 
@@ -1535,7 +1484,7 @@ async def test_tick_all_resolves_merger_per_goal(tmp_path, monkeypatch):
     def _resolver(goal):
         return on_merger if goal.workspace_dir == "/repos/on" else None
 
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="added /health",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
@@ -1570,7 +1519,7 @@ async def test_tick_all_resolves_verify_done_per_goal(tmp_path):
         seen.append(goal.workspace_dir)
         return goal.workspace_dir == "/repos/a"  # per-goal, distinct values
 
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
@@ -1600,7 +1549,7 @@ async def test_tick_all_resolves_autodeploy_per_goal(tmp_path):
         seen.append(goal.workspace_dir)
         return goal.workspace_dir == "/repos/a"
 
-    planner, evaluator = FakeClaude(ACT_FEATURE), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
@@ -1636,12 +1585,12 @@ async def test_new_goal_opens_investigation(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(lifecycle="investigating"))
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
-    assert planner.calls == 0 and evaluator.calls == 0       # no cognition yet
+    assert evaluator.calls == 0       # no cognition yet
     assert len(engine.dispatched) == 1
     action, _, _ = engine.dispatched[0]
     assert action.tool == "review_repository" and action.open_pr is False
@@ -1660,14 +1609,14 @@ async def test_investigation_running_is_zero_tokens(tmp_path):
         phase="in_flight", lifecycle="investigating",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
     ))
-    planner, evaluator = FakeClaude(ACT), FakeClaude()
+    evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IN_FLIGHT
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
 
 
 @pytest.mark.asyncio
@@ -1680,18 +1629,16 @@ async def test_discovery_resolves_writes_brief_and_advances_to_executing(tmp_pat
         phase="in_flight", lifecycle="investigating",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
     ))
-    planner = FakeClaude(ACT)  # must NOT run this tick
     # the research caller in tick_goal is the evaluator-tier caller:
     researcher = FakeClaude("## Current state\nbare API\n## Gap to good\nno UI\n## What good looks like\n- pages")
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo has 3 endpoints, no frontend"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, researcher, engine, notifier)
+    out = await _tick(store, "g", researcher, engine, notifier)
 
     assert out is Outcome.ADVANCED
     assert researcher.calls == 1                              # the brief was synthesized
     assert "3 endpoints" in researcher.last_prompt           # repo analysis fed to synthesis
-    assert planner.calls == 0
     assert store.load_status("g").lifecycle == "executing"   # advanced
     assert "Current state" in store.read_discovery("g")      # brief persisted
     assert any("look" in m.lower() for m in notifier.sent)
@@ -1707,12 +1654,11 @@ async def test_discovery_synthesis_failure_still_advances(tmp_path):
         phase="in_flight", lifecycle="investigating",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
     ))
-    planner = FakeClaude(ACT)
     researcher = FakeClaude("")   # empty → GoalResearchError inside synthesis
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="analysis"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, researcher, engine, notifier)
+    out = await _tick(store, "g", researcher, engine, notifier)
 
     assert out is Outcome.ADVANCED
     assert store.load_status("g").lifecycle == "executing"   # not stuck
@@ -1720,19 +1666,19 @@ async def test_discovery_synthesis_failure_still_advances(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_legacy_goal_skips_investigation_and_plans(tmp_path):
+async def test_legacy_goal_skips_investigation_and_dispatches(tmp_path):
     """A goal with no lifecycle (created before the front-end existed) behaves as
-    'executing' — it plans + dispatches immediately, no discovery review."""
+    'executing' — it dispatches an advance session immediately, no discovery review."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")  # default status → lifecycle None
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
-    assert planner.calls == 1                                 # planned (executing path)
     action, _, _ = engine.dispatched[0]
-    assert action.tool == "start_program"                    # the planned action, NOT a discovery review
+    assert action.tool == "implement_feature"                # the advance session, NOT a discovery review
+    assert "Advance this goal" in action.goal
 
 
 # ---- notification altitude (owner hears only owner-level by default) --------
@@ -1746,9 +1692,9 @@ async def test_per_task_dispatch_is_suppressed_by_default(tmp_path, monkeypatch)
     monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)  # default = owner
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED          # the action still ran
     assert len(engine.dispatched) == 1
@@ -1758,17 +1704,21 @@ async def test_per_task_dispatch_is_suppressed_by_default(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_owner_level_blocker_always_sends(tmp_path, monkeypatch):
     """A real blocker (needs-you) is owner-altitude — it reaches the owner even at
-    the default 'owner' floor."""
+    the default 'owner' floor. Driven by the lost-ref block, a real needs-you."""
     monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    planner = FakeClaude(json.dumps({"decision": "blocked", "question": "which auth provider?"}))
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+    store.save_status("g", GoalStatus(
+        phase="in_flight",
+        in_flight=InFlight("devclaw", "implement_feature", "t_gone", "task", "add /health"),
+    ))
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_gone"))
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
-    assert any("auth provider" in m for m in notifier.sent)
+    assert any("t_gone" in m for m in notifier.sent)
 
 
 @pytest.mark.asyncio
@@ -1778,9 +1728,9 @@ async def test_task_altitude_restores_the_firehose(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVCLAW_NOTIFY_ALTITUDE", "task")
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
     assert any("🚀" in m for m in notifier.sent)
@@ -1798,7 +1748,7 @@ async def _failing_prepare(
     raise WorkspaceError("clone failed: remote: Repository not found.")
 
 
-async def _tick_prep(store, goal_id, planner, engine, notifier, *, prepare_ws):
+async def _tick_prep(store, goal_id, engine, notifier, *, prepare_ws):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=FakeClaude(), notifier=notifier,
@@ -1814,9 +1764,9 @@ async def test_executing_prep_failure_blocks_with_real_error(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle"))
-    planner, engine, notifier = FakeClaude(ACT), FakeEngine(), RecordingNotifier()
+    engine, notifier = FakeEngine(), RecordingNotifier()
 
-    out = await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare)
+    out = await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
 
     assert out is Outcome.BLOCKED
     st = store.load_status("g")
@@ -1831,19 +1781,19 @@ async def test_investigation_prep_failure_blocks_without_cognition(tmp_path):
     """On a brand-new outcome goal the investigation prep is the SAME workspace
     executing needs — a prep failure there blocks immediately (lifecycle pinned to
     executing so future ticks route through the blocked-guard), spending zero
-    planner tokens."""
+    cognition tokens."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
-    planner, engine, notifier = FakeClaude(ACT), FakeEngine(), RecordingNotifier()
+    engine, notifier = FakeEngine(), RecordingNotifier()
 
-    out = await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare)
+    out = await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
 
     assert out is Outcome.BLOCKED
     st = store.load_status("g")
     assert st.phase == "blocked" and st.lifecycle == "executing"
     assert "Repository not found" in (st.blocked_on or "")
-    assert planner.calls == 0 and engine.dispatched == []
+    assert engine.dispatched == []
 
 
 @pytest.mark.asyncio
@@ -1853,90 +1803,15 @@ async def test_blocked_on_prep_failure_does_not_respam(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle"))
-    planner, engine, notifier = FakeClaude(ACT), FakeEngine(), RecordingNotifier()
+    engine, notifier = FakeEngine(), RecordingNotifier()
 
-    await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare)
+    await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
     sent_after_block = len(notifier.sent)
 
-    planner2 = FakeClaude(ACT)
-    out = await _tick_prep(store, "g", planner2, engine, notifier, prepare_ws=_failing_prepare)
+    out = await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
 
     assert out is Outcome.IDLE
-    assert planner2.calls == 0
     assert len(notifier.sent) == sent_after_block        # no second ping
-
-
-# ---- regression: the duplicate-ship loop (dogfood 2026-06-21) ---------------
-
-
-class RaisingClaude:
-    """A cognition caller that always raises — models the planner hitting a usage
-    limit (or any error) right after an action finished."""
-
-    def __init__(self, exc: Exception) -> None:
-        self.exc = exc
-        self.calls = 0
-
-    async def __call__(self, prompt: str) -> str:
-        self.calls += 1
-        raise self.exc
-
-
-@pytest.mark.asyncio
-async def test_consumed_action_is_persisted_before_a_planner_crash(tmp_path, monkeypatch):
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    # The bug: in_flight=None was computed in memory but NOT saved before the
-    # next-action planner ran; the planner crashing on a usage limit aborted the
-    # tick with the stale pointer on disk, so the next tick re-shipped/re-announced
-    # the same finished action forever. A non-(Goal)PlannerError still escapes
-    # tick_goal — but the cleared state must already be durable.
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight",
-        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "build M2\n\nlong body"),
-    ))
-    planner = RaisingClaude(RuntimeError("boom after the action finished"))
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="done",
-        pr_url="https://github.com/o/r/pull/2", gate_passed=True,
-    ))
-    notifier = RecordingNotifier()
-    merger = RecordingMerger(ok=True)
-
-    with pytest.raises(RuntimeError):
-        await _tick(store, "g", planner, FakeClaude(), engine, notifier, merger=merger)
-
-    # the action was consumed + merged exactly once …
-    assert merger.merged == ["https://github.com/o/r/pull/2"]
-    # … and the cleared in_flight is DURABLE despite the crash — so a re-tick
-    # plans the next milestone instead of re-shipping this one.
-    assert store.load_status("g").in_flight is None
-
-
-@pytest.mark.asyncio
-async def test_planner_session_limit_is_caught_not_escaped(tmp_path):
-    # The shared `claude --print` caller raises planner.PlannerError (NOT
-    # GoalPlannerError) on a usage limit. goal_tick must catch it (so it can pause
-    # / handle it) rather than let it escape to the outer 'tick error (isolated)'.
-    from devclaw.planner import PlannerError
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight",
-        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "build M2"),
-    ))
-    planner = RaisingClaude(PlannerError("You've hit your session limit · resets 12:20am (Europe/Dublin)"))
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="done",
-        pr_url="https://github.com/o/r/pull/2", gate_passed=True,
-    ))
-
-    out = await _tick(store, "g", planner, FakeClaude(), engine, RecordingNotifier(), merger=RecordingMerger())
-
-    # caught + handled (FakeEngine has no set_global_pause → ERROR, but NOT raised)
-    assert out is Outcome.ERROR
-    assert store.load_status("g").in_flight is None  # still durably cleared
 
 
 @pytest.mark.asyncio
@@ -1956,10 +1831,9 @@ async def test_ship_notification_is_concise_not_the_full_prompt(tmp_path, monkey
         phase="in_flight",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", long_goal),
     ))
-    planner = FakeClaude(ACT_FEATURE)
     notifier = RecordingNotifier()
 
-    await _tick(store, "g", planner, FakeClaude(), FakeEngine(poll_result=PollResult(
+    await _tick(store, "g", FakeClaude(), FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="done",
         pr_url="https://github.com/o/r/pull/2", gate_passed=True,
     )), notifier, merger=RecordingMerger())
@@ -1986,7 +1860,7 @@ async def test_ship_notification_is_suppressed_at_owner_altitude(tmp_path, monke
     ))
     notifier = RecordingNotifier()
 
-    await _tick(store, "g", FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(poll_result=PollResult(
+    await _tick(store, "g", FakeClaude(), FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="done",
         pr_url="https://github.com/o/r/pull/2", gate_passed=True,
     )), notifier, merger=RecordingMerger())
@@ -2084,11 +1958,11 @@ async def test_failing_remote_checks_block_the_close(tmp_path):
     store = _store(tmp_path, Clock())
     _verifying_checklist_goal(store, tmp_path)
     checker = FakeRemoteChecker(RemoteChecksResult("failing", "32 failed of 32 (32× startup_failure)"))
-    planner, evaluator = FakeClaude(ACT), FakeClaude(_ACHIEVED_EVAL)
+    evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, remote_checker=checker)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.SLEPT                       # not done — steered back in
     assert checker.calls == [("https://example.com/demo.git", "goal/g")]
@@ -2111,11 +1985,11 @@ async def test_never_ran_ci_blocks_the_close_under_strict_gate(tmp_path, monkeyp
     store = _store(tmp_path, Clock())
     _verifying_checklist_goal(store, tmp_path)
     checker = FakeRemoteChecker(RemoteChecksResult("none", "workflows exist but zero runs"))
-    planner, evaluator = FakeClaude(ACT), FakeClaude(_ACHIEVED_EVAL)
+    evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, remote_checker=checker)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.SLEPT
     assert store.load_status("g").phase != "done"
@@ -2135,11 +2009,11 @@ async def test_broken_ci_infra_closes_with_annotation_under_flexible_gate(tmp_pa
     checker = FakeRemoteChecker(
         RemoteChecksResult("infra_broken", "5 of 5 died at startup — CI infrastructure never executed")
     )
-    planner, evaluator = FakeClaude(ACT), FakeClaude(_ACHIEVED_EVAL)
+    evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, remote_checker=checker)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.DONE
     assert store.load_status("g").phase == "done"
@@ -2151,11 +2025,11 @@ async def test_passing_remote_checks_let_the_goal_close(tmp_path):
     store = _store(tmp_path, Clock())
     _verifying_checklist_goal(store, tmp_path)
     checker = FakeRemoteChecker()  # passing
-    planner, evaluator = FakeClaude(ACT), FakeClaude(_ACHIEVED_EVAL)
+    evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, remote_checker=checker)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.DONE
     assert store.load_status("g").phase == "done"
@@ -2169,11 +2043,11 @@ async def test_unknown_remote_state_fails_open_but_logs(tmp_path):
     store = _store(tmp_path, Clock())
     _verifying_checklist_goal(store, tmp_path)
     checker = FakeRemoteChecker(RemoteChecksResult("unknown", "gh: network unreachable"))
-    planner, evaluator = FakeClaude(ACT), FakeClaude(_ACHIEVED_EVAL)
+    evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, remote_checker=checker)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     # infra uncertainty must not wedge a verified goal — but it IS observable
     assert out is Outcome.DONE
@@ -2185,11 +2059,11 @@ async def test_checker_exception_fails_open(tmp_path):
     store = _store(tmp_path, Clock())
     _verifying_checklist_goal(store, tmp_path)
     checker = FakeRemoteChecker(exc=RuntimeError("gh exploded"))
-    planner, evaluator = FakeClaude(ACT), FakeClaude(_ACHIEVED_EVAL)
+    evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, remote_checker=checker)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.DONE
     assert "unknown" in store.recent_log("g")
@@ -2205,11 +2079,11 @@ async def test_legacy_goal_without_checklist_skips_the_checker(tmp_path):
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
     checker = FakeRemoteChecker()
-    planner, evaluator = FakeClaude(ACT), FakeClaude(_ACHIEVED_EVAL)
+    evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier, remote_checker=checker)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.DONE
     assert checker.calls == []
@@ -2251,7 +2125,6 @@ async def test_standing_goal_done_gate_blocks_instead_of_closing(tmp_path):
         phase="verifying",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
-    planner = FakeClaude(ACT)  # must NOT be called
     evaluator = FakeClaude(json.dumps({
         "verdict": "achieved",
         "rationale": "every axis passes",
@@ -2263,7 +2136,7 @@ async def test_standing_goal_done_gate_blocks_instead_of_closing(tmp_path):
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     s = store.load_status("g")
@@ -2306,14 +2179,14 @@ async def test_orphaned_failed_program_readopted_and_settled(tmp_path):
     """A goal whose in_flight ref was lost (STATUS.md truncated by a crash
     mid-write) must have the SWEEP rediscover its own already-failed program
     via parent_goal_id and re-adopt it; the NEXT ordinary tick then settles
-    it and replans WITH the failure as input — instead of idling forever on
+    it and dispatches a fresh advance session — instead of idling forever on
     a result that will never arrive."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d")
     # cadence not due + no steering → without the sweep this tick is IDLE
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
     store.append_log("g", "dispatched start_program: Program: reporting & dashboards")
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = OrphanAwareEngine(
         program=("p_lost", "Program: reporting & dashboards"),
         poll_result=PollResult(
@@ -2330,13 +2203,13 @@ async def test_orphaned_failed_program_readopted_and_settled(tmp_path):
     s = store.load_status("g")
     assert s.in_flight is not None and s.in_flight.id == "p_lost"
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED
-    assert planner.calls == 1
-    assert "wall-clock timeout" in planner.last_prompt  # failure fed to the planner
+    action, _, _ = engine.dispatched[-1]
+    assert action.tool == "implement_feature"           # a fresh advance session
     log = store.recent_log("g")
-    assert "start_program p_lost → failed" in log
+    assert "start_program p_lost → failed" in log       # the failure is on the durable record
 
 
 @pytest.mark.asyncio
@@ -2347,7 +2220,7 @@ async def test_settled_program_is_not_readopted(tmp_path):
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
     store.append_log("g", "start_program p_seen → failed")
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = OrphanAwareEngine(program=("p_seen", "Program: reporting"))
 
     swept = await sweep_orphaned_refs(store, engine)
@@ -2355,10 +2228,9 @@ async def test_settled_program_is_not_readopted(tmp_path):
     assert swept == {}
     assert engine.polls == 0
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IDLE
-    assert planner.calls == 0
     assert engine.polls == 0
 
 
@@ -2370,7 +2242,7 @@ async def test_orphaned_running_program_readopted_as_in_flight(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = OrphanAwareEngine(
         program=("p_run", "Program: reporting"),
         poll_result=PollResult(terminal=False, status="running"),
@@ -2383,10 +2255,9 @@ async def test_orphaned_running_program_readopted_as_in_flight(tmp_path):
     assert s.in_flight is not None and s.in_flight.id == "p_run"
     assert s.in_flight.ref_kind == "program"
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IN_FLIGHT
-    assert planner.calls == 0
     s = store.load_status("g")
     assert s.in_flight is not None and s.in_flight.id == "p_run"
     assert s.in_flight.ref_kind == "program"
@@ -2406,7 +2277,6 @@ async def test_save_status_is_atomic_replace(tmp_path):
     assert store.load_status("g").in_flight.id == "p1"
 
 
-
 # ---- lost in-flight ref: block legibly, never wedge (audit 2026-07-10) ------
 # The engine row a ref points at can vanish (DB loss, manual cleanup, a
 # cross-environment restore). poll then raises GoalEngineError on EVERY tick,
@@ -2423,10 +2293,10 @@ async def test_lost_action_ref_blocks_and_notifies_owner(tmp_path):
         phase="in_flight",
         in_flight=InFlight("devclaw", "implement_feature", "t_gone", "task", "add /health"),
     ))
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_gone"))
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     st = store.load_status("g")
@@ -2434,7 +2304,7 @@ async def test_lost_action_ref_blocks_and_notifies_owner(tmp_path):
     assert st.in_flight is None                          # the lost ref is cleared
     assert "task t_gone" in (st.blocked_on or "")
     assert "unknown task_id" in (st.blocked_on or "")    # the real error, not a paraphrase
-    assert planner.calls == 0 and evaluator.calls == 0   # zero cognition on the failure path
+    assert evaluator.calls == 0   # zero cognition on the failure path
     assert len(notifier.sent) == 1                       # owner heard it exactly once
     assert "t_gone" in notifier.sent[0]
     assert "t_gone" in store.recent_log("g")
@@ -2453,14 +2323,12 @@ async def test_lost_ref_block_does_not_loop(tmp_path):
     ))
     notifier = RecordingNotifier()
     engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_gone"))
-    await _tick(store, "g", FakeClaude(ACT), FakeClaude(), engine, notifier)
+    await _tick(store, "g", FakeClaude(), engine, notifier)
     sent_after_block = len(notifier.sent)
 
-    planner2, evaluator2 = FakeClaude(ACT), FakeClaude()
-    out = await _tick(store, "g", planner2, evaluator2, engine, notifier)
+    out = await _tick(store, "g", FakeClaude(), engine, notifier)
 
     assert out is Outcome.IDLE
-    assert planner2.calls == 0 and evaluator2.calls == 0  # blocked goals idle at 0 tokens
     assert engine.polls == 1                              # nothing left to poll
     assert len(notifier.sent) == sent_after_block         # no second ping
 
@@ -2473,10 +2341,10 @@ async def test_lost_discovery_ref_blocks_and_notifies_owner(tmp_path):
         phase="in_flight", lifecycle="investigating",
         in_flight=InFlight("devclaw", "review_repository", "t_disc", "task", "analyze", is_discovery=True),
     ))
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_disc"))
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     st = store.load_status("g")
@@ -2486,13 +2354,13 @@ async def test_lost_discovery_ref_blocks_and_notifies_owner(tmp_path):
     # would route the NEXT tick back into INVESTIGATING and silently dispatch a
     # fresh review — contradicting the "paused; steer me" ping just sent.
     assert st.lifecycle == "executing"
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert len(notifier.sent) == 1 and "t_disc" in notifier.sent[0]
 
     # Next tick: a true block — idles at zero tokens, no re-dispatch, no re-ping.
-    out2 = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out2 = await _tick(store, "g", evaluator, engine, notifier)
     assert out2 is Outcome.IDLE
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert len(notifier.sent) == 1
     assert store.load_status("g").phase == "blocked"
 
@@ -2505,16 +2373,16 @@ async def test_lost_done_gate_ref_blocks_and_notifies_owner(tmp_path):
         phase="verifying",
         in_flight=InFlight("devclaw", "review_repository", "t_gate", "task", "verify", is_done_check=True),
     ))
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_gate"))
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     st = store.load_status("g")
     assert st.phase == "blocked" and st.in_flight is None
     assert "task t_gate" in (st.blocked_on or "")
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert len(notifier.sent) == 1 and "t_gate" in notifier.sent[0]
 
 
@@ -2530,12 +2398,12 @@ async def test_corrupt_checklist_blocks_tick_loudly_then_idles(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")  # no STATUS yet → would plan+dispatch if healthy
     (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
-    assert planner.calls == 0 and evaluator.calls == 0  # corruption preempts cognition
+    assert evaluator.calls == 0  # corruption preempts cognition
     assert engine.dispatched == []
     s = store.load_status("g")
     assert s.phase == "blocked"
@@ -2544,9 +2412,9 @@ async def test_corrupt_checklist_blocks_tick_loudly_then_idles(tmp_path):
     assert "checklist.yaml" in store.recent_log("g")
 
     # Tick again with the file still torn — idle, no re-ping, no log spam.
-    out2 = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out2 = await _tick(store, "g", evaluator, engine, notifier)
     assert out2 is Outcome.IDLE
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert len(notifier.sent) == 1
 
 
@@ -2559,19 +2427,19 @@ async def test_corrupt_firmed_draft_blocks_tick_via_load_effective_goal(tmp_path
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     (tmp_path / "g" / "firmed-draft.yaml").write_text("status: [garbage\n")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert engine.dispatched == []
     s = store.load_status("g")
     assert s.phase == "blocked"
     assert "firmed-draft.yaml" in s.blocked_on
     assert len(notifier.sent) == 1 and "corrupted" in notifier.sent[0]
 
-    out2 = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out2 = await _tick(store, "g", evaluator, engine, notifier)
     assert out2 is Outcome.IDLE
     assert len(notifier.sent) == 1
 
@@ -2587,10 +2455,10 @@ async def test_corrupt_doc_block_preserves_running_in_flight_ref(tmp_path):
         "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "start_program", "p1", "program")),
     )
     (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     assert engine.polls == 0  # blocked before polling — no new work of any kind
@@ -2602,16 +2470,16 @@ async def test_corrupt_doc_block_preserves_running_in_flight_ref(tmp_path):
 @pytest.mark.asyncio
 async def test_missing_checklist_and_firmed_draft_stay_backlog_mode(tmp_path):
     """MISSING contract files remain the legitimate pre-decomposer /
-    pre-firming state: the goal plans from the backlog (base goal), no block,
+    pre-firming state: the goal advances from the base goal alone, no block,
     no corruption noise."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")  # neither checklist.yaml nor firmed-draft.yaml
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
-    assert out is Outcome.DISPATCHED  # backlog mode unchanged
-    assert planner.calls == 1
+    assert out is Outcome.DISPATCHED  # advance dispatch unchanged
+    assert len(engine.dispatched) == 1
     assert store.load_status("g").phase == "in_flight"
 
 
@@ -2626,15 +2494,15 @@ async def test_missing_checklist_and_firmed_draft_stay_backlog_mode(tmp_path):
 async def test_blocked_kind_stamped_per_block_site(tmp_path):
     """Each block class stamps its machine-readable kind next to the prose:
     a torn checklist.yaml → mechanical:corrupt_doc, the dispatch-cap backstop
-    → mechanical:dispatch_cap, a planner decision=blocked → needs_answer, and
-    force_block (the illegal-transition escape hatch) → bug."""
+    → mechanical:dispatch_cap, the done-gate blocking for a human decision
+    → needs_answer, and force_block (the illegal-transition escape hatch) → bug."""
     store = _store(tmp_path, Clock())
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
     # mechanical:corrupt_doc — a contract file that exists but won't parse
     seed_goal(tmp_path, "gc")
     (tmp_path / "gc" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    assert await _tick(store, "gc", planner, evaluator, engine, notifier) is Outcome.BLOCKED
+    assert await _tick(store, "gc", evaluator, engine, notifier) is Outcome.BLOCKED
     s = store.load_status("gc")
     assert s.phase == "blocked" and s.blocked_kind == "mechanical:corrupt_doc"
     # the STATUS.md view surfaces the kind next to blocked_on (frontmatter + body)
@@ -2645,15 +2513,25 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path):
     # mechanical:dispatch_cap — the runaway backstop (backlog 2 → cap 4)
     seed_goal(tmp_path, "gd")
     store.save_status("gd", GoalStatus(phase="idle", actions_dispatched=4))
-    assert await _tick(store, "gd", planner, evaluator, engine, notifier) is Outcome.BLOCKED
+    assert await _tick(store, "gd", evaluator, engine, notifier) is Outcome.BLOCKED
     assert store.load_status("gd").blocked_kind == "mechanical:dispatch_cap"
 
-    # needs_answer — the planner asked the owner a question
+    # needs_answer — the done-gate blocked for a human decision (#430: the
+    # delivered fix sits on an open, unmerged PR only the owner can land)
     seed_goal(tmp_path, "gq")
-    ask = FakeClaude(json.dumps({"decision": "blocked", "question": "which auth provider?"}))
-    assert await _tick(store, "gq", ask, evaluator, engine, notifier) is Outcome.BLOCKED
+    store.save_status("gq", GoalStatus(
+        phase="verifying",
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+        open_unmerged_pr="https://github.com/o/r/pull/9",
+    ))
+    ask_eval = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "main lacks the fix",
+        "corrections": ["merge the delivered PR"],
+    }))
+    eng_q = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="main lacks the fix"))
+    assert await _tick(store, "gq", ask_eval, eng_q, notifier) is Outcome.BLOCKED
     sq = store.load_status("gq")
-    assert sq.blocked_on == "which auth provider?" and sq.blocked_kind == "needs_answer"
+    assert "pull/9" in (sq.blocked_on or "") and sq.blocked_kind == "needs_answer"
 
     # bug — the force_block illegal-transition escape hatch
     seed_goal(tmp_path, "gb")
@@ -2754,23 +2632,23 @@ GOOD_CHECKLIST = (
 async def test_corrupt_doc_block_autoheals_when_doc_parses_again(tmp_path):
     """Torn checklist → BLOCKED (one ping, zero cognition). Fix the file → the
     very next tick auto-unblocks mechanically (log line, NO ping, heal 1/3)
-    and proceeds to plan — the ensuing plan is the intended cost of a real
-    heal. A later productive settle earns the heal budget back."""
+    and proceeds to dispatch the advance session. A later productive settle
+    earns the heal budget back."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    planner, evaluator, engine, notifier = FakeClaude(ACT_FEATURE), FakeClaude(), FakeEngine(), RecordingNotifier()
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    assert await _tick(store, "g", planner, evaluator, engine, notifier) is Outcome.BLOCKED
-    assert await _tick(store, "g", planner, evaluator, engine, notifier) is Outcome.IDLE
-    assert planner.calls == 0 and evaluator.calls == 0  # zero cognition while torn
+    assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.BLOCKED
+    assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.IDLE
+    assert evaluator.calls == 0 and engine.dispatched == []  # zero cost while torn
     assert len(notifier.sent) == 1                       # the block ping only
 
     (tmp_path / "g" / "checklist.yaml").write_text(GOOD_CHECKLIST)
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
-    assert out is Outcome.DISPATCHED                     # tick proceeded to plan + dispatch
-    assert planner.calls == 1
+    assert out is Outcome.DISPATCHED                     # tick proceeded to dispatch
+    assert len(engine.dispatched) == 1
     s = store.load_status("g")
     assert s.phase == "in_flight" and s.blocked_kind == ""
     assert s.heal_attempts == 1
@@ -2780,7 +2658,7 @@ async def test_corrupt_doc_block_autoheals_when_doc_parses_again(tmp_path):
     # A productive settle (same signal as the dispatch-cap refund) earns the
     # auto-heal budget back — the goal is demonstrably stable again.
     engine.poll_result = PollResult(terminal=True, status="done", detail="ok", gate_passed=True)
-    await _tick(store, "g", planner, evaluator, engine, notifier)
+    await _tick(store, "g", evaluator, engine, notifier)
     assert store.load_status("g").heal_attempts == 0
 
 
@@ -2789,11 +2667,14 @@ async def test_corrupt_doc_flapping_capped_after_three_heals(tmp_path):
     """tear/fix ×3 heals fine; the 4th fix does NOT heal — the goal parks
     blocked with exactly one plain gave-up ping, and every further tick is
     zero-cognition idle. (tear/fix via the goal_docs row — after the first
-    heal the checklist is DB-backed, the file is just a view.)"""
+    heal the checklist is DB-backed, the file is just a view. A heal
+    re-attempts by design: the first one dispatches an advance session; later
+    heals restore the preserved in-flight ref to its polling phase.)"""
     store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    sleeper = FakeClaude(json.dumps({"decision": "sleep", "note": "wait"}))
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+    seed_goal(tmp_path, "g", cadence="30d")
+    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
 
     def tear():
         store._goal_state.write_doc("g", "checklist", "not yaml: [garbage", 1)
@@ -2803,29 +2684,33 @@ async def test_corrupt_doc_flapping_capped_after_three_heals(tmp_path):
 
     for n in (1, 2, 3):
         tear()
-        assert await _tick(store, "g", sleeper, evaluator, engine, notifier) is Outcome.BLOCKED
+        assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.BLOCKED
         fix()
-        assert await _tick(store, "g", sleeper, evaluator, engine, notifier) is Outcome.SLEPT
-        assert store.load_status("g").heal_attempts == n
-    assert sleeper.calls == 3  # exactly one plan per real heal
+        out = await _tick(store, "g", evaluator, engine, notifier)
+        assert out is not Outcome.BLOCKED
+        s = store.load_status("g")
+        assert s.phase != "blocked" and s.heal_attempts == n   # healed, mechanically
+    assert evaluator.calls == 0                                # heals cost zero cognition
+    assert len(engine.dispatched) == 1                         # heal 1 re-attempted; 2+3 restored the same ref
 
-    # 4th flap: budget spent — the fix must NOT heal.
+    # 4th flap: budget spent — the fix must NOT heal. (The preserved in-flight
+    # ref still gets its mechanical poll — 0 tokens — so the tick reports
+    # IN_FLIGHT, but the block itself stays.)
     tear()
-    assert await _tick(store, "g", sleeper, evaluator, engine, notifier) is Outcome.BLOCKED
+    assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.BLOCKED
     fix()
-    out = await _tick(store, "g", sleeper, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
-    assert out is Outcome.IDLE
+    assert out is Outcome.IN_FLIGHT
     s = store.load_status("g")
     assert s.phase == "blocked" and s.blocked_kind == "mechanical:corrupt_doc"
-    assert sleeper.calls == 3                                  # the gave-up tick spent zero cognition
     assert len([m for m in notifier.sent if "gave up" in m]) == 1
 
-    # Parked: further ticks are zero-cognition, zero-ping idle.
+    # Parked: further ticks are zero-cognition, zero-ping, zero-dispatch.
     pings = len(notifier.sent)
     for _ in range(3):
-        assert await _tick(store, "g", sleeper, evaluator, engine, notifier) is Outcome.IDLE
-    assert sleeper.calls == 3 and evaluator.calls == 0
+        assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.IN_FLIGHT
+    assert evaluator.calls == 0 and len(engine.dispatched) == 1
     assert len(notifier.sent) == pings                         # exactly one gave-up ping, ever
     assert store.load_status("g").phase == "blocked"
 
@@ -2838,25 +2723,25 @@ async def test_autoheal_never_fires_on_needs_answer_or_bug_blocks(tmp_path):
     store = _store(tmp_path, Clock())
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    # needs_answer — driven by a real planner "blocked" decision.
+    # needs_answer — the owner has a question to answer (kind-stamping from a
+    # real block site is covered by test_blocked_kind_stamped_per_block_site).
     seed_goal(tmp_path, "gq")
-    ask = FakeClaude(json.dumps({"decision": "blocked", "question": "which auth provider?"}))
-    assert await _tick(store, "gq", ask, evaluator, engine, notifier) is Outcome.BLOCKED
+    store.save_status("gq", GoalStatus(
+        phase="blocked", blocked_on="which auth provider?", blocked_kind="needs_answer",
+    ))
     pings = len(notifier.sent)
-    planner = FakeClaude(ACT)
-    assert await _tick(store, "gq", planner, evaluator, engine, notifier) is Outcome.IDLE
+    assert await _tick(store, "gq", evaluator, engine, notifier) is Outcome.IDLE
     sq = store.load_status("gq")
     assert sq.phase == "blocked" and sq.blocked_kind == "needs_answer"
     assert sq.heal_attempts == 0                          # never even attempted
-    assert planner.calls == 0 and len(notifier.sent) == pings
 
     # bug — the force_block illegal-transition escape hatch.
     seed_goal(tmp_path, "gb")
     assert store.force_block("gb", "illegal state transition: …") is True
-    assert await _tick(store, "gb", planner, evaluator, engine, notifier) is Outcome.IDLE
+    assert await _tick(store, "gb", evaluator, engine, notifier) is Outcome.IDLE
     sb = store.load_status("gb")
     assert sb.phase == "blocked" and sb.blocked_kind == "bug"
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert len(notifier.sent) == pings                    # no heal chatter either
 
 
@@ -2872,20 +2757,20 @@ async def test_lost_ref_block_stays_human_gated(tmp_path):
         phase="in_flight",
         in_flight=InFlight("devclaw", "implement_feature", "t_gone", "task", "add /health"),
     ))
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_gone"))
 
-    assert await _tick(store, "g", planner, evaluator, engine, notifier) is Outcome.BLOCKED
+    assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.BLOCKED
     assert store.load_status("g").blocked_kind == "mechanical:lost_ref"
     pings = len(notifier.sent)
 
     # Healthy store, many ticks: stays blocked, zero cognition, no auto-unblock.
     for _ in range(3):
-        assert await _tick(store, "g", planner, evaluator, engine, notifier) is Outcome.IDLE
+        assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.IDLE
     s = store.load_status("g")
     assert s.phase == "blocked" and s.blocked_kind == "mechanical:lost_ref"
     assert s.heal_attempts == 0
-    assert planner.calls == 0 and evaluator.calls == 0
+    assert evaluator.calls == 0
     assert len(notifier.sent) == pings
 
 
@@ -2901,17 +2786,17 @@ async def test_lost_ref_block_stays_human_gated(tmp_path):
 async def test_prep_block_autoheals_when_remote_reachable_again(tmp_path, monkeypatch):
     """Prep-blocked goal + reachable remote → the first due recheck heals
     (one ls-remote against the goal's repo_url, no ping, log line), and the
-    tick proceeds to plan + dispatch with the REAL prepare_ws."""
+    tick proceeds to dispatch with the REAL prepare_ws."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    # investigation path: prep runs BEFORE any cognition, so the block tick
+    # investigation path: prep runs BEFORE any dispatch, so the block tick
     # is zero-token (mirrors test_investigation_prep_failure_blocks_without_cognition)
     store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
-    planner, engine, notifier = FakeClaude(ACT), FakeEngine(), RecordingNotifier()
+    engine, notifier = FakeEngine(), RecordingNotifier()
 
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
     assert store.load_status("g").blocked_kind == "mechanical:prep"
-    assert planner.calls == 0 and len(notifier.sent) == 1
+    assert len(notifier.sent) == 1                        # the block ping only
 
     probes: list[str] = []
 
@@ -2920,11 +2805,11 @@ async def test_prep_block_autoheals_when_remote_reachable_again(tmp_path, monkey
         return True
 
     monkeypatch.setattr("devclaw.goal.tick_guards._ls_remote_ok_sync", reachable)
-    out = await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=fake_prepare)
+    out = await _tick_prep(store, "g", engine, notifier, prepare_ws=fake_prepare)
 
-    assert out is Outcome.DISPATCHED                      # healed and went on to plan
+    assert out is Outcome.DISPATCHED                      # healed and went on to dispatch
     assert probes == ["https://example.com/demo.git"]     # exactly one ls-remote, the goal's URL
-    assert planner.calls == 1
+    assert len(engine.dispatched) == 1
     s = store.load_status("g")
     assert s.phase == "in_flight" and s.blocked_kind == ""
     assert s.heal_attempts == 1 and s.next_heal_at is None
@@ -2941,8 +2826,8 @@ async def test_prep_heal_respects_backoff_window(tmp_path, monkeypatch):
     store = _store(tmp_path, clock)
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
-    planner, engine, notifier = FakeClaude(ACT), FakeEngine(), RecordingNotifier()
-    await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare)
+    engine, notifier = FakeEngine(), RecordingNotifier()
+    await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
 
     probes: list[str] = []
     reachable = {"now": False}
@@ -2954,30 +2839,29 @@ async def test_prep_heal_respects_backoff_window(tmp_path, monkeypatch):
     monkeypatch.setattr("devclaw.goal.tick_guards._ls_remote_ok_sync", recheck)
 
     # First recheck is due immediately (no window yet) — fails, arms 30min.
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
     s = store.load_status("g")
     assert len(probes) == 1 and s.heal_attempts == 1 and s.next_heal_at is not None
 
     # Inside the window: NO recheck — the tick never even spawns the subprocess.
     clock.advance(10 * 60)
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
     assert len(probes) == 1
 
     # Window open (t=31min > 30min): recheck fires, fails, window doubles to 1h.
     clock.advance(21 * 60)
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
     assert len(probes) == 2 and store.load_status("g").heal_attempts == 2
 
     # 31min into the 1h window: still closed.
     clock.advance(31 * 60)
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
     assert len(probes) == 2
-    assert planner.calls == 0                             # zero cognition this whole time
 
     # Past the window and the remote is back: heal, budget continuing at 3/5.
     clock.advance(30 * 60)
     reachable["now"] = True
-    out = await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=fake_prepare)
+    out = await _tick_prep(store, "g", engine, notifier, prepare_ws=fake_prepare)
     assert out is Outcome.DISPATCHED
     assert len(probes) == 3
     s = store.load_status("g")
@@ -2993,8 +2877,8 @@ async def test_prep_heal_gives_up_after_cap(tmp_path, monkeypatch):
     store = _store(tmp_path, clock)
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
-    planner, engine, notifier = FakeClaude(ACT), FakeEngine(), RecordingNotifier()
-    await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare)
+    engine, notifier = FakeEngine(), RecordingNotifier()
+    await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
 
     probes: list[str] = []
 
@@ -3007,14 +2891,14 @@ async def test_prep_heal_gives_up_after_cap(tmp_path, monkeypatch):
     # 5 failed rechecks, jumping past every backoff window (max 6h).
     for n in (1, 2, 3, 4, 5):
         clock.advance(7 * 3600)
-        assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+        assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
         assert store.load_status("g").heal_attempts == n
     assert len(probes) == 5
     assert not any("gave up" in m for m in notifier.sent)
 
     # Budget spent: the next tick parks — one plain gave-up ping, NO recheck.
     clock.advance(7 * 3600)
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
     assert len(probes) == 5                                # parked before any subprocess
     assert len([m for m in notifier.sent if "gave up" in m]) == 1
     s = store.load_status("g")
@@ -3024,9 +2908,8 @@ async def test_prep_heal_gives_up_after_cap(tmp_path, monkeypatch):
     pings = len(notifier.sent)
     for _ in range(3):
         clock.advance(7 * 3600)
-        assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+        assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
     assert len(probes) == 5 and len(notifier.sent) == pings
-    assert planner.calls == 0
 
 
 @pytest.mark.asyncio
@@ -3038,7 +2921,7 @@ async def test_prep_heal_checks_workspace_git_when_no_repo_url(tmp_path, monkeyp
     ws = tmp_path / "ws"
     seed_goal(tmp_path, "g", repo_url=None, workspace_dir=str(ws))
     store.save_status("g", GoalStatus(phase="idle"))  # executing path (world-research skips prep)
-    planner, engine, notifier = FakeClaude(ACT), FakeEngine(), RecordingNotifier()
+    engine, notifier = FakeEngine(), RecordingNotifier()
 
     def no_ls_remote(url: str) -> bool:
         raise AssertionError("ls-remote must not run for a goal without a repo_url")
@@ -3046,138 +2929,20 @@ async def test_prep_heal_checks_workspace_git_when_no_repo_url(tmp_path, monkeyp
     monkeypatch.setattr("devclaw.goal.tick_guards._ls_remote_ok_sync", no_ls_remote)
 
     # Executing path: plan → dispatch → prep fails → block (one plan call).
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
     assert store.load_status("g").blocked_kind == "mechanical:prep"
 
     # Workspace still isn't a checkout → the stat recheck fails, backoff arms.
-    assert await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
+    assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.IDLE
     assert store.load_status("g").heal_attempts == 1
 
     # The checkout appears; past the window the recheck passes and heals.
     (ws / ".git").mkdir(parents=True)
     clock.advance(31 * 60)
-    out = await _tick_prep(store, "g", planner, engine, notifier, prepare_ws=fake_prepare)
+    out = await _tick_prep(store, "g", engine, notifier, prepare_ws=fake_prepare)
     assert out is Outcome.DISPATCHED
     s = store.load_status("g")
     assert s.blocked_kind == "" and s.heal_attempts == 2 and s.next_heal_at is None
-
-# ---- live workspace snapshot grounds the plan prompt (triage F5) -------------
-# The planner sibling of the #227 review-gate fix: on the documented fallback
-# paths (investigation dispatch failed, discovery synthesis failed,
-# DEVCLAW_GOAL_INVESTIGATE=0, from-scratch) the plan prompt used to carry ZERO
-# workspace-derived facts beyond a path string — and host-side claude inherits
-# devclaw's own cwd, so the instruction it composed could describe the
-# control-plane repo instead of the goal's. Every planning tick now collects a
-# live snapshot of the ACTUAL workspace, and ONLY planning ticks pay for it.
-
-
-def _seed_workspace_repo(tmp_path):
-    """A REAL on-disk git repo with .NET markers (shaped like
-    test_review_gate.py's grounding fixture) — the planner's live snapshot
-    must carry these facts, not devclaw's own."""
-    import subprocess
-
-    repo = tmp_path / "closeloop-ws"
-    repo.mkdir()
-
-    def _git(*args):
-        subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
-
-    _git("init", "-q", "-b", "main")
-    _git("config", "user.email", "t@t")
-    _git("config", "user.name", "t")
-    _git("remote", "add", "origin",
-         "https://github.com/dsdevq/closeloop-bench-2026-07-11.git")
-    (repo / "global.json").write_text('{"sdk":{"version":"9.0.315"}}\n')
-    (repo / "backend").mkdir()
-    (repo / "backend" / "Program.cs").write_text("// entry\n")
-    _git("add", "-A")
-    _git("commit", "-q", "-m", "init")
-    return repo
-
-
-@pytest.mark.asyncio
-async def test_plan_prompt_carries_live_workspace_snapshot_on_fallback_path(tmp_path):
-    """The worst case: investigation dispatch failed and the goal skipped to
-    executing with NO discovery.md and NO checklist — the prompt's only
-    workspace anchor used to be the path string. The planner must now see
-    grounded facts from the actual repo (remote, key-file probes)."""
-    repo = _seed_workspace_repo(tmp_path)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", workspace_dir=str(repo))
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
-    store.append_log("g", "investigation dispatch failed (boom) — skipping to executing")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
-
-    assert out is Outcome.DISPATCHED
-    assert planner.calls == 1
-    prompt = planner.last_prompt
-    assert "Repository context" in prompt
-    assert "closeloop-bench-2026-07-11.git" in prompt   # the ACTUAL remote
-    assert "global.json: file" in prompt                # live .NET probe line
-    assert "pyproject.toml: missing" in prompt          # NOT devclaw's stack
-
-
-@pytest.mark.asyncio
-async def test_plan_prompt_carries_snapshot_on_healthy_path_too(tmp_path):
-    """With a discovery brief present (the healthy path) the snapshot still
-    rides along: the brief is a creation-time artifact — the snapshot is the
-    workspace NOW, rendered before it as the source of truth."""
-    repo = _seed_workspace_repo(tmp_path)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", workspace_dir=str(repo))
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
-    store.write_discovery("g", "## Current state\nbare API, no health endpoint")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
-
-    assert out is Outcome.DISPATCHED
-    prompt = planner.last_prompt
-    assert "Discovery brief" in prompt                          # healthy path intact
-    assert "closeloop-bench-2026-07-11.git" in prompt           # snapshot too
-    assert prompt.index("Repository context") < prompt.index("Discovery brief")
-
-
-@pytest.mark.asyncio
-async def test_planner_snapshot_only_collected_when_planning(tmp_path, monkeypatch):
-    """The zero-token guard's subprocess sibling: an idle tick and a
-    blocked-without-work tick must not even COLLECT the snapshot (no git
-    subprocess), while a planning tick collects it exactly once."""
-    from devclaw.goal import planner as goal_planner
-
-    calls = {"n": 0}
-
-    async def counting_collector(workspace_dir: str) -> str:
-        calls["n"] += 1
-        return f"workspace_dir: {workspace_dir}"
-
-    monkeypatch.setattr(goal_planner, "_collect_repo_context", counting_collector)
-
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="1d")
-    planner, evaluator, engine, notifier = FakeClaude(ACT), FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    # Idle tick (cadence not due) → no collection, no cognition.
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
-    assert out is Outcome.IDLE
-    assert calls["n"] == 0 and planner.calls == 0
-
-    # Blocked goal, no new work → still nothing.
-    store.save_status("g", GoalStatus(phase="blocked", blocked_on="waiting on owner"))
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
-    assert out is Outcome.IDLE
-    assert calls["n"] == 0 and planner.calls == 0
-
-    # Planning tick (cadence due) → exactly one collection, one plan call.
-    store.save_status("g", GoalStatus(phase="idle"))
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
-    assert out is Outcome.DISPATCHED
-    assert calls["n"] == 1 and planner.calls == 1
-
 
 # ---- trace volume hygiene (harden/trace-retention, 2026-07-15) --------------
 
@@ -3211,7 +2976,7 @@ async def test_trend_sweep_skips_cancelled_and_done_goals(tmp_path):
     store.save_status("finished", GoalStatus(phase="done"))
 
     td = RecordingTrendDetector()
-    planner, evaluator = FakeClaude(ACT), FakeClaude()
+    evaluator = FakeClaude()
     engine, notifier = FakeEngine(), RecordingNotifier()
 
     await tick_all(
@@ -3222,7 +2987,6 @@ async def test_trend_sweep_skips_cancelled_and_done_goals(tmp_path):
 
     assert td.per_goal == ["live"]      # terminal goals not swept
     assert td.harness_self == 1         # the global pass still ran
-    assert planner.calls == 0           # idle live goal → still zero tokens
     assert evaluator.calls == 0
 
 
@@ -3258,7 +3022,7 @@ async def test_tick_all_runs_trace_prune_on_cheap_path_with_zero_tokens(tmp_path
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
 
     engine = PruningEngine()
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=engine, evaluator_caller=evaluator,
@@ -3267,7 +3031,6 @@ async def test_tick_all_runs_trace_prune_on_cheap_path_with_zero_tokens(tmp_path
 
     assert engine.prunes == 1
     assert out["g"] is Outcome.IDLE
-    assert planner.calls == 0          # <-- the quota guardrail holds
     assert evaluator.calls == 0
 
 
@@ -3283,7 +3046,7 @@ async def test_trace_prune_failure_never_breaks_the_heartbeat(tmp_path):
         def prune_traces(self) -> int:
             raise RuntimeError("database is locked")
 
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=ExplodingPruneEngine(), evaluator_caller=evaluator, notifier=notifier,
@@ -3303,7 +3066,7 @@ async def test_tick_all_runs_events_prune_on_cheap_path_with_zero_tokens(tmp_pat
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
 
     engine = PruningEngine()
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=engine, evaluator_caller=evaluator,
@@ -3312,7 +3075,6 @@ async def test_tick_all_runs_events_prune_on_cheap_path_with_zero_tokens(tmp_pat
 
     assert engine.event_prunes == 1
     assert out["g"] is Outcome.IDLE
-    assert planner.calls == 0          # <-- the quota guardrail holds
     assert evaluator.calls == 0
 
 
@@ -3328,7 +3090,7 @@ async def test_events_prune_failure_never_breaks_the_heartbeat(tmp_path):
         def prune_events(self) -> int:
             raise RuntimeError("database is locked")
 
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=ExplodingEventsPruneEngine(), evaluator_caller=evaluator, notifier=notifier,
@@ -3347,7 +3109,7 @@ async def test_tick_all_runs_vacuum_on_cheap_path_with_zero_tokens(tmp_path):
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
 
     engine = PruningEngine()
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=engine, evaluator_caller=evaluator,
@@ -3356,7 +3118,6 @@ async def test_tick_all_runs_vacuum_on_cheap_path_with_zero_tokens(tmp_path):
 
     assert engine.vacuums == 1
     assert out["g"] is Outcome.IDLE
-    assert planner.calls == 0          # <-- the quota guardrail holds
     assert evaluator.calls == 0
 
 
@@ -3372,7 +3133,7 @@ async def test_vacuum_failure_never_breaks_the_heartbeat(tmp_path):
         def vacuum(self) -> bool:
             raise RuntimeError("disk full")
 
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=ExplodingVacuumEngine(), evaluator_caller=evaluator, notifier=notifier,
@@ -3394,7 +3155,7 @@ async def test_tick_all_pings_owner_when_db_size_alerts_at_zero_tokens(tmp_path)
         def check_db_size_alert(self) -> "str | None":
             return "⚠️ devclaw.db has grown to 2.10 GB"
 
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=AlertingEngine(), evaluator_caller=evaluator, notifier=notifier,
@@ -3403,7 +3164,6 @@ async def test_tick_all_pings_owner_when_db_size_alerts_at_zero_tokens(tmp_path)
 
     assert any("devclaw.db has grown" in m for m in notifier.sent)
     assert out["g"] is Outcome.IDLE
-    assert planner.calls == 0          # <-- the quota guardrail holds
     assert evaluator.calls == 0
 
 
@@ -3418,7 +3178,7 @@ async def test_no_db_size_ping_when_under_threshold(tmp_path):
         def check_db_size_alert(self) -> "str | None":
             return None
 
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     await tick_all(
         store=store, engine=QuietEngine(), evaluator_caller=evaluator, notifier=notifier,
@@ -3440,7 +3200,7 @@ async def test_db_size_alert_failure_never_breaks_the_heartbeat(tmp_path):
         def check_db_size_alert(self) -> "str | None":
             raise RuntimeError("stat failed")
 
-    planner, evaluator, notifier = FakeClaude(ACT), FakeClaude(), RecordingNotifier()
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
         store=store, engine=ExplodingAlertEngine(), evaluator_caller=evaluator, notifier=notifier,

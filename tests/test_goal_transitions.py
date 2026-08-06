@@ -7,7 +7,6 @@ closing one specific failure class the choke point exists to prevent. See
 
 from __future__ import annotations
 
-import json
 from dataclasses import replace
 
 import pytest
@@ -26,17 +25,12 @@ from devclaw.goal.transitions import (
 )
 from tests.goal_fakes import Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal
 
-ACT = json.dumps(
-    {"decision": "act", "note": "ship next", "actions": [{"tool": "start_program", "goal": "build /health"}]}
-)
-SLEEP = json.dumps({"decision": "sleep", "note": "waiting"})
 
-
-async def _tick(store, goal_id, planner, evaluator, engine, notifier, *, eval_every=99):
+async def _tick(store, goal_id, evaluator, engine, notifier, *, prepare=fake_prepare):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
-        notify_url="http://relay", prepare_ws=fake_prepare, eval_every=eval_every,
+        notify_url="http://relay", prepare_ws=prepare, eval_every=99,
     )
 
 
@@ -161,7 +155,7 @@ def test_transition_illegal_raises_and_writes_nothing(tmp_path):
 @pytest.mark.asyncio
 async def test_illegal_transition_at_tick_force_blocks_and_notifies_once(tmp_path, monkeypatch):
     """A handler proposing a transition the LEGAL table doesn't permit (here:
-    the real (executing_idle, resume_idle) edge the planner's 'sleep' decision
+    the real (executing_idle, dispatch_action) edge the thin advance dispatch
     needs is yanked out, modeling 'the table is missing a real code path')
     must not crash-loop the tick: tick_goal force-blocks the goal, pings the
     owner exactly once, and the goal is Outcome.BLOCKED — never an unhandled
@@ -172,15 +166,14 @@ async def test_illegal_transition_at_tick_force_blocks_and_notifies_once(tmp_pat
 
     real_legal = dict(LEGAL)
     patched = dict(LEGAL)
-    del patched[(State.EXECUTING_IDLE, Event.RESUME_IDLE)]
+    del patched[(State.EXECUTING_IDLE, Event.DISPATCH_ACTION)]
     monkeypatch.setattr(store_mod, "LEGAL", patched)
 
-    planner = FakeClaude(SLEEP)
     evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.BLOCKED
     saved = store.load_status("g")
@@ -190,58 +183,60 @@ async def test_illegal_transition_at_tick_force_blocks_and_notifies_once(tmp_pat
     assert len(owner_pings) == 1
 
     # The NEXT tick idles quietly — no unread steering, so a blocked goal
-    # never even reaches the planner (0 tokens), let alone re-attempts the
-    # same illegal call or pings the owner again. Restore the real table
-    # first: the modeled "bug" was one-shot, not a permanent break.
+    # never unblocks on the timer: zero cognition, zero NEW dispatches, and
+    # no second ping. Restore the real table first: the modeled "bug" was
+    # one-shot, not a permanent break.
     monkeypatch.setattr(store_mod, "LEGAL", real_legal)
-    planner2 = FakeClaude(SLEEP)
-    out2 = await _tick(store, "g", planner2, evaluator, engine, notifier)
+    dispatched_before = len(engine.dispatched)
+    out2 = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out2 is Outcome.IDLE
-    assert planner2.calls == 0
+    assert evaluator.calls == 0
+    assert len(engine.dispatched) == dispatched_before  # no new advance dispatched
     assert len(notifier.sent) == 1  # no new ping
 
 
 # ---- 5. cancel mid-tick is never clobbered (THE headline test) -------------
 
 
-class _CancelMidAwaitCaller:
-    """A planner caller that cancels the goal DURING its own await — models
-    cancel_goal landing between the tick's status load and its eventual
-    write."""
+class _CancelMidPrepare:
+    """A prepare_ws hook that cancels the goal DURING the tick's own await —
+    models cancel_goal landing between the tick's status load and its dispatch
+    write (prepare_ws is the thin advance path's last await before the dispatch
+    transaction, now that there is no planner await to race)."""
 
     def __init__(self, store: GoalStore, goal_id: str) -> None:
         self.store = store
         self.goal_id = goal_id
         self.calls = 0
 
-    async def __call__(self, prompt: str) -> str:
+    async def __call__(self, workspace_dir, repo_url=None, branch=None):
         self.calls += 1
         s = self.store.load_status(self.goal_id)
         self.store.transition(
             self.goal_id, Event.CANCEL, replace(s, phase="cancelled", in_flight=None), expect=s,
         )
-        return SLEEP
+        return branch or "main"
 
 
 @pytest.mark.asyncio
 async def test_cancel_mid_tick_is_never_clobbered(tmp_path):
     """Closes the stale-snapshot un-cancel class: a cancel_goal landing DURING
-    the tick's planner await must win — the tick's own (now-stale) write must
-    be abandoned, not silently overwrite the cancel."""
+    the tick's advance-dispatch await must win — the tick's own (now-stale)
+    dispatch write must be abandoned, not silently overwrite the cancel."""
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    planner = _CancelMidAwaitCaller(store, "g")
+    prepare = _CancelMidPrepare(store, "g")
     evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier, prepare=prepare)
 
     assert out is Outcome.CONFLICT
-    assert planner.calls == 1
+    assert prepare.calls == 1  # the concurrent writer really landed mid-tick
     final = store.load_status("g")
     assert final.phase == "cancelled"
     assert final.in_flight is None
@@ -250,16 +245,16 @@ async def test_cancel_mid_tick_is_never_clobbered(tmp_path):
 # ---- 6. steer-unblock mid-tick abandons cleanly -----------------------------
 
 
-class _SteerUnblockMidAwaitCaller:
-    """A planner caller that appends steering AND unblocks the goal DURING its
-    own await — models a second steer_goal call landing mid-tick."""
+class _SteerUnblockMidPrepare:
+    """A prepare_ws hook that appends steering AND unblocks the goal DURING
+    the tick's own await — models a second steer_goal call landing mid-tick."""
 
     def __init__(self, store: GoalStore, goal_id: str) -> None:
         self.store = store
         self.goal_id = goal_id
         self.calls = 0
 
-    async def __call__(self, prompt: str) -> str:
+    async def __call__(self, workspace_dir, repo_url=None, branch=None):
         self.calls += 1
         self.store.append_steering(self.goal_id, ["do X instead"], source="denys")
         s = self.store.load_status(self.goal_id)
@@ -268,16 +263,16 @@ class _SteerUnblockMidAwaitCaller:
                 self.goal_id, Event.UNBLOCK,
                 replace(s, phase="idle", actions_dispatched=0), expect=s,
             )
-        return SLEEP
+        return branch or "main"
 
 
 @pytest.mark.asyncio
 async def test_steer_unblock_mid_tick_abandons_cleanly(tmp_path):
-    """A blocked goal already has unread steering (so it plans this tick); a
-    SECOND steer+unblock lands mid-await. The tick's own write is abandoned
-    (Outcome.CONFLICT) rather than clobbering the unblock, and the NEXT tick
-    plans with ALL the steering visible (nothing was silently consumed by the
-    abandoned write)."""
+    """A blocked goal already has unread steering (so the thin path dispatches
+    an advance this tick); a SECOND steer+unblock lands mid-await. The tick's
+    own write is abandoned (Outcome.CONFLICT) rather than clobbering the
+    unblock, and the NEXT tick dispatches with ALL the steering riding the
+    advance brief (nothing was silently consumed by the abandoned write)."""
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g")
     store.save_status(
@@ -285,32 +280,35 @@ async def test_steer_unblock_mid_tick_abandons_cleanly(tmp_path):
     )
     store.append_steering("g", ["first steer"], source="denys")
 
-    planner = _SteerUnblockMidAwaitCaller(store, "g")
+    prepare = _SteerUnblockMidPrepare(store, "g")
     evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier, prepare=prepare)
 
     assert out is Outcome.CONFLICT
-    assert planner.calls == 1
+    assert prepare.calls == 1
     mid = store.load_status("g")
     assert mid.phase == "idle"  # the mid-tick unblock stuck
-    # PR5: consumption is by exact goal_steering row id (rides the post-plan
+    # PR5: consumption is by exact goal_steering row id (rides the dispatch
     # transition), not a cursor — the abandoned tick's consume_steering never
-    # landed (it rode the same failed CAS as the decision write), so BOTH
+    # landed (it rode the same failed CAS as the dispatch write), so BOTH
     # lines are still unconsumed. Mechanically adapted from the pre-PR5
     # `mid.inbox_cursor == 0` assertion; same intent.
     unconsumed = [line for _, line in store.unread_steering_rows("g")]
     assert len(unconsumed) == 2
     assert "first steer" in unconsumed[0] and "do X instead" in unconsumed[1]
 
-    planner2 = FakeClaude(SLEEP)
-    out2 = await _tick(store, "g", planner2, evaluator, engine, notifier)
+    dispatched_before = len(engine.dispatched)
+    out2 = await _tick(store, "g", evaluator, engine, notifier)
 
-    assert planner2.calls == 1  # real cognition fired — steering IS work
-    assert "first steer" in planner2.last_prompt
-    assert "do X instead" in planner2.last_prompt
+    assert out2 is Outcome.DISPATCHED               # steering IS work — the tick advances
+    assert evaluator.calls == 0                     # mechanically, zero cognition
+    assert len(engine.dispatched) == dispatched_before + 1
+    action, _goal, _url = engine.dispatched[-1]
+    assert "first steer" in action.goal             # ALL the steering rode the brief
+    assert "do X instead" in action.goal
 
 
 # ---- 7. version threading within one tick -----------------------------------
@@ -327,12 +325,11 @@ async def test_version_threading_watchdog_write_then_dispatch_no_conflict(tmp_pa
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    planner = FakeClaude(ACT)
     evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", planner, evaluator, engine, notifier)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.DISPATCHED  # not CONFLICT — the watchdog's write threaded through
     assert len(engine.dispatched) == 1

@@ -7,16 +7,14 @@ done (or back to not_started on failure) with grounded evidence."""
 
 from __future__ import annotations
 
-import json
-
 import pytest
 
 from devclaw.goal import tick_settle
-from devclaw.goal.checklist import dump_checklist
-from devclaw.goal.models import Checklist, ChecklistItem, GoalStatus, InFlight, PollResult
+from devclaw.goal.models import Action, Checklist, ChecklistItem, GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import (
     Outcome,
+    _dispatch_action,
     _flag_items_in_flight,
     _settle_addressed_items,
     tick_goal,
@@ -159,7 +157,7 @@ def test_settle_gate_failed_reverts_to_not_started(tmp_path):
     updated = _settle_addressed_items(cl0_in_flight, ["scaffold"], poll)
 
     item = next(i for i in updated.items if i.id == "scaffold")
-    # back in the pick-pool — planner can re-attempt with sharper instruction
+    # back in the pick-pool — the next one-shot batch re-attempts it
     assert item.status == "not_started"
     assert item.evidence is None
 
@@ -181,14 +179,15 @@ async def test_settle_with_addresses_no_checklist_does_not_raise(tmp_path):
     _resolve_polling_action: pin the caller-level guarantee that an
     in-flight ref carrying `addresses` still settles cleanly when the goal
     has no checklist at all (was test_settle_addressed_items_no_checklist_noop,
-    re-pointed at the integration level PR7's refactor moved this concern to)."""
+    re-pointed at the integration level PR7's refactor moved this concern to).
+    The clean settle then chains into the thin advance path, whose done-trigger
+    opens the grounded done-gate (VERIFYING) — no crash on the missing plan."""
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")  # no checklist written
     store.save_status("g", GoalStatus(
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "do it", addresses=["scaffold"]),
     ))
-    planner = FakeClaude(json.dumps({"decision": "sleep", "note": "ok"}), role="planner")
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", pr_url="https://x/pr/1", gate_passed=True, detail="ok",
     ))
@@ -199,7 +198,7 @@ async def test_settle_with_addresses_no_checklist_does_not_raise(tmp_path):
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
-    assert out is Outcome.SLEPT  # settled cleanly, then the planner said sleep
+    assert out is Outcome.VERIFYING  # settled cleanly, then the thin path proposed done
     assert store.read_checklist("g") is None  # still no checklist — no crash
 
 
@@ -218,7 +217,7 @@ def test_settle_addressed_items_unknown_id_silently_skipped(tmp_path):
 
 def test_settle_increments_attempts_on_failure(tmp_path):
     # A failed settle bumps the item's attempt counter; below the cap it stays
-    # in the pick-pool so the planner can re-attempt.
+    # in the pick-pool so the next batch can re-attempt it.
     checklist = _example_checklist()
     poll = PollResult(terminal=True, status="failed", pr_url=None, gate_passed=None)
     updated = _settle_addressed_items(checklist, ["scaffold"], poll)
@@ -241,7 +240,7 @@ def test_settle_resets_attempts_on_success(tmp_path):
 
 def test_settle_trips_circuit_breaker_at_cap(tmp_path, monkeypatch):
     # At the cap the item flips to `blocked` (NOT back to the pick-pool), so the
-    # planner stops re-picking a ticket that has failed N straight times.
+    # loop stops re-picking a ticket that has failed N straight times.
     monkeypatch.setattr(tick_settle, "ITEM_MAX_ATTEMPTS", 3)
     cl = Checklist(items=[
         ChecklistItem(**{**vars(_example_checklist().items[0]),
@@ -404,28 +403,20 @@ async def test_decompose_skipped_when_done_when_empty(tmp_path):
 
 
 # ---- dispatch-with-addresses end-to-end ------------------------------------
-
-
-_ACT_WITH_ADDRESSES = json.dumps({
-    "decision": "act", "note": "scaffold first",
-    "actions": [{
-        "tool": "implement_feature",
-        "goal": "Create the csproj at backend/src/Foo.csproj",
-        "open_pr": True,
-        "addresses": ["scaffold"],
-    }],
-})
+# The per-tick planner that used to emit `addresses=[...]` actions is gone
+# (demolition P3b) — the addresses-carrying dispatch now lives on the one_shot
+# path, where the checklist IS the plan and every pending item rides one
+# mechanical `start_program` dispatch.
 
 
 @pytest.mark.asyncio
-async def test_planner_action_with_addresses_flips_item_in_flight(tmp_path):
+async def test_one_shot_dispatch_with_addresses_flips_items_in_flight(tmp_path):
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")
+    seed_goal(tmp_path, "g", mode="one_shot")
     store.write_checklist("g", _example_checklist())
-    # Goal is at idle/executing, ready for planner — no in-flight.
+    # Goal is at idle/executing, ready to dispatch — no in-flight.
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()  # dispatch only; no poll this tick
 
     out = await tick_goal(
@@ -435,14 +426,13 @@ async def test_planner_action_with_addresses_flips_item_in_flight(tmp_path):
     )
 
     assert out is Outcome.DISPATCHED
-    # Item flipped in_flight via the dispatch hook
+    # Every pending item flipped in_flight via the dispatch hook
     cl = store.read_checklist("g")
-    scaffold = next(i for i in cl.items if i.id == "scaffold")
-    assert scaffold.status == "in_flight"
+    assert [i.status for i in cl.items] == ["in_flight", "in_flight"]
     # The action's addresses are carried on the in-flight ref so settle finds them
     s = store.load_status("g")
     assert s.in_flight is not None
-    assert s.in_flight.addresses == ["scaffold"]
+    assert s.in_flight.addresses == ["scaffold", "wire-x"]
 
 
 @pytest.mark.asyncio
@@ -464,9 +454,8 @@ async def test_settled_addressed_action_flips_item_done_with_evidence(tmp_path):
         ),
     ))
 
-    # planner re-runs after settle on the same tick; just say "sleep" so we focus
-    # on the settle side-effect.
-    planner = FakeClaude(json.dumps({"decision": "sleep", "note": "ok"}), role="planner")
+    # the settle chains into the advance path on the same tick (which proposes
+    # done off the clean header); we focus on the settle side-effect.
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", pr_url="https://x/pr/1", gate_passed=True,
         detail="ok",
@@ -505,7 +494,6 @@ async def test_dispatch_uses_goal_branch_when_checklist_exists(tmp_path):
         calls.append(branch)
         return branch or "main"
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
 
     await tick_goal(
@@ -531,11 +519,6 @@ async def test_dispatch_uses_default_branch_when_no_checklist(tmp_path):
         calls.append(branch)
         return branch or "main"
 
-    legacy_act = json.dumps({
-        "decision": "act", "note": "do it",
-        "actions": [{"tool": "implement_feature", "goal": "do something", "open_pr": True}],
-    })
-    planner = FakeClaude(legacy_act, role="planner")
     engine = FakeEngine()
 
     await tick_goal(
@@ -549,8 +532,12 @@ async def test_dispatch_uses_default_branch_when_no_checklist(tmp_path):
 
 @pytest.mark.asyncio
 async def test_review_repository_dispatch_does_not_use_goal_branch(tmp_path):
-    """``review_repository`` is read-only — it must run on the default branch
-    even when a checklist exists."""
+    """``review_repository`` is read-only — the shared dispatch path must run
+    it on the default branch even when a checklist exists. No tick path routes
+    a mid-goal review through ``_dispatch_action`` anymore (the planner that
+    emitted them is gone, demolition P3b), so this drives the surviving guard
+    directly — it also keeps the reviewer's checkout un-stacked for any future
+    caller of the seam."""
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")
     store.write_checklist("g", _example_checklist())
@@ -562,32 +549,29 @@ async def test_review_repository_dispatch_does_not_use_goal_branch(tmp_path):
         calls.append(branch)
         return branch or "main"
 
-    review_act = json.dumps({
-        "decision": "act", "note": "review",
-        "actions": [{
-            "tool": "review_repository", "goal": "scan", "open_pr": False,
-        }],
-    })
-    planner = FakeClaude(review_act, role="planner")
-    engine = FakeEngine()
-
-    await tick_goal(
-        "g", store=store, engine=engine,
-        evaluator_caller=FakeClaude(role="evaluator"),
-        notifier=RecordingNotifier(), prepare_ws=rec_prepare,
+    review = Action(engine="devclaw", tool="review_repository", goal="scan", open_pr=False)
+    out = await _dispatch_action(
+        "g", store.load_effective_goal("g"), store.load_status("g"), review,
+        store=store, engine=FakeEngine(), notifier=RecordingNotifier(),
+        notify_url="", prepare_ws=rec_prepare,
     )
 
+    assert out is Outcome.DISPATCHED
     assert calls == [None]
 
 
 @pytest.mark.asyncio
 async def test_done_gate_review_uses_goal_branch_when_checklist_exists(tmp_path):
     """The done-gate review judges done_when against the goal's accumulated
-    work — must read the goal branch, not the empty default branch."""
+    work — must read the goal branch, not the empty default branch. Triggered
+    the thin way: a successful advance settle proposes done."""
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")
     store.write_checklist("g", _example_checklist())
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    store.save_status("g", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
+    ))
 
     calls: list = []
 
@@ -595,18 +579,17 @@ async def test_done_gate_review_uses_goal_branch_when_checklist_exists(tmp_path)
         calls.append(branch)
         return branch or "main"
 
-    planner = FakeClaude(
-        json.dumps({"decision": "done", "note": "all items done"}),
-        role="planner",
-    )
-    engine = FakeEngine()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", pr_url="https://x/pr/1", gate_passed=True, detail="ok",
+    ))
 
-    await tick_goal(
+    out = await tick_goal(
         "g", store=store, engine=engine,
         evaluator_caller=FakeClaude(role="evaluator"),
         notifier=RecordingNotifier(), prepare_ws=rec_prepare,
     )
 
+    assert out is Outcome.VERIFYING
     assert "goal/g" in calls
 
 
@@ -630,28 +613,22 @@ def _scaffold_checklist() -> Checklist:
     ])
 
 
-_ACT_ADDR_LOGIC = json.dumps({
-    "decision": "act", "note": "wire it",
-    "actions": [{
-        "tool": "implement_feature",
-        "goal": "Wire the X tool at backend/src/Tools/X.cs",
-        "open_pr": True,
-        "addresses": ["wire-x"],
-    }],
-})
-
-
 @pytest.mark.asyncio
 async def test_dispatch_derives_scaffold_flag_from_addressed_item(tmp_path):
-    """An action addressing a scaffold-tagged item dispatches with the Action's
-    scaffold flag DERIVED True — mechanism, not the planner LLM. The queue then
-    reads that flag off the task row to skip the adversarial review gate."""
+    """A one-shot dispatch whose every addressed item is scaffold-tagged goes
+    out with the Action's scaffold flag DERIVED True — mechanism, not an LLM.
+    The queue then reads that flag off the task row to skip the adversarial
+    review gate. Only the scaffold item is pending here — the derivation is
+    conservative (all-addressed-must-be-scaffold; see the mixed-batch test)."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")
-    store.write_checklist("g", _scaffold_checklist())
+    seed_goal(tmp_path, "g", mode="one_shot")
+    cl0 = _scaffold_checklist()
+    store.write_checklist("g", Checklist(items=[
+        cl0.items[0],
+        ChecklistItem(**{**vars(cl0.items[1]), "status": "done", "evidence": "PR x"}),
+    ]))
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")  # addresses ["scaffold"]
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -662,20 +639,21 @@ async def test_dispatch_derives_scaffold_flag_from_addressed_item(tmp_path):
 
     assert out is Outcome.DISPATCHED
     dispatched_action, _goal, _nu = engine.dispatched[0]
+    assert dispatched_action.addresses == ["scaffold"]
     assert dispatched_action.scaffold is True
 
 
 @pytest.mark.asyncio
-async def test_dispatch_does_not_scaffold_a_logic_item(tmp_path):
-    """The over-tag guard at the dispatch seam: an action addressing a NON-
-    scaffold item dispatches with scaffold=False, so real logic still gets
-    reviewed even though a scaffold item exists elsewhere in the checklist."""
+async def test_dispatch_does_not_scaffold_a_mixed_batch(tmp_path):
+    """The over-tag guard at the dispatch seam: a one-shot batch that mixes a
+    scaffold item with a logic item dispatches with scaffold=False, so real
+    logic still gets reviewed even though a scaffold item rides the same
+    program."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")
-    store.write_checklist("g", _scaffold_checklist())
+    seed_goal(tmp_path, "g", mode="one_shot")
+    store.write_checklist("g", _scaffold_checklist())  # scaffold + wire-x both pending
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    planner = FakeClaude(_ACT_ADDR_LOGIC, role="planner")  # addresses ["wire-x"]
     engine = FakeEngine()
 
     await tick_goal(
@@ -685,22 +663,18 @@ async def test_dispatch_does_not_scaffold_a_logic_item(tmp_path):
     )
 
     dispatched_action, _goal, _nu = engine.dispatched[0]
+    assert dispatched_action.addresses == ["scaffold", "wire-x"]
     assert dispatched_action.scaffold is False
 
 
 @pytest.mark.asyncio
 async def test_dispatch_no_scaffold_in_backlog_mode(tmp_path):
-    """A legacy backlog-mode goal (no checklist) dispatches non-scaffold — the
+    """A backlog-mode goal (no checklist) dispatches non-scaffold — the
     derivation is a no-op without a checklist to read the tag from."""
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")  # no checklist
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    legacy_act = json.dumps({
-        "decision": "act", "note": "do it",
-        "actions": [{"tool": "implement_feature", "goal": "do something", "open_pr": True}],
-    })
-    planner = FakeClaude(legacy_act, role="planner")
     engine = FakeEngine()
 
     await tick_goal(
@@ -731,7 +705,6 @@ async def test_settled_addressed_action_gate_failed_reverts_to_not_started(tmp_p
         ),
     ))
 
-    planner = FakeClaude(json.dumps({"decision": "sleep", "note": "ok"}), role="planner")
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", pr_url="https://x/pr/1", gate_passed=False,
         detail="agent failed verify",
@@ -754,10 +727,9 @@ async def test_settled_addressed_action_gate_failed_reverts_to_not_started(tmp_p
 async def test_repeated_item_failure_trips_breaker_and_blocks_goal(tmp_path, monkeypatch):
     # #6: once an item has failed ITEM_MAX_ATTEMPTS straight times, the settle
     # hook trips the STRUCTURAL breaker — the item flips to `blocked`, the goal
-    # is parked (blocked_kind=needs_human), and the owner is pinged — instead of
-    # the planner re-picking the same failing ticket forever (the closeloop-bench
-    # 2026-07-18 pattern). Replaces the planner-authored "CIRCUIT BREAKER" prose
-    # that a forgetful planner sometimes never wrote.
+    # is parked (blocked_kind=needs_answer), and the owner is pinged — instead
+    # of the loop re-dispatching the same failing ticket forever (the
+    # closeloop-bench 2026-07-18 pattern).
     monkeypatch.setattr(tick_settle, "ITEM_MAX_ATTEMPTS", 3)
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")
@@ -775,7 +747,7 @@ async def test_repeated_item_failure_trips_breaker_and_blocks_goal(tmp_path, mon
         ),
     ))
 
-    planner = FakeClaude(json.dumps({"decision": "sleep", "note": "ok"}), role="planner")
+    evaluator = FakeClaude(role="evaluator")
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", pr_url="https://x/pr/1", gate_passed=False,
         detail="failed again",
@@ -784,7 +756,7 @@ async def test_repeated_item_failure_trips_breaker_and_blocks_goal(tmp_path, mon
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        evaluator_caller=FakeClaude(role="evaluator"),
+        evaluator_caller=evaluator,
         notifier=notifier, prepare_ws=fake_prepare,
     )
 
@@ -796,20 +768,21 @@ async def test_repeated_item_failure_trips_breaker_and_blocks_goal(tmp_path, mon
     scaffold = next(i for i in store.read_checklist("g").items if i.id == "scaffold")
     assert scaffold.status == "blocked"
     assert scaffold.attempts == 3
-    # the breaker blocked BEFORE any fresh planning (zero-token on the block
-    # path) and the owner was pinged.
-    assert planner.calls == 0
+    # the breaker blocked BEFORE any fresh work (zero cognition, zero dispatch
+    # on the block path) and the owner was pinged.
+    assert evaluator.calls == 0
+    assert engine.dispatched == []
     assert any("circuit breaker" in m for m in notifier.sent)
 
 
 # ---- cross-dispatch prior-attempts digest ----------------------------------
 #
-# The cross-dispatch half of the continuity gap: the planner sees the failure
-# history in its context, but the WORKER's brief was authored fresh each
-# dispatch, so a re-dispatched item re-discovered failed approaches one
-# attempt at a time. Failed settles now append a compact note to the item's
+# The cross-dispatch half of the continuity gap: the WORKER's brief is authored
+# fresh each dispatch, so a re-dispatched item re-discovered failed approaches
+# one attempt at a time. Failed settles append a compact note to the item's
 # bounded failure_log; the dispatch seam renders those notes into the
-# DISPATCHED goal text only (status `next` + the log line stay clean).
+# DISPATCHED goal text only (status `next` + the log line stay clean). The
+# addresses-carrying re-dispatch lives on the one_shot path now.
 
 
 def test_failed_settle_appends_failure_note_to_item(tmp_path):
@@ -873,9 +846,11 @@ def test_failure_log_round_trips_through_yaml_and_is_bounded(tmp_path):
 @pytest.mark.asyncio
 async def test_redispatch_brief_carries_prior_attempt_digest(tmp_path):
     """The engine's dispatched goal carries the failure history; the recorded
-    action (status.next) stays clean — presence AND absence."""
+    action (status.next) stays clean — presence AND absence. Driven the way a
+    real re-dispatch happens now: a one-shot remainder batch re-picks the
+    failed item from the pool."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")
+    seed_goal(tmp_path, "g", mode="one_shot")
     cl = Checklist(items=[
         ChecklistItem(**{**vars(_example_checklist().items[0]),
                          "attempts": 1,
@@ -885,7 +860,6 @@ async def test_redispatch_brief_carries_prior_attempt_digest(tmp_path):
     store.write_checklist("g", cl)
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")  # addresses ["scaffold"]
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -899,7 +873,7 @@ async def test_redispatch_brief_carries_prior_attempt_digest(tmp_path):
     assert "PRIOR ATTEMPTS ON THIS WORK ITEM" in dispatched_action.goal
     assert "boom-approach" in dispatched_action.goal
     assert "[scaffold]" in dispatched_action.goal
-    # the recorded next stays the planner's clean goal text
+    # the recorded next stays the clean batch-brief text
     status = store.load_status("g")
     assert "PRIOR ATTEMPTS" not in (status.next or "")
     assert "boom-approach" not in (status.next or "")
@@ -908,13 +882,13 @@ async def test_redispatch_brief_carries_prior_attempt_digest(tmp_path):
 @pytest.mark.asyncio
 async def test_dispatch_without_failures_is_byte_identical(tmp_path):
     """Blank-safe: no addressed item has failures → the dispatched goal is
-    EXACTLY the planner's text, no digest section."""
+    EXACTLY the recorded action text (the one-shot batch brief), no digest
+    section."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")
+    seed_goal(tmp_path, "g", mode="one_shot")
     store.write_checklist("g", _example_checklist())
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -925,7 +899,8 @@ async def test_dispatch_without_failures_is_byte_identical(tmp_path):
 
     assert out is Outcome.DISPATCHED
     dispatched_action, _goal, _nu = engine.dispatched[0]
-    assert dispatched_action.goal == "Create the csproj at backend/src/Foo.csproj"
+    assert dispatched_action.goal == store.load_status("g").next  # byte-identical
+    assert dispatched_action.goal.startswith("one-shot batch: 2 checklist item(s)")
     assert "PRIOR ATTEMPTS" not in dispatched_action.goal
 
 
@@ -952,7 +927,6 @@ async def test_dispatch_proceeds_when_branch_is_fresh_zero_ahead_zero_behind(tmp
 
     monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_fresh)
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -982,7 +956,6 @@ async def test_dispatch_proceeds_when_branch_is_young_below_stale_threshold(tmp_
 
     monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_young)
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -1013,7 +986,6 @@ async def test_dispatch_skipped_when_branch_is_hard_stale(tmp_path, monkeypatch)
 
     monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_hard_stale)
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -1045,7 +1017,6 @@ async def test_dispatch_proceeds_when_branch_has_commits_ahead(tmp_path, monkeyp
 
     monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_ahead)
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -1074,7 +1045,6 @@ async def test_dispatch_proceeds_when_staleness_probe_returns_none(tmp_path, mon
 
     monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_hiccup)
 
-    planner = FakeClaude(_ACT_WITH_ADDRESSES, role="planner")
     engine = FakeEngine()
 
     out = await tick_goal(
@@ -1105,11 +1075,6 @@ async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypat
     seed_goal(tmp_path, "g")  # no checklist -> per-action mode
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    legacy_act = json.dumps({
-        "decision": "act", "note": "do it",
-        "actions": [{"tool": "implement_feature", "goal": "do something", "open_pr": True}],
-    })
-    planner = FakeClaude(legacy_act, role="planner")
     engine = FakeEngine()
 
     out = await tick_goal(

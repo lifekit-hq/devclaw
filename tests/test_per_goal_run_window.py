@@ -6,16 +6,9 @@ Confines a token-heavy standing goal (e.g. a CloseLoop ownership loop) to nights
 without gating the rest of the engine, which the global run-window can't do."""
 from __future__ import annotations
 
-import json
-
 from devclaw.goal.tick import Outcome, tick_all
 from devclaw.goal.store import GoalStore
 from tests.goal_fakes import Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal
-
-ACT = json.dumps(
-    {"decision": "act", "note": "ship next",
-     "actions": [{"tool": "start_program", "goal": "build /health"}]}
-)
 
 
 class WindowEngine(FakeEngine):
@@ -33,9 +26,9 @@ class WindowEngine(FakeEngine):
 
 async def test_windowed_out_goal_is_skipped_others_tick(tmp_path):
     store = GoalStore(tmp_path, now=Clock())
-    seed_goal(tmp_path, "day")
-    seed_goal(tmp_path, "night")
-    planner, evaluator = FakeClaude(ACT), FakeClaude()
+    seed_goal(tmp_path, "day", workspace_dir="/repos/day")
+    seed_goal(tmp_path, "night", workspace_dir="/repos/night")
+    evaluator = FakeClaude()
     engine = WindowEngine({"night"})
 
     out = await tick_all(
@@ -45,8 +38,12 @@ async def test_windowed_out_goal_is_skipped_others_tick(tmp_path):
 
     assert out["night"] is Outcome.RATE_LIMITED   # outside its window → held
     assert out["day"] is Outcome.DISPATCHED       # inside → ticked normally
-    assert planner.calls == 1                     # only the day goal planned — 0 tokens for night
-    # exactly one dispatch, and it was the day goal
+    # zero cognition either way — the thin advance dispatch is mechanical, and
+    # the windowed-out goal never even got that far
+    assert evaluator.calls == 0
+    # exactly one dispatch, and it was the day goal's advance session
     assert len(engine.dispatched) == 1
-    _, goal, _ = engine.dispatched[0]
-    assert goal.workspace_dir == "/repos/demo"
+    action, goal, _ = engine.dispatched[0]
+    assert action.tool == "implement_feature"
+    assert "Advance this goal" in action.goal
+    assert goal.workspace_dir == "/repos/day"

@@ -4,11 +4,15 @@ CAS (``GoalStore.transition``'s optimistic-concurrency check, Tranche 1/PR4)
 already guarantees CORRECTNESS when two ticks race the SAME goal — the ONLY
 same-goal concurrency left standing after PR4 is an MCP-driven ``tick_one``
 (manual poke, ops-agent) overlapping the heartbeat's ``tick_all`` sweep for
-that goal. Pre-PR8, that race meant BOTH ticks ran a full cognition round (a
-planner/evaluator call can take minutes) and the LOSER abandoned its entire
-planning round to a ``TransitionConflict`` — correct, but wasteful and a
-confusing trace. PR8's lock adds EFFICIENCY + LEGIBILITY on top of CAS: the
-second tick simply waits for the first to finish, then reads FRESH state.
+that goal. Pre-PR8, that race meant BOTH ticks ran a full round (workspace
+prep + dispatch can take minutes) and the LOSER abandoned its entire round to
+a ``TransitionConflict`` — correct, but wasteful and a confusing trace. PR8's
+lock adds EFFICIENCY + LEGIBILITY on top of CAS: the second tick simply waits
+for the first to finish, then reads FRESH state.
+
+The mid-tick await these tests park on is ``prepare_ws`` — the thin advance
+path's last await before the dispatch transaction (the planner await that
+used to play this role is gone, demolition P3b).
 
 Named regression tests, each with a one-line comment naming the property it
 proves. See ``devclaw/goal/tick.py``'s ``_TICK_LOCKS`` / ``_tick_lock`` /
@@ -19,49 +23,45 @@ proves. See ``devclaw/goal/tick.py``'s ``_TICK_LOCKS`` / ``_tick_lock`` /
 from __future__ import annotations
 
 import asyncio
-import json
 from dataclasses import replace
 
 import pytest
 
 from devclaw.goal import store as store_mod
-from devclaw.goal.models import GoalStatus
+from devclaw.goal.models import GoalStatus, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import Outcome, tick_goal
 from devclaw.goal.transitions import Event, State
 from tests.goal_fakes import Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal
-
-SLEEP = json.dumps({"decision": "sleep", "note": "waiting"})
 
 
 def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _tick(store, goal_id, planner, evaluator, engine, notifier, *, eval_every=99):
+async def _tick(store, goal_id, evaluator, engine, notifier, *, prepare=fake_prepare):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
-        notify_url="http://relay", prepare_ws=fake_prepare, eval_every=eval_every,
+        notify_url="http://relay", prepare_ws=prepare, eval_every=99,
     )
 
 
-class _ParkingPlanner:
-    """A planner caller that counts calls, then PARKS on a shared
-    ``asyncio.Event`` before returning a fixed decision. Once ``release`` is
-    set it stays set (``asyncio.Event`` semantics), so any call that starts
-    AFTER the release is a no-op wait — this is what lets one instance model
-    both "the first call parks" and "a later call returns immediately"."""
+class _ParkingPrepare:
+    """A prepare_ws hook that counts calls, then PARKS on a shared
+    ``asyncio.Event`` before returning. Once ``release`` is set it stays set
+    (``asyncio.Event`` semantics), so any call that starts AFTER the release
+    is a no-op wait — this is what lets one instance model both "the first
+    call parks" and "a later call returns immediately"."""
 
-    def __init__(self, release: asyncio.Event, response: str = SLEEP) -> None:
+    def __init__(self, release: asyncio.Event) -> None:
         self.release = release
-        self.response = response
         self.calls = 0
 
-    async def __call__(self, prompt: str) -> str:
+    async def __call__(self, workspace_dir, repo_url=None, branch=None):
         self.calls += 1
         await self.release.wait()
-        return self.response
+        return branch or "main"
 
 
 async def _let_tasks_run(n: int = 25) -> None:
@@ -81,48 +81,47 @@ async def _let_tasks_run(n: int = 25) -> None:
 async def test_same_goal_ticks_serialize(tmp_path):
     """Two concurrent tick_goal calls for the SAME goal — modeling an
     MCP-driven tick_one racing the heartbeat's tick_all, the one same-goal
-    race PR4's CAS leaves standing. Pre-PR8 both would call the planner in
-    parallel and the second writer would lose its whole round to
+    race PR4's CAS leaves standing. Pre-PR8 both would reach the advance
+    dispatch in parallel and the second writer would lose its whole round to
     Outcome.CONFLICT (see devclaw/goal/tick.py's _tick_lock comment — this
     is deliberately demonstrated only in prose here, not as a second code
     path, since removing the lock would just be reverting this PR). With the
-    lock: tick2 cannot even acquire it — let alone start cognition — until
-    tick1's ENTIRE tick (cognition + its post-plan transition) has finished,
-    and neither tick ever sees CONFLICT."""
+    lock: tick2 cannot even acquire it — let alone start its dispatch —
+    until tick1's ENTIRE tick has finished; tick2 then reads FRESH state
+    (the in-flight ref tick1 just created) and polls it instead of
+    double-dispatching a second advance session off a stale idle snapshot."""
     store = _store(tmp_path, Clock())
-    # cadence="0s": tick2 must run REAL cognition (not just idle at zero cost)
-    # for planner.calls == 2 to actually prove serialized-but-not-skipped —
-    # last_plan_at is always in the past by the time tick2 gets to plan.
-    # workspace_dir must NOT exist: the plan-time workspace snapshot (triage
-    # F5) then resolves synchronously (one stat, no executor hop), so the
-    # bare `sleep(0)` pumps below deterministically park tick1 AT cognition —
-    # the default /repos/demo could exist on a dev host and thread-hop.
-    seed_goal(tmp_path, "g", cadence="0s", workspace_dir=str(tmp_path / "no-such-ws"))
+    # cadence="0s": a stale idle read would be "due" again immediately, so a
+    # lockless tick2 WOULD dispatch a second advance — which is exactly what
+    # the dispatched-count assertion below rules out.
+    seed_goal(tmp_path, "g", cadence="0s")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
     release = asyncio.Event()
-    planner = _ParkingPlanner(release)
+    prepare = _ParkingPrepare(release)
     evaluator = FakeClaude()
-    engine = FakeEngine()
+    engine = FakeEngine(poll_result=PollResult(terminal=False, status="running", detail=""))
     notifier = RecordingNotifier()
 
-    task1 = asyncio.create_task(_tick(store, "g", planner, evaluator, engine, notifier))
+    task1 = asyncio.create_task(_tick(store, "g", evaluator, engine, notifier, prepare=prepare))
     await _let_tasks_run()
-    assert planner.calls == 1  # tick1 reached cognition and is parked on `release`
+    assert prepare.calls == 1  # tick1 reached the advance dispatch and is parked on `release`
 
-    task2 = asyncio.create_task(_tick(store, "g", planner, evaluator, engine, notifier))
+    task2 = asyncio.create_task(_tick(store, "g", evaluator, engine, notifier, prepare=prepare))
     await _let_tasks_run()
-    # Without the lock, tick2 would have read status and called the planner
-    # too (a second, concurrent call) by now. With it, tick2 is blocked
-    # acquiring _tick_lock("g") — held by tick1 — and never reaches cognition.
-    assert planner.calls == 1
+    # Without the lock, tick2 would have read (stale idle) status and reached
+    # prepare_ws too — a second, concurrent dispatch round — by now. With it,
+    # tick2 is blocked acquiring _tick_lock("g") — held by tick1 — and never
+    # even starts its body.
+    assert prepare.calls == 1
 
     release.set()
     out1, out2 = await asyncio.gather(task1, task2)
 
-    assert planner.calls == 2                 # both ticks eventually ran real cognition
-    assert out1 is Outcome.SLEPT
-    assert out2 is Outcome.SLEPT
+    assert out1 is Outcome.DISPATCHED         # tick1 dispatched the advance session
+    assert out2 is Outcome.IN_FLIGHT          # tick2 read FRESH state and polled the ref
+    assert len(engine.dispatched) == 1        # never a second, stale-snapshot dispatch
+    assert engine.polls == 1                  # tick2 did real work, not a skipped round
     assert Outcome.CONFLICT not in (out1, out2)
 
 
@@ -132,38 +131,36 @@ async def test_same_goal_ticks_serialize(tmp_path):
 @pytest.mark.asyncio
 async def test_different_goals_do_not_serialize(tmp_path):
     """The lock is per-goal, not global — two DIFFERENT goals ticking
-    concurrently must both reach cognition in parallel; one goal's tick must
-    never wait behind another goal's in-flight planner call."""
+    concurrently must both reach their advance dispatch in parallel; one
+    goal's tick must never wait behind another goal's in-flight dispatch."""
     store = _store(tmp_path, Clock())
-    # Absent workspace_dir for the same reason as test_same_goal_ticks_serialize:
-    # keep the path to cognition free of the snapshot's executor hop so the
-    # bare-pump assertions below stay deterministic.
-    seed_goal(tmp_path, "g1", workspace_dir=str(tmp_path / "no-such-ws-1"))
-    seed_goal(tmp_path, "g2", workspace_dir=str(tmp_path / "no-such-ws-2"))
+    seed_goal(tmp_path, "g1")
+    seed_goal(tmp_path, "g2")
     store.save_status("g1", GoalStatus(phase="idle", lifecycle="executing"))
     store.save_status("g2", GoalStatus(phase="idle", lifecycle="executing"))
 
     release = asyncio.Event()
-    planner1 = _ParkingPlanner(release)
-    planner2 = _ParkingPlanner(release)
+    prepare1 = _ParkingPrepare(release)
+    prepare2 = _ParkingPrepare(release)
     evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
-    task1 = asyncio.create_task(_tick(store, "g1", planner1, evaluator, engine, notifier))
-    task2 = asyncio.create_task(_tick(store, "g2", planner2, evaluator, engine, notifier))
+    task1 = asyncio.create_task(_tick(store, "g1", evaluator, engine, notifier, prepare=prepare1))
+    task2 = asyncio.create_task(_tick(store, "g2", evaluator, engine, notifier, prepare=prepare2))
     await _let_tasks_run()
 
-    # BOTH cognitions started before either finished — a different-goal Lock
-    # object guards g2, so g1's held lock never blocks it.
-    assert planner1.calls == 1
-    assert planner2.calls == 1
+    # BOTH dispatch rounds started before either finished — a different-goal
+    # Lock object guards g2, so g1's held lock never blocks it.
+    assert prepare1.calls == 1
+    assert prepare2.calls == 1
 
     release.set()
     out1, out2 = await asyncio.gather(task1, task2)
 
-    assert out1 is Outcome.SLEPT
-    assert out2 is Outcome.SLEPT
+    assert out1 is Outcome.DISPATCHED
+    assert out2 is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 2
 
 
 # ---- 3. the lock does not deadlock with the choke-point catch --------------
@@ -175,41 +172,40 @@ async def test_illegal_transition_releases_the_lock(tmp_path, monkeypatch):
     IllegalTransition/TransitionConflict choke-point catch — in the per-goal
     lock. This proves that catch does not leave the lock held: force an
     IllegalTransition the same way test_goal_transitions.py's regression
-    does (yank the real (EXECUTING_IDLE, RESUME_IDLE) edge out of LEGAL,
-    modeling 'the table is missing a real code path'); tick1 force-blocks
-    internally and returns Outcome.BLOCKED normally (not an unhandled
-    raise). A SECOND, independent tick_goal call for the SAME goal —
-    awaited right after, bounded by asyncio.wait_for so a real regression
-    fails loud instead of hanging the suite — must then run real cognition
-    and complete; a leaked lock would hang it forever."""
+    does (yank the real (EXECUTING_IDLE, DISPATCH_ACTION) edge the thin
+    advance dispatch needs out of LEGAL, modeling 'the table is missing a
+    real code path'); tick1 force-blocks internally and returns
+    Outcome.BLOCKED normally (not an unhandled raise). A SECOND, independent
+    tick_goal call for the SAME goal — awaited right after, bounded by
+    asyncio.wait_for so a real regression fails loud instead of hanging the
+    suite — must then dispatch normally and complete; a leaked lock would
+    hang it forever."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
     real_legal = dict(store_mod.LEGAL)
     patched = dict(store_mod.LEGAL)
-    del patched[(State.EXECUTING_IDLE, Event.RESUME_IDLE)]
+    del patched[(State.EXECUTING_IDLE, Event.DISPATCH_ACTION)]
     monkeypatch.setattr(store_mod, "LEGAL", patched)
 
-    planner1 = FakeClaude(SLEEP)
     evaluator = FakeClaude()
     engine = FakeEngine()
     notifier = RecordingNotifier()
 
     out1 = await asyncio.wait_for(
-        _tick(store, "g", planner1, evaluator, engine, notifier), timeout=5,
+        _tick(store, "g", evaluator, engine, notifier), timeout=5,
     )
     assert out1 is Outcome.BLOCKED             # the internal catch fired, not an unhandled raise
-    assert planner1.calls == 1                  # cognition ran before the illegal write blew up
 
     monkeypatch.setattr(store_mod, "LEGAL", real_legal)  # restore — the modeled bug is one-shot
     s = store.load_status("g")
     store.transition("g", Event.UNBLOCK, replace(s, phase="idle", actions_dispatched=0), expect=s)
 
-    planner2 = FakeClaude(SLEEP)
+    dispatched_before = len(engine.dispatched)
     out2 = await asyncio.wait_for(
-        _tick(store, "g", planner2, evaluator, engine, notifier), timeout=5,
+        _tick(store, "g", evaluator, engine, notifier), timeout=5,
     )
 
-    assert out2 is Outcome.SLEPT
-    assert planner2.calls == 1                  # a second, independent tick actually ran cognition
+    assert out2 is Outcome.DISPATCHED
+    assert len(engine.dispatched) == dispatched_before + 1  # a second, independent tick really ran
