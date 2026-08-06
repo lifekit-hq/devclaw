@@ -665,11 +665,10 @@ class GoalContentMixin:
         parses that prefix straight off the file, keeps working unchanged.
 
         The row stores the SAME formatted line as the file, not the bare
-        text: the row's ``line`` is what ``unread_steering`` feeds the
-        planner, and the planner prompt (``prompts/goal-planner.md``)
-        documents evaluator corrections as "marked [auto-eval]" — that
-        marker must survive the move to row-backed steering, byte-identical
-        to what the pre-PR5 file read produced. It also keeps machine rows
+        text: the row's ``line`` is what ``unread_steering`` feeds into the
+        worker's advance brief, and evaluator corrections stay "marked
+        [auto-eval]" — that marker must survive the move to row-backed
+        steering, byte-identical to what the pre-PR5 file read produced. It also keeps machine rows
         and hand-ingested rows consistent (both hold the inbox.md line
         verbatim); the structured ``source`` column exists separately for
         queries.

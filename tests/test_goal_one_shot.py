@@ -43,7 +43,7 @@ def _checklist() -> Checklist:
 async def _tick(store, gid, planner, evaluator, engine, notifier):
     return await tick_goal(
         gid, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=evaluator,
+        evaluator_caller=evaluator,
         notifier=notifier, prepare_ws=fake_prepare,
     )
 
@@ -392,7 +392,7 @@ async def test_one_shot_decomposes_even_with_flag_off_and_empty_done_when(tmp_pa
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(role="planner"), evaluator_caller=research,
+        evaluator_caller=research,
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
         decompose_enabled=False,          # the production default that bit live
         decomposer_caller=decomposer,
@@ -419,7 +419,6 @@ async def test_long_lived_decompose_gates_unchanged_by_the_one_shot_override(tmp
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(role="planner"),
         evaluator_caller=FakeClaude(_BRIEF, role="research"),
         notifier=RecordingNotifier(), prepare_ws=fake_prepare,
         decompose_enabled=False,

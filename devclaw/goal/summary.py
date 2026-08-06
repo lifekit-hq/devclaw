@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import os
 
-from .planner import ClaudeCaller
+from ..llm_call import ClaudeCaller
 
 #: cheap tier — owner notifications are rare, so this never touches idle quota.
 from ..model_tiers import model_for as _model_for

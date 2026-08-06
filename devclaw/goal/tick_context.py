@@ -25,7 +25,7 @@ from . import summary as _goal_summary
 from .engine import GoalEngine
 from .models import EvalResult, GoalStatus
 from .notify import Notifier
-from .planner import ClaudeCaller
+from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from ..engine.workspace import prepare_workspace
 from ..loom import trace as _trace
@@ -68,14 +68,6 @@ AUTODEPLOY_ENABLED = True
 DECOMPOSE_ENABLED = os.environ.get("DEVCLAW_GOAL_DECOMPOSE", "0") not in ("0", "false", "")
 
 
-#: when True, a long_lived executing goal takes the THIN plan-state path
-#: (demolition P3, docs/proposals/cognition-demolition.md): zero per-tick planner
-#: cognition — the tick mechanically dispatches "advance the goal / maintain
-#: PLAN.md" worker sessions and lets the grounded done-gate judge completion.
-#: Default OFF so the per-tick planner stays the default until a box
-#: `measure_passrate` re-run proves the thin path holds the 2/2 baseline (P3b
-#: flips the default and deletes the planner).
-THIN_PLAN_ENABLED = os.environ.get("DEVCLAW_THIN_PLAN", "0") not in ("0", "false", "")
 
 
 class Outcome(str, Enum):
@@ -251,7 +243,6 @@ class TickContext:
 
     store: GoalStore
     engine: GoalEngine
-    planner_caller: ClaudeCaller
     evaluator_caller: ClaudeCaller
     notifier: Notifier
     notify_url: str = ""
@@ -261,12 +252,10 @@ class TickContext:
     autodeploy: bool = AUTODEPLOY_ENABLED
     no_progress_s: int = NO_PROGRESS_S
     decompose_enabled: bool = DECOMPOSE_ENABLED
-    thin_plan_enabled: bool = THIN_PLAN_ENABLED
     summary_caller: "ClaudeCaller | None" = None
     merger: "_merge.Merger | None" = None
-    #: Pillar 1 cognition caller for the decomposer. None → reuse
-    #: ``planner_caller`` (both default to opus); explicit injection lets tests
-    #: stub the decomposer without touching the planner stub.
+    #: Pillar 1 cognition caller for the decomposer. None → the decomposer's
+    #: own ``default_caller()``; explicit injection lets tests stub it.
     decomposer_caller: "ClaudeCaller | None" = None
     #: cognition caller for world-research (from-scratch goal grounding —
     #: real-world exemplars + MVP bar + defer list). None → handlers use

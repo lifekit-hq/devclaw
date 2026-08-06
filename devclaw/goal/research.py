@@ -22,7 +22,7 @@ import asyncio
 import os
 
 from .models import Goal
-from .planner import ClaudeCaller
+from ..llm_call import ClaudeCaller
 from ..task_git import _review_repo_context_sync
 
 #: when on, a newly created goal starts at lifecycle "new" and investigates

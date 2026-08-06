@@ -29,7 +29,6 @@ from typing import Callable
 
 from . import checklist as _checklist
 from . import merge as _merge
-from . import planner as _planner
 from . import remote_checks as _remote_checks
 from . import triage as _triage
 # _deploy stays at tick.py level even though only tick_donegate._auto_deploy calls
@@ -40,7 +39,7 @@ from ..delivery import deploy as _deploy  # noqa: F401 (re-export/monkeypatch an
 from .engine import GoalEngine
 from .models import Action, Checklist as _ChecklistModel, Goal, GoalStatus
 from .notify import Notifier
-from .planner import ClaudeCaller
+from ..llm_call import ClaudeCaller
 from .store import GoalDocCorrupt, GoalStore
 from .transitions import Event, IllegalTransition, TransitionConflict
 from ..loom import trace as _trace
@@ -59,7 +58,6 @@ from .tick_context import (  # noqa: F401 (re-exported)
     DECOMPOSE_ENABLED,
     EVAL_EVERY,
     NO_PROGRESS_S,
-    THIN_PLAN_ENABLED,
     VERIFY_DONE,
     NotifyLevel,
     Outcome,
@@ -119,7 +117,6 @@ async def tick_goal(
     *,
     store: GoalStore,
     engine: GoalEngine,
-    planner_caller: ClaudeCaller,
     evaluator_caller: ClaudeCaller,
     notifier: Notifier,
     notify_url: str = "",
@@ -129,7 +126,6 @@ async def tick_goal(
     autodeploy: bool = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     decompose_enabled: bool = DECOMPOSE_ENABLED,
-    thin_plan_enabled: bool = THIN_PLAN_ENABLED,
     summary_caller: "ClaudeCaller | None" = None,
     merger: "_merge.Merger | None" = None,
     decomposer_caller: "ClaudeCaller | None" = None,
@@ -162,12 +158,11 @@ async def tick_goal(
             outcome = await _tick_goal_impl(
                 goal_id,
                 store=store, engine=engine,
-                planner_caller=planner_caller, evaluator_caller=evaluator_caller,
+                evaluator_caller=evaluator_caller,
                 notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
                 eval_every=eval_every, verify_done=verify_done, autodeploy=autodeploy,
                 no_progress_s=no_progress_s,
                 decompose_enabled=decompose_enabled,
-                thin_plan_enabled=thin_plan_enabled,
                 summary_caller=summary_caller, merger=merger,
                 decomposer_caller=decomposer_caller,
                 world_research_caller=world_research_caller,
@@ -236,7 +231,6 @@ async def _tick_goal_impl(
     *,
     store: GoalStore,
     engine: GoalEngine,
-    planner_caller: ClaudeCaller,
     evaluator_caller: ClaudeCaller,
     notifier: Notifier,
     notify_url: str = "",
@@ -246,7 +240,6 @@ async def _tick_goal_impl(
     autodeploy: bool = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     decompose_enabled: bool = DECOMPOSE_ENABLED,
-    thin_plan_enabled: bool = THIN_PLAN_ENABLED,
     summary_caller: "ClaudeCaller | None" = None,
     merger: "_merge.Merger | None" = None,
     decomposer_caller: "ClaudeCaller | None" = None,
@@ -268,12 +261,11 @@ async def _tick_goal_impl(
     """
     ctx = TickContext(
         store=store, engine=engine,
-        planner_caller=planner_caller, evaluator_caller=evaluator_caller,
+        evaluator_caller=evaluator_caller,
         notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
         eval_every=eval_every, verify_done=verify_done, autodeploy=autodeploy,
         no_progress_s=no_progress_s,
         decompose_enabled=decompose_enabled,
-        thin_plan_enabled=thin_plan_enabled,
         summary_caller=summary_caller, merger=merger,
         decomposer_caller=decomposer_caller,
         world_research_caller=world_research_caller,
@@ -604,8 +596,8 @@ def _advance_brief(goal: Goal, steering: str) -> str:
 async def _handle_long_lived_advance(
     goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
 ) -> Outcome:
-    """The THIN long_lived executing path (demolition P3, flag-gated by
-    ``DEVCLAW_THIN_PLAN``) — ZERO per-tick planner cognition. The worker owns the
+    """The long_lived executing path — ZERO per-tick planner cognition
+    (the planner was cut, demolition P3b). The worker owns the
     plan (``PLAN.md`` in the repo); the control plane only dispatches "advance
     the goal / maintain PLAN.md" and lets the grounded done-gate judge done:
 
@@ -705,135 +697,8 @@ async def _handle_executing(
         # ADR 0003 stage 2: the one-shot dial replaces the per-tick planner
         # entirely — mechanical dispatch/done-proposal, zero LLM on this path.
         return await _handle_one_shot_executing(goal_id, goal, status, ctx)
-    if ctx.thin_plan_enabled:
-        # Demolition P3 (flag-gated, docs/proposals/cognition-demolition.md):
-        # the THIN long_lived path also runs zero per-tick planner cognition —
-        # mechanical "advance the goal / maintain PLAN.md" dispatch + the
-        # grounded done-gate. When the flag is OFF (default) the per-tick planner
-        # path below is byte-unchanged.
-        return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
-    rows = ctx.store.unread_steering_rows(goal_id)
-    steering = "\n".join(line for _, line in rows)
-    # unread_steering_rows() may have lazily ingested new inbox.md lines,
-    # which bumps goal_status.version (every write bumps version — PR4's
-    # rule). Reload so `expect=` below CAS's against the CURRENT row, not a
-    # pre-ingest snapshot — otherwise this tick's OWN ingest would look like
-    # a concurrent writer and self-inflict a TransitionConflict on every
-    # tick that finds fresh steering, not just a genuine race.
-    status = ctx.store.load_status(goal_id)
-    work = bool(finished_detail) or bool(steering)
-    if status.phase == "blocked":
-        should_plan = work  # cadence does NOT re-poke a blocked goal; only work unblocks
-    else:
-        should_plan = work or ctx.store.cadence_due(goal, status)
-    if not should_plan:
-        ctx.store.update_status_fields(goal_id, last_tick_at=ctx.store.now_iso())
-        return Outcome.IDLE
+    return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
 
-    # [demolition P1 — docs/proposals/cognition-demolition.md] The per-tick
-    # mid-flight direction evaluator was removed here: direction is no longer
-    # re-judged by an LLM every EVAL_EVERY deliveries (the 43%-unparseable
-    # off_track thrash). The mechanical brakes stand — the zero-token no-progress
-    # watchdog (tick_guards), the grounded done-gate (tick_donegate), and the
-    # per-item circuit breaker. `EVAL_EVERY`/`deliveries_since_eval`/`eval_every`
-    # are now inert cadence plumbing (P4 removes them).
-
-    consume_ids = [rid for rid, _ in rows]
-
-    # Plan one next action. Pass the checklist if one exists — the planner
-    # then runs in checklist mode and picks one ready item. Also surface the
-    # per-project trend retrospective (trend-PR3 — closes the cross-session
-    # loop: the detector writes into <workspace>/.devclaw/trends.md; here we
-    # feed the tail back into the planner so it can act on its own findings).
-    # Pass "" when the file is missing OR holds only the placeholder so the
-    # prompt skips the section entirely.
-    from ..trend_detector import read_trends_text
-    trends_text = read_trends_text(goal.workspace_dir, limit_chars=2000)
-    if trends_text.startswith("(no trends recorded") or trends_text.startswith("(could not read"):
-        trends_text = ""
-    # Live workspace snapshot (triage F5): grounded plan-time facts from the
-    # ACTUAL repo (remote, head, key-file probes, layout), so the planner's
-    # instruction can't inherit repo assumptions from host-side claude's own
-    # environment — on the fallback paths (investigation dispatch failed,
-    # discovery synthesis failed, investigate disabled, from-scratch) the
-    # prompt otherwise has no workspace-derived facts at all. Collected HERE,
-    # past the should_plan gate beside the trends read, so idle/blocked ticks
-    # stay zero-cost: no git subprocess, no LLM. Best-effort — never raises;
-    # "" just omits the prompt section.
-    repo_context = await _planner._collect_repo_context(goal.workspace_dir)
-    try:
-        result = await _planner.plan(
-            goal, status, ctx.store.recent_log(goal_id), steering, finished_detail,
-            claude_caller=ctx.planner_caller, discovery=ctx.store.read_discovery(goal_id),
-            checklist=ctx.store.read_checklist(goal_id),
-            trends=trends_text,
-            repo_context=repo_context,
-        )
-    except (_planner.GoalPlannerError, PlannerError) as exc:
-        # A usage/rate limit at the PLANNER must pause the layer, not be logged
-        # and retried next tick (re-burning quota). The goal planner shells out
-        # via the shared claude --print caller, which raises PlannerError on a
-        # non-zero exit (e.g. a session limit). Catch BOTH (dogfood 2026-06-21).
-        paused = _maybe_pause(ctx.engine, ctx.store, goal_id, str(exc))
-        if paused is not None:
-            ctx.store.update_status_fields(goal_id, last_tick_at=ctx.store.now_iso())
-            return paused
-        ctx.store.append_log(goal_id, f"plan error: {exc}")
-        ctx.store.update_status_fields(goal_id, last_tick_at=ctx.store.now_iso())
-        await _notify(ctx.notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] plan step failed: {exc}")
-        return Outcome.ERROR
-
-    now = ctx.store.now_iso()
-    # No `inbox_cursor=` here (PR5): that field now carries the INGEST cursor
-    # (bumped by _ingest_inbox/append_steering, reflected via the `status`
-    # reload above), not a consume cursor — consumption is `consume_ids`
-    # riding each transition below, atomic with the decision.
-    base = replace(status, last_plan_at=now, last_tick_at=now)
-
-    if result.decision == "sleep":
-        ctx.store.transition(
-            goal_id, Event.RESUME_IDLE, replace(base, phase="idle", next=result.note),
-            expect=status, consume_steering=consume_ids,
-        )
-        ctx.store.append_log(goal_id, f"sleep: {result.note}")
-        return Outcome.SLEPT
-
-    if result.decision == "blocked":
-        ctx.store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=result.question,
-                    blocked_kind="needs_answer", next=""),
-            expect=status, consume_steering=consume_ids,
-        )
-        # §6 (ADR 0010): persist the planner's structured options for the console
-        # to render as click-to-steer buttons. Always written (even empty) so a
-        # re-block overwrites any stale prior options. Same single-writer path.
-        ctx.store.write_block_options(goal_id, result.options, result.recommended)
-        ctx.store.append_log(goal_id, f"blocked: {result.question}")
-        await _notify(
-            ctx.notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] needs you — {result.question}",
-            summarize=ctx.summary_caller,
-        )
-        return Outcome.BLOCKED
-
-    if result.decision == "done":
-        return await _open_done_gate(
-            goal_id, goal, base,
-            store=ctx.store, engine=ctx.engine, evaluator_caller=ctx.evaluator_caller,
-            notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
-            verify_done=ctx.verify_done, note=result.note, summarize=ctx.summary_caller,
-            remote_checker=ctx.remote_checker,
-            autodeploy=ctx.autodeploy,
-            consume_steering=consume_ids,
-        )
-
-    # decision == "act"
-    return await _dispatch_action(
-        goal_id, goal, base, result.actions[0],
-        store=ctx.store, engine=ctx.engine, notifier=ctx.notifier,
-        notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws, summarize=ctx.summary_caller,
-        consume_steering=consume_ids,
-    )
 
 
 # ---- multi-goal driver -----------------------------------------------------
@@ -843,7 +708,6 @@ async def tick_all(
     *,
     store: GoalStore,
     engine: GoalEngine,
-    planner_caller: ClaudeCaller,
     evaluator_caller: ClaudeCaller,
     notifier: Notifier,
     notify_url: str = "",
@@ -1005,7 +869,7 @@ async def tick_all(
             with _trace.tracer_scope(tracer):
                 outcomes[goal_id] = await tick_goal(
                     goal_id, store=store, engine=engine,
-                    planner_caller=planner_caller, evaluator_caller=evaluator_caller,
+                    evaluator_caller=evaluator_caller,
                     notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
                     eval_every=eval_every, verify_done=goal_verify_done,
                     autodeploy=goal_autodeploy, no_progress_s=no_progress_s,

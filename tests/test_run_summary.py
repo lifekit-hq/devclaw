@@ -138,7 +138,7 @@ async def test_achieved_close_writes_run_summary_view_and_notifies(tmp_path, mon
 
     out = await tick_goal(
         "g", store=store, engine=engine,
-        planner_caller=FakeClaude(role="planner"), evaluator_caller=evaluator,
+        evaluator_caller=evaluator,
         notifier=notifier, prepare_ws=fake_prepare, verify_done=True,
     )
 
@@ -181,7 +181,7 @@ async def test_summary_hiccup_never_disturbs_a_verified_close(tmp_path, monkeypa
     out = await tick_goal(
         "g", store=store,
         engine=FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="r")),
-        planner_caller=FakeClaude(role="planner"), evaluator_caller=evaluator,
+        evaluator_caller=evaluator,
         notifier=notifier, prepare_ws=fake_prepare, verify_done=True,
     )
 

@@ -8,43 +8,32 @@ quirks from zero. These pin the host-side loop that fixes that:
 - the project_docs row keyed by NORMALIZED workspace path (outlives goals);
 - settle folds a worker's REPO NOTES hand-back into the brief, best-effort;
 - the NEXT dispatch on the same workspace prepends the brief to the goal
-  text — plain text injection, model-agnostic — while read-only reviews
-  stay unseeded and idle ticks stay zero-token.
+  text (the thin advance brief now — the planner is gone, demolition P3b) —
+  plain text injection, model-agnostic — while read-only reviews stay
+  unseeded and idle ticks stay zero-token.
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
 from devclaw.goal import repo_brief
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
-from devclaw.goal.tick import Outcome, tick_goal
+from devclaw.goal.tick import Outcome, _advance_brief, tick_goal
 from tests.goal_fakes import (
     Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal,
 )
-
-ACT_FEATURE = json.dumps(
-    {"decision": "act", "note": "feat",
-     "actions": [{"tool": "implement_feature", "goal": "add /health", "open_pr": True}]}
-)
-ACT_REVIEW = json.dumps(
-    {"decision": "act", "note": "verify",
-     "actions": [{"tool": "review_repository", "goal": "verify the delivery"}]}
-)
-SLEEP = json.dumps({"decision": "sleep", "note": "waiting"})
 
 
 def _store(tmp_path):
     return GoalStore(tmp_path, now=Clock())
 
 
-async def _tick(store, goal_id, planner, engine):
+async def _tick(store, goal_id, engine, *, evaluator=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
-        planner_caller=planner, evaluator_caller=FakeClaude(),
+        evaluator_caller=evaluator or FakeClaude(),
         notifier=RecordingNotifier(), notify_url="http://relay",
         prepare_ws=fake_prepare, eval_every=99, verify_done=True,
     )
@@ -125,7 +114,7 @@ async def test_settle_folds_worker_repo_notes_into_the_brief(tmp_path):
         repo_notes="tests need `npm run test:ci`, not `npm test`; build is pnpm-only",
     ))
 
-    await _tick(store, "g", FakeClaude(SLEEP), engine)
+    await _tick(store, "g", engine)
 
     brief = store.read_repo_brief("/repos/demo")
     assert "tests need `npm run test:ci`" in brief
@@ -145,7 +134,7 @@ async def test_settle_without_repo_notes_writes_nothing(tmp_path):
         terminal=True, status="done", detail="added /health", gate_passed=True,
     ))
 
-    await _tick(store, "g", FakeClaude(SLEEP), engine)
+    await _tick(store, "g", engine)
 
     assert store.read_repo_brief("/repos/demo") == ""
 
@@ -172,9 +161,13 @@ async def test_repo_notes_writeback_failure_never_wedges_the_settle(tmp_path, mo
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk full")),
     )
 
-    await _tick(store, "g", FakeClaude(SLEEP), engine)
+    await _tick(store, "g", engine)
 
-    assert store.load_status("g").in_flight is None  # settled despite the hiccup
+    # settled despite the hiccup: the original ref cleared and the thin path
+    # moved straight on to proposing done (the done-gate review is in flight).
+    s = store.load_status("g")
+    assert s.phase == "verifying"
+    assert s.in_flight is not None and s.in_flight.is_done_check
 
 
 # ---- dispatch injection ------------------------------------------------------
@@ -183,33 +176,46 @@ async def test_repo_notes_writeback_failure_never_wedges_the_settle(tmp_path, mo
 @pytest.mark.asyncio
 async def test_dispatch_prepends_the_repo_brief_to_the_goal_text(tmp_path):
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")  # no STATUS yet → plan → dispatch
+    seed_goal(tmp_path, "g")  # no STATUS yet → cadence due → advance dispatch
     store.write_repo_brief("/repos/demo", "build is pnpm-only")
     engine = FakeEngine()
 
-    out = await _tick(store, "g", FakeClaude(ACT_FEATURE), engine)
+    out = await _tick(store, "g", engine)
 
     assert out is Outcome.DISPATCHED
     dispatched_goal = engine.dispatched[0][0].goal
     assert dispatched_goal.startswith("[Repo notes")
     assert "build is pnpm-only" in dispatched_goal
-    assert dispatched_goal.rstrip().endswith("add /health")
+    # the brief is a PREFIX — the advance brief itself rides byte-unchanged
+    assert dispatched_goal.endswith(_advance_brief(store.load_effective_goal("g"), ""))
 
 
 @pytest.mark.asyncio
 async def test_review_dispatch_stays_unseeded_by_the_brief(tmp_path):
     """A read-only review grounds the evaluator — seeding it with prior
-    workers' claims would bias the very reality-check the loop leans on."""
+    workers' claims would bias the very reality-check the loop leans on. The
+    thin path's review dispatch is the done-gate: trigger it via a successful
+    advance settle and assert the reviewer's brief stays clean."""
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")
     store.write_repo_brief("/repos/demo", "build is pnpm-only")
-    engine = FakeEngine()
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight",
+            in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
+        ),
+    )
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="ok", gate_passed=True,
+    ))
 
-    await _tick(store, "g", FakeClaude(ACT_REVIEW), engine)
+    out = await _tick(store, "g", engine)
 
-    dispatched_goal = engine.dispatched[0][0].goal
-    assert "Repo notes" not in dispatched_goal
-    assert "pnpm-only" not in dispatched_goal
+    assert out is Outcome.VERIFYING
+    reviews = [a for a, _g, _u in engine.dispatched if a.tool == "review_repository"]
+    assert len(reviews) == 1
+    assert "Repo notes" not in reviews[0].goal
+    assert "pnpm-only" not in reviews[0].goal
 
 
 @pytest.mark.asyncio
@@ -218,9 +224,10 @@ async def test_empty_brief_leaves_the_goal_text_byte_identical(tmp_path):
     seed_goal(tmp_path, "g")
     engine = FakeEngine()
 
-    await _tick(store, "g", FakeClaude(ACT_FEATURE), engine)
+    await _tick(store, "g", engine)
 
-    assert engine.dispatched[0][0].goal == "add /health"
+    # no brief stored → the dispatched goal is EXACTLY the advance brief
+    assert engine.dispatched[0][0].goal == _advance_brief(store.load_effective_goal("g"), "")
 
 
 @pytest.mark.asyncio
@@ -237,11 +244,11 @@ async def test_delivery_record_stays_clean_of_the_repo_brief(tmp_path):
         terminal=True, status="done", detail="ok", gate_passed=True,
     ))
 
-    await _tick(store, "g", FakeClaude(ACT_FEATURE), engine)   # dispatch (prefixed)
-    await _tick(store, "g", FakeClaude(SLEEP), engine)         # settle
+    await _tick(store, "g", engine)   # dispatch (prefixed advance brief)
+    await _tick(store, "g", engine)   # settle (then the done-gate opens)
 
     deliveries = store.recent_deliveries("g")
-    assert "add /health" in deliveries
+    assert "Advance this goal" in deliveries   # the clean advance-brief text
     assert "[Repo notes" not in deliveries
     assert "pnpm-only" not in deliveries
 
@@ -254,10 +261,10 @@ async def test_idle_tick_stays_zero_token_with_a_brief_present(tmp_path):
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
     store.write_repo_brief("/repos/demo", "a fact")
-    planner, engine = FakeClaude(ACT_FEATURE), FakeEngine()
+    evaluator, engine = FakeClaude(), FakeEngine()
 
-    out = await _tick(store, "g", planner, engine)
+    out = await _tick(store, "g", engine, evaluator=evaluator)
 
     assert out is Outcome.IDLE
-    assert planner.calls == 0
+    assert evaluator.calls == 0
     assert engine.dispatched == []

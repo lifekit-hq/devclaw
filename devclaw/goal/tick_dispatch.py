@@ -37,7 +37,7 @@ from . import repo_brief as _repo_brief
 from .engine import GoalEngine
 from .models import Action, Goal, GoalStatus
 from .notify import Notifier
-from .planner import ClaudeCaller
+from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
