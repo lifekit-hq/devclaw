@@ -1,8 +1,13 @@
-"""From-scratch goals fire world-research at investigation open-time.
+"""One-shot from-scratch goals fire world-research at investigation open-time.
 
 The investigating phase has two branches: world-research when the goal is
 from-scratch (no ``repo_url``), repo-research otherwise. These tests cover
 the from-scratch branch end-to-end through ``tick_goal``.
+
+Investigating is a ONE-SHOT concern (demolition P4): a long_lived goal skips
+it entirely (its worker pulls context in-session), so these tests seed
+``mode="one_shot"`` to exercise the world-research branch. The long_lived skip
+is covered in tests/test_goal_tick.py.
 
 Cognition-quality grading of the brief itself lives in tests/chain/.
 """
@@ -44,7 +49,7 @@ async def test_from_scratch_goal_fires_world_research(tmp_path):
     """No ``repo_url`` → investigation runs world-research synchronously,
     writes the brief to discovery.md, and transitions to executing."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g", repo_url=None)
+    seed_goal(tmp_path, "g", repo_url=None, mode="one_shot")
     store.save_status("g", GoalStatus(lifecycle="investigating"))
 
     world = FakeClaude(
@@ -82,7 +87,7 @@ async def test_from_scratch_world_research_failure_proceeds_without_brief(tmp_pa
     """If the world-research caller raises, the goal continues without a
     brief rather than wedging — investigation is an enhancement, not a gate."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g", repo_url=None)
+    seed_goal(tmp_path, "g", repo_url=None, mode="one_shot")
     store.save_status("g", GoalStatus(lifecycle="investigating"))
 
     class _Boom:
@@ -113,7 +118,7 @@ async def test_existing_repo_goal_takes_repo_research_path(tmp_path):
     dispatch happens (today's behavior). World-research caller MUST NOT be
     invoked."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g", repo_url="https://example.com/existing.git")
+    seed_goal(tmp_path, "g", repo_url="https://example.com/existing.git", mode="one_shot")
     store.save_status("g", GoalStatus(lifecycle="investigating"))
 
     world = FakeClaude(response="SHOULD NOT FIRE", role="world_research")
@@ -143,7 +148,7 @@ async def test_world_research_skips_when_workspace_checkout_exists(tmp_path):
     repo = tmp_path / "pre-existing"
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True, capture_output=True)
-    seed_goal(tmp_path, "g", repo_url=None, workspace_dir=str(repo))
+    seed_goal(tmp_path, "g", repo_url=None, workspace_dir=str(repo), mode="one_shot")
     store.save_status("g", GoalStatus(lifecycle="investigating"))
 
     world = FakeClaude(response="SHOULD NOT FIRE", role="world_research")
@@ -165,7 +170,7 @@ async def test_world_research_brief_reads_spec_from_store(tmp_path):
     """The spec the waiter wrote via ``write_spec`` must reach the
     world-research prompt — that's the grounding for the brief."""
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g", repo_url=None)
+    seed_goal(tmp_path, "g", repo_url=None, mode="one_shot")
     store.save_status("g", GoalStatus(lifecycle="investigating"))
     store.write_spec("g", "# spec\n## Scope\nin: contacts, notes\nout: deals\n")
 

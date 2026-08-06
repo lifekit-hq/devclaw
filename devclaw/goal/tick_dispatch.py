@@ -428,6 +428,30 @@ async def _open_investigation(
     couldn't build is the same one executing needs, so deferring just hides
     the error one tick longer. Block on it instead (legibly).
     """
+    # Long_lived goals do not investigate (demolition P4): the detour's output
+    # (discovery.md) is never read on the thin advance path — the worker pulls
+    # its own context in-session. create_goal no longer stamps them
+    # investigating; this guard catches a long_lived goal that was ALREADY in
+    # investigating in a live DB when this shipped (or reached it some other
+    # way) and skips it straight to executing on its next tick — zero cognition,
+    # no engine round-trip. one_shot still investigates below.
+    #
+    # Skipping investigation also skips firming for long_lived (firming is only
+    # reached via the investigation-resolve hooks). That is INTENTIONAL and
+    # off-by-default today (DEVCLAW_GOAL_FIRMING); the long_lived done-gate keeps
+    # its criterion — it reads the owner's `done_when` from create_goal, never
+    # discovery.md. Shrinking firming to the thin done_when-agreement is separate
+    # P4 work.
+    if goal.mode == "long_lived":
+        store.transition(
+            goal_id, Event.RESOLVE_INVESTIGATION,
+            replace(status, lifecycle="executing", phase="idle",
+                    next="long_lived: skipping investigation → executing"),
+            expect=status,
+        )
+        store.append_log(goal_id, "long_lived: skipping investigation → executing")
+        return Outcome.ADVANCED
+
     # Branch 1: from-scratch goal → world-research, no engine dispatch.
     if _world_research.should_fire(goal):
         return await _open_world_research(

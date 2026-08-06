@@ -240,6 +240,43 @@ def test_create_goal_admits_with_warning(svc):
     assert any("pytest" in w and "PATH" in w for w in result["warnings"])
 
 
+# ---- investigating is a one_shot concern (demolition P4) ---------------------
+
+
+def test_long_lived_goal_starts_executing_not_investigating(svc):
+    """Demolition P4: a long_lived goal skips the investigating detour — its
+    worker pulls repo context in-session (_advance_brief), so create_goal does
+    NOT stamp it investigating (no wasted discovery cognition / review_repository
+    round-trip). It starts in the default executing lifecycle."""
+    svc.create_goal(
+        "g-ll",
+        objective="keep the dashboard healthy",
+        workspace_dir="/ws",
+        done_when="GET /health returns HTTP 200 with status:ok in the body.",
+        backlog=["add /health controller", "add test"],
+        mode="long_lived",
+    )
+    assert svc._goal_store.load_status("g-ll").lifecycle != "investigating"
+
+
+def test_one_shot_goal_still_starts_investigating(svc):
+    """The contrast: one_shot still investigates — its discovery brief feeds the
+    decomposer + the one_shot reopen-gate, so create_goal stamps it
+    investigating when INVESTIGATE_ENABLED is on (the default)."""
+    from devclaw.goal import research as goal_research
+
+    assert goal_research.INVESTIGATE_ENABLED  # default env — guards the contrast below
+    svc.create_goal(
+        "g-os",
+        objective="ship the health endpoint",
+        workspace_dir="/ws",
+        done_when="GET /health returns HTTP 200 with status:ok in the body.",
+        backlog=["add /health controller", "add test"],
+        mode="one_shot",
+    )
+    assert svc._goal_store.load_status("g-os").lifecycle == "investigating"
+
+
 # ---- service.verify_goal pre-flight surface ---------------------------------
 
 

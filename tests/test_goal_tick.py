@@ -1580,10 +1580,12 @@ async def test_auto_deploy_disabled_returns_empty_without_deploying(tmp_path):
 
 @pytest.mark.asyncio
 async def test_new_goal_opens_investigation(tmp_path):
-    """A new outcome goal's first tick dispatches a read-only repo analysis and
-    enters 'investigating' — it does NOT plan/act yet (research before acting)."""
+    """A new one_shot outcome goal's first tick dispatches a read-only repo
+    analysis and enters 'investigating' — it does NOT plan/act yet (research
+    before acting). Investigating is one_shot-only now (demolition P4): a
+    long_lived goal skips it (test_goal_one_shot.py covers the skip)."""
     store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
+    seed_goal(tmp_path, "g", mode="one_shot")
     store.save_status("g", GoalStatus(lifecycle="investigating"))
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
@@ -1778,13 +1780,14 @@ async def test_executing_prep_failure_blocks_with_real_error(tmp_path):
 
 @pytest.mark.asyncio
 async def test_investigation_prep_failure_blocks_without_cognition(tmp_path):
-    """On a brand-new outcome goal the investigation prep is the SAME workspace
-    executing needs — a prep failure there blocks immediately (lifecycle pinned to
-    executing so future ticks route through the blocked-guard), spending zero
-    cognition tokens."""
+    """A long_lived goal preps its workspace on the executing/advance-dispatch
+    path (demolition P4 — it does not investigate). ``prepare_ws`` runs BEFORE
+    the dispatch, so a prep failure there blocks immediately (the same
+    ``_block_on_prep_failure`` the one_shot investigation path uses), spending
+    zero cognition tokens and dispatching nothing."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
     engine, notifier = FakeEngine(), RecordingNotifier()
 
     out = await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
@@ -2789,9 +2792,9 @@ async def test_prep_block_autoheals_when_remote_reachable_again(tmp_path, monkey
     tick proceeds to dispatch with the REAL prepare_ws."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    # investigation path: prep runs BEFORE any dispatch, so the block tick
+    # executing/advance path: prep runs BEFORE any dispatch, so the block tick
     # is zero-token (mirrors test_investigation_prep_failure_blocks_without_cognition)
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
     engine, notifier = FakeEngine(), RecordingNotifier()
 
     assert await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
@@ -2825,7 +2828,7 @@ async def test_prep_heal_respects_backoff_window(tmp_path, monkeypatch):
     clock = Clock()
     store = _store(tmp_path, clock)
     seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
     engine, notifier = FakeEngine(), RecordingNotifier()
     await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
 
@@ -2876,7 +2879,7 @@ async def test_prep_heal_gives_up_after_cap(tmp_path, monkeypatch):
     clock = Clock()
     store = _store(tmp_path, clock)
     seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
     engine, notifier = FakeEngine(), RecordingNotifier()
     await _tick_prep(store, "g", engine, notifier, prepare_ws=_failing_prepare)
 
