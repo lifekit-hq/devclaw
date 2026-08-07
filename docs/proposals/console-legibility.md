@@ -218,11 +218,13 @@ drill-in page.* It subsumes the "Execution as a goal tab" mis-filing and directl
 answers "click the task and trace it, running or finished."
 
 **Sizing (amends § Sizing):**
-- **P1-A (bounded, highest value, ready to build): task drill-in as a route.** Give
-  the existing Execution view a route + make task rows clickable; live-or-frozen.
-  Independently shippable; the data + the render component already exist. This is
-  the piece Denys most wants and is exempt-adjacent (mostly wiring an existing view
-  to a URL), but it's grouped under this LOCKED proposal so it stays one home.
+- **P1-A — SHIPPED 2026-08-07 (this PR): task drill-in as a route.** The existing
+  worker Execution trace now has its own route `/console/goals/:id/tasks/:taskId`
+  (`TaskDetail.tsx` reusing the `TaskTrace` component), and the Tasks-tab rows
+  navigate to it (`MilestoneTasks` rows are `rowlink`s keyed on `parentGoalId`).
+  Live while the task runs (the goal is polled so status/PR flip in place and the
+  trace grows without a reload flash), frozen history once it settles. The data +
+  render component already existed — this wired them to a URL.
 - **P4 (NEW — named, direction LOCKED, shape `[OPEN]`): stream-tab consolidation.**
   The Activity/Trace/Cognition collapse into one altitude-tagged feed. Direction is
   locked (kill the sprawl); the *shape* is not — resolve these at its clarify step
@@ -237,7 +239,7 @@ answers "click the task and trace it, running or finished."
     page: in the unified goal feed, or a thin "goal cognition" strip.
 
 **Status of this amendment:** **LOCKED (direction)** — 2026-08-07. Denys asked to
-"lock this behaviour for now, continue later." P1-A (task-route) is buildable;
-**P4 (tab consolidation) is direction-locked but must not start code until
+"lock this behaviour for now, continue later." P1-A (task-route) **SHIPPED
+2026-08-07**; **P4 (tab consolidation) is direction-locked but must not start code until
 `[OPEN-6..8]` are answered at its clarify step** (behavior/IA change → the hard rule
 applies). A locked line is reopenable — edit here, don't silently diverge.

@@ -9,6 +9,7 @@ import { Projects } from "./pages/Projects";
 import { ProjectDetail } from "./pages/ProjectDetail";
 import { Goals } from "./pages/Goals";
 import { GoalDetail } from "./pages/GoalDetail";
+import { TaskDetail } from "./pages/TaskDetail";
 import { Evals } from "./pages/Evals";
 import { Problems } from "./pages/Problems";
 import { Settings } from "./pages/Settings";
@@ -24,6 +25,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="projects/:id" element={<ProjectDetail />} />
           <Route path="goals" element={<Goals />} />
           <Route path="goals/:id" element={<GoalDetail />} />
+          <Route path="goals/:id/tasks/:taskId" element={<TaskDetail />} />
           <Route path="evals" element={<Evals />} />
           <Route path="problems" element={<Problems />} />
           <Route path="settings" element={<Settings />} />
