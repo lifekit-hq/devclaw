@@ -90,46 +90,46 @@ def _looks_conventional(subject: str) -> bool:
     return bool(_CC.match(subject.strip()))
 
 
-# git diff --stat prints a trailing summary like:
-#   " 3 files changed, 30 insertions(+), 5 deletions(-)"
-# We only need the trailing summary; per-file lines are ignored.
-_STAT_FILES = re.compile(r"(\d+)\s+files?\s+changed")
-_STAT_ADDS = re.compile(r"(\d+)\s+insertions?\(\+\)")
-_STAT_DELS = re.compile(r"(\d+)\s+deletions?\(-\)")
+# Issue references the delivered change resolves. GitHub links AND auto-closes an
+# issue when a PR body says ``Closes #N``, so we surface any issue the goal or the
+# engineer's own commit named — the professional equivalent of a linked ticket.
+# Conservative on purpose: only explicit fix/close verbs and the self-fix
+# ``issue #N`` objective count, so a passing mention (``see #99 for context``)
+# never triggers a spurious auto-close.
+_CLOSES_RE = re.compile(
+    r"\b(?:clos(?:e|es|ed)|fix(?:es|ed)?|resolv(?:e|es|ed))\s+#(\d+)", re.IGNORECASE
+)
+# The self-fix objective shape (``Fix devclaw issue #N: …``) — anchored on a
+# fix-verb so an incidental "see issue #50 for context" never auto-closes #50.
+_ISSUE_RE = re.compile(r"\bfix(?:es|ed)?\s+\S+\s+issue\s+#(\d+)", re.IGNORECASE)
 
 
-def _scope_suffix(files_stat: str | None, *, min_files: int = 5, min_lines: int = 500) -> str:
-    """Return a trailing ``(spans N files, K lines)`` PR-title suffix when the
-    delivered diff is materially wider than a single-focus commit subject can
-    convey; empty otherwise.
+def _closes_issues(*texts: str | None) -> list[int]:
+    """Issue numbers this change resolves, pulled (deduped, in first-seen order)
+    from the goal text and the engineer's own commit body."""
+    seen: list[int] = []
+    for text in texts:
+        if not text:
+            continue
+        for pattern in (_CLOSES_RE, _ISSUE_RE):
+            for m in pattern.finditer(text):
+                n = int(m.group(1))
+                if n not in seen:
+                    seen.append(n)
+    return seen
 
-    Guards against the failure mode where the engineer writes a conventional-
-    commit-shaped subject (e.g. ``refactor(frontend): extract shared type
-    aliases into types.ts``) that describes ~5% of what actually shipped (an
-    App.tsx 1827→181-line restructure across seven feature dirs, per
-    closeloop PR #23). The suffix is grounded in the ACTUAL diffstat, so it
-    catches both a narrow commit subject AND a future planner-authored title
-    that drifts from what the executor built.
 
-    TODO(c7-proper): plan.md §Production-ready criterion C7 prescribes a
-    proper `title:` field on Action, threaded planner→delivery. This suffix is
-    the diff-grounded fallback; the proper thread-through is a follow-up if
-    this proves insufficient (a planner-authored title CAN still drift).
-    """
-    if not files_stat:
-        return ""
-    last = files_stat.strip().splitlines()[-1] if files_stat.strip() else ""
-    m_files = _STAT_FILES.search(last)
-    if not m_files:
-        return ""
-    files = int(m_files.group(1))
-    adds = int(_STAT_ADDS.search(last).group(1)) if _STAT_ADDS.search(last) else 0
-    dels = int(_STAT_DELS.search(last).group(1)) if _STAT_DELS.search(last) else 0
-    total = adds + dels
-    if files < min_files and total < min_lines:
-        return ""
-    lines_str = f"{total / 1000:.1f}k" if total >= 1000 else str(total)
-    return f" (spans {files} files, {lines_str} lines)"
+# A standalone close/fix directive line (``Fixes #42``) — stripped from the lead
+# prose so the issue link renders once, canonically, as the body's Closes section.
+_DIRECTIVE_LINE = re.compile(
+    r"\s*(?:clos(?:e|es|ed)|fix(?:es|ed)?|resolv(?:e|es|ed))\s+#\d+\s*$", re.IGNORECASE
+)
+
+
+def _strip_directive_lines(text: str) -> str:
+    return "\n".join(
+        ln for ln in text.splitlines() if not _DIRECTIVE_LINE.match(ln)
+    ).strip()
 
 
 async def _agent_commit_msg(workspace_dir: str, base: str | None) -> tuple[str, str] | None:
@@ -162,6 +162,27 @@ def _objective_from_brief(goal: str) -> str:
     return ""
 
 
+def _link_title_branch(title: str, branch: str, issues: list[int]) -> tuple[str, str]:
+    """Fold a resolved issue reference into the PR title and branch — the
+    linked-ticket parallel. The title gets a trailing ``(#N)`` (skipped if it
+    already names the issue or would exceed the 72-char budget); the branch slug
+    is prefixed with the issue number (``fix/42-…``). Only the FIRST issue
+    decorates title/branch — the full set still renders as ``Closes #N`` lines in
+    the PR body."""
+    if not issues:
+        return title, branch
+    n = issues[0]
+    if f"#{n}" not in title:
+        candidate = f"{title} (#{n})"
+        if len(candidate) <= 72:
+            title = candidate
+    if "/" in branch:
+        typ, _, slug = branch.partition("/")
+        if slug != str(n) and not slug.startswith(f"{n}-"):
+            branch = f"{typ}/{n}-{slug}"
+    return title, branch
+
+
 def _resolve_title(
     *,
     planner_title: str | None,
@@ -175,18 +196,22 @@ def _resolve_title(
     commit subject (whenever it committed — see the ``ahead > 0`` note at the call
     site: a stray uncommitted file must not sink the worker-authored subject into
     the generic brief) → a goal-derived heuristic that NEVER renders the
-    thin-advance brief (falling back to its embedded objective instead)."""
+    thin-advance brief (falling back to its embedded objective instead). A
+    resolved issue reference (self-fix ``issue #N`` objective, or the engineer's
+    own ``Fixes #N``) decorates the title + branch before returning."""
     planner = (planner_title or "").strip() or None
     if planner:
         prefixed = planner if _looks_conventional(planner) else _pr_title(planner, kind)
         title = _truncate_words(prefixed, 72)
         branch = f"{_cc_type(title, kind)}/{_slug(_cc_description(title))}"
         changes = (agent_msg[1] or agent_msg[0]) if agent_msg else None
+        title, branch = _link_title_branch(title, branch, _closes_issues(goal, changes, planner))
         return title, branch, changes
     if agent_msg:
         subject, body = agent_msg
         title = _truncate_words(subject if _looks_conventional(subject) else _pr_title(subject, kind), 72)
         branch = f"{_cc_type(subject, kind)}/{_slug(_cc_description(subject))}"
+        title, branch = _link_title_branch(title, branch, _closes_issues(goal, body, subject))
         return title, branch, body or subject
     # No worker commit to describe the change (dirty tree, nothing committed).
     # Derive from the goal — but the thin-advance brief is plumbing, not a
@@ -194,7 +219,10 @@ def _resolve_title(
     base_text = goal
     if _is_advance_brief(goal):
         base_text = _objective_from_brief(goal) or "advance the goal by one increment"
-    return _pr_title(base_text, kind), f"devclaw/{task_id[:8]}-{_slug(base_text)}", None
+    title = _pr_title(base_text, kind)
+    branch = f"devclaw/{task_id[:8]}-{_slug(base_text)}"
+    title, branch = _link_title_branch(title, branch, _closes_issues(goal))
+    return title, branch, None
 
 
 def _scope_label(title: str) -> str:
@@ -221,31 +249,30 @@ async def _apply_scope_label(workspace_dir: str, pr_url: str, title: str) -> Non
 
 
 def _pr_body(
-    goal: str, task_id: str, verify: dict | None, files_stat: str | None,
+    goal: str, task_id: str, verify: dict | None,
     *, changes: str | None = None, advisories: list | None = None,
 ) -> str:
-    """A PR body a reviewer can actually use. When the engineer wrote its own commit
-    (``changes``), lead with what CHANGED and keep the (long) task instruction as a
-    collapsed Ticket; otherwise fall back to the instruction as What. Always carries
-    the gate verdict, diffstat, and the honest green-gate-≠-correct caveat.
+    """A PR body that reads like a careful engineer opened it: lead with what
+    CHANGED (the engineer's own commit body when it wrote one, else the task),
+    a one-line verification note, ``Closes #N`` for any resolved issue, the
+    original task tucked into a collapsed block, and a plain devclaw signature.
+    No diffstat, no telemetry.
 
     ``advisories`` (ADR 0007): trust-mode dial-able gate findings this change
     SHIPPED past rather than blocked on. Rendered as a loud section so the human
     sees them at the merge boundary — the backstop for advisory gates."""
-    if changes is not None:
-        parts = ["## Changes", changes.strip() or "(see commit)", ""]
-        parts += ["<details><summary>📋 Ticket (what was asked + why)</summary>", "",
-                  goal.strip(), "", "</details>", ""]
-    else:
-        parts = ["## What", goal.strip(), ""]
+    lead = _strip_directive_lines(changes) if changes is not None else goal.strip()
+    parts = [lead or "(see commit)", ""]
     if verify and verify.get("ran"):
         cmd = verify.get("cmd", "")
         if verify.get("passed"):
-            code = verify.get("exit_code")
-            verdict = f"Gate `{cmd}` passed" + (f" (exit {code})." if code is not None else ".")
+            parts += [f"Verified with `{cmd}` — passing.", ""]
         else:
-            verdict = f"Gate `{cmd}` did **not** pass — see the task error."
-        parts += ["## Verification", verdict, ""]
+            parts += [f"Gate `{cmd}` did **not** pass — see the task error.", ""]
+    for n in _closes_issues(goal, changes):
+        parts += [f"Closes #{n}"]
+    if _closes_issues(goal, changes):
+        parts += [""]
     if advisories:
         parts += ["## ⚠️ Advisory — shipped under `trust`, review before merging"]
         parts += [
@@ -259,14 +286,10 @@ def _pr_body(
             reason = (a.get("reason") if isinstance(a, dict) else str(a)) or ""
             parts += [f"- **{gate}**: {reason.strip()}"]
         parts += [""]
-    if files_stat and files_stat.strip():
-        parts += ["## Files changed", "```", files_stat.strip(), "```", ""]
-    parts += [
-        "---",
-        f"🤖 Delivered by devclaw (task `{task_id}`). Verify-gated, but **review "
-        "before merging** — a green gate means the tests pass, not that the code "
-        "is right.",
-    ]
+    if changes is not None:
+        parts += ["<details><summary>Original task</summary>", "",
+                  goal.strip(), "", "</details>", ""]
+    parts += ["---", f"🤖 Delivered by devclaw (task `{task_id}`)"]
     return "\n".join(parts)
 
 
@@ -385,8 +408,9 @@ async def deliver_change(
     title (feat/fix/…); ``verify`` (the gate verdict) goes into the PR body.
     ``title`` is the PLANNER's chosen PR title (see Action.title / plan.md
     §Production-ready C7). When present and non-empty it wins over the
-    engineer's own commit subject and the goal-derived heuristic — the diff-
-    scope suffix from ``_scope_suffix`` still applies for grounding.
+    engineer's own commit subject and the goal-derived heuristic; a resolved
+    issue reference then decorates it (title ``(#N)`` + branch) via
+    ``_resolve_title``.
 
     ``base_branch`` / ``target_branch`` are the v1-helper-resurface delivery
     seam (docs/proposals/v1-helper-resurface.md §3): ``base_branch`` is a
@@ -493,10 +517,6 @@ async def deliver_change(
     # else: the agent's own commits are already on this branch (ahead > 0).
     result["committed"] = True
 
-    # Diffstat of the delivered change — for the PR body's "Files changed".
-    diff_range = f"{base}..HEAD" if base else "HEAD~1..HEAD"
-    _, files_stat = await _run("git", "diff", "--stat", diff_range, cwd=workspace_dir)
-
     # Push only if there's a remote. (Local-only repos — e.g. clones of a local
     # path — have no GitHub remote; we stop at the local commit, which is still
     # a reviewable artifact.)
@@ -524,21 +544,13 @@ async def deliver_change(
                 result["pr_url"] = existing
                 result["delivered"] = True
                 return result
-        # Ground the PR title in the actual diff scope — an engineer commit
-        # subject often describes ~5% of a wide restructure (see closeloop
-        # PR #23). Suffix only fires when files/lines cross a threshold; skip
-        # when the title already carries a scope tail so we never double-suffix
-        # on updates or when the agent wrote its own scope indicator.
-        pr_title = title
-        if not pr_title.rstrip().endswith(")"):
-            pr_title = pr_title + _scope_suffix(files_stat)
-        # A caller-chosen ``base_branch`` becomes the PR base; absent, gh
-        # defaults the base to the repo's default branch (today's behavior).
+        # The title/branch are already issue-decorated by _resolve_title; the
+        # body carries what changed + Closes #N. No diff-scope telemetry.
         base_args = ("--base", base_branch) if base_branch else ()
         rc, out = await _run(
             "gh", "pr", "create", *base_args, "--head", branch,
-            "--title", pr_title,
-            "--body", _pr_body(goal, task_id, verify, files_stat, changes=changes, advisories=advisories),
+            "--title", title,
+            "--body", _pr_body(goal, task_id, verify, changes=changes, advisories=advisories),
             cwd=workspace_dir,
         )
         url = _extract_pr_url(out)

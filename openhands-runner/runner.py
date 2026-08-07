@@ -189,13 +189,16 @@ _CONTEXT_PREAMBLE = (
 # derives the branch + PR from this commit, so a clean conventional-commit message
 # here is what makes the history readable. (Don't push or open a PR — devclaw does.)
 _COMMIT_CODA = (
-    "Finally, COMMIT your change yourself with a clean conventional-commit message: "
-    "a concise subject line in the form `type(scope): what changed` (type = feat / "
-    "fix / refactor / test / docs / chore; imperative, ≤ ~70 chars, describing the "
-    "CHANGE — not the task you were given), then a blank line, then a short body "
-    "explaining WHY and how you verified it. Make ONE commit for the whole change "
-    "(stage everything, including new files). Do NOT push and do NOT open a pull "
-    "request — devclaw delivers your commit as a branch + PR."
+    "Finally, COMMIT your change yourself with a clean conventional-commit message — "
+    "it becomes the PR a human reviews, so write it like a senior engineer would:\n"
+    "  - Subject: `type(scope): what changed` (type = feat / fix / refactor / test / "
+    "docs / chore; imperative, <= ~70 chars; the CHANGE, not the task).\n"
+    "  - Blank line, then a 2-4 line body: WHY the change and how you verified it.\n"
+    "  - Resolving a tracked issue? Add a `Fixes #<n>` line so the PR links and "
+    "closes it.\n"
+    "Make ONE commit for the whole change (stage everything, including new files). "
+    "Do NOT push and do NOT open a pull request — devclaw delivers your commit as a "
+    "branch + PR."
 )
 # The code-quality bar. Without it the agent optimizes for the ONE thing it's
 # told to satisfy — a green test suite — and ships "a working version": logic

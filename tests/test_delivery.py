@@ -13,13 +13,13 @@ import pytest
 
 from devclaw import delivery
 from devclaw.delivery import (
+    _closes_issues,
     _extract_pr_url,
     _is_advance_brief,
     _pr_body,
     _pr_title,
     _resolve_title,
     _scope_label,
-    _scope_suffix,
     _slug,
     deliver_change,
 )
@@ -92,6 +92,19 @@ def test_resolve_title_prefers_worker_subject_over_the_advance_brief():
     assert changes == "Adds Tag entity + M2M."
 
 
+def test_resolve_title_decorates_with_resolved_issue():
+    # A self-fix goal names its target issue; the title gets a trailing `(#N)`
+    # and the branch is prefixed with the number — the linked-ticket parallel.
+    title, branch, _ = _resolve_title(
+        planner_title=None,
+        agent_msg=("fix(feed): stop pagination drift", "Cursor paging. Fixes #42."),
+        goal="Fix devclaw issue #42: pagination drifts",
+        kind="fix_bug", task_id="abc123def4",
+    )
+    assert title == "fix(feed): stop pagination drift (#42)"
+    assert branch == "fix/42-stop-pagination-drift"
+
+
 def test_resolve_title_rejects_advance_brief_falls_back_to_objective():
     # No worker commit at all (pure dirty tree). We must still not render the
     # brief — fall back to its embedded `Goal:` objective.
@@ -112,90 +125,72 @@ def test_scope_label_from_cc_scope_then_type():
     assert _scope_label("not a conventional subject") == ""
 
 
-def test_pr_body_carries_ticket_gate_and_caveat():
+def test_pr_body_leads_with_change_and_verification():
     verify = {"ran": True, "cmd": "dotnet test", "passed": True, "exit_code": 0}
-    body = _pr_body("Add an endpoint", "abcd1234", verify, " Program.cs | 6 +\n 1 file changed")
-    assert "## What" in body and "Add an endpoint" in body
-    assert "Gate `dotnet test` passed" in body
-    assert "## Files changed" in body and "Program.cs" in body
-    assert "review before merging" in body.lower()  # the honest caveat
+    body = _pr_body("Add an endpoint", "abcd1234", verify)
+    # Reads like prose — the change leads, no `## What`/`## Changes` scaffolding.
+    assert body.startswith("Add an endpoint")
+    assert "Verified with `dotnet test` — passing." in body
+    assert "🤖 Delivered by devclaw (task `abcd1234`)" in body
     # degrades cleanly when there was no gate
-    nogate = _pr_body("x", "id", None, None)
-    assert "## Verification" not in nogate and "## Files changed" not in nogate
+    nogate = _pr_body("x", "id", None)
+    assert "Verified with" not in nogate
+
+
+def test_pr_body_carries_no_line_count_telemetry():
+    # The whole point of this change: a PR reads like a human wrote it, with no
+    # diffstat / files-changed / line-count telemetry anywhere in the body.
+    verify = {"ran": True, "cmd": "pytest", "passed": True, "exit_code": 0}
+    body = _pr_body(
+        "Refactor the feed", "id", verify,
+        changes="feat(feed): paginate\n\nCursor paging.",
+    )
+    for banned in ("Files changed", "insertion", "deletion", "spans ", "files changed", "```"):
+        assert banned not in body, f"telemetry leaked: {banned!r}"
+
+
+def test_pr_body_drops_the_green_gate_caveat():
+    # The "green gate means tests pass, not that the code is right" disclaimer is
+    # gone — the safety rail is the fail-closed gate + human merge, not PR prose.
+    body = _pr_body("Add X", "id", {"ran": True, "cmd": "pytest", "passed": True})
+    assert "not that the code" not in body
+    assert "green gate" not in body.lower()
+
+
+def test_pr_body_links_resolved_issue_with_closes():
+    # A self-fix goal names its target issue; a `Closes #N` line makes GitHub
+    # link and auto-close it on merge (the linked-ticket parallel).
+    body = _pr_body("Fix devclaw issue #42: pagination drifts", "id", None)
+    assert "Closes #42" in body
+    # Also picks the engineer's own `Fixes #N` out of the commit body — and
+    # canonicalizes it to a single `Closes #7` (no redundant directive in prose).
+    body2 = _pr_body("Advance the goal", "id", None, changes="feat: x\n\nFixes #7")
+    assert "Closes #7" in body2 and "Fixes #7" not in body2
+    # A passing mention never triggers a spurious auto-close.
+    assert "Closes" not in _pr_body("See #99 for background", "id", None)
 
 
 def test_pr_body_renders_trust_advisory_section():
     # ADR 0007: a trust-mode gate advisory rides into the PR body so the human
     # sees it at the merge boundary. Absent when there are no advisories.
     advisories = [{"gate": "review", "reason": "dead code left in DealService"}]
-    body = _pr_body("Add X", "id", None, None, advisories=advisories)
+    body = _pr_body("Add X", "id", None, advisories=advisories)
     assert "Advisory" in body and "shipped under `trust`" in body
     assert "review" in body and "dead code left in DealService" in body
-    assert "review before merging" in body.lower()
     # no advisory section when the list is empty/None
-    assert "Advisory" not in _pr_body("Add X", "id", None, None)
+    assert "Advisory" not in _pr_body("Add X", "id", None)
 
 
-def test_scope_suffix_empty_or_missing():
-    # No files_stat → no suffix. Graceful on the None/"" edges.
-    assert _scope_suffix(None) == ""
-    assert _scope_suffix("") == ""
-    # A malformed stat with no `files changed` line — return "" rather than raise.
-    assert _scope_suffix("some garbage output") == ""
-
-
-def test_scope_suffix_narrow_diff_no_fire():
-    # Narrow — 2 files, 30 lines — well under both thresholds → no suffix.
-    stat = " foo.py | 20 ++++++++++++++++++++\n bar.py | 10 ++++++++++\n 2 files changed, 30 insertions(+), 0 deletions(-)"
-    assert _scope_suffix(stat) == ""
-
-
-def test_scope_suffix_wide_by_files_fires():
-    # 6 files with a small line count → fires because file-count crosses.
-    stat = (
-        " a.py | 5 ++++-\n b.py | 5 ++++-\n c.py | 5 ++++-\n"
-        " d.py | 5 ++++-\n e.py | 5 ++++-\n f.py | 5 ++++-\n"
-        " 6 files changed, 24 insertions(+), 6 deletions(-)"
-    )
-    suf = _scope_suffix(stat)
-    assert suf.startswith(" (spans 6 files")
-    assert "30 lines)" in suf  # 24 + 6 = 30, below 1k threshold → raw int
-
-
-def test_scope_suffix_wide_by_lines_fires():
-    # 2 files but 1800 lines → fires because line-count crosses.
-    stat = " App.tsx | 1800 +++++++...\n types.ts | 200 ++++++...\n 2 files changed, 1800 insertions(+), 200 deletions(-)"
-    suf = _scope_suffix(stat)
-    assert suf.startswith(" (spans 2 files")
-    assert "2.0k lines)" in suf
-
-
-def test_scope_suffix_the_closeloop_pr_23_case():
-    # The concrete regression this fix targets: closeloop PR #23 restructure —
-    # ~10 feature-dir files, ~1800 net insertions + ~1600 deletions.
-    stat = (
-        " frontend/src/App.tsx | 1650 -----\n"
-        " frontend/src/features/accounts/AccountsView.tsx | 320 +++++\n"
-        " frontend/src/features/activities/ActivitiesView.tsx | 280 +++\n"
-        " frontend/src/features/auth/LoginView.tsx | 90 +++\n"
-        " frontend/src/features/contacts/ContactsView.tsx | 360 +++\n"
-        " frontend/src/features/pipeline/PipelineView.tsx | 410 +++\n"
-        " frontend/src/features/stats/StatsView.tsx | 120 +++\n"
-        " frontend/src/features/today/TodayView.tsx | 130 +++\n"
-        " frontend/src/hooks/useAppState.ts | 145 +++\n"
-        " frontend/src/types.ts | 30 +++\n"
-        " 10 files changed, 1885 insertions(+), 1650 deletions(-)"
-    )
-    suf = _scope_suffix(stat)
-    assert suf.startswith(" (spans 10 files")
-    assert "3.5k lines)" in suf  # 1885 + 1650 = 3535, formatted as 3.5k
-
-
-def test_scope_suffix_tunable_thresholds():
-    # Callers can dial the thresholds tighter or looser.
-    tight_stat = " foo.py | 4 +++-\n bar.py | 4 +++-\n baz.py | 4 +++-\n 3 files changed, 12 insertions(+), 0 deletions(-)"
-    assert _scope_suffix(tight_stat) == ""  # default: no fire
-    assert _scope_suffix(tight_stat, min_files=3) != ""  # tightened: fires
+def test_closes_issues_extraction():
+    # Explicit fix/close verbs and the self-fix `issue #N` objective count…
+    assert _closes_issues("Fix devclaw issue #42: x") == [42]
+    assert _closes_issues("feat: y\n\nFixes #7 and closes #8") == [7, 8]
+    assert _closes_issues("resolved #3") == [3]
+    # …a passing mention does not (even one using the word "issue"), and
+    # results dedupe in first-seen order.
+    assert _closes_issues("see #99 for context") == []
+    assert _closes_issues("see issue #50 for context, do not close it") == []
+    assert _closes_issues("Fixes #5", "Fix devclaw issue #5 again") == [5]
 
 
 def test_extract_pr_url():
@@ -419,11 +414,10 @@ def test_cc_helpers_and_changes_body():
     assert _cc_type("fix(db): y", "implement_feature") == "fix"      # from the subject
     assert _cc_type("just a subject", "fix_bug") == "fix"            # falls back to kind
     assert _cc_description("feat(api): add the widget") == "add the widget"
-    # the changes-path body leads with what changed + collapses the ticket
-    body = _pr_body("the long ticket instruction", "id", None, None, changes="Added a widget endpoint + tests")
-    assert "## Changes" in body and "Added a widget endpoint" in body
-    assert "Ticket" in body and "the long ticket instruction" in body
-    assert "## What" not in body  # the instruction is the ticket, not the headline
+    # the changes-path body leads with what changed + collapses the original task
+    body = _pr_body("the long ticket instruction", "id", None, changes="Added a widget endpoint + tests")
+    assert body.startswith("Added a widget endpoint + tests")
+    assert "Original task" in body and "the long ticket instruction" in body
 
 
 # ---- TaskQueue wiring ------------------------------------------------------
