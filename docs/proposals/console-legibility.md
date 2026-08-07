@@ -10,7 +10,10 @@
   commits direction only; tranche scheduling stays Denys's call, and a locked line
   is reopenable — edit here, don't silently diverge. The state-honesty *correctness*
   half remains out of lock scope (already executing via the `console-state-honesty`
-  self-goal).
+  self-goal). **Amended + re-locked 2026-08-07** (see § Amendment 2026-08-07): a
+  second walkthrough sharpened Thread A #1 into a **routed task drill-in** (P1-A,
+  buildable) and added **stream-tab consolidation** (P4 — direction LOCKED, shape
+  `[OPEN-6..8]`); PR #474 shipped the Thread A #2 payload-render no-brainer.
 - **Date opened:** 2026-07-29 · **Authors:** Denys + Claude
 - **Scope note / what's already moving:** the **state-honesty *correctness* fixes**
   (the project count mismatch + the Problems-page windowing/resolution) are
@@ -164,3 +167,77 @@ mechanisms (a new rollup/summarization surface; a new lifecycle + verb) — they
 *correctness* fixes are the bug-fix exception and are already executing via the
 self-goal; if that goal's PR turns out to need a mechanism (not just a fix), it
 comes back here first.
+
+## Amendment 2026-08-07 — task-as-drill-in (a route) + stream-tab consolidation
+
+From a **second live walkthrough** (Denys watched the `compounding-test-2026-08-07`
+experiment run: he saw the in-flight task on the goal page, wanted to *click it and
+trace it live*, and noted that the goal-detail tabs read as redundant). Two things
+sharpen Thread A; the direction is **LOCKED**, one new slice's *shape* stays `[OPEN]`.
+
+**Progress since the 2026-07-29 lock (Thread A #2 partially shipped):** PR **#474**
+landed the "render the payload, not `ACPToolCallEvent`" no-brainer (§ The design →
+Thread A) — the worker-event decoder now extracts the tool `title` + output, so the
+Execution trace reads like turns instead of raw JSON. The *mechanical-rollup brief*
+layer above it (`[OPEN-1]`'s resolution) is still unbuilt. (#474 also made the goal
+tabs URL-addressable and fixed the timeline "skipped-phase" honesty; #475 is
+delivery, tangential.)
+
+**N-A — Thread A #1 sharpened: the task drill-in is a ROUTE, not just a panel.**
+The 2026-07-29 lock framed "a task is a dead ID" as a task-detail *panel*. The
+concrete shape Denys wants: a task is a **clickable navigation target** at
+`/console/goals/:id/tasks/:taskId` — click a task row (or an in-flight-task chip)
+→ its own page showing the worker **Execution** trace (which already exists — it's
+today's "Execution" tab, currently reachable only via an in-page task-switcher) +
+its PR + gate result + status. **Live** if the task is running (the same view
+auto-refreshing), **frozen "history"** if it settled. The running-vs-finished
+distinction Denys named falls out of this for free — same view, live vs static.
+
+**N-B — NEW observation: stream-tab sprawl on the goal-detail page.** The goal
+page carries **8 tabs** (Timeline · Tasks · Pull requests · Activity · Trace ·
+Cognition · Execution · Schedule); **five of them (Tasks/Activity/Trace/Cognition/
+Execution) are the same *shape* — a chronological event list — at different
+altitudes/actors**, and the UI doesn't make the distinction legible, so they read
+as duplicates. Precisely: Activity = goal-level event feed; Trace = goal-level,
+lower altitude (cognition + dispatch per tick); Cognition = the control-plane
+`claude` calls + prompts; **Execution = the *worker's* turns — that one is
+task-level, mis-filed as a goal tab**; Tasks = the plan items.
+
+**The model that resolves both (the amendment's spine):** **the task is the
+drill-in unit.** A goal is a stream of tasks (+ the goal-level cognition between
+them). So the target IA:
+- **Goal page** → Overview/Plan (phase + milestones + the **clickable** task list)
+  · **one** altitude-tagged activity feed (collapse Activity + Trace + Cognition
+  into a single stream, each entry tagged by altitude and click-through to detail)
+  · Pull requests · Schedule. ~4 tabs, down from 8.
+- **Task page** (N-A) → that task's Execution (worker turns) + its cognition + its
+  PR + gate, live or historical.
+
+This collapses the confusing overlap into: *goal-level = one feed; task-level = one
+drill-in page.* It subsumes the "Execution as a goal tab" mis-filing and directly
+answers "click the task and trace it, running or finished."
+
+**Sizing (amends § Sizing):**
+- **P1-A (bounded, highest value, ready to build): task drill-in as a route.** Give
+  the existing Execution view a route + make task rows clickable; live-or-frozen.
+  Independently shippable; the data + the render component already exist. This is
+  the piece Denys most wants and is exempt-adjacent (mostly wiring an existing view
+  to a URL), but it's grouped under this LOCKED proposal so it stays one home.
+- **P4 (NEW — named, direction LOCKED, shape `[OPEN]`): stream-tab consolidation.**
+  The Activity/Trace/Cognition collapse into one altitude-tagged feed. Direction is
+  locked (kill the sprawl); the *shape* is not — resolve these at its clarify step
+  **before** its tranche:
+  - **`[OPEN-6]`** Which streams merge, and does **Trace** (the layer-altitude view,
+    ADR 0008) survive as its own thing or fold into the unified feed? (Risk:
+    collapsing altitudes badly *loses* the layer-trace signal 0008 added on purpose.)
+  - **`[OPEN-7]`** The unified feed's altitude tags + default filter (does it default
+    to goal-altitude with cognition/worker-detail behind a toggle, or interleave all?).
+  - **`[OPEN-8]`** Where the **goal-level** cognition (done-gate evaluator, decomposer,
+    direction-eval — which are NOT task-scoped) lives once Execution moves to the task
+    page: in the unified goal feed, or a thin "goal cognition" strip.
+
+**Status of this amendment:** **LOCKED (direction)** — 2026-08-07. Denys asked to
+"lock this behaviour for now, continue later." P1-A (task-route) is buildable;
+**P4 (tab consolidation) is direction-locked but must not start code until
+`[OPEN-6..8]` are answered at its clarify step** (behavior/IA change → the hard rule
+applies). A locked line is reopenable — edit here, don't silently diverge.
