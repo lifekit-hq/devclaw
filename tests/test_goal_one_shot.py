@@ -66,6 +66,34 @@ def test_legacy_goal_yaml_without_mode_loads_long_lived(tmp_path):
     assert store.load_goal("g").mode == "long_lived"
 
 
+# ---- investigating is a one_shot concern (demolition P4) -------------------
+
+
+@pytest.mark.asyncio
+async def test_long_lived_goal_in_investigating_skips_to_executing_zero_cognition(tmp_path):
+    """Demolition P4: long_lived goals do not investigate. A long_lived goal
+    that is somehow in investigating (a live DB stamped before this shipped, or
+    any other path) skips STRAIGHT to executing on its next tick — ZERO
+    cognition, NO engine round-trip (no wasted review_repository), no discovery
+    brief written. Its worker pulls repo context in-session (_advance_brief),
+    so the whole investigating detour is dead push for it (§3a). one_shot still
+    investigates — covered by test_goal_tick_world_research + the one_shot
+    tests above."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g", mode="long_lived")
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="investigating"))
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", FakeClaude(), evaluator, engine, notifier)
+
+    assert out is Outcome.ADVANCED
+    assert evaluator.calls == 0            # no discovery/world-research cognition
+    assert engine.dispatched == []         # no review_repository round-trip
+    assert not (tmp_path / "g" / "discovery.md").exists()
+    s = store.load_status("g")
+    assert s.lifecycle == "executing" and s.phase == "idle"
+
+
 # ---- executing: dispatch the whole checklist as ONE planned program --------
 
 

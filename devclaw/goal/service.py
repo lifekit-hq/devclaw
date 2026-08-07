@@ -548,9 +548,16 @@ class GoalService:
         # spec it landed on so the evaluator judges done against the shared contract.
         if spec and spec.strip():
             self._goal_store.write_spec(goal_id, spec)
-        # Outcome goals investigate (research → discovery brief) before executing;
-        # stamp the starting lifecycle so the first tick opens that front-end.
-        if goal_research.INVESTIGATE_ENABLED:
+        # Investigating (read-only repo analysis → discovery brief → optional
+        # decompose) is a ONE-SHOT concern: its output (discovery.md + the
+        # checklist) feeds the one_shot decomposer and the one_shot reopen-gate
+        # (tick.py "no checklist and no discovery brief"). A long_lived goal's
+        # worker PULLS its own context in-session (_advance_brief: "read PLAN.md
+        # and the repo") and never reads discovery.md — so for it the whole
+        # detour (an engine review_repository + one/two discovery-cognition
+        # calls) is pure wasted push (demolition P4, §3a trust-the-input). Only
+        # one_shot stamps investigating; long_lived starts executing directly.
+        if goal_research.INVESTIGATE_ENABLED and mode == "one_shot":
             self._goal_store.save_status(goal_id, GoalStatus(lifecycle="investigating"))
         self._goal_store.append_log(goal_id, "goal created")
         self.poke()  # advance it on the next loop turn without waiting a full interval
