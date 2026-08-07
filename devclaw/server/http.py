@@ -817,14 +817,20 @@ def _node_vitals() -> dict:
             running += 1
 
     # Clean-cycle headline + rolling rate over the cycle_reports window (ADR 0006).
+    # IDLE cycles (the loop did no work — off/held/all-cancelled) are neither
+    # clean nor wedged: they're excluded from BOTH numerator and denominator so
+    # an off week of empty nights can't drift the rate toward a meaningless 100%.
     cycles = store.list_cycle_reports(limit=30)
+    scored = [c for c in cycles if not c.get("idle")]
     if cycles:
         latest = cycles[0]
-        clean = bool(latest["clean"])
+        latest_idle = bool(latest.get("idle"))
+        # `clean` headline is None for an idle latest window (nothing to grade).
+        clean = None if latest_idle else bool(latest["clean"])
         last_window_end = latest["window_end_ms"]
-        clean_recent = sum(1 for c in cycles if c["clean"])
+        clean_recent = sum(1 for c in scored if c["clean"])
     else:
-        clean, last_window_end, clean_recent = None, None, 0
+        clean, last_window_end, clean_recent, latest_idle = None, None, 0, False
 
     running_tasks = len(store.list_tasks(status="running", limit=200))
 
@@ -850,8 +856,11 @@ def _node_vitals() -> dict:
         },
         "cleanCycle": {
             "clean": clean,
+            "idle": latest_idle,
             "lastWindowEndMs": last_window_end,
-            "recent": {"clean": clean_recent, "total": len(cycles)},
+            # `total` counts only SCORED (non-idle) windows — the honest
+            # denominator; idle windows are surfaced separately, never counted.
+            "recent": {"clean": clean_recent, "total": len(scored), "idle": len(cycles) - len(scored)},
         },
         "runningTasks": running_tasks,
         # The 5-layer strip (CLAUDE.md layer map). ``unknown`` is honest, not a

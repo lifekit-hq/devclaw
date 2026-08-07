@@ -88,16 +88,42 @@ def test_node_vitals_clean_cycle_headline_is_the_newest_window(http_mod, monkeyp
     v = http_mod._node_vitals()
 
     # Newest window (c2) is the headline; recent rate counts the clean ones.
+    # Both windows did work (non-idle), so both count toward the denominator.
     assert v["cleanCycle"]["clean"] is False
+    assert v["cleanCycle"]["idle"] is False
     assert v["cleanCycle"]["lastWindowEndMs"] == 2000
-    assert v["cleanCycle"]["recent"] == {"clean": 1, "total": 2}
+    assert v["cleanCycle"]["recent"] == {"clean": 1, "total": 2, "idle": 0}
 
 
 def test_node_vitals_clean_cycle_null_when_no_reports(http_mod, monkeypatch):
     monkeypatch.setattr(http_mod, "goals", _fake_goals([]))
     v = http_mod._node_vitals()
     assert v["cleanCycle"]["clean"] is None
-    assert v["cleanCycle"]["recent"] == {"clean": 0, "total": 0}
+    assert v["cleanCycle"]["recent"] == {"clean": 0, "total": 0, "idle": 0}
+
+
+def test_node_vitals_excludes_idle_cycles_from_clean_rate(http_mod, monkeypatch):
+    # The drift bug: an OFF devclaw fires empty (idle) cycle reports each night.
+    # Those must NOT count toward the clean-cycle rate — neither numerator nor
+    # denominator — so a week off can't inflate the rate toward 100%.
+    monkeypatch.setattr(http_mod, "goals", _fake_goals([]))
+    # One genuine clean run, then three idle (off) nights.
+    http_mod.store.record_cycle_report(
+        cycle_key="worked", window_start_ms=0, window_end_ms=1000,
+        clean=True, wedges_json="[]", pauses_json="[]", summary="ok",
+    )
+    for i in range(3):
+        http_mod.store.record_cycle_report(
+            cycle_key=f"idle{i}", window_start_ms=2000 + i, window_end_ms=3000 + i,
+            clean=True, wedges_json="[]", pauses_json="[]", summary="idle", idle=True,
+        )
+    v = http_mod._node_vitals()
+
+    # Latest window is idle → headline clean is None + idle flag set.
+    assert v["cleanCycle"]["idle"] is True
+    assert v["cleanCycle"]["clean"] is None
+    # Rate counts only the one scored (non-idle) window, not 4/4.
+    assert v["cleanCycle"]["recent"] == {"clean": 1, "total": 1, "idle": 3}
 
 
 def test_node_vitals_layers_stay_honest(http_mod, monkeypatch):

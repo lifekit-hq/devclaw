@@ -48,8 +48,12 @@ export function Evals() {
   const passRate = settled ? passed / settled : null;
 
   const cycleRows = cycles ?? [];
-  const cleanCycles = cycleRows.filter((n) => n.clean === 1).length;
-  const cleanRate = cycleRows.length ? cleanCycles / cycleRows.length : null;
+  // Idle cycles (the loop did no work — off/held/all-cancelled) are excluded
+  // from BOTH numerator and denominator, so empty nights can't drift the rate.
+  const scoredCycles = cycleRows.filter((n) => n.idle !== 1);
+  const cleanCycles = scoredCycles.filter((n) => n.clean === 1).length;
+  const cleanRate = scoredCycles.length ? cleanCycles / scoredCycles.length : null;
+  const idleCycles = cycleRows.length - scoredCycles.length;
 
   const shown =
     filter === "all" ? rows : rows.filter((o) => o.source === filter);
@@ -76,9 +80,11 @@ export function Evals() {
               label="Clean cycles"
               value={pct(cleanRate)}
               sub={
-                cycleRows.length
-                  ? `${cleanCycles} / ${cycleRows.length} cycles`
-                  : "no cycle reports yet"
+                scoredCycles.length
+                  ? `${cleanCycles} / ${scoredCycles.length} cycles${idleCycles ? ` · ${idleCycles} idle` : ""}`
+                  : cycleRows.length
+                    ? `${idleCycles} idle (no runs)`
+                    : "no cycle reports yet"
               }
               color={rateColor(cleanRate)}
             />

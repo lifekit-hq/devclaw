@@ -371,6 +371,9 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                     window_start_ms INTEGER NOT NULL,
                     window_end_ms   INTEGER NOT NULL,
                     clean           INTEGER NOT NULL,  -- 1 iff zero mechanism-wedges
+                    -- `idle` (added 2026-08-07, migration below) = 1 iff the loop
+                    -- did no work this cycle (off/held/all-cancelled): NEITHER
+                    -- clean nor wedged, EXCLUDED from the clean-cycle rate.
                     wedges_json     TEXT NOT NULL,     -- JSON list [{class, detail, ref}]
                     pauses_json     TEXT NOT NULL,     -- self-healed pauses (reported, not wedges)
                     summary         TEXT NOT NULL,     -- the human-readable message body
@@ -480,11 +483,39 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 # rows and pre-existing rows — byte-identical legacy behavior.
                 "ALTER TABLE tasks ADD COLUMN base_branch TEXT",
                 "ALTER TABLE tasks ADD COLUMN target_branch TEXT",
+                # Idle cycle flag (2026-08-07) — 1 iff the loop did no work in
+                # the window (off/held/all-cancelled): excluded from the
+                # clean-cycle rate so empty nights of an OFF devclaw don't drift
+                # it toward a meaningless 100%. Defaulted 0 so pre-existing rows
+                # read as non-idle (their `clean` value is unchanged).
+                "ALTER TABLE cycle_reports ADD COLUMN idle INTEGER NOT NULL DEFAULT 0",
             ):
                 try:
                     self._db.execute(sql)
                 except sqlite3.OperationalError:
                     pass  # column already exists
+
+            # (2b) One-time backfill of the `idle` flag onto cycle_reports rows
+            # written before the column existed (2026-08-07). Pre-existing rows
+            # default idle=0, so the empty nights of an OFF devclaw already logged
+            # would keep counting as "clean" until they scroll out of the 30-row
+            # window — leaving the drifted rate wrong NOW, not just going forward.
+            # A row is retro-idle iff it recorded NO work: clean, no wedges, no
+            # self-healed pauses, no needs-operator surfacing, and the summary's
+            # "settled 0: 0 done, 0 failed" tail (the only settle-count signal the
+            # row carries). Naturally idempotent — the `idle = 0` guard means a
+            # second open touches nothing; safe because it only ever flips an
+            # empty-clean row, never a row with real work/wedges/pauses.
+            try:
+                self._db.execute(
+                    "UPDATE cycle_reports SET idle = 1 "
+                    "WHERE idle = 0 AND clean = 1 "
+                    "AND wedges_json = '[]' AND pauses_json = '[]' "
+                    "AND summary LIKE '%settled 0: 0 done, 0 failed%' "
+                    "AND summary NOT LIKE '%needs operator%'"
+                )
+            except sqlite3.OperationalError:
+                pass  # table/column not present yet (fresh DB pre-CREATE) — nothing to backfill
 
             # (3) Indexes — safe now that all referenced columns exist.
             self._db.executescript(
@@ -923,6 +954,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         pauses_json: str,
         summary: str,
         sent_at: Optional[int] = None,
+        idle: bool = False,
     ) -> bool:
         """Persist ONE cycle-window report (the layer-2 heartbeat calls this —
         single-writer: cycle_reports is only ever written here). Idempotent on
@@ -930,13 +962,15 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         the same cycle is a no-op, so a racing/duplicate window-close edge can't
         double-report. Returns True iff a NEW row was inserted. ``sent_at`` NULL
         means the notifier didn't confirm the push (unconfigured / failed) — a
-        log-only report, never an error."""
+        log-only report, never an error. ``idle`` True means the loop did no work
+        this cycle (off/held/all-cancelled) — the row is excluded from the
+        clean-cycle rate; defaulted False so older callers stay byte-identical."""
         with self._lock:
             cur = self._db.execute(
                 "INSERT OR IGNORE INTO cycle_reports "
                 "(cycle_key, window_start_ms, window_end_ms, clean, "
-                " wedges_json, pauses_json, summary, sent_at, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " wedges_json, pauses_json, summary, sent_at, created_at, idle) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     cycle_key,
                     window_start_ms,
@@ -947,6 +981,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                     summary,
                     sent_at,
                     _now_ms(),
+                    1 if idle else 0,
                 ),
             )
             self._commit()
@@ -955,7 +990,8 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
     def list_cycle_reports(self, *, limit: int = 30) -> list[dict]:
         """Recent cycle_reports rows, newest window first — the read surface the
         console Evals tab (PR3) projects the clean-cycle headline + history from.
-        Plain dicts, pure SELECT."""
+        Plain dicts, pure SELECT. Rows carry ``idle`` (1 = no work that cycle);
+        readers exclude idle rows from the clean-cycle rate."""
         with self._lock:
             rows = self._db.execute(
                 "SELECT * FROM cycle_reports "

@@ -7,7 +7,8 @@ from rows devclaw already writes (``eval_outcomes``, the ``problems`` catalog)
 and pushes a human-readable report through the existing notifier. It answers the
 operator's real done-criterion: "kick off a goal for the cycle and it runs
 without me." A cycle is **clean** iff **zero mechanism-wedges** fired in the
-window.
+window — *and only counts at all if the loop actually ran that cycle* (see
+**idle** below).
 
 Clean-cycle boundary (LOCKED, ADR 0006 §5-O1):
 
@@ -22,6 +23,18 @@ Clean-cycle boundary (LOCKED, ADR 0006 §5-O1):
   wedge). A gate *verdict* (review requested changes, verify/test-integrity/
   browser gate failed closed on genuinely bad code) is the gate doing its job —
   a quality signal, not a mechanism wedge.
+- **idle** (counts as NEITHER clean nor wedged) = a cycle in which the loop did
+  no work at all: zero tasks settled AND zero wedges AND zero self-healed pauses
+  AND zero needs-operator surfacings. This is what an *off* devclaw looks like —
+  the instance paused/held or every goal cancelled for the window, so the
+  heartbeat still fires the mechanical report but finds an empty slice. An idle
+  cycle has nothing to be "clean" about (the done-criterion is vacuous when
+  there was no goal to run), so it is EXCLUDED from the clean-cycle rate rather
+  than silently counted as a success. Without this, an off week of empty nights
+  drifts the rate upward toward a meaningless 100%. Conservative by design: a
+  cycle where a goal genuinely worked but nothing *settled* before the window
+  closed reads as idle and is dropped — that only ever under-counts, never
+  inflates.
 
 Everything here is arithmetic over existing rows: no LLM call, no subprocess.
 The window math is pure functions over primitives so it is unit-testable without
@@ -130,12 +143,16 @@ def most_recent_closed_window(
 @dataclass
 class CycleReport:
     """The assembled cycle slice — the shape :meth:`GoalService._maybe_emit_cycle_report`
-    persists + pushes. ``clean`` is 1 iff ``wedges`` is empty."""
+    persists + pushes. ``clean`` is 1 iff ``wedges`` is empty; ``idle`` is 1 iff
+    the loop did no work in the window (excluded from the clean-cycle rate)."""
 
     cycle_key: str
     window_start_ms: int
     window_end_ms: int
     clean: bool
+    #: no work happened this cycle (off/held/all-cancelled) — neither clean nor
+    #: wedged; excluded from the clean-cycle rate so empty nights don't drift it.
+    idle: bool = False
     wedges: list[dict] = field(default_factory=list)   # [{class, detail, ref}]
     pauses: list[dict] = field(default_factory=list)   # [{class, detail, ref}]
     needs_operator: list[dict] = field(default_factory=list)  # genuine needs_answer (clean)
@@ -215,11 +232,19 @@ def assemble_cycle_report(
         # else: task_fail / other → a genuine outcome, not a mechanism wedge.
 
     clean = len(wedges) == 0
+    # Idle = the loop did NOTHING this cycle: nothing settled, and none of the
+    # three mechanism signals (wedge / self-healed pause / needs-operator) fired.
+    # That is an OFF devclaw — the report still fires mechanically, but there is
+    # no run to call clean, so it's excluded from the rate (see module docstring).
+    idle = (
+        settled == 0 and not wedges and not pauses and not needs_operator
+    )
     report = CycleReport(
         cycle_key=cycle_key,
         window_start_ms=window_start_ms,
         window_end_ms=window_end_ms,
         clean=clean,
+        idle=idle,
         wedges=wedges,
         pauses=pauses,
         needs_operator=needs_operator,
@@ -234,7 +259,12 @@ def assemble_cycle_report(
 def render_summary(r: CycleReport) -> str:
     """The human-readable message body — the notifier payload + the persisted
     ``summary`` column. Concise, Telegram-friendly."""
-    head = "✅ CLEAN — no mechanism-wedges." if r.clean else f"⚠️ {len(r.wedges)} wedge(s):"
+    if r.idle:
+        head = "💤 IDLE — no runs this cycle (excluded from the clean-cycle rate)."
+    elif r.clean:
+        head = "✅ CLEAN — no mechanism-wedges."
+    else:
+        head = f"⚠️ {len(r.wedges)} wedge(s):"
     lines = [
         f"🔁 Cycle report {r.cycle_key} ({CYCLE_WINDOW_START}–{CYCLE_WINDOW_END} {CYCLE_WINDOW_TZ})",
         head,

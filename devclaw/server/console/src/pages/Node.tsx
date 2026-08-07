@@ -85,16 +85,29 @@ export function Node() {
           <section style={{ marginBottom: 30 }}>
             <SectionLabel>Clean-cycle rate</SectionLabel>
             <div className="card" style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 10 }}>
-              {v.cleanCycle.clean === null ? (
+              {v.cleanCycle.clean === null && v.cleanCycle.recent.total === 0 && !v.cleanCycle.idle ? (
                 <span className="secondary">No cycle reports yet.</span>
               ) : (
                 <>
-                  <StatusDot color={v.cleanCycle.clean ? "var(--green)" : "var(--amber)"} />
+                  <StatusDot
+                    color={
+                      v.cleanCycle.idle
+                        ? "var(--text-muted)"
+                        : v.cleanCycle.clean
+                          ? "var(--green)"
+                          : "var(--amber)"
+                    }
+                  />
                   <span style={{ fontSize: 14, fontWeight: 600 }}>
-                    Last window {v.cleanCycle.clean ? "clean" : "wedged"}
+                    {v.cleanCycle.idle
+                      ? "Last window idle — no runs"
+                      : `Last window ${v.cleanCycle.clean ? "clean" : "wedged"}`}
                   </span>
                   <span className="secondary" style={{ fontSize: 12.5 }}>
-                    {v.cleanCycle.recent.clean}/{v.cleanCycle.recent.total} recent windows clean
+                    {v.cleanCycle.recent.total > 0
+                      ? `${v.cleanCycle.recent.clean}/${v.cleanCycle.recent.total} recent windows clean`
+                      : "no runs to grade yet"}
+                    {v.cleanCycle.recent.idle > 0 && ` · ${v.cleanCycle.recent.idle} idle`}
                   </span>
                   {v.cleanCycle.lastWindowEndMs && (
                     <span className="mono muted" style={{ marginLeft: "auto", fontSize: 11 }}>

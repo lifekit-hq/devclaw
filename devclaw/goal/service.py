@@ -462,6 +462,7 @@ class GoalService:
             window_start_ms=start_ms,
             window_end_ms=end_ms,
             clean=report.clean,
+            idle=report.idle,
             wedges_json=json.dumps(report.wedges),
             pauses_json=json.dumps(report.pauses),
             summary=report.summary,
