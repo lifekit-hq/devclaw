@@ -1,0 +1,133 @@
+"""The compounding scorecard (experiment P1-C): store + analysis + one graded
+night. Locks the trajectory reading the whole experiment turns on — monotonic
+progress vs churn (green→red) vs plateau — off the box, with scripted vectors.
+"""
+
+from __future__ import annotations
+
+from evals.compounding import (
+    NightRecord,
+    analyze,
+    append_night,
+    load_history,
+    render_report,
+    run_night,
+)
+from evals.ledger_checklist.checklist import Check, CheckCtx, CheckResult
+
+
+def _vec(green: set[str], total: int = 3) -> dict[str, bool]:
+    return {f"c{i}": (f"c{i}" in green) for i in range(1, total + 1)}
+
+
+def _night(n: int, green: set[str], total: int = 3, tokens: int | None = None) -> NightRecord:
+    return NightRecord(night=n, ts_ms=1000 + n, repo_ref=f"sha{n}", vector=_vec(green, total), tokens=tokens)
+
+
+def _ctx() -> CheckCtx:
+    return CheckCtx(repo="/x", sh=lambda *a, **k: None, api=lambda *a, **k: None)
+
+
+# --- store ------------------------------------------------------------------
+
+def test_store_round_trips_in_night_order(tmp_path):
+    p = tmp_path / "run.jsonl"
+    append_night(p, _night(2, {"c1"}))
+    append_night(p, _night(1, {"c1"}))  # appended out of order
+    hist = load_history(p)
+    assert [r.night for r in hist] == [1, 2]  # sorted by night
+    assert hist[0].vector == {"c1": True, "c2": False, "c3": False}
+
+
+def test_load_history_missing_file_is_empty(tmp_path):
+    assert load_history(tmp_path / "nope.jsonl") == []
+
+
+# --- analysis ---------------------------------------------------------------
+
+def test_empty_history_is_no_data():
+    r = analyze([])
+    assert r.verdict == "no-data"
+    assert r.nights == 0
+
+
+def test_single_night_is_started_with_its_greens_as_new():
+    r = analyze([_night(1, {"c1", "c2"})])
+    assert r.verdict == "started"
+    assert r.new_green == ["c1", "c2"]
+    assert r.churned == []
+    assert r.monotonic is True
+    assert r.latest_green == 2 and r.total_criteria == 3
+
+
+def test_added_green_reads_as_compounding():
+    hist = [_night(1, {"c1"}), _night(2, {"c1", "c2"})]
+    r = analyze(hist)
+    assert r.verdict == "compounding"
+    assert r.new_green == ["c2"]
+    assert r.churned == []
+    assert r.monotonic is True
+
+
+def test_green_going_red_is_churn_and_breaks_monotonic():
+    hist = [_night(1, {"c1", "c2"}), _night(2, {"c1"})]
+    r = analyze(hist)
+    assert r.verdict == "churn"
+    assert r.churned == ["c2"]
+    assert r.monotonic is False
+
+
+def test_flat_green_for_k_working_nights_is_plateau():
+    hist = [_night(1, {"c1"}), _night(2, {"c1"}), _night(3, {"c1"})]
+    r = analyze(hist)
+    assert r.plateau_nights == 2  # nights 2 and 3 added nothing
+    assert r.verdict == "plateau"
+    assert r.monotonic is True  # flat is non-decreasing — plateau, not churn
+
+
+def test_all_green_is_closed():
+    hist = [_night(1, {"c1", "c2"}), _night(2, {"c1", "c2", "c3"})]
+    r = analyze(hist)
+    assert r.reached_all_green is True
+    assert r.verdict == "closed"
+
+
+def test_idle_night_does_not_count_toward_plateau():
+    # Night 2 did no work (tokens=0) — it must not be read as a plateau night.
+    hist = [_night(1, {"c1"}), _night(2, {"c1"}, tokens=0), _night(3, {"c1", "c2"})]
+    r = analyze(hist)
+    assert r.verdict == "compounding"  # night 3 added c2; the idle night is skipped
+    assert r.plateau_nights == 0
+
+
+# --- one graded night -------------------------------------------------------
+
+def test_run_night_wraps_checklist_into_a_record():
+    checks = [
+        Check("c1", "a", lambda ctx: CheckResult(True, "green")),
+        Check("c2", "b", lambda ctx: CheckResult(False, "red")),
+    ]
+    rec = run_night(_ctx(), night=4, repo_ref="deadbeef", checks=checks, tokens=1234, ts_ms=999)
+    assert rec.night == 4 and rec.repo_ref == "deadbeef" and rec.ts_ms == 999
+    assert rec.tokens == 1234
+    assert rec.vector == {"c1": True, "c2": False}
+    assert rec.green_count() == 1
+
+
+def test_run_night_fails_closed_on_a_crashing_probe():
+    def _boom(ctx):
+        raise RuntimeError("no toolchain")
+
+    checks = [Check("c1", "x", _boom)]
+    rec = run_night(_ctx(), night=1, repo_ref="h", checks=checks, ts_ms=1)
+    assert rec.vector == {"c1": False}  # crash → red, never a phantom green
+
+
+# --- report -----------------------------------------------------------------
+
+def test_render_report_smoke():
+    hist = [_night(1, {"c1"}), _night(2, {"c1", "c2"})]
+    out = render_report(analyze(hist), hist)
+    assert "COMPOUNDING" in out
+    assert "| night |" in out
+    assert "c2" in out
