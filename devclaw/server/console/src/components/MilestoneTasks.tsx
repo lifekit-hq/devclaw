@@ -1,15 +1,15 @@
-import { useState } from "react";
-import type { TaskRow } from "../api";
+import { Link } from "react-router-dom";
+import { tokenQueryString, type TaskRow } from "../api";
 import { KIND_LABEL, taskStatusColor } from "../status";
 import { relativeTime } from "../util/time";
-import { IconExternal } from "../icons";
 import { EmptyState, StatusDot, TieredDisclosure } from "../ui";
 
 // MilestoneTasks — the MILESTONE tier of the spine (ADR 0008 P1, PR-D). A
 // milestone is a *view*: a goal's tasks grouped by their plan_key (§5.1, no new
 // entity). Active milestones (any pending/running task) render in full; fully
 // settled ones fold — the spine's active-shown/settled-folded rule at this tier.
-// Each task row drills in (click to expand its details + PR link).
+// Each task row is a drill-in ROUTE (console-legibility P1-A): click it → its
+// own task page (worker Execution trace + PR/status, live or frozen).
 
 const ACTIVE = new Set(["pending", "running"]);
 
@@ -79,55 +79,37 @@ function MilestoneBlock({ m }: { m: Milestone }) {
 }
 
 function TaskLine({ t }: { t: TaskRow }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ borderBottom: "1px solid var(--border)" }}>
-      <div
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "110px 110px minmax(0,1fr) 90px",
-          gap: 12,
-          alignItems: "center",
-          padding: "10px 16px",
-          cursor: "pointer",
-        }}
-      >
-        <span className="mono secondary" style={{ fontSize: 12 }}>{KIND_LABEL[t.kind] ?? t.kind}</span>
-        <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5 }}>
-          <StatusDot color={taskStatusColor(t.status)} live={t.status === "running"} />
-          {t.status}
-        </span>
-        <span className="mono truncate muted" style={{ fontSize: 11.5 }} title={t.id}>{t.id}</span>
-        <span className="mono secondary" style={{ textAlign: "right", fontSize: 12 }}>{relativeTime(t.createdAt)}</span>
-      </div>
-      {open && (
-        <div style={{ padding: "4px 16px 12px", display: "flex", flexDirection: "column", gap: 5 }}>
-          <Detail label="Task id" value={t.id} mono />
-          <Detail label="Workspace" value={t.workspaceDir} mono />
-          {t.milestone && <Detail label="Milestone" value={t.milestone} />}
-          {t.planKey && <Detail label="Plan key" value={t.planKey} mono />}
-          <Detail label="Created" value={relativeTime(t.createdAt)} />
-          {t.completedAt && <Detail label="Completed" value={relativeTime(t.completedAt)} />}
-          {t.prUrl && (
-            <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-              <span className="eyebrow" style={{ minWidth: 84 }}>PR</span>
-              <a href={t.prUrl} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                {t.prUrl.replace("https://github.com/", "")} <IconExternal size={12} />
-              </a>
-            </div>
-          )}
-        </div>
-      )}
+  const qs = tokenQueryString();
+  const row = (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "110px 110px minmax(0,1fr) 90px",
+        gap: 12,
+        alignItems: "center",
+        padding: "10px 16px",
+      }}
+    >
+      <span className="mono secondary" style={{ fontSize: 12 }}>{KIND_LABEL[t.kind] ?? t.kind}</span>
+      <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5 }}>
+        <StatusDot color={taskStatusColor(t.status)} live={t.status === "running"} />
+        {t.status}
+      </span>
+      <span className="mono truncate muted" style={{ fontSize: 11.5 }} title={t.id}>{t.id}</span>
+      <span className="mono secondary" style={{ textAlign: "right", fontSize: 12 }}>{relativeTime(t.createdAt)}</span>
     </div>
   );
-}
-
-function Detail({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  // A standalone task with no parent goal has no goal-scoped route — render it
+  // as a plain (non-navigating) row rather than a dead link.
+  if (!t.parentGoalId) return <div style={{ borderBottom: "1px solid var(--border)" }}>{row}</div>;
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-      <span className="eyebrow" style={{ minWidth: 84 }}>{label}</span>
-      <span className={mono ? "mono secondary truncate" : "secondary truncate"} style={{ fontSize: 12.5 }} title={value}>{value}</span>
-    </div>
+    <Link
+      to={`/goals/${t.parentGoalId}/tasks/${t.id}${qs}`}
+      className="rowlink"
+      style={{ display: "block", borderBottom: "1px solid var(--border)", color: "inherit", textDecoration: "none" }}
+      title="Open this task's execution trace"
+    >
+      {row}
+    </Link>
   );
 }

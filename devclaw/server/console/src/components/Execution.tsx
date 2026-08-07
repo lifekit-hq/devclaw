@@ -96,7 +96,11 @@ export function Execution({ tasks }: { tasks: TaskRow[] }) {
   );
 }
 
-function TaskTrace({ taskId }: { taskId: string }) {
+// TaskTrace — the worker turn list for ONE task. Exported so the task drill-in
+// route (TaskDetail) renders the exact same view the Execution tab does. When
+// ``live`` (the task is still running) it silently re-fetches every few seconds
+// so the trace grows in place — no Loading flash, unlike a taskId change.
+export function TaskTrace({ taskId, live }: { taskId: string; live?: boolean }) {
   const [rows, setRows] = useState<WorkerEventRow[] | null>(null);
   const [more, setMore] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -118,6 +122,24 @@ function TaskTrace({ taskId }: { taskId: string }) {
       alive = false;
     };
   }, [taskId]);
+
+  useEffect(() => {
+    if (!live) return;
+    let alive = true;
+    const poll = setInterval(() => {
+      fetchTaskEvents(taskId)
+        .then((r) => {
+          if (!alive) return;
+          setRows(r.events);
+          setMore(r.nextCursor != null);
+        })
+        .catch(() => {}); // a transient poll failure keeps the last good trace
+    }, 4000);
+    return () => {
+      alive = false;
+      clearInterval(poll);
+    };
+  }, [taskId, live]);
 
   if (err) return <ErrorNote>{err}</ErrorNote>;
   if (!rows) return <Loading />;
