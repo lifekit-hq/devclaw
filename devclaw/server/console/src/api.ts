@@ -321,9 +321,11 @@ export interface NodeVitals {
   dispatch: ControlState;
   goals: { total: number; running: number; needsYou: number; done: number; cancelled: number };
   cleanCycle: {
-    clean: boolean | null;
+    clean: boolean | null; // null when the latest window is idle (nothing to grade)
+    idle: boolean; // the latest window did no work (off/held/all-cancelled)
     lastWindowEndMs: number | null;
-    recent: { clean: number; total: number };
+    // `total` counts only scored (non-idle) windows; `idle` is surfaced separately
+    recent: { clean: number; total: number; idle: number };
   };
   runningTasks: number;
   layers: NodeLayer[];
@@ -733,6 +735,7 @@ export interface CycleReport {
   window_start_ms: number;
   window_end_ms: number;
   clean: number; // 1 iff zero mechanism-wedges
+  idle: number; // 1 iff the loop did no work this cycle (excluded from the clean-cycle rate)
   wedges_json: string;
   pauses_json: string;
   summary: string;

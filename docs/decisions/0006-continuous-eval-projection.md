@@ -52,7 +52,15 @@ views are projections") applied to metrics.
    cognition-timeout-treated-as-terminal, engine/gate crash classes; clean =
    a genuine `needs_answer` (human-gated is the design) and a **self-healed
    quota/auth pause** (the pause machinery working unattended IS the
-   mechanism working — listed in the report, never failing the cycle).
+   mechanism working — listed in the report, never failing the cycle). An
+   **idle** cycle — the loop did no work at all (zero settled tasks, zero
+   wedges, zero pauses, zero needs-operator: an *off* devclaw, held or
+   all-cancelled for the window) — is NEITHER clean nor wedged and is
+   **excluded from the clean-cycle rate** (amended 2026-08-07). Without this
+   an off week of empty nights, over which the heartbeat still fires the
+   mechanical report, drifts the rate toward a meaningless 100%. Conservative:
+   a cycle where a goal worked but nothing settled before close reads as idle
+   and is dropped — under-counting, never inflating.
 3. **A mechanical window-close push report.** When the run cycle
    closes, the *scheduled-edge owner* (today: the heartbeat) assembles the
    cycle's slice — clean?, wedge list with classes, self-healed pauses, what

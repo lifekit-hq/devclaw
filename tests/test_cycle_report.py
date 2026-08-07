@@ -190,6 +190,113 @@ def test_cycle_report_ignores_rows_outside_the_window():
     r = assemble_cycle_report(store, nd, s, e)
     assert r.clean is True
     assert r.settled == 0 and r.wedges == []
+    # Nothing in-window ⇒ the loop did no work ⇒ idle (excluded from the rate).
+    assert r.idle is True
+
+
+# ---- idle boundary: an OFF devclaw must not count as a clean cycle ----------
+
+
+def test_cycle_report_empty_window_is_idle_not_a_clean_success():
+    # The drift bug: devclaw turned OFF for a week. The heartbeat still fires the
+    # mechanical report each cycle, finds an empty slice (no settles, no wedges,
+    # no pauses, no blocks) — that is IDLE, not a clean run, and must be excluded
+    # from the clean-cycle rate so empty nights don't drift it toward 100%.
+    nd, s, e, _mid = _window()
+    r = assemble_cycle_report(_FakeStore(), nd, s, e)
+    assert r.idle is True
+    assert r.settled == 0 and r.wedges == [] and r.pauses == [] and r.needs_operator == []
+    assert "IDLE" in r.summary and "excluded" in r.summary
+
+
+def test_cycle_report_settled_work_is_not_idle():
+    # A cycle where a task actually settled is a real run — never idle.
+    nd, s, e, mid = _window()
+    store = _FakeStore(outcomes=[
+        {"status": "done", "settled_at": mid, "failure_class": None, "task_id": "t1"},
+    ])
+    r = assemble_cycle_report(store, nd, s, e)
+    assert r.idle is False and r.clean is True
+
+
+def test_cycle_report_needs_answer_only_is_not_idle():
+    # A surfaced needs_answer means the loop RAN and hit a real question — clean,
+    # but NOT idle (there was work), so it stays counted in the clean-cycle rate.
+    nd, s, e, mid = _window()
+    store = _FakeStore(problems=[{
+        "category": "block", "kind": "needs_answer",
+        "sample_message": "which auth provider?",
+        "last_seen_ms": mid, "last_goal_id": "g1", "fingerprint": "block|na|x",
+    }])
+    r = assemble_cycle_report(store, nd, s, e)
+    assert r.idle is False and r.clean is True and len(r.needs_operator) == 1
+
+
+def test_cycle_report_selfhealed_pause_only_is_not_idle():
+    # The pause machinery working unattended IS the loop working — not idle.
+    nd, s, e, mid = _window()
+    store = _FakeStore(problems=[{
+        "category": "limit", "kind": "rate_limit", "sample_message": "paused until 05:00",
+        "last_seen_ms": mid, "fingerprint": "limit|rl|x",
+    }])
+    r = assemble_cycle_report(store, nd, s, e)
+    assert r.idle is False and r.clean is True and len(r.pauses) == 1
+
+
+def test_cycle_report_wedge_is_never_idle():
+    # A wedge means the plumbing broke — the loop was running. Never idle.
+    nd, s, e, mid = _window()
+    store = _FakeStore(outcomes=[
+        {"status": "failed", "settled_at": mid, "failure_class": "engine_error",
+         "error": "boom", "task_id": "t1"},
+    ])
+    r = assemble_cycle_report(store, nd, s, e)
+    assert r.idle is False and r.clean is False
+
+
+def test_store_backfills_idle_flag_onto_legacy_empty_cycle_rows(tmp_path):
+    # A DB written before the `idle` column existed keeps its empty off-week rows
+    # at idle=0, so they'd keep drifting the rate until they scroll out. The
+    # one-time migration backfill flips ONLY the empty-clean rows to idle=1,
+    # never a row with real work / a wedge / a pause / a needs-operator line.
+    path = str(tmp_path / "legacy.db")
+    s = StateStore(path)
+    # Force rows to the pre-migration state (idle=0) with realistic summaries.
+    rows = [
+        # empty off night → should be backfilled idle=1
+        ("off1", 1, "[]", "[]", "🔁 …\n💤 …\nsettled 0: 0 done, 0 failed"),
+        # a real clean run (2 done) → NOT idle
+        ("worked", 1, "[]", "[]", "🔁 …\n✅ CLEAN\nsettled 2: 2 done, 0 failed"),
+        # a wedged night → NOT idle (clean=0)
+        ("wedged", 0, '[{"class":"engine_error"}]', "[]",
+         "🔁 …\n⚠️ 1 wedge\nsettled 1: 0 done, 1 failed"),
+        # needs-answer night: settled 0 but the loop RAN → NOT idle
+        ("asked", 1, "[]", "[]",
+         "🔁 …\n✅ CLEAN\nneeds operator (1):\n  • needs_answer — ?\nsettled 0: 0 done, 0 failed"),
+        # a self-healed pause night: settled 0 but pauses present → NOT idle
+        ("paused", 1, "[]", '[{"class":"rate_limit"}]',
+         "🔁 …\nself-healed pauses (1):\nsettled 0: 0 done, 0 failed"),
+    ]
+    for key, clean, wj, pj, summary in rows:
+        s._db.execute(
+            "INSERT INTO cycle_reports (cycle_key, window_start_ms, window_end_ms, "
+            " clean, wedges_json, pauses_json, summary, created_at, idle) "
+            "VALUES (?, 0, 1000, ?, ?, ?, ?, 0, 0)",
+            (key, clean, wj, pj, summary),
+        )
+    s._commit()
+    s.close()
+
+    # Reopen → the migration runs the idempotent backfill.
+    s2 = StateStore(path)
+    by_key = {r["cycle_key"]: r["idle"] for r in s2.list_cycle_reports(limit=50)}
+    s2.close()
+
+    assert by_key["off1"] == 1          # empty off night → corrected to idle
+    assert by_key["worked"] == 0        # real work → untouched
+    assert by_key["wedged"] == 0        # a wedge → untouched
+    assert by_key["asked"] == 0         # needs-operator → the loop ran, not idle
+    assert by_key["paused"] == 0        # self-healed pause → the loop ran, not idle
 
 
 # ---- the heartbeat edge (integration over a real store) --------------------
@@ -382,6 +489,27 @@ async def test_cycle_report_selfhealed_pause_keeps_night_clean_over_real_store(
     assert row["clean"] == 1
     assert "quota" in row["pauses_json"]
     assert row["wedges_json"] == "[]"
+
+
+@pytest.mark.asyncio
+async def test_cycle_report_empty_cycle_persists_idle_flag_over_real_store(
+    tmp_path, db, monkeypatch
+):
+    # End-to-end: an off cycle (no eval_outcomes, no problems in-window) emits a
+    # report persisted with idle=1 — the row a rate reader excludes.
+    fixed_now = _ms(datetime(2026, 7, 22, 10, 0, tzinfo=_UTC))
+    monkeypatch.setattr("devclaw.goal.service._now_ms", lambda: fixed_now)
+    nd, _s, _e = most_recent_closed_window(fixed_now)
+
+    notifier = RecordingNotifier()
+    svc, planner, evaluator = _svc(tmp_path, db, notifier)
+
+    emitted = await svc._maybe_emit_cycle_report()
+    assert emitted == nd
+    assert planner.calls == 0 and evaluator.calls == 0  # zero-token edge
+    (row,) = db.list_cycle_reports()
+    assert row["idle"] == 1
+    assert "IDLE" in notifier.sent[0]
 
 
 @pytest.mark.asyncio
