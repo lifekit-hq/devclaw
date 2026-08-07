@@ -78,11 +78,63 @@ def _one_line(text: str, limit: int = 200) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
+def _acp_content_text(content: Any) -> str:
+    """Human-readable text out of an ACP tool-call ``content`` block — a list of
+    ``{"content": {"text": ...}}`` (or ``{"text": ...}``) items the ACP worker
+    emits as a tool's OUTPUT. Best-effort: unknown shapes contribute nothing
+    rather than raising (the raw payload is always preserved on ``raw``)."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        inner = item.get("content")
+        if isinstance(inner, dict):
+            txt = inner.get("text")
+        elif isinstance(inner, str):
+            txt = inner
+        else:
+            txt = item.get("text")
+        if isinstance(txt, str) and txt.strip():
+            parts.append(txt)
+    return "\n".join(parts)
+
+
 def _classify(etype: str, source: str, payload: dict) -> tuple[str, str, str]:
     """(kind, title, detail) for one event. ``kind`` is one of message / action /
     observation / error / other — the execution-level taxonomy, not the mock's
     cognition/subprocess/dispatch buckets."""
     t = (etype or "").lower()
+    # ACP tool call — the dominant worker event on the ACP path (Claude Code).
+    # Its type ("ACPToolCallEvent") contains none of the words below, so without
+    # this branch it fell through to "other" and dumped raw JSON. The payload
+    # already carries a human ``title`` ("Read Program.cs") and the tool OUTPUT
+    # under ``content`` — pull both out so the Execution trace reads like an
+    # engineer's turn, not a JSON blob.
+    if "toolcall" in t or (isinstance(payload, dict) and payload.get("tool_call_id")):
+        tool_title = _first_str(payload, ("title", "tool_name", "tool", "name")) or "tool call"
+        out = _acp_content_text(payload.get("content"))
+        args = payload.get("raw_input")
+        # Output first so the one-line summary previews the RESULT (a file's text,
+        # a command's stdout); the input args follow in the expanded detail.
+        parts: list[str] = []
+        if out:
+            parts.append(out)
+        if isinstance(args, dict) and args:
+            parts.append("input:\n" + _pretty(args))
+        elif isinstance(args, str) and args.strip():
+            parts.append("input: " + args)
+        # A just-initiated (pending) call has no output/args yet — the human
+        # ``title`` already carries it, so leave detail empty rather than dumping
+        # raw JSON. The full payload is always on ``raw`` (the never-hide guarantee).
+        detail = "\n\n".join(parts)
+        kind = "error" if payload.get("is_error") else "action"
+        return kind, tool_title, detail
+    if "systemprompt" in t:
+        return "other", "system prompt", _first_str(payload, ("system_prompt", "content", "text", "prompt")) or _pretty(payload)
     if "message" in t:
         who = source or "agent"
         return "message", f"{who} message", _message_text(payload) or _pretty(payload)
