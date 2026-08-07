@@ -234,9 +234,17 @@ answers "click the task and trace it, running or finished."
   ref then the working-tree file — so an *in-flight* plan shows, not only a merged
   one. Read-only, human-initiated (off the tick path → no zero-token concern),
   never mutates goal state. Backend `_read_plan_md` + `GET /goals/{id}/plan.json`;
-  frontend `Plan.tsx` (dependency-free markdown render). NOTE: the plan is shown;
-  *painting live execution onto the plan* (the task cursor moving down it) is the
-  natural next increment, unsized.
+  frontend `Plan.tsx` (dependency-free markdown render).
+- **P1-C — SHIPPED 2026-08-07 (this PR): plan-as-spine landing.** The **Plan** tab
+  becomes the goal's default/landing tab (was Timeline), and renders the plan as a
+  spine top-to-bottom: PLAN.md, then an **"Execution — tasks against this plan"**
+  section with the live milestone/task stream beneath it, each task row drilling
+  into its own execution trace (P1-A route). So clicking a goal lands on
+  *here's the plan → here's what's executing against it → click any task* — the
+  top-down view Denys described. Reuses `Plan` + `MilestoneTasks`, no new backend.
+  NOTE: still an *achievable* spine (plan-then-live-tasks), NOT per-bullet linkage
+  (PLAN.md is freeform markdown with no structured task↔bullet link) — that finer
+  mapping stays unsized/unbuilt.
 - **P4 (NEW — named, direction LOCKED, shape `[OPEN]`): stream-tab consolidation.**
   The Activity/Trace/Cognition collapse into one altitude-tagged feed. Direction is
   locked (kill the sprawl); the *shape* is not — resolve these at its clarify step

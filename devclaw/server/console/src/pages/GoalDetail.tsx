@@ -37,13 +37,15 @@ export function GoalDetail() {
   const [data, setData] = useState<GD | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Tab lives in ?tab= so a view is deep-linkable and shareable (a browser
-  // reload or a pasted link lands on the same tab). Unknown/absent → timeline.
+  // reload or a pasted link lands on the same tab). Unknown/absent → Plan: the
+  // plan is the spine, so clicking a goal lands on "here's the plan + what's
+  // executing against it," not the phase rail.
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get("tab") ?? "";
-  const tab: Tab = (TAB_IDS as readonly string[]).includes(tabParam) ? (tabParam as Tab) : "timeline";
+  const tab: Tab = (TAB_IDS as readonly string[]).includes(tabParam) ? (tabParam as Tab) : "plan";
   const setTab = (t: Tab) => {
     const next = new URLSearchParams(searchParams);
-    if (t === "timeline") next.delete("tab");
+    if (t === "plan") next.delete("tab");
     else next.set("tab", t);
     setSearchParams(next, { replace: true });
   };
@@ -159,8 +161,8 @@ export function GoalDetail() {
     hasUnknowns && (data?.unknowns ?? []).every((u) => (answers[u.id] ?? "").trim());
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: "timeline", label: "Timeline" },
     { id: "plan", label: "Plan" },
+    { id: "timeline", label: "Timeline" },
     { id: "tasks", label: "Tasks", count: data?.tasks?.length },
     { id: "prs", label: "Pull requests" },
     { id: "activity", label: "Activity" },
@@ -250,7 +252,18 @@ export function GoalDetail() {
 
           <div style={{ paddingTop: 22 }}>
             {tab === "timeline" && <Timeline data={data} />}
-            {tab === "plan" && <Plan goalId={data.id} />}
+            {tab === "plan" && (
+              // The spine: the plan itself, then the live tasks executing against
+              // it, top-to-bottom. Each task row drills into its own execution
+              // trace (the task-route from P1-A).
+              <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                <Plan goalId={data.id} />
+                <div>
+                  <div className="eyebrow" style={{ marginBottom: 10 }}>Execution — tasks against this plan</div>
+                  <MilestoneTasks tasks={data.tasks ?? []} emptyLabel="No tasks dispatched yet — the heartbeat files them here." />
+                </div>
+              </div>
+            )}
             {tab === "tasks" && (
               <MilestoneTasks tasks={data.tasks ?? []} emptyLabel="No tasks dispatched yet — the heartbeat files them here." />
             )}
