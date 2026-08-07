@@ -1316,6 +1316,85 @@ async def goal_prs_json(request: Request) -> Response:
     return JSONResponse({"prs": rows})
 
 
+async def _git_show(workspace_dir: str, ref: str) -> str | None:
+    """`git -C <ws> show <ref>` → the file contents, or None on any failure —
+    reads a file off a ref without checking it out. Best-effort, never raises."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", workspace_dir, "show", ref,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8.0)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return None
+    if proc.returncode != 0:
+        return None
+    text = stdout.decode("utf-8", "replace")
+    return text if text.strip() else None
+
+
+async def _read_plan_md(workspace_dir: str, goal_id: str) -> dict:
+    """The goal's worker-owned PLAN.md, for the console's Plan view. Tries the
+    goal's LIVE delivery branch first (so an in-flight plan shows, not only a
+    merged one), then whatever's checked out, then the working-tree file. A repo
+    with no PLAN.md returns content=None (a goal that hasn't planned yet), never
+    an error."""
+    # The workspace resets to the default branch between actions, so a short,
+    # bounded fetch keeps origin/goal/<id> current for an in-flight goal. Never
+    # let a plan view hang on the network.
+    try:
+        fetch = await asyncio.create_subprocess_exec(
+            "git", "-C", workspace_dir, "fetch", "--quiet", "origin", f"goal/{goal_id}",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(fetch.communicate(), timeout=8.0)
+    except (OSError, asyncio.TimeoutError):
+        pass
+    for source, ref in (
+        ("branch", f"origin/goal/{goal_id}:PLAN.md"),
+        ("branch", f"goal/{goal_id}:PLAN.md"),
+        ("head", "HEAD:PLAN.md"),
+    ):
+        content = await _git_show(workspace_dir, ref)
+        if content:
+            return {"content": content, "source": source, "ref": ref.rsplit(":", 1)[0]}
+    try:
+        path = os.path.join(workspace_dir, "PLAN.md")
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+            if content.strip():
+                return {"content": content, "source": "worktree", "ref": None}
+    except OSError:
+        pass
+    return {"content": None, "source": None, "ref": None}
+
+
+@mcp.custom_route("/goals/{goal_id}/plan.json", methods=["GET"])
+async def goal_plan_json(request: Request) -> Response:
+    """The goal's PLAN.md — the worker-owned durable plan (cognition-demolition:
+    plan-state lives in a file the worker maintains in the repo, not the control
+    plane). Surfaced read-only so the operator can read and evaluate the plan
+    itself. Human-initiated (the Plan tab), so the git read is off the tick path
+    — no zero-token concern. Never mutates goal state."""
+    goal_id = request.path_params["goal_id"]
+    try:
+        g = goals.get_goal(goal_id)
+    except KeyError:
+        return JSONResponse({"error": "not_found", "id": goal_id}, status_code=404)
+    workspace_dir = g.get("workspace_dir") or ""
+    if not workspace_dir or not os.path.isdir(workspace_dir):
+        return JSONResponse({"content": None, "source": None, "ref": None})
+    return JSONResponse(await _read_plan_md(workspace_dir, goal_id))
+
+
 @mcp.custom_route("/prs/merge", methods=["POST"])
 async def pr_merge(request: Request) -> Response:
     """Console-facing merge button. Body: `{"prUrl": "https://github.com/…"}`.

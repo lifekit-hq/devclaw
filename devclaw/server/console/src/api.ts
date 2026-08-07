@@ -204,6 +204,19 @@ export async function fetchGoal(id: string): Promise<GoalDetail> {
   return r.json();
 }
 
+export interface PlanDoc {
+  content: string | null;          // the PLAN.md text, or null if the goal has none yet
+  source: "branch" | "head" | "worktree" | null;
+  ref: string | null;             // the git ref it was read from (e.g. origin/goal/<id>)
+}
+
+export async function fetchGoalPlan(id: string): Promise<PlanDoc> {
+  const r = await fetch(`/goals/${encodeURIComponent(id)}/plan.json${tokenQS()}`);
+  if (r.status === 404) throw new Error(`goal not found: ${id}`);
+  if (!r.ok) throw new Error(`goal plan ${id}: ${r.status}`);
+  return r.json();
+}
+
 export type EventKind = "cognition" | "subprocess" | "dispatch" | "delivery" | "notify";
 export const EVENT_KINDS: EventKind[] = [
   "cognition",

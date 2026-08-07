@@ -218,13 +218,25 @@ drill-in page.* It subsumes the "Execution as a goal tab" mis-filing and directl
 answers "click the task and trace it, running or finished."
 
 **Sizing (amends § Sizing):**
-- **P1-A — SHIPPED 2026-08-07 (this PR): task drill-in as a route.** The existing
+- **P1-A — SHIPPED 2026-08-07 (#479): task drill-in as a route.** The existing
   worker Execution trace now has its own route `/console/goals/:id/tasks/:taskId`
   (`TaskDetail.tsx` reusing the `TaskTrace` component), and the Tasks-tab rows
   navigate to it (`MilestoneTasks` rows are `rowlink`s keyed on `parentGoalId`).
   Live while the task runs (the goal is polled so status/PR flip in place and the
   trace grows without a reload flash), frozen history once it settles. The data +
   render component already existed — this wired them to a URL.
+- **P1-B — SHIPPED 2026-08-07 (this PR): PLAN.md-as-spine.** Surface the goal's
+  worker-owned `PLAN.md` (the durable plan the cognition-demolition moved into a
+  repo file) as a new **Plan** tab on the goal page, so the operator can *read and
+  evaluate the plan itself* — the plan-as-spine Denys described. Clarify resolved:
+  **where the server reads PLAN.md** → the goal's **live delivery branch**
+  (`origin/goal/<id>`, best-effort short fetch), falling back to the checked-out
+  ref then the working-tree file — so an *in-flight* plan shows, not only a merged
+  one. Read-only, human-initiated (off the tick path → no zero-token concern),
+  never mutates goal state. Backend `_read_plan_md` + `GET /goals/{id}/plan.json`;
+  frontend `Plan.tsx` (dependency-free markdown render). NOTE: the plan is shown;
+  *painting live execution onto the plan* (the task cursor moving down it) is the
+  natural next increment, unsized.
 - **P4 (NEW — named, direction LOCKED, shape `[OPEN]`): stream-tab consolidation.**
   The Activity/Trace/Cognition collapse into one altitude-tagged feed. Direction is
   locked (kill the sprawl); the *shape* is not — resolve these at its clarify step
