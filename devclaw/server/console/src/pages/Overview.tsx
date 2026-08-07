@@ -104,7 +104,7 @@ export function Overview() {
                   }}
                 >
                   <StatusDot color={phaseColor(g.phase)} live={phaseIsLive(g.phase)} />
-                  <span className="mono truncate" style={{ flex: 1, fontSize: 13 }}>{g.id}</span>
+                  <span className="truncate" style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{g.objective || g.id}</span>
                   <span className="secondary truncate" style={{ fontSize: 12, maxWidth: 160 }}>{g.projectName}</span>
                   <span className="mono muted" style={{ fontSize: 12 }}>{relativeTime(g.lastUpdateMs)}</span>
                 </div>
@@ -137,14 +137,20 @@ function GoalCard({ g, onOpen, tone }: { g: GoalWithProject; onOpen: () => void;
       onClick={onOpen}
       style={{ padding: "14px 16px", borderLeft: `2px solid ${border}` }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 5 }}>
         <StatusDot color={phaseColor(g.phase)} live={phaseIsLive(g.phase)} />
-        <span className="mono" style={{ fontWeight: 550, fontSize: 13.5 }}>{g.id}</span>
-        <span className="secondary" style={{ fontSize: 12 }}>· {g.projectName}</span>
-        <span className="badge" style={{ marginLeft: "auto" }}>{g.phaseLabel}</span>
+        <span className="truncate" style={{ fontWeight: 600, fontSize: 14, flex: 1 }}>
+          {g.objective || g.id}
+        </span>
+        <span className="badge" style={{ marginLeft: "auto", flexShrink: 0 }}>{g.phaseLabel}</span>
       </div>
-      <div className="secondary truncate" style={{ fontSize: 12.5, paddingLeft: 17 }}>
-        {g.action || "—"}
+      <div
+        className="secondary truncate"
+        style={{ fontSize: 12, paddingLeft: 17, display: "flex", gap: 8, alignItems: "center" }}
+      >
+        <span className="mono muted">{g.id}</span>
+        <span>· {g.projectName}</span>
+        {g.action && g.action !== "—" && <span className="truncate">· {g.action}</span>}
       </div>
     </div>
   );

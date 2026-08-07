@@ -24,6 +24,10 @@ export async function fetchProjects(): Promise<ProjectRow[]> {
 
 export interface GoalRow {
   id: string;
+  /** The durable goal statement — the goal's identity, e.g. "Build a notes API
+   *  with tag filtering". Distinct from `action` (its current motion). "" when
+   *  the goal row couldn't be read. List views render this as the primary label. */
+  objective: string;
   phase: string | null;
   phaseLabel: string;
   action: string;

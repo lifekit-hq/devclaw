@@ -308,6 +308,7 @@ def _goal_row(goal_id: str) -> dict:
     except KeyError:
         return {
             "id": goal_id,
+            "objective": "",
             "phase": None,
             "phaseLabel": "Missing",
             "action": "—",
@@ -316,6 +317,10 @@ def _goal_row(goal_id: str) -> dict:
     phase = g.get("phase")
     return {
         "id": goal_id,
+        # The durable goal statement — a goal's IDENTITY, distinct from `action`
+        # (its current motion). The list views render this as the primary label
+        # so the operator reads "what each goal IS" instead of a wall of IDs.
+        "objective": g.get("objective") or "",
         "phase": phase,
         "phaseLabel": _phase_label(phase),
         "action": _goal_action_label(goal_id),
