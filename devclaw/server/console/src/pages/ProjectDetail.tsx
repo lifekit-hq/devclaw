@@ -42,7 +42,10 @@ export function ProjectDetail() {
         borderBottom: "1px solid var(--border)",
       }}
     >
-      <span className="mono truncate" style={{ fontWeight: 500, fontSize: 13 }}>{g.id}</span>
+      <div style={{ minWidth: 0 }}>
+        <div className="truncate" style={{ fontWeight: 550, fontSize: 13 }}>{g.objective || g.id}</div>
+        <div className="mono muted truncate" style={{ fontSize: 11, marginTop: 2 }}>{g.id}</div>
+      </div>
       <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5 }}>
         <StatusDot color={phaseColor(g.phase)} live={phaseIsLive(g.phase)} />
         {g.phaseLabel}
