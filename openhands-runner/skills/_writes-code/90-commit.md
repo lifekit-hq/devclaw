@@ -1,11 +1,17 @@
 # Commit hygiene
 
-Finally, COMMIT your change yourself with a clean conventional-commit message:
+COMMIT your change yourself with a clean conventional-commit message — it becomes the PR a human reviews:
 
-- Subject line in the form `type(scope): what changed` where type is one of `feat` / `fix` / `refactor` / `test` / `docs` / `chore`. Imperative, ≤ ~70 chars. Describe the CHANGE — not the task you were given.
-- Blank line.
-- Short body explaining WHY and how you verified it.
+- **Subject:** `type(scope): what changed` (`feat`/`fix`/`refactor`/`test`/`docs`/`chore`; imperative, ≤ ~70 chars; the CHANGE, not the task).
+- Blank line, then a 2–4 line body: WHY and how you verified.
+- Resolving a tracked issue? Add `Fixes #<n>` so the PR links and closes it.
 
-Make ONE commit for the whole change (stage everything, including new files).
+```
+fix(feed): stop pagination drift on mid-scroll inserts
 
-Do NOT push and do NOT open a pull request — devclaw delivers your commit as a branch + PR.
+Cursor-encode the last-seen id + timestamp. Verified: dotnet test.
+
+Fixes #42
+```
+
+ONE commit, staging everything. Do NOT push or open a PR — devclaw delivers it as a branch + PR.
