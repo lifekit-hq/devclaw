@@ -34,6 +34,19 @@ _MSG = {"llm_message": {"content": [
 _ACTION = {"thought": "run the test suite to see the baseline",
            "action": {"tool": "execute_bash", "command": "dotnet test"}}
 _OBS = {"content": "Passed!  - Failed: 0, Passed: 20, Skipped: 0"}
+# The ACP path's dominant event (Claude Code): a tool call with a human ``title``,
+# ``raw_input`` args, and the OUTPUT nested under ``content`` — the real shape the
+# runner stores. Matches openhands-runner's ACPToolCallEvent model_dump.
+_ACP_TOOLCALL = {
+    "id": "be733681", "timestamp": "2026-08-07T09:27:00", "source": "agent",
+    "tool_call_id": "toolu_015KC2um", "status": "completed", "is_error": False,
+    "title": "Read src/FieldNotes.Api/Program.cs",
+    "raw_input": {"path": "src/FieldNotes.Api/Program.cs"},
+    "content": [{"type": "content", "content": {
+        "annotations": None, "field_meta": None,
+        "text": "var builder = WebApplication.CreateBuilder(args);"}}],
+    "kind": "ACPToolCallEvent",
+}
 
 
 def _seed_task(store: StateStore, task_id: str = "t1") -> None:
@@ -81,6 +94,42 @@ def test_decode_observation_event_extracts_output():
     row = decode_event(_ev(3, "ObservationEvent", "environment", _OBS))
     assert row["kind"] == "observation"
     assert "Passed: 20" in row["detail"]
+
+
+def test_decode_acp_tool_call_extracts_human_title_and_output_not_raw_json():
+    # Regression: the ACP worker (Claude Code) emits ACPToolCallEvent, whose type
+    # matches none of message/action/observation — it fell through to "other" and
+    # dumped raw JSON into the Execution trace (the console showed rows like
+    # ``ACPToolCallEvent { "content": [ ... ] }``). Now it reads the human ``title``
+    # and the tool OUTPUT out of ``content``.
+    row = decode_event(_ev(1, "ACPToolCallEvent", "agent", _ACP_TOOLCALL))
+    assert row["kind"] == "action"
+    assert row["title"] == "Read src/FieldNotes.Api/Program.cs"   # human, not "ACPToolCallEvent"
+    assert "WebApplication.CreateBuilder" in row["detail"]        # the tool output surfaced
+    assert row["summary"].startswith("var builder")              # summary previews output, not JSON
+    assert "ACPToolCallEvent" not in row["summary"]
+    assert row["raw"] == _ACP_TOOLCALL                            # full payload still preserved
+
+
+def test_decode_acp_tool_call_error_is_kind_error():
+    payload = {**_ACP_TOOLCALL, "is_error": True,
+               "content": [{"content": {"text": "dotnet: command not found"}}]}
+    row = decode_event(_ev(2, "ACPToolCallEvent", "agent", payload))
+    assert row["kind"] == "error"
+    assert "command not found" in row["detail"]
+
+
+def test_decode_acp_pending_tool_call_has_no_raw_json_dump():
+    # A just-initiated call: content null, no args yet (the SDK emits pending →
+    # completed per call). The human title carries it; we must NOT dump raw JSON
+    # into the trace — that was the exact noise the fix removes. raw stays intact.
+    pending = {"tool_call_id": "toolu_x", "title": "Find `**/*.md`",
+               "status": "pending", "content": None, "kind": "ACPToolCallEvent"}
+    row = decode_event(_ev(3, "ACPToolCallEvent", "agent", pending))
+    assert row["kind"] == "action"
+    assert row["title"] == "Find `**/*.md`"
+    assert "{" not in row["detail"]            # no JSON blob leaked into the trace
+    assert row["raw"] == pending               # full payload still preserved
 
 
 def test_decode_unknown_event_falls_back_to_full_dump_never_blank():

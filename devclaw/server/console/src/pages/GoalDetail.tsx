@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { answerGoal, cancelGoal, fetchGoal, resumeGoal, setGoalStrictness, steerGoal, tokenQueryString, type BlockOption, type GoalDetail as GD } from "../api";
 import { EventFeed } from "../components/EventFeed";
 import { GoalRunWindow } from "../components/GoalRunWindow";
@@ -12,7 +12,8 @@ import { IconAlert, IconSteer, IconStop } from "../icons";
 import { phaseColor, VERDICT_LABEL, verdictColor } from "../status";
 import { Badge, ErrorNote, Loading, Modal, StatusDot, Tabs } from "../ui";
 
-type Tab = "timeline" | "tasks" | "prs" | "activity" | "trace" | "cognition" | "execution" | "schedule";
+const TAB_IDS = ["timeline", "tasks", "prs", "activity", "trace", "cognition", "execution", "schedule"] as const;
+type Tab = (typeof TAB_IDS)[number];
 
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -34,7 +35,17 @@ export function GoalDetail() {
   const qs = tokenQueryString();
   const [data, setData] = useState<GD | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("timeline");
+  // Tab lives in ?tab= so a view is deep-linkable and shareable (a browser
+  // reload or a pasted link lands on the same tab). Unknown/absent → timeline.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab") ?? "";
+  const tab: Tab = (TAB_IDS as readonly string[]).includes(tabParam) ? (tabParam as Tab) : "timeline";
+  const setTab = (t: Tab) => {
+    const next = new URLSearchParams(searchParams);
+    if (t === "timeline") next.delete("tab");
+    else next.set("tab", t);
+    setSearchParams(next, { replace: true });
+  };
   const [busy, setBusy] = useState<"cancel" | "steer" | "resume" | "answer" | "strictness" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [steerOpen, setSteerOpen] = useState(false);
@@ -184,7 +195,9 @@ export function GoalDetail() {
                   </Badge>
                 )}
                 {data.dispatchCap > 0 && (
-                  <Badge k="Dispatched">{data.actionsDispatched} / {data.dispatchCap}</Badge>
+                  <Badge k="Dispatched" title={`${data.actionsDispatched} actions dispatched of this goal's ${data.dispatchCap}-action safety cap — NOT the backlog size. The cap is a runaway brake; hitting it blocks for review.`}>
+                    {data.actionsDispatched} / {data.dispatchCap}
+                  </Badge>
                 )}
                 {data.usage && data.usage.totalTokens > 0 && (
                   <Badge k="Usage" title={`cognition ${fmtTokens(data.usage.cognitionTokensIn + data.usage.cognitionTokensOut)} tok · workers ${fmtTokens(data.usage.workerInputTokens + data.usage.workerOutputTokens)} tok over ${data.usage.tasksWithUsage} task${data.usage.tasksWithUsage === 1 ? "" : "s"}`}>
@@ -439,18 +452,27 @@ function Timeline({ data }: { data: GD }) {
         <div style={{ position: "absolute", top: 5, left: 0, right: 0, height: 2, background: "var(--border)" }} />
         <div style={{ position: "absolute", top: 5, left: 0, width: `${pct}%`, height: 2, background: "var(--accent)" }} />
         <div style={{ position: "relative", display: "flex", justifyContent: "space-between" }}>
-          {nodes.map((n) => (
-            <div key={n.name} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 74 }}>
-              <StatusDot
-                color={n.current || n.reached ? "var(--accent)" : "var(--border-strong)"}
-                live={n.current}
-              />
-              <span style={{ fontSize: 11.5, fontWeight: n.current ? 600 : 500, color: n.current ? "var(--text)" : n.reached ? "var(--text-secondary)" : "var(--text-muted)", textAlign: "center" }}>
-                {n.name}
-              </span>
-              <span className="mono muted" style={{ fontSize: 10 }}>{shortTime(n.timestampMs)}</span>
-            </div>
-          ))}
+          {nodes.map((n) => {
+            // "reached" marks every node up to the current one — but a long_lived
+            // goal SKIPS investigating/firming (#473), and a skipped phase has no
+            // phase_history timestamp. reached-without-a-timestamp = skipped: dim
+            // it (not the solid accent of a genuinely-completed phase) so the
+            // timeline never claims a phase ran when it didn't.
+            const skipped = n.reached && !n.current && n.timestampMs == null;
+            const done = n.reached && !n.current && !skipped;
+            const dotColor = n.current || done ? "var(--accent)" : "var(--border-strong)";
+            return (
+              <div key={n.name} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, width: 74 }}>
+                <StatusDot color={dotColor} live={n.current} />
+                <span style={{ fontSize: 11.5, fontWeight: n.current ? 600 : 500, color: n.current ? "var(--text)" : done ? "var(--text-secondary)" : "var(--text-muted)", textAlign: "center" }}>
+                  {n.name}
+                </span>
+                <span className="mono muted" style={{ fontSize: 10 }} title={skipped ? "no phase_history record — skipped or not timed" : undefined}>
+                  {skipped ? "skipped" : shortTime(n.timestampMs)}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
