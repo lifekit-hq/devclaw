@@ -131,7 +131,10 @@ function GoalLine({ g, onOpen }: { g: GoalWithProject; onOpen: (id: string) => v
         cursor: "pointer",
       }}
     >
-      <span className="mono truncate" style={{ fontWeight: 500, fontSize: 12.5 }}>{g.id}</span>
+      <div style={{ minWidth: 0 }}>
+        <div className="truncate" style={{ fontWeight: 500, fontSize: 12.5 }}>{g.objective || g.id}</div>
+        <div className="mono muted truncate" style={{ fontSize: 10.5, marginTop: 1 }}>{g.id}</div>
+      </div>
       <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12 }}>
         <StatusDot color={phaseColor(g.phase)} live={phaseIsLive(g.phase)} />
         {g.phaseLabel}
