@@ -5,6 +5,7 @@ import { EventFeed } from "../components/EventFeed";
 import { GoalRunWindow } from "../components/GoalRunWindow";
 import { PRList } from "../components/PRList";
 import { MilestoneTasks } from "../components/MilestoneTasks";
+import { Plan } from "../components/Plan";
 import { LayerTrace } from "../components/LayerTrace";
 import { Cognition } from "../components/Cognition";
 import { Execution } from "../components/Execution";
@@ -12,7 +13,7 @@ import { IconAlert, IconSteer, IconStop } from "../icons";
 import { phaseColor, VERDICT_LABEL, verdictColor } from "../status";
 import { Badge, ErrorNote, Loading, Modal, StatusDot, Tabs } from "../ui";
 
-const TAB_IDS = ["timeline", "tasks", "prs", "activity", "trace", "cognition", "execution", "schedule"] as const;
+const TAB_IDS = ["timeline", "plan", "tasks", "prs", "activity", "trace", "cognition", "execution", "schedule"] as const;
 type Tab = (typeof TAB_IDS)[number];
 
 function fmtTokens(n: number): string {
@@ -159,6 +160,7 @@ export function GoalDetail() {
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: "timeline", label: "Timeline" },
+    { id: "plan", label: "Plan" },
     { id: "tasks", label: "Tasks", count: data?.tasks?.length },
     { id: "prs", label: "Pull requests" },
     { id: "activity", label: "Activity" },
@@ -248,6 +250,7 @@ export function GoalDetail() {
 
           <div style={{ paddingTop: 22 }}>
             {tab === "timeline" && <Timeline data={data} />}
+            {tab === "plan" && <Plan goalId={data.id} />}
             {tab === "tasks" && (
               <MilestoneTasks tasks={data.tasks ?? []} emptyLabel="No tasks dispatched yet — the heartbeat files them here." />
             )}
