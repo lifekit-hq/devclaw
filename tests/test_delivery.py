@@ -14,11 +14,23 @@ import pytest
 from devclaw import delivery
 from devclaw.delivery import (
     _extract_pr_url,
+    _is_advance_brief,
     _pr_body,
     _pr_title,
+    _resolve_title,
+    _scope_label,
     _scope_suffix,
     _slug,
     deliver_change,
+)
+
+# The thin-advance pull-brief shape (goal/tick.py:_advance_brief) — the generic
+# task ``goal`` on every long_lived tick post-demolition.
+_ADVANCE_BRIEF = (
+    "Advance this goal by one substantive, shippable increment, then stop.\n"
+    "First read PLAN.md (create and maintain it as you go) and the repo to "
+    "decide the next step yourself; implement it end to end and commit, "
+    "PLAN.md included.\n\nGoal: Build a small field notes REST API"
 )
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
@@ -62,6 +74,42 @@ def test_pr_title_is_clean_and_conventional():
     assert len(longt) <= 72 and longt.endswith("…")
     # no kind → no prefix, still cleaned
     assert _pr_title("just do the thing").startswith("just do the thing")
+
+
+def test_resolve_title_prefers_worker_subject_over_the_advance_brief():
+    # Regression (the two-commit `devclaw/…advance-this-goal` PR): the worker
+    # committed a clean `feat(tags): …`, the task goal is the generic advance
+    # brief. The worker's subject must win — title, branch, and body all describe
+    # WHAT CHANGED, never the plumbing brief.
+    title, branch, changes = _resolve_title(
+        planner_title=None,
+        agent_msg=("feat(tags): add Tags with note assignment", "Adds Tag entity + M2M."),
+        goal=_ADVANCE_BRIEF, kind="implement_feature", task_id="02c2b647aa",
+    )
+    assert title == "feat(tags): add Tags with note assignment"
+    assert branch == "feat/add-tags-with-note-assignment"
+    assert "Advance this goal" not in title and "devclaw/" not in branch
+    assert changes == "Adds Tag entity + M2M."
+
+
+def test_resolve_title_rejects_advance_brief_falls_back_to_objective():
+    # No worker commit at all (pure dirty tree). We must still not render the
+    # brief — fall back to its embedded `Goal:` objective.
+    title, branch, changes = _resolve_title(
+        planner_title=None, agent_msg=None,
+        goal=_ADVANCE_BRIEF, kind="implement_feature", task_id="deadbeef12",
+    )
+    assert "Advance this goal by one substantive" not in title
+    assert title.startswith("feat: Build a small field notes REST API")
+    assert "advance-this-goal" not in branch
+    assert changes is None
+    assert _is_advance_brief(_ADVANCE_BRIEF) and not _is_advance_brief("add a widget")
+
+
+def test_scope_label_from_cc_scope_then_type():
+    assert _scope_label("feat(tags): add tag filtering") == "tags"
+    assert _scope_label("fix: harden the reject path") == "fix"
+    assert _scope_label("not a conventional subject") == ""
 
 
 def test_pr_body_carries_ticket_gate_and_caveat():
@@ -222,6 +270,44 @@ async def test_deliver_uses_the_engineer_commit_for_branch_not_the_goal(tmp_path
         ["git", "ls-remote", "--heads", origin], capture_output=True, text=True
     ).stdout
     assert "feat/add-the-widget-endpoint" in refs and "devclaw/" not in refs
+
+
+async def test_deliver_uses_worker_subject_even_with_a_stray_dirty_file(tmp_path):
+    # The exact compounding-test PR #2 bug: the worker committed its feature with
+    # a clean `feat(tags): …` subject but left ONE stray file uncommitted, and the
+    # task goal is the generic thin-advance brief. The old `not dirty and ahead>0`
+    # guard discarded the worker's subject and dumped the brief onto a
+    # `devclaw/…advance-this-goal` branch. Now the worker's subject wins; the stray
+    # remainder is still committed onto the same branch.
+    origin = str(tmp_path / "origin.git")
+    subprocess.run(["git", "init", "--bare", "-q", origin], check=True)
+    repo = str(tmp_path / "repo")
+    subprocess.run(["git", "clone", "-q", origin, repo], check=True)
+    _git(repo, "config", "user.email", "t@t")
+    _git(repo, "config", "user.name", "t")
+    (tmp_path / "repo" / "base.txt").write_text("base\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "base")
+    _git(repo, "push", "-q", "origin", "HEAD")
+    # the agent committed its feature cleanly…
+    (tmp_path / "repo" / "tags.cs").write_text("// tags feature\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(tags): add Tags feature")
+    # …but left a stray uncommitted file (e.g. PLAN.md it forgot to stage)
+    (tmp_path / "repo" / "PLAN.md").write_text("- [x] Feature 2: Tags\n")
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="02c2b647aa",
+        goal=_ADVANCE_BRIEF, kind="implement_feature",
+    )
+
+    assert r["committed"] is True and r["pushed"] is True and r["delivered"] is True
+    assert r["branch"] == "feat/add-tags-feature"
+    refs = subprocess.run(
+        ["git", "ls-remote", "--heads", origin], capture_output=True, text=True
+    ).stdout
+    assert "feat/add-tags-feature" in refs
+    assert "advance-this-goal" not in refs and "devclaw/" not in refs
 
 
 async def test_deliver_goal_branch_mode_does_not_create_per_task_branch(tmp_path):
