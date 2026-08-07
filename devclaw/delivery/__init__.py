@@ -144,6 +144,82 @@ async def _agent_commit_msg(workspace_dir: str, base: str | None) -> tuple[str, 
     return subj.strip(), body.strip()
 
 
+def _is_advance_brief(goal: str) -> bool:
+    """The thin-advance pull-brief (``goal/tick.py:_advance_brief``) is generic
+    plumbing — "Advance this goal by one substantive, shippable increment…" — not
+    a description of any change. Post-demolition it's the task ``goal`` on every
+    long_lived tick, so it must NEVER leak into a PR title."""
+    return goal.strip().startswith("Advance this goal by one substantive")
+
+
+def _objective_from_brief(goal: str) -> str:
+    """Pull the ``Goal: <objective>`` line out of the advance-brief — a usable
+    title basis when the worker committed nothing to derive one from."""
+    for line in goal.splitlines():
+        s = line.strip()
+        if s.startswith("Goal:"):
+            return s[len("Goal:") :].strip()
+    return ""
+
+
+def _resolve_title(
+    *,
+    planner_title: str | None,
+    agent_msg: tuple[str, str] | None,
+    goal: str,
+    kind: str | None,
+    task_id: str,
+) -> tuple[str, str, str | None]:
+    """Choose the PR ``(title, derived_branch, changes)`` from the best available
+    source, in priority order: the planner's explicit title → the ENGINEER's own
+    commit subject (whenever it committed — see the ``ahead > 0`` note at the call
+    site: a stray uncommitted file must not sink the worker-authored subject into
+    the generic brief) → a goal-derived heuristic that NEVER renders the
+    thin-advance brief (falling back to its embedded objective instead)."""
+    planner = (planner_title or "").strip() or None
+    if planner:
+        prefixed = planner if _looks_conventional(planner) else _pr_title(planner, kind)
+        title = _truncate_words(prefixed, 72)
+        branch = f"{_cc_type(title, kind)}/{_slug(_cc_description(title))}"
+        changes = (agent_msg[1] or agent_msg[0]) if agent_msg else None
+        return title, branch, changes
+    if agent_msg:
+        subject, body = agent_msg
+        title = _truncate_words(subject if _looks_conventional(subject) else _pr_title(subject, kind), 72)
+        branch = f"{_cc_type(subject, kind)}/{_slug(_cc_description(subject))}"
+        return title, branch, body or subject
+    # No worker commit to describe the change (dirty tree, nothing committed).
+    # Derive from the goal — but the thin-advance brief is plumbing, not a
+    # description, so fall back to its embedded objective rather than leak it.
+    base_text = goal
+    if _is_advance_brief(goal):
+        base_text = _objective_from_brief(goal) or "advance the goal by one increment"
+    return _pr_title(base_text, kind), f"devclaw/{task_id[:8]}-{_slug(base_text)}", None
+
+
+def _scope_label(title: str) -> str:
+    """A light PR label from the conventional-commit scope (``feat(tags):`` →
+    ``tags``) or, absent a scope, the type (``fix:`` → ``fix``) — so a delivered PR
+    carries an area/kind label the way a human-managed repo does. Empty when the
+    title isn't conventional (no label rather than a junk one)."""
+    m = _CC.match(title.strip())
+    if not m:
+        return ""
+    scope = (m.group(2) or "").strip("()").strip()
+    return _slug(scope or m.group(1), n=30)
+
+
+async def _apply_scope_label(workspace_dir: str, pr_url: str, title: str) -> None:
+    """Best-effort: create-if-missing + attach a scope/kind label to the PR. A
+    label is cosmetic — every step is non-fatal (``_run`` never raises), so a
+    labelling failure can't fail a delivered PR."""
+    label = _scope_label(title)
+    if not label:
+        return
+    await _run("gh", "label", "create", label, "--color", "ededed", "--force", cwd=workspace_dir)
+    await _run("gh", "pr", "edit", pr_url, "--add-label", label, cwd=workspace_dir)
+
+
 def _pr_body(
     goal: str, task_id: str, verify: dict | None, files_stat: str | None,
     *, changes: str | None = None, advisories: list | None = None,
@@ -367,27 +443,16 @@ async def deliver_change(
     # fallback: devclaw commits with a goal-derived conventional title on a
     # devclaw/* branch (so an auto-committed change is visibly distinct from an
     # engineer-authored one).
-    agent_msg = await _agent_commit_msg(workspace_dir, base) if (not dirty and ahead > 0) else None
-    planner_title = (title or "").strip() or None
-    if planner_title:
-        # Planner's explicit title wins over the engineer's commit subject and the
-        # goal-derived heuristic. Prefix the kind (`feat:`/`fix:`) if the planner
-        # omitted the conventional-commit prefix — the branch derivation below
-        # relies on `_cc_type` recovering a type from the subject either way.
-        prefixed = planner_title if _looks_conventional(planner_title) else _pr_title(planner_title, kind)
-        pr_title_derived = _truncate_words(prefixed, 72)
-        derived_branch = f"{_cc_type(pr_title_derived, kind)}/{_slug(_cc_description(pr_title_derived))}"
-        changes = (agent_msg[1] or agent_msg[0]) if agent_msg else None
-        title_slot = pr_title_derived
-    elif agent_msg:
-        subject, body = agent_msg
-        title_slot = _truncate_words(subject if _looks_conventional(subject) else _pr_title(subject, kind), 72)
-        derived_branch = f"{_cc_type(subject, kind)}/{_slug(_cc_description(subject))}"
-        changes = body or subject
-    else:
-        title_slot = _pr_title(goal, kind)
-        derived_branch = f"devclaw/{task_id[:8]}-{_slug(goal)}"
-        changes = None
+    # Resolve the engineer's own commit whenever it committed ANYTHING ahead of
+    # base — NOT only when the tree is pristine. A worker that commits its feature
+    # (`feat(tags): …`) but leaves a stray file uncommitted used to fall through to
+    # the goal-derived title and dump the generic advance-brief (the two-commit
+    # `devclaw/…advance-this-goal` PR bug). The stray remainder is still committed
+    # below; the title comes from the worker's subject.
+    agent_msg = await _agent_commit_msg(workspace_dir, base) if ahead > 0 else None
+    title_slot, derived_branch, changes = _resolve_title(
+        planner_title=title, agent_msg=agent_msg, goal=goal, kind=kind, task_id=task_id,
+    )
     # ``title`` (the function parameter) has now been consumed; ``title_slot`` is
     # the PR-title string the rest of this function uses. Kept as ``title`` in the
     # commit-message path below so we don't churn the message shape.
@@ -479,6 +544,9 @@ async def deliver_change(
         url = _extract_pr_url(out)
         if url:
             result["pr_url"] = url
+            # Light structure: an area/kind label so the PR reads like human-managed
+            # work (best-effort; a labelling hiccup never fails the delivered PR).
+            await _apply_scope_label(workspace_dir, url, title)
         elif rc != 0:
             result["error"] = f"pushed, but gh pr create failed: {out[-300:]}"
 
