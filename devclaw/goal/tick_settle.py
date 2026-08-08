@@ -30,14 +30,17 @@ from .tick_guards import _block_on_lost_ref, _block_on_prep_failure
 from .tick_dispatch import _resolve_discovery
 from .tick_donegate import _resolve_done_gate
 from . import checklist as _checklist
+from . import delivery_strategy as _delivery
 from . import reconcile as _reconcile
 from . import repo_brief as _repo_brief
+from . import slice_guard as _slice_guard
 from .engine import GoalEngine, GoalEngineError
 from .models import Checklist, ChecklistItem, Goal, GoalStatus, InFlight, ItemAssert, PollResult
 from .store import GoalStore
 from .transitions import Event
 from ..loom import trace as _trace
 from ..engine.workspace import WorkspaceError
+from ..quality.gate_policy import Consequence, gate_consequence
 from ..state_store import derive_failure_class
 
 
@@ -749,6 +752,55 @@ async def _resolve_polling_action(
                 summarize=ctx.summary_caller,
             )
             return Outcome.BLOCKED
+
+    # ---- milestone-keyed mega-dump guardrail (SDLC pipeline P2) -------------
+    # A well-sliced nightly increment closes ONE milestone; an increment that
+    # flips >1 PLAN.md ``## Milestones`` checkbox ([ ]→[x]) built ahead into
+    # later milestones instead of shipping one reviewable slice (the "Ledger"
+    # 17k-line-PR class). Detection is a pure git-diff + string parse — ZERO
+    # token and best-effort/fail-OPEN: an absent or garbled PLAN.md ⇒ 0 flips ⇒
+    # never trips (:mod:`slice_guard`). The VERDICT rides the EXISTING strictness
+    # dial (:func:`gate_consequence`, a dial-able "slice" gate): under ``trust``
+    # it ADVISES (loud log, ship anyway — the done-gate + human review are the
+    # backstop), under ``strict`` it BLOCKS the goal for a re-slice. Scoped to a
+    # delivered increment (poll ``done``) whose topology is a goal branch — the
+    # per-action topology has no accumulating PLAN.md to reason about, and this
+    # runs only on the POLLING_ACTION settle path (never idle/blocked), so the
+    # ``FakeClaude.calls == 0`` guards stay green.
+    if (
+        poll.status == "done"
+        and _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
+    ):
+        flips = await asyncio.to_thread(
+            _slice_guard.mega_dump_flips_sync, goal.workspace_dir
+        )
+        if flips > 1:
+            note = (
+                f"slice guardrail: this increment flipped {flips} PLAN.md milestones "
+                f"([ ]→[x]) in one delivery — a coherent increment closes ONE "
+                f"milestone and ships as one reviewable PR, not a build-ahead through "
+                f"later milestones"
+            )
+            if gate_consequence("slice", goal.strictness) is Consequence.BLOCK:
+                reason = (
+                    note + ". Parked for a re-slice (strict mode): steer a smaller "
+                    "next step (one milestone), or set trust to ship-and-advise."
+                )
+                ctx.store.transition(
+                    goal_id, Event.BLOCK,
+                    replace(new_status, phase="blocked", blocked_on=reason,
+                            blocked_kind="needs_answer"),
+                    expect=new_status,
+                )
+                ctx.store.append_log(goal_id, reason)
+                await _notify(
+                    ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {reason}",
+                    summarize=ctx.summary_caller,
+                )
+                return Outcome.BLOCKED
+            # ADVISE — loud in the goal log, ship anyway (trust mode). The
+            # done-gate's grounded review + the human merge are the backstop.
+            ctx.store.append_log(goal_id, "⚠️ " + note + " — shipped anyway (trust mode)")
 
     # ---- post-commit tail: auto-merge / program-reconcile (real awaits) ----
     # Moved here (from before the status write, pre-PR7) so both now run

@@ -1043,8 +1043,15 @@ async def test_discovery_goes_straight_to_executing(tmp_path):
 
 
 def _delivery_status():
+    # A legacy PER-ACTION delivery: lifecycle=None reads-as-executing for the
+    # phase classifier but resolves to the per-action topology (each action its
+    # own branch + PR off main). #486/Part C re-keyed the auto-merge SKIP on the
+    # delivery TOPOLOGY, not on ``addresses``, so the per-action auto-merge
+    # machinery these tests exercise needs a genuinely per-action goal — a
+    # long_lived *executing* goal now accumulates on a goal branch and its
+    # cumulative PR is left OPEN for the done-gate instead of auto-merging.
     return GoalStatus(
-        phase="in_flight", lifecycle="executing",
+        phase="in_flight", lifecycle=None,
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
     )
 
@@ -1250,6 +1257,113 @@ async def test_legacy_dispatch_without_addresses_still_auto_merges(tmp_path, mon
     await _tick(store, "g", evaluator, engine, notifier, merger=merger)
 
     assert merger.merged == ["https://github.com/o/r/pull/9"]
+
+
+# ---- SDLC pipeline P2: milestone-keyed mega-dump guardrail ------------------
+
+
+def _long_lived_executing_status():
+    """A long_lived goal mid-flight on an advance task — resolves to the
+    goal-branch topology (accumulating PLAN.md), the only topology the slice
+    guardrail reasons about."""
+    return GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_slice_guardrail_advises_under_trust_and_ships(tmp_path, monkeypatch):
+    """A >1-milestone mega-dump under the default `trust` dial ADVISES: a loud
+    goal-log line surfaces the finding, but the increment still ships (the
+    done-gate + human merge are the backstop) — never a hard block. Zero-token."""
+    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 3)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", mode="long_lived")
+    store.save_status("g", _long_lived_executing_status())
+    evaluator = FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="built ahead",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+
+    assert out is not Outcome.BLOCKED  # advise-and-ship, not wedged
+    assert evaluator.calls == 0  # detection is pure git+string — zero cognition
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "slice guardrail" in log and "flipped 3 PLAN.md milestones" in log
+    assert "shipped anyway (trust mode)" in log
+
+
+@pytest.mark.asyncio
+async def test_slice_guardrail_blocks_under_strict_for_a_reslice(tmp_path, monkeypatch):
+    """Under the `strict` dial the SAME mega-dump BLOCKS the goal for a re-slice —
+    an owner ping + a legible reason, no silent ship. Zero-token."""
+    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 2)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", mode="long_lived")
+    store.set_strictness("g", "strict")
+    store.save_status("g", _long_lived_executing_status())
+    evaluator = FakeClaude()
+    notifier = RecordingNotifier()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="built ahead",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.BLOCKED
+    assert evaluator.calls == 0
+    assert store.load_status("g").phase == "blocked"
+    assert any("slice guardrail" in m and "re-slice" in m.lower() for m in notifier.sent)
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "Parked for a re-slice (strict mode)" in log
+
+
+@pytest.mark.asyncio
+async def test_slice_guardrail_fails_open_when_detection_finds_no_megadump(tmp_path, monkeypatch):
+    """DETECTION fails OPEN: an unparseable / clean PLAN.md reads as ≤1 flip, so
+    even under `strict` the guardrail never trips — a detection blind spot must
+    never wedge a legitimately-sliced increment."""
+    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 1)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", mode="long_lived")
+    store.set_strictness("g", "strict")
+    store.save_status("g", _long_lived_executing_status())
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="one clean milestone",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is not Outcome.BLOCKED
+    assert store.load_status("g").phase != "blocked"
+    assert "slice guardrail" not in (tmp_path / "g" / "log.md").read_text()
+
+
+@pytest.mark.asyncio
+async def test_slice_guardrail_never_runs_on_per_action_topology(tmp_path, monkeypatch):
+    """The guardrail is scoped to the goal-branch topology (accumulating
+    PLAN.md). A legacy per-action delivery has no such plan — detection must not
+    even be consulted, so a mega-dump stub can't block it."""
+    def _boom(ws):  # pragma: no cover - must not be called
+        raise AssertionError("detection ran on a per-action delivery")
+
+    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", _boom)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", _delivery_status())  # legacy per-action topology
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="ok",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier(), merger=None)
+
+    assert out is not Outcome.BLOCKED
 
 
 # ---- #394: total merge-policy resolution + settle-time mergeability --------
