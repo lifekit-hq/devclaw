@@ -25,10 +25,10 @@ You can't plan a large goal to the last task up front, so don't. Lay out the **M
 
 ## As you work
 
-- Flip `- [ ]` → `- [x]` as each task lands — the checklist is how you and the next session see what's left **without re-deriving it**. Progress is reading a box, not re-planning.
-- Finish a milestone's tasks → mark it `- [x]`, then pick and break down the next.
+- Flip `- [ ]` → `- [x]` as each task lands — how you and the next session see what's left **without re-deriving it**.
+- Finish a milestone's tasks → mark it `- [x]`, then break down the next. **One advance session closes ONE milestone, shipped as one reviewable PR — never build ahead and flip several `- [ ]` → `- [x]` at once.**
 - Record load-bearing choices (a stack, a schema, an API shape) under **Decisions so far** with their one-line reason, so no session relitigates them.
-- **The goal is done only when every milestone is checked and the Destination is met — not when your one increment is done.** Advance by one solid increment, keep the plan honest about what remains.
+- **The goal is done only when every milestone is checked and the Destination is met — not when your one increment is done.**
 
 ## Rules
 
