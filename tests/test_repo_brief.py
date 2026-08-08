@@ -39,6 +39,27 @@ async def _tick(store, goal_id, engine, *, evaluator=None):
     )
 
 
+# ---- the advance brief binds "one increment" to the current milestone -------
+
+
+def test_advance_brief_binds_the_increment_to_the_current_milestone(tmp_path):
+    """SDLC pipeline P2 (Part A): the thin-advance brief must tell the worker to
+    implement the CURRENT milestone only and NOT build ahead — the prompt half of
+    the mega-dump fix. Without this clause nothing bound "one increment" to one
+    milestone and the worker legally shipped the whole plan in one PR."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    brief = _advance_brief(store.load_effective_goal("g"), "")
+    assert "current milestone only" in brief.lower()
+    assert "do not build ahead" in brief.lower()
+    assert "one reviewable pr" in brief.lower()
+    # The opening line — which `delivery._is_advance_brief` matches on as a prefix
+    # — stays byte-intact so title/branch resolution still recognises the brief.
+    assert brief.startswith(
+        "Advance this goal by one substantive, shippable increment, then stop."
+    )
+
+
 # ---- the pure merge policy --------------------------------------------------
 
 

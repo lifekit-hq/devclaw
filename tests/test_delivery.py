@@ -28,6 +28,9 @@ from devclaw.delivery import (
 # task ``goal`` on every long_lived tick post-demolition.
 _ADVANCE_BRIEF = (
     "Advance this goal by one substantive, shippable increment, then stop.\n"
+    "Implement the CURRENT milestone only — the smallest not-yet-done "
+    "milestone in PLAN.md — and do NOT build ahead into later milestones; a "
+    "coherent one-milestone slice is one reviewable PR.\n"
     "First read PLAN.md (create and maintain it as you go) and the repo to "
     "decide the next step yourself; implement it end to end and commit, "
     "PLAN.md included.\n\nGoal: Build a small field notes REST API"
