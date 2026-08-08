@@ -152,6 +152,62 @@ app to test generality; the head-to-head-vs-one-shot contrast (see [OPEN-5]).
   far") is a **P2** strengthener, not a P1 gate. Reopen if the P1 null/positive
   result needs a comparator to be believed.
 
+## Amendment 2026-08-08 — substrate gap: reset-to-main amnesia → goal-branch accumulation for long_lived
+
+**The night-1 finding.** Before the first real nightly run could compound, the
+substrate silently erased it. A long_lived durable goal runs one "advance one
+increment" task per night, and `engine/workspace.py::prepare_workspace` resets the
+task's workspace (`fetch → reset --hard origin/main → clean`) **before every
+task** — *unless* a goal branch is in play. Long_lived thin-advance passed **no**
+goal branch → reset to `origin/main`; and because a long_lived goal's single PR is
+**not** merged, `main` stays empty → the reset **wiped the prior night's work** →
+the worker rebuilt from scratch every night (observed: two from-scratch builds in
+different stacks). That reset-to-main step silently **assumes the PR merged**;
+for unmerged long_lived accumulation that assumption is false, so it is amnesia,
+not compounding — the whole reason an early run showed churn, not compounding.
+
+**The fix (this PR).** `devclaw/goal/delivery_strategy.py::resolve_strategy` now
+resolves a **long_lived goal in the `executing` lifecycle** to the `GOAL_BRANCH`
+strategy — the same battle-tested machinery checklist goals already use (Pillar
+1/2, #394): a `goal/<id>` branch created off main on night 1, then `fetch → reset
+--hard origin/goal/<id>` each night, **preserving the accumulated work**. One
+predicate change; it flows automatically to the dispatch target-branch and the
+three done-gate branch reads (which now review the goal branch — the accumulated
+work — instead of an empty main). Legacy goals (`lifecycle is None`) and one_shot
+goals are unchanged. Regression tests: `test_long_lived_goal_accumulates_on_goal_branch`
+(dispatch carries `target_branch=goal/<id>`) and the `resolve_strategy` unit tests
+(`test_long_lived_executing_no_checklist_resolves_goal_branch`, plus the negatives
+for legacy/pre-executing/one_shot).
+
+**Consequence for the scorecard (operator instruction — supersedes "clones the
+target repo at HEAD" above).** Accumulation now lives on `goal/<id>`, **not** on
+`main` (which stays empty until a slice is deliberately landed). So the nightly
+compounding scorecard (P1-C) must clone/grade **the `goal/<id>` branch** (or the
+reused single PR's head), **NOT** `main`. `evals/compounding.py` already takes a
+repo + ref, so this is an operator-instruction note, not necessarily a code
+change: point the scorecard's ref at `goal/<goal_id>`. Grading `main` HEAD would
+read all-red every night and falsely report a total plateau.
+
+**Deliberately deferred (named fast-follow — do NOT guess).** *Bounding /
+landing verified slices on main* is a **separate** PR. This change keeps the
+long_lived goal's single PR to main **open and reused**, never auto-merged by the
+strategy resolution. Two reconciliations were left untouched on purpose, because
+auto-merge is entangled with the `#394/#430` settle-time totality and defaults
+**off** (`AUTOMERGE_ENABLED=False`), so the experiment is safe as-is:
+1. **Auto-merge skip at settle** (`tick_settle.py`): the "skip auto-merge for a
+   shared goal-branch PR" guard keys off `bool(addresses)` (checklist items),
+   which is **False** for a long_lived thin-advance dispatch. With auto-merge
+   *enabled* on the target repo, a long_lived `goal/<id>` PR would therefore
+   auto-merge to main and delete the branch — landing unbounded nightly work on
+   main without the intended bounding review. **The experiment must keep
+   auto-merge OFF (the default)** until the bounding fast-follow reconciles this
+   signal from `bool(addresses)` to "delivery is on a goal branch".
+2. **The `#430` `open_unmerged_pr` marker** is still set for a long_lived
+   goal-branch delivery (same `bool(addresses)` signal), but it is **never
+   consumed** for a goal-branch goal (the done-gate wrong-ref block requires
+   `goal_branch(...) is None`), so it is harmless today — folded into the same
+   fast-follow.
+
 ## Why this isn't just another eval
 
 The eval projection (ADR 0006) measures **per-task** pass-rate and **per-cycle**
