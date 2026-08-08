@@ -1,9 +1,11 @@
 # Proposal — the SDLC execution pipeline: reaching senior-team behavior
 
-- **Status:** **DRAFT** — 2026-08-08. Captured from a live design conversation
-  (the ledger compounding night-1 post-mortem → "how do we reach real-world
-  execution?"). Direction, not schedule; `[OPEN]` items below are unresolved and
-  must be interrogated before any LOCK.
+- **Status:** **LOCKED (direction)** — 2026-08-08. Captured from a live design
+  conversation (the ledger compounding night-1 post-mortem → "how do we reach
+  real-world execution?"), then clarified in the same session — all five `[OPEN]`s
+  resolved by Denys in conversation (see "Clarify — resolved" below). Locking
+  commits **direction only**, not schedule; a locked line stays reopenable (edit
+  here, don't silently diverge). P1 (the accumulation seam) already SHIPPED (#486).
 - **Date opened:** 2026-08-08 · **Authors:** Denys + Claude
 - **Relates to / does not restate:** the north-star — devclaw should execute like
   a **real-world software team**: do as much as a capable model can per PR, but
@@ -85,37 +87,59 @@ tests is fine; the same 2k split into 40 one-liners is worse. Guardrails are the
 **not** the judgment ("what's the right slice"). Keep them light
 (good-design-is-light; systemic-over-specific).
 
-## `[OPEN]` — clarify before any LOCK
+## Clarify — resolved (2026-08-08)
 
-- **[OPEN-1] The stage-2 slicing heuristic.** What is the prompt-level definition
-  of "one coherent slice," and what is the *light* guardrail that catches a
-  mega-dump without fragmenting (e.g. "one increment ≈ one PLAN.md milestone," not
-  a line count)? Owner: TBD.
-- **[OPEN-2] Per-slice definition-of-done (stage 4).** How is "this slice is
-  genuinely done" enforced beyond `verify_cmd` green — and where does the hidden
-  checklist (compounding experiment) fit vs. the worker-visible bar?
-- **[OPEN-3] Auto-merge reconciliation (stage 6).** The settle-time auto-merge
-  signal (`bool(addresses)`) is not yet reconciled for goal-branch long_lived
-  work (deferred in PR #486). What is the correct "ready to land a slice" signal?
-- **[OPEN-4] Moving target.** Model one-shot capability keeps growing, so the
-  right slice size moves. How/when do we revisit the bound rather than freeze it?
-- **[OPEN-5] Relationship to the decomposer.** Does stage-2 slicing live in the
-  worker's PLAN.md (pull) or a control-plane decomposer (push)? The demolition arc
-  favored worker-owned; confirm this frame doesn't reintroduce a push planner.
+- **[OPEN-1] The stage-2 slicing heuristic — RESOLVED.** The *heuristic* already
+  exists in the worker's `PLAN.md` skill (`openhands-runner/skills/_writes-code/05-plan-md.md`:
+  rolling-wave, de-risk-early, milestones→tasks, "advance by one solid increment").
+  The gap is **enforcement**: the advance prompt (`tick.py:582`) never binds "one
+  increment" to *one milestone*, and there is no guardrail. Fix = (a) sharpen the
+  advance prompt + skill so one increment ≈ **the current PLAN.md milestone — do
+  not build ahead**, and (b) a **light guardrail keyed on milestones, not lines**:
+  flag when a single increment flips **>1 milestone** to `[x]` (or touches >1 SPEC
+  feature). Judgment-respecting — the model picks the slice; the guardrail only
+  catches "you did the whole plan at once." Never a line-counter (the trap).
+- **[OPEN-2] Per-slice definition-of-done — RESOLVED.** A slice's DoD is the
+  **existing gate on a bounded slice** — `verify_cmd` green + the fail-closed
+  review gate + its milestone's tasks complete — no new gate. Slices **accumulate
+  on the goal branch** and the **done-gate is the single cumulative review** at
+  completion (see [OPEN-3]). The compounding hidden checklist stays **goal-level**
+  (grades the whole `done_when`), never per-slice, preserving trust-input /
+  verify-output (the worker never sees it).
+- **[OPEN-3] Auto-merge reconciliation — RESOLVED: accumulate → merge at the
+  done-gate.** Re-key the settle-time auto-merge SKIP from `bool(addresses)` to
+  **"is this on a goal branch?"** (`resolve_strategy(...).goal_branch(...) is not
+  None`). Then a long_lived goal-branch PR skips auto-merge and stays open for the
+  done-gate — the same "one cumulative PR, reviewed once" contract checklist goals
+  already have — **safe even if a project turns auto-merge on** (closes the #486
+  deferred risk). Incremental slice-merges to `main` are the named end-state
+  ([OPEN-4] evolution), not P1.
+- **[OPEN-4] Moving target — RESOLVED.** The slicing bound is a **config value,
+  not a hardcoded constant**, revisited on a **frontier-model release** (tie to the
+  `devclaw-relevance-audit` cadence) or when the compounding scorecard shows
+  plateau/churn attributable to slicing. Incremental-merge-to-main is the recorded
+  north-star evolution to revisit here.
+- **[OPEN-5] Relationship to the decomposer — RESOLVED: PULL.** Stage-2 slicing
+  lives in the worker's `PLAN.md` (pull), consistent with the cognition-demolition
+  arc (P3b). The control-plane **decomposer stays the `one_shot`-only dial**; we do
+  **not** reintroduce a push planner.
 
 ## Sizing — slice, don't estimate
 
 Per spec-lifecycle: this is a *direction*, sized as increments, not a whole-arc
 estimate.
 
-- **P1 (in flight):** the accumulation seam — goal-branch mode for long_lived
-  (PR #486) — so stage 6 works and sequencing across nights is even possible.
-  This is the floor; without it no other stage's improvement compounds.
-- **P2 (named, unsized):** stage-2 slicing — strengthen the PLAN.md heuristic
-  prompt **and** add a light guardrail against the mega-dump (resolve [OPEN-1]).
-- **P3 (named, unsized):** stage-4 per-slice definition-of-done; stage-6
-  auto-merge reconciliation ([OPEN-3]); the OOM-admission floor that keeps the
-  stage-5 gate off the cliff.
+- **P1 — SHIPPED (#486):** the accumulation seam — goal-branch mode for
+  long_lived — so stage 6 works and sequencing across nights is even possible.
+  The floor; without it no other stage's improvement compounds.
+- **P2 (next, firmable now):** stage-2 slicing — (a) sharpen the advance prompt +
+  `PLAN.md` skill to bind "one increment" to the current milestone, and (b) the
+  milestone-keyed mega-dump guardrail, enforced via the **ADR 0007 trust dial**
+  (advise under `trust`, block under `strict`). Plus the [OPEN-3] auto-merge
+  re-key (skip goal-branch PRs), a small companion. ~2 PRs.
+- **P3 (named, unsized):** the OOM-admission floor that keeps the stage-5 review
+  gate off the cliff (the `-9` class fix, 08-03 scoped); and — as the north-star
+  evolution ([OPEN-4]) — incremental verified-slice merges to `main`.
 
 The compounding experiment is the live instrument that tells us whether each
 increment actually moves devclaw toward senior-team cadence.
