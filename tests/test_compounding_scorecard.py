@@ -10,6 +10,7 @@ from evals.compounding import (
     analyze,
     append_night,
     load_history,
+    plan_stats,
     render_report,
     run_night,
 )
@@ -131,3 +132,59 @@ def test_render_report_smoke():
     assert "COMPOUNDING" in out
     assert "| night |" in out
     assert "c2" in out
+
+
+# --- PLAN.md size tripwire (the huge-plan fear, made a watchable number) -----
+
+def test_plan_stats_counts_only_milestone_section_checkboxes():
+    plan = (
+        "## Destination\ndone\n\n"
+        "## Milestones\n- [x] scaffold\n- [ ] auth\n- [ ] ui\n\n"
+        "## Tasks — auth\n- [ ] login endpoint\n- [x] jwt helper\n"
+    )
+    s = plan_stats(plan)
+    assert s["plan_milestones"] == 3  # the Tasks-section checkboxes are NOT milestones
+    assert s["plan_milestones_done"] == 1  # only the one [x] milestone
+    assert s["plan_lines"] == len(plan.splitlines())
+    assert s["plan_bytes"] == len(plan.encode("utf-8"))
+
+
+def test_plan_stats_empty_and_no_milestones_section():
+    assert plan_stats("")["plan_milestones"] == 0
+    assert plan_stats("## Notes\njust prose, no milestones\n")["plan_milestones"] == 0
+
+
+def test_run_night_records_plan_size_from_repo(tmp_path):
+    (tmp_path / "PLAN.md").write_text("## Milestones\n- [x] a\n- [ ] b\n", encoding="utf-8")
+    ctx = CheckCtx(repo=str(tmp_path), sh=lambda *a, **k: None, api=lambda *a, **k: None)
+    checks = [Check("c1", "a", lambda c: CheckResult(True, "green"))]
+    rec = run_night(ctx, night=1, repo_ref="h", checks=checks, ts_ms=1)
+    assert rec.plan_milestones == 2 and rec.plan_milestones_done == 1
+    assert rec.plan_lines == 3 and rec.plan_bytes is not None
+
+
+def test_run_night_plan_fields_none_when_no_plan_md():
+    # _ctx() repo="/x" has no PLAN.md — the tripwire is best-effort, never fails a night
+    checks = [Check("c1", "a", lambda c: CheckResult(True, "green"))]
+    rec = run_night(_ctx(), night=1, repo_ref="h", checks=checks, ts_ms=1)
+    assert rec.plan_lines is None and rec.plan_milestones is None
+
+
+def test_old_record_without_plan_fields_still_loads(tmp_path):
+    # a pre-tripwire JSONL line (no plan_* keys) must still load — defaults fill in
+    p = tmp_path / "run.jsonl"
+    p.write_text(
+        '{"night": 1, "ts_ms": 1, "repo_ref": "h", "vector": {"c1": true}, "tokens": null}\n',
+        encoding="utf-8",
+    )
+    hist = load_history(p)
+    assert len(hist) == 1 and hist[0].plan_lines is None
+
+
+def test_render_report_surfaces_the_plan_line():
+    rec = NightRecord(
+        night=1, ts_ms=1, repo_ref="h", vector={"c1": True},
+        plan_lines=42, plan_milestones=5, plan_milestones_done=2,
+    )
+    out = render_report(analyze([rec]), [rec])
+    assert "PLAN.md" in out and "42 lines" in out and "2/5 milestones" in out

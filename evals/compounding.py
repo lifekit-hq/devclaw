@@ -21,6 +21,7 @@ Design boundaries, on purpose:
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -46,6 +47,10 @@ class NightRecord:
     repo_ref: str  # the target-repo HEAD sha that was graded
     vector: dict[str, bool]  # criterion id -> green
     tokens: int | None = None  # tokens the goal spent that night (idle detection)
+    plan_bytes: int | None = None  # PLAN.md size tripwire — is the plan bloating?
+    plan_lines: int | None = None
+    plan_milestones: int | None = None  # milestones in the ## Milestones section
+    plan_milestones_done: int | None = None  # of those, checked [x]
     notes: str = ""
 
     def green(self) -> set[str]:
@@ -186,6 +191,20 @@ def render_report(report: CompoundingReport, history: list[NightRecord]) -> str:
         f"- churned this night: {', '.join(report.churned) or '—'}",
         f"- monotonic (never regressed): **{report.monotonic}**",
         f"- plateau length: {report.plateau_nights}",
+    ]
+    latest = history[-1]
+    if latest.plan_lines is not None:
+        first = next((r for r in history if r.plan_lines is not None), latest)
+        grew = ""
+        if first is not latest and first.plan_lines:
+            factor = latest.plan_lines / first.plan_lines
+            if factor >= 3:
+                grew = f" — ⚠ grew {factor:.1f}× since night {first.night} (is the plan bloating?)"
+        lines.append(
+            f"- PLAN.md: **{latest.plan_lines} lines**, "
+            f"{latest.plan_milestones_done}/{latest.plan_milestones} milestones{grew}"
+        )
+    lines += [
         "",
         "| night | green | Δ | new green | churned |",
         "|---|---|---|---|---|",
@@ -201,6 +220,55 @@ def render_report(report: CompoundingReport, history: list[NightRecord]) -> str:
             f"{', '.join(added) or '—'} | {', '.join(gone) or '—'} |"
         )
     return "\n".join(lines)
+
+
+# --- PLAN.md size tripwire (pure) -------------------------------------------
+
+_MS_HEADING = "milestone"  # the "## Milestones" section heading (prefix, case-insensitive)
+_CHECKBOX = re.compile(r"^[-*]\s+\[([ xX])\]")
+
+
+def plan_stats(text: str) -> dict[str, int]:
+    """Pure PLAN.md size read — the bloat tripwire (the fear: a huge PLAN.md with
+    thousands of tasks). Counts total bytes/lines and the milestones in the
+    ``## Milestones`` section (checkbox lines only; tasks in other sections are
+    NOT milestones). Rolling-wave keeps this small; a spike is the signal the
+    worker stopped slicing and dumped a plan."""
+    milestones = done = 0
+    in_ms = False
+    for raw in text.splitlines():
+        s = raw.strip()
+        if s.startswith("## "):
+            in_ms = s[3:].strip().lower().startswith(_MS_HEADING)
+            continue
+        if in_ms:
+            m = _CHECKBOX.match(s)
+            if m:
+                milestones += 1
+                if m.group(1) in ("x", "X"):
+                    done += 1
+    return {
+        "plan_bytes": len(text.encode("utf-8")),
+        "plan_lines": len(text.splitlines()),
+        "plan_milestones": milestones,
+        "plan_milestones_done": done,
+    }
+
+
+def _read_plan_stats(repo: str) -> dict[str, int | None]:
+    """Best-effort ``plan_stats`` for the repo's ``PLAN.md``; all-None when absent
+    or unreadable. NEVER raises — the tripwire must never fail a graded night."""
+    absent: dict[str, int | None] = {
+        "plan_bytes": None, "plan_lines": None,
+        "plan_milestones": None, "plan_milestones_done": None,
+    }
+    try:
+        p = Path(repo) / "PLAN.md"
+        if not p.is_file():
+            return absent
+        return dict(plan_stats(p.read_text(encoding="utf-8", errors="replace")))
+    except Exception:  # noqa: BLE001 — best-effort tripwire, never fails the night
+        return absent
 
 
 # --- one graded night (orchestration; stub-testable via an injected ctx) ----
@@ -224,6 +292,7 @@ def run_night(
         repo_ref=repo_ref,
         vector=criteria_vector(results),
         tokens=tokens,
+        **_read_plan_stats(ctx.repo),
     )
 
 
