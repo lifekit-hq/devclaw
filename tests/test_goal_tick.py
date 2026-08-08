@@ -1234,14 +1234,15 @@ async def test_checklist_mode_dispatch_is_not_auto_merged(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_legacy_dispatch_without_addresses_still_auto_merges(tmp_path, monkeypatch):
-    """Backwards-compat: legacy backlog-mode goals (no addresses on the
-    in-flight ref) keep the existing auto-merge behaviour. Only Pillar 1
-    checklist dispatches skip the merge."""
+    """Backwards-compat: a legacy PER-ACTION goal (no addresses AND the per-action
+    topology — lifecycle=None) keeps the existing per-action auto-merge behaviour.
+    Only goal-branch topologies (Pillar 1 checklist OR long_lived executing) skip
+    the merge, leaving the cumulative PR for the done-gate (#486/Part C)."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="executing",
+        phase="in_flight", lifecycle=None,  # ← legacy per-action topology
         in_flight=InFlight(
             "devclaw", "implement_feature", "t1", "task", "add /health",
             addresses=[],  # ← legacy mode, no checklist
@@ -1364,6 +1365,34 @@ async def test_slice_guardrail_never_runs_on_per_action_topology(tmp_path, monke
     out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier(), merger=None)
 
     assert out is not Outcome.BLOCKED
+
+
+@pytest.mark.asyncio
+async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatch):
+    """#486 (Part C): a long_lived goal-branch delivery carries NO ``addresses``
+    (there is no checklist), but its PR is the SAME cumulative goal-branch PR a
+    checklist goal's is — auto-merging it mid-flight would delete the goal branch
+    and wipe the accumulated work on the next night's re-fork. The skip is
+    re-keyed off the delivery TOPOLOGY, so this PR stays open for the done-gate
+    and the skip is logged legibly."""
+    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
+    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 0)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", mode="long_lived")
+    store.save_status("g", _long_lived_executing_status())
+    evaluator = FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="one clean milestone",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+    notifier, merger = RecordingNotifier(), RecordingMerger()
+
+    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
+
+    assert merger.merged == []  # the cumulative PR is NOT merged mid-flight
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "auto-merge skipped (goal-branch:" in log
+    assert "https://github.com/o/r/pull/9" in log
 
 
 # ---- #394: total merge-policy resolution + settle-time mergeability --------

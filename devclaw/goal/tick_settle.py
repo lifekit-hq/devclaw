@@ -846,12 +846,24 @@ async def _resolve_polling_action(
     # switch) never said so. An owner who flipped automerge on must never have
     # to infer "it silently didn't engage" from an open PR and an empty log.
     in_checklist_dispatch = bool(addresses)
+    # #486: key the auto-merge SKIP on the delivery TOPOLOGY, not on the presence
+    # of ``addresses``. A long_lived goal-branch delivery carries no addresses
+    # (there is no checklist), but its PR is the SAME cumulative goal-branch PR a
+    # checklist goal's is — auto-merging it mid-flight deletes the goal branch and
+    # forces the next night to re-fork from main, wiping the accumulated PR. Both
+    # topologies want the single cumulative PR left OPEN for the done-gate; only a
+    # per-action (``goal_branch(...) is None``) delivery auto-merges per action.
+    on_goal_branch = (
+        _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
+    )
     merged_now = False
     merge_failed_pinged = False  # an OWNER ping already fired for this PR this settle
     merge_skip = ""  # non-empty ⇒ this green delivery's PR was deliberately not merged
     green_pr = bool(poll.status == "done" and poll.gate_passed and poll.pr_url)
     if green_pr and in_checklist_dispatch:
         merge_skip = "checklist-mode: shared goal-branch PR stays open for the done-gate"
+    elif green_pr and on_goal_branch:
+        merge_skip = "goal-branch: cumulative PR stays open for the done-gate"
     elif green_pr and ctx.merger is None:
         merge_skip = "auto-merge is off for this repo"
     elif green_pr:
@@ -895,7 +907,11 @@ async def _resolve_polling_action(
     # goal branch (no wrong-ref trap). A column-only write AFTER the atomic
     # settle (the merge attempt above is async, outside the transaction) — and
     # its returned fresh-versioned status is threaded onward so _handle_executing's
-    # `expect=` still CAS's against the current version.
+    # `expect=` still CAS's against the current version. The done-gate consumer of
+    # this marker (tick_donegate) is itself guarded on ``goal_branch(...) is None``,
+    # so a long_lived goal-branch PR that lands here (no addresses) sets a marker
+    # the goal-branch done-gate never reads — benign; keyed on ``in_checklist_dispatch``
+    # unchanged, since #486 only re-keys the auto-merge SKIP above.
     if green_pr and not in_checklist_dispatch:
         new_status = ctx.store.update_status_fields(
             goal_id, open_unmerged_pr=(None if merged_now else poll.pr_url)
