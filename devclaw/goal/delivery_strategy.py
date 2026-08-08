@@ -76,14 +76,34 @@ PER_ACTION: "DeliveryStrategy" = PerActionStrategy()
 
 
 def resolve_strategy(store: "GoalStore", goal_id: str) -> "DeliveryStrategy":
-    """The delivery strategy for a goal: ``goal-branch`` once the decomposer has
-    produced a checklist (items accumulate on one branch), else ``per-action``.
+    """The delivery strategy for a goal:
+
+    * ``goal-branch`` once the decomposer has produced a checklist (a one-shot
+      goal's items accumulate on one branch — Pillar 1), OR when the goal is a
+      **long_lived goal in the ``executing`` lifecycle** (2026-08-08 amnesia fix:
+      thin-advance runs one "advance one increment" task per night, and a
+      per-action strategy resets the workspace to ``origin/main`` before every
+      task — which, because the goal's single PR isn't merged, wipes the prior
+      night's accumulated work and forces a from-scratch rebuild every night;
+      ``goal/<id>`` accumulation is what preserves compounding progress);
+    * ``per-action`` for everything else — one_shot goals with no checklist yet,
+      and legacy goals with no lifecycle recorded (``lifecycle is None`` reads as
+      executing elsewhere, but delivery stays per-action for them, unchanged).
 
     Reproduces EXACTLY the ``store.read_checklist(goal_id) is not None`` gate that
     guarded the inline ``f"goal/{goal_id}"`` computations before extraction — and
     keeps their default ``on_corrupt="raise"`` semantics, so a corrupt contract
-    still fails loud here rather than being silently downgraded to per-action.
+    still fails loud here rather than being silently downgraded to per-action. The
+    long_lived branch is a pure read of goal state (mode + lifecycle); it adds no
+    LLM call and no writer to goal state.
     """
     if store.read_checklist(goal_id) is not None:
+        return GOAL_BRANCH
+    # A long_lived goal accumulates its nightly increments on ``goal/<id>`` too —
+    # require the *executing* lifecycle explicitly (NOT the legacy ``None`` that
+    # merely behaves-as-executing) so legacy per-action goals are untouched.
+    goal = store.load_goal(goal_id)
+    status = store.load_status(goal_id)
+    if goal.mode == "long_lived" and status.lifecycle == "executing":
         return GOAL_BRANCH
     return PER_ACTION

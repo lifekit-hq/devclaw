@@ -506,12 +506,14 @@ async def test_dispatch_uses_goal_branch_when_checklist_exists(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_uses_default_branch_when_no_checklist(tmp_path):
-    """Legacy mode preserved: backlog-only goals still get the default-branch
-    reset on every dispatch."""
+async def test_dispatch_uses_default_branch_for_legacy_goal(tmp_path):
+    """Legacy (pre-lifecycle) goals still get the default-branch reset on every
+    dispatch. ``lifecycle=None`` reads-as-executing for the tick but stays
+    per-action for delivery — the long_lived goal-branch accumulation (the
+    2026-08-08 amnesia fix) requires an EXPLICIT ``executing`` lifecycle."""
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")  # no checklist
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle=None))
 
     calls: list = []
 
@@ -528,6 +530,35 @@ async def test_dispatch_uses_default_branch_when_no_checklist(tmp_path):
     )
 
     assert calls == [None]
+
+
+@pytest.mark.asyncio
+async def test_long_lived_goal_accumulates_on_goal_branch(tmp_path):
+    """The 2026-08-08 amnesia fix: a long_lived goal in the ``executing``
+    lifecycle with NO checklist accumulates its nightly thin-advance increments
+    on ``goal/<id>`` — the SAME branch every night — so the per-task
+    reset-to-``origin/main`` no longer wipes prior nights' work (which never
+    merges to main, so main stays empty and a per-action reset rebuilds from
+    scratch)."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")  # long_lived (default), no checklist
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+
+    calls: list = []
+
+    async def rec_prepare(ws, repo_url=None, branch=None):
+        calls.append(branch)
+        return branch or "main"
+
+    engine = FakeEngine()
+
+    await tick_goal(
+        "g", store=store, engine=engine,
+        evaluator_caller=FakeClaude(role="evaluator"),
+        notifier=RecordingNotifier(), prepare_ws=rec_prepare,
+    )
+
+    assert "goal/g" in calls
 
 
 @pytest.mark.asyncio
@@ -1059,8 +1090,10 @@ async def test_dispatch_proceeds_when_staleness_probe_returns_none(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypatch):
-    """Legacy backlog-mode goals (no checklist, per-action delivery) never hit
-    the staleness probe — ``branch_for_dispatch`` is None for that path."""
+    """Legacy (pre-lifecycle) backlog goals (no checklist, per-action delivery)
+    never hit the staleness probe — ``branch_for_dispatch`` is None for that
+    path. (A long_lived *executing* goal now accumulates on ``goal/<id>`` and DOES
+    probe — covered by test_long_lived_goal_accumulates_on_goal_branch.)"""
     from devclaw.goal import tick_dispatch
 
     probe_calls: list = []
@@ -1072,8 +1105,8 @@ async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypat
     monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_recording)
 
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")  # no checklist -> per-action mode
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    seed_goal(tmp_path, "g")  # no checklist, legacy lifecycle -> per-action mode
+    store.save_status("g", GoalStatus(phase="idle", lifecycle=None))
 
     engine = FakeEngine()
 
