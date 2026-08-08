@@ -580,6 +580,9 @@ def _advance_brief(goal: Goal, steering: str) -> str:
     isn't one."""
     parts = [
         "Advance this goal by one substantive, shippable increment, then stop.",
+        "Implement the CURRENT milestone only — the smallest not-yet-done "
+        "milestone in PLAN.md — and do NOT build ahead into later milestones; a "
+        "coherent one-milestone slice is one reviewable PR.",
         "First read PLAN.md (create and maintain it as you go) and the repo to "
         "decide the next step yourself; implement it end to end and commit, "
         "PLAN.md included.",

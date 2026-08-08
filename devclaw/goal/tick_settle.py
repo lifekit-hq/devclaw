@@ -30,14 +30,17 @@ from .tick_guards import _block_on_lost_ref, _block_on_prep_failure
 from .tick_dispatch import _resolve_discovery
 from .tick_donegate import _resolve_done_gate
 from . import checklist as _checklist
+from . import delivery_strategy as _delivery
 from . import reconcile as _reconcile
 from . import repo_brief as _repo_brief
+from . import slice_guard as _slice_guard
 from .engine import GoalEngine, GoalEngineError
 from .models import Checklist, ChecklistItem, Goal, GoalStatus, InFlight, ItemAssert, PollResult
 from .store import GoalStore
 from .transitions import Event
 from ..loom import trace as _trace
 from ..engine.workspace import WorkspaceError
+from ..quality.gate_policy import Consequence, gate_consequence
 from ..state_store import derive_failure_class
 
 
@@ -750,6 +753,55 @@ async def _resolve_polling_action(
             )
             return Outcome.BLOCKED
 
+    # ---- milestone-keyed mega-dump guardrail (SDLC pipeline P2) -------------
+    # A well-sliced nightly increment closes ONE milestone; an increment that
+    # flips >1 PLAN.md ``## Milestones`` checkbox ([ ]→[x]) built ahead into
+    # later milestones instead of shipping one reviewable slice (the "Ledger"
+    # 17k-line-PR class). Detection is a pure git-diff + string parse — ZERO
+    # token and best-effort/fail-OPEN: an absent or garbled PLAN.md ⇒ 0 flips ⇒
+    # never trips (:mod:`slice_guard`). The VERDICT rides the EXISTING strictness
+    # dial (:func:`gate_consequence`, a dial-able "slice" gate): under ``trust``
+    # it ADVISES (loud log, ship anyway — the done-gate + human review are the
+    # backstop), under ``strict`` it BLOCKS the goal for a re-slice. Scoped to a
+    # delivered increment (poll ``done``) whose topology is a goal branch — the
+    # per-action topology has no accumulating PLAN.md to reason about, and this
+    # runs only on the POLLING_ACTION settle path (never idle/blocked), so the
+    # ``FakeClaude.calls == 0`` guards stay green.
+    if (
+        poll.status == "done"
+        and _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
+    ):
+        flips = await asyncio.to_thread(
+            _slice_guard.mega_dump_flips_sync, goal.workspace_dir
+        )
+        if flips > 1:
+            note = (
+                f"slice guardrail: this increment flipped {flips} PLAN.md milestones "
+                f"([ ]→[x]) in one delivery — a coherent increment closes ONE "
+                f"milestone and ships as one reviewable PR, not a build-ahead through "
+                f"later milestones"
+            )
+            if gate_consequence("slice", goal.strictness) is Consequence.BLOCK:
+                reason = (
+                    note + ". Parked for a re-slice (strict mode): steer a smaller "
+                    "next step (one milestone), or set trust to ship-and-advise."
+                )
+                ctx.store.transition(
+                    goal_id, Event.BLOCK,
+                    replace(new_status, phase="blocked", blocked_on=reason,
+                            blocked_kind="needs_answer"),
+                    expect=new_status,
+                )
+                ctx.store.append_log(goal_id, reason)
+                await _notify(
+                    ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {reason}",
+                    summarize=ctx.summary_caller,
+                )
+                return Outcome.BLOCKED
+            # ADVISE — loud in the goal log, ship anyway (trust mode). The
+            # done-gate's grounded review + the human merge are the backstop.
+            ctx.store.append_log(goal_id, "⚠️ " + note + " — shipped anyway (trust mode)")
+
     # ---- post-commit tail: auto-merge / program-reconcile (real awaits) ----
     # Moved here (from before the status write, pre-PR7) so both now run
     # STRICTLY AFTER the settle has committed — shrinking the 2026-06-21
@@ -794,12 +846,24 @@ async def _resolve_polling_action(
     # switch) never said so. An owner who flipped automerge on must never have
     # to infer "it silently didn't engage" from an open PR and an empty log.
     in_checklist_dispatch = bool(addresses)
+    # #486: key the auto-merge SKIP on the delivery TOPOLOGY, not on the presence
+    # of ``addresses``. A long_lived goal-branch delivery carries no addresses
+    # (there is no checklist), but its PR is the SAME cumulative goal-branch PR a
+    # checklist goal's is — auto-merging it mid-flight deletes the goal branch and
+    # forces the next night to re-fork from main, wiping the accumulated PR. Both
+    # topologies want the single cumulative PR left OPEN for the done-gate; only a
+    # per-action (``goal_branch(...) is None``) delivery auto-merges per action.
+    on_goal_branch = (
+        _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
+    )
     merged_now = False
     merge_failed_pinged = False  # an OWNER ping already fired for this PR this settle
     merge_skip = ""  # non-empty ⇒ this green delivery's PR was deliberately not merged
     green_pr = bool(poll.status == "done" and poll.gate_passed and poll.pr_url)
     if green_pr and in_checklist_dispatch:
         merge_skip = "checklist-mode: shared goal-branch PR stays open for the done-gate"
+    elif green_pr and on_goal_branch:
+        merge_skip = "goal-branch: cumulative PR stays open for the done-gate"
     elif green_pr and ctx.merger is None:
         merge_skip = "auto-merge is off for this repo"
     elif green_pr:
@@ -843,7 +907,11 @@ async def _resolve_polling_action(
     # goal branch (no wrong-ref trap). A column-only write AFTER the atomic
     # settle (the merge attempt above is async, outside the transaction) — and
     # its returned fresh-versioned status is threaded onward so _handle_executing's
-    # `expect=` still CAS's against the current version.
+    # `expect=` still CAS's against the current version. The done-gate consumer of
+    # this marker (tick_donegate) is itself guarded on ``goal_branch(...) is None``,
+    # so a long_lived goal-branch PR that lands here (no addresses) sets a marker
+    # the goal-branch done-gate never reads — benign; keyed on ``in_checklist_dispatch``
+    # unchanged, since #486 only re-keys the auto-merge SKIP above.
     if green_pr and not in_checklist_dispatch:
         new_status = ctx.store.update_status_fields(
             goal_id, open_unmerged_pr=(None if merged_now else poll.pr_url)

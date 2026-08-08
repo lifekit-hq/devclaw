@@ -44,11 +44,14 @@ ALWAYS_HARD: frozenset[str] = frozenset(
     }
 )
 
-#: The two dial-able gates, named for clarity and tests. NOT load-bearing —
+#: The dial-able gates, named for clarity and tests. NOT load-bearing —
 #: :func:`gate_consequence` keys off ``ALWAYS_HARD`` membership, so a gate is
 #: hard only by appearing in ``ALWAYS_HARD``; a new dial-able gate needs nothing
-#: added here to be advisory under ``trust``.
-DIAL_ABLE: frozenset[str] = frozenset({"browser", "review"})
+#: added here to be advisory under ``trust``. ``slice`` is the milestone-keyed
+#: mega-dump guardrail (SDLC pipeline P2, resolved in ``goal.tick_settle``):
+#: under ``trust`` a ``>1``-milestone increment advises-and-ships, under
+#: ``strict`` it blocks for a re-slice.
+DIAL_ABLE: frozenset[str] = frozenset({"browser", "review", "slice"})
 
 
 class Consequence(Enum):
