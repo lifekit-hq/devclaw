@@ -536,3 +536,10 @@ textarea.field {
     padding: 0 16px;
   }
 }
+
+/* Clickable table rows (universal task drill-in) */
+.row-link:hover,
+.row-link:focus-visible {
+  background: color-mix(in srgb, var(--border) 35%, transparent);
+  outline: none;
+}

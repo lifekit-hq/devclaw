@@ -1,14 +1,19 @@
-import type { TaskRow } from "../api";
+import { useNavigate } from "react-router-dom";
+import { tokenQueryString, type TaskRow } from "../api";
 import { KIND_LABEL, taskStatusColor } from "../status";
 import { relativeTime } from "../util/time";
 import { EmptyState, StatusDot } from "../ui";
 
 // Compact task table — the goal's dispatched tasks, or a project's standalone
-// tasks. One shape, labeled at the call site.
+// tasks. One shape, labeled at the call site. Every row is a drill-in: click
+// lands on /tasks/:id, the universal task detail (contract, verdicts,
+// execution trace) — a task is never a dead row.
 
 const COLS = "110px 110px minmax(0,1fr) 100px";
 
 export function TasksSection({ tasks, emptyLabel }: { tasks: TaskRow[]; emptyLabel: string }) {
+  const nav = useNavigate();
+  const qs = tokenQueryString();
   if (tasks.length === 0) return <EmptyState title={emptyLabel} />;
   return (
     <div className="card" style={{ overflow: "hidden" }}>
@@ -29,6 +34,13 @@ export function TasksSection({ tasks, emptyLabel }: { tasks: TaskRow[]; emptyLab
       {tasks.map((t) => (
         <div
           key={t.id}
+          className="row-link"
+          role="link"
+          tabIndex={0}
+          onClick={() => nav(`/tasks/${t.id}${qs}`)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") nav(`/tasks/${t.id}${qs}`);
+          }}
           style={{
             display: "grid",
             gridTemplateColumns: COLS,
@@ -36,6 +48,7 @@ export function TasksSection({ tasks, emptyLabel }: { tasks: TaskRow[]; emptyLab
             alignItems: "center",
             padding: "11px 16px",
             borderBottom: "1px solid var(--border)",
+            cursor: "pointer",
           }}
         >
           <span className="mono secondary" style={{ fontSize: 12 }}>{KIND_LABEL[t.kind] ?? t.kind}</span>
