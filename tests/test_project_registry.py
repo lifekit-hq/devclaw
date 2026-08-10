@@ -437,3 +437,26 @@ def test_resolve_override_string_field(reg):
 def test_resolve_override_rejects_unknown_field(reg):
     with pytest.raises(ValueError):
         reg.resolve_override("/src/p", "not_a_field", True)
+
+
+# ---- managed-repo provenance ------------------------------------------------
+
+
+def test_managed_repo_ledger_records_case_insensitively_and_survives_reopen(tmp_path):
+    """The delete_repo ownership gate reads this ledger: slugs match however
+    GitHub cases them, and provenance must outlive a server restart."""
+    db = str(tmp_path / "devclaw.db")
+    reg = ProjectRegistry(db)
+
+    assert not reg.is_managed_repo("dsdevq/scratch")
+    reg.record_managed_repo("dsdevq/Scratch")
+    assert reg.is_managed_repo("dsdevq/scratch")
+    assert reg.is_managed_repo("DSDEVQ/SCRATCH")
+    reg.record_managed_repo("dsdevq/Scratch")  # idempotent, no raise
+
+    reopened = ProjectRegistry(db)
+    assert reopened.is_managed_repo("dsdevq/scratch")
+
+    reopened.forget_managed_repo("Dsdevq/Scratch")
+    assert not reopened.is_managed_repo("dsdevq/scratch")
+    reopened.forget_managed_repo("dsdevq/scratch")  # forgetting twice is a no-op

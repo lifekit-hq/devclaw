@@ -13,6 +13,10 @@ and a default branch (``main``), so the very next ``git clone`` + ``fetch`` +
 ``checkout`` in prepare_workspace succeeds and delivery can branch a PR against a
 real base. Auth here is *repo write access* (the ``gh`` token), separate from the
 Claude OAuth pillar (cognition billing) — same split as :mod:`delivery`.
+
+:func:`delete_repo` is the teardown twin — retiring the scratch/bench repos this
+module creates, behind an explicit confirm echo (deletion needs the extra
+``delete_repo`` OAuth scope on the gh token besides).
 """
 
 from __future__ import annotations
@@ -39,6 +43,14 @@ def slug_repo_name(text: str, n: int = 60) -> str:
 def _default_owner() -> str | None:
     """Owner for new repos. None → gh uses the authenticated user's account."""
     return os.environ.get("DEVCLAW_GITHUB_OWNER") or None
+
+
+def full_slug(name: str, owner: str | None = None) -> str:
+    """The owner-qualified slug create_repo/delete_repo operate on — one shared
+    derivation so the provenance ledger and the gh calls can't disagree."""
+    safe = slug_repo_name(name)
+    owner = owner or _default_owner()
+    return f"{owner}/{safe}" if owner else safe
 
 
 async def _run(*args: str) -> tuple[int, str]:
@@ -81,9 +93,7 @@ async def create_repo(
     rather than erroring, so re-running a goal setup is safe. Raises
     :class:`RepoError` only when creation genuinely fails (auth/network/quota).
     """
-    safe = slug_repo_name(name)
-    owner = owner or _default_owner()
-    slug = f"{owner}/{safe}" if owner else safe
+    slug = full_slug(name, owner)
 
     # Already there? Hand back its URL instead of failing the whole goal setup.
     if (existing := await _clone_url(slug)) is not None:
@@ -111,3 +121,36 @@ def _extract_clone_url(text: str, slug: str) -> str | None:
     if "/" in slug:  # owner/name known → safe to synthesize
         return f"https://github.com/{slug}.git"
     return None
+
+
+async def delete_repo(name: str, *, confirm: str = "", owner: str | None = None) -> dict:
+    """Delete a GitHub repo and return ``{deleted, repo}`` — create_repo's teardown twin.
+
+    Irreversible, so it is deliberately hard to trip by accident:
+
+    - ``confirm`` must echo the repo's canonical ``owner/name`` exactly as GitHub
+      reports it. A mismatch (or omission) raises with the exact string to pass,
+      so the caller always names precisely what dies before it does.
+    - An unknown repo raises — a typo must never silently no-op (same contract
+      as the registry's ``delete_project``).
+    - ``gh repo delete`` needs the ``delete_repo`` OAuth scope; gh's own error
+      (which carries the ``gh auth refresh -s delete_repo`` hint) is surfaced
+      verbatim rather than swallowed.
+    """
+    slug = full_slug(name, owner)
+
+    rc, out = await _run(
+        "gh", "repo", "view", slug, "--json", "nameWithOwner", "-q", ".nameWithOwner"
+    )
+    canonical = out.strip()
+    if rc != 0 or "/" not in canonical:
+        raise RepoError(f"repo '{slug}' not found — nothing deleted: {out[-200:]}")
+    if confirm != canonical:
+        raise RepoError(
+            f"refusing to delete '{canonical}': pass confirm='{canonical}' "
+            "to prove you mean this exact repo"
+        )
+    rc, out = await _run("gh", "repo", "delete", canonical, "--yes")
+    if rc != 0:
+        raise RepoError(f"gh repo delete failed: {out[-400:]}")
+    return {"deleted": True, "repo": canonical}

@@ -239,7 +239,9 @@ and `tests/test_self_triage.py`.
 - **Public surface:** every `@mcp.tool` decorator in `devclaw/server/tools.py`.
   HTTP endpoints in `devclaw/server/http.py`.
 - **Allowed to call:** layer 2 (`goals.create_goal(...)`, `goals.get_goal(...)`,
-  etc.), the project registry, and — for the **direct-task intake**
+  etc.), the project registry, `delivery/repo.py` (the `create_repo`/`delete_repo`
+  gh provisioning pair — pure gh subprocess, no engine/queue involvement), and —
+  for the **direct-task intake**
   (`dispatch_task`, the v1 task-runner path re-surfaced by
   [ADR 0011](./decisions/0011-branch-target-delivery-seam.md)) —
   `TaskQueue.submit`. The direct intake is a sanctioned second front door onto

@@ -28,7 +28,7 @@ docs/
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** Part I: the one-sitting mental model (five layers, two chains, the heartbeat, one task's journey, where state lives). Part II: the **locked contract** — per-layer contracts, the invariants (incl. grounded cognition, auto-heal), testability/replaceability, the question tree, the code map. | **CURRENT** — written 2026-07-13 (merged from `how-it-really-works.md` + `architecture-layers.md`), re-verified 2026-07-28. Load-bearing claims checked against main during the docs audits; change history in git. |
+| [`architecture.md`](./architecture.md) | **Start here.** Part I: the one-sitting mental model (five layers, two chains, the heartbeat, one task's journey, where state lives). Part II: the **locked contract** — per-layer contracts, the invariants (incl. grounded cognition, auto-heal), testability/replaceability, the question tree, the code map. | **CURRENT** — written 2026-07-13 (merged from `how-it-really-works.md` + `architecture-layers.md`), re-verified 2026-07-28. *Updated 2026-08-10*: layer-1 allowed-call list now names `delivery/repo.py` (the create_repo/delete_repo pair — a pre-existing omission). Load-bearing claims checked against main during the docs audits; change history in git. |
 
 ## Flows
 
@@ -48,7 +48,7 @@ docs/
 | Doc | Purpose | Currency |
 |---|---|---|
 | [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + docker) layer by layer, L1 single task → L5 abort. | **CURRENT** — *audited 2026-07-13*: every tool named in the steps exists on the MCP surface; L1–L5 descriptions match. *Updated 2026-07-19*: L2/L3 rewritten for the start_program → one-shot-goal alias (ADR 0003 stage 2b) — follow via `get_goal`/`tail_goal`, the child program appears in `list_programs` after the heartbeat dispatches the checklist. *Updated 2026-07-19 (post-shakedown)*: L2 workspace setup now requires a host-visible origin (goal-layer prep fetches it) and notes a /tmp file remote validates mechanics only — a green close needs a real pushable remote (sandbox can't push host file paths). |
-| [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | Deploying the OpenClaw waiter + devclaw to the VPS; the waiter's tool menu. | **CURRENT** — *audited 2026-07-13*: all menu tools exist; `resume_goal` added to the Goals line (#228). *Updated 2026-07-19*: `start_program` menu line marked as the deprecated one-shot-goal alias (ADR 0003 stage 2b — poll with `get_goal`, not `get_program`). |
+| [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | Deploying the OpenClaw waiter + devclaw to the VPS; the waiter's tool menu. | **CURRENT** — *audited 2026-07-13*: all menu tools exist; `resume_goal` added to the Goals line (#228). *Updated 2026-07-19*: `start_program` menu line marked as the deprecated one-shot-goal alias (ADR 0003 stage 2b — poll with `get_goal`, not `get_program`). *Updated 2026-08-10*: `delete_repo` added to the Tasks menu line. |
 
 ## Decision records (frozen — rationale, not current state)
 
