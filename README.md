@@ -118,7 +118,7 @@ devclaw/
 ├── delivery/           # how shipped changes REACH the owner:
 │   ├── __init__.py     #   engineer-authored commit → branch → push → PR
 │   ├── deploy.py       #   Tailscale deploy hosting — experimental; launcher supports Python/static only (#401)
-│   └── repo.py         #   gh repo creation (for create_repo)
+│   └── repo.py         #   gh repo creation + teardown (create_repo / delete_repo)
 ├── quality/            # gates that judge the work past the green test gate:
 │   ├── __init__.py     #   pre-PR adversarial diff review (claude)
 │   ├── eval_judge.py   #   failure-mode classifier across eval runs
@@ -153,6 +153,7 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 | `review_repository(workspace_dir, …)` | Deprecated alias — forwards to `dispatch_task(kind="review_repository")` (read-only) |
 | `onboard(workspace_dir, …)` | Analyze a repo and write a draft `AGENTS.md` (comprehension only) |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
+| `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
 | `start_program(workspace_dir, goal, …)` | DEPRECATED sugar for `create_goal(mode='one_shot')` — files a one-shot goal that plans the brief end-to-end and runs the checklist as one parallel program |
 | `get_program(program_id)` / `list_programs()` | Program status + task DAG |
 | `get_status(task_id)` / `list_tasks(...)` / `get_events(...)` | Task history + replayable event feed (live SSE over HTTP) |

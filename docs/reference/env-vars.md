@@ -103,7 +103,7 @@ session quota, not a bill.**
 | `DEVCLAW_TAILSCALE_BIN` | `tailscale` | Tailscale CLI used by `deploy.py` for `tailscale serve`. |
 | `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | — | **Actively refused.** The sandbox runner strips these from the env before spawning the container. Set anywhere = no effect; the design pillar is Pro/Max OAuth, not metered billing. |
 | `GITHUB_TOKEN` / `GH_TOKEN` | — | Repo push + PR access for `open_pr` delivery (or use a logged-in `gh`). Git access only — not cognition billing. |
-| `DEVCLAW_GITHUB_OWNER` | — | GitHub account/org `create_repo` creates under (falls back to `gh`'s active login). |
+| `DEVCLAW_GITHUB_OWNER` | — | GitHub account/org `create_repo`/`delete_repo` operate under (falls back to `gh`'s active login). |
 
 ## Goal layer
 

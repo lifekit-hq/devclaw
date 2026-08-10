@@ -234,6 +234,10 @@ class ProjectRegistry:
                   updated_at    INTEGER NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+                CREATE TABLE IF NOT EXISTS managed_repos (
+                  slug       TEXT PRIMARY KEY,  -- lowercased owner/name
+                  created_at INTEGER NOT NULL
+                );
                 """
             )
             # Migration for DBs created before a given override column existed —
@@ -434,6 +438,36 @@ class ProjectRegistry:
                     p.browser_gate_mode, p.sandbox_image,
                     p.updated_at, p.id,
                 ),
+            )
+            self._db.commit()
+
+    # ---- managed-repo provenance -------------------------------------------
+    # Which GitHub repos devclaw itself stood up (via the create_repo tool).
+    # delete_repo consults this ledger and refuses anything not in it, so
+    # devclaw can only ever tear down what it created — a pre-existing,
+    # human-owned repo (finance-sentry) is structurally undeletable over MCP
+    # no matter what confirm string is passed. Slugs are stored lowercased
+    # because GitHub slugs are case-insensitive.
+
+    def record_managed_repo(self, slug: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR IGNORE INTO managed_repos (slug, created_at) VALUES (?, ?)",
+                (slug.lower(), _now_ms()),
+            )
+            self._db.commit()
+
+    def is_managed_repo(self, slug: str) -> bool:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM managed_repos WHERE slug = ?", (slug.lower(),)
+            ).fetchone()
+        return row is not None
+
+    def forget_managed_repo(self, slug: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "DELETE FROM managed_repos WHERE slug = ?", (slug.lower(),)
             )
             self._db.commit()
 
