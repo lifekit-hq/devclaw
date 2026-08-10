@@ -26,6 +26,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="goals" element={<Goals />} />
           <Route path="goals/:id" element={<GoalDetail />} />
           <Route path="goals/:id/tasks/:taskId" element={<TaskDetail />} />
+          <Route path="tasks/:taskId" element={<TaskDetail />} />
           <Route path="evals" element={<Evals />} />
           <Route path="problems" element={<Problems />} />
           <Route path="settings" element={<Settings />} />

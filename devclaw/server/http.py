@@ -1671,6 +1671,46 @@ async def task_events_json(request: Request) -> Response:
     return JSONResponse({"events": rows, "count": len(rows), "nextCursor": next_cursor})
 
 
+@mcp.custom_route("/tasks/{task_id}.json", methods=["GET"])
+async def task_json(request: Request) -> Response:
+    """One task as a first-class drill-in feed — the SAME anatomy no matter how
+    the task was born (goal-dispatched or standalone dispatch_task): the header
+    facts (kind/status/PR/timestamps/branch), the CONTRACT (the full prompt/goal
+    text the worker was handed), and the settled verdicts decomposed from
+    result_json (verify / delivery / diff stats / usage) — WITHOUT the bulky
+    agent transcript (the turn-by-turn lives at /tasks/{id}/events.json, #455).
+    404 on an unknown id — a typo is not an empty task. Read-only."""
+    task_id = request.path_params["task_id"]
+    if not _valid_task_id(task_id):
+        return JSONResponse({"error": "bad_task_id"}, status_code=400)
+    t = store.get_task(task_id)
+    if t is None:
+        return JSONResponse({"error": "unknown_task"}, status_code=404)
+    row = _task_row(t)
+    row["error"] = t.error
+    row["verifyCmd"] = t.verify_cmd
+    verify = delivery = diff_stats = usage = None
+    result_corrupt = False
+    if t.result_json:
+        try:
+            rj = json.loads(t.result_json)
+            if isinstance(rj, dict):
+                verify = rj.get("verify")
+                delivery = rj.get("delivery")
+                diff_stats = rj.get("diff_stats")
+                usage = rj.get("usage")
+        except Exception:  # noqa: BLE001 — a corrupt result must not 500 the drill-in;
+            result_corrupt = True  # header + contract still render; the gap is FLAGGED
+    return JSONResponse({
+        "task": row,
+        "verify": verify,
+        "delivery": delivery,
+        "diffStats": diff_stats,
+        "usage": usage,
+        "resultCorrupt": result_corrupt,
+    })
+
+
 @mcp.custom_route("/projects/{project_id}.json", methods=["GET"])
 async def project_json(request: Request) -> Response:
     """Project Detail feed — header (name, repo, preview) + active/archived goal

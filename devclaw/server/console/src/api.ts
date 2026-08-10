@@ -466,6 +466,36 @@ export interface WorkerEventRow {
   raw: unknown;
 }
 
+// ---- universal task drill-in (any task, goal-born or standalone) ----------
+
+export interface TaskVerify {
+  ran?: boolean; cmd?: string | null; passed?: boolean;
+  exit_code?: number | null; timed_out?: boolean; output?: string | null;
+}
+export interface TaskDelivery {
+  delivered?: boolean; branch?: string | null; committed?: boolean;
+  pushed?: boolean; pr_url?: string | null; error?: string | null;
+}
+export interface TaskDiffStats { files?: number; insertions?: number; deletions?: number }
+export interface TaskUsage {
+  input_tokens?: number; output_tokens?: number;
+  cache_read_tokens?: number; cost_usd?: number;
+}
+export interface TaskDetailFeed {
+  task: TaskRow & { error: string | null; verifyCmd: string | null };
+  verify: TaskVerify | null;
+  delivery: TaskDelivery | null;
+  diffStats: TaskDiffStats | null;
+  usage: TaskUsage | null;
+}
+
+export async function fetchTask(taskId: string): Promise<TaskDetailFeed> {
+  const r = await fetch(`/tasks/${encodeURIComponent(taskId)}.json${tokenQS()}`);
+  if (r.status === 404) throw new Error(`task not found: ${taskId}`);
+  if (!r.ok) throw new Error(`task ${taskId}: ${r.status}`);
+  return r.json();
+}
+
 export async function fetchTaskEvents(
   taskId: string,
 ): Promise<{ events: WorkerEventRow[]; nextCursor: number | null }> {
