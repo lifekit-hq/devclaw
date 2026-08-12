@@ -65,8 +65,16 @@ def _health_freshness() -> dict:
             return None
         return _dt.datetime.fromtimestamp(int(ms) / 1000, tz=_dt.timezone.utc).isoformat()
 
+    from ..dispatch_gate import operator_block
+    from ..state_store import _now_ms
+
     reports = store.list_cycle_reports(limit=1)
     last_report_ms = reports[0].get("created_at") if reports else None
+    # Dispatch state on the token-free route so the external watchdog can
+    # tell "held" from "stalled" (O3-class false positive) without auth.
+    # Same computation get_run_schedule serves — not sensitive: it says
+    # WHETHER dispatch is open, not what is being dispatched.
+    blocked, why = operator_block(store.operator_hold(), store.get_run_schedule(), _now_ms())
     return {
         "git_sha": os.environ.get("DEVCLAW_GIT_SHA") or None,
         "built_at": os.environ.get("DEVCLAW_BUILT_AT") or None,
@@ -74,6 +82,8 @@ def _health_freshness() -> dict:
         "last_tick_at": _iso(getattr(goals, "last_tick_at_ms", None)),
         "last_cycle_report_at": _iso(last_report_ms),
         "tick_seconds": getattr(goals, "tick_seconds", None),
+        "dispatch_open": not blocked,
+        "dispatch_hold_reason": why or None,
     }
 
 

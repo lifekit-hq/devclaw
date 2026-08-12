@@ -97,6 +97,27 @@ def test_health_is_null_safe_before_first_tick_and_without_build_env(
     assert body["last_cycle_report_at"] is None
 
 
+def test_health_reports_dispatch_state_for_the_held_vs_stalled_call(
+    http_mod, store, monkeypatch
+):
+    """The token-free route carries dispatch_open + the hold reason so the
+    external watchdog can tell "held" (run window / operator hold — normal)
+    from "stalled" (a real wedge) — the O3 false-positive class."""
+    monkeypatch.setattr(
+        http_mod,
+        "goals",
+        SimpleNamespace(started_at_ms=1, last_tick_at_ms=None, tick_seconds=900),
+    )
+    body = _payload(asyncio.run(http_mod.health(None)))
+    assert body["dispatch_open"] is True  # fresh store: no hold, window disabled
+    assert body["dispatch_hold_reason"] is None
+
+    store.set_operator_hold(True, "manual hold for test")
+    body = _payload(asyncio.run(http_mod.health(None)))
+    assert body["dispatch_open"] is False
+    assert body["dispatch_hold_reason"]
+
+
 def test_node_json_carries_the_same_freshness_block(http_mod, monkeypatch):
     monkeypatch.setattr(
         http_mod,
