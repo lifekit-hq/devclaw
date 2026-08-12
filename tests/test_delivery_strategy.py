@@ -106,3 +106,44 @@ def test_resolve_keeps_fail_loud_default_and_propagates_corruption():
     with pytest.raises(RuntimeError, match="corrupt contract"):
         ds.resolve_strategy(store, "g1")
     assert store.calls == [{"goal_id": "g1", "on_corrupt": "raise"}]
+
+
+def test_fresh_long_lived_goal_resolves_goal_branch_delivery(tmp_path):
+    # Regression (live-found: ledger night 1, 2026-08-10). create_goal(mode=
+    # "long_lived") persisted NO lifecycle — the "starts executing directly"
+    # comment was never written to the status row — and resolve_strategy's
+    # deliberately-explicit ``executing`` requirement then downgraded every
+    # FRESH long_lived goal to per-action delivery: reset-to-main on each
+    # dispatch, three unmerged scaffold PRs, main never moved — the exact
+    # amnesia #486 was written to kill. Creation must stamp the lifecycle it
+    # claims, end to end through the real service + store.
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+
+    store = StateStore(str(tmp_path / "t.db"))
+    queue = TaskQueue(store)
+    cfg = GoalConfig(
+        goals_dir=tmp_path / "goals",
+        notify_url="",
+        tick_seconds=900,
+        eval_every=5,
+        verify_done=False,
+    )
+    svc = GoalService(queue, store, cfg)
+    try:
+        svc.create_goal(
+            "ledger",
+            objective="ship it",
+            workspace_dir="/ws",
+            done_when="the test command exits 0 and at least one assertion runs.",
+            backlog=["scaffold project", "first feature"],
+            mode="long_lived",
+        )
+        goal_store = svc._goal_store
+        assert goal_store.load_status("ledger").lifecycle == "executing"
+        strat = ds.resolve_strategy(goal_store, "ledger")
+        assert strat is ds.GOAL_BRANCH
+        assert strat.goal_branch("ledger") == "goal/ledger"
+    finally:
+        store.close()

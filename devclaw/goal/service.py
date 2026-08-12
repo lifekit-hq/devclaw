@@ -560,6 +560,16 @@ class GoalService:
         # one_shot stamps investigating; long_lived starts executing directly.
         if goal_research.INVESTIGATE_ENABLED and mode == "one_shot":
             self._goal_store.save_status(goal_id, GoalStatus(lifecycle="investigating"))
+        elif mode == "long_lived":
+            # "Starts executing directly" must be PERSISTED, not implied: a NULL
+            # lifecycle reads-as-executing on every display surface, but
+            # delivery_strategy.resolve_strategy requires the EXPLICIT
+            # ``executing`` string to put the goal on its ``goal/<id>``
+            # accumulation branch — NULL silently downgrades every fresh
+            # long_lived goal to per-action reset-to-main delivery, the exact
+            # amnesia #486 exists to kill (live-found: ledger night 1,
+            # 2026-08-10 — three unmerged scaffold PRs, main never moved).
+            self._goal_store.save_status(goal_id, GoalStatus(lifecycle="executing"))
         self._goal_store.append_log(goal_id, "goal created")
         self.poke()  # advance it on the next loop turn without waiting a full interval
         result = self.get_goal(goal_id)
