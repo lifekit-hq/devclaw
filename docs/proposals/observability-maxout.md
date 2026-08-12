@@ -1,7 +1,9 @@
 # Observability max-out — watch the watcher, remember the metrics, schedule the evals
 
-**Status: DRAFT** (2026-08-12; owner Denys). P1 firmed and sized below; P2
-agreed-in-direction; P3 mostly-agreed with `[OPEN]` items carrying the rest.
+**Status: LOCKED (direction)** — 2026-08-12. Drafted and clarified the same
+session; all 5 `[OPEN]` items resolved with Denys (answers inline in §Resolved
+below). Locking commits direction, not schedule — tranche sequencing stays
+Denys's call. P1 firmed and sized; P2/P3 named, P2 sized after P1.
 
 ## Origin
 
@@ -78,9 +80,10 @@ The **current detector set is not earning its keep**, on live evidence
 **Verdict: keep the process, repurpose it.** Ops-agent's justified role is the
 **mechanical external watchdog + restart authority** — the things that must
 work when devclaw's own cognition and notify paths are down, which is
-precisely when an LLM-playbook loop is least trustworthy. Strip or fix the
-goal-level detectors; the LLM playbook layer shrinks to the (still-gated) L3
-defect classifier or goes entirely (`[OPEN] O2` below).
+precisely when an LLM-playbook loop is least trustworthy. Clarify outcome on
+the goal-level detectors: **hygiene now, deletion decided after the ledger
+watch** (Denys, 2026-08-12 — see §Resolved O2), so the watch itself supplies
+the evidence on whether O1–O4 ever catch something devclaw's own pings miss.
 
 ## P1 — watch the watcher + surface honesty (firmed, ~5 PRs, end-of-week cap)
 
@@ -98,8 +101,9 @@ land in their own repos.
 3. **ops-agent: O5 daemon-liveness detector — zero-LLM, mechanical.** Polls
    `/health`: (a) unreachable/process down, (b) `last_tick_at` staler than
    N×tick-interval, (c) no cycle report by window-close + grace. Actions are
-   mechanical (no playbook): owner ping via the notify relay; `docker restart`
-   per the authority answer in `[OPEN] O1`. This is the dead-man's switch.
+   mechanical (no playbook): owner ping via the notify relay — **ping-only in
+   this tranche** (Resolved O1); auto-restart is a named follow-up unlocked
+   by correct detections. This is the dead-man's switch.
 4. **ops-agent: detector hygiene.** Skip goals in terminal phases
    (cancelled/done) — kills the daily zombie incidents and their cognition
    burn; suppress O1/O3 while dispatch is held (run-window/pause/operator
@@ -118,40 +122,46 @@ writes); all failure modes stay loud.
   same mechanical moment ADR 0006 uses) → console chart of merge-rate /
   verdict mix / first-pass hit rate / tokens-per-merged-PR over time. The
   5-night watch becomes chartable instead of anecdotal.
-- **Threshold pings on degradation** (values `[OPEN] O3`): merge-rate drop,
-  cognition-timeout spike, clean-cycle-rate drop.
+- **Measurement only in P2** (Resolved O3): no threshold pings yet.
+  **P2.1 — threshold pings** (merge-rate drop, cognition-timeout spike,
+  clean-cycle-rate drop) ships after ~2 weeks of snapshot baseline, values
+  chosen from the data.
 - **Widen self-triage** beyond the `db_size` allowlist so recurring alerts
   arrive deduped with a proposed fix.
 
-## P3 — scheduled evals + notify hardening (mostly agreed; `[OPEN]`s carry the rest)
+## P3 — scheduled evals + notify hardening (all three in — Resolved O5)
 
 - **Nightly stub-mode sandbox-E2E** on the VPS runner (free, deterministic);
   failures ping.
-- **Periodic real-pipeline eval burn** — cadence and quota budget `[OPEN] O4`.
+- **Weekly real-pipeline eval burn** (Resolved O4): `run_all --cognition
+  claude`, hard token cap, skipped while the account is quota-paused.
 - **Notify hardening**: bounded retry on the goal-layer owner path (the task
   path already has it), plus one shared dedup/rate-limit helper replacing the
   per-site flags.
 
-## `[OPEN]` items (clarify before LOCK)
+## Resolved (clarify step, 2026-08-12 — all answered by Denys in-session)
 
-- **[OPEN] O1 — restart authority.** May O5 `docker restart` devclaw
-  automatically on a dead/frozen daemon, or ping-only in the first tranche
-  (restart added after a few correct detections)? Recommendation: ping-only
-  first — a wrong automatic restart during an in-flight sandboxed task is the
-  riskier failure.
-- **[OPEN] O2 — the goal-level detectors' fate.** Fix-and-keep O1/O3 (PR 4
-  above) and keep O2/O4 + the LLM playbook layer as-is — or strip ops-agent to
-  the mechanical watchdog (O5 + hygiene) + the human-gated L3 defect
-  classifier, deleting the rest? Recommendation: strip — devclaw already
-  notifies for those conditions itself; duplicated alerting from a second
-  cognition loop is weight without signal ("good design is light").
-- **[OPEN] O3 — P2 threshold values + snapshot retention.** Which metrics
-  page, at what deltas, over what window; how long snapshots are kept.
-- **[OPEN] O4 — real-eval cadence + budget.** Weekly? Which harness
-  (`run_all --cognition claude` vs `measure_passrate`)? Hard token budget per
-  run, and does it pause when the account is quota-paused?
-- **[OPEN] O5 — P3 "mostly agree" boundary.** Which P3 piece carries the
-  reservation — the real-eval burn (quota), the notify refactor, or both?
+- **O1 — restart authority: PING-ONLY first.** O5 pings via the relay; the
+  human restarts. Auto-restart is a named follow-up PR, unlocked only after
+  O5 has a few correct detections on record (a wrong automatic restart
+  during an in-flight sandboxed task is the riskier failure).
+- **O2 — goal-level detectors: HYGIENE NOW, DECIDE AFTER THE WATCH.** Keep
+  O1–O4 + playbooks, but fix them in P1 (terminal-phase filter kills the
+  zombie incidents; dispatch-hold suppression kills the held≠stalled false
+  positives). The strip-vs-keep decision is explicitly deferred to after the
+  ledger 5-night watch, owner Denys — the watch supplies the evidence on
+  whether O1–O4 ever catch anything devclaw's own pings miss. (Deliberately
+  NOT the drafter's strip recommendation — evidence over doctrine.)
+- **O3 — P2 ships MEASUREMENT ONLY.** Per-cycle snapshots + the console
+  trend chart; NO threshold pings in P2. Thresholds become **P2.1**, chosen
+  from ~2 weeks of baseline data — thresholds invented without a baseline
+  are noise.
+- **O4 — real-eval burn: WEEKLY, capped, pause-aware.** One
+  `run_all --cognition claude` run per week with a hard token cap, skipped
+  entirely while the account is quota-paused.
+- **O5 — P3 scope: ALL THREE pieces in.** Nightly stub-E2E + the weekly
+  real burn + notify retry/dedup. The "mostly agree" carried no surviving
+  reservation once the pieces were named separately.
 
 ## Out of scope
 
