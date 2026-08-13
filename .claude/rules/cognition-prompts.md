@@ -18,6 +18,14 @@ Applies to `devclaw/prompts/*.md` + the gate's own `devclaw/quality/prompts/*.md
   instruction text — it leaks the literal header into every rendering and makes
   omission tests vacuous (bit us in #234). Reference it as `Repository context`
   without the `##`.
+- **Prompt style — state each rule ONCE, imperatively.** No persona/
+  motivational framing ("this makes the difference between…"), no incident
+  history in the template — the war story goes in the commit message that adds
+  the rule, never in the prompt. A rule needed in two sections is a smell:
+  restructure so it lives in one. Every template line costs tokens on the
+  least-reliable call class in the system (`claude --print` OOM/timeouts scale
+  with input size), so the bar for a line is "changes model behaviour", not
+  "adds emphasis".
 
 ## Caller modules
 
