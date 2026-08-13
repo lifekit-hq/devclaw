@@ -34,11 +34,35 @@ jobs:
       # gitleaks via pinned binary (arm64) — exit code is the gate; scans the
       # working tree for secrets. Avoids the gitleaks-action's license + the
       # account-lock's artifact-quota SARIF-upload failure.
+      # Download is retried, sha256-pinned, and cached on the self-hosted
+      # runner so a network flake (2026-08-12: `curl: (56) Connection died`
+      # mid-download painted a PR red) reads as "download failed (infra)",
+      # never as a secrets finding.
       - name: gitleaks
         run: |
           VERSION=8.21.2
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_arm64.tar.gz" \
-            | tar -xz gitleaks
+          # sha256 of gitleaks_8.21.2_linux_arm64.tar.gz from the official
+          # release asset gitleaks_8.21.2_checksums.txt at
+          # https://github.com/gitleaks/gitleaks/releases/tag/v8.21.2
+          SHA256=654c935542c89f565aabe7bf7c6c500830f116c114f0aeb509d2460c1ac2e6da
+          CACHE_DIR="$HOME/.cache/gitleaks/${VERSION}"
+          TARBALL="${CACHE_DIR}/gitleaks_${VERSION}_linux_arm64.tar.gz"
+          if ! echo "${SHA256}  ${TARBALL}" | sha256sum -c --status 2>/dev/null; then
+            mkdir -p "${CACHE_DIR}"
+            if ! curl -sSfL --retry 5 --retry-delay 2 --retry-all-errors \
+                "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_arm64.tar.gz" \
+                -o "${TARBALL}.tmp"; then
+              echo "::error::gitleaks download failed (infra) — NOT a secrets finding; retry the job"
+              exit 1
+            fi
+            if ! echo "${SHA256}  ${TARBALL}.tmp" | sha256sum -c --status; then
+              echo "::error::gitleaks download checksum mismatch (infra) — NOT a secrets finding"
+              rm -f "${TARBALL}.tmp"
+              exit 1
+            fi
+            mv "${TARBALL}.tmp" "${TARBALL}"
+          fi
+          tar -xzf "${TARBALL}" gitleaks
           ./gitleaks dir . --no-banner --redact --exit-code 1
 
       - name: yamllint
