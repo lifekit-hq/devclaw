@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
+from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
 from . import merge as goal_merge
 from . import remote_checks as goal_remote_checks
@@ -639,6 +640,24 @@ class GoalService:
         join key is the deterministic ``self-fix-issue-<n>`` id."""
         return self._goal_store.exists(goal_id)
 
+    def _delivery_view(self, goal_id: str) -> dict:
+        """The resolved delivery strategy + goal branch (#495) — the single most
+        load-bearing runtime decision per goal, previously visible nowhere but a
+        workspace reflog on the VPS. Display path: ``resolve_strategy`` keeps its
+        fail-loud ``on_corrupt="raise"`` semantics for the DELIVERY path, but a
+        read surface must not 500 over a corrupt contract (the tick already
+        blocks the goal loudly; ``blocked_on`` carries the signal) — so here a
+        resolution failure degrades to an explicit ``"unresolvable"``, never to
+        a silently-wrong strategy name."""
+        try:
+            strat = _delivery_strategy.resolve_strategy(self._goal_store, goal_id)
+        except Exception:
+            return {"delivery_strategy": "unresolvable", "goal_branch": None}
+        return {
+            "delivery_strategy": strat.name,
+            "goal_branch": strat.goal_branch(goal_id),
+        }
+
     def get_goal(self, goal_id: str) -> dict:
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
@@ -661,7 +680,12 @@ class GoalService:
             "mode": g.mode,
             "strictness": g.strictness,
             "phase": s.phase,
-            "lifecycle": s.lifecycle or "executing",
+            # RAW stored lifecycle (#496): a legacy row's NULL renders as null,
+            # never coalesced to "executing" — resolve_strategy branches on the
+            # raw value, and a display that coalesces actively misleads
+            # diagnosis (the #493 bug lived exactly in that gap).
+            "lifecycle": s.lifecycle,
+            **self._delivery_view(goal_id),
             "next": s.next,
             "blocked_on": s.blocked_on,
             "blocked_kind": s.blocked_kind,
@@ -753,7 +777,9 @@ class GoalService:
             "objective": g.objective,
             "done_when": g.done_when,
             "phase": s.phase,
-            "lifecycle": s.lifecycle or "executing",
+            # RAW stored lifecycle (#496) — see get_goal; null is honest.
+            "lifecycle": s.lifecycle,
+            **self._delivery_view(goal_id),
             "next": s.next,
             "blocked_on": s.blocked_on,
             "actions_dispatched": s.actions_dispatched,
@@ -793,7 +819,9 @@ class GoalService:
                 "objective": g.objective[:140],
                 "workspace_dir": g.workspace_dir,
                 "phase": s.phase,
-                "lifecycle": s.lifecycle or "executing",
+                # RAW stored lifecycle (#496) — see get_goal; null is honest.
+                "lifecycle": s.lifecycle,
+                **self._delivery_view(gid),
                 "blocked_on": s.blocked_on,
                 "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
                 "direction": s.last_eval_verdict,
