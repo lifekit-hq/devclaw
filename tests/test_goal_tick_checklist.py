@@ -935,6 +935,77 @@ async def test_dispatch_without_failures_is_byte_identical(tmp_path):
     assert "PRIOR ATTEMPTS" not in dispatched_action.goal
 
 
+def test_prior_attempts_digest_capped_keeps_most_recent():
+    """The digest is budget-capped (a repeatedly re-dispatched batch's
+    aggregated failure notes inflated the worker's initial prompt without
+    bound — real "Prompt is too long" failure, 2026-08-12). Over budget, the
+    OLDEST whole notes fall off behind a loud elision marker; the most recent
+    — the actionable ones — survive intact."""
+    from devclaw.goal.tick_dispatch import MAX_DIGEST_CHARS, _prior_attempts_digest
+
+    notes = [f"attempt {i}: settled failed · approach-{i} " + "x" * 300
+             for i in range(1, 31)]  # ~10k chars, well over budget
+    cl = Checklist(items=[
+        ChecklistItem(**{**vars(_example_checklist().items[0]), "failure_log": notes}),
+        _example_checklist().items[1],
+    ])
+
+    digest = _prior_attempts_digest(cl, ["scaffold"])
+
+    # the note lines (everything after the fixed header) fit the budget
+    _, _, body = digest.partition("route):\n")
+    assert body and len(body) <= MAX_DIGEST_CHARS
+    # most recent note kept whole; oldest dropped
+    assert "approach-30" in digest
+    assert "approach-1 " not in digest
+    # loud, not silent: the marker names how many were dropped
+    dropped = 30 - sum(f"approach-{i} " in digest for i in range(1, 31))
+    assert f"{dropped} older failure note(s) dropped" in digest
+
+
+def test_prior_attempts_digest_small_is_byte_identical():
+    """Under-budget digests must not change shape at all — the cap is
+    invisible until it's needed."""
+    from devclaw.goal.tick_dispatch import _prior_attempts_digest
+
+    cl = Checklist(items=[
+        ChecklistItem(**{**vars(_example_checklist().items[0]),
+                         "failure_log": ["attempt 1: settled failed · gate boom-approach"]}),
+        _example_checklist().items[1],
+    ])
+
+    digest = _prior_attempts_digest(cl, ["scaffold"])
+
+    assert digest == (
+        "\n\nPRIOR ATTEMPTS ON THIS WORK ITEM (all failed - do not repeat "
+        "these approaches; diagnose why they failed and take a different "
+        "route):\n"
+        "- [scaffold] attempt 1: settled failed · gate boom-approach"
+    )
+
+
+def test_prior_attempts_digest_single_oversized_note_hard_trimmed():
+    """Whole-entry drops can't help when ONE note alone exceeds the budget —
+    only then is the note hard-trimmed, with a loud suffix."""
+    from devclaw.goal.tick_dispatch import MAX_DIGEST_CHARS, _prior_attempts_digest
+
+    cl = Checklist(items=[
+        ChecklistItem(**{**vars(_example_checklist().items[0]),
+                         "failure_log": ["attempt 1: old-note",
+                                         "attempt 2: giant " + "y" * (2 * MAX_DIGEST_CHARS)]}),
+        _example_checklist().items[1],
+    ])
+
+    digest = _prior_attempts_digest(cl, ["scaffold"])
+
+    _, _, body = digest.partition("route):\n")
+    assert body and len(body) <= MAX_DIGEST_CHARS
+    assert "hard-trimmed" in digest
+    assert "attempt 2: giant" in digest      # the recent note's head survives
+    assert "old-note" not in digest          # older whole entry dropped first
+    assert "1 older failure note(s) dropped" in digest
+
+
 # ---- staleness probe (issue-393 wire-up) ------------------------------------
 
 
