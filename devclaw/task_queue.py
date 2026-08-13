@@ -187,6 +187,19 @@ _REVIEW_CRASH_MARKER = "review gate crashed (failing closed):"
 #: re-dispatch loop. It is NEVER treated as an approval (never settles ``done``);
 #: the reason rides the failure so the goal layer surfaces it to the owner.
 _WORKER_BLOCKED_MARKER = "worker reported BLOCKED:"
+#: Substring the engine surfaces when the worker's conversation OVERFLOWED the
+#: model context window (full shape: ``Conversation run failed for id=...:
+#: Internal error: Prompt is too long``). Unlike the two markers above this one
+#: is not prefixed by us — it rides mid-string inside the engine's error — so
+#: it is matched with ``in``, not ``startswith``; anchoring on the engine's
+#: ``Internal error:`` prefix restores the misroute shield the other markers
+#: get from ``startswith`` (a target repo's verify output that merely SAYS
+#: "Prompt is too long" must not be routed here). The overflow is DETERMINISTIC
+#: for a given task scope, and the retry prompt APPENDS the prior failure
+#: history to the instruction, so a re-run is strictly LARGER and overflows
+#: again. Fails FAST + CLOSED like the review-crash path: never done, never
+#: paused, no retry — the task must be re-dispatched with smaller scope.
+_PROMPT_TOO_LONG_MARKER = "Internal error: Prompt is too long"
 #: ``BRANCH_STALE_THRESHOLD`` is defined next to the staleness probe in
 #: :mod:`devclaw.task_git` (imported above) so the prep-time refuse guard and the
 #: tick-path dispatch skip share ONE predicate; re-exported here for callers/tests.
@@ -1522,11 +1535,13 @@ class TaskQueue(_NotifyMixin):
         #      it recomputes the diff and surfaces lower-priority findings.
         #    Axis 2 — FAILURE-STRING CLASSIFICATION: classify_failure() reads the
         #      terminal failure text to pause on quota/auth (usage-limit path).
-        #    Axis 3 — MARKER-BASED FAST-FAIL ROUTING: _WORKER_BLOCKED_MARKER and
-        #      _REVIEW_CRASH_MARKER route specific failures without a retry.
+        #    Axis 3 — MARKER-BASED FAST-FAIL ROUTING: _WORKER_BLOCKED_MARKER,
+        #      _REVIEW_CRASH_MARKER and _PROMPT_TOO_LONG_MARKER route specific
+        #      failures without a retry.
         #
         #    LOAD-BEARING ORDERING (below): _WORKER_BLOCKED_MARKER is checked
-        #    BEFORE classify_failure, which is checked BEFORE _REVIEW_CRASH_MARKER.
+        #    BEFORE classify_failure, which is checked BEFORE _REVIEW_CRASH_MARKER
+        #    and _PROMPT_TOO_LONG_MARKER.
         #    The SAME review-crash string is a PAUSE or a FAST-FAIL depending on
         #    which classifier claims it first — reordering silently changes the
         #    outcome. Leave the order as written.
@@ -1854,6 +1869,29 @@ class TaskQueue(_NotifyMixin):
                     f"{last_failure} Not auto-retried: a diff too large or "
                     "unreviewable for the gate must be split into smaller commits or "
                     "reviewed by a human — retrying re-crashes the gate identically.",
+                )
+                self._check_and_trip_breaker(workspace_dir, task_id)
+                return None
+            # Context overflow: the worker's conversation exceeded the model's
+            # context window ("Conversation run failed for id=...: Internal
+            # error: Prompt is too long"). NOT a defect a retry can fix — the
+            # overflow is deterministic for this task's scope, and the retry
+            # prompt APPENDS the failure history to the instruction, so a
+            # re-run is strictly LARGER and overflows again: "(failed after 2
+            # attempts)" was pure quota burn. Fail FAST + fail CLOSED (never
+            # ships, never pauses — classify_failure above already returned
+            # REAL for this wording) with an actionable reason, same treatment
+            # as the review-crash fast-fail above. Substring match: the marker
+            # rides mid-string inside the engine's error, not as our prefix.
+            if _PROMPT_TOO_LONG_MARKER in last_failure:
+                self._store.mark_failed(
+                    task_id,
+                    f"{last_failure} — the worker conversation overflowed the "
+                    "model context. Not auto-retried: the overflow is "
+                    "deterministic and a retry replays the same task plus its "
+                    "failure history, so it overflows again. Re-dispatch this "
+                    "task with a smaller scope — slice the work into smaller "
+                    "pieces touching fewer files.",
                 )
                 self._check_and_trip_breaker(workspace_dir, task_id)
                 return None

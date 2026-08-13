@@ -1,0 +1,68 @@
+# devclaw Constitution
+
+Seeded 2026-08-13 from the load-bearing invariants in `CLAUDE.md` and
+`docs/architecture.md`. Those documents remain canonical — on any conflict,
+`CLAUDE.md` wins and this file must be corrected in the same PR. This
+constitution exists so the speckit pipeline checks devclaw's *actual* rules
+instead of a generic product-feature template.
+
+## Core Principles
+
+### I. OAuth only — never metered billing
+Cognition is always `claude` over Pro/Max OAuth. `ANTHROPIC_API_KEY` /
+`ANTHROPIC_AUTH_TOKEN` are actively stripped at every spawn site. No spec may
+introduce a path that lets a stray key silently switch autonomous runs onto
+metered billing.
+
+### II. Model-agnostic worker layer
+Skills are plain markdown; hooks are bash `.sh` files; cross-tool capability
+goes through MCP, not vendor tool-wiring. Swapping `claude-code` for another
+agent must only change the `ACPAgent` call.
+
+### III. Zero-token idle
+An idle goal and an in-flight-still-running goal cost ~0 `claude` calls.
+Cheap SQLite/timestamp checks run before any LLM call. A spec that adds
+tick-path cognition firing on idle is unconstitutional on its face.
+
+### IV. Single writer to state
+Only the TaskQueue mutates task rows; goal state is owned by `GoalStore`
+behind CAS'd transitions (`TransitionConflict` over silent clobber).
+Markdown status files are generated views, never read back for decisions.
+
+### V. Verification fails closed; "done" is a proposal
+A quality-gate crash is not an approval. Completion is gated on grounded
+evaluation (`review_repository` against the firmed `done_when`), never on
+counting PRs or backlog items. The trust dial recalibrates the two
+review-shaped gates; it never repeals fail-closed for crash/quota cases.
+
+### VI. Loud failure over silent degradation
+Broken delivery fails; lost/corrupt state blocks legibly with an owner ping;
+usage limits pause-and-resume with WIP preserved. Any bounded coverage
+(top-N, sampling, truncation) says so out loud.
+
+### VII. Fix the class, not the instance
+A concrete failure is an instance of a class; change the rule, not the case
+that hurt today. Domain specifics (code, PRs, Playwright) stay at the edges
+so layers 1–4 remain domain-agnostic.
+
+## Development Workflow
+
+- Direction changes start from a LOCKED `docs/proposals/` entry or an ADR —
+  speckit specs are execution-side artifacts downstream of a locked direction
+  (see `.claude/rules/spec-lifecycle.md` for the boundary).
+- Every behavior-change PR ships a named regression test; zero-token guard
+  tests (`FakeClaude.calls == 0`) are load-bearing — if one fails, the change
+  is wrong, never the test.
+- Branch per change; squash merges; `invariant-guard` runs on any diff before
+  a PR; docs made stale by a diff are fixed in the same PR.
+- Slice novel work into independently-shippable P1/P2/P3 increments; firm and
+  size only P1, in devclaw's own units (N PRs, an end-of-week cap).
+
+## Governance
+
+This constitution mirrors, and is subordinate to, `CLAUDE.md` and the ADRs in
+`docs/decisions/`. Amendments happen only as reflections of a change already
+made there — never the other way around. `invariant-guard` remains the
+enforcement agent; speckit checklists supplement it, they do not replace it.
+
+**Version**: 1.0.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-13

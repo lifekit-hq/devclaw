@@ -102,6 +102,21 @@ def _flag_items_in_flight(store: GoalStore, goal_id: str, item_ids: list[str]) -
     store.write_checklist(goal_id, updated, render_view=False)
 
 
+#: Cap on the prior-attempts digest inlined into a dispatched worker brief
+#: (same shape as :data:`devclaw.goal.repo_brief.MAX_BRIEF_CHARS`). Oldest
+#: notes are dropped first — recent failures are the actionable ones — behind
+#: a loud elision marker. Uncapped, a repeatedly re-dispatched item's
+#: failure_log grew the worker's initial prompt without bound (contributed to
+#: a real "Prompt is too long" failure, 2026-08-12).
+MAX_DIGEST_CHARS = 4000
+
+#: Headroom reserved inside the budget for the elision/truncation markers, so
+#: adding them can't push a capped digest back over MAX_DIGEST_CHARS.
+_DIGEST_MARKER_RESERVE = 120
+
+_DIGEST_TRUNC_SUFFIX = " …[note hard-trimmed to fit the digest budget]"
+
+
 def _prior_attempts_digest(checklist, addresses: list[str]) -> str:
     """Blank-safe brief section from the addressed items' failure_log — the
     cross-dispatch half of the continuity gap: the planner sees the failure
@@ -123,6 +138,25 @@ def _prior_attempts_digest(checklist, addresses: list[str]) -> str:
             lines.append(f"- [{item_id}] {note}")
     if not lines:
         return ""
+    # Budget: keep the MOST RECENT notes (the actionable ones), drop the
+    # oldest whole entries first behind a loud marker; hard-trim mid-entry
+    # only when a single note alone exceeds the budget. Under-budget digests
+    # take none of these branches — byte-identical to the uncapped output.
+    if len("\n".join(lines)) > MAX_DIGEST_CHARS:
+        budget = MAX_DIGEST_CHARS - _DIGEST_MARKER_RESERVE
+        dropped = 0
+        while len(lines) > 1 and len("\n".join(lines)) > budget:
+            lines.pop(0)
+            dropped += 1
+        if len(lines) == 1 and len(lines[0]) > budget:
+            keep = max(0, budget - len(_DIGEST_TRUNC_SUFFIX))
+            lines[0] = lines[0][:keep] + _DIGEST_TRUNC_SUFFIX
+        if dropped:
+            lines.insert(
+                0,
+                f"- [devclaw] {dropped} older failure note(s) dropped to fit "
+                "the digest size budget; the most recent are kept below:",
+            )
     header = (
         "PRIOR ATTEMPTS ON THIS WORK ITEM (all failed - do not repeat "
         "these approaches; diagnose why they failed and take a different "

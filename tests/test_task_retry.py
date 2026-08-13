@@ -197,6 +197,61 @@ async def test_worker_blocked_status_is_not_retried_and_surfaces_reason(store, m
     assert "Needs a human" in t.error
 
 
+async def test_prompt_too_long_fails_fast_without_retry(store, monkeypatch):
+    # Context overflow ("Conversation run failed for id=...: Internal error:
+    # Prompt is too long") is DETERMINISTIC for a task's scope — and the retry
+    # prompt appends the failure history, so a re-run is strictly larger and
+    # overflows again ("(failed after 2 attempts)" was pure quota burn). Fail
+    # FAST (exactly one engine invocation) + CLOSED (failed — never done,
+    # never paused) with actionable smaller-scope guidance.
+    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 3)  # retries available, must not be used
+    calls: list = []
+
+    async def overflowing_runner(req: EngineRequest):
+        calls.append(req.goal)
+        return {"status": "error",
+                "error": ("Conversation run failed for id=abc123: "
+                          "Internal error: Prompt is too long")}
+
+    q = TaskQueue(store, runner=overflowing_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "failed"  # fail closed — an overflow is never an approval
+    assert len(calls) == 1  # no second engine invocation — the retry is futile
+    assert "Prompt is too long" in t.error
+    assert "Not auto-retried" in t.error and "smaller scope" in t.error
+    # never a pause: a context overflow is a REAL failure, not a usage limit
+    until_ms, _reason = store.global_pause()
+    assert until_ms == 0
+
+
+async def test_quota_error_mentioning_prompt_too_long_still_pauses(store, monkeypatch):
+    # LOAD-BEARING ORDERING: classify_failure runs BEFORE the prompt-too-long
+    # marker check, so a quota-shaped error that ALSO carries the marker text
+    # must take the pause-and-resume path (requeued, quota preserved), never
+    # the terminal no-retry fail. Pins the ordering the settle-path comment
+    # promises — a comment alone is not a regression guard.
+    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    calls: list = []
+
+    async def quota_with_marker(req: EngineRequest):
+        calls.append(req.goal)
+        return {"status": "error",
+                "error": ("Conversation run failed for id=abc123: Internal "
+                          "error: You're out of extra usage · resets 3:30am "
+                          "(UTC) — Internal error: Prompt is too long")}
+
+    q = TaskQueue(store, runner=quota_with_marker)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "pending"  # requeued for the pause window, NOT failed
+    assert len(calls) == 1
+    until_ms, _reason = store.global_pause()
+    assert until_ms > 0  # the pause engaged — quota routing was not shadowed
+
+
 async def test_timeout_is_not_retried(store, monkeypatch):
     monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
     monkeypatch.setattr(task_queue, "TASK_TIMEOUT_S", 0.2)

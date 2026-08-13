@@ -16,6 +16,20 @@ the pipeline we already converged on and adding one hard discipline line.
 > *slice-into-prioritized-increments* discipline below. See vault
 > `projects/devclaw/speckit-decision-2026-07-22.md`.
 
+> **ADOPTED 2026-08-13 — Denys's decision, reversing the line above.** Spec-kit
+> is now installed in this repo (`.specify/` + `speckit-*` skills), consistent
+> with the rest of the fleet (finance-sentry vendors spec-kit v0.16.0). The two
+> July objections are answered structurally, not waved away: (1) **two homes** —
+> the homes now have a hard boundary: `docs/proposals/` + `docs/decisions/`
+> remain the only home for *direction* (multi-PR arcs, invariant changes; the
+> pipeline below is unchanged and still mandatory), while `.specify/specs/` holds
+> *execution-side feature specs* written downstream of an already-locked
+> direction — a speckit spec never locks direction, and a proposal never carries
+> task-level detail. (2) **generic template can't check invariants** — the
+> speckit constitution (`.specify/memory/constitution.md`) is seeded from
+> `CLAUDE.md`'s invariants and declared subordinate to it; `invariant-guard`
+> remains the enforcement agent on every diff.
+
 ## The pipeline
 
 ```
