@@ -16,6 +16,7 @@ from pydantic import Field
 
 from ..delivery import deploy as _deploy
 from .. import elicitation as _elicitation
+from .. import intake as _intake
 from ..delivery import repo as _repo
 from ..dispatch_gate import (
     _parse_hhmm,
@@ -149,6 +150,49 @@ async def review_repository(
         goal=focus or "general code review",
         notify_url=notify_url,
     )
+
+
+@mcp.tool
+async def file_intake(
+    project_id: str,
+    what: str,
+    done_when: str,
+    asker: str,
+    channel: Literal["chat", "telegram", "a2a", "other"],
+    context: Optional[str] = None,
+) -> str:
+    """Stage 1 of the single intake doorway: record an ask as a durable,
+    labeled GitHub issue on the target registered project's repo, and return
+    the issue URL — the asker's receipt. EVERY ask from every source (human or
+    agent) enters devclaw through this tool; it can only create issues, never
+    dispatch. Execution admission (stage 2) is a separate step by the
+    authorized dispatcher via ``dispatch_task``/``create_goal``, referencing
+    the intake issue.
+
+    - ``project_id`` — a registered project (see ``list_projects``); the issue
+      is filed on its ``repoUrl`` repo. Unknown project ⇒ synchronous reject.
+    - ``what`` — the ask, one paragraph.
+    - ``done_when`` — verifiable completion criteria (≥ 20 chars).
+    - ``asker`` / ``channel`` — provenance, recorded (not authenticated) and
+      stamped server-side along with the filing timestamp.
+    - ``context`` — optional evidence: where seen, repro, links.
+
+    Returns ``{issue_url, project_id, repo}``. A filing failure raises with an
+    actionable message — there is no receipt unless the issue really exists."""
+    try:
+        result = await _intake.file_intake(
+            registry,
+            project_id=project_id,
+            what=what,
+            done_when=done_when,
+            asker=asker,
+            channel=channel,
+            context=context,
+            now_ms=_now_ms(),
+        )
+    except _intake.IntakeError as exc:
+        raise ToolError(str(exc)) from exc
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool
