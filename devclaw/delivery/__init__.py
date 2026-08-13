@@ -225,6 +225,12 @@ def _resolve_title(
     return title, branch, None
 
 
+#: Constant provenance label attached to every devclaw-delivered PR — the
+#: machine-readable "shipped by devclaw" marker external reporting filters on
+#: (the PR-body signature is prose; a label is the first-class GitHub filter).
+PROVENANCE_LABEL = "devclaw"
+
+
 def _scope_label(title: str) -> str:
     """A light PR label from the conventional-commit scope (``feat(tags):`` →
     ``tags``) or, absent a scope, the type (``fix:`` → ``fix``) — so a delivered PR
@@ -237,15 +243,18 @@ def _scope_label(title: str) -> str:
     return _slug(scope or m.group(1), n=30)
 
 
-async def _apply_scope_label(workspace_dir: str, pr_url: str, title: str) -> None:
-    """Best-effort: create-if-missing + attach a scope/kind label to the PR. A
-    label is cosmetic — every step is non-fatal (``_run`` never raises), so a
-    labelling failure can't fail a delivered PR."""
-    label = _scope_label(title)
-    if not label:
-        return
-    await _run("gh", "label", "create", label, "--color", "ededed", "--force", cwd=workspace_dir)
-    await _run("gh", "pr", "edit", pr_url, "--add-label", label, cwd=workspace_dir)
+async def _apply_pr_labels(workspace_dir: str, pr_url: str, title: str) -> None:
+    """Best-effort: create-if-missing + attach the constant ``devclaw``
+    provenance label plus a scope/kind label to the PR. Labels are cosmetic —
+    every step is non-fatal (``_run`` never raises), so a labelling failure
+    can't fail a delivered PR."""
+    labels = [PROVENANCE_LABEL]
+    scope = _scope_label(title)
+    if scope and scope != PROVENANCE_LABEL:
+        labels.append(scope)
+    for label in labels:
+        await _run("gh", "label", "create", label, "--color", "ededed", "--force", cwd=workspace_dir)
+    await _run("gh", "pr", "edit", pr_url, "--add-label", ",".join(labels), cwd=workspace_dir)
 
 
 def _pr_body(
@@ -556,9 +565,10 @@ async def deliver_change(
         url = _extract_pr_url(out)
         if url:
             result["pr_url"] = url
-            # Light structure: an area/kind label so the PR reads like human-managed
-            # work (best-effort; a labelling hiccup never fails the delivered PR).
-            await _apply_scope_label(workspace_dir, url, title)
+            # Light structure: the constant `devclaw` provenance label + an
+            # area/kind label so the PR reads like human-managed work
+            # (best-effort; a labelling hiccup never fails the delivered PR).
+            await _apply_pr_labels(workspace_dir, url, title)
         elif rc != 0:
             result["error"] = f"pushed, but gh pr create failed: {out[-300:]}"
 

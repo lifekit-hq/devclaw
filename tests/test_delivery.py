@@ -608,7 +608,7 @@ def _clone_with_origin(tmp_path):
 
 
 def _github_faking_run(monkeypatch, calls, *, existing_pr=None, push_fails=False,
-                       create_fails=False):
+                       create_fails=False, label_fails=False):
     """Wrap delivery._run: git stays REAL (real branches, real pushes to the
     local bare origin), but the remote LOOKS like GitHub and ``gh`` is faked —
     the existing tests never reach the gh path, and this is the only seam that
@@ -627,6 +627,8 @@ def _github_faking_run(monkeypatch, calls, *, existing_pr=None, push_fails=False
             if create_fails:
                 return 1, "gh: base branch not found"
             return 0, "https://github.com/acme/widgets/pull/7"
+        if prog == "gh" and args[:2] in (("label", "create"), ("pr", "edit")):
+            return (1, "gh: labels are broken today") if label_fails else (0, "")
         return await real_run(prog, *args, cwd=cwd, **kw)
 
     fake_run._devclaw_real = real_run  # so re-patching in one test never chains
@@ -762,6 +764,59 @@ async def test_deliver_failure_on_caller_chosen_branch_still_fails_closed(tmp_pa
     assert r2["pr_url"] is None
     assert "gh pr create failed" in (r2["error"] or "")
     assert delivery_failed(r2)
+
+
+async def test_delivered_pr_carries_devclaw_provenance_label(tmp_path, monkeypatch):
+    """Machine-readable provenance: every PR devclaw opens gets the constant
+    ``devclaw`` label (created-if-missing, then attached) so external reporting
+    can filter shipped-by-devclaw vs shipped-by-the-human first-class — the
+    PR-body signature is prose, not a filter. The scope/kind label still rides
+    along in the same attach."""
+    origin, repo = _clone_with_origin(tmp_path)
+    (tmp_path / "repo" / "feature.txt").write_text("agent change\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(api): add the widget endpoint")
+
+    calls = []
+    _github_faking_run(monkeypatch, calls)
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="abcd1234ef", goal="add the widget",
+        kind="implement_feature",
+    )
+
+    assert r["delivered"] is True and r["pr_url"]
+    label_creates = [c for c in calls if c[:3] == ("gh", "label", "create")]
+    assert "devclaw" in [c[3] for c in label_creates]
+    edits = [c for c in calls if c[:3] == ("gh", "pr", "edit")]
+    assert len(edits) == 1
+    attached = edits[0][edits[0].index("--add-label") + 1].split(",")
+    assert "devclaw" in attached
+    assert "api" in attached  # the scope label still rides along
+
+
+async def test_label_failure_never_fails_a_delivered_pr(tmp_path, monkeypatch):
+    """#183 semantics unchanged by the provenance label: labelling is
+    best-effort — every gh label/edit call failing leaves the delivery a full
+    success (delivered, PR recorded, no error)."""
+    origin, repo = _clone_with_origin(tmp_path)
+    (tmp_path / "repo" / "feature.txt").write_text("agent change\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(api): add the widget endpoint")
+
+    calls = []
+    _github_faking_run(monkeypatch, calls, label_fails=True)
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="abcd1234ef", goal="add the widget",
+        kind="implement_feature",
+    )
+
+    # The label calls WERE attempted and failed…
+    assert any(c[:3] == ("gh", "label", "create") for c in calls)
+    # …and the delivery is still a clean success.
+    assert r["delivered"] is True and r["error"] is None
+    assert r["pr_url"] == "https://github.com/acme/widgets/pull/7"
 
 
 # ---- branch-target wire to the direct-task path (v1-helper-resurface PR-2) --
