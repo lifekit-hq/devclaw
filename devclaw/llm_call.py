@@ -117,6 +117,53 @@ def _retry_backoff_s(attempt: int, retry_after_s: int | None) -> float:
     return float(min(_COGNITION_RETRY_BASE_S * (4 ** attempt), _COGNITION_RETRY_CAP_S))
 
 
+#: Cap on CONCURRENT host-side ``claude --print`` subprocesses (2026-08-13).
+#: Every host cognition call — review gate, evaluator, planner, done-gate —
+#: funnels through this one spawn chokepoint, but the population is invisible
+#: to the task cap (``DEVCLAW_MAX_CONCURRENT`` counts sandboxed tasks, not host
+#: processes): last night up to 4 review gates + goal cognition ran
+#: concurrently and the kernel OOM-killed them (``exited -9``, ×117 lifetime).
+#: A module-level semaphore, sized by ``DEVCLAW_MAX_HOST_COGNITION`` (default
+#: 2), bounds the host ``claude`` population; queued callers simply wait —
+#: no errors, no behavior change besides serialization. The zero-token idle
+#: guard is unaffected (this wraps only REAL calls), and the retry backoff in
+#: :func:`call_claude` sleeps OUTSIDE the semaphore (each attempt re-acquires).
+_MAX_HOST_COGNITION_DEFAULT = 2
+
+
+def _max_host_cognition_from_env(raw: str | None) -> int:
+    """Parse ``DEVCLAW_MAX_HOST_COGNITION`` → a positive concurrency cap.
+    Fail-safe like the timeout/retry parsers above: invalid or ``< 1`` falls
+    back to the default — a typo in ``.env`` must never take cognition down
+    (and ``0`` would deadlock every call, so it is NOT honored)."""
+    try:
+        n = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return _MAX_HOST_COGNITION_DEFAULT
+    return n if n >= 1 else _MAX_HOST_COGNITION_DEFAULT
+
+
+#: Lazy holder for the semaphore, keyed to the event loop it was created under.
+#: Lazy so importing this module never touches an event loop, and so the env
+#: var is read at first use (tests monkeypatch it). Loop-keyed because an
+#: ``asyncio.Semaphore`` binds to the running loop on first acquire and raises
+#: if reused from another loop — production runs one loop forever (one stable
+#: semaphore), while each ``asyncio.run`` in the test suite gets a fresh one.
+_host_cognition_sem: asyncio.Semaphore | None = None
+_host_cognition_sem_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _host_cognition_semaphore() -> asyncio.Semaphore:
+    global _host_cognition_sem, _host_cognition_sem_loop
+    loop = asyncio.get_running_loop()
+    if _host_cognition_sem is None or _host_cognition_sem_loop is not loop:
+        _host_cognition_sem = asyncio.Semaphore(
+            _max_host_cognition_from_env(os.environ.get("DEVCLAW_MAX_HOST_COGNITION"))
+        )
+        _host_cognition_sem_loop = loop
+    return _host_cognition_sem
+
+
 class PlannerError(Exception):
     def __init__(self, message: str, raw: str | None = None) -> None:
         super().__init__(message)
@@ -342,6 +389,24 @@ async def call_claude(
 
 
 async def _call_claude_once(
+    prompt: str,
+    model: str | None = None,
+    *,
+    role: str = "unknown",
+    timeout_ms: int | None = None,
+) -> str:
+    """One attempt, gated by the host-cognition semaphore: acquire BEFORE the
+    subprocess spawns, release only after the process has exited — so at most
+    ``DEVCLAW_MAX_HOST_COGNITION`` host ``claude`` processes ever coexist. A
+    queued caller just waits its turn; nothing errors. The cognition timeout
+    (``asyncio.wait_for`` inside :func:`_spawn_claude_once`) starts AFTER the
+    acquire, so time spent queued behind the semaphore never counts against a
+    call's timeout budget."""
+    async with _host_cognition_semaphore():
+        return await _spawn_claude_once(prompt, model, role=role, timeout_ms=timeout_ms)
+
+
+async def _spawn_claude_once(
     prompt: str,
     model: str | None = None,
     *,
