@@ -1,0 +1,45 @@
+name: Weekly Release
+
+# Cuts a release once a week by merging the Release Please PR that accumulates on main.
+# Release Please keeps that PR current on every merge; this job just lands it on a cadence.
+# No releasable commits since the last release → no PR → the job no-ops.
+#
+# GITHUB_TOKEN merges do not fire push-triggered workflows, so after merging this job
+# explicitly dispatches Release Please (tags + publishes the GitHub release).
+#
+# Unlike finance-sentry there is NO deploy dispatch here: devclaw deploys to the VPS
+# via lifekit-stack's redeploy-devclaw.sh, run by the owner (the run window resets
+# and live goals make deploys an operator decision, not a cron's).
+
+on:
+  schedule:
+    - cron: "0 8 * * 1" # Mondays 08:00 UTC
+  workflow_dispatch: # manual "release now"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: weekly-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Merge pending release PR, then dispatch tag
+        run: |
+          set -euo pipefail
+          pr=$(gh pr list --state open --label "autorelease: pending" --json number --jq '.[0].number // empty')
+          if [[ -z "$pr" ]]; then
+            echo "No pending release PR — nothing to release this week."
+            exit 0
+          fi
+          echo "Merging release PR #$pr"
+          gh pr merge "$pr" --squash --delete-branch
+          gh workflow run release-please.yml --ref main
