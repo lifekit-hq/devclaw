@@ -127,9 +127,11 @@ def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
     verify-iterate was compressed (~12.2k → ~10.9k) while every devclaw-specific
     contract + guardrail (verify-gate coverage, repo-gate-conflict, PLAN.md,
     commit) stayed. A regression above this ceiling means the spoon-feeding prose
-    crept back — recompress it, don't raise the bar."""
+    crept back — recompress it, don't raise the bar. (Ceiling lifted 11.4k →
+    12.6k for the #508 doctrine additions — judgment-call return contract,
+    precedent rule, one-shot scope bound — genuine doctrine, not prose creep.)"""
     brief = runner._load_skills("implement_feature")
-    assert len(brief) < 11_400
+    assert len(brief) < 12_600
     # the guardrails the compression must never drop (the anti-#358 rules + the
     # pull-doctrine live on regardless of how tight the prose gets)
     assert "Never weaken or delete an existing test" in brief
