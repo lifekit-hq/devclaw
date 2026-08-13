@@ -1,0 +1,22 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+  # Dispatched by weekly-release.yml after it merges the release PR: a merge done with
+  # GITHUB_TOKEN does not fire push workflows, so the tag/release step must be invoked
+  # explicitly (workflow_dispatch is exempt from that restriction).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
