@@ -5,5 +5,5 @@
   "here": true,
   "integration": "claude",
   "script": "sh",
-  "speckit_version": "0.16.3.dev0"
+  "speckit_version": "0.16.3"
 }

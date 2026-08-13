@@ -1,6 +1,6 @@
 {
   "integration": "speckit",
-  "version": "0.16.3.dev0",
+  "version": "0.16.3",
   "installed_at": "2026-08-13T06:51:41.985884+00:00",
   "files": {
     ".specify/scripts/bash/setup-tasks.sh": "4a33dd1e6c32ddc7d570f4b538572c54069192573eed0ec654d9fb826e31a4fe",
