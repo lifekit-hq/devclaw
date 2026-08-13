@@ -1,10 +1,14 @@
 # Proposal — single intake doorway: every ask, one owned pipeline, one durable receipt
 
-- **Status:** **LOCKED (direction)** — 2026-08-13. Drafted, clarified, and locked
-  in one session: all 5 `[OPEN]`s walked one-by-one with Denys and resolved (§4).
-  LOCKED = direction, not schedule — tranche sequencing stays Denys's call
-  (spec-lifecycle). **No code before this lock existed; none lands outside a
-  scheduled tranche.**
+- **Status:** **GRADUATED → [ADR 0012](../decisions/0012-single-intake-doorway.md)**
+  — 2026-08-13, same day as the lock (Denys scheduled the tranche immediately;
+  P1 shipped as #513 + lifekit-stack#117). The ADR is canonical for the doorway
+  decision; this proposal remains the home of the named-unsized **P2** (doorway
+  unavoidable at dispatch, `Closes`-vs-`Refs` per goal mode) and **P3**
+  (push-notify the asker; scorecard-gated auto-pickup — thresholds get their
+  own clarify step when scheduled). History: drafted, clarified (all 5
+  `[OPEN]`s walked one-by-one with Denys, §4), and LOCKED (direction) earlier
+  the same session.
 - **Date opened:** 2026-08-13 · **Authors:** Denys + Claude
 - **Relates to / does not restate:**
   - `CLAUDE.md` invariants — single-writer-to-state + CAS choke point, zero-token
