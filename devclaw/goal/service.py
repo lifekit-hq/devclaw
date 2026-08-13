@@ -141,6 +141,18 @@ class GoalService:
         #: so tests (which set DEVCLAW_TREND_ENABLED=0 or stub differently) and
         #: cold-starts don't import claude bindings prematurely.
         self._trend_detector_inst: "Optional[_trend_detector_mod.TrendDetector]" = None
+        #: heartbeat freshness (#494) — stamped by tick_all on every completed
+        #: full pass, read by /health + /node.json. In-memory on purpose: the
+        #: signal is "THIS process's loop completed a pass", so it must die
+        #: with the process rather than outlive it in the db.
+        self.started_at_ms: int = _now_ms()
+        self.last_tick_at_ms: Optional[int] = None
+
+    @property
+    def tick_seconds(self) -> int:
+        """Heartbeat interval — exposed so the health surfaces can self-describe
+        the staleness threshold instead of consumers duplicating config."""
+        return self._cfg.tick_seconds
 
     # ---- cognition callers (bound on first real use) -----------------------
 
@@ -407,6 +419,10 @@ class GoalService:
             triage_caller=self._triage(),
             mergeability_probe=goal_merge.pr_conflicting,
         )
+        # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
+        # crashing tick leaves this stale, which is exactly the signal an
+        # external dead-man watcher needs to see.
+        self.last_tick_at_ms = _now_ms()
         return {gid: o.value for gid, o in outcomes.items()}
 
     async def tick_one(self, goal_id: str) -> str:

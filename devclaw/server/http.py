@@ -48,9 +48,50 @@ def _safe_parse(s: str) -> object:
         return s
 
 
+def _health_freshness() -> dict:
+    """Heartbeat freshness + build identity (#494) — one truth shared by
+    ``/health`` and ``/node.json``, so the external dead-man watcher and the
+    console read the same fields.
+
+    Build identity comes from env baked into the image at build time
+    (``DEVCLAW_GIT_SHA`` / ``DEVCLAW_BUILT_AT``); read per call so it needs no
+    module reload. Absent values are ``null``, never faked. The cycle-report
+    read inherits ``list_cycle_reports`` semantics: empty/missing table → no
+    row (null here), real DB corruption raises loudly — and a /health that
+    500s on a corrupt store is a true alarm, not a bug."""
+
+    def _iso(ms: object) -> str | None:
+        if not ms:
+            return None
+        return _dt.datetime.fromtimestamp(int(ms) / 1000, tz=_dt.timezone.utc).isoformat()
+
+    from ..dispatch_gate import operator_block
+    from ..state_store import _now_ms
+
+    reports = store.list_cycle_reports(limit=1)
+    last_report_ms = reports[0].get("created_at") if reports else None
+    # Dispatch state on the token-free route so the external watchdog can
+    # tell "held" from "stalled" (O3-class false positive) without auth.
+    # Same computation get_run_schedule serves — not sensitive: it says
+    # WHETHER dispatch is open, not what is being dispatched.
+    blocked, why = operator_block(store.operator_hold(), store.get_run_schedule(), _now_ms())
+    return {
+        "git_sha": os.environ.get("DEVCLAW_GIT_SHA") or None,
+        "built_at": os.environ.get("DEVCLAW_BUILT_AT") or None,
+        "started_at": _iso(getattr(goals, "started_at_ms", None)),
+        "last_tick_at": _iso(getattr(goals, "last_tick_at_ms", None)),
+        "last_cycle_report_at": _iso(last_report_ms),
+        "tick_seconds": getattr(goals, "tick_seconds", None),
+        "dispatch_open": not blocked,
+        "dispatch_hold_reason": why or None,
+    }
+
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health(_request: Request) -> Response:
-    return JSONResponse({"ok": True, "name": SERVER_NAME, "version": __version__})
+    return JSONResponse(
+        {"ok": True, "name": SERVER_NAME, "version": __version__, **_health_freshness()}
+    )
 
 
 @mcp.custom_route("/dashboard", methods=["GET"])
@@ -868,6 +909,9 @@ def _node_vitals() -> dict:
             "recent": {"clean": clean_recent, "total": len(scored), "idle": len(cycles) - len(scored)},
         },
         "runningTasks": running_tasks,
+        # Heartbeat freshness + build identity (#494) — same block /health
+        # serves, so the console and the dead-man watcher read one truth.
+        "freshness": _health_freshness(),
         # The 5-layer strip (CLAUDE.md layer map). ``unknown`` is honest, not a
         # gap to paper over: L3/L5 have no idle probe today.
         "layers": [

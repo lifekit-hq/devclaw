@@ -31,6 +31,8 @@ default; copy it to `.env` and uncomment what you want to change.
 | `DEVCLAW_HOST` | `0.0.0.0` | HTTP bind address. Set `127.0.0.1` to restrict to loopback. |
 | `DEVCLAW_TOKEN` | — | Bearer-token gate for every HTTP route except `/health`. Sent as `Authorization: Bearer <token>` (MCP clients) or `?token=` (dashboard/SSE). Unset = no auth (local dev). |
 | `DEVCLAW_DOTENV` | `.env` (repo cwd) | Path of the `.env` file loaded at startup. Must be set in the shell to bootstrap (it can't live in the file it locates). |
+| `DEVCLAW_GIT_SHA` | — | Deployed git commit, baked into the image at build time (the deploy script already computes it for CACHEBUST). Surfaced on `/health` + `/node.json` (#494); unset ⇒ `null`, never guessed. |
+| `DEVCLAW_BUILT_AT` | — | Image build timestamp (ISO-8601), same provenance and surfaces as `DEVCLAW_GIT_SHA`. |
 
 ## State + concurrency
 
