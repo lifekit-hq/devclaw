@@ -85,7 +85,8 @@ def _list_goals(goal_store: GoalStore) -> list[dict]:
             "id": gid,
             "workspace_dir": g.workspace_dir,
             "phase": s.phase,
-            "lifecycle": s.lifecycle or "executing",
+            # RAW stored lifecycle (#496) — null for legacy rows, never coalesced.
+            "lifecycle": s.lifecycle,
             "blocked_on": s.blocked_on,
             "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
             "direction": (
