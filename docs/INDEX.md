@@ -28,7 +28,7 @@ docs/
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** Part I: the one-sitting mental model (five layers, two chains, the heartbeat, one task's journey, where state lives). Part II: the **locked contract** — per-layer contracts, the invariants (incl. grounded cognition, auto-heal), testability/replaceability, the question tree, the code map. | **CURRENT** — written 2026-07-13 (merged from `how-it-really-works.md` + `architecture-layers.md`), re-verified 2026-07-28. *Updated 2026-08-10*: layer-1 allowed-call list now names `delivery/repo.py` (the create_repo/delete_repo pair — a pre-existing omission). Load-bearing claims checked against main during the docs audits; change history in git. |
+| [`architecture.md`](./architecture.md) | **Start here.** Part I: the one-sitting mental model (five layers, two chains, the heartbeat, one task's journey, where state lives). Part II: the **locked contract** — per-layer contracts, the invariants (incl. grounded cognition, auto-heal), testability/replaceability, the question tree, the code map. | **CURRENT** — written 2026-07-13 (merged from `how-it-really-works.md` + `architecture-layers.md`), re-verified 2026-07-28. *Updated 2026-08-10*: layer-1 allowed-call list now names `delivery/repo.py` (the create_repo/delete_repo pair — a pre-existing omission). *Updated 2026-08-13*: layer-1 allowed-call list adds `intake.py` (`file_intake`, single-intake-doorway P1). Load-bearing claims checked against main during the docs audits; change history in git. |
 
 ## Flows
 
@@ -42,6 +42,7 @@ docs/
 | Doc | Purpose | Currency |
 |---|---|---|
 | [`reference/env-vars.md`](./reference/env-vars.md) | Single source of truth for every env var the runtime reads, grouped by purpose. | **CURRENT** — written/verified across the 2026-07-13 → 2026-07-30 tranches, re-verified 2026-08-06 (P3b planner cut: removed `DEVCLAW_THIN_PLAN` — the thin path is now the only long_lived path), updated 2026-08-13 (added `DEVCLAW_MAX_HOST_COGNITION` — host-cognition concurrency cap). Doc↔code parity is enforced by `tests/test_env_vars_doc_sync.py` (bidirectional) — the load-bearing guarantee this row exists for. Change history in git. |
+| [`reference/intake-shape.md`](./reference/intake-shape.md) | The intake shape — how any ask (human or agent, any channel) enters devclaw via the `file_intake` MCP tool: fields, synchronous rejection rules, server-stamped provenance, the issue-URL receipt and its open/closed lifecycle, and the stage-1/stage-2 split (filing is unprivileged; dispatch stays with the authorized dispatcher). Enforcement is `devclaw/intake.py`; this page is the canonical narrative. | **CURRENT** — written 2026-08-13 with the P1 implementation of `proposals/single-intake-doorway.md`. |
 
 ## Runbooks
 

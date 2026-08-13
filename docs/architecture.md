@@ -240,7 +240,11 @@ and `tests/test_self_triage.py`.
   HTTP endpoints in `devclaw/server/http.py`.
 - **Allowed to call:** layer 2 (`goals.create_goal(...)`, `goals.get_goal(...)`,
   etc.), the project registry, `delivery/repo.py` (the `create_repo`/`delete_repo`
-  gh provisioning pair — pure gh subprocess, no engine/queue involvement), and —
+  gh provisioning pair — pure gh subprocess, no engine/queue involvement),
+  `intake.py` (`file_intake`, the single-intake-doorway stage 1 — same
+  pure-gh-subprocess class: validates the intake shape, files a labeled issue
+  on a registered project's repo, can only create issues, never dispatch; see
+  [`reference/intake-shape.md`](./reference/intake-shape.md)), and —
   for the **direct-task intake**
   (`dispatch_task`, the v1 task-runner path re-surfaced by
   [ADR 0011](./decisions/0011-branch-target-delivery-seam.md)) —
