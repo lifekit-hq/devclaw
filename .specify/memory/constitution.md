@@ -47,22 +47,29 @@ so layers 1–4 remain domain-agnostic.
 
 ## Development Workflow
 
-- Direction changes start from a LOCKED `docs/proposals/` entry or an ADR —
-  speckit specs are execution-side artifacts downstream of a locked direction
-  (see `.claude/rules/spec-lifecycle.md` for the boundary).
+- ALL behavior-changing work starts with the speckit pipeline —
+  `/speckit-specify` → `/speckit-clarify` (run WITH Denys, one question at a
+  time) → `/speckit-plan` → `/speckit-tasks` → implement
+  (see `.claude/rules/speckit-workflow.md`). No implementation before the
+  clarify step is done. The spec records rejected alternatives — it is the
+  direction memory; the retired proposal→ADR pipeline
+  (`docs/proposals/` + `docs/decisions/`) is frozen history.
 - Every behavior-change PR ships a named regression test; zero-token guard
   tests (`FakeClaude.calls == 0`) are load-bearing — if one fails, the change
   is wrong, never the test.
-- Branch per change; squash merges; `invariant-guard` runs on any diff before
-  a PR; docs made stale by a diff are fixed in the same PR.
+- Branch per change; squash merges; docs made stale by a diff are fixed in
+  the same PR.
 - Slice novel work into independently-shippable P1/P2/P3 increments; firm and
   size only P1, in devclaw's own units (N PRs, an end-of-week cap).
 
 ## Governance
 
-This constitution mirrors, and is subordinate to, `CLAUDE.md` and the ADRs in
-`docs/decisions/`. Amendments happen only as reflections of a change already
-made there — never the other way around. `invariant-guard` remains the
-enforcement agent; speckit checklists supplement it, they do not replace it.
+This constitution is the invariant statement the speckit pipeline checks
+specs against — the enforcement surface for dev work on this repo (ruled by
+Denys 2026-08-13, retiring the proposal→ADR pipeline and the invariant-guard
+agent). `CLAUDE.md` remains the repo contract: on any conflict `CLAUDE.md`
+wins and this file is corrected in the same PR. A spec that requires an
+invariant change must say so explicitly and amend this constitution in the
+same arc — never silently.
 
-**Version**: 1.0.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-13
+**Version**: 2.0.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-13

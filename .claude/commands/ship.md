@@ -20,14 +20,16 @@ and report it instead of proceeding:
    mapped docs (DOC_MAP in .claude/hooks/docs-reminder.py) — if the change
    makes a doc claim wrong, fix the doc + its docs/INDEX.md currency tag as
    part of this same change.
-5. **Invariant review**: run the `invariant-guard` agent on the diff
-   (`git diff main...HEAD`). FIX FIRST verdict ⇒ stop and address it.
+5. **Constitution check**: for a behavior-changing diff, re-read
+   `.specify/memory/constitution.md` and verify the diff violates no principle
+   (and that the change came through a `.specify/specs/` spec per
+   .claude/rules/speckit-workflow.md). A violation ⇒ stop and address it.
 6. **Commit**: conventional message ($ARGUMENTS if provided, else derive one),
    body says WHY + names the regression test, ends with
    `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 7. **Push + PR**: `git push -u origin <branch>`, then `gh pr create` — body
    covers what/why, the named regression test, the suite counts, and any
-   invariant-guard notes; ends with
+   constitution-check notes; ends with
    `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 8. Report the PR URL, diffstat, and suite counts. Do NOT merge — merging is
    the owner's call unless already authorized this session.
