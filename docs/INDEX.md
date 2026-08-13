@@ -20,9 +20,14 @@ docs/
 ├── flows/             temporal traces (one task; dispatch → PR)
 ├── reference/         look-up tables (env vars)
 ├── runbooks/          operational procedures (shakedown, VPS deploy)
-├── decisions/         frozen ADRs — rationale, not current state
-└── proposals/         pre-ADR staging — direction drafts (DRAFT → LOCKED → ADR)
+├── decisions/         FROZEN 2026-08-13 — historical ADRs (pipeline retired → speckit)
+└── proposals/         FROZEN 2026-08-13 — historical direction drafts (pipeline retired → speckit)
 ```
+
+Since 2026-08-13, behavior-changing work starts in `.specify/` (the speckit
+pipeline — see `.claude/rules/speckit-workflow.md`); specs under
+`.specify/specs/` are the living direction+execution artifacts. The
+`decisions/` and `proposals/` sections below are frozen history.
 
 ## System
 
@@ -51,7 +56,12 @@ docs/
 | [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + docker) layer by layer, L1 single task → L5 abort. | **CURRENT** — *audited 2026-07-13*: every tool named in the steps exists on the MCP surface; L1–L5 descriptions match. *Updated 2026-07-19*: L2/L3 rewritten for the start_program → one-shot-goal alias (ADR 0003 stage 2b) — follow via `get_goal`/`tail_goal`, the child program appears in `list_programs` after the heartbeat dispatches the checklist. *Updated 2026-07-19 (post-shakedown)*: L2 workspace setup now requires a host-visible origin (goal-layer prep fetches it) and notes a /tmp file remote validates mechanics only — a green close needs a real pushable remote (sandbox can't push host file paths). |
 | [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | Deploying the OpenClaw waiter + devclaw to the VPS; the waiter's tool menu. | **CURRENT** — *audited 2026-07-13*: all menu tools exist; `resume_goal` added to the Goals line (#228). *Updated 2026-07-19*: `start_program` menu line marked as the deprecated one-shot-goal alias (ADR 0003 stage 2b — poll with `get_goal`, not `get_program`). *Updated 2026-08-10*: `delete_repo` added to the Tasks menu line. |
 
-## Decision records (frozen — rationale, not current state)
+## Decision records (FROZEN 2026-08-13 — historical record only)
+
+**The proposal→ADR pipeline is retired** (Denys's ruling, 2026-08-13 — full
+speckit; see `.claude/rules/speckit-workflow.md`). ADRs 0001–0012 remain the
+authoritative record of the decisions they froze, but nothing new lands here:
+new direction is decided and recorded inside `.specify/specs/` specs.
 
 | Doc | Purpose | Currency |
 |---|---|---|
@@ -68,13 +78,14 @@ docs/
 | [`decisions/0011-branch-target-delivery-seam.md`](./decisions/0011-branch-target-delivery-seam.md) | **v1-helper P1**: the branch-target delivery seam. `dispatch_task` → queue → `deliver_change` gain optional `base_branch` (ahead-count/diff grounding + `gh pr create --base`) and `target_branch` (workspace prepped ON the pinned branch, goal-mode PR-reuse predicate widened to caller-pinned branches). Two loud-fail hardening rules from the tranche's invariant review: a pinned-target miss settles the task `failed`; a bogus base fails at dispatch, not downstream. Omitted params = byte-identical legacy behavior; goal layer untouched; delivery stays fail-closed (#183). | **DECISION RECORD** — accepted 2026-07-27 (graduated the P1 slice from `proposals/v1-helper-resurface.md`); tranche shipped starting PR #387. P2 (console "file a task" surface) + P3 (direct-path prep ergonomics) stay in the proposal, named-unsized. |
 | [`decisions/0012-single-intake-doorway.md`](./decisions/0012-single-intake-doorway.md) | **The single intake doorway**: every devclaw-bound ask — human or agent, any channel — is first recorded via the low-privilege `file_intake` MCP tool (python-validated shape at the choke point, server-stamped provenance, `devclaw-intake` issue on the target registered project's repo, issue URL = the asker's durable receipt, loud failure = no fake receipts); execution admission stays a separate human-gated act by the dispatch tools, referencing the intake issue. Rejected alternatives frozen: raw `gh` filing (enforces nothing; mediating agents already hold MCP creds) and an internal pending queue (second backlog store). Issues = intent, SQLite = execution; no per-repo templates. | **DECISION RECORD** — accepted 2026-08-13 (graduated from `proposals/single-intake-doorway.md`, locked and scheduled the same day). P1 shipped: #513 + lifekit-stack#117. P2 (doorway unavoidable at dispatch; `Closes` vs `Refs` per goal mode) + P3 (push-notify asker; scorecard-gated auto-pickup) stay in the proposal, named-unsized. |
 
-## Proposals (pre-ADR staging — the status line inside the doc is authoritative)
+## Proposals (FROZEN 2026-08-13 — historical record only)
 
-The spec lifecycle ([`.claude/rules/spec-lifecycle.md`](../.claude/rules/spec-lifecycle.md)):
-a direction is drafted here, every `[OPEN]` item is answered (the clarify
-step), the status flips to LOCKED, and when a tranche is scheduled the
-proposal graduates to a frozen ADR in `decisions/`. No code before lock.
-The tag below mirrors the doc's own status line.
+**The proposal→ADR pipeline is retired** (Denys's ruling, 2026-08-13 — full
+speckit; see `.claude/rules/speckit-workflow.md`). Nothing new lands here and
+no status line changes anymore. DRAFT proposals below were never locked; if
+their work is picked up it starts fresh as a `.specify/specs/` spec (the
+proposal is source material, not a binding direction). The tags below mirror
+each doc's own status line as of the freeze.
 
 | Doc | Purpose | Status |
 |---|---|---|

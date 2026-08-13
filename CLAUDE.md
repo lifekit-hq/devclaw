@@ -169,11 +169,14 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 
 This repo carries a Claude-Code project harness for developing devclaw itself
 (distinct from layer 5's model-agnostic `.agent/skills/`, which is product):
-`rules/` (testing · git-workflow · cognition-prompts · spec-lifecycle —
+`rules/` (testing · git-workflow · cognition-prompts · speckit-workflow —
 auto-loaded, the operational detail this file deliberately doesn't carry;
-spec-lifecycle is the anti-drift pipeline: a behavior-changing tranche starts
-from a LOCKED `docs/proposals/` entry or an ADR, no code before lock), `agents/invariant-guard`
-(run it on any diff before a PR), `commands/ship` (the pre-PR ritual as `/ship`),
+speckit-workflow is the anti-drift pipeline since 2026-08-13: every
+behavior-changing change starts `/speckit-specify` → `/speckit-clarify` →
+plan → tasks → implement in `.specify/`, no implementation before clarify,
+with the constitution (`.specify/memory/constitution.md`) as the invariant
+statement specs are checked against; `docs/proposals/` + `docs/decisions/`
+are frozen history), `commands/ship` (the pre-PR ritual as `/ship`),
 `hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
 escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `skills/` (docs-audit,
 live-shakedown).
