@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [x] No [NEEDS CLARIFICATION] markers remain (the 4 open questions are carried as explicit "Open Decisions" with proposed defaults, to be locked in `/speckit-clarify` per the constitution's mandated with-Denys step)
+- [x] No [NEEDS CLARIFICATION] markers remain — the 4 open questions were LOCKED with Denys in the `/speckit-clarify` session 2026-08-14 (recorded in spec `## Clarifications`)
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (outcomes, not mechanisms)

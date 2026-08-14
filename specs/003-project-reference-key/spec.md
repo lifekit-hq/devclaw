@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-14
 
-**Status**: Draft — awaiting `/speckit-clarify` (4 open decisions below)
+**Status**: Clarified 2026-08-14 — all 4 open decisions locked; ready for `/speckit-plan`
 
 **Tracking issue**: lifekit-hq/devclaw#520 · **Direction memory**: `docs/proposals/project-reference-key.md` (frozen DRAFT #504)
 
@@ -31,6 +31,15 @@ This is one class with two observed instances:
 
 Per Constitution VII (fix the class), the rule to change is *where dispatch gets
 its facts* — not either individual row.
+
+## Clarifications
+
+### Session 2026-08-14
+
+- Q: Should raw `workspace_dir` stay a permanent escape hatch, or should every dispatch be required to name a registered `project_id`? → A: **Registry required for all** — `project_id` is the mandatory dispatch contract; raw `workspace_dir` is removed as a caller-facing parameter. devclaw's own harness-internal dispatches (self-fix, dry-runs) are special-cased in code, not via a public raw-path parameter.
+- Q: How should raw `workspace_dir` be removed once `project_id` resolution lands? → A: **Hard cutover in P1** — the P1 arc removes the raw parameter outright and flips every call site, all tests, and the OpenClaw waiter prompt in lockstep. No deprecation window. The waiter-prompt change (OpenClaw side, Denys-owned GitOps) MUST land in the same window as the devclaw tool-signature change, or dispatch breaks on the VPS.
+- Q: On a missing/non-git workspace for a registered project, what should preflight do in P1? → A: **Reject loud in P1, auto-prep in P2.** P1 fails the dispatch at admission with an actionable reason; P2 adds the goal-path block-and-heal that auto-clones from the row's `repoUrl`, converging the goal and direct paths on one self-heal.
+- Q: How should the registry handle the container-vs-host path perspective that caused the 2026-08-12 failure? → A: **Container-side only, validated at write time.** The registry stores only paths meaningful to the serving process; `register_project`/`update_project` validate the path resolves inside that process, so a host-perspective path can't be written silently. No new stored field, no translation layer.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -66,9 +75,9 @@ no task row created and zero engine/LLM work.
    `project_id="ghost"`, **Then** the call is rejected synchronously with a
    clear "unknown project" error, no task is enqueued, and no container or
    `claude` call is made.
-3. **Given** a registered project, **When** a caller passes BOTH a `project_id`
-   and a raw `workspace_dir`, **Then** the precedence rule (see Open Decision 1)
-   is applied deterministically and the outcome is logged.
+3. **Given** the dispatch tools no longer accept a raw `workspace_dir`
+   parameter, **When** a caller attempts to dispatch without a `project_id`,
+   **Then** the call is rejected with a message pointing at `project_id`.
 4. **Given** a project row whose override knobs (automerge, merge_strategy,
    review_gate, …) are set, **When** work is dispatched by key, **Then** those
    knobs govern the task exactly as they do today via the path-keyed lookup —
@@ -95,9 +104,9 @@ engine/sandbox is never reached on the failing path.
 **Acceptance Scenarios**:
 
 1. **Given** a resolved workspace that does not exist on disk, **When** a task
-   is dispatched, **Then** preflight triggers the configured verb at admission
-   (reject or prepare) — it does not reach `sandcastle` launch as a claimed
-   task.
+   is dispatched, **Then** P1 preflight rejects it loudly at admission (P2 will
+   auto-prepare from `repoUrl` instead) — it never reaches `sandcastle` launch
+   as a claimed task.
 2. **Given** a resolved path that exists but is not a git repository, **When**
    a task is dispatched, **Then** preflight fails it loudly with a reason that
    names the path and the problem.
@@ -169,8 +178,8 @@ and confirm rollups/override resolution still bind to the right project.
 
 ### Edge Cases
 
-- Caller passes both `project_id` and raw `workspace_dir` → precedence per Open
-  Decision 1, logged.
+- Caller dispatches with no `project_id` → rejected pointing at `project_id`
+  (raw `workspace_dir` is no longer a caller-facing parameter).
 - Two projects registered against the same workspace path (legacy) → resolution
   must be deterministic and not silently pick one.
 - `project_id` resolves but its `repoUrl`/knobs are `null` → fall back to
@@ -201,14 +210,25 @@ and confirm rollups/override resolution still bind to the right project.
 - **FR-005**: A failing preflight MUST fail loud with a reason naming the path,
   the cause, and the remedy (Constitution VI).
 - **FR-006**: `register_project` / `update_project` MUST validate and normalize
-  the stored `workspace_dir` (and surface a non-resolving `repoUrl`) so the row
-  is dispatch-dependable at read time.
+  the stored `workspace_dir` — as a canonical **container-side** path that
+  resolves inside the serving process (rejecting a host-perspective path like
+  the 2026-08-12 `/srv/…` write) — and surface a non-resolving `repoUrl`, so the
+  row is dispatch-dependable at read time. No host↔container mapping is stored;
+  the single container-side frame is enforced, not assumed.
 - **FR-007**: Resolution MUST *populate* the resolved `workspace_dir` onto the
   task/goal row (not replace the join model), so all existing path-keyed
   internal joins keep working unchanged in P1.
-- **FR-008**: Raw `workspace_dir` MUST remain accepted as a deprecated-but-
-  working alternative through P1 (migration path per Open Decision 2); its
-  behavior is byte-unchanged when passed.
+- **FR-008**: `project_id` is the mandatory dispatch contract — raw
+  `workspace_dir` is removed as a caller-facing parameter **in P1** (hard
+  cutover, no deprecation window). Every in-repo call site and test MUST be
+  migrated to `project_id` in the same arc, and harness-internal dispatches
+  (self-fix, dry-runs) resolve their workspace in code, never via a public
+  raw-path parameter.
+- **FR-008a**: The OpenClaw waiter prompt MUST be updated to dispatch by
+  `project_id` in the same landing window as the tool-signature change; because
+  the cutover is hard, a devclaw deploy that lands the new signatures without
+  the matching waiter update breaks dispatch on the VPS. This coordination is a
+  named release step, not an afterthought.
 - **FR-009**: Override-knob and status behavior (automerge, merge_strategy,
   review_gate, verify_done, sandbox_image, rollups) MUST be identical whether a
   task was dispatched by key or by raw path.
@@ -254,41 +274,47 @@ and confirm rollups/override resolution still bind to the right project.
 - The registry (`project_registry`) already stores everything resolution needs
   (`workspace_dir`, `repo_url`, override knobs); this feature reads and
   validates it, it does not add new stored fields in P1.
-- Container-side path convention holds: the registry stores paths meaningful to
-  the serving process (the 2026-08-12 violation was a bad *write*, addressed by
-  FR-006) — pending Open Decision 4.
+- Container-side path convention holds and is now enforced: the registry stores
+  paths meaningful to the serving process; the 2026-08-12 violation was a bad
+  *write*, closed by FR-006's write-time validation.
 - The goal-path `prepare_ws` + `mechanical:prep` self-heal is reusable on the
   direct-dispatch path for P2 (no new prep mechanism invented).
-- The OpenClaw waiter prompt can be updated to prefer `project_id`; ownership of
-  that update is Open Decision 2.
+- The OpenClaw waiter prompt is updated to dispatch by `project_id`; ownership
+  is Denys (OpenClaw GitOps via `dsdevq/lifekit-stack`), landed in lockstep with
+  the devclaw deploy (FR-008a). Because the cutover is hard, P1 is larger than a
+  pure additive change — it includes migrating every in-repo dispatch call site
+  and test — which `/speckit-plan` must size accordingly.
 - No invariant change is required: this feature strengthens Constitution IV/VI
   (trustworthy state, loud failure) and touches no other principle. If clarify
   surfaces a needed invariant change, the constitution is amended in the same
   arc.
 
-## Open Decisions (resolve at `/speckit-clarify`, with Denys)
+## Open Decisions — LOCKED 2026-08-14 (`/speckit-clarify`, with Denys)
 
-These are the proposal's four mandatory `[OPEN]`s. A proposed default is given
-for each; clarify locks them.
+The proposal's four mandatory `[OPEN]`s, all resolved in the clarify session
+(recorded in Clarifications above). Kept here as direction memory — the reasons,
+not just the answers.
 
-1. **Raw `workspace_dir` deprecation path** — grace period (both accepted while
-   waiter + tests migrate) vs hard cutover once the waiter prompt is updated;
-   and who owns updating the waiter. *Proposed default: graceful — accept both
-   through P1, `project_id` preferred, deprecate raw path in a later slice.*
-2. **Unregistered / ad-hoc dispatch** — keep a raw-path escape hatch forever
-   (self-fix goals, dry-runs, one-off human dispatch) vs require a registry row
-   for everything and special-case the harness internals. *Proposed default:
-   keep the escape hatch; the harness's own self-fix registers a row like any
-   project.*
-3. **Preflight-failure verb** — reject the tool call (caller retries after fix)
-   vs accept + block `mechanical:prep` + auto-heal when the clone appears; one
-   answer for both goal and direct paths or per-path. *Proposed default: P1
-   rejects loud on the direct path; P2 adds auto-prep so the direct path gains
-   the goal-path block-and-heal semantics — converging both paths.*
-4. **Container/host path duality** — store canonical container-side paths only
-   (validated inside the serving process) vs grow an explicit host↔container
-   mapping. *Proposed default: container-side only, but now *validated* at write
-   time (FR-006) so the convention can't be violated silently as it was.*
+1. **Raw `workspace_dir` deprecation path** — ✅ **RESOLVED 2026-08-14: hard
+   cutover in P1.** Raw parameter removed outright; every call site + test +
+   the OpenClaw waiter prompt flip in the same arc; no deprecation window. The
+   waiter-prompt update is Denys-owned (OpenClaw GitOps) and is a named,
+   lockstep release step with the devclaw deploy.
+2. **Unregistered / ad-hoc dispatch** — ✅ **RESOLVED 2026-08-14: registry
+   required for all.** Every dispatch names a `project_id`; raw `workspace_dir`
+   is removed as a caller-facing parameter. The harness's own internal
+   dispatches (self-fix, dry-runs) resolve their workspace in code, special-cased
+   — not via a public raw-path parameter.
+3. **Preflight-failure verb** — ✅ **RESOLVED 2026-08-14: reject loud in P1,
+   auto-prep in P2.** P1 rejects a missing/non-git workspace at admission with
+   an actionable reason; P2 adds the goal-path block-and-heal (`mechanical:prep`
+   auto-clone from `repoUrl`), converging the goal and direct paths on one
+   self-heal semantics.
+4. **Container/host path duality** — ✅ **RESOLVED 2026-08-14: container-side
+   only, validated at write time.** The registry stores only container-side
+   paths; write-time validation (FR-006) confirms they resolve in the serving
+   process. No host↔container mapping is added — the incident was a validation
+   gap, not a missing-mapping gap.
 
 ## Out of Scope
 
