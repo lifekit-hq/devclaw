@@ -8,6 +8,8 @@ import pytest
 from devclaw.project_registry import (
     ProjectExists,
     ProjectRegistry,
+    ResolvedDispatch,
+    UnknownProject,
     project_rollup,
 )
 
@@ -34,6 +36,56 @@ def test_duplicate_id_raises(reg):
 
 def test_get_unknown_is_none(reg):
     assert reg.get("nope") is None
+
+
+# ---- spec 003 (#520): registry as the single source of truth for dispatch ----
+
+
+def test_register_project_validates_and_normalizes_workspace_path(reg):
+    """Write-time validation (US3): an absolute container-side path is accepted;
+    a relative or empty path is rejected at the write choke point so it can never
+    be stored to rot (the 2026-08-12 host-path-for-container-consumer class)."""
+    reg.create(id="ok", name="Ok", workspace_dir="/var/lib/devclaw/workspaces/ok")
+    assert reg.get("ok").workspace_dir == "/var/lib/devclaw/workspaces/ok"
+    with pytest.raises(ValueError):
+        reg.create(id="rel", name="Rel", workspace_dir="relative/path")
+    with pytest.raises(ValueError):
+        reg.create(id="blank", name="Blank", workspace_dir="   ")
+    # update path is guarded too
+    with pytest.raises(ValueError):
+        reg.update("ok", workspace_dir="still/relative")
+
+
+def test_resolve_dispatch_returns_workspace_and_repo(reg):
+    """US1: resolving a registered project_id yields its concrete workspace +
+    repo — the facts every dispatch tool needs — read once from the row."""
+    reg.create(
+        id="fs", name="FS",
+        workspace_dir="/var/lib/devclaw/workspaces/fs",
+        repo_url="https://github.com/lifekit-hq/finance-sentry.git",
+    )
+    resolved = reg.resolve_dispatch("fs")
+    assert isinstance(resolved, ResolvedDispatch)
+    assert resolved.workspace_dir == "/var/lib/devclaw/workspaces/fs"
+    assert resolved.repo_url == "https://github.com/lifekit-hq/finance-sentry.git"
+
+
+def test_resolve_dispatch_unknown_id_raises_unknown_project(reg):
+    """US1: an unknown project_id is a typed miss (KeyError subclass) the tool
+    layer turns into a synchronous ToolError — never a silent later failure."""
+    with pytest.raises(UnknownProject):
+        reg.resolve_dispatch("ghost")
+    # UnknownProject is a KeyError so existing `except KeyError` guards catch it
+    with pytest.raises(KeyError):
+        reg.resolve_dispatch("ghost")
+
+
+def test_resolve_dispatch_without_workspace_raises(reg):
+    """A project registered without a workspace_dir cannot be dispatched to —
+    loud ValueError, not a None that fails deep in the engine."""
+    reg.create(id="bare", name="Bare", repo_url="git@x/bare.git")
+    with pytest.raises(ValueError):
+        reg.resolve_dispatch("bare")
 
 
 def test_update_is_partial_and_bumps_updated_at(reg):

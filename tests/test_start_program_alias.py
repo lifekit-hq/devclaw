@@ -16,6 +16,7 @@ import json
 import pytest
 
 from devclaw.goal.service import GoalConfig, GoalService
+from devclaw.project_registry import ProjectRegistry
 from devclaw.server import tools as _tools
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
@@ -41,13 +42,19 @@ def svc(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def _patch(svc, monkeypatch):
+def _patch(svc, monkeypatch, tmp_path):
     monkeypatch.setattr(_tools, "goals", svc)
+    # spec 003 / #520: start_program resolves its workspace from a registered
+    # project_id. Goal path — no git preflight (prepare_ws handles it on tick),
+    # so a plain registered row pointing at /ws is enough.
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    reg.create(id="proj", name="proj", workspace_dir="/ws")
+    monkeypatch.setattr(_tools, "registry", reg)
     return svc
 
 
 async def test_start_program_files_a_one_shot_goal_not_a_queue_program(svc):
-    out = json.loads(await _tools.start_program(workspace_dir="/ws", goal=_BRIEF))
+    out = json.loads(await _tools.start_program(project_id="proj", goal=_BRIEF))
 
     assert out["mode"] == "one_shot"
     goal_id = out["goal_id"]
@@ -62,29 +69,31 @@ async def test_start_program_files_a_one_shot_goal_not_a_queue_program(svc):
 
 
 async def test_start_program_brief_rides_as_the_spec(svc):
-    out = json.loads(await _tools.start_program(workspace_dir="/ws", goal=_BRIEF))
+    out = json.loads(await _tools.start_program(project_id="proj", goal=_BRIEF))
     spec = svc._goal_store.read_spec(out["goal_id"])
     assert spec is not None and _BRIEF in spec
 
 
 async def test_start_program_notify_url_is_flagged_not_silently_dropped(svc):
     out = json.loads(await _tools.start_program(
-        workspace_dir="/ws", goal=_BRIEF, notify_url="https://hook.example/x",
+        project_id="proj", goal=_BRIEF, notify_url="https://hook.example/x",
     ))
     assert "notify_url_ignored" in out
 
 
-async def test_start_program_still_requires_workspace_and_goal(svc):
+async def test_start_program_still_requires_project_and_goal(svc):
     from fastmcp.exceptions import ToolError
 
     with pytest.raises(ToolError):
-        await _tools.start_program(workspace_dir="", goal=_BRIEF)
+        await _tools.start_program(project_id="", goal=_BRIEF)
     with pytest.raises(ToolError):
-        await _tools.start_program(workspace_dir="/ws", goal="")
+        await _tools.start_program(project_id="proj", goal="")
+    with pytest.raises(ToolError, match="unknown project_id"):
+        await _tools.start_program(project_id="ghost", goal=_BRIEF)
 
 
 async def test_start_program_goal_ids_are_readable_and_unique(svc):
-    a = json.loads(await _tools.start_program(workspace_dir="/ws", goal=_BRIEF))
-    b = json.loads(await _tools.start_program(workspace_dir="/ws", goal=_BRIEF))
+    a = json.loads(await _tools.start_program(project_id="proj", goal=_BRIEF))
+    b = json.loads(await _tools.start_program(project_id="proj", goal=_BRIEF))
     assert a["goal_id"] != b["goal_id"]          # uuid suffix — no collision
     assert a["goal_id"].startswith("build-the-accounts-screen")

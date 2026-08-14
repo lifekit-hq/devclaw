@@ -2,10 +2,42 @@
 
 from __future__ import annotations
 
+import subprocess
 from datetime import datetime, timezone
+from pathlib import Path
 
 from devclaw.goal.models import Action, Goal, InFlight, PollResult
 from devclaw.loom import trace as _trace
+
+
+def register_tmp_project(
+    registry,
+    workspace_dir,
+    *,
+    project_id: str = "tmp-proj",
+    repo_url: str | None = None,
+    git_init: bool = True,
+    **knobs,
+) -> str:
+    """Register a throwaway project row and return its ``project_id`` — the
+    migration helper for tests that dispatch work.
+
+    Spec 003 (#520) made ``project_id`` the dispatch contract and added a
+    git-checkout preflight at admission, so a dispatched workspace must be a real
+    git repo. This helper ``git init``s the workspace (unless ``git_init=False``,
+    for tests that WANT to exercise the non-git preflight rejection), mirroring
+    the real-git fixture style in ``test_review_gate.py``. ``**knobs`` (automerge=…,
+    review_gate=…, sandbox_image=…) pass straight through to ``registry.create``."""
+    ws = Path(workspace_dir)
+    ws.mkdir(parents=True, exist_ok=True)
+    if git_init and not (ws / ".git").exists():
+        subprocess.run(["git", "init", "-q", str(ws)], check=True)
+        (ws / "README.md").write_text("tmp project\n")
+    registry.create(
+        id=project_id, name=project_id, workspace_dir=str(ws),
+        repo_url=repo_url, **knobs,
+    )
+    return project_id
 
 
 class FakeClaude:

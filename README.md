@@ -147,14 +147,14 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 
 | Tool | Does |
 |---|---|
-| `dispatch_task(kind, workspace_dir, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository` |
-| `implement_feature(workspace_dir, goal, …)` | Deprecated alias — forwards to `dispatch_task(kind="implement_feature")` |
-| `fix_bug(workspace_dir, description, …)` | Deprecated alias — forwards to `dispatch_task(kind="fix_bug")` |
-| `review_repository(workspace_dir, …)` | Deprecated alias — forwards to `dispatch_task(kind="review_repository")` (read-only) |
-| `onboard(workspace_dir, …)` | Analyze a repo and write a draft `AGENTS.md` (comprehension only) |
+| `dispatch_task(kind, project_id, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository`. `project_id` names a registered project — devclaw resolves its workspace/repo from the registry (never a raw path), rejects an unknown project, and preflights that the workspace is a real git checkout before dispatch (#520) |
+| `implement_feature(project_id, goal, …)` | Deprecated alias — forwards to `dispatch_task(kind="implement_feature")` |
+| `fix_bug(project_id, description, …)` | Deprecated alias — forwards to `dispatch_task(kind="fix_bug")` |
+| `review_repository(project_id, …)` | Deprecated alias — forwards to `dispatch_task(kind="review_repository")` (read-only) |
+| `onboard(project_id, …)` | Analyze a repo and write a draft `AGENTS.md` (comprehension only) |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
-| `start_program(workspace_dir, goal, …)` | DEPRECATED sugar for `create_goal(mode='one_shot')` — files a one-shot goal that plans the brief end-to-end and runs the checklist as one parallel program |
+| `start_program(project_id, goal, …)` | DEPRECATED sugar for `create_goal(mode='one_shot')` — files a one-shot goal that plans the brief end-to-end and runs the checklist as one parallel program |
 | `get_program(program_id)` / `list_programs()` | Program status + task DAG |
 | `get_status(task_id)` / `list_tasks(...)` / `get_events(...)` | Task history + replayable event feed (live SSE over HTTP) |
 | `get_scorecard_metrics(window_hours?)` | Rolling scorecard over the last N hours (default 1 week): merge rate, evaluator-verdict distribution, steer rate, first-pass hit rate, workspace breaks — a cheap SQLite read, callable from Telegram/dashboards |
@@ -175,8 +175,8 @@ Both modes share every gate, the delivery contract, and the close discipline. `s
 | Tool | Does |
 |---|---|
 | `scope_grill(idea, transcript?)` | One turn of the pre-goal scope interview with the waiter: given a rough idea + the transcript so far, returns the next question (with a reasoned default) or the final agreed spec — the input `create_goal` deserves |
-| `create_goal(goal_id, objective, workspace_dir, done_when, backlog, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick loop) or `'one_shot'` (plan once, run the checklist as one parallel program) |
-| `verify_goal(objective, workspace_dir, …)` | Pre-flight check — same admission validations as `create_goal`, no side effects; previews reject/warn conditions |
+| `create_goal(goal_id, objective, project_id, done_when, backlog, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick loop) or `'one_shot'` (plan once, run the checklist as one parallel program). `project_id` resolves the workspace + repo from the registry (#520) |
+| `verify_goal(objective, project_id, …)` | Pre-flight check — same admission validations as `create_goal`, no side effects; previews reject/warn conditions |
 | `get_goal(goal_id)` | Objective, phase, what's in flight, the latest direction verdict, recent log |
 | `list_goals()` | All goals + phase + direction |
 | `steer_goal(goal_id, message)` | Correct/redirect — recorded as steering, honored on the next tick |

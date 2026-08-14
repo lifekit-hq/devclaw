@@ -21,6 +21,37 @@ class WorkspaceError(RuntimeError):
     pass
 
 
+def workspace_is_dispatchable(workspace_dir: str | None) -> str | None:
+    """Dispatch-time preflight predicate (spec 003 / #520, US2): is this
+    workspace a real git checkout a task can run in RIGHT NOW? Returns a
+    human-actionable reason string when it is NOT dispatchable, or ``None`` when
+    it is fine to proceed.
+
+    Zero-token and zero-container by construction — a couple of filesystem stats,
+    nothing more — so it stays on the cheap side of the dispatch seam and never
+    trips the zero-token idle guard. Callers invoke it at ADMISSION (before a row
+    is claimed / any ``docker run``): the direct path rejects with a ToolError,
+    the goal path blocks-and-heals (``mechanical:prep``). This replaces the late,
+    post-claim, silent failure inside the sandbox (``engine/sandcastle.py`` only
+    checked existence at launch, not git-ness). Mirrors the ``.git`` predicate
+    :func:`prepare_workspace` already uses below."""
+    if not workspace_dir or not str(workspace_dir).strip():
+        return "no workspace_dir to dispatch into"
+    root = Path(workspace_dir)
+    if not root.exists():
+        return (
+            f"workspace {workspace_dir!r} does not exist — the registry row points "
+            f"at a path that isn't on disk (clone it, or fix the project's "
+            f"workspace_dir / repo_url)"
+        )
+    if not (root / ".git").exists():
+        return (
+            f"workspace {workspace_dir!r} is not a git checkout (no .git) — set the "
+            f"project's repo_url so devclaw can clone it, or point it at a real checkout"
+        )
+    return None
+
+
 async def _run(*args: str, cwd: str | None = None) -> tuple[int, str]:
     """Run a command, return (exit_code, combined output). Never raises."""
     try:
