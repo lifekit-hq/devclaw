@@ -128,16 +128,34 @@ def test_scope_label_from_cc_scope_then_type():
     assert _scope_label("not a conventional subject") == ""
 
 
-def test_pr_body_leads_with_change_and_verification():
+def test_pr_body_uses_summary_and_testing_sections():
+    # Claude-Code house structure (matches the reference the owner likes): a
+    # `## Summary` of what changed and a `## Testing` note, with a clean
+    # generated-by signature — no task-UUID "Delivered by devclaw" footer.
     verify = {"ran": True, "cmd": "dotnet test", "passed": True, "exit_code": 0}
     body = _pr_body("Add an endpoint", "abcd1234", verify)
-    # Reads like prose — the change leads, no `## What`/`## Changes` scaffolding.
-    assert body.startswith("Add an endpoint")
-    assert "Verified with `dotnet test` — passing." in body
-    assert "🤖 Delivered by devclaw (task `abcd1234`)" in body
-    # degrades cleanly when there was no gate
+    assert "## Summary" in body and "Add an endpoint" in body
+    assert "## Testing" in body and "Verified with `dotnet test` — passing." in body
+    assert "🤖 Generated with [Claude Code]" in body
+    assert "Delivered by devclaw" not in body
+    # degrades cleanly when there was no gate → no ## Testing section at all
     nogate = _pr_body("x", "id", None)
-    assert "Verified with" not in nogate
+    assert "Verified with" not in nogate and "## Testing" not in nogate
+
+
+def test_pr_body_omits_original_task_dump_and_coauthor_trailer():
+    # The verbose <details>Original task</details> block is gone, and the worker's
+    # Co-Authored-By trailer stays in the COMMIT — never duplicated into the PR body.
+    body = _pr_body(
+        "the long ticket instruction here",
+        "id",
+        {"ran": True, "cmd": "pytest", "passed": True},
+        changes="feat: do the thing\n\n- did X\n- did Y\n\nCo-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>",
+    )
+    assert "Original task" not in body and "<details>" not in body
+    assert "Co-Authored-By" not in body
+    assert "the long ticket instruction here" not in body   # task text not dumped
+    assert "did X" in body and "## Summary" in body
 
 
 def test_pr_body_carries_no_line_count_telemetry():
@@ -417,10 +435,11 @@ def test_cc_helpers_and_changes_body():
     assert _cc_type("fix(db): y", "implement_feature") == "fix"      # from the subject
     assert _cc_type("just a subject", "fix_bug") == "fix"            # falls back to kind
     assert _cc_description("feat(api): add the widget") == "add the widget"
-    # the changes-path body leads with what changed + collapses the original task
+    # the changes-path body leads with what changed under ## Summary; the original
+    # task is NOT dumped into the body.
     body = _pr_body("the long ticket instruction", "id", None, changes="Added a widget endpoint + tests")
-    assert body.startswith("Added a widget endpoint + tests")
-    assert "Original task" in body and "the long ticket instruction" in body
+    assert "## Summary" in body and "Added a widget endpoint + tests" in body
+    assert "Original task" not in body and "the long ticket instruction" not in body
 
 
 # ---- TaskQueue wiring ------------------------------------------------------
