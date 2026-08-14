@@ -1017,3 +1017,107 @@ async def test_target_branch_on_base_or_default_is_rejected_before_any_push(
         ["git", "rev-parse", "main"], cwd=origin, capture_output=True, text=True,
     )
     assert out.returncode == 0
+
+
+# ---- atomic sweep + goal-PR refresh (ledger PR #4 warts) -------------------
+
+
+async def test_deliver_amends_stray_files_into_the_worker_commit_atomically(tmp_path):
+    """The two-commit fixup bug (ledger PR #4): the worker commits its milestone,
+    then a leftover file (a lockfile the gate regenerated, a scaffold dotfile it
+    forgot) is present uncommitted. The sweep must FOLD into the worker's own
+    commit — one atomic commit, no second commit borrowing the worker's headline."""
+    origin, repo = _clone_with_origin(tmp_path)
+    (tmp_path / "repo" / "app.ts").write_text("// the app\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(frontend): scaffold the app (M8)")
+    # a generated leftover, uncommitted (e.g. package-lock.json the gate rewrote)
+    (tmp_path / "repo" / "package-lock.json").write_text("{}\n")
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="dead00beef",
+        goal="build the frontend", kind="implement_feature",
+    )
+
+    assert r["committed"] is True and r["delivered"] is True
+    n = subprocess.run(
+        ["git", "-C", repo, "rev-list", "--count", "origin/main..HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert n == "1", f"expected one atomic commit, got {n}"
+    files = subprocess.run(
+        ["git", "-C", repo, "show", "--name-only", "--format=", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout
+    assert "package-lock.json" in files and "app.ts" in files
+    subj = subprocess.run(
+        ["git", "-C", repo, "log", "--format=%s", "origin/main..HEAD"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    assert subj == "feat(frontend): scaffold the app (M8)"
+
+
+async def test_deliver_never_amends_an_already_pushed_goal_increment(tmp_path):
+    """Safety: on a goal branch whose prior increment is already pushed, a run
+    that leaves the tree dirty WITHOUT a new worker commit must NOT amend the
+    pushed commit (that needs a force-push) — it makes a fresh commit. Guards the
+    _head_is_pushed branch of the sweep."""
+    origin, repo = _clone_with_origin(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "goal/g1")
+    (tmp_path / "repo" / "m1.txt").write_text("m1\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat: increment one")
+    _git(repo, "push", "-q", "-u", "origin", "goal/g1")
+    pushed_sha = subprocess.run(
+        ["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    # this run leaves the tree dirty but makes NO new commit.
+    (tmp_path / "repo" / "stray.txt").write_text("stray\n")
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="cafef00d99",
+        goal="continue g1", kind="implement_feature",
+    )
+
+    assert r["committed"] is True and r["delivered"] is True and r["error"] is None
+    parent = subprocess.run(
+        ["git", "-C", repo, "rev-parse", "HEAD~1"], capture_output=True, text=True
+    ).stdout.strip()
+    assert parent == pushed_sha, "the pushed increment must not be rewritten"
+    files = subprocess.run(
+        ["git", "-C", repo, "show", "--name-only", "--format=", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout
+    assert "stray.txt" in files
+
+
+async def test_deliver_goal_branch_refreshes_the_existing_pr_to_accumulated_state(tmp_path, monkeypatch):
+    """The stale-goal-PR bug (ledger PR #4 kept M1's title over 8 commits): on a
+    goal branch whose PR already exists, delivery must REFRESH the PR title
+    (goal-level) and body (the running increment list) via `gh pr edit`, not
+    return the frozen first-increment title."""
+    origin, repo = _clone_with_origin(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "goal/ledger")
+    (tmp_path / "repo" / "m1.txt").write_text("m1\n")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "feat(backend): scaffold (M1)")
+    (tmp_path / "repo" / "m2.txt").write_text("m2\n")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "feat(backend): persistence (M2)")
+
+    calls = []
+    existing = "https://github.com/acme/widgets/pull/4"
+    _github_faking_run(monkeypatch, calls, existing_pr=existing)
+
+    r = await deliver_change(
+        workspace_dir=repo, task_id="0ddba11abc",
+        goal="Build Ledger, a full-stack expense tracker", kind="implement_feature",
+    )
+
+    assert r["pr_url"] == existing and r["delivered"] is True
+    assert not [c for c in calls if c[:3] == ("gh", "pr", "create")]
+    edits = [c for c in calls if c[:3] == ("gh", "pr", "edit")]
+    assert edits, "expected a gh pr edit refresh call"
+    edit = edits[0]
+    ti = edit[edit.index("--title") + 1]
+    assert "Ledger" in ti and "M1" not in ti
+    body = edit[edit.index("--body") + 1]
+    assert "Increments landed" in body and "(M1)" in body and "(M2)" in body

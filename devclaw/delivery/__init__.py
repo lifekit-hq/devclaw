@@ -302,6 +302,41 @@ def _pr_body(
     return "\n".join(parts)
 
 
+def _goal_pr_body(
+    goal: str, task_id: str, verify: dict | None,
+    subjects: list[str], *, advisories: list | None = None,
+) -> str:
+    """The PR body for a GOAL-branch PR (one PR spans the whole goal): the goal
+    objective, the running list of increments landed on the branch, a verify
+    note for the latest increment, ``Closes #N``, any trust-mode advisories, and
+    a plain signature. Refreshed on every delivery so the reviewer always sees
+    the accumulated state instead of the first increment frozen in time."""
+    parts = [goal.strip() or "(goal branch)", ""]
+    if subjects:
+        parts += [f"## Increments landed on this goal branch ({len(subjects)})"]
+        parts += [f"- {s}" for s in subjects]
+        parts += [""]
+    if verify and verify.get("ran"):
+        cmd = verify.get("cmd", "")
+        if verify.get("passed"):
+            parts += [f"Latest increment verified with `{cmd}` — passing.", ""]
+        else:
+            parts += [f"Latest gate `{cmd}` did **not** pass — see the task error.", ""]
+    for n in _closes_issues(goal):
+        parts += [f"Closes #{n}"]
+    if _closes_issues(goal):
+        parts += [""]
+    if advisories:
+        parts += ["## ⚠️ Advisory — shipped under `trust`, review before merging"]
+        for a in advisories:
+            gate = (a.get("gate") if isinstance(a, dict) else None) or "gate"
+            reason = (a.get("reason") if isinstance(a, dict) else str(a)) or ""
+            parts += [f"- **{gate}**: {reason.strip()}"]
+        parts += [""]
+    parts += ["---", f"🤖 Delivered by devclaw (goal branch · task `{task_id}`)"]
+    return "\n".join(parts)
+
+
 async def _run(
     prog: str, *args: str, cwd: str, env_extra: dict[str, str] | None = None
 ) -> tuple[int, str]:
@@ -334,6 +369,32 @@ async def _current_branch(workspace_dir: str) -> str | None:
         return None
     name = out.strip()
     return name or None
+
+
+async def _head_is_pushed(workspace_dir: str) -> bool:
+    """True iff HEAD is already contained in some remote-tracking branch — i.e.
+    it has been pushed and amending it would rewrite published history (a
+    force-push). False for a fresh local commit (nothing on a remote contains it
+    yet), which is the safe-to-amend case. Branch-agnostic on purpose: it asks
+    'is this commit published anywhere' rather than trusting a specific
+    ``origin/<branch>`` ref to be freshly fetched."""
+    rc, out = await _run("git", "branch", "-r", "--contains", "HEAD", cwd=workspace_dir)
+    return rc == 0 and bool(out.strip())
+
+
+async def _recent_commit_subjects(workspace_dir: str, base: str | None) -> list[str]:
+    """The subjects of the commits this branch carries beyond its base
+    (``base..HEAD``), oldest first — the running list of increments that have
+    landed on a goal branch, for the goal PR body. Best-effort: [] if the range
+    can't be resolved."""
+    if not base:
+        return []
+    rc, out = await _run(
+        "git", "log", "--reverse", "--format=%s", f"{base}..HEAD", cwd=workspace_dir,
+    )
+    if rc != 0:
+        return []
+    return [ln for ln in out.splitlines() if ln.strip()]
 
 
 async def _find_pr_for_branch(workspace_dir: str, branch: str) -> str | None:
@@ -513,13 +574,30 @@ async def deliver_change(
 
     if dirty:
         await _run("git", "add", "-A", cwd=workspace_dir)
-        msg = f"{title}\n\nDelivered by devclaw (task {task_id})."
-        # Identity via GIT_* env (not -c): env beats every config level, so an
-        # ambient/leaked identity can't author devclaw's delivery commit.
-        rc, out = await _run(
-            "git", "commit", "-m", msg, cwd=workspace_dir,
-            env_extra=git_identity_env(),
-        )
+        # Fold leftover files into the worker's OWN commit when it made one this
+        # run (ahead of base) and that commit is still local. A leftover is almost
+        # always a generated/tooling artifact of the same change — a lockfile the
+        # verify gate's install regenerated after the worker committed, or a
+        # scaffold dotfile the worker forgot to stage. A second commit would both
+        # duplicate the worker's headline (two commits, same subject) and leave
+        # the worker's commit non-atomic (its code won't build without the
+        # swept-in lockfile). Amending an unpushed commit is safe; a pushed commit
+        # (a prior goal-branch increment) must NEVER be amended — that needs a
+        # force-push — so fall back to devclaw's own goal-titled commit there and
+        # in the no-worker-commit (ahead == 0) legacy case.
+        if ahead > 0 and not await _head_is_pushed(workspace_dir):
+            rc, out = await _run(
+                "git", "commit", "--amend", "--no-edit", cwd=workspace_dir,
+                env_extra=git_identity_env(),
+            )
+        else:
+            msg = f"{title}\n\nDelivered by devclaw (task {task_id})."
+            # Identity via GIT_* env (not -c): env beats every config level, so an
+            # ambient/leaked identity can't author devclaw's delivery commit.
+            rc, out = await _run(
+                "git", "commit", "-m", msg, cwd=workspace_dir,
+                env_extra=git_identity_env(),
+            )
         if rc != 0:
             result["error"] = f"commit failed: {out}"
             return result
@@ -548,18 +626,36 @@ async def deliver_change(
     # rather than calling `gh pr create` over it (which would fail).
     if "github.com" in remote:
         if goal_mode:
+            # A goal-branch PR spans the WHOLE goal, not this one increment: title
+            # it at the goal level and give it the running list of increments that
+            # have landed, refreshed on every delivery. Without this the PR stays
+            # frozen at the FIRST increment's title/body (e.g. "scaffold … (M1)")
+            # while later milestones pile onto the branch underneath it — the
+            # human reviewer reads a stale title over an eight-commit branch.
+            title = _pr_title(goal, kind)
+            subjects = await _recent_commit_subjects(workspace_dir, base)
+            body = _goal_pr_body(goal, task_id, verify, subjects, advisories=advisories)
             existing = await _find_pr_for_branch(workspace_dir, branch)
             if existing:
+                # Refresh the existing PR to the accumulated state. Best-effort: a
+                # refresh hiccup never fails an already-delivered PR.
+                await _run(
+                    "gh", "pr", "edit", existing,
+                    "--title", title, "--body", body,
+                    cwd=workspace_dir,
+                )
                 result["pr_url"] = existing
                 result["delivered"] = True
                 return result
-        # The title/branch are already issue-decorated by _resolve_title; the
-        # body carries what changed + Closes #N. No diff-scope telemetry.
+        else:
+            # The title/branch are already issue-decorated by _resolve_title; the
+            # body carries what changed + Closes #N. No diff-scope telemetry.
+            body = _pr_body(goal, task_id, verify, changes=changes, advisories=advisories)
         base_args = ("--base", base_branch) if base_branch else ()
         rc, out = await _run(
             "gh", "pr", "create", *base_args, "--head", branch,
             "--title", title,
-            "--body", _pr_body(goal, task_id, verify, changes=changes, advisories=advisories),
+            "--body", body,
             cwd=workspace_dir,
         )
         url = _extract_pr_url(out)
