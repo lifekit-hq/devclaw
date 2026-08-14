@@ -233,3 +233,59 @@ async def test_by_key_dispatch_preserves_override_knobs(monkeypatch, tmp_path):
     # as a by-path dispatch would have resolved them
     assert reg.resolve_override(call["workspace_dir"], "automerge", None) is True
     assert reg.resolve_override(call["workspace_dir"], "review_gate", True) is False
+
+
+# ---- #523 (P2): direct-path auto-prep from repo_url -------------------------
+
+
+def _make_source_repo(path):
+    """A real local git repo with one commit, usable as a clone source (offline)."""
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(path)], check=True)
+    (path / "f.txt").write_text("hi\n")
+    subprocess.run(["git", "-C", str(path), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(path), "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-qm", "init"],
+        check=True,
+    )
+    return str(path)
+
+
+async def test_dispatch_auto_preps_missing_workspace_from_repo_url(monkeypatch, tmp_path):
+    """#523 (P2): a registered project whose workspace is ABSENT but which carries
+    a repo_url is auto-cloned at dispatch instead of rejected, then submitted."""
+    calls: list[dict] = []
+    from devclaw.server import _state
+
+    monkeypatch.setattr(_state.queue, "submit", lambda **k: calls.append(k) or "t1")
+    repo_url = _make_source_repo(tmp_path / "src")
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "clone-here"  # does NOT exist yet
+    reg.create(id="fresh", name="fresh", workspace_dir=str(ws), repo_url=repo_url)
+    monkeypatch.setattr(_tools, "registry", reg)
+    await _tools.dispatch_task(
+        kind="implement_feature", project_id="fresh", goal="x"
+    )
+    assert (ws / ".git").exists(), "absent workspace was auto-cloned from repo_url"
+    (call,) = calls
+    assert call["workspace_dir"] == str(ws)
+
+
+async def test_dispatch_missing_workspace_no_repo_url_still_rejects(monkeypatch, tmp_path):
+    """#523 (P2): auto-prep is scoped — an absent workspace with NO repo_url has
+    nothing to clone from, so it stays a loud reject (no submit)."""
+    calls: list[dict] = []
+    from devclaw.server import _state
+
+    monkeypatch.setattr(_state.queue, "submit", lambda **k: calls.append(k) or "t1")
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    reg.create(id="norepo", name="norepo", workspace_dir=str(tmp_path / "nope"))
+    monkeypatch.setattr(_tools, "registry", reg)
+    with pytest.raises(ToolError, match="does not exist"):
+        await _tools.dispatch_task(
+            kind="implement_feature", project_id="norepo", goal="x"
+        )
+    assert calls == [], "no repo to clone from → reject, never submit"
