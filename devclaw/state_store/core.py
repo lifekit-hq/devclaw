@@ -483,6 +483,16 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 # rows and pre-existing rows — byte-identical legacy behavior.
                 "ALTER TABLE tasks ADD COLUMN base_branch TEXT",
                 "ALTER TABLE tasks ADD COLUMN target_branch TEXT",
+                # The owning project's reference key (#524 P3), stamped at
+                # dispatch. Per-project override knobs resolve BY this id, not by
+                # a normalized-workspace-path scan. NULL on goal-path rows (goals
+                # carry their own project_id) and legacy pre-P3 rows → knobs fall
+                # to the devclaw-wide defaults.
+                "ALTER TABLE tasks ADD COLUMN project_id TEXT",
+                # Same reference key on the program row (#524 P3) — child tasks
+                # inherit it via _persist_plan, so a program's slices resolve
+                # their knobs by id too. NULL on legacy pre-P3 programs.
+                "ALTER TABLE programs ADD COLUMN project_id TEXT",
                 # Idle cycle flag (2026-08-07) — 1 iff the loop did no work in
                 # the window (off/held/all-cancelled): excluded from the
                 # clean-cycle rate so empty nights of an OFF devclaw don't drift
@@ -575,6 +585,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         strictness: str = "trust",
         base_branch: Optional[str] = None,
         target_branch: Optional[str] = None,
+        project_id: Optional[str] = None,
     ) -> None:
         with self._lock:
             self._db.execute(
@@ -582,8 +593,8 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                      (id, kind, status, workspace_dir, goal, notify_url, created_at,
                       program_id, depends_on, order_idx, milestone, verify_cmd, deliver,
                       title, parent_goal_id, scaffold, plan_key, strictness,
-                      base_branch, target_branch)
-                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      base_branch, target_branch, project_id)
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     id,
                     kind,
@@ -604,6 +615,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                     strictness if strictness in ("trust", "strict") else "trust",
                     base_branch,
                     target_branch,
+                    project_id,
                 ),
             )
             self._commit()
@@ -1013,17 +1025,19 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         verify_cmd: Optional[str] = None,
         parent_goal_id: Optional[str] = None,
         strictness: str = "trust",
+        project_id: Optional[str] = None,
     ) -> None:
         with self._lock:
             self._db.execute(
                 "INSERT INTO programs "
                 "(id, goal, workspace_dir, notify_url, status, created_at, open_pr, "
-                " verify_cmd, parent_goal_id, strictness) "
-                "VALUES (?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?)",
+                " verify_cmd, parent_goal_id, strictness, project_id) "
+                "VALUES (?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?)",
                 (
                     id, goal, workspace_dir, notify_url, _now_ms(),
                     1 if open_pr else 0, verify_cmd, parent_goal_id,
                     strictness if strictness in ("trust", "strict") else "trust",
+                    project_id,
                 ),
             )
             self._commit()

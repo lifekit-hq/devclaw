@@ -578,7 +578,10 @@ async def test_project_review_gate_override_off_skips_even_when_global_on(store,
 
     q = TaskQueue(store, runner=_ok_gate_runner([]), reviewer=reviewer)
     q.set_registry(reg)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    # P3 (#524): the per-project review_gate override resolves by project_id
+    # stamped on the task row, so the task must name its project.
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
+                   verify_cmd="pytest", project_id="p")
     await q.drain()
     assert store.get_task(tid).status == "done" and called["n"] == 0
 
@@ -596,7 +599,10 @@ async def test_project_review_gate_override_on_runs_even_when_global_off(store, 
 
     q = TaskQueue(store, runner=_ok_gate_runner([]), reviewer=_reviewer(["approve"]))
     q.set_registry(reg)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    # P3 (#524): the per-project review_gate override resolves by project_id
+    # stamped on the task row, so the task must name its project.
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
+                   verify_cmd="pytest", project_id="p")
     await q.drain()
     # gate ran (approve verdict) and the task shipped.
     assert store.get_task(tid).status == "done"

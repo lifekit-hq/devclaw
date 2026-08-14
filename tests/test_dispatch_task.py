@@ -229,10 +229,11 @@ async def test_by_key_dispatch_preserves_override_knobs(monkeypatch, tmp_path):
         kind="implement_feature", project_id="knobbed", goal="x"
     )
     (call,) = calls
-    # the submitted workspace joins back to the project's pinned knobs, exactly
-    # as a by-path dispatch would have resolved them
-    assert reg.resolve_override(call["workspace_dir"], "automerge", None) is True
-    assert reg.resolve_override(call["workspace_dir"], "review_gate", True) is False
+    # the submitted task carries the project_id, and the knobs resolve BY that id
+    # (#524 P3) — the same values a by-path resolve produced before.
+    assert call["project_id"] == "knobbed"
+    assert reg.resolve_override("knobbed", "automerge", None) is True
+    assert reg.resolve_override("knobbed", "review_gate", True) is False
 
 
 # ---- #523 (P2): direct-path auto-prep from repo_url -------------------------

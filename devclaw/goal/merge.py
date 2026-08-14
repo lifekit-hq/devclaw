@@ -55,30 +55,31 @@ GATE_STATUS_CONTEXT = "devclaw/gate"
 
 
 def resolve_automerge(
-    registry: "Optional[ProjectRegistry]", workspace_dir: Optional[str]
+    registry: "Optional[ProjectRegistry]", project_id: Optional[str]
 ) -> bool:
-    """Should a goal working in ``workspace_dir`` auto-merge its gate-passed
-    PRs? A project's own ``automerge`` override wins when set; otherwise this
-    falls back to the devclaw-wide ``AUTOMERGE_ENABLED`` default. With no
-    registry (e.g. tests, or a workspace not registered as a project), the
-    global default is all there is."""
-    if registry is not None:
-        project = registry.find_by_workspace_dir(workspace_dir)
+    """Should a goal owned by ``project_id`` auto-merge its gate-passed PRs? A
+    project's own ``automerge`` override wins when set; otherwise this falls back
+    to the devclaw-wide ``AUTOMERGE_ENABLED`` default. With no registry (e.g.
+    tests) or no owning project (self-fix goals, legacy pre-P3 goals), the global
+    default is all there is. Keyed by the project reference key (#524 P3), not a
+    workspace-path scan."""
+    if registry is not None and project_id:
+        project = registry.get(project_id)
         if project is not None and project.automerge is not None:
             return project.automerge
     return AUTOMERGE_ENABLED
 
 
 def resolve_merge_strategy(
-    registry: "Optional[ProjectRegistry]", workspace_dir: Optional[str]
+    registry: "Optional[ProjectRegistry]", project_id: Optional[str]
 ) -> str:
-    """Which `gh pr merge` strategy for a goal working in ``workspace_dir``: the
+    """Which `gh pr merge` strategy for a goal owned by ``project_id``: the
     owning project's ``merge_strategy`` override if set, else the devclaw-wide
     ``DEFAULT_MERGE_STRATEGY``. A pinned-but-invalid value falls back to the
     default rather than handing `gh` a bad flag."""
     strategy = DEFAULT_MERGE_STRATEGY
     if registry is not None:
-        strategy = registry.resolve_override(workspace_dir, "merge_strategy", DEFAULT_MERGE_STRATEGY)
+        strategy = registry.resolve_override(project_id, "merge_strategy", DEFAULT_MERGE_STRATEGY)
     return strategy if strategy in _VALID_STRATEGIES else DEFAULT_MERGE_STRATEGY
 
 

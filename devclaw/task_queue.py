@@ -515,7 +515,8 @@ class _ReviewGate:
     async def check(self, gi: GateInput) -> GateVerdict:
         diff = await gi.diff()
         failure = await self.queue._review_failure(
-            gi.kind, gi.goal, diff, gi.workspace_dir, scaffold=gi.scaffold
+            gi.kind, gi.goal, diff, gi.workspace_dir, scaffold=gi.scaffold,
+            project_id=gi.project_id,
         )
         if failure is not None:
             return GateVerdict.failed(self.gate_id, failure, dialable=True)
@@ -797,6 +798,7 @@ class TaskQueue(_NotifyMixin):
         strictness: str = "trust",
         base_branch: Optional[str] = None,
         target_branch: Optional[str] = None,
+        project_id: Optional[str] = None,
         pump: bool = True,
     ) -> str:
         """Create a task row (status 'pending') and, by default, immediately
@@ -835,6 +837,7 @@ class TaskQueue(_NotifyMixin):
             strictness=strictness,
             base_branch=base_branch,
             target_branch=target_branch,
+            project_id=project_id,
         )
         if pump:
             self._pump()
@@ -850,6 +853,7 @@ class TaskQueue(_NotifyMixin):
         verify_cmd: Optional[str] = None,
         parent_goal_id: Optional[str] = None,
         strictness: str = "trust",
+        project_id: Optional[str] = None,
         pump: bool = True,
     ) -> str:
         """Submit a program the decomposer will plan into child tasks.
@@ -877,6 +881,7 @@ class TaskQueue(_NotifyMixin):
             id=program_id, goal=goal, workspace_dir=workspace_dir,
             notify_url=notify_url, open_pr=open_pr, verify_cmd=verify_cmd,
             parent_goal_id=parent_goal_id, strictness=strictness,
+            project_id=project_id,
         )
         if pump:
             self._planning.add(program_id)
@@ -1252,6 +1257,10 @@ class TaskQueue(_NotifyMixin):
         # line below is inert (no prep subprocess, legacy deliver_change call).
         base_branch = (row.base_branch or None) if row else None
         target_branch = (row.target_branch or None) if row else None
+        # Owning project's reference key (#524 P3) — the per-project knobs
+        # (sandbox_image, browser_gate_mode, review_gate) resolve by this id, not
+        # by a workspace-path scan. None for a task with no project.
+        project_id = (row.project_id if row else None)
 
         prep_failure: Optional[str] = None
         if (base_branch or target_branch) and not (row and row.pause_count > 0):
@@ -1273,7 +1282,8 @@ class TaskQueue(_NotifyMixin):
             success: Optional[dict] = None
         else:
             success = await self._run_and_settle(
-                task_id, kind, workspace_dir, goal, defer_done=deliver
+                task_id, kind, workspace_dir, goal, defer_done=deliver,
+                project_id=project_id,
             )
         if success is _PAUSED:
             # Paused for a quota limit — task is back to 'pending', global pause
@@ -1381,6 +1391,10 @@ class TaskQueue(_NotifyMixin):
         # Child tasks inherit the program's strictness dial (ADR 0007), same as
         # open_pr / verify_cmd. Legacy programs (pre-column) load "trust".
         program_strictness = program.strictness if program else "trust"
+        # Child tasks inherit the program's owning project_id (#524 P3), so their
+        # per-project knobs (review_gate, sandbox_image, browser_gate_mode)
+        # resolve by id. Legacy programs (pre-column) load None → defaults.
+        program_project_id = program.project_id if program else None
         key_to_uuid = {p.key: str(uuid.uuid4()) for p in planned}
         for idx, p in enumerate(planned):
             dep_uuids: list[str] = []
@@ -1412,6 +1426,7 @@ class TaskQueue(_NotifyMixin):
                 # Inherited dial (ADR 0007) — every child of a strict program
                 # blocks on a dial-able gate failure; a trust program advises.
                 strictness=program_strictness,
+                project_id=program_project_id,
             )
 
     def start_planned_program(
@@ -1425,6 +1440,7 @@ class TaskQueue(_NotifyMixin):
         verify_cmd: Optional[str] = None,
         parent_goal_id: Optional[str] = None,
         strictness: str = "trust",
+        project_id: Optional[str] = None,
         pump: bool = True,
     ) -> str:
         """Submit an ALREADY-PLANNED program (the caller supplies the
@@ -1445,6 +1461,7 @@ class TaskQueue(_NotifyMixin):
             id=program_id, goal=goal, workspace_dir=workspace_dir,
             notify_url=notify_url, open_pr=open_pr, verify_cmd=verify_cmd,
             parent_goal_id=parent_goal_id, strictness=strictness,
+            project_id=project_id,
         )
         self._persist_plan(program_id, workspace_dir, planned)
         self._store.mark_program_running(program_id)
@@ -1518,7 +1535,7 @@ class TaskQueue(_NotifyMixin):
 
     async def _run_and_settle(
         self, task_id: str, kind: TaskKind, workspace_dir: str, goal: str,
-        *, defer_done: bool = False,
+        *, defer_done: bool = False, project_id: Optional[str] = None,
     ) -> Optional[dict]:
         """Run the agent (with retries) and settle the task. Returns None once the
         task is settled (done/failed/timeout). When ``defer_done`` is set and the
@@ -1679,7 +1696,7 @@ class TaskQueue(_NotifyMixin):
                 goal=attempt_goal,
                 on_event=on_event,
                 verify_cmd=verify_cmd,
-                sandbox_image=self._sandbox_image(workspace_dir),
+                sandbox_image=self._sandbox_image(project_id),
                 owner_id=self._sandbox_owner,
             )
             try:
@@ -1742,8 +1759,9 @@ class TaskQueue(_NotifyMixin):
                         workspace_dir=workspace_dir,
                         verify=result.get("verify"),
                         scaffold=scaffold,
-                        browser_mode=self._browser_gate_mode(workspace_dir),
+                        browser_mode=self._browser_gate_mode(project_id),
                         diff_fn=lambda: _git_diff(workspace_dir, pre_run_sha),
+                        project_id=project_id,
                     )
                     # ADR 0007 / review-gate-repositioning (spec 001): the
                     # per-increment adversarial diff review is a STRICT-ONLY gate.
@@ -1935,37 +1953,39 @@ class TaskQueue(_NotifyMixin):
         self._check_and_trip_breaker(workspace_dir, task_id)
         return None
 
-    def _review_gate_enabled(self, workspace_dir: str) -> bool:
-        """Whether the pre-PR review gate runs for a task in ``workspace_dir``:
+    def _review_gate_enabled(self, project_id: Optional[str]) -> bool:
+        """Whether the pre-PR review gate runs for a task owned by ``project_id``:
         the owning project's ``review_gate`` override if set, else the
-        devclaw-wide ``REVIEW_GATE_ENABLED`` default. No registry wired → the
-        default."""
+        devclaw-wide ``REVIEW_GATE_ENABLED`` default. No registry wired, or no
+        owning project (None) → the default. Keyed by the project reference key
+        (#524 P3), not a workspace-path scan."""
         if self._registry is None:
             return REVIEW_GATE_ENABLED
         return self._registry.resolve_override(
-            workspace_dir, "review_gate", REVIEW_GATE_ENABLED
+            project_id, "review_gate", REVIEW_GATE_ENABLED
         )
 
-    def _sandbox_image(self, workspace_dir: str):
-        """Per-task sandbox image (ADR 0005): the owning project's
-        ``sandbox_image`` override if set, else None — the engine then applies
-        its own DEVCLAW_SANDBOX_IMAGE default (the queue deliberately does not
-        know the engine's default; docker-less engines ignore the field). The
-        escape hatch + migration bridge for stacks the mise path doesn't cover
-        yet. No registry wired → None."""
+    def _sandbox_image(self, project_id: Optional[str]):
+        """Per-task sandbox image (ADR 0005) for a task owned by ``project_id``:
+        the owning project's ``sandbox_image`` override if set, else None — the
+        engine then applies its own DEVCLAW_SANDBOX_IMAGE default (the queue
+        deliberately does not know the engine's default; docker-less engines
+        ignore the field). The escape hatch + migration bridge for stacks the
+        mise path doesn't cover yet. No registry wired / no project → None."""
         if self._registry is None:
             return None
-        return self._registry.resolve_override(workspace_dir, "sandbox_image", None)
+        return self._registry.resolve_override(project_id, "sandbox_image", None)
 
-    def _browser_gate_mode(self, workspace_dir: str) -> str:
-        """Browser-gate stance (``flexible``|``strict``) for a task in
-        ``workspace_dir``: the owning project's ``browser_gate_mode`` override if
+    def _browser_gate_mode(self, project_id: Optional[str]) -> str:
+        """Browser-gate stance (``flexible``|``strict``) for a task owned by
+        ``project_id``: the owning project's ``browser_gate_mode`` override if
         set, else the devclaw-wide ``BROWSER_GATE_MODE`` default. No registry
-        wired → the default. Same resolver seam as ``_review_gate_enabled``."""
+        wired / no project → the default. Same resolver seam as
+        ``_review_gate_enabled``."""
         if self._registry is None:
             return BROWSER_GATE_MODE
         return self._registry.resolve_override(
-            workspace_dir, "browser_gate_mode", BROWSER_GATE_MODE
+            project_id, "browser_gate_mode", BROWSER_GATE_MODE
         )
 
     async def _browser_reachability_clears(
@@ -2023,7 +2043,7 @@ class TaskQueue(_NotifyMixin):
 
     async def _review_failure(
         self, kind: TaskKind, goal: str, diff: str, workspace_dir: str,
-        *, scaffold: bool = False,
+        *, scaffold: bool = False, project_id: Optional[str] = None,
     ) -> Optional[str]:
         """Run the pre-PR adversarial review gate on the change's diff. Returns the
         request-changes feedback (→ fed back into the retry loop like a gate fail),
@@ -2044,7 +2064,7 @@ class TaskQueue(_NotifyMixin):
         the test-integrity scan before reaching here, and neither of those is
         gated on ``scaffold``. So even a MIS-tagged real code task is at worst
         "unreviewed but still must build + pass tests", never "ships broken"."""
-        if not self._review_gate_enabled(workspace_dir) or kind not in _REVIEWABLE_KINDS:
+        if not self._review_gate_enabled(project_id) or kind not in _REVIEWABLE_KINDS:
             return None
         if scaffold:
             sys.stderr.write(

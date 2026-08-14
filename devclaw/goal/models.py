@@ -93,6 +93,12 @@ class Goal:
     #: the gate strictness dial (see :data:`Strictness`, ADR 0007). Defaulted to
     #: "trust" so existing goal.yaml (predates the field) loads advisory.
     strictness: Strictness = "trust"
+    #: the owning project's reference key (#524 P3). The per-project override
+    #: knobs (automerge, verify_done, autodeploy, merge_strategy) resolve BY this
+    #: id, not by a workspace-path scan. None for self-fix goals with no
+    #: registered project, and for legacy goal.yaml written before P3 (until the
+    #: one-shot backfill stamps it) — both fall to the devclaw-wide defaults.
+    project_id: Optional[str] = None
 
 
 #: case-insensitive markers by which a ``done_when`` disclaims boundedness —

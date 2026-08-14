@@ -113,6 +113,11 @@ class Task:
     #: continue-this-branch contract never silently degrades into a
     #: fresh-branch PR). None ⇒ today's auto-derived branch.
     target_branch: Optional[str] = None
+    #: the owning project's reference key (#524 P3), stamped at dispatch. The
+    #: per-project override knobs (review_gate, sandbox_image, browser_gate_mode)
+    #: resolve BY this id, not by a workspace-path scan. None for the goal path
+    #: (goals carry their own project_id) and for legacy rows written before P3.
+    project_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -139,6 +144,7 @@ class Task:
             "pauseCount": self.pause_count,
             "scaffold": self.scaffold,
             "preRunSha": self.pre_run_sha,
+            "projectId": self.project_id,
         }
 
 
@@ -170,6 +176,10 @@ class Program:
     #: has NO way to rediscover its own running/failed program — the 2026-07-09
     #: closeloop-mission-v2 dead night. Null for standalone start_program calls.
     parent_goal_id: Optional[str] = None
+    #: Owning project's reference key (#524 P3); child tasks inherit it via
+    #: _persist_plan so their per-project knobs resolve by id. Null on legacy
+    #: pre-P3 programs and standalone programs with no registered project.
+    project_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -255,6 +265,7 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         ),
         base_branch=r["base_branch"] if "base_branch" in r.keys() else None,
         target_branch=r["target_branch"] if "target_branch" in r.keys() else None,
+        project_id=r["project_id"] if "project_id" in r.keys() else None,
     )
 
 
@@ -276,6 +287,7 @@ def _row_to_program(r: sqlite3.Row) -> Program:
         strictness=(
             r["strictness"] if "strictness" in r.keys() and r["strictness"] else "trust"
         ),
+        project_id=r["project_id"] if "project_id" in r.keys() else None,
     )
 
 

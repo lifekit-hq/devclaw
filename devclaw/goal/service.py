@@ -187,11 +187,11 @@ class GoalService:
         set, else the devclaw-wide ``DEVCLAW_GOAL_AUTOMERGE`` default. Merging
         to the default branch is opt-in either way. ``goal=None`` (e.g. the
         firming phase, which never merges) just falls back to the global
-        default since there's no workspace to look up a project by."""
-        workspace_dir = goal.workspace_dir if goal is not None else None
-        if not goal_merge.resolve_automerge(self._project_registry, workspace_dir):
+        default since there's no project to look up."""
+        project_id = goal.project_id if goal is not None else None
+        if not goal_merge.resolve_automerge(self._project_registry, project_id):
             return None
-        strategy = goal_merge.resolve_merge_strategy(self._project_registry, workspace_dir)
+        strategy = goal_merge.resolve_merge_strategy(self._project_registry, project_id)
         return goal_merge.default_merger(strategy)
 
     def _merger_resolver(self) -> "Callable[[Goal], Optional[goal_merge.Merger]]":
@@ -218,7 +218,7 @@ class GoalService:
         if self._project_registry is None or goal is None:
             return default
         return self._project_registry.resolve_override(
-            goal.workspace_dir, "verify_done", default
+            goal.project_id, "verify_done", default
         )
 
     def _verify_done_resolver(self) -> "Callable[[Goal], bool]":
@@ -235,13 +235,42 @@ class GoalService:
         if self._project_registry is None or goal is None:
             return default
         return self._project_registry.resolve_override(
-            goal.workspace_dir, "autodeploy", default
+            goal.project_id, "autodeploy", default
         )
 
     def _autodeploy_resolver(self) -> "Callable[[Goal], bool]":
         """Per-goal ``autodeploy`` for tick_all's sweep (same reason as
         :meth:`_merger_resolver`)."""
         return self._autodeploy
+
+    def backfill_project_ids(self) -> int:
+        """One-time migration (#524 P3): stamp ``project_id`` onto goals written
+        before the field existed, resolving each goal's owning project by the
+        LEGACY workspace-path match (``find_by_workspace_dir`` — its sole
+        surviving caller, the runtime joins are all id-keyed now). Without this,
+        a long-lived goal in flight at deploy time would lose its owning
+        project's pinned knobs (automerge/verify_done/autodeploy) — e.g. the live
+        ledger goal's ``automerge`` — and fall to the devclaw-wide defaults.
+
+        Idempotent and zero-token: a goal that already has ``project_id``, or
+        whose workspace matches no registered project, is skipped. A corrupt
+        goal.yaml is skipped, never blocks startup. Returns the count stamped.
+        Called once at startup (see server lifecycle)."""
+        if self._project_registry is None:
+            return 0
+        stamped = 0
+        for gid in self._goal_store.list_goal_ids():
+            try:
+                g = self._goal_store.load_goal(gid)
+            except Exception:
+                continue  # a half-written / corrupt goal.yaml never blocks startup
+            if g.project_id:
+                continue
+            project = self._project_registry.find_by_workspace_dir(g.workspace_dir)
+            if project is not None:
+                self._goal_store.set_project_id(gid, project.id)
+                stamped += 1
+        return stamped
 
     def _trend_detector(self) -> "Optional[_trend_detector_mod.TrendDetector]":
         """The cross-session trend detector. ``None`` when disabled via
@@ -538,6 +567,7 @@ class GoalService:
         spec: str = "",
         mode: str = "long_lived",
         strictness: str = "trust",
+        project_id: Optional[str] = None,
     ) -> dict:
         # Chef admission ("verified on all sides"). Goals that fail structural
         # checks are REJECTED with a structured condition list — the caller
@@ -561,6 +591,7 @@ class GoalService:
             goal_id, objective=objective, workspace_dir=workspace_dir, cadence=cadence,
             repo_url=repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
             done_when=done_when, backlog=backlog, mode=mode, strictness=strictness,
+            project_id=project_id,
         )
         # The waiter may have grilled scope before filing the order — persist the
         # spec it landed on so the evaluator judges done against the shared contract.
@@ -820,9 +851,10 @@ class GoalService:
         }
 
     def list_goals(self) -> list[dict]:
-        # Includes `workspace_dir`, `progress`, and `blocked_on` so
-        # project_registry.project_rollup can derive project↔goal association
-        # by workspace match — no stored goal_ids list to drift stale.
+        # Includes `project_id` so project_registry.project_rollup (and the
+        # server rollup twins) derive project↔goal association by the project
+        # reference key (#524 P3) — re-keyed off the old normalized-workspace
+        # match so a workspace rename or shared path can't drift it.
         out = []
         # Account-wide hold (quota pause / manual hold / global window) computed
         # ONCE — per-goal windows are get_goal detail, not worth N reads here.
@@ -834,6 +866,7 @@ class GoalService:
                 "id": gid,
                 "objective": g.objective[:140],
                 "workspace_dir": g.workspace_dir,
+                "project_id": g.project_id,
                 "phase": s.phase,
                 # RAW stored lifecycle (#496) — see get_goal; null is honest.
                 "lifecycle": s.lifecycle,
