@@ -834,10 +834,9 @@ async def create_goal(
 @mcp.tool
 async def verify_goal(
     objective: str,
-    workspace_dir: str,
+    project_id: str,
     done_when: str = "",
     backlog: Optional[list[str]] = None,
-    repo_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     spec: str = "",
 ) -> str:
@@ -849,17 +848,21 @@ async def verify_goal(
     Use this to preview rejections so the customer sees fixable conditions
     before they think the order was filed. ``admitted: false`` means
     create_goal would reject; ``admitted: true`` with warnings means
-    create_goal would accept but flag.
+    create_goal would accept but flag. ``project_id`` names the registered
+    project whose workspace + repo the goal would run in (same reference key as
+    create_goal); an unknown project is rejected synchronously.
 
     Response shape:
       {"admitted": bool,
        "conditions": [{"code": "...", "severity": "reject"|"warn",
                        "message": "...", "field": "..."}, ...]}
     """
+    resolved = _resolve_project_or_reject(project_id, "verify_goal")
     return json.dumps(
         goals.verify_goal(
-            objective=objective, workspace_dir=workspace_dir, done_when=done_when,
-            backlog=backlog, repo_url=repo_url, verify_cmd=verify_cmd, spec=spec,
+            objective=objective, workspace_dir=resolved.workspace_dir,
+            done_when=done_when, backlog=backlog, repo_url=resolved.repo_url,
+            verify_cmd=verify_cmd, spec=spec,
         ),
         indent=2,
     )
