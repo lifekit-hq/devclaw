@@ -82,6 +82,30 @@ def _validate_sandbox_image(value: Optional[str]) -> None:
         )
 
 
+def _validate_workspace_path(value: Optional[str]) -> None:
+    """A stored ``workspace_dir`` must be a non-empty, absolute, container-side
+    path. The 2026-08-12 dispatch failures came from a *host*-perspective path
+    (``/srv/…`` from before the container migration) written for a
+    *container*-perspective consumer, plus a fourth path the waiter invented
+    outright — accepted silently because the write path validated nothing.
+    Validating shape at THIS single write choke point (mirroring
+    :func:`_validate_sandbox_image`) stops a relative/empty/junk path from being
+    stored to rot. Existence is deliberately NOT checked here — a project may be
+    registered before its clone exists; asserting the workspace is really there
+    is the dispatch-time preflight's job (spec 003 US2/US3)."""
+    if value is None:
+        return
+    p = str(value).strip()
+    if not p:
+        raise ValueError("workspace_dir must be a non-empty path")
+    if p.startswith("~"):
+        p = str(Path(p).expanduser())
+    if not p.startswith("/"):
+        raise ValueError(
+            f"workspace_dir must be an absolute container-side path, got: {value!r}"
+        )
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -192,6 +216,24 @@ class ProjectExists(Exception):
     """Raised on create() when the id is already taken."""
 
 
+class UnknownProject(KeyError):
+    """Raised by resolve_dispatch() when a project_id is not registered. A
+    KeyError subclass so existing ``except KeyError`` guards keep working; the
+    tool layer maps it to a synchronous ToolError (zero task/engine work)."""
+
+
+@dataclass
+class ResolvedDispatch:
+    """The concrete dispatch target resolved from a ``project_id`` reference key
+    (spec 003 / #520). Transient — consumed at the tool seam, never persisted.
+    The per-project override knobs are intentionally absent: they still resolve
+    via the existing workspace-path joins off ``workspace_dir`` (migrating those
+    to id-keying is P3), so resolution only has to produce the workspace and, for
+    goals, the clone source."""
+    workspace_dir: str
+    repo_url: Optional[str] = None
+
+
 class ProjectRegistry:
     """SQLite-backed CRUD for the project registry. Owns its own ``projects``
     table on the given db file (shared with the state store; registry writes are
@@ -276,6 +318,7 @@ class ProjectRegistry:
         sandbox_image: Optional[str] = None,
     ) -> Project:
         _validate_sandbox_image(sandbox_image)
+        _validate_workspace_path(workspace_dir)
         p = Project(
             id=id, name=name, repo_url=repo_url, workspace_dir=workspace_dir,
             preview_url=preview_url, notes=notes, goal_ids=list(goal_ids or []),
@@ -368,6 +411,7 @@ class ProjectRegistry:
         if repo_url is not None:
             p.repo_url = repo_url
         if workspace_dir is not None:
+            _validate_workspace_path(workspace_dir)
             p.workspace_dir = workspace_dir
         if preview_url is not None:
             p.preview_url = preview_url
@@ -507,6 +551,27 @@ class ProjectRegistry:
             if value is not None:
                 return value
         return default
+
+    def resolve_dispatch(self, project_id: str) -> ResolvedDispatch:
+        """Resolve a dispatch reference key to its concrete workspace + repo.
+        The registry is the single source of truth for dispatch (spec 003 /
+        #520): callers name a ``project_id`` and never a raw path, and devclaw
+        resolves the target here at the one place every dispatch tool crosses.
+
+        Raises :class:`UnknownProject` (a KeyError) if the id is not registered —
+        the tool layer turns that into a synchronous ToolError with zero task/
+        engine work. Raises ValueError if the row carries no ``workspace_dir`` to
+        run in. Does NOT check that the workspace exists on disk — that is the
+        dispatch-time preflight's job (a loud reject at admission, not here)."""
+        p = self.get(project_id)
+        if p is None:
+            raise UnknownProject(project_id)
+        if not p.workspace_dir:
+            raise ValueError(
+                f"project {project_id!r} has no workspace_dir — set one via "
+                f"update_project before dispatching to it"
+            )
+        return ResolvedDispatch(workspace_dir=p.workspace_dir, repo_url=p.repo_url)
 
 
 def _normalize_workspace(path: Optional[str]) -> Optional[str]:
