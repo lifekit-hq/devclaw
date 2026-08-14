@@ -346,7 +346,7 @@ async def test_request_changes_retries_with_feedback_then_ships(store, monkeypat
         store, runner=_ok_gate_runner(calls),
         reviewer=_reviewer(["needs a real edge case test", "approve"]),
     )
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest", strictness="strict")
     await q.drain()
     assert store.get_task(tid).status == "done"
     assert len(calls) == 2  # first review requested changes, retried, second approved
@@ -373,30 +373,92 @@ async def test_persistent_request_changes_escalates(store, monkeypatch):
     assert "dead code" in t.error and "failed after 2 attempts" in t.error
 
 
-async def test_trust_ships_persistent_review_finding_with_advisory(store, monkeypatch):
-    # ADR 0007: under the default "trust" dial, a review finding that survives
-    # every retry ADVISES-and-ships instead of escalating — the change delivers
-    # with the finding recorded loud (problems catalog, recovered) and carried
-    # into the result → PR body. The converse of the strict-escalates test.
+async def test_trust_produces_no_review_advisory_because_review_never_runs(store, monkeypatch):
+    # SUPERSEDES the old ADR-0007 "trust advises-and-ships the review finding"
+    # test: spec 001 (review-gate-repositioning) drops the per-increment review
+    # from the chain under `trust` ENTIRELY, so a persistently-blocking reviewer
+    # is never consulted — there is no review advisory to carry, and the change
+    # ships clean on the always-hard gates + the human PR review. (The review
+    # gate's advise-and-ship dial no longer applies; only the browser gate is
+    # dial-able under trust now.)
     import json
     monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(
         store, runner=_ok_gate_runner(calls),
-        reviewer=_reviewer(["dead code", "dead code"]),  # never approves
+        reviewer=_reviewer(["dead code", "dead code"]),  # would block if consulted
     )
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
                    verify_cmd="pytest", strictness="trust")
     await q.drain()
     t = store.get_task(tid)
-    assert t.status == "done"          # shipped, not failed
-    assert len(calls) == 2             # still retried once before advising
+    assert t.status == "done"          # ships clean
+    assert len(calls) == 1             # no review-driven retry (review never ran)
     advisories = json.loads(t.result_json).get("gate_advisories") or []
-    assert advisories and advisories[0]["gate"] == "review"
-    assert "dead code" in advisories[0]["reason"]
-    # recorded loud + countable, as a recovered "gate" problem (carried on past it)
-    gate_rows = [p for p in store.list_problems() if p.get("category") == "gate"]
-    assert gate_rows and gate_rows[0]["count"] >= 1
+    assert not [a for a in advisories if a.get("gate") == "review"]  # no review advisory
+
+
+# ---- review-gate repositioning (spec 001): trust drops the per-increment review ----
+
+
+async def test_trust_mode_skips_per_increment_review_even_when_reviewer_crashes(store, monkeypatch):
+    """Under `trust` the adversarial diff review is not in the gate chain at all —
+    so a reviewer that CRASHES on every call cannot fail the task: it is never
+    invoked. The change ships on verify + integrity + browser, and the human PR
+    review is the semantic backstop. (The #186 crash-fails-closed rule is untouched
+    for STRICT, where the gate is still consulted.)"""
+    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    calls: list = []
+    review_calls: list = []
+
+    async def crashing_reviewer(*, goal, kind, diff, repo_context=None):
+        review_calls.append(goal)
+        raise RuntimeError("reviewer must never be consulted under trust")
+
+    q = TaskQueue(store, runner=_ok_gate_runner(calls), reviewer=crashing_reviewer)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X",
+                   verify_cmd="pytest", strictness="trust")
+    await q.drain()
+    assert store.get_task(tid).status == "done"   # shipped despite a crashing reviewer
+    assert review_calls == []                       # …because it was never called
+    assert len(calls) == 1                          # no review-driven retry
+
+
+async def test_strict_mode_still_invokes_the_per_increment_review(store, monkeypatch):
+    """Under `strict` the review gate runs exactly as today — it is consulted on
+    every increment. (Its blocking behavior on a persistent finding is covered by
+    test_persistent_request_changes_escalates.)"""
+    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    calls: list = []
+    review_calls: list = []
+
+    async def counting_reviewer(*, goal, kind, diff, repo_context=None):
+        review_calls.append(goal)
+        return {"verdict": "approve", "summary": "ok", "issues": [], "blocking": []}
+
+    q = TaskQueue(store, runner=_ok_gate_runner(calls), reviewer=counting_reviewer)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
+                   verify_cmd="pytest", strictness="strict")
+    await q.drain()
+    assert store.get_task(tid).status == "done"
+    assert review_calls, "strict mode must still consult the per-increment review"
+
+
+async def test_trust_mode_still_fails_closed_on_verify(store, monkeypatch):
+    """Dropping the review gate under trust must NOT loosen the always-hard gates:
+    a verify (tests) failure still fails the task closed in trust mode."""
+    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+
+    async def failing_verify_runner(req: EngineRequest):
+        return {"status": "ok", "workspaceDir": req.workspace_dir,
+                "verify": {"ran": True, "cmd": "pytest", "passed": False,
+                           "exit_code": 1, "timed_out": False, "output": "boom"}}
+
+    q = TaskQueue(store, runner=failing_verify_runner, reviewer=_reviewer(["approve"]))
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
+                   verify_cmd="pytest", strictness="trust")
+    await q.drain()
+    assert store.get_task(tid).status == "failed"   # verify is always-hard, trust or not
 
 
 async def test_approve_ships_first_try(store, monkeypatch):
@@ -425,7 +487,7 @@ async def test_review_crash_fails_fast_closed(store, monkeypatch):
         raise RuntimeError("reviewer exploded")
 
     q = TaskQueue(store, runner=_ok_gate_runner(calls), reviewer=boom)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest", strictness="strict")
     await q.drain()
     t = store.get_task(tid)
     assert t.status == "failed"  # still fail-closed — never ships unreviewed
@@ -446,7 +508,7 @@ async def test_review_quota_crash_pauses_instead_of_failing(store, monkeypatch):
         raise RuntimeError("Internal error: You're out of extra usage · resets 10pm (UTC)")
 
     q = TaskQueue(store, runner=_ok_gate_runner([]), reviewer=quota_boom)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest", strictness="strict")
     await q.drain()
     assert store.get_task(tid).status == "pending"   # requeued, NOT failed
     until, reason = store.global_pause()
@@ -472,7 +534,7 @@ async def test_review_session_limit_in_planner_raw_pauses_instead_of_failing(sto
         )
 
     q = TaskQueue(store, runner=_ok_gate_runner([]), reviewer=limit_prose_boom)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest", strictness="strict")
     await q.drain()
     t = store.get_task(tid)
     assert t.status == "pending"                       # requeued, NOT failed
@@ -617,8 +679,7 @@ async def test_review_gate_grounded_in_actual_workspace_repo(store, tmp_path, mo
     q = TaskQueue(store, runner=_ok_gate_runner([]), reviewer=reviewer)
     tid = q.submit(
         kind="implement_feature", workspace_dir=str(repo), goal="add CI",
-        verify_cmd="pytest",
-    )
+        verify_cmd="pytest", strictness="strict")
     await q.drain()
 
     assert store.get_task(tid).status == "done"

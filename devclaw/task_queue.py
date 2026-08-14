@@ -1745,15 +1745,21 @@ class TaskQueue(_NotifyMixin):
                         browser_mode=self._browser_gate_mode(workspace_dir),
                         diff_fn=lambda: _git_diff(workspace_dir, pre_run_sha),
                     )
-                    verdict = await run_pipeline(
-                        gate_input,
-                        (
-                            _VerifyGate(),
-                            _IntegrityGate(),
-                            _ReviewGate(self),
-                            _BrowserGate(self),
-                        ),
-                    )
+                    # ADR 0007 / review-gate-repositioning (spec 001): the
+                    # per-increment adversarial diff review is a STRICT-ONLY gate.
+                    # Under `trust` (the default, companion mode) it is dropped from
+                    # the chain entirely — not run, so zero `claude` calls and no
+                    # crash surface — because the human reviews every PR and the
+                    # goal-level done-gate re-catches its unique findings one cycle
+                    # later. Composition stays in the orchestrator (strictness is in
+                    # scope here); the gate itself never learns the dial, honoring
+                    # gate_pipeline's "policy never lives in a gate". verify /
+                    # test_integrity stay always-hard; browser stays dial-able.
+                    gates: list = [_VerifyGate(), _IntegrityGate()]
+                    if strictness != "trust":
+                        gates.append(_ReviewGate(self))
+                    gates.append(_BrowserGate(self))
+                    verdict = await run_pipeline(gate_input, tuple(gates))
                     if verdict is not None:
                         # The first failing gate — feed its reason back through the
                         # SAME retry loop as a gate fail. For a DIAL-ABLE gate (review

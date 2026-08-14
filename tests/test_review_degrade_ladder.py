@@ -376,7 +376,9 @@ async def test_review_gate_through_queue_ships_like_the_single_reviewer(store, m
     reviewer = functools.partial(review_gate, claude_caller=one_approve)
     calls: list = []
     q = TaskQueue(store, runner=_ok_gate_runner(calls), reviewer=reviewer)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    # strict so the review gate is actually consulted (spec 001: trust skips it).
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
+                   verify_cmd="pytest", strictness="strict")
     await q.drain()
     assert store.get_task(tid).status == "done"
     assert len(calls) == 1
@@ -399,7 +401,10 @@ async def test_queue_review_timeout_exhausted_fails_closed_without_agent_retry(
 
     reviewer = functools.partial(review_gate, claude_caller=timing_out)
     q = TaskQueue(store, runner=_ok_gate_runner(calls), reviewer=reviewer)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    # strict: the review gate is only consulted under strict now (spec 001), and
+    # a consulted-but-crashed gate still fails closed (#186).
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
+                   verify_cmd="pytest", strictness="strict")
     await q.drain()
     t = store.get_task(tid)
     assert t.status == "failed"

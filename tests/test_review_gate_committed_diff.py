@@ -97,8 +97,7 @@ async def test_review_gate_sees_agent_committed_work(store, monkeypatch, tmp_pat
     q = TaskQueue(store, runner=committing_runner, reviewer=reviewer)
     tid = q.submit(
         kind="implement_feature", workspace_dir=str(ws), goal="ship feature",
-        verify_cmd="pytest",
-    )
+        verify_cmd="pytest", strictness="strict")
     await q.drain()
     assert store.get_task(tid).status == "done"
     assert "feature.py" in seen["diff"] and "shipped" in seen["diff"]

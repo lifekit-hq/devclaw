@@ -74,12 +74,18 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
 
 - **Verification fails CLOSED.** A quality-gate crash is **not** an approval — an
   exception in the gate settles the task failed (#186). *Recalibrated by the gate
-  strictness dial (ADR 0007), not repealed:* the two review-shaped gates (browser-E2E,
-  adversarial review) are dial-able — under a goal's default `trust` a surviving
-  finding advises-and-ships (loud + surfaced in the PR, human merge is the backstop)
-  instead of wedging; under `strict` they fail closed. The verify/test-integrity/done
-  gates stay always-hard, and every *unreviewable* case (crash/quota) still fails closed
-  in both modes — the #186 line above is untouched.
+  strictness dial (ADR 0007), not repealed:* the dial sets which gates are
+  *consulted*, not only their consequence. Under a goal's default `trust` the
+  **per-increment adversarial diff review is dropped from the task gate chain
+  entirely** (spec `001-review-gate-repositioning`) — it was the #1 mechanism-wedge
+  source, and the human reviews every PR while the goal-level done-gate re-catches
+  its findings; under `strict` it is consulted and fails closed exactly as before.
+  The browser-E2E gate stays dial-able — under `trust` a surviving finding
+  advises-and-ships (loud + surfaced in the PR, human merge is the backstop)
+  instead of wedging; under `strict` it fails closed. The verify/test-integrity/done
+  gates stay always-hard, and every *unreviewable* case (crash/quota) in a
+  *consulted* gate still fails closed in both modes — #186 governs consulted gates,
+  and a gate not consulted under `trust` produces no silence to ship on.
 - **An unreviewable change fails closed *and fast*, not forever.** When the review gate
   can't produce a verdict at all (a crash / non-JSON response on an oversized diff), the
   task fails **closed** (never ships — #186 holds) but **without an agent retry**:
