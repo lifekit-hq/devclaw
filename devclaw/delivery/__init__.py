@@ -257,27 +257,46 @@ async def _apply_pr_labels(workspace_dir: str, pr_url: str, title: str) -> None:
     await _run("gh", "pr", "edit", pr_url, "--add-label", ",".join(labels), cwd=workspace_dir)
 
 
+# A `Co-Authored-By:` trailer — belongs in the COMMIT (where the worker model
+# stays visible as co-author), NOT duplicated into the PR description body.
+_COAUTHOR_LINE = re.compile(r"\s*Co-Authored-By:\s*.+$", re.IGNORECASE)
+
+
+def _strip_coauthor_lines(text: str) -> str:
+    """Drop ``Co-Authored-By:`` trailer lines from a PR-body lead."""
+    return "\n".join(
+        ln for ln in text.splitlines() if not _COAUTHOR_LINE.match(ln)
+    ).strip()
+
+
+#: The plain generated-by signature — matches the Claude-Code house PR style
+#: (the constant `devclaw` provenance LABEL, #510, carries the "who", so the body
+#: footer stays clean instead of leaking a task UUID).
+_PR_SIGNATURE = "🤖 Generated with [Claude Code](https://claude.com/claude-code)"
+
+
 def _pr_body(
     goal: str, task_id: str, verify: dict | None,
     *, changes: str | None = None, advisories: list | None = None,
 ) -> str:
-    """A PR body that reads like a careful engineer opened it: lead with what
-    CHANGED (the engineer's own commit body when it wrote one, else the task),
-    a one-line verification note, ``Closes #N`` for any resolved issue, the
-    original task tucked into a collapsed block, and a plain devclaw signature.
-    No diffstat, no telemetry.
+    """A clean, Claude-Code-style PR body: a ``## Summary`` of what changed, a
+    ``## Testing`` note, ``Closes #N`` for any resolved issue, any trust-mode
+    advisory, and a plain generated-by signature. No original-task dump, no
+    telemetry, no leaked ``Co-Authored-By`` trailer (that stays in the commit).
 
     ``advisories`` (ADR 0007): trust-mode dial-able gate findings this change
     SHIPPED past rather than blocked on. Rendered as a loud section so the human
     sees them at the merge boundary — the backstop for advisory gates."""
     lead = _strip_directive_lines(changes) if changes is not None else goal.strip()
-    parts = [lead or "(see commit)", ""]
+    lead = _strip_coauthor_lines(lead)
+    parts = ["## Summary", "", lead or "(see commit)", ""]
     if verify and verify.get("ran"):
         cmd = verify.get("cmd", "")
+        parts += ["## Testing", ""]
         if verify.get("passed"):
-            parts += [f"Verified with `{cmd}` — passing.", ""]
+            parts += [f"- Verified with `{cmd}` — passing.", ""]
         else:
-            parts += [f"Gate `{cmd}` did **not** pass — see the task error.", ""]
+            parts += [f"- Gate `{cmd}` did **not** pass — see the task error.", ""]
     for n in _closes_issues(goal, changes):
         parts += [f"Closes #{n}"]
     if _closes_issues(goal, changes):
@@ -295,10 +314,7 @@ def _pr_body(
             reason = (a.get("reason") if isinstance(a, dict) else str(a)) or ""
             parts += [f"- **{gate}**: {reason.strip()}"]
         parts += [""]
-    if changes is not None:
-        parts += ["<details><summary>Original task</summary>", "",
-                  goal.strip(), "", "</details>", ""]
-    parts += ["---", f"🤖 Delivered by devclaw (task `{task_id}`)"]
+    parts += [_PR_SIGNATURE]
     return "\n".join(parts)
 
 
@@ -333,7 +349,7 @@ def _goal_pr_body(
             reason = (a.get("reason") if isinstance(a, dict) else str(a)) or ""
             parts += [f"- **{gate}**: {reason.strip()}"]
         parts += [""]
-    parts += ["---", f"🤖 Delivered by devclaw (goal branch · task `{task_id}`)"]
+    parts += [_PR_SIGNATURE]
     return "\n".join(parts)
 
 
