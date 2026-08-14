@@ -147,7 +147,7 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 
 | Tool | Does |
 |---|---|
-| `dispatch_task(kind, project_id, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository`. `project_id` names a registered project — devclaw resolves its workspace/repo from the registry (never a raw path), rejects an unknown project, and preflights that the workspace is a real git checkout before dispatch (#520) |
+| `dispatch_task(kind, project_id, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository`. `project_id` names a registered project — devclaw resolves its workspace/repo from the registry (never a raw path), rejects an unknown project, and preflights the workspace before dispatch: a real git checkout runs; an absent one is auto-cloned from the project's `repo_url`; anything else is rejected loud (#520 P1 + #523 P2) |
 | `implement_feature(project_id, goal, …)` | Deprecated alias — forwards to `dispatch_task(kind="implement_feature")` |
 | `fix_bug(project_id, description, …)` | Deprecated alias — forwards to `dispatch_task(kind="fix_bug")` |
 | `review_repository(project_id, …)` | Deprecated alias — forwards to `dispatch_task(kind="review_repository")` (read-only) |

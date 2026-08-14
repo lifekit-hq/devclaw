@@ -24,7 +24,13 @@ from ..dispatch_gate import (
     operator_block,
     schedule_blocks,
 )
-from ..engine.workspace import workspace_is_dispatchable
+from pathlib import Path as _Path
+
+from ..engine.workspace import (
+    WorkspaceError,
+    prepare_workspace,
+    workspace_is_dispatchable,
+)
 from ..project_registry import (
     ProjectExists,
     ResolvedDispatch,
@@ -54,15 +60,37 @@ def _resolve_project_or_reject(project_id: str, tool: str) -> ResolvedDispatch:
         raise ToolError(str(exc))
 
 
-def _preflight_or_reject(resolved: ResolvedDispatch, project_id: str) -> None:
-    """Direct-path dispatch preflight (spec 003 US2): reject at admission if the
-    resolved workspace isn't a real git checkout, BEFORE queue.submit claims the
-    task. Zero-token. The GOAL path does not need this — its workspace is
-    prepared (cloned/reset) by ``prepare_workspace`` on the tick, which already
-    rejects a non-git/no-repo workspace via ``_block_on_prep_failure``."""
+async def _preflight_or_prep(resolved: ResolvedDispatch, project_id: str) -> None:
+    """Direct-path dispatch preflight + auto-prep (spec 003 US2/US4, #520 P2).
+
+    P1 (US2): reject at admission if the resolved workspace isn't a real git
+    checkout, BEFORE queue.submit claims the task — never a late sandbox failure.
+
+    P2 (US4, #523): when the workspace is simply ABSENT and the project carries a
+    ``repo_url``, auto-clone it from that repo instead of rejecting — extending
+    to the direct path the convenience the goal path already has (its workspace
+    is cloned by ``prepare_workspace`` on the tick). Scope is deliberately narrow:
+    - absent + repo_url  → clone, then proceed (or reject loud if the clone fails)
+    - absent + no repo_url → reject (nothing to clone from)
+    - exists-but-non-git → reject (git clone can't land in a non-empty dir; and
+      resetting an existing checkout is not the direct path's job)
+
+    Still zero-token (git subprocess only; no LLM). The GOAL path routes through
+    ``prepare_workspace`` + ``_block_on_prep_failure`` and does not use this."""
     reason = workspace_is_dispatchable(resolved.workspace_dir)
-    if reason is not None:
-        raise ToolError(f"cannot dispatch to project {project_id!r}: {reason}")
+    if reason is None:
+        return
+    absent = not _Path(resolved.workspace_dir).exists()
+    if absent and resolved.repo_url:
+        try:
+            await prepare_workspace(resolved.workspace_dir, resolved.repo_url)
+        except WorkspaceError as exc:
+            raise ToolError(
+                f"cannot dispatch to project {project_id!r}: auto-prep from "
+                f"{resolved.repo_url!r} failed: {exc}"
+            )
+        return
+    raise ToolError(f"cannot dispatch to project {project_id!r}: {reason}")
 
 
 @mcp.tool
@@ -120,7 +148,7 @@ async def dispatch_task(
     if not goal:
         raise ToolError("dispatch_task requires project_id and goal")
     resolved = _resolve_project_or_reject(project_id, "dispatch_task")
-    _preflight_or_reject(resolved, project_id)
+    await _preflight_or_prep(resolved, project_id)
     is_review = kind == "review_repository"
     task_id = queue.submit(
         kind=kind,
@@ -288,7 +316,7 @@ async def onboard(
     and only corrects what's wrong or missing. Returns task_id immediately;
     same optional notify_url as implement_feature."""
     resolved = _resolve_project_or_reject(project_id, "onboard")
-    _preflight_or_reject(resolved, project_id)
+    await _preflight_or_prep(resolved, project_id)
     task_id = queue.submit(
         kind="onboard",
         workspace_dir=resolved.workspace_dir,
