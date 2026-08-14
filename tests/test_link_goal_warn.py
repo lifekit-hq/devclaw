@@ -85,15 +85,16 @@ async def test_terminal_goal_does_not_count_as_active(wire):
     assert "warning" not in out
 
 
-async def test_workspace_match_alone_counts(wire):
-    """Even if only linked-by-workspace (never explicitly link_goal'd), an
-    existing active goal blocks the linking of a second one."""
+async def test_project_id_match_alone_counts(wire):
+    """Even if only associated by project_id (never explicitly link_goal'd), an
+    existing active goal blocks the linking of a second one (#524 P3 — the
+    association is the project reference key, not a workspace-path match)."""
     reg, fake_goals = wire
     reg.create(id="proj_a", name="A", workspace_dir="/ws")
-    # goal 1 is live via workspace match — NOT via link_goal
-    fake_goals.append({"id": "g1", "workspace_dir": "/ws", "phase": "executing"})
-    # trying to link a different goal id (still in the same workspace)
-    fake_goals.append({"id": "g2", "workspace_dir": "/ws", "phase": "firming"})
+    # goal 1 is live via project_id match — NOT via link_goal
+    fake_goals.append({"id": "g1", "project_id": "proj_a", "phase": "executing"})
+    # trying to link a different goal id (still owned by the same project)
+    fake_goals.append({"id": "g2", "project_id": "proj_a", "phase": "firming"})
 
     raw = await _tools.link_goal("proj_a", "g2")
     out = json.loads(raw)

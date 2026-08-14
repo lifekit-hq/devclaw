@@ -4,13 +4,14 @@
 
 **Created**: 2026-08-14
 
-**Status**: P1 SHIPPED (#522, 2026-08-14) · P2 SHIPPED (#523, 2026-08-14) · P3 tracked (#524, unstarted)
+**Status**: P1 SHIPPED (#522) · P2 SHIPPED (#523) · P3 SHIPPED (#524) — all 2026-08-14. Feature COMPLETE.
 
 **Tracking issue**: lifekit-hq/devclaw#520 · **Direction memory**: `docs/proposals/project-reference-key.md` (frozen DRAFT #504)
 
 **Delivery log**:
 - **P1 (#522)** — `project_id` mandatory dispatch contract; raw `workspace_dir` removed; server-side resolution + direct-path reject-loud preflight + write-time path validation. 8 files, full suite green.
 - **P2 (#523)** — direct-path auto-prep (US4): an ABSENT workspace with a `repo_url` is auto-cloned via `prepare_workspace` at dispatch instead of rejected. **Scope decision (recorded to prevent re-litigation):** clone-when-*missing* only — an exists-but-non-git dir still rejects (git clone can't land in a non-empty dir), and an existing checkout is never reset (that is not the one-shot direct path's job; the goal path owns pristine-per-action). "Converge goal + direct on one self-heal" (clarify decision 3) is satisfied in substance — both now clone a missing workspace from the row's repo — but the *mechanical:prep block-and-heal loop* stays goal-only, because the one-shot direct path has no tick to heal on.
+- **P3 (#524)** — id-keyed joins (US5, "full rip-out" per Denys): `project_id` is stamped onto the task, goal, and program rows at dispatch, and EVERY per-project-knob join (`resolve_override`, `resolve_automerge`, `project_rollup`, and the two server rollup twins) now keys on it. The normalized-workspace-path scan (`find_by_workspace_dir`) is retired from every runtime path — it survives ONLY as the reverse lookup for the one-time startup **backfill** (`GoalService.backfill_project_ids`) that stamps `project_id` onto goals written before the field, so a long-lived goal in flight at deploy (the live `ledger` goal) keeps its owning project's pinned knobs instead of falling to the devclaw-wide defaults. `project_id` is nullable throughout (self-fix goals, legacy rows) → default. **Result:** a project's `workspace_dir` can be renamed, and two projects can share a path, without silently unbinding knobs — the last fragility in the class is gone.
 
 **Input**: Register a project once; reference it by a stable key at dispatch; resolve its workspace, repo, and override knobs server-side from the registry row — so a stale or invented path can never silently reach the engine and fail (or deliver to the wrong repo).
 

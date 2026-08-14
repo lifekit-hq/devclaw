@@ -1764,17 +1764,13 @@ async def project_json(request: Request) -> Response:
     p = registry.get(project_id)
     if p is None:
         return JSONResponse({"error": "not_found", "id": project_id}, status_code=404)
-    # Discover this project's goals by workspace_dir match — same join rule
-    # as project_rollup. `goal_ids` on the Project row is advisory only and
-    # can go stale (see project_registry_link_stale memory + docstring).
-    from ..project_registry import _normalize_workspace
-
-    proj_ws = _normalize_workspace(p.workspace_dir)
-    matching_ids: list[str] = []
-    if proj_ws is not None:
-        for g in goals.list_goals():
-            if _normalize_workspace(g.get("workspace_dir")) == proj_ws:
-                matching_ids.append(g["id"])
+    # Discover this project's goals by project_id match — same join rule as
+    # project_rollup (#524 P3, re-keyed off the old workspace-path match).
+    # `goal_ids` on the Project row is advisory only and can go stale (see
+    # project_registry_link_stale memory + docstring).
+    matching_ids: list[str] = [
+        g["id"] for g in goals.list_goals() if g.get("project_id") == p.id
+    ]
     active: list[dict] = []
     archived: list[dict] = []
     for gid in matching_ids:

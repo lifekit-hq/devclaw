@@ -33,7 +33,7 @@ def test_sandbox_image_persists_and_resolves(tmp_path):
     reopened = ProjectRegistry(str(tmp_path / "devclaw.db"))
     assert reopened.get("fs").sandbox_image == "devclaw-sandbox-dotnet:local"
     assert (
-        reopened.resolve_override("/ws/fs", "sandbox_image", None)
+        reopened.resolve_override("fs", "sandbox_image", None)
         == "devclaw-sandbox-dotnet:local"
     )
 
@@ -41,8 +41,8 @@ def test_sandbox_image_persists_and_resolves(tmp_path):
 def test_unpinned_project_inherits_the_default(tmp_path):
     reg = _reg(tmp_path)
     reg.create(id="fs", name="FS", workspace_dir="/ws/fs")
-    assert reg.resolve_override("/ws/fs", "sandbox_image", None) is None
-    assert reg.resolve_override("/ws/unclaimed", "sandbox_image", None) is None
+    assert reg.resolve_override("fs", "sandbox_image", None) is None
+    assert reg.resolve_override("unclaimed-unregistered", "sandbox_image", None) is None
 
 
 def test_update_can_pin_and_clear_the_override(tmp_path):
@@ -133,11 +133,12 @@ def test_dispatch_resolves_the_owning_projects_pin(tmp_path):
     )
     q = TaskQueue.__new__(TaskQueue)  # only the resolver seam under test
     q._registry = reg
-    assert q._sandbox_image(str(tmp_path / "ws")) == "devclaw-sandbox-dotnet:local"
-    # unclaimed workspace → None → the engine applies its own default
-    assert q._sandbox_image("/elsewhere") is None
+    # #524 P3: the pin resolves by the task's project_id, not its workspace path.
+    assert q._sandbox_image("fs") == "devclaw-sandbox-dotnet:local"
+    # unregistered project → None → the engine applies its own default
+    assert q._sandbox_image("unclaimed-unregistered") is None
     q._registry = None
-    assert q._sandbox_image(str(tmp_path / "ws")) is None
+    assert q._sandbox_image("fs") is None
 
 
 def test_engine_request_defaults_to_no_override():

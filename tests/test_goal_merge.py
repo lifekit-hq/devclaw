@@ -35,16 +35,16 @@ def test_project_override_wins_over_global_default(tmp_path, monkeypatch):
     reg.create(id="p", name="P", workspace_dir="/src/p", automerge=False)
     monkeypatch.setattr("devclaw.goal.merge.AUTOMERGE_ENABLED", True)
     # global says on, but this project pins off — override wins.
-    assert resolve_automerge(reg, "/src/p") is False
+    assert resolve_automerge(reg, "p") is False
 
 
 def test_project_with_no_override_inherits_global_default(tmp_path, monkeypatch):
     reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
     reg.create(id="p", name="P", workspace_dir="/src/p")  # automerge=None
     monkeypatch.setattr("devclaw.goal.merge.AUTOMERGE_ENABLED", True)
-    assert resolve_automerge(reg, "/src/p") is True
+    assert resolve_automerge(reg, "p") is True
     monkeypatch.setattr("devclaw.goal.merge.AUTOMERGE_ENABLED", False)
-    assert resolve_automerge(reg, "/src/p") is False
+    assert resolve_automerge(reg, "p") is False
 
 
 # ---- resolve_merge_strategy + strategy-bound merger -------------------------
@@ -56,7 +56,7 @@ def test_merge_strategy_project_override_wins(tmp_path, monkeypatch):
     reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
     reg.create(id="p", name="P", workspace_dir="/src/p", merge_strategy="rebase")
     monkeypatch.setattr("devclaw.goal.merge.DEFAULT_MERGE_STRATEGY", "squash")
-    assert resolve_merge_strategy(reg, "/src/p") == "rebase"
+    assert resolve_merge_strategy(reg, "p") == "rebase"
 
 
 def test_merge_strategy_unpinned_and_no_registry_use_default(tmp_path, monkeypatch):
@@ -65,7 +65,7 @@ def test_merge_strategy_unpinned_and_no_registry_use_default(tmp_path, monkeypat
     reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
     reg.create(id="p", name="P", workspace_dir="/src/p")  # unpinned
     monkeypatch.setattr("devclaw.goal.merge.DEFAULT_MERGE_STRATEGY", "merge")
-    assert resolve_merge_strategy(reg, "/src/p") == "merge"
+    assert resolve_merge_strategy(reg, "p") == "merge"
     assert resolve_merge_strategy(None, "/src/p") == "merge"
 
 
@@ -75,7 +75,7 @@ def test_merge_strategy_invalid_pin_falls_back_to_default(tmp_path, monkeypatch)
     reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
     reg.create(id="p", name="P", workspace_dir="/src/p", merge_strategy="bogus")
     monkeypatch.setattr("devclaw.goal.merge.DEFAULT_MERGE_STRATEGY", "squash")
-    assert resolve_merge_strategy(reg, "/src/p") == "squash"
+    assert resolve_merge_strategy(reg, "p") == "squash"
 
 
 # ---- GitHub-native auto-merge (--auto) + devclaw's own gate status ----------

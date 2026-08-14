@@ -76,7 +76,7 @@ def _goals_dir() -> str:
 def _list_goals(goal_store: GoalStore) -> list[dict]:
     """CLI-side mirror of goal_service.list_goals — reads straight from
     GoalStore so the CLI works without the queue/engine. Shape includes
-    workspace_dir so project_rollup can do the workspace-match join."""
+    project_id so project_rollup can do the id-keyed join (#524 P3)."""
     out: list[dict] = []
     for gid in goal_store.list_goal_ids():
         g = goal_store.load_goal(gid)
@@ -84,6 +84,7 @@ def _list_goals(goal_store: GoalStore) -> list[dict]:
         out.append({
             "id": gid,
             "workspace_dir": g.workspace_dir,
+            "project_id": g.project_id,
             "phase": s.phase,
             # RAW stored lifecycle (#496) — null for legacy rows, never coalesced.
             "lifecycle": s.lifecycle,

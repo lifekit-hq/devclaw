@@ -176,6 +176,7 @@ def seed_goal(
     workspace_dir: str = "/repos/demo",
     done_when: str = "all backlog items merged",
     mode: str | None = None,
+    project_id: str | None = None,
 ) -> None:
     """Write a minimal goal.yaml under goals_dir/<goal_id>/.
 
@@ -208,4 +209,6 @@ def seed_goal(
     }
     if mode is not None:
         doc["mode"] = mode
+    if project_id is not None:
+        doc["project_id"] = project_id
     (d / "goal.yaml").write_text(yaml.safe_dump(doc))

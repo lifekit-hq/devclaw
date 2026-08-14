@@ -81,6 +81,7 @@ class InProcessEngine:
                 verify_cmd=action.verify_cmd or goal.verify_cmd,
                 parent_goal_id=goal.id,
                 strictness=goal.strictness,
+                project_id=goal.project_id,
                 pump=False,
             )
             return InFlight("devclaw", "start_program", program_id, "program", action.goal)
@@ -98,6 +99,7 @@ class InProcessEngine:
                 verify_cmd=action.verify_cmd or goal.verify_cmd,
                 parent_goal_id=goal.id,
                 strictness=goal.strictness,
+                project_id=goal.project_id,
                 pump=False,
             )
             return InFlight("devclaw", "start_program", program_id, "program", action.goal)
@@ -119,6 +121,7 @@ class InProcessEngine:
                 # for a read-only review_repository — it has no diff to review.
                 scaffold=False if is_review else action.scaffold,
                 strictness=goal.strictness,
+                project_id=goal.project_id,
                 pump=False,
             )
             return InFlight("devclaw", action.tool, task_id, "task", action.goal)

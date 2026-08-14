@@ -289,6 +289,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         stub_acceptable: list[str] | None = None,
         mode: str = "long_lived",
         strictness: str = "trust",
+        project_id: str | None = None,
     ) -> Goal:
         """Write a new goal.yaml. Raises FileExistsError if the id is taken."""
         if self.exists(goal_id):
@@ -323,6 +324,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
                     "stub_acceptable": list(stub_acceptable or []),
                     "mode": mode,
                     "strictness": strictness,
+                    "project_id": project_id,
                 },
                 sort_keys=False,
             )
@@ -352,6 +354,9 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             # Legacy / unrecognized reads as "trust" (advisory) — the default
             # dial: dial-able gates log-and-ship rather than wedge (ADR 0007).
             strictness=("strict" if raw.get("strictness") == "strict" else "trust"),
+            # Legacy goal.yaml (pre-P3) has no project_id → None until the
+            # one-shot backfill stamps it (knobs fall to defaults meanwhile).
+            project_id=(str(raw["project_id"]) if raw.get("project_id") else None),
         )
 
     def set_strictness(self, goal_id: str, strictness: str) -> Goal:
@@ -373,6 +378,19 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         raw["strictness"] = strictness
         self._write_atomic(goal_id, "goal.yaml", yaml.safe_dump(raw, sort_keys=False))
         return self.load_goal(goal_id)
+
+    def set_project_id(self, goal_id: str, project_id: str) -> None:
+        """Stamp a goal's owning project reference key (#524 P3). Used ONLY by
+        the one-time startup backfill that migrates goals written before the
+        field existed (raw load → set one key → atomic rewrite, every other key
+        preserved). Not a steering verb — the association is a durable fact, set
+        at creation for new goals."""
+        path = self._dir(goal_id) / "goal.yaml"
+        if not path.exists():
+            raise FileNotFoundError(f"goal {goal_id!r} has no goal.yaml")
+        raw = yaml.safe_load(path.read_text()) or {}
+        raw["project_id"] = project_id
+        self._write_atomic(goal_id, "goal.yaml", yaml.safe_dump(raw, sort_keys=False))
 
     # ---- helpers -----------------------------------------------------------
 

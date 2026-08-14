@@ -226,12 +226,13 @@ class UnknownProject(KeyError):
 class ResolvedDispatch:
     """The concrete dispatch target resolved from a ``project_id`` reference key
     (spec 003 / #520). Transient — consumed at the tool seam, never persisted.
-    The per-project override knobs are intentionally absent: they still resolve
-    via the existing workspace-path joins off ``workspace_dir`` (migrating those
-    to id-keying is P3), so resolution only has to produce the workspace and, for
-    goals, the clone source."""
+    Carries ``project_id`` so the dispatch seam can stamp it onto the task/goal
+    row (#524 P3): the per-project override knobs then resolve by id off that
+    stored ``project_id``, not by a fragile normalized-workspace-path scan. The
+    knob VALUES aren't resolved here — only the key needed to resolve them later."""
     workspace_dir: str
     repo_url: Optional[str] = None
+    project_id: Optional[str] = None
 
 
 class ProjectRegistry:
@@ -516,11 +517,15 @@ class ProjectRegistry:
             self._db.commit()
 
     def find_by_workspace_dir(self, workspace_dir: Optional[str]) -> Optional[Project]:
-        """The reverse of the rollup join: given a goal's ``workspace_dir``,
-        find the project that owns it (normalized match, same rule as
-        :func:`project_rollup`). Returns ``None`` if the workspace is empty or
-        no project claims it. Used by the auto-merge resolver — a goal has no
-        automerge setting of its own, only its owning project does."""
+        """Reverse workspace→project lookup by normalized path.
+
+        **Migration/backfill ONLY (#524 P3).** The runtime project↔goal/task
+        joins are all keyed on ``project_id`` now; this normalized-path scan
+        survives solely for ``GoalService.backfill_project_ids`` to stamp
+        ``project_id`` onto goals written before the field. Do NOT reintroduce it
+        on a runtime path — that is the fragile join P3 deleted (a workspace
+        rename or a shared path silently unbinds a project). Returns ``None`` if
+        the workspace is empty or no project claims it."""
         target = _normalize_workspace(workspace_dir)
         if target is None:
             return None
@@ -531,21 +536,27 @@ class ProjectRegistry:
                 return _row_to_project(r)
         return None
 
-    def resolve_override(self, workspace_dir: Optional[str], field: str, default: Any) -> Any:
-        """Resolve one per-project override for a goal/task working in
-        ``workspace_dir``: the owning project's value for ``field`` if it pins
-        one (non-null), else ``default`` (the devclaw-wide env default). This is
-        the single generic seam every override consumer routes through — a goal
-        has no such setting of its own, only its owning project does, and when
-        the fleet-wide settings store lands (PR B) only ``default``'s source
-        changes here, not the call sites.
+    def resolve_override(self, project_id: Optional[str], field: str, default: Any) -> Any:
+        """Resolve one per-project override for a goal/task belonging to
+        ``project_id``: the owning project's value for ``field`` if it pins one
+        (non-null), else ``default`` (the devclaw-wide env default). This is the
+        single generic seam every override consumer routes through — a goal has
+        no such setting of its own, only its owning project does.
+
+        Keyed by the project reference key (#524 P3), NOT by a normalized
+        workspace-path scan: a project's ``workspace_dir`` can now be renamed
+        without silently unbinding its knobs, and two projects can't collide on a
+        shared path. ``project_id`` may be None (self-fix goals with no owning
+        project, or a legacy row dispatched before P3) → falls to ``default``.
 
         ``field`` must be one of :data:`_OVERRIDE_FIELDS`; anything else is a
         programming error and raises, rather than silently returning the
         default and masking a typo."""
         if field not in _OVERRIDE_FIELDS:
             raise ValueError(f"not a per-project override field: {field!r}")
-        project = self.find_by_workspace_dir(workspace_dir)
+        if not project_id:
+            return default
+        project = self.get(project_id)
         if project is not None:
             value = getattr(project, field)
             if value is not None:
@@ -571,7 +582,9 @@ class ProjectRegistry:
                 f"project {project_id!r} has no workspace_dir — set one via "
                 f"update_project before dispatching to it"
             )
-        return ResolvedDispatch(workspace_dir=p.workspace_dir, repo_url=p.repo_url)
+        return ResolvedDispatch(
+            workspace_dir=p.workspace_dir, repo_url=p.repo_url, project_id=project_id
+        )
 
 
 def _normalize_workspace(path: Optional[str]) -> Optional[str]:
@@ -596,25 +609,24 @@ def _normalize_workspace(path: Optional[str]) -> Optional[str]:
 
 
 def project_rollup(project: Project, all_goals: list[dict]) -> dict:
-    """Join a project with live goal state via workspace_dir match.
+    """Join a project with live goal state via ``project_id`` match (#524 P3).
 
     ``all_goals`` is the pre-fetched output of ``goal_service.list_goals()``
-    (or the CLI's GoalStore-backed equivalent). Every goal whose normalized
-    ``workspace_dir`` equals the project's normalized ``workspace_dir`` is
-    associated. Passing the full list in from the caller lets us render every
-    project in a single ``list_goals`` scan instead of an N-times per-project
-    fetch.
+    (or the CLI's GoalStore-backed equivalent). Every goal whose stored
+    ``project_id`` equals the project's id is associated. Passing the full list
+    in from the caller lets us render every project in a single ``list_goals``
+    scan instead of an N-times per-project fetch. (Was a normalized-workspace-dir
+    match — re-keyed to the project reference key so a workspace rename or a
+    shared path can't drift the association.)
 
     ``health`` is a cheap derived signal for the control plane: ``blocked`` if
     any goal is blocked or flagged stalled by the watchdog, ``done`` if all
     goals are done, ``working`` if any is active, else ``idle``."""
-    proj_ws = _normalize_workspace(project.workspace_dir)
     goals: list[dict] = []
-    if proj_ws is not None:
-        for g in all_goals:
-            if _normalize_workspace(g.get("workspace_dir")) != proj_ws:
-                continue
-            goals.append(
+    for g in all_goals:
+        if g.get("project_id") != project.id:
+            continue
+        goals.append(
                 {
                     "id": g.get("id"),
                     "phase": g.get("phase"),

@@ -159,6 +159,7 @@ async def dispatch_task(
         deliver=False if is_review else open_pr,
         base_branch=base_branch,
         target_branch=target_branch,
+        project_id=resolved.project_id,
     )
     return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
 
@@ -322,6 +323,7 @@ async def onboard(
         workspace_dir=resolved.workspace_dir,
         goal=focus or "general onboarding",
         notify_url=notify_url,
+        project_id=resolved.project_id,
     )
     return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
 
@@ -367,6 +369,7 @@ async def start_program(
         result = goals.create_goal(
             goal_id, objective=goal, workspace_dir=resolved.workspace_dir,
             repo_url=resolved.repo_url, spec=goal, mode="one_shot",
+            project_id=resolved.project_id,
         )
     except GoalAdmissionRejected as exc:
         raise ToolError(json.dumps(exc.result.to_dict(), indent=2))
@@ -848,6 +851,7 @@ async def create_goal(
                 done_when=done_when, backlog=backlog, cadence=cadence,
                 repo_url=resolved.repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
                 spec=spec, mode=mode, strictness=strictness,
+                project_id=resolved.project_id,
             ),
             indent=2,
         )
@@ -1465,15 +1469,13 @@ _TERMINAL_GOAL_PHASES = {"done", "cancelled", "error", "achieved"}
 
 
 def _project_active_goal_ids(project) -> list[str]:
-    """All non-terminal goal ids that belong to this project — by workspace_dir
-    match (the authoritative join) OR by the advisory ``goal_ids`` list.
+    """All non-terminal goal ids that belong to this project — by ``project_id``
+    match (the authoritative join, #524 P3) OR by the advisory ``goal_ids`` list.
 
     Used by the one-goal-per-project warn (2026-07-04): both entry points
-    (create_goal against a matching workspace, or link_goal directly) count
-    toward the "already-has-active-goal" state."""
-    from ..project_registry import _normalize_workspace
-
-    proj_ws = _normalize_workspace(project.workspace_dir)
+    (create_goal against this project, or link_goal directly) count toward the
+    "already-has-active-goal" state. Re-keyed off the old normalized-workspace
+    match so a workspace rename can't drift the count."""
     seen: set[str] = set()
     active: list[str] = []
     for g in goals.list_goals():
@@ -1482,12 +1484,9 @@ def _project_active_goal_ids(project) -> list[str]:
             continue
         if g.get("phase") in _TERMINAL_GOAL_PHASES:
             continue
-        matches_ws = (
-            proj_ws is not None
-            and _normalize_workspace(g.get("workspace_dir")) == proj_ws
-        )
+        matches_project = g.get("project_id") == project.id
         matches_link = gid in (project.goal_ids or [])
-        if matches_ws or matches_link:
+        if matches_project or matches_link:
             if gid not in seen:
                 seen.add(gid)
                 active.append(gid)

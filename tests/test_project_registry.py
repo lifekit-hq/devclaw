@@ -146,20 +146,22 @@ def test_persistence_across_reopen(tmp_path):
 # is what drives association.
 
 
-def _goal(id: str, workspace_dir: str, **fields) -> dict:
-    """Build a goals-list entry (goal_service.list_goals shape) for tests."""
-    base = {"id": id, "workspace_dir": workspace_dir}
+def _goal(id: str, project_id: str, **fields) -> dict:
+    """Build a goals-list entry (goal_service.list_goals shape) for tests. The
+    project↔goal join is by project_id (#524 P3), so the 2nd arg is the owning
+    project id, not a workspace path."""
+    base = {"id": id, "project_id": project_id}
     base.update(fields)
     return base
 
 
-def test_rollup_joins_by_workspace_dir(reg):
+def test_rollup_joins_by_project_id(reg):
     reg.create(id="todo", name="Todo", workspace_dir="/src/todo")
     all_goals = [
-        _goal("g1", "/src/todo", phase="in_flight", lifecycle="executing",
+        _goal("g1", "todo", phase="in_flight", lifecycle="executing",
               blocked_on=None, progress={"stalled": False},
               direction={"verdict": "on_track"}),
-        _goal("g-other", "/src/somewhere-else", phase="in_flight",
+        _goal("g-other", "somewhere-else", phase="in_flight",
               progress={"stalled": False}),
     ]
     out = project_rollup(reg.get("todo"), all_goals)
@@ -169,26 +171,25 @@ def test_rollup_joins_by_workspace_dir(reg):
     assert out["goals"][0]["direction"]["verdict"] == "on_track"
 
 
-def test_rollup_normalizes_workspace_paths(reg):
-    """A trailing slash / double slash on either side of the join must not
-    hide a matching goal — projects and goals may set the workspace_dir via
-    different code paths that don't agree on formatting."""
-    reg.create(id="todo", name="Todo", workspace_dir="/src/todo/")
-    all_goals = [
-        _goal("g1", "/src//todo", phase="in_flight", progress={"stalled": False}),
-    ]
+def test_rollup_join_survives_a_workspace_rename(reg):
+    """#524 P3: the join is by project_id, so renaming the project's
+    workspace_dir must NOT drop its goals — the exact fragility the id-key
+    replaces (a workspace-path scan would have missed the renamed project)."""
+    reg.create(id="todo", name="Todo", workspace_dir="/src/todo")
+    reg.update("todo", workspace_dir="/src/todo-RENAMED")
+    all_goals = [_goal("g1", "todo", phase="in_flight", progress={"stalled": False})]
     out = project_rollup(reg.get("todo"), all_goals)
     assert len(out["goals"]) == 1 and out["goals"][0]["id"] == "g1"
 
 
 def test_rollup_ignores_stored_goal_ids(reg):
-    """Explicit link_goal calls do NOT bring an unrelated-workspace goal
-    into the rollup. This is the guard for the cancel-and-refile drift the
-    workspace-match design was introduced to eliminate."""
+    """Explicit link_goal calls do NOT bring a goal owned by a different
+    project into the rollup. Guards the cancel-and-refile drift the
+    project-id match is designed to eliminate."""
     reg.create(id="todo", name="Todo", workspace_dir="/src/todo")
     reg.link_goal("todo", "some-old-goal")  # advisory; must not affect rollup
     all_goals = [
-        _goal("some-old-goal", "/src/other", phase="in_flight",
+        _goal("some-old-goal", "other", phase="in_flight",
               progress={"stalled": False}),
     ]
     out = project_rollup(reg.get("todo"), all_goals)
@@ -196,23 +197,25 @@ def test_rollup_ignores_stored_goal_ids(reg):
     assert out["health"] == "idle"
 
 
-def test_rollup_no_workspace_dir_yields_no_goals(reg):
+def test_rollup_matches_by_id_even_without_a_workspace_dir(reg):
+    """#524 P3: because the join is by id, a project with no workspace_dir
+    still gathers its goals — the old workspace-scan could not."""
     reg.create(id="todo", name="Todo")  # no workspace_dir
-    all_goals = [_goal("g1", "/anything", phase="in_flight", progress={})]
+    all_goals = [_goal("g1", "todo", phase="in_flight", progress={"stalled": False})]
     out = project_rollup(reg.get("todo"), all_goals)
-    assert out["goals"] == [] and out["health"] == "idle"
+    assert len(out["goals"]) == 1 and out["health"] == "working"
 
 
 def test_rollup_health_blocked_on_phase(reg):
     reg.create(id="todo", name="Todo", workspace_dir="/src/todo")
-    all_goals = [_goal("g1", "/src/todo", phase="blocked",
+    all_goals = [_goal("g1", "todo", phase="blocked",
                        lifecycle="executing", progress={})]
     assert project_rollup(reg.get("todo"), all_goals)["health"] == "blocked"
 
 
 def test_rollup_health_blocked_on_stall(reg):
     reg.create(id="todo", name="Todo", workspace_dir="/src/todo")
-    all_goals = [_goal("g1", "/src/todo", phase="idle",
+    all_goals = [_goal("g1", "todo", phase="idle",
                        lifecycle="executing", progress={"stalled": True})]
     assert project_rollup(reg.get("todo"), all_goals)["health"] == "blocked"
 
@@ -220,8 +223,8 @@ def test_rollup_health_blocked_on_stall(reg):
 def test_rollup_health_done_when_all_done(reg):
     reg.create(id="todo", name="Todo", workspace_dir="/src/todo")
     all_goals = [
-        _goal("g1", "/src/todo", phase="done", progress={}),
-        _goal("g2", "/src/todo", phase="done", progress={}),
+        _goal("g1", "todo", phase="done", progress={}),
+        _goal("g2", "todo", phase="done", progress={}),
     ]
     assert project_rollup(reg.get("todo"), all_goals)["health"] == "done"
 
@@ -229,7 +232,7 @@ def test_rollup_health_done_when_all_done(reg):
 def test_rollup_health_archived_short_circuits(reg):
     reg.create(id="todo", name="Todo", workspace_dir="/src/todo")
     reg.update("todo", status="archived")
-    all_goals = [_goal("g1", "/src/todo", phase="in_flight", progress={})]
+    all_goals = [_goal("g1", "todo", phase="in_flight", progress={})]
     assert project_rollup(reg.get("todo"), all_goals)["health"] == "archived"
 
 
@@ -469,9 +472,9 @@ def test_all_override_columns_migrate_onto_a_legacy_table(tmp_path):
 def test_resolve_override_project_value_wins_over_default(reg):
     reg.create(id="p", name="P", workspace_dir="/src/p", autodeploy=False)
     # default says True (env default), project pins False → project wins.
-    assert reg.resolve_override("/src/p", "autodeploy", True) is False
+    assert reg.resolve_override("p", "autodeploy", True) is False
     # a field the project didn't pin falls back to the default.
-    assert reg.resolve_override("/src/p", "verify_done", True) is True
+    assert reg.resolve_override("p", "verify_done", True) is True
 
 
 def test_resolve_override_unregistered_workspace_returns_default(reg):
@@ -481,14 +484,55 @@ def test_resolve_override_unregistered_workspace_returns_default(reg):
 
 def test_resolve_override_string_field(reg):
     reg.create(id="p", name="P", workspace_dir="/src/p", merge_strategy="rebase")
-    assert reg.resolve_override("/src/p", "merge_strategy", "squash") == "rebase"
+    assert reg.resolve_override("p", "merge_strategy", "squash") == "rebase"
     reg.create(id="q", name="Q", workspace_dir="/src/q")  # no pin
-    assert reg.resolve_override("/src/q", "merge_strategy", "squash") == "squash"
+    assert reg.resolve_override("q", "merge_strategy", "squash") == "squash"
 
 
 def test_resolve_override_rejects_unknown_field(reg):
     with pytest.raises(ValueError):
-        reg.resolve_override("/src/p", "not_a_field", True)
+        reg.resolve_override("p", "not_a_field", True)
+
+
+def test_resolve_override_survives_a_workspace_rename(reg):
+    """#524 P3: knobs resolve by project_id, so renaming the project's
+    workspace_dir does NOT unbind them — the exact fragility the id-key
+    eliminates (the old workspace scan would have missed the renamed row)."""
+    reg.create(id="p", name="P", workspace_dir="/src/p", automerge=True)
+    reg.update("p", workspace_dir="/src/p-RENAMED")
+    assert reg.resolve_override("p", "automerge", None) is True
+
+
+def test_resolve_override_none_project_id_returns_default(reg):
+    """A goal/task with no owning project (self-fix, legacy pre-P3 row) falls to
+    the default — never raises, never scans."""
+    assert reg.resolve_override(None, "automerge", "DFLT") == "DFLT"
+
+
+def test_backfill_stamps_project_id_from_legacy_workspace(tmp_path):
+    """#524 P3 migration: a goal written before the field is stamped with its
+    owning project's id (resolved by the legacy workspace match) so its knobs
+    keep resolving across the cutover. Idempotent."""
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+    from tests.goal_fakes import seed_goal
+
+    goals_dir = tmp_path / "goals"
+    db = StateStore(str(tmp_path / "t.db"))
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    reg.create(id="proj", name="P", workspace_dir="/repos/demo", automerge=True)
+    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900,
+                     eval_every=99, verify_done=False)
+    svc = GoalService(TaskQueue(db), db, config=cfg, project_registry=reg)
+    seed_goal(goals_dir, "legacy-g")  # workspace_dir=/repos/demo, NO project_id
+    assert svc._goal_store.load_goal("legacy-g").project_id is None
+
+    assert svc.backfill_project_ids() == 1
+    assert svc._goal_store.load_goal("legacy-g").project_id == "proj"
+    # idempotent — a second run stamps nothing (already set)
+    assert svc.backfill_project_ids() == 0
+    db.close()
 
 
 # ---- managed-repo provenance ------------------------------------------------

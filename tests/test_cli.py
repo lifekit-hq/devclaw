@@ -43,12 +43,11 @@ def test_show_unknown_returns_1(env, capsys):
     assert "unknown project" in capsys.readouterr().err
 
 
-def test_goal_shows_up_via_workspace_match(env, capsys):
-    """The rollup joins project↔goals by workspace_dir. A goal whose
-    workspace matches the project's workspace shows up; no explicit link
-    needed. `seed_goal` writes a goal with workspace_dir=/repos/demo, so
-    registering the project with the same value is what associates them."""
-    seed_goal(env["goals"], "g1")  # workspace_dir: /repos/demo
+def test_goal_shows_up_via_project_id_match(env, capsys):
+    """The rollup joins project↔goals by project_id (#524 P3). A goal stamped
+    with the project's id shows up; no explicit link needed. `seed_goal` writes
+    the goal with project_id=todo, which is what associates them."""
+    seed_goal(env["goals"], "g1", project_id="todo")
     main(["projects", "register", "todo", "Todo App",
           "--workspace-dir", "/repos/demo"])
     capsys.readouterr()

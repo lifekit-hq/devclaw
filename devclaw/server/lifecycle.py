@@ -89,6 +89,15 @@ def main() -> None:
     # dead process so the heartbeat resumes them. Sync — runs before the loop.
     reaped = queue.recover()
 
+    # #524 P3 one-time migration: stamp project_id onto goals written before the
+    # field, so a long-lived goal in flight at deploy keeps its owning project's
+    # pinned knobs (automerge/verify_done/autodeploy) instead of falling to the
+    # devclaw-wide defaults. Idempotent + zero-token; resolves each goal's owner
+    # by the legacy workspace match one last time.
+    backfilled = goals.backfill_project_ids()
+    if backfilled:
+        sys.stderr.write(f"{SERVER_NAME}: backfilled project_id on {backfilled} goal(s)\n")
+
     # Seed Claude workspace-trust for the cwd cognition runs `claude --print` in
     # (this container's /app). Without it Claude Code (since ~2026-07) ignores
     # the workspace's .claude/settings.json permissions and the planner/evaluator

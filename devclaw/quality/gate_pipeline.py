@@ -67,6 +67,10 @@ class GateInput:
     #: async producer of the post-run diff vs. the pre-run base. Called at most
     #: once; the result is cached on :attr:`_diff_value`.
     diff_fn: Callable[[], Awaitable[str]]
+    #: owning project's reference key (#524 P3) — the review gate resolves its
+    #: ``review_gate`` enable/disable knob by this id, not a workspace-path scan.
+    #: None for a task with no owning project (self-fix, legacy pre-P3 rows).
+    project_id: Optional[str] = None
     _diff_computed: bool = field(default=False, repr=False)
     _diff_value: str = field(default="", repr=False)
 

@@ -72,7 +72,7 @@ class _FakeQueue:
         self._review_fail = review_fail
         self._reachability_clears = reachability_clears
 
-    async def _review_failure(self, kind, goal, diff, ws, *, scaffold=False):
+    async def _review_failure(self, kind, goal, diff, ws, *, scaffold=False, project_id=None):
         return self._review_fail
 
     async def _browser_reachability_clears(self, verify, diff, ws):
