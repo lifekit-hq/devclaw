@@ -9,8 +9,11 @@ Pins:
      never accepted them, and the merge must not smuggle a gate/PR into a
      read-only review.
   3. The deprecated aliases (implement_feature, fix_bug, review_repository)
-     still call queue.submit with the same kind/goal/deliver as before, so
-     external MCP callers don't break.
+     still forward the same kind/goal/deliver as before, so external MCP callers
+     don't break.
+  4. spec 003 / #520: the tool takes a ``project_id`` (not a raw path); devclaw
+     resolves the workspace from the registry, rejects an unknown project, and
+     preflights that the workspace is a real git checkout before submit.
 """
 
 from __future__ import annotations
@@ -20,12 +23,23 @@ import json
 import pytest
 from fastmcp.exceptions import ToolError
 
+from devclaw.project_registry import ProjectRegistry
 from devclaw.server import tools as _tools
+from tests.goal_fakes import register_tmp_project
+
+
+class _Env:
+    def __init__(self, calls, project_id, workspace_dir):
+        self.calls = calls
+        self.pid = project_id
+        self.ws = workspace_dir
 
 
 @pytest.fixture
-def capture_submit(monkeypatch):
-    """Replace queue.submit with a spy; return a list that captures each call."""
+def env(monkeypatch, tmp_path):
+    """Spy queue.submit + a registry holding one registered project ('proj')
+    whose workspace is a REAL git checkout (so the dispatch preflight passes).
+    Patches the tools module's ``registry``/``queue`` seams."""
     calls: list[dict] = []
 
     def _fake_submit(**kwargs) -> str:
@@ -35,13 +49,18 @@ def capture_submit(monkeypatch):
     from devclaw.server import _state
 
     monkeypatch.setattr(_state.queue, "submit", _fake_submit)
-    return calls
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "wsp"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/lifekit-hq/x.git")
+    monkeypatch.setattr(_tools, "registry", reg)
+    return _Env(calls, "proj", str(ws))
 
 
-async def test_dispatch_task_implement_feature_forwards_kind_and_deliver(capture_submit):
+async def test_dispatch_task_implement_feature_forwards_kind_and_deliver(env):
     raw = await _tools.dispatch_task(
         kind="implement_feature",
-        workspace_dir="/tmp/wsp",
+        project_id=env.pid,
         goal="add /health",
         verify_cmd="pytest -q",
         open_pr=True,
@@ -49,102 +68,168 @@ async def test_dispatch_task_implement_feature_forwards_kind_and_deliver(capture
     result = json.loads(raw)
     assert result["task_id"] == "task_1"
     assert result["status"] == "pending"
-    (call,) = capture_submit
+    (call,) = env.calls
     assert call["kind"] == "implement_feature"
-    assert call["workspace_dir"] == "/tmp/wsp"
+    assert call["workspace_dir"] == env.ws  # resolved from the registry row
     assert call["goal"] == "add /health"
     assert call["verify_cmd"] == "pytest -q"
     assert call["deliver"] is True
 
 
-async def test_dispatch_task_fix_bug_forwards_kind(capture_submit):
+async def test_dispatch_task_fix_bug_forwards_kind(env):
     await _tools.dispatch_task(
         kind="fix_bug",
-        workspace_dir="/tmp/wsp",
+        project_id=env.pid,
         goal="fix crash on empty payload",
         verify_cmd="pytest",
     )
-    (call,) = capture_submit
+    (call,) = env.calls
     assert call["kind"] == "fix_bug"
     assert call["goal"] == "fix crash on empty payload"
     assert call["verify_cmd"] == "pytest"
     assert call["deliver"] is False
 
 
-async def test_dispatch_task_review_repository_ignores_verify_and_open_pr(capture_submit):
+async def test_dispatch_task_review_repository_ignores_verify_and_open_pr(env):
     await _tools.dispatch_task(
         kind="review_repository",
-        workspace_dir="/tmp/wsp",
+        project_id=env.pid,
         goal="focus on auth",
         verify_cmd="pytest",
         open_pr=True,
     )
-    (call,) = capture_submit
+    (call,) = env.calls
     assert call["kind"] == "review_repository"
     assert call["verify_cmd"] is None, "review is read-only — no verify gate"
     assert call["deliver"] is False, "review is read-only — no PR delivery"
 
 
-async def test_dispatch_task_rejects_empty_workspace_or_goal():
-    with pytest.raises(ToolError, match="workspace_dir and goal"):
+async def test_dispatch_task_rejects_empty_project_or_goal(env):
+    with pytest.raises(ToolError, match="project_id"):
         await _tools.dispatch_task(
-            kind="implement_feature", workspace_dir="", goal="x"
+            kind="implement_feature", project_id="", goal="x"
         )
-    with pytest.raises(ToolError, match="workspace_dir and goal"):
+    with pytest.raises(ToolError, match="project_id and goal"):
         await _tools.dispatch_task(
-            kind="implement_feature", workspace_dir="/tmp/wsp", goal=""
+            kind="implement_feature", project_id=env.pid, goal=""
         )
+    assert env.calls == [], "a rejected dispatch submits no task"
 
 
-async def test_implement_feature_alias_still_submits_same_kind(capture_submit):
+async def test_implement_feature_alias_still_submits_same_kind(env):
     await _tools.implement_feature(
-        workspace_dir="/tmp/wsp", goal="add /health", open_pr=True
+        project_id=env.pid, goal="add /health", open_pr=True
     )
-    (call,) = capture_submit
+    (call,) = env.calls
     assert call["kind"] == "implement_feature"
     assert call["deliver"] is True
 
 
-async def test_fix_bug_alias_still_submits_same_kind(capture_submit):
+async def test_fix_bug_alias_still_submits_same_kind(env):
     await _tools.fix_bug(
-        workspace_dir="/tmp/wsp", description="crash on empty payload"
+        project_id=env.pid, description="crash on empty payload"
     )
-    (call,) = capture_submit
+    (call,) = env.calls
     assert call["kind"] == "fix_bug"
     assert call["goal"] == "crash on empty payload"
 
 
-async def test_review_repository_alias_still_submits_same_kind(capture_submit):
-    await _tools.review_repository(workspace_dir="/tmp/wsp", focus="auth")
-    (call,) = capture_submit
+async def test_review_repository_alias_still_submits_same_kind(env):
+    await _tools.review_repository(project_id=env.pid, focus="auth")
+    (call,) = env.calls
     assert call["kind"] == "review_repository"
     assert call["goal"] == "auth"
     assert call["verify_cmd"] is None
     assert call["deliver"] is False
 
 
-async def test_review_repository_alias_defaults_goal_when_no_focus(capture_submit):
-    await _tools.review_repository(workspace_dir="/tmp/wsp")
-    (call,) = capture_submit
+async def test_review_repository_alias_defaults_goal_when_no_focus(env):
+    await _tools.review_repository(project_id=env.pid)
+    (call,) = env.calls
     assert call["goal"] == "general code review"
 
 
-async def test_dispatch_task_forwards_branch_targets_to_submit(capture_submit):
+async def test_dispatch_task_forwards_branch_targets_to_submit(env):
     """v1-helper-resurface PR-2: the MCP surface threads base_branch /
     target_branch into queue.submit — and omitting them submits None (the
     byte-identical legacy shape)."""
     await _tools.dispatch_task(
         kind="implement_feature",
-        workspace_dir="/tmp/wsp",
+        project_id=env.pid,
         goal="continue spec 035",
         open_pr=True,
         base_branch="develop",
         target_branch="feat/spec-035",
     )
     await _tools.dispatch_task(
-        kind="implement_feature", workspace_dir="/tmp/wsp", goal="plain",
+        kind="implement_feature", project_id=env.pid, goal="plain",
     )
-    first, second = capture_submit
+    first, second = env.calls
     assert first["base_branch"] == "develop"
     assert first["target_branch"] == "feat/spec-035"
     assert second["base_branch"] is None and second["target_branch"] is None
+
+
+# ---- spec 003 / #520 regression tests (quickstart scenarios) ----------------
+
+
+async def test_dispatch_by_project_id_resolves_workspace_and_repo(env):
+    """Quickstart 1: naming a registered project_id resolves its workspace from
+    the registry row — the caller never passes a path."""
+    await _tools.dispatch_task(
+        kind="implement_feature", project_id="proj", goal="do the thing"
+    )
+    (call,) = env.calls
+    assert call["workspace_dir"] == env.ws
+
+
+async def test_dispatch_unknown_project_id_rejected_zero_token(env):
+    """Quickstart 2: an unknown project_id is rejected synchronously — no task
+    is submitted (zero downstream/engine work)."""
+    with pytest.raises(ToolError, match="unknown project_id"):
+        await _tools.dispatch_task(
+            kind="implement_feature", project_id="ghost", goal="x"
+        )
+    assert env.calls == [], "unknown project must not reach queue.submit"
+
+
+async def test_preflight_rejects_non_git_workspace_before_submit(monkeypatch, tmp_path):
+    """Quickstart 3: a registered project whose workspace is not a git checkout
+    is rejected at admission, BEFORE queue.submit — replacing the old late
+    sandbox-launch failure."""
+    calls: list[dict] = []
+    from devclaw.server import _state
+
+    monkeypatch.setattr(_state.queue, "submit", lambda **k: calls.append(k) or "t1")
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    bare = tmp_path / "bare"  # exists but no .git
+    register_tmp_project(reg, bare, project_id="nogit", git_init=False)
+    monkeypatch.setattr(_tools, "registry", reg)
+    with pytest.raises(ToolError, match="not a git checkout"):
+        await _tools.dispatch_task(
+            kind="implement_feature", project_id="nogit", goal="x"
+        )
+    assert calls == [], "preflight rejects before any submit/claim"
+
+
+async def test_by_key_dispatch_preserves_override_knobs(monkeypatch, tmp_path):
+    """Quickstart 4: override knobs still resolve via the workspace-path join off
+    the RESOLVED workspace — by-key dispatch yields the identical gating decision
+    as the old by-path dispatch did (FR-007: resolution populates, not replaces)."""
+    calls: list[dict] = []
+    from devclaw.server import _state
+
+    monkeypatch.setattr(_state.queue, "submit", lambda **k: calls.append(k) or "t1")
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "wsp"
+    register_tmp_project(reg, ws, project_id="knobbed",
+                         automerge=True, review_gate=False)
+    monkeypatch.setattr(_tools, "registry", reg)
+    await _tools.dispatch_task(
+        kind="implement_feature", project_id="knobbed", goal="x"
+    )
+    (call,) = calls
+    # the submitted workspace joins back to the project's pinned knobs, exactly
+    # as a by-path dispatch would have resolved them
+    assert reg.resolve_override(call["workspace_dir"], "automerge", None) is True
+    assert reg.resolve_override(call["workspace_dir"], "review_gate", True) is False

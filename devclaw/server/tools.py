@@ -24,15 +24,51 @@ from ..dispatch_gate import (
     operator_block,
     schedule_blocks,
 )
-from ..project_registry import ProjectExists, project_rollup
+from ..engine.workspace import workspace_is_dispatchable
+from ..project_registry import (
+    ProjectExists,
+    ResolvedDispatch,
+    UnknownProject,
+    project_rollup,
+)
 from ..state_store import _now_ms
 from ._state import _goal_get, goals, mcp, queue, registry, store
+
+
+def _resolve_project_or_reject(project_id: str, tool: str) -> ResolvedDispatch:
+    """Resolve a dispatch reference key (spec 003 / #520) into its concrete
+    workspace + repo, or reject the tool call synchronously. This is the single
+    seam every dispatch/goal tool crosses instead of taking a raw path — an
+    unknown project fails HERE with an actionable ToolError and zero task/engine
+    work, never a claimed task that dies deep in the engine."""
+    if not project_id:
+        raise ToolError(f"{tool} requires project_id")
+    try:
+        return registry.resolve_dispatch(project_id)
+    except UnknownProject:
+        raise ToolError(
+            f"unknown project_id: {project_id!r} — register it first "
+            f"(register_project / list_projects)"
+        )
+    except ValueError as exc:
+        raise ToolError(str(exc))
+
+
+def _preflight_or_reject(resolved: ResolvedDispatch, project_id: str) -> None:
+    """Direct-path dispatch preflight (spec 003 US2): reject at admission if the
+    resolved workspace isn't a real git checkout, BEFORE queue.submit claims the
+    task. Zero-token. The GOAL path does not need this — its workspace is
+    prepared (cloned/reset) by ``prepare_workspace`` on the tick, which already
+    rejects a non-git/no-repo workspace via ``_block_on_prep_failure``."""
+    reason = workspace_is_dispatchable(resolved.workspace_dir)
+    if reason is not None:
+        raise ToolError(f"cannot dispatch to project {project_id!r}: {reason}")
 
 
 @mcp.tool
 async def dispatch_task(
     kind: Literal["implement_feature", "fix_bug", "review_repository"],
-    workspace_dir: str,
+    project_id: str,
     goal: str,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
@@ -40,9 +76,13 @@ async def dispatch_task(
     base_branch: Optional[str] = None,
     target_branch: Optional[str] = None,
 ) -> str:
-    """One-shot dispatch of a code task to OpenHands in the given workspace_dir.
-    Returns a task_id immediately; the task runs asynchronously. Poll
-    get_status(task_id), or pass notify_url to be pushed the result.
+    """One-shot dispatch of a code task to OpenHands in a REGISTERED project's
+    workspace. ``project_id`` names a project (see ``list_projects`` /
+    ``register_project``); devclaw resolves its workspace + repo from the
+    registry row — you never pass a raw path. An unknown project, or one whose
+    workspace isn't a real git checkout, is rejected immediately. Returns a
+    task_id; the task runs asynchronously. Poll get_status(task_id), or pass
+    notify_url to be pushed the result.
 
     ``kind`` selects the prompt bias:
       - ``implement_feature`` — new features / open-ended changes.
@@ -77,12 +117,14 @@ async def dispatch_task(
     Prefer this over the older ``implement_feature`` / ``fix_bug`` /
     ``review_repository`` tools — those are kept as back-compat aliases and
     forward here."""
-    if not workspace_dir or not goal:
-        raise ToolError("dispatch_task requires workspace_dir and goal")
+    if not goal:
+        raise ToolError("dispatch_task requires project_id and goal")
+    resolved = _resolve_project_or_reject(project_id, "dispatch_task")
+    _preflight_or_reject(resolved, project_id)
     is_review = kind == "review_repository"
     task_id = queue.submit(
         kind=kind,
-        workspace_dir=workspace_dir,
+        workspace_dir=resolved.workspace_dir,
         goal=goal,
         notify_url=notify_url,
         verify_cmd=None if is_review else verify_cmd,
@@ -95,7 +137,7 @@ async def dispatch_task(
 
 @mcp.tool
 async def implement_feature(
-    workspace_dir: str,
+    project_id: str,
     goal: str,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
@@ -106,7 +148,7 @@ async def implement_feature(
     for new integrations. See ``dispatch_task`` for full docs."""
     return await dispatch_task(
         kind="implement_feature",
-        workspace_dir=workspace_dir,
+        project_id=project_id,
         goal=goal,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
@@ -116,7 +158,7 @@ async def implement_feature(
 
 @mcp.tool
 async def fix_bug(
-    workspace_dir: str,
+    project_id: str,
     description: str,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
@@ -126,10 +168,10 @@ async def fix_bug(
     Kept for back-compat with existing MCP callers; prefer ``dispatch_task``
     for new integrations. See ``dispatch_task`` for full docs."""
     if not description:
-        raise ToolError("fix_bug requires workspace_dir and description")
+        raise ToolError("fix_bug requires project_id and description")
     return await dispatch_task(
         kind="fix_bug",
-        workspace_dir=workspace_dir,
+        project_id=project_id,
         goal=description,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
@@ -139,14 +181,14 @@ async def fix_bug(
 
 @mcp.tool
 async def review_repository(
-    workspace_dir: str, focus: str = "", notify_url: Optional[str] = None
+    project_id: str, focus: str = "", notify_url: Optional[str] = None
 ) -> str:
     """DEPRECATED — thin forwarder to ``dispatch_task(kind="review_repository")``.
     Kept for back-compat with existing MCP callers; prefer ``dispatch_task``
     for new integrations. See ``dispatch_task`` for full docs."""
     return await dispatch_task(
         kind="review_repository",
-        workspace_dir=workspace_dir,
+        project_id=project_id,
         goal=focus or "general code review",
         notify_url=notify_url,
     )
@@ -212,7 +254,7 @@ async def review_trends(scope: str = "harness_self", limit_chars: int = 5000) ->
 
 @mcp.tool
 async def onboard(
-    workspace_dir: str, focus: str = "", notify_url: Optional[str] = None
+    project_id: str, focus: str = "", notify_url: Optional[str] = None
 ) -> str:
     """Onboard a repository: analyze it and write a DRAFT documentation set
     (plus the project's dev-container boilerplate) so future tasks + humans
@@ -245,11 +287,11 @@ async def onboard(
     substantive existing doc — it validates each part against the real repo
     and only corrects what's wrong or missing. Returns task_id immediately;
     same optional notify_url as implement_feature."""
-    if not workspace_dir:
-        raise ToolError("onboard requires workspace_dir")
+    resolved = _resolve_project_or_reject(project_id, "onboard")
+    _preflight_or_reject(resolved, project_id)
     task_id = queue.submit(
         kind="onboard",
-        workspace_dir=workspace_dir,
+        workspace_dir=resolved.workspace_dir,
         goal=focus or "general onboarding",
         notify_url=notify_url,
     )
@@ -270,7 +312,7 @@ def _one_shot_goal_id(goal: str) -> str:
 
 @mcp.tool
 async def start_program(
-    workspace_dir: str, goal: str, notify_url: Optional[str] = None
+    project_id: str, goal: str, notify_url: Optional[str] = None
 ) -> str:
     """DEPRECATED sugar for create_goal(mode='one_shot') — ADR 0003 stage 2b:
     a program and a goal are the same thing, differing only in the
@@ -284,18 +326,19 @@ async def start_program(
     program appears in list_programs once the goal dispatches it. Prefer
     calling create_goal(mode='one_shot') directly — this alias exists for
     existing waiter flows and will be retired."""
-    if not workspace_dir or not goal:
-        raise ToolError("start_program requires workspace_dir and goal")
+    if not goal:
+        raise ToolError("start_program requires project_id and goal")
     from ..goal.admission import GoalAdmissionRejected
 
+    resolved = _resolve_project_or_reject(project_id, "start_program")
     goal_id = _one_shot_goal_id(goal)
     try:
         # The brief rides as the SPEC (the scope contract firming derives
         # done_when from) — the same acceptance parity the old direct-queue
         # path had: a substantial brief plans; there is no separate done_when.
         result = goals.create_goal(
-            goal_id, objective=goal, workspace_dir=workspace_dir,
-            spec=goal, mode="one_shot",
+            goal_id, objective=goal, workspace_dir=resolved.workspace_dir,
+            repo_url=resolved.repo_url, spec=goal, mode="one_shot",
         )
     except GoalAdmissionRejected as exc:
         raise ToolError(json.dumps(exc.result.to_dict(), indent=2))
@@ -725,11 +768,10 @@ async def dry_evaluate(
 async def create_goal(
     goal_id: str,
     objective: str,
-    workspace_dir: str,
+    project_id: str,
     done_when: str = "",
     backlog: Optional[list[str]] = None,
     cadence: str = "1d",
-    repo_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = True,
     spec: str = "",
@@ -750,8 +792,9 @@ async def create_goal(
 
     goal_id: a short stable slug (the on-disk folder name). objective: the durable
     aim. done_when: the prose completion test the evaluator judges against. backlog:
-    a starting work-list. workspace_dir: the repo checkout DevClaw keeps fresh per
-    action; repo_url clones it if absent. verify_cmd: the gate (e.g. 'dotnet test').
+    a starting work-list. project_id: the registered project (see list_projects)
+    whose workspace + repo devclaw resolves and keeps fresh per action — an unknown
+    project is rejected synchronously. verify_cmd: the gate (e.g. 'dotnet test').
     spec: optional pre-aligned scope contract — when the OpenClaw waiter has
     grilled the customer (via scope_grill) before filing the order, pass the
     finalized spec.md here and the evaluator judges done against it."""
@@ -761,16 +804,21 @@ async def create_goal(
         raise ToolError("create_goal mode must be 'long_lived' or 'one_shot'")
     if strictness not in ("trust", "strict"):
         raise ToolError("create_goal strictness must be 'trust' or 'strict'")
-    # objective + workspace_dir are checked inside admission and surfaced as
-    # structured conditions — don't duplicate them here.
+    # Resolve the project reference key → workspace + repo (spec 003 / #520).
+    # Unknown project rejects here; the workspace is NOT preflighted for
+    # existence — a goal's workspace is cloned/reset by prepare_workspace on the
+    # first tick (which blocks-and-heals a non-git/no-repo workspace itself).
+    resolved = _resolve_project_or_reject(project_id, "create_goal")
+    # objective is checked inside admission and surfaced as a structured
+    # condition — don't duplicate it here.
     from ..goal.admission import GoalAdmissionRejected
 
     try:
         return json.dumps(
             goals.create_goal(
-                goal_id, objective=objective, workspace_dir=workspace_dir,
+                goal_id, objective=objective, workspace_dir=resolved.workspace_dir,
                 done_when=done_when, backlog=backlog, cadence=cadence,
-                repo_url=repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
+                repo_url=resolved.repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
                 spec=spec, mode=mode, strictness=strictness,
             ),
             indent=2,
