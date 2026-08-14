@@ -32,8 +32,17 @@ Markdown status files are generated views, never read back for decisions.
 ### V. Verification fails closed; "done" is a proposal
 A quality-gate crash is not an approval. Completion is gated on grounded
 evaluation (`review_repository` against the firmed `done_when`), never on
-counting PRs or backlog items. The trust dial recalibrates the two
-review-shaped gates; it never repeals fail-closed for crash/quota cases.
+counting PRs or backlog items. Fail-closed-on-crash governs every gate that is
+*consulted*: a gate that runs and cannot produce a verdict never ships on its
+own silence (#186). The strictness dial sets which gates are *consulted*, not
+just their consequence: under `trust` (the default) the per-increment
+adversarial diff review is **not part of the task gate chain at all** — the
+human reviews every PR and the goal-level done-gate re-catches its findings —
+while under `strict` it is consulted and fail-closed exactly as before. A gate
+that is by policy not consulted produces no silence to ship on, so removing it
+from the `trust` chain does not repeal #186. The verify, test-integrity, and
+goal-level done gates stay always-hard in BOTH modes; the browser-E2E gate
+stays dial-able (advise-under-trust / block-under-strict) per ADR 0007.
 
 ### VI. Loud failure over silent degradation
 Broken delivery fails; lost/corrupt state blocks legibly with an owner ping;
@@ -72,4 +81,7 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.0.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-13
+**Version**: 2.1.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-14
+(2.1.0 — Principle V: the strictness dial sets which gates are *consulted*; under
+`trust` the per-increment adversarial diff review is dropped from the task gate
+chain. Spec `001-review-gate-repositioning`.)
