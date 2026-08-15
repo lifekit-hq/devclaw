@@ -568,24 +568,30 @@ async def _handle_one_shot_executing(
 
 
 def _advance_brief(goal: Goal, steering: str) -> str:
-    """The light pull-brief for a thin-path advance session (demolition P3).
+    """The light pull-brief for a thin-path advance session (demolition P3;
+    speckit substrate, spec 008 US1).
 
-    Deliberately thin (§3a trust-the-input): the worker PULLS its context —
-    ``PLAN.md`` + the repo's ``AGENTS.md`` + the repo itself — the way a briefed
-    subagent explores, rather than being handed a pre-chewed dossier. The
-    PLAN.md worker skill teaches HOW to maintain the plan; this says only WHAT to
-    pursue and to advance it by one increment. Steering (an owner input, or the
-    done-gate's own corrections re-applied via ``_apply_corrections``) rides in
-    here for the worker to read — never applied by a planner, because there
-    isn't one."""
+    Deliberately thin (§3a trust-the-input): the worker PULLS its context — the
+    speckit ``specs/*/`` artifacts + the repo's ``.specify/`` scripts + the repo
+    itself — the way a briefed subagent explores, rather than being handed a
+    pre-chewed dossier. This says only WHAT to pursue and to advance it by one
+    story-slice via the speckit flow. Model-agnostic (Principle II): plain
+    imperative text referencing the ``.specify/`` bash scripts, never Claude-Code
+    slash-command wiring. Steering (an owner input, or the done-gate's own
+    corrections re-applied via ``_apply_corrections``) rides in here for the
+    worker to read — never applied by a planner, because there isn't one."""
     parts = [
-        "Advance this goal by one substantive, shippable increment, then stop.",
-        "Implement the CURRENT milestone only — the smallest not-yet-done "
-        "milestone in PLAN.md — and do NOT build ahead into later milestones; a "
-        "coherent one-milestone slice is one reviewable PR.",
-        "First read PLAN.md (create and maintain it as you go) and the repo to "
-        "decide the next step yourself; implement it end to end and commit, "
-        "PLAN.md included.",
+        "Advance this goal by one substantive, shippable increment using speckit, "
+        "then stop.",
+        "Find the CURRENT feature: the smallest not-yet-complete specs/NNN-*/ "
+        "(its tasks.md still has unchecked items). If none exists and new work is "
+        "called for, create one with .specify/scripts/bash/create-new-feature.sh.",
+        "Run the speckit steps for that feature — specify, then plan, then tasks, "
+        "then implement — using the repo's .specify/ scripts and templates. "
+        "Implement only the SMALLEST not-yet-done story-slice (one coherent slice "
+        "= one reviewable PR); do NOT build ahead into later stories.",
+        "Check off the completed items in tasks.md and commit the specs/NNN-*/ "
+        "artifacts together with the code.",
         "",
         f"Goal: {goal.objective}",
     ]
@@ -601,8 +607,9 @@ async def _handle_long_lived_advance(
 ) -> Outcome:
     """The long_lived executing path — ZERO per-tick planner cognition
     (the planner was cut, demolition P3b). The worker owns the
-    plan (``PLAN.md`` in the repo); the control plane only dispatches "advance
-    the goal / maintain PLAN.md" and lets the grounded done-gate judge done:
+    plan (the speckit ``specs/*/`` artifacts in the repo); the control plane only
+    dispatches "advance the goal via speckit" and lets the grounded done-gate
+    judge done:
 
       * a SUCCESSFUL advance session just settled → propose done. The done-gate
         verifies against ``done_when``: ``achieved`` closes the goal; not-achieved

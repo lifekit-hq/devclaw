@@ -31,6 +31,7 @@ from .tick_guards import _block_on_prep_failure
 from . import checklist as _checklist
 from . import decomposer as _decomposer
 from . import research as _research
+from . import slice_guard as _slice_guard
 from . import world_research as _world_research
 from . import delivery_strategy as _delivery
 from . import repo_brief as _repo_brief
@@ -336,6 +337,20 @@ async def _dispatch_action(
     # row (pump=False left it merely 'pending'), then trace/notify — all
     # post-commit, per the mirror-discipline + dispatch/pump-split rules.
     store.render_mirrors(goal_id)
+    # Record which speckit feature this dispatch is advancing (spec 008 US1, D6)
+    # so the done-gate can ground on the right specs/NNN/spec.md. Best-effort,
+    # AFTER the settle transaction committed (a plain file doc, never inside the
+    # atomic unit); a detection hiccup must never wedge or re-settle a dispatch.
+    # Read-only reviews carry no feature to advance. Zero-token (pure fs read),
+    # work-present path — the idle guard is untouched.
+    if action.tool != "review_repository":
+        try:
+            feature_dir = await asyncio.to_thread(
+                _slice_guard.current_feature_dir_sync, goal.workspace_dir
+            )
+            store.write_executing_feature(goal_id, feature_dir)
+        except Exception:  # noqa: BLE001 — recording is a bonus, never a dispatch gate
+            pass
     _engine_kick(engine)
     _trace.record_dispatch(goal_id=goal_id, tool=action.tool, ref_id=ref.id, engine=getattr(engine, "kind", ""))
     # Notify uses the short label, not the full prompt body — the raw `action.goal`

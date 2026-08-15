@@ -158,6 +158,36 @@ def _done_gate_review_brief(goal: "Goal") -> str:
     )
 
 
+def _feature_spec_grounding(goal: "Goal", store: GoalStore, goal_id: str) -> str:
+    """The contract the done-gate judges against (spec 008 US1, FR-006 / D6).
+
+    When the goal has an executing-feature directory recorded (at dispatch), read
+    that feature's ``spec.md`` from the actual workspace and return it as the
+    ``spec`` grounding — the speckit spec is now the contract of record, so the
+    gate grounds on its Success Criteria + Requirements. When no feature dir is
+    recorded (or its ``spec.md`` is absent), fall back to the goal's existing
+    scope spec (:meth:`GoalStore.read_spec`), which itself degrades to the
+    ``done_when`` text in the evaluator prompt — the grounding SOURCE changed, the
+    fail-closed gate did not (``done_when`` is always evaluated by ``build_prompt``).
+
+    Best-effort and never raises: a git/fs hiccup degrades to the existing
+    fallback rather than failing the gate. Module-global so tests patch it here."""
+    fallback = store.read_spec(goal_id)
+    try:
+        rel = store.read_executing_feature(goal_id).strip()
+    except Exception:  # noqa: BLE001 — grounding is best-effort
+        return fallback
+    if not rel or not goal.workspace_dir:
+        return fallback
+    try:
+        spec_path = Path(goal.workspace_dir) / rel / "spec.md"
+        if spec_path.is_file():
+            return spec_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 — a workspace hiccup falls back, never fails
+        return fallback
+    return fallback
+
+
 def _project_owns_its_deploy(workspace_dir: str) -> bool:
     """The target project owns its deploy when its repo contains a ``Dockerfile``
     at the workspace root. In that case devclaw MUST NOT spin its own throwaway
@@ -247,11 +277,14 @@ async def _resolve_done_gate(
     # so a git hiccup can't read as an eval error. No zero-token concern: this
     # path already runs cognition; the git subprocess adds no LLM call.
     repo_context = await _evaluator._repo_context(goal.workspace_dir)
+    # Ground the gate on the executing feature's speckit spec (FR-006 / D6),
+    # falling back to the goal's scope spec / done_when when none is recorded.
+    spec = _feature_spec_grounding(goal, store, goal_id)
     try:
         ev = await _evaluator.evaluate(
             goal, status, store.recent_log(goal_id), store.recent_deliveries(goal_id),
             claude_caller=evaluator_caller, review_report=review_report, at_done_gate=True,
-            spec=store.read_spec(goal_id), repo_context=repo_context,
+            spec=spec, repo_context=repo_context,
         )
     except _evaluator.GoalEvalError as exc:
         store.append_log(goal_id, f"done-gate eval error: {exc}")

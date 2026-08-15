@@ -155,7 +155,9 @@ async def test_first_tick_dispatches_advance_session(tmp_path):
     assert len(engine.dispatched) == 1
     action, goal, notify_url = engine.dispatched[0]
     assert action.tool == "implement_feature"
-    assert "Advance this goal" in action.goal and "PLAN.md" in action.goal
+    # spec 008 US1: the thin advance brief runs the speckit flow, not PLAN.md.
+    assert "Advance this goal" in action.goal and "tasks.md" in action.goal
+    assert "PLAN.md" not in action.goal
     assert notify_url == "http://relay"
     saved = store.load_status("g")
     assert saved.phase == "in_flight" and saved.in_flight is not None
@@ -1278,7 +1280,7 @@ async def test_slice_guardrail_advises_under_trust_and_ships(tmp_path, monkeypat
     """A >1-milestone mega-dump under the default `trust` dial ADVISES: a loud
     goal-log line surfaces the finding, but the increment still ships (the
     done-gate + human merge are the backstop) — never a hard block. Zero-token."""
-    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 3)
+    monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", lambda ws: 3)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", mode="long_lived")
     store.save_status("g", _long_lived_executing_status())
@@ -1293,7 +1295,7 @@ async def test_slice_guardrail_advises_under_trust_and_ships(tmp_path, monkeypat
     assert out is not Outcome.BLOCKED  # advise-and-ship, not wedged
     assert evaluator.calls == 0  # detection is pure git+string — zero cognition
     log = (tmp_path / "g" / "log.md").read_text()
-    assert "slice guardrail" in log and "flipped 3 PLAN.md milestones" in log
+    assert "slice guardrail" in log and "flipped 3 tasks.md items" in log
     assert "shipped anyway (trust mode)" in log
 
 
@@ -1301,7 +1303,7 @@ async def test_slice_guardrail_advises_under_trust_and_ships(tmp_path, monkeypat
 async def test_slice_guardrail_blocks_under_strict_for_a_reslice(tmp_path, monkeypatch):
     """Under the `strict` dial the SAME mega-dump BLOCKS the goal for a re-slice —
     an owner ping + a legible reason, no silent ship. Zero-token."""
-    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 2)
+    monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", lambda ws: 2)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", mode="long_lived")
     store.set_strictness("g", "strict")
@@ -1325,10 +1327,10 @@ async def test_slice_guardrail_blocks_under_strict_for_a_reslice(tmp_path, monke
 
 @pytest.mark.asyncio
 async def test_slice_guardrail_fails_open_when_detection_finds_no_megadump(tmp_path, monkeypatch):
-    """DETECTION fails OPEN: an unparseable / clean PLAN.md reads as ≤1 flip, so
+    """DETECTION fails OPEN: an unparseable / clean tasks.md reads as ≤1 flip, so
     even under `strict` the guardrail never trips — a detection blind spot must
     never wedge a legitimately-sliced increment."""
-    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 1)
+    monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", lambda ws: 1)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", mode="long_lived")
     store.set_strictness("g", "strict")
@@ -1348,12 +1350,12 @@ async def test_slice_guardrail_fails_open_when_detection_finds_no_megadump(tmp_p
 @pytest.mark.asyncio
 async def test_slice_guardrail_never_runs_on_per_action_topology(tmp_path, monkeypatch):
     """The guardrail is scoped to the goal-branch topology (accumulating
-    PLAN.md). A legacy per-action delivery has no such plan — detection must not
-    even be consulted, so a mega-dump stub can't block it."""
+    tasks.md). A legacy per-action delivery has no such plan — detection must not
+    even be consulted, so a build-ahead stub can't block it."""
     def _boom(ws):  # pragma: no cover - must not be called
         raise AssertionError("detection ran on a per-action delivery")
 
-    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", _boom)
+    monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", _boom)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())  # legacy per-action topology
@@ -1376,7 +1378,7 @@ async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatc
     re-keyed off the delivery TOPOLOGY, so this PR stays open for the done-gate
     and the skip is logged legibly."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    monkeypatch.setattr("devclaw.goal.slice_guard.mega_dump_flips_sync", lambda ws: 0)
+    monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", lambda ws: 0)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", mode="long_lived")
     store.save_status("g", _long_lived_executing_status())

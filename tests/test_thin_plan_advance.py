@@ -2,7 +2,7 @@
 is CUT; this is now the ONLY long_lived executing path).
 
 A long_lived executing goal runs ZERO per-tick planner cognition: the tick
-mechanically dispatches "advance the goal / maintain PLAN.md" worker sessions
+mechanically dispatches "advance the goal via speckit" worker sessions
 and lets the grounded done-gate judge completion.
 
 The load-bearing assertions (inheriting the old planner path's guardrail):
@@ -81,7 +81,7 @@ async def test_thin_blocked_tick_stays_idle_zero_tokens(tmp_path):
 
 @pytest.mark.asyncio
 async def test_thin_cadence_due_dispatches_advance_without_planner(tmp_path):
-    """A due thin tick dispatches ONE 'advance the goal / maintain PLAN.md'
+    """A due thin tick dispatches ONE 'advance the goal via speckit'
     implement_feature session — mechanically, with no cognition call."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d", done_when="the /health endpoint returns 200")
@@ -97,7 +97,7 @@ async def test_thin_cadence_due_dispatches_advance_without_planner(tmp_path):
     action, _goal, _url = engine.dispatched[0]
     assert action.tool == "implement_feature"
     assert "Advance this goal" in action.goal
-    assert "PLAN.md" in action.goal
+    assert "tasks.md" in action.goal and "PLAN.md" not in action.goal  # spec 008 US1
     assert "the /health endpoint returns 200" in action.goal  # done_when rode into the brief
 
 
