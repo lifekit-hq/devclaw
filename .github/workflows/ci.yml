@@ -73,22 +73,7 @@ jobs:
             -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' \
             .github/workflows/ 2>&1 || true
 
-  deploy:
-    name: Deploy to lifekit-vps
-    needs: test
-    # Only ship a green main. workflow_dispatch gives a manual "redeploy main"
-    # button. PRs never reach the self-hosted runner (test/lint run hosted).
-    if: >-
-      (github.event_name == 'push' && github.ref == 'refs/heads/main')
-      || github.event_name == 'workflow_dispatch'
-    runs-on: self-hosted
-    concurrency:
-      group: deploy-lifekit-vps
-      cancel-in-progress: false
-    steps:
-      # No checkout: the runner (user `lifekit`) drives the existing on-box
-      # deploy surface, which git-clones devclaw@main itself at image-build time.
-      - name: deploy.sh (rebuild devclaw@main --no-cache, recreate, verify)
-        run: |
-          cd /srv/lifekit-stack
-          DEVCLAW_REF=main bash scripts/deploy.sh
+  # NB: there is deliberately NO deploy job here. A merge to main runs tests +
+  # lint only — it MUST NOT rebuild-and-recreate the live VPS mid-run (spec 005,
+  # FR-008), which used to SIGKILL in-flight overnight goal sandboxes. Deploy is
+  # operator-triggered via .github/workflows/deploy.yml (workflow_dispatch).

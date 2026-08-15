@@ -1,0 +1,81 @@
+name: Deploy devclaw
+
+# Operator-triggered ONLY (spec 005, FR-008). A merge to main runs tests/lint
+# (ci.yml) but NEVER auto-deploys the live VPS — that was the doctrine violation
+# where a routine merge SIGKILLed in-flight overnight goal sandboxes. Shipping
+# is a deliberate button-press here.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to deploy (blank = build this commit and deploy its SHA)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: write        # push devclaw-mcp + devclaw-sandbox to ghcr.io
+
+jobs:
+  deploy:
+    name: Build → push (ghcr) → deploy to lifekit-vps
+    runs-on: self-hosted
+    concurrency:
+      group: deploy-lifekit-vps
+      cancel-in-progress: false
+    env:
+      REGISTRY: ghcr.io/lifekit-hq
+    steps:
+      - uses: actions/checkout@v4
+
+      # If a tag input is given we skip build and just (re)deploy that tag —
+      # this is the rollback path (deploy a prior SHA without a source revert).
+      - name: Resolve build identity
+        id: id
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "deploy_tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+            echo "do_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy_tag=${SHA}" >> "$GITHUB_OUTPUT"
+            echo "do_build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to ghcr.io
+        if: steps.id.outputs.do_build == 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # devclaw-mcp — built FROM the checked-out source (COPY, no git clone),
+      # SHA baked so /health reports exactly this commit. Cache-respecting.
+      - name: Build + push devclaw-mcp
+        if: steps.id.outputs.do_build == 'true'
+        run: |
+          SHA="${{ steps.id.outputs.sha }}"
+          docker build -f deploy/Dockerfile \
+            --build-arg DEVCLAW_GIT_SHA="${SHA}" \
+            --build-arg DEVCLAW_BUILT_AT="${{ steps.id.outputs.built_at }}" \
+            -t "${REGISTRY}/devclaw-mcp:${SHA}" \
+            -t "${REGISTRY}/devclaw-mcp:latest" .
+          docker push "${REGISTRY}/devclaw-mcp:${SHA}"
+          docker push "${REGISTRY}/devclaw-mcp:latest"
+
+      # devclaw-sandbox — the per-task image the MCP server spawns, built from
+      # the SAME source (.sandcastle/Dockerfile) so it matches the MCP version
+      # without the md5-verify crutch (FR-002).
+      - name: Build + push devclaw-sandbox
+        if: steps.id.outputs.do_build == 'true'
+        run: |
+          SHA="${{ steps.id.outputs.sha }}"
+          docker build -f .sandcastle/Dockerfile \
+            -t "${REGISTRY}/devclaw-sandbox:${SHA}" \
+            -t "${REGISTRY}/devclaw-sandbox:latest" .
+          docker push "${REGISTRY}/devclaw-sandbox:${SHA}"
+          docker push "${REGISTRY}/devclaw-sandbox:latest"
+
+      # Scoped deploy — pulls the tag, recreates ONLY the devclaw project,
+      # verifies /health, fails loud. OpenClaw-side containers are untouched.
+      - name: Deploy (scoped, readiness-gated)
+        run: bash deploy/deploy-devclaw.sh "${{ steps.id.outputs.deploy_tag }}"

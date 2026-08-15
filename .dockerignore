@@ -1,0 +1,27 @@
+# Keep the docker build context lean (applies to deploy/Dockerfile AND
+# .sandcastle/Dockerfile — both build from the repo root). Do NOT exclude
+# openhands-runner/ (the sandbox image COPYs it) or devclaw/server/console/src
+# (the MCP image builds the console from it).
+
+.git
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Reinstalled fresh inside the image (npm ci / pip install).
+**/node_modules/
+.venv/
+venv/
+
+# Built in-image; force-included into the wheel by hatchling.
+devclaw/server/console/dist/
+
+# Dev-harness worktrees + eval run artifacts — large, never needed at build.
+.claude/worktrees/
+evals/runs/
+
+# Local editor/OS cruft.
+.DS_Store
+*.swp

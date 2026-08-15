@@ -1,0 +1,209 @@
+# devclaw's OWN compose project — brings devclaw up independently of the
+# OpenClaw/lifekit-stack project (spec 005). Run it as its own project:
+#
+#   docker compose -p devclaw --env-file /srv/lifekit-stack/.env \
+#       -f deploy/docker-compose.devclaw.yml up -d
+#
+# vs. lifekit-stack, which keeps the OpenClaw project (gateway, cli, dashboard,
+# notify-relay, google-workspace-mcp). The two projects stay integrated at
+# RUNTIME through shared, externally-declared seams — the `lifekit-shared`
+# network and the `devclaw-state` volume — so neither project owns the other.
+#
+# Images are pulled by tag from ghcr.io (built + pushed by devclaw's
+# .github/workflows/deploy.yml). No `build:` here — deploy pulls, never builds.
+# ops-agent's image is still BUILT by lifekit-stack (build-only there) and
+# RUN here (spec 005 clarify: referenced by tag this slice).
+#
+# The `devclaw-state` volume (devclaw.db + goals) and the `lifekit-shared`
+# network are declared `external` so they keep their identity across the
+# cutover and across recreates — see docs/runbooks/devclaw-self-deploy.md for
+# the one-time adoption order that preserves durable goal state.
+
+x-policy:
+  policy: &policy
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: '50m'
+        max-file: '3'
+
+services:
+  devclaw-mcp:
+    <<: *policy
+    # DevClaw v2 — autonomous coding runtime exposed via streamable-http MCP.
+    # Image is built from the checked-out source (deploy/Dockerfile) and pulled
+    # by SHA tag; the running SHA is surfaced on /health + /node.json (#494).
+    image: ${DEVCLAW_MCP_IMAGE:-ghcr.io/lifekit-hq/devclaw-mcp:latest}
+    deploy:
+      resources:
+        limits:
+          # 3g — devclaw spawns multiple concurrent `claude --print` subprocesses
+          # per tick (decomposer, evaluator, firming); each Node Claude CLI is
+          # 200-400MB during a call. 1g OOM-killed subprocesses (2026-07-03).
+          memory: 3g
+    # group_add: grant the non-root `node` user access to the host docker
+    # socket so the MCP server can spawn per-task devclaw-sandbox containers.
+    # GID must match the host's `docker` group (990 on lifekit-vps).
+    group_add:
+      - "${LIFEKIT_DOCKER_GID:-999}"
+    environment:
+      DEVCLAW_TRANSPORT: http
+      DEVCLAW_PORT: "8000"
+      DEVCLAW_DB: /var/lib/devclaw/devclaw.db
+      DEVCLAW_GOALS_DIR: /var/lib/devclaw/goals
+      # Goal-layer milestone notifications → notify-relay (in the OpenClaw
+      # project, reachable over the shared external network by service name).
+      DEVCLAW_GOAL_NOTIFY_URL: http://notify-relay:8090/text
+      DEVCLAW_NOTIFY_ALTITUDE: ${DEVCLAW_NOTIFY_ALTITUDE:-task}
+      DEVCLAW_GOAL_AUTOMERGE: ${DEVCLAW_GOAL_AUTOMERGE:-0}
+      # fastmcp >= 3.4 HostOriginGuard: allowlist the docker-network MCP host and
+      # the tailnet console host (else 421 / 403 on non-loopback routes).
+      FASTMCP_HTTP_ALLOWED_HOSTS: ${FASTMCP_HTTP_ALLOWED_HOSTS:-["devclaw-mcp:8000","lifekit-vps.tail1cb676.ts.net:18791"]}
+      FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
+      CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+      OPENHANDS_SUPPRESS_BANNER: "1"
+      # The per-task sandbox image, pulled from ghcr by tag (built from the same
+      # source as this MCP image — no md5-verify crutch; both are this commit).
+      DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}
+      DEVCLAW_GOAL_DECOMPOSE: ${DEVCLAW_GOAL_DECOMPOSE:-1}
+      DEVCLAW_GOAL_FIRMING: ${DEVCLAW_GOAL_FIRMING:-0}
+      DEVCLAW_TRACE_RETENTION_DAYS: ${DEVCLAW_TRACE_RETENTION_DAYS:-7}
+      DEVCLAW_SELF_REPO: ${DEVCLAW_SELF_REPO:-}
+      DEVCLAW_SELF_ISSUE_MIN_CYCLES: ${DEVCLAW_SELF_ISSUE_MIN_CYCLES:-2}
+      DEVCLAW_SELF_ISSUE_QUIET_DAYS: ${DEVCLAW_SELF_ISSUE_QUIET_DAYS:-3}
+      DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE: ${DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE:-3}
+      DEVCLAW_PLANNER_TIMEOUT_MS: ${DEVCLAW_PLANNER_TIMEOUT_MS:-1200000}
+      DEVCLAW_HOST_CLAUDE_DIR: ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}
+      DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
+      DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
+      TZ: ${OPENCLAW_TZ:-UTC}
+      # Point git's credential helper at gh's stored token (private-repo clone).
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: credential.helper
+      GIT_CONFIG_VALUE_0: "!gh auth git-credential"
+    volumes:
+      # Durable state — devclaw.db + goals. External volume: survives recreates
+      # AND the cutover from the lifekit-stack project (goal-safety, FR-009).
+      - devclaw-state:/var/lib/devclaw
+      # Workspaces — bind-mounted from the host so docker (on the host) can
+      # bind-mount the SAME path into each spawned devclaw-sandbox container.
+      - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/var/lib/devclaw/workspaces
+      # Host docker socket — spawns per-task sandcastle containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Host tailscaled control socket — `tailscale serve` for durable deploys.
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
+      # Claude Code OAuth — inherited from the host session (no API key, ever).
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
+      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # The /srv/memory vault — trend retrospectives + self-reflection reads.
+      - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
+      # gh CLI auth (private clone + PR) and gitconfig (commit authorship).
+      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
+      - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    expose:
+      - "8000"
+    # Loopback-only host binding for the console/dashboard SSE feed, reached via
+    # an SSH tunnel (ssh -L 18791:127.0.0.1:18791 lifekit-vps). The /mcp hop
+    # from the gateway stays on the shared network.
+    ports:
+      - "127.0.0.1:18791:8000"
+    networks:
+      - default
+      - lifekit-shared
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl -fs http://127.0.0.1:8000/health || exit 1"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  ops-agent:
+    <<: *policy
+    # Resident watchdog for stuck devclaw goals. Runs in THIS (devclaw) project;
+    # its image is still built by lifekit-stack (build-only there) and pulled/
+    # tagged here. Separate process from devclaw-mcp by design.
+    image: ${OPS_AGENT_IMAGE:-ops-agent:local}
+    depends_on:
+      - devclaw-mcp
+    group_add:
+      - "${LIFEKIT_DOCKER_GID:-999}"
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+    environment:
+      OPS_AGENT_GOALS_DIR: /data/goals
+      OPS_AGENT_INCIDENTS_DIR: /data/incidents
+      OPS_AGENT_POLL_INTERVAL_S: ${OPS_AGENT_POLL_INTERVAL_S:-60}
+      OPS_AGENT_DEDUP_WINDOW_S: ${OPS_AGENT_DEDUP_WINDOW_S:-86400}
+      OPS_AGENT_CLAUDE_MODEL: ${OPS_AGENT_CLAUDE_MODEL:-sonnet}
+      OPS_AGENT_CLAUDE_TIMEOUT_S: ${OPS_AGENT_CLAUDE_TIMEOUT_S:-60}
+      CLAUDE_CONFIG_DIR: /home/node/.claude
+      OPS_AGENT_DEVCLAW_MCP_URL: ${OPS_AGENT_DEVCLAW_MCP_URL:-http://devclaw-mcp:8000/mcp}
+      OPS_AGENT_DEVCLAW_MCP_TOKEN: ${DEVCLAW_TOKEN:-}
+      OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S: ${OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S:-30}
+      OPS_AGENT_VERIFYING_STALL_HOURS: ${OPS_AGENT_VERIFYING_STALL_HOURS:-4}
+      # docker_restart allowlist — devclaw-mcp's container name is now project-
+      # scoped to `devclaw` (was `compose-devclaw-mcp-1` under the shared
+      # project). Override in .env if the compose project name differs.
+      OPS_AGENT_DOCKER_RESTART_ALLOWLIST: ${OPS_AGENT_DOCKER_RESTART_ALLOWLIST:-devclaw-devclaw-mcp-1}
+      OPS_AGENT_DOCKER_TIMEOUT_S: ${OPS_AGENT_DOCKER_TIMEOUT_S:-30}
+      OPS_AGENT_WORKSPACES_DIR: /data/workspaces
+      OPS_AGENT_TREND_REPEAT_THRESHOLD: ${OPS_AGENT_TREND_REPEAT_THRESHOLD:-3}
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      # devclaw's goal store, READ-ONLY (ops-agent never mutates devclaw state).
+      - devclaw-state:/data/devclaw-state:ro
+      - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/data/workspaces:ro
+      # Incident output — host source dir MUST exist first (see runbook):
+      #   sudo mkdir -p /srv/memory/projects/ops-agent
+      #   sudo chown 1000:1000 /srv/memory/projects/ops-agent
+      - ${LIFEKIT_OPS_AGENT_DIR:-/srv/memory/projects/ops-agent}:/data/incidents
+      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude:ro
+      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json:ro
+      # Host docker socket — the docker_restart action (allowlisted above).
+      - /var/run/docker.sock:/var/run/docker.sock
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    command: ["ops-agent"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export OPS_AGENT_GOALS_DIR=/data/devclaw-state/goals
+        exec "$$@"
+      - --
+    networks:
+      - default
+      - lifekit-shared
+
+volumes:
+  # Durable goal state. Declared external so the two-project split does NOT
+  # re-namespace it. On the CUTOVER host the existing volume is named
+  # `compose_devclaw-state` (it was owned by the shared `compose` project); set
+  #   DEVCLAW_STATE_VOLUME=compose_devclaw-state
+  # in the env file to ADOPT IT IN PLACE — zero copy, same bytes, no goal loss
+  # (FR-009). A fresh host uses the default `devclaw-state`. See the runbook.
+  devclaw-state:
+    external: true
+    name: ${DEVCLAW_STATE_VOLUME:-devclaw-state}
+
+networks:
+  # Cross-project runtime seam: devclaw-mcp ⇄ notify-relay and gateway →
+  # devclaw-mcp resolve each other by service name here. lifekit-stack attaches
+  # its gateway + notify-relay to the same external network. Create once:
+  #   docker network create lifekit-shared
+  lifekit-shared:
+    external: true
