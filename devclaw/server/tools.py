@@ -263,6 +263,74 @@ async def file_intake(
         )
     except _intake.IntakeError as exc:
         raise ToolError(str(exc)) from exc
+    # Async readiness grade (spec 006): the receipt is already real; the grade
+    # lands moments later as a durable label. Scheduled here (intake path only),
+    # NEVER on the heartbeat — the zero-token idle guard stays intact (FR-009).
+    # Filing is never blocked on cognition (FR-011): a slow/paused grade cannot
+    # delay this return.
+    _schedule_readiness_grade(result, what=what, done_when=done_when, context=context)
+    return json.dumps(result, indent=2)
+
+
+#: strong refs to in-flight background grades so the event loop doesn't GC them.
+_GRADE_TASKS: set = set()
+
+
+def _schedule_readiness_grade(
+    result: dict, *, what: str, done_when: str, context: Optional[str]
+) -> None:
+    import asyncio
+    import sys as _sys
+
+    project = registry.get(result["project_id"])
+    workspace_dir = getattr(project, "workspace_dir", "") or "" if project else ""
+
+    async def _run() -> None:
+        try:
+            from ..intake_readiness import default_caller
+
+            await _intake.grade_and_label(
+                repo=result["repo"],
+                issue=result["issue_url"],
+                what=what,
+                done_when=done_when,
+                context=context,
+                workspace_dir=workspace_dir,
+                claude_caller=default_caller(),
+            )
+        except Exception as exc:  # noqa: BLE001 — background task, log and drop
+            _sys.stderr.write(f"file_intake: readiness grade failed: {exc}\n")
+
+    try:
+        task = asyncio.create_task(_run())
+    except RuntimeError:
+        # No running loop (unusual for the async tool path) — skip scheduling
+        # rather than crash the receipt. The grade can be re-triggered manually.
+        return
+    _GRADE_TASKS.add(task)
+    task.add_done_callback(_GRADE_TASKS.discard)
+
+
+@mcp.tool
+async def regrade_intake(project_id: str, issue_url: str) -> str:
+    """Re-run the intake readiness grade on an existing intake issue (spec 006,
+    FR-010). The manual re-trigger: after a ``needs-refinement`` ask is amended
+    (edit the issue), call this to re-read the issue, re-grade it against the
+    repo, and swap the readiness label (``needs-refinement`` ⇄ ``devclaw-ready``)
+    — no re-filing, and devclaw does NOT auto-watch issue edits.
+
+    - ``project_id`` — the registered project the issue lives on.
+    - ``issue_url`` — the intake issue's URL (the receipt).
+
+    Returns ``{issue_url, project_id, repo, readiness}``. The grade fails
+    CLOSED: any failure to reach a confident ready verdict lands
+    ``needs-refinement``, never ``devclaw-ready``."""
+    try:
+        result = await _intake.regrade(
+            registry, project_id=project_id, issue=issue_url
+        )
+    except _intake.IntakeError as exc:
+        raise ToolError(str(exc)) from exc
     return json.dumps(result, indent=2)
 
 
