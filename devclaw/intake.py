@@ -21,6 +21,7 @@ call fails; there is no silent half-filed state.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import sys
 from datetime import datetime, timezone
@@ -139,6 +140,7 @@ class GhAdapter(Protocol):
     async def remove_labels(self, repo: str, issue: str, labels: list[str]) -> None: ...
     async def comment(self, repo: str, issue: str, body: str) -> None: ...
     async def read_issue(self, repo: str, issue: str) -> Optional[str]: ...
+    async def list_intake_awaiting_grade(self, repo: str) -> list[str]: ...
 
 
 async def _run(*args: str) -> tuple[int, str]:
@@ -197,6 +199,31 @@ class GhCli:
             "gh", "issue", "view", issue, "--repo", repo, "--json", "body", "-q", ".body"
         )
         return out if rc == 0 else None
+
+    async def list_intake_awaiting_grade(self, repo: str) -> list[str]:
+        """Open intake issues that carry the intake label but NEITHER readiness
+        label — the pending-grade set derived from GitHub itself (the label is
+        the source of truth, FR-007). gh has no NOT-label filter, so list the
+        intake issues and drop the already-graded ones here. Never raises — a gh
+        hiccup degrades to ``[]`` (the sweep skips this repo, not the process)."""
+        rc, out = await _run(
+            "gh", "issue", "list", "--repo", repo, "--label", INTAKE_LABEL,
+            "--state", "open", "--limit", "200", "--json", "url,labels",
+        )
+        if rc != 0 or not out.strip():
+            return []
+        try:
+            items = json.loads(out)
+        except (json.JSONDecodeError, ValueError):
+            return []
+        pending: list[str] = []
+        for it in items if isinstance(items, list) else []:
+            names = {(l or {}).get("name") for l in (it.get("labels") or [])}
+            if names.isdisjoint(_READINESS_LABELS):
+                url = it.get("url")
+                if url:
+                    pending.append(url)
+        return pending
 
 
 # ---- the doorway ------------------------------------------------------------
@@ -449,3 +476,47 @@ async def regrade(
         "repo": slug,
         "readiness": label,
     }
+
+
+# ---- durable recovery (spec 006 P2 hardening) -------------------------------
+
+async def recover_pending_grades(
+    registry, *, gh: Optional[GhAdapter] = None, claude_caller=None,
+) -> int:
+    """Re-grade every intake issue left WITHOUT a readiness label — the pending
+    set derived from GitHub itself (the label is the source of truth). Closes the
+    P1 restart gap: the async grade is in-process, so a process death between the
+    receipt and the grade landing would otherwise leave an ask in permanent
+    unlabeled limbo. Meant to run ONCE at serve-start (never on the heartbeat
+    tick — the zero-token idle guard stays intact); it is idempotent and
+    self-healing, since each boot re-derives the pending set from GitHub, so a
+    crash mid-recovery is simply retried next boot (SC-001).
+
+    Zero cognition until an actual ungraded issue is found (the list is a plain
+    gh query). Best-effort per project and per issue — one repo's gh hiccup, or
+    one unreadable issue, never blocks the rest; never raises. Returns the count
+    of issues successfully (re-)graded.
+    """
+    gh = gh or GhCli()
+    graded = 0
+    for project in registry.list():
+        slug = repo_slug(getattr(project, "repo_url", "") or "")
+        if slug is None:
+            continue
+        try:
+            pending = await gh.list_intake_awaiting_grade(slug)
+        except Exception as exc:  # noqa: BLE001 — best-effort per repo
+            sys.stderr.write(f"readiness recovery: list failed on {slug}: {exc}\n")
+            continue
+        for issue in pending:
+            try:
+                await regrade(
+                    registry, project_id=project.id, issue=issue,
+                    claude_caller=claude_caller, gh=gh,
+                )
+                graded += 1
+            except Exception as exc:  # noqa: BLE001 — one issue never blocks the sweep
+                sys.stderr.write(
+                    f"readiness recovery: grade failed on {slug} {issue}: {exc}\n"
+                )
+    return graded

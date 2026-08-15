@@ -10,6 +10,7 @@ import urllib.parse
 from starlette.responses import JSONResponse
 
 from .. import __version__
+from .. import intake as intake_mod
 from ..claude_trust import config_path_for, ensure_trusted_in_place
 from ._state import (
     AUTH_TOKEN,
@@ -20,6 +21,7 @@ from ._state import (
     goals,
     mcp,
     queue,
+    registry,
 )
 
 
@@ -58,8 +60,37 @@ def _start_loops() -> None:
     goals.start()
 
 
+_RECOVERY_TASKS: set = set()
+
+
+def _kick_readiness_recovery() -> None:
+    """Spec 006 P2 hardening: on serve-start, reconcile any intake issue left
+    without a readiness label by a prior crash — re-grade the pending set derived
+    from GitHub (SC-001). Kicked as a background task so it never blocks serving;
+    runs ONCE at startup, NOT on the heartbeat tick (the zero-token idle guard
+    stays intact), and spends zero cognition when nothing is pending."""
+
+    async def _run() -> None:
+        try:
+            n = await intake_mod.recover_pending_grades(registry)
+            if n:
+                sys.stderr.write(
+                    f"{SERVER_NAME}: readiness recovery graded {n} pending intake issue(s)\n"
+                )
+        except Exception as exc:  # noqa: BLE001 — best-effort startup sweep
+            sys.stderr.write(f"{SERVER_NAME}: readiness recovery sweep failed: {exc}\n")
+
+    try:
+        task = asyncio.create_task(_run())
+    except RuntimeError:
+        return  # no running loop — skip rather than crash serve; manual regrade remains
+    _RECOVERY_TASKS.add(task)
+    task.add_done_callback(_RECOVERY_TASKS.discard)
+
+
 async def _serve_stdio() -> None:
     _start_loops()
+    _kick_readiness_recovery()
     await mcp.run_stdio_async()
 
 
@@ -76,6 +107,7 @@ async def _serve_http() -> None:
         path="/mcp", middleware=[Middleware(AuthMiddleware)], stateless_http=True
     )
     _start_loops()
+    _kick_readiness_recovery()
     config = uvicorn.Config(app, host=HTTP_HOST, port=HTTP_PORT, log_level="warning")
     await uvicorn.Server(config).serve()
 
