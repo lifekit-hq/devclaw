@@ -24,6 +24,12 @@ This spec covers **P1 only**: make asks *gradeable*. Autonomy (the tick claiming
 - Q: How many outcome states should the readiness grade have? → A: **Binary** — `devclaw-ready` or `needs-refinement` only. Fail-closed already means "when in doubt → needs-refinement"; a borderline ask simply lands in `needs-refinement` until sharpened. No third human-review bucket.
 - Q: When a `needs-refinement` ask is amended to be groundable, how does it get re-graded? → A: **Manual re-trigger** — re-grading runs on an explicit operator/asker action against that issue; no automatic watching of issue edits, no cognition spend on trivial edits.
 
+### P2 hardening — durable recovery of the async grade (2026-08-15)
+
+The P1 grade is an in-process `asyncio` task, so a process death between the receipt and the grade landing would leave an issue carrying the intake label but no readiness label — violating SC-001 ("no ask left in permanent unlabeled limbo") across a restart. Resolved with a **serve-start reconciliation sweep** (`intake.recover_pending_grades`): on boot, re-grade every intake issue that carries **neither** readiness label — the pending set **derived from GitHub itself** (the label is the source of truth), so it is idempotent and self-healing (each boot re-derives the set; a crash mid-recovery is retried next boot). It runs once at serve-start as a background task, **never on the heartbeat tick** (the zero-token idle guard, FR-009, stays intact) and spends zero cognition when nothing is pending.
+
+*Rejected alternative — a separate durable pending-grade table:* a second store recording "issue X awaits grading" would be a second source of truth for gradedness that can drift from the labels. Deriving the pending set from the labels themselves keeps the one source of truth (FR-007) and also self-heals grades that failed to land for any reason, not just restarts.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - An ungroundable ask is caught at the door (Priority: P1)

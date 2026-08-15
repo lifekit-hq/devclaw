@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 
 import pytest
 
@@ -29,14 +30,23 @@ from devclaw.project_registry import ProjectRegistry
 # ---- fakes ------------------------------------------------------------------
 
 class FakeGh:
-    """Records label/comment writes and serves a canned issue body for reads."""
+    """Records label/comment writes and serves a canned issue body for reads.
+    ``pending`` is the ungraded-issue set the recovery sweep discovers;
+    ``unreadable`` issues return no body (models a gh read hiccup)."""
 
-    def __init__(self, body: str | None = None):
+    def __init__(self, body: str | None = None, pending=None, unreadable=()):
         self.body = body
+        self.pending = list(pending or [])
+        self.unreadable = set(unreadable)
+        self.list_calls: list[str] = []
         self.labels_ensured: list[tuple[str, str]] = []
         self.added: list[tuple[str, str, tuple[str, ...]]] = []
         self.removed: list[tuple[str, str, tuple[str, ...]]] = []
         self.comments: list[tuple[str, str, str]] = []
+
+    async def list_intake_awaiting_grade(self, repo):
+        self.list_calls.append(repo)
+        return list(self.pending)
 
     async def ensure_label(self, repo, name):
         self.labels_ensured.append((repo, name))
@@ -51,6 +61,8 @@ class FakeGh:
         self.comments.append((repo, issue, body))
 
     async def read_issue(self, repo, issue):
+        if issue in self.unreadable:
+            return None
         return self.body
 
     def added_labels(self) -> list[str]:
@@ -376,3 +388,133 @@ def test_readiness_prompt_omits_repo_facts_when_absent():
     )
     assert "tracked_top_level" not in prompt
     assert "repo facts are unknown" in prompt
+
+
+# ---- P2 hardening: durable recovery of ungraded intake issues (SC-001) ------
+# The P1 grade is an in-process async task; a restart between the receipt and the
+# grade landing would leave the issue with the intake label but no readiness
+# label. recover_pending_grades reconciles that set (derived from GitHub itself)
+# at serve-start, so no ask is left in permanent unlabeled limbo.
+
+def _reg_with_project(tmp_path):
+    reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
+    reg.create(
+        id="finance-sentry",
+        name="Finance Sentry",
+        repo_url="https://github.com/lifekit-hq/finance-sentry.git",
+        workspace_dir=str(tmp_path / "ws"),
+    )
+    return reg
+
+
+def test_list_intake_awaiting_grade_drops_already_graded(monkeypatch):
+    """The pending set is derived from the labels: an intake issue is awaiting a
+    grade iff it carries NEITHER readiness label. Graded issues are excluded."""
+    payload = json.dumps(
+        [
+            {"url": "https://x/issues/1", "labels": [{"name": "devclaw-intake"}]},
+            {"url": "https://x/issues/2", "labels": [{"name": "devclaw-intake"}, {"name": "devclaw-ready"}]},
+            {"url": "https://x/issues/3", "labels": [{"name": "devclaw-intake"}, {"name": "needs-refinement"}]},
+        ]
+    )
+
+    async def fake_run(*args):
+        return 0, payload
+
+    monkeypatch.setattr(intake, "_run", fake_run)
+    pending = asyncio.run(intake.GhCli().list_intake_awaiting_grade("o/n"))
+    assert pending == ["https://x/issues/1"]
+
+
+def test_list_intake_awaiting_grade_degrades_to_empty_on_gh_error(monkeypatch):
+    async def fake_run(*args):
+        return 1, "gh: not authenticated"
+
+    monkeypatch.setattr(intake, "_run", fake_run)
+    assert asyncio.run(intake.GhCli().list_intake_awaiting_grade("o/n")) == []
+
+
+def test_recover_pending_grades_regrades_every_ungraded_intake_issue(tmp_path):
+    reg = _reg_with_project(tmp_path)
+    body = _intake_body("Rename Balance.cs to AccountBalance.cs.", "Build passes and a test proves it.")
+    gh = FakeGh(
+        body=body,
+        pending=[
+            "https://github.com/lifekit-hq/finance-sentry/issues/7",
+            "https://github.com/lifekit-hq/finance-sentry/issues/8",
+        ],
+    )
+    caller = CannedClaude(READY_JSON)
+    n = asyncio.run(intake.recover_pending_grades(reg, gh=gh, claude_caller=caller))
+    assert n == 2
+    assert caller.calls == 2
+    assert gh.added_labels().count(intake.READY_LABEL) == 2
+
+
+def test_recover_pending_grades_spends_zero_cognition_when_nothing_pending(tmp_path):
+    reg = _reg_with_project(tmp_path)
+    gh = FakeGh(body=_intake_body("x", "y"), pending=[])
+    caller = CannedClaude(READY_JSON)
+    n = asyncio.run(intake.recover_pending_grades(reg, gh=gh, claude_caller=caller))
+    assert n == 0
+    assert caller.calls == 0  # no ungraded issue ⇒ no claude call at all
+
+
+def test_recover_pending_grades_is_best_effort_per_issue(tmp_path):
+    reg = _reg_with_project(tmp_path)
+    body = _intake_body("Do the thing to Foo.cs.", "It works and a test proves it.")
+    good = "https://github.com/lifekit-hq/finance-sentry/issues/7"
+    bad = "https://github.com/lifekit-hq/finance-sentry/issues/9"  # unreadable
+    gh = FakeGh(body=body, pending=[bad, good], unreadable={bad})
+    n = asyncio.run(
+        intake.recover_pending_grades(reg, gh=gh, claude_caller=CannedClaude(READY_JSON))
+    )
+    assert n == 1  # the unreadable issue is skipped; the good one is graded
+    assert intake.READY_LABEL in gh.added_labels()
+
+
+def test_recover_pending_grades_skips_repo_on_list_error_and_never_raises(tmp_path):
+    reg = _reg_with_project(tmp_path)
+
+    class ListBrokenGh(FakeGh):
+        async def list_intake_awaiting_grade(self, repo):
+            raise RuntimeError("gh list exploded")
+
+    gh = ListBrokenGh(body=_intake_body("x", "y"))
+    n = asyncio.run(
+        intake.recover_pending_grades(reg, gh=gh, claude_caller=CannedClaude(READY_JSON))
+    )
+    assert n == 0  # never raises; the bad repo is simply skipped
+
+
+def test_readiness_recovery_is_not_wired_into_the_idle_tick():
+    """Recovery runs at serve-start only — never on the heartbeat tick, so the
+    zero-token idle guard stays intact."""
+    from devclaw.goal import tick, tick_guards, tick_dispatch, service
+
+    for mod in (tick, tick_guards, tick_dispatch, service):
+        src = inspect.getsource(mod)
+        assert "recover_pending_grades" not in src, f"{mod.__name__} reaches recovery"
+
+
+def test_serve_start_kicks_the_readiness_recovery_sweep(monkeypatch):
+    """The serve path schedules the recovery sweep as a background task under the
+    running loop, calling recover_pending_grades exactly once."""
+    from devclaw.server import lifecycle
+
+    called = {"n": 0}
+
+    async def fake_recover(registry, **kw):
+        called["n"] += 1
+        return 0
+
+    monkeypatch.setattr(lifecycle.intake_mod, "recover_pending_grades", fake_recover)
+
+    async def drive():
+        lifecycle._kick_readiness_recovery()
+        await asyncio.sleep(0)
+        for t in list(lifecycle._RECOVERY_TASKS):
+            await t
+
+    asyncio.run(drive())
+    assert called["n"] == 1
