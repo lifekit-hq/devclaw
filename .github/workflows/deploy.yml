@@ -44,8 +44,11 @@ jobs:
             echo "do_build=true" >> "$GITHUB_OUTPUT"
           fi
 
+      # Unconditional — the deploy step PULLS the (private) package even when
+      # the build is skipped; gating login on do_build broke every tag/rollback
+      # dispatch with "error from registry: denied" (dashboard cutover,
+      # 2026-08-16).
       - name: Log in to ghcr.io
-        if: steps.id.outputs.do_build == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       # devclaw-mcp — built FROM the checked-out source (COPY, no git clone),
