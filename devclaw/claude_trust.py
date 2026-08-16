@@ -106,9 +106,9 @@ def ensure_trusted_in_place(config_path: str, workspace_path: str) -> bool:
 def write_trusted_copy(src_config_path: str, workspace_path: str) -> str | None:
     """Write a COPY of the ``.claude.json`` at ``src_config_path`` with
     ``workspace_path`` trusted, to a temp file, and return its path. For the
-    sandbox, whose bound config is read-only so it can't be edited in place —
-    the caller binds this copy read-only and deletes it after the container
-    exits.
+    sandbox — the host file must never be edited in place; the caller binds
+    this copy read-WRITE (the in-sandbox claude writes its own config; the
+    copy is disposable) and deletes it after the container exits.
 
     Returns None when the source can't be read/parsed, so the caller falls back
     to binding the raw host file (today's behavior — never a *regression*, and

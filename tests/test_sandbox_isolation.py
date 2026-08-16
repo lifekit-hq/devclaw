@@ -4,9 +4,10 @@ The per-task sandbox must NOT project the whole host ~/.claude into the engineer
 (that would leak personal skills/, plugins/ + their MCP servers, the global
 CLAUDE.md that points at the unmounted ~/memory, and projects/ history —
 non-reproducible and full of tools that fail or mislead). It mounts only a curated
-allowlist, default just the OAuth credential. These pin the mount posture so the
-leak can't silently come back, and assert it stays unit-testable (pure arg build,
-no docker).
+allowlist — default the OAuth identity pair, bound as per-task disposable
+read-write COPIES (the sandbox CLI writes its own config; host files stay
+untouched). These pin the mount posture so the leak can't silently come back,
+and assert it stays unit-testable (pure arg build, no docker).
 """
 
 import pytest
@@ -197,68 +198,93 @@ def test_strip_api_keys_removes_both_vars():
     assert clean["PATH"] == "/bin"  # unrelated env preserved
 
 
-# ---- workspace-trust mount override (fix/claude-workspace-trust) ----
-# The in-sandbox claude dead-stopped on the untrusted-workspace guard because
-# the bound .claude.json (keyed by host paths) never trusted /workspace. The
-# fix binds a PRE-TRUSTED COPY for the .claude.json entry only; everything else
-# stays the raw read-only bind. These pin that seam.
+# ---- identity-pair mounts: disposable copies, read-WRITE ----
+# The in-sandbox claude legitimately WRITES its own config (identity/cache
+# updates on startup, token refresh on OAuth expiry); a read-only bind turns
+# that into a terminal EROFS task failure (live-found 2026-08-16, the #538
+# shakedown). The identity pair therefore binds per-task DISPOSABLE COPIES
+# read-write (.claude.json's copy additionally pre-trusts /workspace); the
+# raw HOST files are never sandbox-writable — a missing copy falls back to
+# the raw bind read-only. These pin that seam.
 
 
-def test_claude_json_binds_the_trusted_copy_when_provided():
+def test_identity_pair_binds_rw_disposable_copies_never_rw_host_files():
+    # The named regression for the EROFS class: with both copies available the
+    # pair binds read-WRITE from the copies; the raw host paths are absent
+    # entirely; a wider-allowlist extra stays read-only.
+    mounts = sc._build_claude_mounts(
+        CLAUDE_DIR,
+        (".credentials.json", ".claude.json", "skills"),
+        claude_json_src="/tmp/devclaw-claude-XYZ.json",
+        credentials_src="/tmp/devclaw-cred-XYZ.json",
+    )
+    assert (
+        f"/tmp/devclaw-cred-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw"
+        in mounts
+    )
+    assert (
+        f"/tmp/devclaw-claude-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:rw"
+        in mounts
+    )
+    joined = " ".join(mounts)
+    # No mount — ro or rw — of the raw host identity files when copies exist.
+    assert f"{CLAUDE_DIR}/.credentials.json:" not in joined
+    assert f"{CLAUDE_DIR}/.claude.json:" not in joined
+    # A host file is NEVER bound writable, copy or no copy.
+    assert f"{CLAUDE_DIR}/.credentials.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw" not in mounts
+    assert f"{CLAUDE_DIR}/.claude.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:rw" not in mounts
+    # Extras stay raw + read-only.
+    assert f"{CLAUDE_DIR}/skills:{sc.CONTAINER_CLAUDE_DIR}/skills:ro" in mounts
+
+
+def test_identity_pair_falls_back_to_raw_ro_binds_without_copies():
+    # None copies (host files unreadable from this process) → pre-copy
+    # behavior: raw binds, READ-ONLY — the fallback must never make a host
+    # file sandbox-writable.
     mounts = sc._build_claude_mounts(
         CLAUDE_DIR,
         (".credentials.json", ".claude.json"),
-        claude_json_src="/tmp/devclaw-claude-XYZ.json",
+        claude_json_src=None,
+        credentials_src=None,
     )
-    # .credentials.json still binds straight from the host dir, read-only...
-    assert (
-        f"{CLAUDE_DIR}/.credentials.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:ro"
-        in mounts
-    )
-    # ...but .claude.json binds the trusted copy at the SAME container target.
-    assert (
-        f"/tmp/devclaw-claude-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:ro"
-        in mounts
-    )
-    # The raw host .claude.json is NOT bound when an override is present.
-    assert (
-        f"{CLAUDE_DIR}/.claude.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:ro"
-        not in mounts
-    )
-
-
-def test_claude_json_falls_back_to_raw_bind_without_override():
-    # None override (host config unreadable) → pre-trust behavior: raw bind.
-    mounts = sc._build_claude_mounts(CLAUDE_DIR, (".claude.json",), claude_json_src=None)
     assert mounts == [
+        "-v",
+        f"{CLAUDE_DIR}/.credentials.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:ro",
         "-v",
         f"{CLAUDE_DIR}/.claude.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:ro",
     ]
 
 
-def test_build_docker_args_threads_the_trusted_copy():
+def test_build_docker_args_threads_both_copies():
     args = sc._build_docker_args(
         container_name="devclaw-test",
         host_bind_path="/host/ws",
         claude_dir=CLAUDE_DIR,
         payload="{}",
         claude_json_src="/tmp/devclaw-claude-XYZ.json",
+        credentials_src="/tmp/devclaw-cred-XYZ.json",
     )
     assert (
-        f"/tmp/devclaw-claude-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:ro"
+        f"/tmp/devclaw-claude-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:rw"
+        in args
+    )
+    assert (
+        f"/tmp/devclaw-cred-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw"
         in args
     )
 
 
 async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_path, monkeypatch):
     """The integration wiring the pure mount tests can't see: run_sandcastle
-    computes the pre-trusted .claude.json copy, binds it into the container as
-    the .claude.json source, and deletes it in its outer `finally` once the
-    container has exited. A dropped `claude_json_src=` kwarg or a missing unlink
-    would keep the whole suite green — this pins the full path."""
+    computes the pre-trusted .claude.json copy AND the disposable .credentials.json
+    copy, binds both into the container read-write, and deletes both in its
+    outer `finally` once the container has exited. A dropped kwarg or a missing
+    unlink would keep the whole suite green — this pins the full path."""
     (tmp_path / "f").write_text("x")  # a populated, existing workspace passes validation
     fake_copy = tmp_path / "devclaw-claude-fake.json"
     fake_copy.write_text("{}")
+    fake_cred = tmp_path / "devclaw-cred-fake.json"
+    fake_cred.write_text("{}")
 
     seen: dict = {}
 
@@ -267,6 +293,12 @@ async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_p
         return str(fake_copy)
 
     monkeypatch.setattr(sc, "write_trusted_copy", fake_write_trusted_copy)
+
+    def fake_disposable_copy(src):
+        seen["cred_src"] = src
+        return str(fake_cred)
+
+    monkeypatch.setattr(sc, "_disposable_copy", fake_disposable_copy)
 
     class _FakeProc:
         returncode = 0  # non-None → teardown is correctly skipped on clean exit
@@ -288,7 +320,9 @@ async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_p
     assert result == {"status": "ok"}
     # It asked write_trusted_copy to trust the CONTAINER workspace path...
     assert seen["copy_args"][1] == sc.CONTAINER_WORKSPACE
-    # ...bound that copy into the container as the .claude.json source...
-    assert f"{fake_copy}:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:ro" in seen["docker_args"]
-    # ...and cleaned up the temp copy once the container exited.
+    # ...bound both copies into the container read-write...
+    assert f"{fake_copy}:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:rw" in seen["docker_args"]
+    assert f"{fake_cred}:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw" in seen["docker_args"]
+    # ...and cleaned up both temp copies once the container exited.
     assert not fake_copy.exists()
+    assert not fake_cred.exists()
