@@ -8,10 +8,11 @@ terminating ``result: {...}`` line. This module:
 
   - Translates an ``EngineRequest`` into a docker invocation.
   - Bind-mounts the host workspace into /workspace and a CURATED allowlist of
-    entries under ~/.claude (default: just the OAuth credential) read-only into
-    /home/agent/.claude — auth in, the host's personal skills/plugins/MCP/global
-    CLAUDE.md out (Pro OAuth posture: read tokens, don't write back). See
-    ``SANDBOX_CLAUDE_ALLOWLIST``.
+    entries under ~/.claude (default: the OAuth identity pair, as per-task
+    disposable read-write COPIES — the sandbox CLI writes its own config; the
+    HOST files stay untouched) into /home/agent/.claude — auth in, the host's
+    personal skills/plugins/MCP/global CLAUDE.md out. See
+    ``SANDBOX_CLAUDE_ALLOWLIST`` and ``_build_claude_mounts``.
   - Streams stdout line-by-line; routes ``event:`` lines through ``on_event``
     and parses the final ``result:`` line as the result.
   - Refuses to forward ANTHROPIC_API_KEY into the container (same belt +
@@ -333,28 +334,65 @@ def _toolchain_volume_name(host_bind_path: str) -> str:
     return f"devclaw-toolchains-{slug or 'workspace'}-{digest}"
 
 
+def _disposable_copy(src_path: str) -> str | None:
+    """A per-task throwaway copy of a host identity file, for a WRITABLE bind
+    into the sandbox (see ``_build_claude_mounts``). ``mkstemp`` keeps the
+    0600 mode — same-uid host↔sandbox is already the load-bearing contract for
+    the raw bind's readability today. Best-effort: any failure (host file
+    unreadable from this process, e.g. containerized devclaw without the
+    mount) ⇒ None, and the caller falls back to the raw read-only bind —
+    never a sandbox-writable host file."""
+    import shutil
+    import tempfile
+
+    try:
+        fd, path = tempfile.mkstemp(prefix="devclaw-cred-", suffix=".json")
+        os.close(fd)
+        shutil.copyfile(src_path, path)
+        return path
+    except OSError:
+        return None
+
+
 def _build_claude_mounts(
     claude_dir: str,
     allowlist: tuple[str, ...],
     claude_json_src: str | None = None,
+    credentials_src: str | None = None,
 ) -> list[str]:
     """``-v`` args binding ONLY the allowlisted entries under the host ~/.claude
-    into the sandbox config dir, each read-only. The curated boundary: auth in,
-    the rest of the host's personal Claude setup out. See ``SANDBOX_CLAUDE_ALLOWLIST``
-    for the rationale.
+    into the sandbox config dir. The curated boundary: auth in, the rest of the
+    host's personal Claude setup out. See ``SANDBOX_CLAUDE_ALLOWLIST`` for the
+    rationale.
 
-    ``claude_json_src`` overrides the host source for the ``.claude.json`` entry
-    only: a pre-trusted copy (host identity + ``projects["/workspace"]`` marked
-    trusted) so the in-sandbox ``claude`` honors the workspace's permissions
-    instead of dead-stopping on the untrusted-workspace guard. None → bind the
-    raw host file (the pre-trust behavior, e.g. when the host config is
-    unreadable)."""
+    The identity pair binds from per-task DISPOSABLE COPIES, read-WRITE:
+    the in-sandbox ``claude`` legitimately writes its own config (identity/cache
+    updates on startup, token refresh on OAuth expiry) and a read-only bind
+    turns that into a terminal ``EROFS`` task failure (live-found 2026-08-16,
+    #538 shakedown — a host-CLI schema drift made the sandbox CLI rewrite
+    ``.claude.json`` on startup). The copies are created per task and deleted
+    after the container exits, so in-sandbox writes evaporate and the HOST
+    files are never writable from a sandbox — the protection the old ``:ro``
+    was for, kept, without the crash.
+
+    ``claude_json_src`` is that copy for ``.claude.json``, additionally
+    pre-trusted (``projects["/workspace"]`` marked trusted) so the in-sandbox
+    ``claude`` honors the workspace's permissions instead of dead-stopping on
+    the untrusted-workspace guard. ``credentials_src`` is the plain copy for
+    ``.credentials.json``. Either None → bind the raw host file read-only
+    (the pre-copy behavior, e.g. when the host file is unreadable from this
+    process) — a fallback must never make a host file sandbox-writable.
+    Every other allowlisted entry binds raw and read-only, as before."""
     base = claude_dir.rstrip("/")
     args: list[str] = []
     for rel in allowlist:
         rel = rel.strip("/")
-        src = claude_json_src if (rel == ".claude.json" and claude_json_src) else f"{base}/{rel}"
-        args += ["-v", f"{src}:{CONTAINER_CLAUDE_DIR}/{rel}:ro"]
+        if rel == ".claude.json" and claude_json_src:
+            args += ["-v", f"{claude_json_src}:{CONTAINER_CLAUDE_DIR}/{rel}:rw"]
+        elif rel == ".credentials.json" and credentials_src:
+            args += ["-v", f"{credentials_src}:{CONTAINER_CLAUDE_DIR}/{rel}:rw"]
+        else:
+            args += ["-v", f"{base}/{rel}:{CONTAINER_CLAUDE_DIR}/{rel}:ro"]
     return args
 
 
@@ -368,6 +406,7 @@ def _build_docker_args(
     sandbox_image: str | None = None,
     owner_id: str | None = None,
     claude_json_src: str | None = None,
+    credentials_src: str | None = None,
 ) -> list[str]:
     """Assemble the full ``docker run`` argv for one task. Pure (no I/O) so the
     mount posture — curated claude allowlist, writable scratch tmpfs, no API-key
@@ -404,7 +443,7 @@ def _build_docker_args(
         # host ~/.claude — see SANDBOX_CLAUDE_ALLOWLIST). `.claude.json` binds a
         # pre-trusted copy so /workspace is a trusted Claude workspace (see
         # claude_trust.write_trusted_copy).
-        *_build_claude_mounts(claude_dir, allowlist, claude_json_src),
+        *_build_claude_mounts(claude_dir, allowlist, claude_json_src, credentials_src),
         # The config dir is non-writable (RO binds), but the claude CLI must write
         # per-session scratch *under* it — `session-env/<uuid>` (a working dir per
         # shell session) + `shell-snapshots/`. On the RO mount those mkdirs hit
@@ -467,14 +506,19 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
 
     payload = json.dumps(_build_payload(req))
 
-    # Bind a pre-trusted copy of .claude.json so the in-sandbox claude treats
-    # /workspace as a trusted workspace (honors its .claude/settings.json
-    # permissions instead of dead-stopping on the untrusted-workspace guard —
-    # the #1 terminal-failure class as of 2026-07). None when the host config is
-    # unreadable → the mount falls back to the raw read-only bind (pre-trust
-    # behavior). Deleted after the container exits.
+    # Bind DISPOSABLE per-task copies of the identity pair, read-write (see
+    # _build_claude_mounts). .claude.json is additionally pre-trusted so the
+    # in-sandbox claude treats /workspace as a trusted workspace (honors its
+    # .claude/settings.json permissions instead of dead-stopping on the
+    # untrusted-workspace guard — the #1 terminal-failure class as of 2026-07).
+    # Either copy None (host file unreadable from this process) → that entry
+    # falls back to the raw read-only bind. Both deleted after the container
+    # exits.
     trusted_claude_json = write_trusted_copy(
         os.path.join(claude_dir.rstrip("/"), ".claude.json"), CONTAINER_WORKSPACE
+    )
+    disposable_credentials = _disposable_copy(
+        os.path.join(claude_dir.rstrip("/"), ".credentials.json")
     )
 
     docker_args = _build_docker_args(
@@ -485,6 +529,7 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
         sandbox_image=req.sandbox_image,
         owner_id=req.owner_id,
         claude_json_src=trusted_claude_json,
+        credentials_src=disposable_credentials,
     )
 
     try:
@@ -518,10 +563,13 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
             if proc.returncode is None:
                 await _teardown(proc, container_name)
     finally:
-        # The trusted-copy temp file is only needed while docker binds it (at
-        # container start); safe to remove once the container has exited.
-        if trusted_claude_json:
-            try:
-                os.unlink(trusted_claude_json)
-            except OSError:
-                pass
+        # The per-task copies are only needed while docker binds them (at
+        # container start); safe to remove once the container has exited —
+        # discarding them is the point: in-sandbox config writes must not
+        # survive the task or touch the host files.
+        for tmp in (trusted_claude_json, disposable_credentials):
+            if tmp:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
