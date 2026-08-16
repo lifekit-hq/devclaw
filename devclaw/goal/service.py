@@ -601,8 +601,8 @@ class GoalService:
         # decompose) is a ONE-SHOT concern: its output (discovery.md + the
         # checklist) feeds the one_shot decomposer and the one_shot reopen-gate
         # (tick.py "no checklist and no discovery brief"). A long_lived goal's
-        # worker PULLS its own context in-session (_advance_brief: "read PLAN.md
-        # and the repo") and never reads discovery.md — so for it the whole
+        # worker PULLS its own context in-session (_advance_brief: the speckit
+        # specs/*/ artifacts + the repo) and never reads discovery.md — so for it the whole
         # detour (an engine review_repository + one/two discovery-cognition
         # calls) is pure wasted push (demolition P4, §3a trust-the-input). Only
         # one_shot stamps investigating; long_lived starts executing directly.

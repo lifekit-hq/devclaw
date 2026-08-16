@@ -125,8 +125,8 @@ def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
     """Locks the 2026-08-05 worker-brief shrink (trust the agent, shrink the
     prompt): the general-engineering spoon-feeding in _common / quality-bar /
     verify-iterate was compressed (~12.2k → ~10.9k) while every devclaw-specific
-    contract + guardrail (verify-gate coverage, repo-gate-conflict, PLAN.md,
-    commit) stayed. A regression above this ceiling means the spoon-feeding prose
+    contract + guardrail (verify-gate coverage, repo-gate-conflict, the
+    durable-memory skill — PLAN.md then, speckit artifacts now — commit) stayed. A regression above this ceiling means the spoon-feeding prose
     crept back — recompress it, don't raise the bar. (Ceiling lifted 11.4k →
     12.6k for the #508 doctrine additions — judgment-call return contract,
     precedent rule, one-shot scope bound — genuine doctrine, not prose creep.)"""
