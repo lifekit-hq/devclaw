@@ -1,7 +1,7 @@
 # devclaw's OWN compose project — brings devclaw up independently of the
 # OpenClaw/lifekit-stack project (spec 005). Run it as its own project:
 #
-#   docker compose -p devclaw --env-file /srv/lifekit-stack/.env \
+#   docker compose -p devclaw --env-file /srv/devclaw/.env \
 #       -f deploy/docker-compose.devclaw.yml up -d
 #
 # vs. lifekit-stack, which keeps the OpenClaw project (gateway, cli, dashboard,

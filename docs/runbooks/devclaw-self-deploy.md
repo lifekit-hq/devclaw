@@ -36,8 +36,15 @@ two externally-declared seams: the `lifekit-shared` network and the
   logs in with `GITHUB_TOKEN` (`packages: write`). Confirm the `lifekit-hq`
   packages allow the repo to publish.
 - The env file the compose fragment + deploy script read
-  (`DEVCLAW_ENV_FILE`, default `/srv/lifekit-stack/.env`) already carries the
-  `LIFEKIT_*` host-path vars — the fragment reuses them unchanged.
+  (`DEVCLAW_ENV_FILE`, default `/srv/devclaw/.env`) exists and is
+  **devclaw-owned** — reading another entity's env file (the old
+  `/srv/lifekit-stack/.env` / `/srv/openclaw/config/.env` default) is the exact
+  cross-entity coupling the ecosystem decoupling removes. It carries every var
+  the fragment reads: the `LIFEKIT_*` host facts (docker GID, claude home,
+  vault dir, workspaces dir — duplicated from the host on purpose; a little
+  host-fact duplication is the price of entity independence), the operator-set
+  `DEVCLAW_*` knobs, `DEVCLAW_TOKEN` for ops-agent, and on the cutover host
+  `DEVCLAW_STATE_VOLUME=compose_devclaw-state`.
 - The incident output dir exists (else ops-agent writes into a phantom mount):
   ```bash
   sudo mkdir -p /srv/memory/projects/ops-agent
@@ -71,7 +78,7 @@ docker network inspect lifekit-shared >/dev/null 2>&1 || docker network create l
 **3. Adopt the existing state volume — the critical step.** The live volume is
 `compose_devclaw-state` (owned by the shared `compose` project). Rather than
 copy it, adopt it in place by pointing the external volume name at it. Add to
-`/srv/lifekit-stack/.env`:
+`/srv/devclaw/.env`:
 ```bash
 DEVCLAW_STATE_VOLUME=compose_devclaw-state
 ```
@@ -91,7 +98,7 @@ docker compose -p compose rm -f devclaw-mcp ops-agent
 
 # bring devclaw up as its own project (pulls the tag, recreates, health-gates)
 cd /path/to/devclaw
-DEVCLAW_ENV_FILE=/srv/lifekit-stack/.env bash deploy/deploy-devclaw.sh "$SHA"
+bash deploy/deploy-devclaw.sh "$SHA"   # reads /srv/devclaw/.env by default
 ```
 
 **5. Attach the OpenClaw seam services to the shared network** so the waiter
@@ -150,7 +157,7 @@ devclaw, no devclaw `build:` stanza, and no md5-verify (SC-006).
 
 Images are tagged by commit SHA, so rolling back is a pull — no source revert:
 ```bash
-DEVCLAW_ENV_FILE=/srv/lifekit-stack/.env bash deploy/deploy-devclaw.sh <prior-sha>
+bash deploy/deploy-devclaw.sh <prior-sha>
 ```
 
 ---
