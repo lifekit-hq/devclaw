@@ -754,21 +754,25 @@ async def _resolve_polling_action(
             return Outcome.BLOCKED
 
     # ---- speckit tasks.md build-ahead guardrail (SDLC pipeline) -------------
-    # A well-sliced nightly increment closes ONE story-slice; an increment that
-    # flips >1 ``specs/*/tasks.md`` checkbox ([ ]→[x]) built ahead into later
-    # stories instead of shipping one reviewable slice (the "Ledger" 17k-line-PR
-    # class). Detection is a pure git-diff + string parse — ZERO token and
-    # best-effort/fail-OPEN: an absent or garbled tasks.md ⇒ 0 flips ⇒ never
-    # trips (:mod:`slice_guard`; it falls back to the legacy PLAN.md reader only
-    # when NO tasks.md exists — D4). The VERDICT rides the EXISTING strictness
-    # dial (:func:`gate_consequence`, a dial-able "slice" gate): under ``trust``
-    # it ADVISES (loud log, ship anyway — the done-gate + human review are the
-    # backstop), under ``strict`` it BLOCKS the goal for a re-slice. Scoped to a
-    # delivered increment (poll ``done``) whose topology is a goal branch — the
-    # per-action topology has no accumulating plan to reason about, and this runs
-    # only on the POLLING_ACTION settle path (never idle/blocked), so the
-    # ``FakeClaude.calls == 0`` guards stay green. Only the SOURCE FILE moved
-    # (PLAN.md → tasks.md); the fail-closed-under-strict consequence is unchanged.
+    # A well-sliced nightly increment advances ONE story-slice; an increment that
+    # advances >1 ``specs/*/tasks.md`` story-slice (a ``[US<n>]`` whose tasks it
+    # checks off) built ahead into later stories instead of shipping one
+    # reviewable slice (the "Ledger" 17k-line-PR class). The UNIT is the
+    # story-slice, NOT the raw checkbox — closing five ``T00x [US1]`` rows is one
+    # slice, not five (see :func:`slice_guard.count_slice_advances`). Detection is
+    # a pure git-diff + string parse — ZERO token and best-effort/fail-OPEN: an
+    # absent or garbled tasks.md ⇒ 0 ⇒ never trips (:mod:`slice_guard`; it falls
+    # back to the legacy PLAN.md reader only when NO tasks.md exists — D4). The
+    # VERDICT rides the EXISTING strictness dial (:func:`gate_consequence`, a
+    # dial-able "slice" gate): under ``trust`` it ADVISES (loud log, ship anyway —
+    # the done-gate + human review are the backstop), under ``strict`` it BLOCKS
+    # the goal for a re-slice. Scoped to a delivered increment (poll ``done``)
+    # whose topology is a goal branch — the per-action topology has no
+    # accumulating plan to reason about, and this runs only on the POLLING_ACTION
+    # settle path (never idle/blocked), so the ``FakeClaude.calls == 0`` guards
+    # stay green. The source moved (PLAN.md milestones → tasks.md story-slices)
+    # and the build-ahead unit with it; the fail-closed-under-strict consequence
+    # is unchanged.
     if (
         poll.status == "done"
         and _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
@@ -778,10 +782,10 @@ async def _resolve_polling_action(
         )
         if flips > 1:
             note = (
-                f"slice guardrail: this increment flipped {flips} tasks.md items "
-                f"([ ]→[x]) in one delivery — a coherent increment closes ONE "
-                f"story-slice and ships as one reviewable PR, not a build-ahead through "
-                f"later stories"
+                f"slice guardrail: this increment advanced {flips} story-slices "
+                f"in one delivery — a coherent increment advances ONE story-slice "
+                f"([US<n>]) and ships as one reviewable PR, not a build-ahead "
+                f"through later stories"
             )
             if gate_consequence("slice", goal.strictness) is Consequence.BLOCK:
                 reason = (

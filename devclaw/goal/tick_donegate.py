@@ -28,6 +28,7 @@ from .tick_context import (
 )
 from . import evaluator as _evaluator
 from . import remote_checks as _remote_checks
+from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
 from .engine import GoalEngine
 from .models import Action, Goal, GoalStatus
@@ -161,23 +162,35 @@ def _done_gate_review_brief(goal: "Goal") -> str:
 def _feature_spec_grounding(goal: "Goal", store: GoalStore, goal_id: str) -> str:
     """The contract the done-gate judges against (spec 008 US1, FR-006 / D6).
 
-    When the goal has an executing-feature directory recorded (at dispatch), read
-    that feature's ``spec.md`` from the actual workspace and return it as the
-    ``spec`` grounding — the speckit spec is now the contract of record, so the
-    gate grounds on its Success Criteria + Requirements. When no feature dir is
-    recorded (or its ``spec.md`` is absent), fall back to the goal's existing
-    scope spec (:meth:`GoalStore.read_spec`), which itself degrades to the
-    ``done_when`` text in the evaluator prompt — the grounding SOURCE changed, the
+    Grounds on the executing feature's ``spec.md`` — the speckit spec is the
+    contract of record, so the gate judges against its Success Criteria +
+    Requirements. The feature dir is resolved as: the one RECORDED at dispatch,
+    else — the common brand-new-feature case, where the dir did not exist
+    pre-session — the feature the increment actually landed in, derived live from
+    the post-session working tree (:func:`slice_guard.current_feature_dir_sync`,
+    the most-recently-touched ``specs/NNN``). Only a repo with NO ``specs/`` at
+    all falls back to the goal's scope spec (:meth:`GoalStore.read_spec`), which
+    itself degrades to the ``done_when`` text — the grounding SOURCE changed, the
     fail-closed gate did not (``done_when`` is always evaluated by ``build_prompt``).
 
     Best-effort and never raises: a git/fs hiccup degrades to the existing
     fallback rather than failing the gate. Module-global so tests patch it here."""
     fallback = store.read_spec(goal_id)
+    if not goal.workspace_dir:
+        return fallback
     try:
         rel = store.read_executing_feature(goal_id).strip()
     except Exception:  # noqa: BLE001 — grounding is best-effort
-        return fallback
-    if not rel or not goal.workspace_dir:
+        rel = ""
+    if not rel:
+        # No dispatch-time record (the feature was authored in-session, so the dir
+        # did not exist to record pre-session). Ground on the feature the
+        # increment actually landed in.
+        try:
+            rel = _slice_guard.current_feature_dir_sync(goal.workspace_dir)
+        except Exception:  # noqa: BLE001 — derivation is best-effort
+            rel = ""
+    if not rel:
         return fallback
     try:
         spec_path = Path(goal.workspace_dir) / rel / "spec.md"

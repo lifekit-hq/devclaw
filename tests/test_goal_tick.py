@@ -1277,7 +1277,7 @@ def _long_lived_executing_status():
 
 @pytest.mark.asyncio
 async def test_slice_guardrail_advises_under_trust_and_ships(tmp_path, monkeypatch):
-    """A >1-milestone mega-dump under the default `trust` dial ADVISES: a loud
+    """A >1-story-slice mega-dump under the default `trust` dial ADVISES: a loud
     goal-log line surfaces the finding, but the increment still ships (the
     done-gate + human merge are the backstop) — never a hard block. Zero-token."""
     monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", lambda ws: 3)
@@ -1295,7 +1295,7 @@ async def test_slice_guardrail_advises_under_trust_and_ships(tmp_path, monkeypat
     assert out is not Outcome.BLOCKED  # advise-and-ship, not wedged
     assert evaluator.calls == 0  # detection is pure git+string — zero cognition
     log = (tmp_path / "g" / "log.md").read_text()
-    assert "slice guardrail" in log and "flipped 3 tasks.md items" in log
+    assert "slice guardrail" in log and "advanced 3 story-slices" in log
     assert "shipped anyway (trust mode)" in log
 
 

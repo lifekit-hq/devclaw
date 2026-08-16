@@ -76,8 +76,10 @@ async def open_install_pr(workspace_dir: str) -> str | None:
 
     A ``gh pr list --head <INSTALL_BRANCH> --state open`` query — a subprocess at
     dispatch time (never on the idle tick path). Best-effort: any gh failure ⇒
-    None (fail-open on detection — a gh hiccup must not wedge dispatch, and a
-    truly-open PR is still caught by the human PR review)."""
+    None. A None here does NOT by itself green-light feature work: the gate pairs
+    it with :func:`local_install_branch_exists` + :func:`gh_unavailable` to fail
+    CLOSED when gh couldn't actually confirm 'no open PR' (a gh hiccup must not
+    silently admit half-installed execution)."""
     rc, out = await _run(
         "gh", "pr", "list", "--head", INSTALL_BRANCH, "--state", "open",
         "--json", "url", "--jq", ".[0].url // empty",
@@ -86,6 +88,49 @@ async def open_install_pr(workspace_dir: str) -> str | None:
     if rc != 0:
         return None
     return out.strip() or None
+
+
+async def local_install_branch_exists(workspace_dir: str) -> bool:
+    """True iff the deterministic install branch exists LOCALLY — concrete
+    evidence :func:`install_speckit_pr` scaffolded a speckit install in THIS
+    checkout. Cheap (a local ``git branch --list``, no network); the goal-path
+    hold and the fail-closed gh-uncertainty branch key off it so an ordinary
+    legacy/plain repo is never probed over the network. Never raises."""
+    rc, out = await _run("git", "branch", "--list", INSTALL_BRANCH, cwd=workspace_dir)
+    return rc == 0 and out.strip() != ""
+
+
+async def gh_unavailable(workspace_dir: str) -> bool:
+    """True iff ``gh`` cannot answer PR queries here (missing binary, auth
+    expiry, network). Used to fail CLOSED on install-state uncertainty rather
+    than silently proceed: a non-zero ``gh auth status`` ⇒ True. Best-effort."""
+    rc, _out = await _run("gh", "auth", "status", cwd=workspace_dir)
+    return rc != 0
+
+
+async def feature_block_reason(workspace_dir: str) -> "str | None":
+    """An actionable reason feature work must NOT run in this repo yet (a speckit
+    install is pending), else ``None`` — the GOAL-path (heartbeat) gate for US2's
+    'no half-installed execution', the durable-goal counterpart of
+    :func:`devclaw.server.tools._block_if_speckit_pending`.
+
+    Cheap and inert for ordinary repos: probes ONLY when a LOCAL install branch
+    exists (concrete evidence onboard scaffolded here), so a plain/legacy repo
+    returns ``None`` after a single ``git branch`` and a stubbed-suite goal tick
+    pays nothing. Fail-CLOSED on gh-uncertainty (unlike the detection guards) —
+    running feature work half-installed is exactly the failure this prevents."""
+    if not await local_install_branch_exists(workspace_dir):
+        return None
+    if await has_committed_speckit(workspace_dir):
+        return None  # the install merged and landed here — good to go
+    url = await open_install_pr(workspace_dir)
+    if url:
+        return (f"the speckit install PR ({url}) is still open — merge it first "
+                f"(no half-installed execution)")
+    if await gh_unavailable(workspace_dir):
+        return ("cannot verify the speckit install PR state (gh unavailable) and a "
+                "local install branch exists — resolve the install before feature work")
+    return None
 
 
 def scaffold_specify(workspace_dir: str) -> list[str]:
@@ -141,21 +186,32 @@ async def install_speckit_pr(workspace_dir: str, *, project_id: str | None = Non
         return {"delivered": True, "pr_url": existing, "branch": INSTALL_BRANCH,
                 "already_open": True, "created": []}
 
-    # Land the scaffold on the deterministic install branch (reset if a stale one
-    # exists) so delivery reuses it and the gate can find the PR by head.
-    rc, out = await _run("git", "checkout", "-B", INSTALL_BRANCH, cwd=workspace_dir)
-    if rc != 0:
-        return {"delivered": False, "pr_url": None, "branch": INSTALL_BRANCH,
-                "error": f"could not create install branch: {out[-200:]}", "created": []}
+    # Capture the branch to restore FIRST: checking out the install branch and
+    # never coming back would strand the shared workspace on it, and a later
+    # dispatch reading HEAD's committed .specify/ would mistake the repo for
+    # 'adopted' and run half-installed. Restored in ``finally`` — on success and
+    # on any scaffold/deliver failure alike.
+    rc0, orig = await _run("git", "rev-parse", "--abbrev-ref", "HEAD", cwd=workspace_dir)
+    orig_branch = orig.strip() if rc0 == 0 and orig.strip() and orig.strip() != "HEAD" else None
+    try:
+        # Land the scaffold on the deterministic install branch (reset if a stale
+        # one exists) so delivery reuses it and the gate can find the PR by head.
+        rc, out = await _run("git", "checkout", "-B", INSTALL_BRANCH, cwd=workspace_dir)
+        if rc != 0:
+            return {"delivered": False, "pr_url": None, "branch": INSTALL_BRANCH,
+                    "error": f"could not create install branch: {out[-200:]}", "created": []}
 
-    created = scaffold_specify(workspace_dir)
+        created = scaffold_specify(workspace_dir)
 
-    result = await deliver_change(
-        workspace_dir=workspace_dir,
-        task_id=f"install-speckit-{project_id or 'repo'}",
-        goal="Install speckit as the execution substrate (.specify/ scaffold)",
-        kind="onboard",
-        target_branch=INSTALL_BRANCH,
-    )
-    result["created"] = created
-    return result
+        result = await deliver_change(
+            workspace_dir=workspace_dir,
+            task_id=f"install-speckit-{project_id or 'repo'}",
+            goal="Install speckit as the execution substrate (.specify/ scaffold)",
+            kind="onboard",
+            target_branch=INSTALL_BRANCH,
+        )
+        result["created"] = created
+        return result
+    finally:
+        if orig_branch:
+            await _run("git", "checkout", orig_branch, cwd=workspace_dir)

@@ -43,6 +43,7 @@ from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
+from .. import speckit_setup as _speckit
 
 
 async def _branch_staleness(workspace_dir: str, goal_id: str) -> "dict | None":
@@ -257,6 +258,23 @@ async def _dispatch_action(
                 f" of default but {staleness['commits_behind']} behind"
                 f" (threshold {BRANCH_STALE_THRESHOLD}); skipping dispatch",
             )
+            return Outcome.SLEPT
+    # No half-installed execution (spec 008 US2): a durable goal must not
+    # dispatch FEATURE work into a repo whose speckit install PR is still open —
+    # the heartbeat counterpart of the MCP tool's _block_if_speckit_pending, at
+    # the shared dispatch chokepoint. Cheap + test-inert: feature_block_reason
+    # probes only when a LOCAL install branch exists (concrete evidence onboard
+    # scaffolded here), so an ordinary repo pays one `git branch` and this never
+    # fires in the stubbed suite. A soft HOLD (no state transition — mirrors the
+    # staleness skip above), re-checked next tick; it clears when the install PR
+    # merges and lands. Read-only reviews are exempt.
+    if action.tool != "review_repository":
+        try:
+            hold_reason = await _speckit.feature_block_reason(goal.workspace_dir)
+        except Exception:  # noqa: BLE001 — a probe hiccup must never wedge dispatch
+            hold_reason = None
+        if hold_reason:
+            store.append_log(goal_id, f"dispatch held: {hold_reason}")
             return Outcome.SLEPT
     # Atomic dispatch (PR7): task/program row creation + the DISPATCH
     # transition + the log row, as ONE transaction. A crash or CAS conflict

@@ -112,6 +112,20 @@ async def _block_if_speckit_pending(resolved: ResolvedDispatch, tool: str) -> No
             f"({pr}) is still open — review and merge it first, then dispatch "
             f"(no half-installed execution)."
         )
+    # A None above is fail-open — it also means "gh couldn't tell". Fail CLOSED
+    # when there's concrete local evidence of a pending install (an install
+    # branch) AND gh is unavailable: a gh hiccup must not silently admit
+    # half-installed execution. Inert for legacy repos (no install branch) and in
+    # the stubbed suite (open_install_pr is faked, so gh is never consulted).
+    if (
+        await _speckit.local_install_branch_exists(resolved.workspace_dir)
+        and await _speckit.gh_unavailable(resolved.workspace_dir)
+    ):
+        raise ToolError(
+            f"cannot dispatch feature work via {tool}: the speckit install state "
+            f"for this repo is unverifiable (gh unavailable) and a local install "
+            f"branch exists — resolve the install first (no half-installed execution)."
+        )
 
 
 @mcp.tool
