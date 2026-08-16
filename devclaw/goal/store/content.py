@@ -543,6 +543,24 @@ class GoalContentMixin:
         path = self._dir(goal_id) / "spec.md"
         return path.read_text() if path.exists() else ""
 
+    # ---- executing-feature reference (spec 008 US1, D6) --------------------
+
+    def write_executing_feature(self, goal_id: str, feature_dir: str) -> None:
+        """Record which speckit feature directory (workspace-relative, e.g.
+        ``specs/012-widget``) the goal is currently executing — best-effort,
+        set at dispatch so the done-gate can ground on the right ``spec.md``.
+        A blank value clears it (absent ⇒ done-gate falls back to
+        ``done_when``). Plain file doc, like :meth:`write_spec`; no devclaw.db
+        table (data-model entity 4)."""
+        self._write_atomic(goal_id, "executing-feature.txt", (feature_dir or "").strip() + "\n")
+
+    def read_executing_feature(self, goal_id: str) -> str:
+        """The recorded executing-feature directory, or ``""`` when none is
+        recorded (transition-safe: absent ⇒ the done-gate falls back to
+        ``done_when``)."""
+        path = self._dir(goal_id) / "executing-feature.txt"
+        return path.read_text().strip() if path.exists() else ""
+
     def recent_deliveries(self, goal_id: str, chars: int = 8000) -> str:
         """The tail of the deliveries record (bounded — the evaluator's
         grounding context). Reconstructs ``header + "".join(blocks)`` from

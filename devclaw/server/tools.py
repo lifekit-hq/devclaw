@@ -38,6 +38,7 @@ from ..project_registry import (
     project_rollup,
 )
 from ..state_store import _now_ms
+from .. import speckit_setup as _speckit
 from ._state import _goal_get, goals, mcp, queue, registry, store
 
 
@@ -91,6 +92,40 @@ async def _preflight_or_prep(resolved: ResolvedDispatch, project_id: str) -> Non
             )
         return
     raise ToolError(f"cannot dispatch to project {project_id!r}: {reason}")
+
+
+async def _block_if_speckit_pending(resolved: ResolvedDispatch, tool: str) -> None:
+    """Block FEATURE dispatch for a repo whose speckit install PR is unmerged —
+    no half-installed execution (spec 008 US2, contracts/onboard-adopt-install).
+
+    Cheap and off the idle path: consulted only at dispatch time (never on the
+    heartbeat/idle tick). Skips the network probe entirely when the repo already
+    commits ``.specify/`` (speckit-ready). A repo with no ``.specify/`` and no
+    open install PR is a legacy PLAN.md repo (D4 dual-read transition) and is NOT
+    blocked — only an actually-open install PR blocks."""
+    if await _speckit.has_committed_speckit(resolved.workspace_dir):
+        return
+    pr = await _speckit.open_install_pr(resolved.workspace_dir)
+    if pr:
+        raise ToolError(
+            f"cannot dispatch feature work via {tool}: the speckit install PR "
+            f"({pr}) is still open — review and merge it first, then dispatch "
+            f"(no half-installed execution)."
+        )
+    # A None above is fail-open — it also means "gh couldn't tell". Fail CLOSED
+    # when there's concrete local evidence of a pending install (an install
+    # branch) AND gh is unavailable: a gh hiccup must not silently admit
+    # half-installed execution. Inert for legacy repos (no install branch) and in
+    # the stubbed suite (open_install_pr is faked, so gh is never consulted).
+    if (
+        await _speckit.local_install_branch_exists(resolved.workspace_dir)
+        and await _speckit.gh_unavailable(resolved.workspace_dir)
+    ):
+        raise ToolError(
+            f"cannot dispatch feature work via {tool}: the speckit install state "
+            f"for this repo is unverifiable (gh unavailable) and a local install "
+            f"branch exists — resolve the install first (no half-installed execution)."
+        )
 
 
 @mcp.tool
@@ -150,6 +185,10 @@ async def dispatch_task(
     resolved = _resolve_project_or_reject(project_id, "dispatch_task")
     await _preflight_or_prep(resolved, project_id)
     is_review = kind == "review_repository"
+    # Feature work (not read-only review) is gated on a merged speckit install:
+    # a repo whose install PR is still open is not run (US2, no half-installed state).
+    if not is_review:
+        await _block_if_speckit_pending(resolved, "dispatch_task")
     task_id = queue.submit(
         kind=kind,
         workspace_dir=resolved.workspace_dir,
@@ -383,9 +422,44 @@ async def onboard(
     NOT authoritative until you review it. The agent won't clobber a
     substantive existing doc — it validates each part against the real repo
     and only corrects what's wrong or missing. Returns task_id immediately;
-    same optional notify_url as implement_feature."""
+    same optional notify_url as implement_feature.
+
+    Speckit substrate (spec 008 US2): every repo devclaw works uses speckit.
+    Onboard decides on the repo's COMMITTED ``.specify/`` directory —
+      - present ⇒ ADOPT (the repo already uses speckit) — writes NO ``PLAN.md``,
+        opens no scaffolding PR, and proceeds to the comprehension-doc pass.
+      - absent  ⇒ INSTALL — generates the ``.specify/`` scaffold and opens a
+        REVIEWABLE PR (never a silent commit to the default branch). The repo
+        isn't run for feature work until that PR merges (no half-installed
+        state); re-run onboard after merge to produce the docs."""
     resolved = _resolve_project_or_reject(project_id, "onboard")
     await _preflight_or_prep(resolved, project_id)
+
+    # Bare repo (no committed .specify/) ⇒ install speckit via a reviewable PR
+    # before anything else. Never a silent commit to the default branch (FR-003).
+    if not await _speckit.has_committed_speckit(resolved.workspace_dir):
+        result = await _speckit.install_speckit_pr(
+            resolved.workspace_dir, project_id=resolved.project_id
+        )
+        return json.dumps(
+            {
+                "speckit": "install_pr",
+                "pr_url": result.get("pr_url"),
+                "branch": result.get("branch"),
+                "created": result.get("created", []),
+                "error": result.get("error"),
+                "note": (
+                    "speckit was absent — opened a reviewable install PR carrying "
+                    "the .specify/ scaffold. Merge it, then re-run onboard to "
+                    "generate the comprehension docs. Feature dispatch is blocked "
+                    "for this repo until the install PR merges."
+                ),
+            },
+            indent=2,
+        )
+
+    # Committed .specify/ present ⇒ adopt: no PLAN.md, no scaffolding PR; run the
+    # comprehension-doc onboarding pass as usual.
     task_id = queue.submit(
         kind="onboard",
         workspace_dir=resolved.workspace_dir,
@@ -393,7 +467,9 @@ async def onboard(
         notify_url=notify_url,
         project_id=resolved.project_id,
     )
-    return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
+    return json.dumps(
+        {"task_id": task_id, "status": "pending", "speckit": "adopted"}, indent=2
+    )
 
 
 def _one_shot_goal_id(goal: str) -> str:

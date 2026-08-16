@@ -28,6 +28,7 @@ from .tick_context import (
 )
 from . import evaluator as _evaluator
 from . import remote_checks as _remote_checks
+from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
 from .engine import GoalEngine
 from .models import Action, Goal, GoalStatus
@@ -158,6 +159,48 @@ def _done_gate_review_brief(goal: "Goal") -> str:
     )
 
 
+def _feature_spec_grounding(goal: "Goal", store: GoalStore, goal_id: str) -> str:
+    """The contract the done-gate judges against (spec 008 US1, FR-006 / D6).
+
+    Grounds on the executing feature's ``spec.md`` — the speckit spec is the
+    contract of record, so the gate judges against its Success Criteria +
+    Requirements. The feature dir is resolved as: the one RECORDED at dispatch,
+    else — the common brand-new-feature case, where the dir did not exist
+    pre-session — the feature the increment actually landed in, derived live from
+    the post-session working tree (:func:`slice_guard.current_feature_dir_sync`,
+    the most-recently-touched ``specs/NNN``). Only a repo with NO ``specs/`` at
+    all falls back to the goal's scope spec (:meth:`GoalStore.read_spec`), which
+    itself degrades to the ``done_when`` text — the grounding SOURCE changed, the
+    fail-closed gate did not (``done_when`` is always evaluated by ``build_prompt``).
+
+    Best-effort and never raises: a git/fs hiccup degrades to the existing
+    fallback rather than failing the gate. Module-global so tests patch it here."""
+    fallback = store.read_spec(goal_id)
+    if not goal.workspace_dir:
+        return fallback
+    try:
+        rel = store.read_executing_feature(goal_id).strip()
+    except Exception:  # noqa: BLE001 — grounding is best-effort
+        rel = ""
+    if not rel:
+        # No dispatch-time record (the feature was authored in-session, so the dir
+        # did not exist to record pre-session). Ground on the feature the
+        # increment actually landed in.
+        try:
+            rel = _slice_guard.current_feature_dir_sync(goal.workspace_dir)
+        except Exception:  # noqa: BLE001 — derivation is best-effort
+            rel = ""
+    if not rel:
+        return fallback
+    try:
+        spec_path = Path(goal.workspace_dir) / rel / "spec.md"
+        if spec_path.is_file():
+            return spec_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 — a workspace hiccup falls back, never fails
+        return fallback
+    return fallback
+
+
 def _project_owns_its_deploy(workspace_dir: str) -> bool:
     """The target project owns its deploy when its repo contains a ``Dockerfile``
     at the workspace root. In that case devclaw MUST NOT spin its own throwaway
@@ -247,11 +290,14 @@ async def _resolve_done_gate(
     # so a git hiccup can't read as an eval error. No zero-token concern: this
     # path already runs cognition; the git subprocess adds no LLM call.
     repo_context = await _evaluator._repo_context(goal.workspace_dir)
+    # Ground the gate on the executing feature's speckit spec (FR-006 / D6),
+    # falling back to the goal's scope spec / done_when when none is recorded.
+    spec = _feature_spec_grounding(goal, store, goal_id)
     try:
         ev = await _evaluator.evaluate(
             goal, status, store.recent_log(goal_id), store.recent_deliveries(goal_id),
             claude_caller=evaluator_caller, review_report=review_report, at_done_gate=True,
-            spec=store.read_spec(goal_id), repo_context=repo_context,
+            spec=spec, repo_context=repo_context,
         )
     except _evaluator.GoalEvalError as exc:
         store.append_log(goal_id, f"done-gate eval error: {exc}")

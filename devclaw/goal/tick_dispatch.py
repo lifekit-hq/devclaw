@@ -31,6 +31,7 @@ from .tick_guards import _block_on_prep_failure
 from . import checklist as _checklist
 from . import decomposer as _decomposer
 from . import research as _research
+from . import slice_guard as _slice_guard
 from . import world_research as _world_research
 from . import delivery_strategy as _delivery
 from . import repo_brief as _repo_brief
@@ -42,6 +43,7 @@ from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
+from .. import speckit_setup as _speckit
 
 
 async def _branch_staleness(workspace_dir: str, goal_id: str) -> "dict | None":
@@ -257,6 +259,23 @@ async def _dispatch_action(
                 f" (threshold {BRANCH_STALE_THRESHOLD}); skipping dispatch",
             )
             return Outcome.SLEPT
+    # No half-installed execution (spec 008 US2): a durable goal must not
+    # dispatch FEATURE work into a repo whose speckit install PR is still open —
+    # the heartbeat counterpart of the MCP tool's _block_if_speckit_pending, at
+    # the shared dispatch chokepoint. Cheap + test-inert: feature_block_reason
+    # probes only when a LOCAL install branch exists (concrete evidence onboard
+    # scaffolded here), so an ordinary repo pays one `git branch` and this never
+    # fires in the stubbed suite. A soft HOLD (no state transition — mirrors the
+    # staleness skip above), re-checked next tick; it clears when the install PR
+    # merges and lands. Read-only reviews are exempt.
+    if action.tool != "review_repository":
+        try:
+            hold_reason = await _speckit.feature_block_reason(goal.workspace_dir)
+        except Exception:  # noqa: BLE001 — a probe hiccup must never wedge dispatch
+            hold_reason = None
+        if hold_reason:
+            store.append_log(goal_id, f"dispatch held: {hold_reason}")
+            return Outcome.SLEPT
     # Atomic dispatch (PR7): task/program row creation + the DISPATCH
     # transition + the log row, as ONE transaction. A crash or CAS conflict
     # anywhere inside rolls the whole unit back — the single-task-orphan
@@ -336,6 +355,20 @@ async def _dispatch_action(
     # row (pump=False left it merely 'pending'), then trace/notify — all
     # post-commit, per the mirror-discipline + dispatch/pump-split rules.
     store.render_mirrors(goal_id)
+    # Record which speckit feature this dispatch is advancing (spec 008 US1, D6)
+    # so the done-gate can ground on the right specs/NNN/spec.md. Best-effort,
+    # AFTER the settle transaction committed (a plain file doc, never inside the
+    # atomic unit); a detection hiccup must never wedge or re-settle a dispatch.
+    # Read-only reviews carry no feature to advance. Zero-token (pure fs read),
+    # work-present path — the idle guard is untouched.
+    if action.tool != "review_repository":
+        try:
+            feature_dir = await asyncio.to_thread(
+                _slice_guard.current_feature_dir_sync, goal.workspace_dir
+            )
+            store.write_executing_feature(goal_id, feature_dir)
+        except Exception:  # noqa: BLE001 — recording is a bonus, never a dispatch gate
+            pass
     _engine_kick(engine)
     _trace.record_dispatch(goal_id=goal_id, tool=action.tool, ref_id=ref.id, engine=getattr(engine, "kind", ""))
     # Notify uses the short label, not the full prompt body — the raw `action.goal`
