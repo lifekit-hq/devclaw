@@ -13,7 +13,7 @@
 #   DEVCLAW_ALLOW_VOLUME_CREATE=1 deploy-devclaw.sh   # cold first-deploy only
 #
 # Env:
-#   DEVCLAW_ENV_FILE   compose --env-file (default /srv/lifekit-stack/.env)
+#   DEVCLAW_ENV_FILE   compose --env-file (default /srv/devclaw/.env — devclaw-owned)
 #   DEVCLAW_REGISTRY   image registry prefix (default ghcr.io/lifekit-hq)
 #
 # Rollback: re-run with a prior SHA tag — images are tagged by commit SHA, so
@@ -22,7 +22,7 @@ set -euo pipefail
 
 TAG="${1:-latest}"
 REGISTRY="${DEVCLAW_REGISTRY:-ghcr.io/lifekit-hq}"
-ENV_FILE="${DEVCLAW_ENV_FILE:-/srv/lifekit-stack/.env}"
+ENV_FILE="${DEVCLAW_ENV_FILE:-/srv/devclaw/.env}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="${HERE}/docker-compose.devclaw.yml"
 PROJECT="devclaw"
