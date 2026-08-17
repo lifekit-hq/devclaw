@@ -52,8 +52,8 @@ devclaw-mcp 2> .shakedown/server.log &           # run in background, keep the l
 ```
 
 Pass criteria: log shows `devclaw v… ready (http://0.0.0.0:8000/mcp, …, recovered=0)`
-and `curl -s localhost:8000/health` returns `{"ok":true,…}`. Dashboard (human eyes):
-`http://localhost:8000/dashboard`.
+and `curl -s localhost:8000/health` returns `{"ok":true,…}`. Console (human eyes):
+`http://localhost:8000/console`.
 
 Driver — bundled next to this skill as `drive.py` (no `DEVCLAW_TOKEN` set → no auth).
 All steps below use `$DRIVE`:

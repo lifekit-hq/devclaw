@@ -571,7 +571,7 @@ async def list_programs(limit: Annotated[int, Field(ge=1, le=1000)] = 50) -> str
     plumbing one layer below the goal: goals dispatch programs, and the
     start_program alias files a one-shot GOAL whose child program lands here once
     dispatched — steer and cancel via the goal, not the program. Use to discover
-    program_ids for get_program, get_events, or /dashboard."""
+    program_ids for get_program or get_events."""
     programs = store.list_programs(limit=limit)
     return json.dumps([p.to_dict() for p in programs], indent=2)
 

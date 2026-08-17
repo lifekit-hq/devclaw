@@ -45,7 +45,7 @@ The image bakes a pinned `claude` CLI + `claude-agent-acp`; the host mounts your
 
 ---
 
-## 2. Start the server (HTTP, so the dashboard works)
+## 2. Start the server (HTTP, so the console works)
 
 ```bash
 export DEVCLAW_DB=$PWD/.shakedown/devclaw.db        # keep state out of the repo
@@ -60,7 +60,7 @@ In a second terminal:
 
 ```bash
 curl -s localhost:8000/health      # {"ok":true,"name":"devclaw","version":"…"}
-open http://localhost:8000/dashboard   # (or just browse it) — empty for now
+open http://localhost:8000/console     # (or just browse it) — empty for now
 ```
 
 ### A tiny MCP driver
@@ -98,7 +98,7 @@ python drive.py implement_feature \
 # → {"task_id":"…","status":"pending"}
 ```
 
-Watch it (poll, or use the dashboard):
+Watch it (poll, or use the console):
 
 ```bash
 python drive.py get_status '{"task_id":"<the id>"}'   # pending → running → done
@@ -177,7 +177,7 @@ python drive.py create_goal \
   '{"goal_id":"jyq","objective":"ship the cli","workspace_dir":"/tmp/sc-l4","spec":"<the finalized spec>"}'
 ```
 
-The build is now a durable goal — watch it on the dashboard / `get_goal` /
+The build is now a durable goal — watch it on the console / `get_goal` /
 `tail_goal`. It may run a while; that's the point.
 
 ---
@@ -212,7 +212,7 @@ safe no-op (`{"cancelled":false}`).
 
 ## 7. What to watch
 
-- **Dashboard** `http://localhost:8000/dashboard` → click a program for the live SSE event stream.
+- **Console** `http://localhost:8000/console` → open the goal for the live event tail + per-task drill-ins.
 - **`get_events`** — the raw OpenHands events per task/program (Action/Observation, etc.).
 - **`$DEVCLAW_GOALS_DIR/<goal-id>/`** — `goal.yaml` + the generated views (`STATUS.md`, `log.md`, `deliveries.md`); state itself lives in SQLite (`get_goal`/`tail_goal` are the truth).
 - **Server stderr** — `recovered=N`, notify attempts, `reaped` logs, sandbox spawn errors.
@@ -256,7 +256,7 @@ rm -rf .shakedown /tmp/sc-l1 /tmp/sc-l2 /tmp/sc-l4
 ```
 
 Replay an archived run in the console any time:
-`DEVCLAW_DB=<archive>/devclaw.db DEVCLAW_TRANSPORT=http devclaw-mcp` → dashboard, read-only.
+`DEVCLAW_DB=<archive>/devclaw.db DEVCLAW_TRANSPORT=http devclaw-mcp` → console, read-only.
 
 ---
 

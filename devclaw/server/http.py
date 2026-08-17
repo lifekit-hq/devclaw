@@ -1,7 +1,9 @@
-"""HTTP custom routes — dashboard, SSE event stream, Telegram answer hook.
+"""HTTP custom routes — console, SSE event stream, Telegram answer hook.
 
-Presentation lives in ``devclaw.dashboard`` (pure renderers); the routes here
-stay thin — fetch data, hand it to a renderer.
+The operator surface is the console SPA under ``/console`` (ADRs 0008–0010);
+the legacy server-rendered dashboard routes 302 onto their console
+equivalents (#549 — one operator surface). JSON/SSE routes here stay thin —
+fetch data, serialize, respond.
 """
 
 from __future__ import annotations
@@ -13,11 +15,11 @@ import mimetypes
 import os
 import time
 from pathlib import Path
+from urllib.parse import quote as _quote
 
 from starlette.requests import Request
 from starlette.responses import (
     FileResponse,
-    HTMLResponse,
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
@@ -26,19 +28,15 @@ from starlette.responses import (
 
 from .. import __version__
 from .. import telemetry as _telemetry
-from . import dashboard as _dash
 from ..project_registry import project_rollup
 from ._state import (
     SERVER_NAME,
-    TOKEN_QS,
     _goal_get,
     goals,
     mcp,
     registry,
     store,
 )
-
-_esc = _dash.esc
 
 
 def _safe_parse(s: str) -> object:
@@ -94,19 +92,34 @@ async def health(_request: Request) -> Response:
     )
 
 
+# ---- Legacy dashboard → console redirects (#549, one operator surface) ----
+# The server-rendered dashboard pages (programs · goals · projects, pure
+# renderers in `devclaw/server/dashboard.py`) are retired behind 302s onto
+# their console equivalents. Deep links map where a mapping exists, else fall
+# back to the console goals list; the incoming query string (the `?token=`
+# auth) rides along so gated deployments stay reachable after the hop.
+
+
+def _console_redirect(request: Request, to: str) -> Response:
+    qs = request.url.query
+    return RedirectResponse(url=f"{to}?{qs}" if qs else to, status_code=302)
+
+
 @mcp.custom_route("/dashboard", methods=["GET"])
-async def dashboard_index(_request: Request) -> Response:
-    programs = store.list_programs(limit=50)
-    return HTMLResponse(_dash.render_programs(programs, version=__version__, token_qs=TOKEN_QS))
+async def dashboard_index(request: Request) -> Response:
+    return _console_redirect(request, "/console/goals")
 
 
 @mcp.custom_route("/dashboard/{program_id}", methods=["GET"])
 async def dashboard_program(request: Request) -> Response:
-    program_id = request.path_params["program_id"]
-    program = store.get_program(program_id)
-    if not program:
-        return HTMLResponse(_dash.render_not_found("program", program_id), status_code=404)
-    return HTMLResponse(_dash.render_program(program, token_qs=TOKEN_QS))
+    """A program's operator view is the goal that dispatched it — GoalDetail
+    carries the live event tail and per-task drill-ins the old program page
+    showed. A parent-less legacy program falls back to the goals list; the
+    raw SSE feed at /programs/{id}/events is unchanged for scripts."""
+    program = store.get_program(request.path_params["program_id"])
+    parent = getattr(program, "parent_goal_id", None) if program else None
+    to = f"/console/goals/{_quote(parent)}" if parent else "/console/goals"
+    return _console_redirect(request, to)
 
 
 @mcp.custom_route("/programs/{program_id}/events", methods=["GET"])
@@ -164,18 +177,13 @@ async def program_events(request: Request) -> Response:
 
 
 @mcp.custom_route("/goals", methods=["GET"])
-async def dashboard_goals(_request: Request) -> Response:
-    """Live overview of every durable goal — the 'what's devclaw doing' pane."""
-    return HTMLResponse(_dash.render_goals(goals.list_goals(), version=__version__, token_qs=TOKEN_QS))
+async def dashboard_goals(request: Request) -> Response:
+    return _console_redirect(request, "/console/goals")
 
 
 @mcp.custom_route("/projects", methods=["GET"])
-async def dashboard_projects(_request: Request) -> Response:
-    """Portfolio view — every registered project + its derived health, the
-    control-plane overview that ties repos to the goals driving them."""
-    all_goals = goals.list_goals()
-    items = [project_rollup(p, all_goals) for p in registry.list()]
-    return HTMLResponse(_dash.render_projects(items, version=__version__, token_qs=TOKEN_QS))
+async def dashboard_projects(request: Request) -> Response:
+    return _console_redirect(request, "/console/projects")
 
 
 # ---- Console (Vite + React SPA, served as a static bundle) ----------------
@@ -1848,11 +1856,8 @@ async def projects_json(_request: Request) -> Response:
 
 @mcp.custom_route("/goals/{goal_id}", methods=["GET"])
 async def dashboard_goal(request: Request) -> Response:
-    """Live detail for one goal: what it's working on NOW, what shipped, the log,
-    and the live event tail. Reuses the same data as the tail_goal MCP tool."""
+    """Legacy HTML goal detail → the console's GoalDetail (same data, richer:
+    plan, PRs, transcripts, task drill-ins). The JSON feed stays at
+    /goals/{goal_id}.json."""
     goal_id = request.path_params["goal_id"]
-    try:
-        d = goals.tail_goal(goal_id, log_lines=40, deliveries_chars=8000, event_limit=40)
-    except KeyError:
-        return HTMLResponse(_dash.render_not_found("goal", goal_id), status_code=404)
-    return HTMLResponse(_dash.render_goal(d, goal_id, token_qs=TOKEN_QS))
+    return _console_redirect(request, f"/console/goals/{_quote(goal_id)}")

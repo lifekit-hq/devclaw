@@ -29,7 +29,7 @@ the technical sense — the rest is orchestration.
 
 | # | Layer | Lives in | Owns |
 |---|---|---|---|
-| 1 | **MCP surface** | `devclaw/server/` | tools, auth, dashboard, transport — pure protocol |
+| 1 | **MCP surface** | `devclaw/server/` | tools, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | the goal state machine + the ~15-min tick |
 | 3 | **Cognition callers** | `goal/{evaluator,decomposer,research,world_research,summary,triage}.py`, `goal/phases/firming.py`, `devclaw/planner.py`, `devclaw/elicitation.py` | one-shot `claude --print` prompt/parse calls |
 | 4 | **TaskQueue + engine** | `task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |

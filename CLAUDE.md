@@ -24,7 +24,7 @@ Only layer 5 is an agent harness in the technical sense.
 
 | # | Layer | Code | Put a change here if it's about… |
 |---|---|---|---|
-| 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, dashboard, transport — pure protocol |
+| 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`investigating → firming → executing`), the ~15-min tick |
 | 3 | **Cognition callers** | `devclaw/goal/evaluator.py`, `decomposer.py`, `phases/firming.py`; `devclaw/elicitation.py` | a one-shot `claude --print` prompt/parse (firming, decompose, direction eval — the per-tick planner was cut, demolition P3b) |
 | 4 | **TaskQueue + engine** | `devclaw/task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
