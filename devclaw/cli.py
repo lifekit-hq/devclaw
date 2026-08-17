@@ -1038,7 +1038,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_reg.add_argument("--merge-strategy", choices=["squash", "merge", "rebase"],
                         help="pin the gh merge strategy; omit to inherit the default")
     p_reg.add_argument("--autodeploy", choices=["on", "off"],
-                        help="pin deploy-on-completion; omit to inherit the default")
+                        help="pin deploy-on-completion; omit to inherit the "
+                             "conditional default (app surface \u21d2 on, library \u21d2 off)")
     p_reg.add_argument("--review-gate", choices=["on", "off"],
                         help="pin the pre-PR review gate; omit to inherit the default")
     p_reg.add_argument("--verify-done", choices=["on", "off"],

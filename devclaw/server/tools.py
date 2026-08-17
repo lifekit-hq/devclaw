@@ -1512,7 +1512,9 @@ async def register_project(
     configured per repo; a goal itself carries none of them:
       - ``automerge`` — auto-merge gate-passed PRs (DEVCLAW_GOAL_AUTOMERGE).
       - ``merge_strategy`` — squash|merge|rebase for the merge (DEVCLAW_GOAL_MERGE_STRATEGY).
-      - ``autodeploy`` — deploy on goal completion (devclaw default: on).
+      - ``autodeploy`` — deploy on goal completion (devclaw default: conditional —
+        on only when the workspace has an app surface the preview launcher can
+        serve; a pure library gets no preview container. 'on'/'off' pins it).
       - ``review_gate`` — run the pre-PR review gate (devclaw default: on).
       - ``verify_done`` — grounded done-gate re-check before closing (devclaw default: on)."""
     if not project_id or not name:

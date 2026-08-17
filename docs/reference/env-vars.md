@@ -115,6 +115,10 @@ Behavior that a **project** can own is not env anymore: `automerge`,
 stance resolve as *code default → project-registry override* (set via
 `register_project` / `update_project`). The env middle-layer was removed —
 three precedence layers with divergent defaults was a debugging trap.
+`autodeploy`'s code default is **conditional** (#554): on goal completion a
+preview deploy runs only if the workspace has an app surface the preview
+launcher can actually serve (`delivery.deploy.workspace_has_app_surface`) — a
+pure library gets no preview container unless its project pins `autodeploy=on`.
 
 | Var | Default | Purpose |
 |---|---|---|
