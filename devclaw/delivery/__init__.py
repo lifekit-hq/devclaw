@@ -54,13 +54,37 @@ def _truncate_words(s: str, limit: int) -> str:
     """Truncate to `limit` chars on a word boundary, adding an ellipsis if cut."""
     if len(s) <= limit:
         return s
-    return s[:limit].rsplit(" ", 1)[0].rstrip(" ,.;:") + "…"
+    head = s[:limit]
+    if " " in head:
+        head = head.rsplit(" ", 1)[0]  # drop the partial trailing word
+    return head.rstrip(" ,.;:-") + "…"
+
+
+# The intake-pointer preamble an intake-filed objective starts with
+# (``Implement intake issue #N of <owner>/<repo>: <what>``). The pointer is a
+# ticket reference, not a description — it belongs in the PR body's
+# ``Closes #N``, never in a title, where it eats the 72-char budget and pushes
+# the actual change description off the end.
+_INTAKE_POINTER_RE = re.compile(
+    r"\bimplement\s+(?:the\s+)?(?:intake\s+)?issue\s+#(\d+)\s+of\s+[\w.-]+/[\w.-]+\s*:\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_issue_pointer(summary: str) -> str:
+    """The summary with a leading intake-pointer preamble removed — the actual
+    change description. Unchanged when there's no pointer (or nothing after it)."""
+    m = _INTAKE_POINTER_RE.match(summary)
+    if not m:
+        return summary
+    rest = summary[m.end():].strip()
+    return rest or summary
 
 
 def _pr_title(goal: str, kind: str | None = None, limit: int = 72) -> str:
     """A clean, conventional-commit-style title (e.g. `feat: add a /health
     endpoint`) — not the raw goal truncated mid-word."""
-    summary = _clean_summary(goal)
+    summary = _strip_issue_pointer(_clean_summary(goal))
     prefix = _KIND_TYPE.get(kind or "", "")
     if prefix:
         return f"{prefix}: {_truncate_words(summary, limit - len(prefix) - 2)}"
@@ -93,9 +117,9 @@ def _looks_conventional(subject: str) -> bool:
 # Issue references the delivered change resolves. GitHub links AND auto-closes an
 # issue when a PR body says ``Closes #N``, so we surface any issue the goal or the
 # engineer's own commit named — the professional equivalent of a linked ticket.
-# Conservative on purpose: only explicit fix/close verbs and the self-fix
-# ``issue #N`` objective count, so a passing mention (``see #99 for context``)
-# never triggers a spurious auto-close.
+# Conservative on purpose: only explicit fix/close verbs, the self-fix
+# ``issue #N`` objective, and the intake-pointer objective count, so a passing
+# mention (``see #99 for context``) never triggers a spurious auto-close.
 _CLOSES_RE = re.compile(
     r"\b(?:clos(?:e|es|ed)|fix(?:es|ed)?|resolv(?:e|es|ed))\s+#(\d+)", re.IGNORECASE
 )
@@ -111,7 +135,7 @@ def _closes_issues(*texts: str | None) -> list[int]:
     for text in texts:
         if not text:
             continue
-        for pattern in (_CLOSES_RE, _ISSUE_RE):
+        for pattern in (_CLOSES_RE, _ISSUE_RE, _INTAKE_POINTER_RE):
             for m in pattern.finditer(text):
                 n = int(m.group(1))
                 if n not in seen:
@@ -331,7 +355,7 @@ def _goal_pr_body(
     if _is_advance_brief(lead):
         # The thin-advance brief is dispatch plumbing, not a description —
         # render the goal's embedded objective instead (the same rule
-        # _derive_title applies; the goal-branch path must not leak it either).
+        # _resolve_title applies; the goal-branch path must not leak it either).
         lead = _objective_from_brief(lead) or "advance the goal by one increment"
     parts = [lead or "(goal branch)", ""]
     if subjects:
@@ -648,18 +672,26 @@ async def deliver_change(
     # rather than calling `gh pr create` over it (which would fail).
     if "github.com" in remote:
         if goal_mode:
-            # A goal-branch PR spans the WHOLE goal, not this one increment: title
-            # it at the goal level and give it the running list of increments that
-            # have landed, refreshed on every delivery. Without this the PR stays
-            # frozen at the FIRST increment's title/body (e.g. "scaffold … (M1)")
-            # while later milestones pile onto the branch underneath it — the
-            # human reviewer reads a stale title over an eight-commit branch.
-            title_basis = goal
-            if _is_advance_brief(goal):
-                # Same rule as _derive_title: the advance brief never titles a PR.
-                title_basis = _objective_from_brief(goal) or "advance the goal by one increment"
-            title = _pr_title(title_basis, kind)
+            # A goal-branch PR spans the WHOLE goal, not this one increment. Title
+            # rule (same class as _resolve_title): while a SINGLE increment sits on
+            # the branch, the worker's own commit subject IS the description of the
+            # PR — prefer it over the objective heuristic. Once more increments
+            # land, re-title at the goal level (refreshed on every delivery), so
+            # the PR never stays frozen at the FIRST increment's subject (e.g.
+            # "scaffold … (M1)") while later milestones pile up underneath it —
+            # the stale-title bug over an eight-commit branch.
             subjects = await _recent_commit_subjects(workspace_dir, base)
+            if len(subjects) == 1:
+                s = subjects[0]
+                title = _truncate_words(
+                    s if _looks_conventional(s) else _pr_title(s, kind), 72
+                )
+            else:
+                title_basis = goal
+                if _is_advance_brief(goal):
+                    # Same rule as _resolve_title: the advance brief never titles a PR.
+                    title_basis = _objective_from_brief(goal) or "advance the goal by one increment"
+                title = _pr_title(title_basis, kind)
             body = _goal_pr_body(goal, task_id, verify, subjects, advisories=advisories)
             existing = await _find_pr_for_branch(workspace_dir, branch)
             if existing:

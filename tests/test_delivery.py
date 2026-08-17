@@ -141,6 +141,39 @@ def test_goal_branch_pr_body_never_renders_the_advance_brief():
     assert plain.startswith("add a widget")
 
 
+def test_goal_branch_pr_title_fallback_strips_issue_pointer_preamble_and_truncates_at_word_boundary():
+    # The S1 run-001 live find (#551): an intake-filed objective starts with the
+    # pointer preamble `Implement intake issue #N of <owner>/<repo>:` — a ticket
+    # reference, not a description. Left in, it ate the 72-char budget and the
+    # title truncated to `…-s1-001: a…`. The pointer must be stripped from any
+    # objective-derived title (the ref still lands in the body as `Closes #N`),
+    # and the remainder truncates at a word boundary, never mid-word.
+    goal = (
+        "Implement intake issue #2 of dsdevq/devclaw-shakedown-s1-001: "
+        "a minimal field notes REST API with create, list, and delete endpoints "
+        "plus persistence"
+    )
+    t = _pr_title(goal, kind="implement_feature")
+    assert t == "feat: a minimal field notes REST API with create, list, and delete…"
+    assert "intake issue" not in t and "dsdevq/" not in t and "#2" not in t
+    assert len(t) <= 72
+    # word-boundary policy: the fragment before the ellipsis is a whole word
+    assert t[len("feat: "):].rstrip("…").split(" ")[-1] in goal.split()
+    # a short pointer objective renders whole, pointer gone
+    assert (
+        _pr_title(
+            "Implement intake issue #2 of dsdevq/devclaw-shakedown-s1-001: a minimal notes API",
+            kind="implement_feature",
+        )
+        == "feat: a minimal notes API"
+    )
+    # the stripped ref still reaches the PR body as Closes #N
+    assert _closes_issues(goal) == [2]
+    assert "Closes #2" in _goal_pr_body(goal, "deadbeef12", None, [])
+    # a pointer with nothing after it degrades to the unstripped summary, not ""
+    assert _pr_title("Implement intake issue #3 of o/r: ").strip()
+
+
 def test_scope_label_from_cc_scope_then_type():
     assert _scope_label("feat(tags): add tag filtering") == "tags"
     assert _scope_label("fix: harden the reject path") == "fix"
@@ -1159,3 +1192,38 @@ async def test_deliver_goal_branch_refreshes_the_existing_pr_to_accumulated_stat
     assert "Ledger" in ti and "M1" not in ti
     body = edit[edit.index("--body") + 1]
     assert "Increments landed" in body and "(M1)" in body and "(M2)" in body
+
+
+async def test_goal_branch_pr_title_prefers_worker_commit_subject(tmp_path, monkeypatch):
+    """The S1 run-001 live find (#551): a one-slice goal-branch PR was titled
+    from the objective (`feat: Implement intake issue #2 of dsdevq/…: a…`) even
+    though the worker wrote a perfectly good commit subject — the goal-branch
+    path never consulted commit subjects. Same class as _resolve_title: while a
+    single increment sits on the branch, the worker's own subject IS the PR
+    description and must title it. (Once more increments land, the goal-level
+    re-title takes over — test_deliver_goal_branch_refreshes… guards that.)"""
+    origin, repo = _clone_with_origin(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "goal/s1-001")
+    (tmp_path / "repo" / "notes.py").write_text("api\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "feat(api): add a minimal field notes endpoint")
+
+    calls = []
+    _github_faking_run(monkeypatch, calls)
+
+    goal = (
+        "Implement intake issue #2 of dsdevq/devclaw-shakedown-s1-001: "
+        "a minimal field notes REST API with create, list, and delete endpoints"
+    )
+    r = await deliver_change(
+        workspace_dir=repo, task_id="s1deadbeef", goal=goal, kind="implement_feature",
+    )
+
+    assert r["delivered"] is True and r["pr_url"]
+    create = next(c for c in calls if c[:3] == ("gh", "pr", "create"))
+    title = create[create.index("--title") + 1]
+    assert title == "feat(api): add a minimal field notes endpoint"
+    assert "Implement intake issue" not in title
+    # the issue ref lands where it belongs — the body's Closes line
+    body = create[create.index("--body") + 1]
+    assert "Closes #2" in body
