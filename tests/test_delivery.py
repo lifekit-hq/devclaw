@@ -15,6 +15,7 @@ from devclaw import delivery
 from devclaw.delivery import (
     _closes_issues,
     _extract_pr_url,
+    _goal_pr_body,
     _is_advance_brief,
     _pr_body,
     _pr_title,
@@ -120,6 +121,24 @@ def test_resolve_title_rejects_advance_brief_falls_back_to_objective():
     assert "advance-this-goal" not in branch
     assert changes is None
     assert _is_advance_brief(_ADVANCE_BRIEF) and not _is_advance_brief("add a widget")
+
+
+def test_goal_branch_pr_body_never_renders_the_advance_brief():
+    # The #538 shakedown live find: the GOAL-BRANCH path fed the raw advance
+    # brief into the PR body (and title), so a delivered PR read as its own
+    # dispatch instructions ("Advance this goal by one substantive…"). Same
+    # rule as _resolve_title: the brief is plumbing — render the embedded
+    # objective instead. Presence AND absence.
+    body = _goal_pr_body(
+        _ADVANCE_BRIEF, "deadbeef12", None,
+        ["feat: add truncate_words utility"],
+    )
+    assert "Advance this goal by one substantive" not in body
+    assert body.startswith("Build a small field notes REST API")
+    assert "feat: add truncate_words utility" in body  # increments list kept
+    # A non-brief goal (one-shot on a goal branch) still renders verbatim.
+    plain = _goal_pr_body("add a widget", "deadbeef12", None, [])
+    assert plain.startswith("add a widget")
 
 
 def test_scope_label_from_cc_scope_then_type():

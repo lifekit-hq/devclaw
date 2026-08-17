@@ -327,7 +327,13 @@ def _goal_pr_body(
     note for the latest increment, ``Closes #N``, any trust-mode advisories, and
     a plain signature. Refreshed on every delivery so the reviewer always sees
     the accumulated state instead of the first increment frozen in time."""
-    parts = [goal.strip() or "(goal branch)", ""]
+    lead = goal.strip()
+    if _is_advance_brief(lead):
+        # The thin-advance brief is dispatch plumbing, not a description —
+        # render the goal's embedded objective instead (the same rule
+        # _derive_title applies; the goal-branch path must not leak it either).
+        lead = _objective_from_brief(lead) or "advance the goal by one increment"
+    parts = [lead or "(goal branch)", ""]
     if subjects:
         parts += [f"## Increments landed on this goal branch ({len(subjects)})"]
         parts += [f"- {s}" for s in subjects]
@@ -648,7 +654,11 @@ async def deliver_change(
             # frozen at the FIRST increment's title/body (e.g. "scaffold … (M1)")
             # while later milestones pile onto the branch underneath it — the
             # human reviewer reads a stale title over an eight-commit branch.
-            title = _pr_title(goal, kind)
+            title_basis = goal
+            if _is_advance_brief(goal):
+                # Same rule as _derive_title: the advance brief never titles a PR.
+                title_basis = _objective_from_brief(goal) or "advance the goal by one increment"
+            title = _pr_title(title_basis, kind)
             subjects = await _recent_commit_subjects(workspace_dir, base)
             body = _goal_pr_body(goal, task_id, verify, subjects, advisories=advisories)
             existing = await _find_pr_for_branch(workspace_dir, branch)
