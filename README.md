@@ -29,7 +29,7 @@ OpenClaw waiter agent          ← translates chat ↔ MCP, doesn't decide
   ▼
 DevClaw (the chef — this repo, FastMCP)
   ├── goal/    durable goals → heartbeat tick → plan + dispatch + evaluate
-  ├── server/  FastMCP stdio + streamable-HTTP, dashboard + SSE, auth
+  ├── server/  FastMCP stdio + streamable-HTTP, the /console SPA + SSE, auth
   ├── loom/    reusable orchestration core (failure classification, test integrity)
   ├── planner.py · review_gate.py · delivery.py · deploy.py · …
   └── sandcastle_runner — `docker run --rm` per task; RO ~/.claude mount; destroyed on exit
@@ -98,7 +98,7 @@ devclaw/
 │   ├── __init__.py     #   re-exports + load-order
 │   ├── _state.py       #   FastMCP instance + long-lived services + env
 │   ├── tools.py        #   every @mcp.tool decorator (the chef's menu)
-│   ├── http.py         #   every @mcp.custom_route (dashboard, SSE, /goals/answer, /traces.json)
+│   ├── http.py         #   every @mcp.custom_route (console, SSE, /goals/answer, /traces.json)
 │   └── lifecycle.py    #   main() + serve loops + bearer-token auth middleware
 ├── goal/               # the durable goal layer (folded-in goalclaw):
 │   ├── service.py      #   GoalService — the facade the server wires up
@@ -236,7 +236,7 @@ devclaw projects register todo "Todo App" --repo-url git@github.com:me/todo.git
 devclaw projects link todo-fullstack-demo todo-quality-audit
 ```
 
-…and a portfolio view at **`/projects`** on the HTTP dashboard.
+…and a portfolio view at **`/console/projects`** on the web console.
 
 The traces telemetry table (every cognition call, dispatch, delivery,
 notification, trend check the heartbeat emits) is readable the same ways — no
@@ -320,8 +320,8 @@ npm install -g @agentclientprotocol/claude-agent-acp
 DEVCLAW_TRANSPORT=stdio devclaw-mcp        # local dev (MCP over stdio)
 # or HTTP for a long-running service:
 DEVCLAW_TRANSPORT=http DEVCLAW_PORT=8000 devclaw-mcp
-#   → MCP at /mcp, the operator console at /console (/ redirects there),
-#     server-rendered dashboards at /dashboard (programs) · /goals · /projects, SSE at /programs/:id/events
+#   → MCP at /mcp, the operator console at /console (/ redirects there; the
+#     legacy /dashboard · /goals · /projects pages 302 to it), SSE at /programs/:id/events
 ```
 
 (`devclaw-mcp` is the console script for the server; `devclaw` is the control-plane CLI; `python -m devclaw.server` / `python -m devclaw.cli` work too.)

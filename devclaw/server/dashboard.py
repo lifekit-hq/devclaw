@@ -1,9 +1,12 @@
-"""Dashboard presentation — pure HTML renderers, no server wiring.
+"""Legacy dashboard presentation — pure HTML renderers, no server wiring.
 
-Split out of ``server.py`` so the HTTP routes there stay thin (fetch data → call
-a renderer) and the markup is unit-testable on its own (feed a renderer fake data,
-assert the page). Every function here is pure: it takes plain data plus the auth
-query-string + version and returns an HTML string. No FastMCP, no stores, no I/O.
+RETIRED as an operator surface (#549, one operator surface): the routes that
+served these pages now 302 to their `/console` equivalents, so nothing calls
+these renderers anymore. Kept (with their unit tests) for one deprecation
+window; deletion is a follow-up amputation candidate (the #539 arc).
+
+Every function here is pure: it takes plain data plus the auth query-string +
+version and returns an HTML string. No FastMCP, no stores, no I/O.
 """
 
 from __future__ import annotations
