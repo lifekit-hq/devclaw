@@ -124,9 +124,26 @@ def test_implement_feature_asks_for_a_clean_self_authored_commit(runner):
 
 
 def test_wrapper_makes_agents_md_the_accumulated_harness(runner):
-    # AGENTS.md is read FIRST and kept current as the reusable knowledge harness —
+    # AGENTS.md is read FIRST and kept honest as the reusable knowledge harness —
     # so future tasks don't re-derive the same context (token efficiency).
     wrapped = runner._wrap_goal("implement_feature", "x")
     assert "AGENTS.md" in wrapped
-    assert "keep it current" in wrapped.lower()
+    assert "keep it honest" in wrapped.lower()
     assert "re-derive" in wrapped.lower()
+
+
+def test_fallback_preamble_never_authors_agents_md_in_feature_slices(runner):
+    """#552: the doctrine is capped to keep-honest — update AGENTS.md only when
+    the shipped change makes it wrong; NEVER author it from scratch (that is
+    onboarding work). Absence is proven against the raw template first."""
+    assert "missing, create it" not in runner._CONTEXT_PREAMBLE  # old rule gone
+    assert "NEVER create AGENTS.md" in runner._CONTEXT_PREAMBLE
+    for kind in ("implement_feature", "fix_bug"):
+        wrapped = runner._wrap_goal(kind, "X")
+        assert "NEVER create AGENTS.md" in wrapped
+        assert "only when the change you shipped makes it wrong" in wrapped
+        assert "missing, create it" not in wrapped
+    # onboarding remains the authoring path — the cap never reaches its wrapper
+    onboard_raw = runner._KIND_WRAPPERS["onboard"]
+    assert "AGENTS.md" in onboard_raw
+    assert "NEVER create AGENTS.md" not in onboard_raw

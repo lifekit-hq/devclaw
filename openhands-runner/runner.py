@@ -178,11 +178,10 @@ _CONTEXT_PREAMBLE = (
     "summary anything pre-existing you had to work around or that needs follow-up. "
     "AGENTS.md in the repo root is the project's ACCUMULATED AGENT HARNESS — read it "
     "FIRST so you don't re-derive what's already known (stack, how to run/test, "
-    "layout, conventions, key decisions, gotchas, reusable patterns). As part of "
-    "this change, KEEP IT CURRENT: if it's missing, create it; if you learned or "
-    "decided something a future task would otherwise have to re-reason, record it "
-    "there concisely. It is the memory that saves the next task from re-thinking "
-    "the same topics — treat maintaining it as part of the work, not optional."
+    "layout, conventions, key decisions, gotchas, reusable patterns). KEEP IT "
+    "HONEST: update it only when the change you shipped makes it wrong. NEVER "
+    "create AGENTS.md if the repo doesn't have one — authoring it from scratch is "
+    "onboarding work, not part of this task."
 )
 # The engineer writes its OWN commit, the way a developer does — so the delivered
 # PR's title/branch/body describe WHAT CHANGED, not the ticket instruction. devclaw

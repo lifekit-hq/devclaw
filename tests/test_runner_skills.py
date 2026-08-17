@@ -139,6 +139,37 @@ def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
     assert "AGENTS.md" in brief
 
 
+def test_feature_slice_doctrine_caps_agents_md_to_keep_honest_never_create(runner, skill_dir):
+    """#552: feature PRs shipped a freshly-authored AGENTS.md alongside the
+    feature. The doctrine is capped: update AGENTS.md only when the shipped
+    change makes it wrong; NEVER create it from scratch — authoring belongs to
+    onboarding. Absence is proven against the raw templates first (per
+    rules/testing.md)."""
+    # the old author-from-scratch instruction is gone from every raw source file
+    doctrine_files = [skill_dir / "_common.md",
+                      *sorted((skill_dir / "_writes-code").glob("*.md"))]
+    for path in doctrine_files:
+        assert "missing, create it" not in path.read_text(encoding="utf-8"), path.name
+    # the cap ships in the writes-code tier (marker proven real in the raw file)
+    cap_file = skill_dir / "_writes-code" / "07-agents-md-honesty.md"
+    assert "NEVER create AGENTS.md" in cap_file.read_text(encoding="utf-8")
+    for kind in ("implement_feature", "fix_bug"):
+        bundle = runner._load_skills(kind)
+        assert "NEVER create AGENTS.md" in bundle
+        assert "only when the change you shipped makes it wrong" in bundle
+        assert "missing, create it" not in bundle
+
+
+def test_onboard_brief_keeps_agents_md_authoring_uncapped(runner, skill_dir):
+    """The never-create cap is feature/fix doctrine only — onboarding IS the
+    authoring path and must not receive a contradicting rule (the cap lives in
+    the _writes-code tier, which onboard never loads)."""
+    bundle = runner._load_skills("onboard")
+    assert "AGENTS.md" in bundle  # onboarding still produces it
+    assert "NEVER create AGENTS.md" not in bundle
+    assert "NEVER create AGENTS.md" not in runner._load_skills("review_repository")
+
+
 def test_fix_bug_keeps_its_smallest_change_skill(runner, skill_dir):
     bundle = runner._load_skills("fix_bug")
     assert "smallest change" in bundle.lower()
