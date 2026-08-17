@@ -477,6 +477,18 @@ def test_resolve_override_project_value_wins_over_default(reg):
     assert reg.resolve_override("p", "verify_done", True) is True
 
 
+def test_explicit_autodeploy_pin_resolves_over_conditional_none_default(reg):
+    """#554: the fleet autodeploy default is now ``None`` (= conditional,
+    resolved by app-surface detection at the done-gate). An explicit project
+    pin must resolve THROUGH that None default unchanged — and a project with
+    no pin (registered before or after the change) resolves to None, i.e. to
+    the conditional path, never to a hard on/off."""
+    reg.create(id="pinned", name="P", workspace_dir="/src/p", autodeploy=True)
+    reg.create(id="unpinned", name="U", workspace_dir="/src/u")
+    assert reg.resolve_override("pinned", "autodeploy", None) is True
+    assert reg.resolve_override("unpinned", "autodeploy", None) is None
+
+
 def test_resolve_override_unregistered_workspace_returns_default(reg):
     assert reg.resolve_override("/src/nope", "review_gate", True) is True
     assert reg.resolve_override(None, "review_gate", False) is False

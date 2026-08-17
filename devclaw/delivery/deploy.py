@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
+from pathlib import Path
 
 from ..engine.sandcastle import _translate_workspace_path  # reuse host-path mapping
 
@@ -118,6 +120,50 @@ DEPLOY_MAX = int(os.environ.get("DEVCLAW_DEPLOY_MAX", "5"))
 
 class DeployError(Exception):
     pass
+
+
+#: the ASGI-app candidates the launcher probes (``app.main main app application
+#: src.main app.app`` as files) — kept in lockstep with ``_LAUNCHER``.
+_ASGI_CANDIDATES = (
+    "app/main.py", "main.py", "app.py", "application.py", "src/main.py", "app/app.py",
+)
+_ASGI_APP_RE = re.compile(r"FastAPI\(|Starlette\(")
+
+
+def workspace_has_app_surface(workspace_dir: str) -> bool:
+    """Does this workspace contain something the preview launcher can actually
+    SERVE as an app? Mirrors ``_LAUNCHER``'s meaningful branches — a FastAPI
+    backend (``backend/requirements.txt``), a root-level ASGI app
+    (``requirements.txt`` + a ``FastAPI(``/``Starlette(`` module at one of the
+    launcher's candidate paths), or a static UI (``frontend/`` dir or a root
+    ``index.html``). A repo matching NONE of these would only ever get the
+    launcher's ``python3 -m http.server`` file-listing fallback — a preview
+    container with nothing to preview.
+
+    This is the deploy-domain instance of the app-surface-vs-library trigger
+    semantics the browser-E2E gate applies to diffs: mechanism (docker, ports)
+    only engages when there is an app surface for it to serve. Pure filesystem
+    stats + one small file read per candidate — zero LLM, zero subprocess.
+    Best-effort and never raises: an unreadable/missing workspace reads as "no
+    app surface" (no deploy — the safe default for the caller)."""
+    try:
+        ws = Path(workspace_dir)
+        if (ws / "backend" / "requirements.txt").is_file():
+            return True
+        if (ws / "frontend").is_dir():
+            return True
+        if (ws / "index.html").is_file():
+            return True
+        if (ws / "requirements.txt").is_file():
+            for cand in _ASGI_CANDIDATES:
+                f = ws / cand
+                if f.is_file() and _ASGI_APP_RE.search(
+                    f.read_text(encoding="utf-8", errors="replace")
+                ):
+                    return True
+        return False
+    except Exception:  # noqa: BLE001 — detection is advisory, never a crash source
+        return False
 
 
 def deploy_name(slug: str) -> str:

@@ -10,7 +10,7 @@ const BOOL_FIELDS: { key: OvrKey; label: string; hint: string; danger?: boolean 
   { key: "automerge", label: "Auto-merge", hint: "Merge a PR automatically once its gates pass." },
   { key: "review_gate", label: "Pre-PR review gate", hint: "Adversarial diff review before a PR ships.", danger: true },
   { key: "verify_done", label: "Verify at done-gate", hint: "Re-run the verify command when evaluating completion." },
-  { key: "autodeploy", label: "Auto-deploy", hint: "Deploy the app on a successful delivery." },
+  { key: "autodeploy", label: "Auto-deploy", hint: "Deploy the app when the goal completes. Inherit = only if the repo has an app surface (libraries: off)." },
 ];
 
 const STR_FIELDS: { key: OvrKey; label: string; hint: string; options: string[] }[] = [

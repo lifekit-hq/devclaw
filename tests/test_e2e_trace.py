@@ -55,7 +55,7 @@ async def test_e2e_trace_captures_full_lifecycle(tmp_path, monkeypatch):
     the *shape* of what happened, not specific timing — refactors that preserve
     behavior preserve the trace; refactors that change it (extra calls, missing
     dispatch, wrong role label) fail this test loudly."""
-    # The done-gate close runs best-effort auto-deploy (enabled=True default);
+    # The done-gate close runs best-effort auto-deploy (conditional default);
     # deploys are out of this test's scope, and unstubbed this launched a REAL
     # devclaw-deploy-g container on docker-enabled hosts (the 2026-07-14 leak).
     from devclaw.delivery import deploy as deploy_mod

@@ -34,7 +34,8 @@ ACT_FEATURE = json.dumps(
 @pytest.fixture(autouse=True)
 def _no_real_deploys(monkeypatch):
     """Deploys are out of scope for tick tests, but every done-gate close runs
-    the best-effort ``_auto_deploy`` with ``enabled=True`` by default — and it
+    the best-effort ``_auto_deploy`` (conditional by default since #554 —
+    an app-surface workspace still deploys) — and it
     swallows ``Exception``, so on a docker-enabled host the achieved-verdict
     tests here silently launched a REAL ``devclaw-deploy-g`` container that
     outlived pytest (the 2026-07-14 leak; conftest's ``_block_real_docker``

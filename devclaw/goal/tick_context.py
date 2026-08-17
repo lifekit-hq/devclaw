@@ -55,9 +55,14 @@ NO_PROGRESS_S = int(os.environ.get("DEVCLAW_GOAL_NO_PROGRESS_S", "21600"))
 VERIFY_DONE = True
 
 
-#: when True, a goal reaching `achieved` auto-deploys the built app to a durable
-#: Tailscale URL. The devclaw-wide default; a project may override it.
-AUTODEPLOY_ENABLED = True
+#: whether a goal reaching `achieved` auto-deploys the built app to a durable
+#: Tailscale URL. The devclaw-wide default is CONDITIONAL (``None``): deploy
+#: only if the workspace has an app surface the preview launcher can serve
+#: (``delivery.deploy.workspace_has_app_surface``, checked at deploy-decision
+#: time) — a pure library must not get a preview container (#554). A project
+#: pins ``True``/``False`` via its registry ``autodeploy`` override; an
+#: explicit value always wins over detection.
+AUTODEPLOY_ENABLED: "bool | None" = None
 
 
 #: when True, the investigating phase dispatches the decomposer after the
@@ -249,7 +254,9 @@ class TickContext:
     prepare_ws: WorkspacePrep = prepare_workspace
     eval_every: int = EVAL_EVERY
     verify_done: bool = VERIFY_DONE
-    autodeploy: bool = AUTODEPLOY_ENABLED
+    #: three-way: True/False = pinned (project override); None = conditional —
+    #: deploy iff the workspace has an app surface (resolved at the done-gate).
+    autodeploy: "bool | None" = AUTODEPLOY_ENABLED
     no_progress_s: int = NO_PROGRESS_S
     decompose_enabled: bool = DECOMPOSE_ENABLED
     summary_caller: "ClaudeCaller | None" = None

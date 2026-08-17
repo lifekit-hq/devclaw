@@ -68,7 +68,9 @@ class GoalConfig:
     tick_seconds: int
     eval_every: int
     verify_done: bool
-    autodeploy: bool = AUTODEPLOY_ENABLED
+    #: three-way: True/False pins the fleet; None (the default) = conditional —
+    #: deploy on completion only if the workspace has an app surface (#554).
+    autodeploy: "Optional[bool]" = AUTODEPLOY_ENABLED
 
     @staticmethod
     def from_env() -> "GoalConfig":
@@ -228,10 +230,15 @@ class GoalService:
         :meth:`_merger_resolver`)."""
         return self._verify_done
 
-    def _autodeploy(self, goal: "Optional[Goal]" = None) -> bool:
+    def _autodeploy(self, goal: "Optional[Goal]" = None) -> "Optional[bool]":
         """The on-complete auto-deploy policy for THIS goal's repo: its owning
-        project's ``autodeploy`` override if set, else the devclaw-wide
-        ``DEVCLAW_GOAL_AUTODEPLOY`` default (carried on the config)."""
+        project's explicit ``autodeploy`` override if set, else the devclaw-wide
+        default (carried on the config). Three-way on purpose: an explicit
+        ``True``/``False`` (project pin) is honored as-is; ``None`` — nothing
+        pinned anywhere — means CONDITIONAL, and the done-gate deploys only if
+        the workspace has an app surface the preview launcher can serve (#554,
+        see tick_donegate._auto_deploy). A pure library never gets a preview
+        container unless its project pins ``autodeploy=on``."""
         default = self._cfg.autodeploy
         if self._project_registry is None or goal is None:
             return default
@@ -239,7 +246,7 @@ class GoalService:
             goal.project_id, "autodeploy", default
         )
 
-    def _autodeploy_resolver(self) -> "Callable[[Goal], bool]":
+    def _autodeploy_resolver(self) -> "Callable[[Goal], Optional[bool]]":
         """Per-goal ``autodeploy`` for tick_all's sweep (same reason as
         :meth:`_merger_resolver`)."""
         return self._autodeploy

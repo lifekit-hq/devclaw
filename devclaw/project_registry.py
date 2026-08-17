@@ -137,7 +137,7 @@ class Project:
     #: pins this repo. Same altitude as ``automerge`` — a decision about a
     #: REPO, not a goal's objective. Resolved via :meth:`resolve_override`.
     merge_strategy: Optional[str] = None  # DEVCLAW_GOAL_MERGE_STRATEGY: squash|merge|rebase
-    autodeploy: Optional[bool] = None     # DEVCLAW_GOAL_AUTODEPLOY
+    autodeploy: Optional[bool] = None     # None = conditional default (app surface ⇒ on, library ⇒ off)
     review_gate: Optional[bool] = None    # devclaw default: task_queue.REVIEW_GATE_ENABLED
     verify_done: Optional[bool] = None    # DEVCLAW_GOAL_VERIFY_DONE
     browser_gate_mode: Optional[str] = None  # fleet default: task_queue.BROWSER_GATE_MODE (flexible|strict)

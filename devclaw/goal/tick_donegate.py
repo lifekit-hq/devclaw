@@ -220,26 +220,39 @@ def _project_owns_its_deploy(workspace_dir: str) -> bool:
         return False
 
 
-async def _auto_deploy(goal_id: str, goal: Goal, store: GoalStore, *, enabled: bool) -> str:
+async def _auto_deploy(
+    goal_id: str, goal: Goal, store: GoalStore, *, enabled: "bool | None"
+) -> str:
     """Deploy the built app to a durable Tailscale URL on goal completion and return
     a short suffix to append to the completion notice (the live URL, or empty). Fully
     best-effort: any failure is logged and swallowed — a verified-complete goal must
     never be reopened because hosting wobbled.
 
-    ``enabled`` is resolved upstream (a project's ``autodeploy`` override, else
-    the devclaw-wide ``DEVCLAW_GOAL_AUTODEPLOY`` default — see
-    GoalService._autodeploy); this function no longer reads the env directly.
+    ``enabled`` is resolved upstream (a project's explicit ``autodeploy``
+    override, else the devclaw-wide default — see GoalService._autodeploy).
+    Three-way: ``True``/``False`` are pinned decisions honored as-is; ``None``
+    (nothing pinned anywhere — the fleet default) is CONDITIONAL — deploy only
+    if the workspace has an app surface the preview launcher can actually serve
+    (:func:`devclaw.delivery.deploy.workspace_has_app_surface`). A pure library
+    gets no preview container (#554); an explicit ``True`` still forces one.
 
     Skipped when the target project owns its own deploy (see
     :func:`_project_owns_its_deploy`) — devclaw does not run a per-goal container
     for a project that already has a Dockerfile + CI deploy job of its own.
     """
-    if not enabled:
+    if enabled is False:
         return ""
     if _project_owns_its_deploy(goal.workspace_dir):
         store.append_log(
             goal_id,
             "auto-deploy skipped: project owns its deploy (Dockerfile present in workspace)",
+        )
+        return ""
+    if enabled is None and not _deploy.workspace_has_app_surface(goal.workspace_dir):
+        store.append_log(
+            goal_id,
+            "auto-deploy skipped: no app surface detected (library repo) — "
+            "set the project's autodeploy=on to force a preview deploy",
         )
         return ""
     try:
@@ -260,7 +273,7 @@ async def _resolve_done_gate(
     *, store: GoalStore, evaluator_caller: ClaudeCaller, notifier: Notifier,
     summarize: "ClaudeCaller | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    autodeploy: bool = AUTODEPLOY_ENABLED,
+    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
 ) -> Outcome:
     """A done-gate review just finished — judge the repo against done_when. Only
@@ -490,7 +503,7 @@ async def _open_done_gate(
     notifier: Notifier, notify_url: str, prepare_ws: WorkspacePrep, verify_done: bool,
     note: str, summarize: "ClaudeCaller | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    autodeploy: bool = AUTODEPLOY_ENABLED,
+    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
 ) -> Outcome:
     """The planner proposed done. Don't trust it: either dispatch a read-only
