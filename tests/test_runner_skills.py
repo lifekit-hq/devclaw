@@ -150,12 +150,18 @@ def test_feature_slice_doctrine_caps_agents_md_to_keep_honest_never_create(runne
                       *sorted((skill_dir / "_writes-code").glob("*.md"))]
     for path in doctrine_files:
         assert "missing, create it" not in path.read_text(encoding="utf-8"), path.name
-    # the cap ships in the writes-code tier (marker proven real in the raw file)
-    cap_file = skill_dir / "_writes-code" / "07-agents-md-honesty.md"
-    assert "NEVER create AGENTS.md" in cap_file.read_text(encoding="utf-8")
+    # the cap ships in the writes-code tier (markers proven real in the raw file)
+    cap_text = (skill_dir / "_writes-code" / "07-agents-md-honesty.md").read_text(
+        encoding="utf-8"
+    )
+    assert "NEVER create AGENTS.md" in cap_text
+    assert "NEVER append" in cap_text
+    assert "THIN, BOUNDED pointer" in cap_text
     for kind in ("implement_feature", "fix_bug"):
         bundle = runner._load_skills(kind)
         assert "NEVER create AGENTS.md" in bundle
+        assert "NEVER append" in bundle           # no learnings/feature notes/history
+        assert "THIN, BOUNDED pointer" in bundle  # the file never grows
         assert "only when the change you shipped makes it wrong" in bundle
         assert "missing, create it" not in bundle
 
@@ -168,6 +174,23 @@ def test_onboard_brief_keeps_agents_md_authoring_uncapped(runner, skill_dir):
     assert "AGENTS.md" in bundle  # onboarding still produces it
     assert "NEVER create AGENTS.md" not in bundle
     assert "NEVER create AGENTS.md" not in runner._load_skills("review_repository")
+
+
+def test_onboard_skill_is_three_docs_with_managed_markers(runner, skill_dir):
+    """#552 adopt-over-build: the onboard skill authors exactly three docs —
+    thin marker-delimited AGENTS.md + README.md + ARCHITECTURE.md. DECISIONS.md
+    is retired (the speckit spec is the decision memory) — absence proven
+    against the raw template first. The marker pair is upstream spec-kit's
+    replace-within-markers upsert convention."""
+    raw = (skill_dir / "onboard" / "00-onboard.md").read_text(encoding="utf-8")
+    assert "DECISIONS.md" not in raw
+    assert "<!-- devclaw:managed:start -->" in raw
+    assert "<!-- devclaw:managed:end -->" in raw
+    assert "THIN, BOUNDED pointer" in raw
+    bundle = runner._load_skills("onboard")
+    assert "DECISIONS.md" not in bundle
+    assert "devclaw:managed:start" in bundle
+    assert "preserves everything outside" in bundle
 
 
 def test_fix_bug_keeps_its_smallest_change_skill(runner, skill_dir):

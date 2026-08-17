@@ -441,19 +441,6 @@ class D6ArchitectureStaleness(_DocFileStaleness):
     doc_path = "ARCHITECTURE.md"
 
 
-class D7DecisionsStaleness(_DocFileStaleness):
-    """``DECISIONS.md`` untouched while the project has had material churn.
-
-    Onboarding produces DECISIONS.md as the ADR-style rationale log. Not
-    firing this signal for a stable, well-thought-through project is
-    correct behavior — a project MAY have all its decisions captured. Firing
-    it after 30 commits means changes are landing without their reasoning
-    getting written down. Same doc-drift shape as D4/D5/D6."""
-
-    id = "D7"
-    doc_path = "DECISIONS.md"
-
-
 class H4SteeringFrequency(Signal):
     """Active goals receiving ≥3 ``denys``-sourced steerings grew vs the prior
     period.
@@ -840,6 +827,5 @@ def all_signals() -> list[Signal]:
         D4AgentsMdStaleness(),
         D5ReadmeStaleness(),
         D6ArchitectureStaleness(),
-        D7DecisionsStaleness(),
         H4SteeringFrequency(),
     ]

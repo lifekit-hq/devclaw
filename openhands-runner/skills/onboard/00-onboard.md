@@ -1,24 +1,31 @@
-# Onboarding mode (produce AGENTS.md + README + ARCHITECTURE.md + DECISIONS.md + .devcontainer/Dockerfile)
+# Onboarding mode (produce AGENTS.md + README.md + ARCHITECTURE.md + .devcontainer/Dockerfile)
 
-You are ONBOARDING this repository: produce the standardized artifacts so a future engineer (and an automated agent) can start work already informed AND in a real environment. Devclaw's C6 exit criterion (`~/memory/projects/devclaw/plan.md` §Production-ready) is that a new project ships with all four docs at init, not just AGENTS.md — because a project with only AGENTS.md is undocumented from a human's point of view. Onboarding also establishes the project's **dev-environment boilerplate** (`.devcontainer/Dockerfile`) so every later task runs in the project's real toolchain instead of re-deriving it each time.
+You are ONBOARDING this repository: produce the standardized artifacts so a future engineer (and an automated agent) can start work already informed AND in a real environment. The doc set is three scoped documents — a thin AGENTS.md pointer for agents, a README.md for humans, an ARCHITECTURE.md for design — plus the project's **dev-environment boilerplate** (`.devcontainer/Dockerfile`) so every later task runs in the project's real toolchain instead of re-deriving it each time.
 
-Inspect the repo **READ ONLY** — read files and run read-only inspection commands (`ls`, `cat`, `grep`, `git log`, `find`, reading config/manifest/lockfiles, etc.). Do NOT modify, create, or delete ANY file EXCEPT the onboarding artifacts described below — the four documentation files, plus `.devcontainer/Dockerfile` when the repo has none; in particular do not change any source, build, or config file.
+Inspect the repo **READ ONLY** — read files and run read-only inspection commands (`ls`, `cat`, `grep`, `git log`, `find`, reading config/manifest/lockfiles, etc.). Do NOT modify, create, or delete ANY file EXCEPT the onboarding artifacts described below — the three documentation files, plus `.devcontainer/Dockerfile` when the repo has none; in particular do not change any source, build, or config file.
 
-## The four documents
+## The three documents
 
 Each doc lives in the repository root and has a specific scope. Do not blur them: cross-linking is fine, duplication is not.
 
-### 1. `AGENTS.md` — COMPREHENSION for agents
+### 1. `AGENTS.md` — THIN, BOUNDED pointer for agents
 
-Describe **WHAT IS** so an agent can start work informed:
+One page, no more. Its whole job is to point, not to narrate:
 
-- **Stack & languages** — frameworks, runtimes, key dependencies + versions.
-- **Layout** — the important directories/modules and what each is for.
-- **How to build, run, and TEST it** — the exact commands, and call out the single command that should be used as the verification gate (what proves a change is good).
-- **Conventions** — code style, naming, branching, commit/PR norms you can infer from the repo.
-- **Setup prerequisites and gotchas** — toolchain versions, env vars, services, anything non-obvious that bites a newcomer.
+- **What the repo is** — one line.
+- **Commands** — the exact build, run, and test commands, and call out the single command that is the verification gate (what proves a change is good).
+- **Layout pointers** — the few directories that matter, one line each.
+- **Links out** — `ARCHITECTURE.md` for design, `.agent/skills/` for repeatable project notes, `specs/` for feature knowledge (when present).
 
-Do NOT include project direction, roadmap, opinions about what to build next, or a decision log — those go in the other three docs.
+Write the content you own inside a marker pair:
+
+```
+<!-- devclaw:managed:start -->
+…the pointer content above…
+<!-- devclaw:managed:end -->
+```
+
+A re-onboard REPLACES the content between the markers and preserves everything outside them — never append a second block. Do NOT put learnings, feature notes, decision rationale, or component narrative here; detailed layout and design narrative belongs in ARCHITECTURE.md.
 
 ### 2. `README.md` — HUMAN-FACING introduction
 
@@ -40,24 +47,9 @@ Describe **HOW IT WORKS** so a reader understands the boundaries + data flow wit
 - **Component map** — the major components/modules/services and what each is responsible for. One paragraph per component. This is the level at which architectural decisions get made.
 - **Data flow** — how a request / job / event flows through the components. Sequence diagram in prose is fine; ASCII / mermaid welcome.
 - **Cross-cutting concerns** — auth, logging, error handling, tests, deploy, whichever apply.
-- **Notable design decisions** — for each: what was decided, why, and what was rejected. Cross-link to DECISIONS.md for the full record.
+- **Notable design decisions** — for each: what was decided, why, and what was rejected. Cross-link the feature's `specs/NNN-*/` artifacts for the full rationale when the repo has them — the spec is the decision memory; do NOT create a separate ADR log.
 
 Placeholder for diagrams is acceptable if you can't draw one directly — write `<!-- diagram: <what should go here> -->` and describe it in prose.
-
-### 4. `DECISIONS.md` — ADR-STYLE log of choices made
-
-Each entry is a short (paragraph-length) ADR:
-
-- Date (approximate, from git log or "unknown").
-- Title — "Chose X over Y for Z".
-- Context — why this decision was in front of the team.
-- Decision — what was picked.
-- Consequences — what this bought and what it cost.
-- Alternatives — what else was considered.
-
-Reconstruct these from `git log`, comments in the code, and any prior README / ARCHITECTURE / doc content. When you honestly cannot infer the reasoning behind a design decision, mark the entry `(reconstructed; may need review)` — the human reviewer can then confirm or correct. Fewer high-quality entries beat many speculative ones.
-
-If nothing significant is inferrable, DECISIONS.md should still exist with a header and a one-line note that no ADRs have been captured yet — an empty log with a heading is still doc infrastructure.
 
 ## The dev-environment boilerplate — `.devcontainer/Dockerfile`
 
@@ -72,16 +64,16 @@ Every future task for this project runs inside a container built from this file,
 
 If you cannot confidently determine the base image for the stack, still write your best-effort Dockerfile and note the uncertainty in that top comment — a human reviews it, and a wrong toolchain fails the build LOUD rather than degrading silently.
 
-## Rules across all four docs
+## Rules across all three docs
 
 **Draft marker:** for any doc you CREATE (not update), put a one-line note at the very top marking it as a DRAFT generated by devclaw onboarding for human review. On subsequent updates the marker stays until a human removes it.
 
-**Do not clobber:** if a doc ALREADY exists AND is substantive, do NOT blindly overwrite it — validate each part against the actual repository, KEEP everything still accurate, and only correct or fill in what is wrong, stale, or missing (preserving the existing structure). If an existing doc is already fully accurate, leave it unchanged.
+**Do not clobber:** if a doc ALREADY exists AND is substantive, do NOT blindly overwrite it — validate each part against the actual repository, KEEP everything still accurate, and only correct or fill in what is wrong, stale, or missing (preserving the existing structure). For AGENTS.md, the devclaw-owned content is what sits between the `devclaw:managed` markers; everything outside them is human-owned and preserved.
 
-**Boundary discipline:** each doc has one job. Don't put ADR-style reasoning in README; don't put quickstart commands in ARCHITECTURE; don't put decision rationale in AGENTS.md. Cross-link instead.
+**Boundary discipline:** each doc has one job. Don't put ADR-style reasoning in README; don't put quickstart commands in ARCHITECTURE; don't put design narrative or decision rationale in AGENTS.md. Cross-link instead.
 
 **Read-only otherwise:** everything else in the repo is read-only during this task.
 
 ## Summary
 
-End with a short summary to STDOUT in your final message: for each of the four docs, whether you CREATED, UPDATED, or LEFT UNCHANGED, plus the two or three most load-bearing facts you captured (per doc). Then one line for `.devcontainer/Dockerfile`: CREATED (name the base image + toolchains) or LEFT UNCHANGED (a dev container already existed).
+End with a short summary to STDOUT in your final message: for each of the three docs, whether you CREATED, UPDATED, or LEFT UNCHANGED, plus the two or three most load-bearing facts you captured (per doc). Then one line for `.devcontainer/Dockerfile`: CREATED (name the base image + toolchains) or LEFT UNCHANGED (a dev container already existed).

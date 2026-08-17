@@ -395,28 +395,30 @@ async def onboard(
     """Onboard a repository: analyze it and write a DRAFT documentation set
     (plus the project's dev-container boilerplate) so future tasks + humans
     start informed and in the project's real environment. OpenHands inspects the
-    workspace READ-ONLY (it modifies no file except the five named onboarding
-    artifacts below) — four scoped COMPREHENSION docs plus one build artifact:
+    workspace READ-ONLY (it modifies no file except the four named onboarding
+    artifacts below) — three scoped docs plus one build artifact:
 
-      - AGENTS.md      — agent-facing: stack, layout, build/run/test commands
-                         (with the verify gate), conventions, gotchas.
+      - AGENTS.md      — a THIN, BOUNDED pointer (~1 page): what the repo is,
+                         exact build/run/test commands (with the verify gate),
+                         layout pointers, links out to ARCHITECTURE.md /
+                         .agent/skills/ / specs/. Devclaw-owned content sits
+                         between ``devclaw:managed`` markers; a re-onboard
+                         replaces within the markers and preserves everything
+                         outside them.
       - README.md      — human-facing: one-paragraph purpose, quickstart,
                          high-level pointer at layout, one-line status.
       - ARCHITECTURE.md — component map, data flow, cross-cutting concerns,
-                         notable design decisions (cross-links to DECISIONS).
-      - DECISIONS.md   — ADR-style entries reconstructed from git log + code +
-                         prior docs. Empty-with-header is acceptable when
-                         nothing is honestly inferrable.
+                         notable design decisions (cross-links the feature's
+                         ``specs/`` artifacts — the spec is the decision
+                         memory; no separate ADR log).
       - .devcontainer/Dockerfile — the DEV environment a human and the agent
                          share (SDK/toolchain image); authored ONLY when the
                          repo has none, so the agent runs in the project's real
                          toolchain instead of re-deriving it per task.
 
-    Closes the C6 gap (`plan.md` §Production-ready): a project with only
-    AGENTS.md is undocumented from a human's point of view. The onboarding
-    skill (`skills/onboard/00-onboard.md`) enforces boundary discipline
-    (no ADR reasoning in README, no quickstart in ARCHITECTURE) so the four
-    docs don't blur into each other.
+    The onboarding skill (`skills/onboard/00-onboard.md`) enforces boundary
+    discipline (no ADR reasoning in README, no quickstart in ARCHITECTURE,
+    no narrative in AGENTS.md) so the three docs don't blur into each other.
 
     Human-in-the-loop: each doc lands with a top-of-file DRAFT marker and is
     NOT authoritative until you review it. The agent won't clobber a
