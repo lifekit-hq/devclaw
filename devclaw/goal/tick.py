@@ -35,6 +35,7 @@ from . import triage as _triage
 # it: tests monkeypatch ``devclaw.goal.tick._deploy.deploy_project`` and both
 # modules bind the SAME ..delivery.deploy module object, so patching it here is
 # what makes the deploy stub visible to the moved _auto_deploy.
+from ..advance_brief import ADVANCE_BRIEF_MARKER
 from ..delivery import deploy as _deploy  # noqa: F401 (re-export/monkeypatch anchor)
 from .engine import GoalEngine
 from .models import Action, Checklist as _ChecklistModel, Goal, GoalStatus
@@ -581,8 +582,11 @@ def _advance_brief(goal: Goal, steering: str) -> str:
     corrections re-applied via ``_apply_corrections``) rides in here for the
     worker to read — never applied by a planner, because there isn't one."""
     parts = [
-        "Advance this goal by one substantive, shippable increment using speckit, "
-        "then stop.",
+        # Built from the shared marker so the detectors (delivery's title/body
+        # guard, tick_dispatch's display choke point) can never drift from the
+        # generator (#547/#550).
+        ADVANCE_BRIEF_MARKER
+        + ", shippable increment using speckit, then stop.",
         "Find the CURRENT feature: the smallest not-yet-complete specs/NNN-*/ "
         "(its tasks.md still has unchecked items). If none exists and new work is "
         "called for, create one with .specify/scripts/bash/create-new-feature.sh.",

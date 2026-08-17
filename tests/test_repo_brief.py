@@ -269,7 +269,11 @@ async def test_delivery_record_stays_clean_of_the_repo_brief(tmp_path):
     await _tick(store, "g", engine)   # settle (then the done-gate opens)
 
     deliveries = store.recent_deliveries("g")
-    assert "Advance this goal" in deliveries   # the clean advance-brief text
+    # The clean action text renders in its DISPLAY form (#550): the record
+    # names the goal's objective — never the prepended hints, and never the
+    # raw advance brief either.
+    assert "Drive the demo repo to done." in deliveries
+    assert "Advance this goal" not in deliveries
     assert "[Repo notes" not in deliveries
     assert "pnpm-only" not in deliveries
 

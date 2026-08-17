@@ -41,6 +41,7 @@ from .notify import Notifier
 from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
+from ..advance_brief import display_goal as _display_goal
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
@@ -296,6 +297,14 @@ async def _dispatch_action(
         scope = _repo_brief.scope_key_for(goal.workspace_dir)
         if scope:
             brief_prefix = _repo_brief.render_brief_prefix(store.read_repo_brief(scope))
+    # Human-facing form of the action (#550 — the display half of the #547
+    # class): the thin-advance brief is dispatch plumbing, so everything a
+    # HUMAN reads from this dispatch — the ``next`` hint (get_goal/console/
+    # STATUS.md), the goal-log head, and the settle-side delivery record +
+    # notification/trace labels via the re-stamped ref — renders the goal's
+    # objective instead. Only the WORKER receives the full brief
+    # (``dispatch_action`` below is untouched).
+    display = _display_goal(action.goal)
     try:
         with store.transaction():
             try:
@@ -308,15 +317,16 @@ async def _dispatch_action(
             except Exception as exc:  # noqa: BLE001 — caught again below, outside the txn
                 dispatch_exc = exc
                 raise
-            # Re-stamp the ref with the CLEAN action text. The brief prefix +
-            # retry digest are worker INPUT; the ref's goal is what settle
-            # records as a delivery and what the direction evaluator reads as
-            # "grounded deliveries" — prior workers' unverified hints must not
-            # ride that channel as evidence (invariant-guard finding), and
-            # _action_label telemetry stays legible instead of leading with
-            # the brief header on every settle.
-            if dispatch_action is not action:
-                ref = replace(ref, goal=action.goal)
+            # Re-stamp the ref with the DISPLAY form of the action text. The
+            # brief prefix + retry digest are worker INPUT; the ref's goal is
+            # what settle records as a delivery and what the direction
+            # evaluator reads as "grounded deliveries" — prior workers'
+            # unverified hints must not ride that channel as evidence
+            # (invariant-guard finding). Same for the raw advance brief
+            # (#550): the delivery record / _action_label telemetry names the
+            # OBJECTIVE, never the dispatch instruction.
+            if dispatch_action is not action or display != action.goal:
+                ref = replace(ref, goal=display)
             # Carry the action's checklist addresses onto the in-flight ref so
             # the settle hook can update the right items without re-reading
             # the plan.
@@ -325,7 +335,7 @@ async def _dispatch_action(
             store.transition(
                 goal_id, Event.DISPATCH_ACTION,
                 replace(
-                    base, phase="in_flight", in_flight=ref, blocked_on=None, next=action.goal,
+                    base, phase="in_flight", in_flight=ref, blocked_on=None, next=display,
                     actions_dispatched=base.actions_dispatched + 1,
                 ),
                 expect=base, consume_steering=consume_steering,
@@ -334,7 +344,7 @@ async def _dispatch_action(
             # doesn't re-pick them next tick before this one settles. No-op in
             # legacy mode. Row-only write — see _flag_items_in_flight.
             _flag_items_in_flight(store, goal_id, list(action.addresses))
-            store.append_log(goal_id, f"dispatched {action.tool}: {action.goal} → {ref.id}", mirror=False)
+            store.append_log(goal_id, f"dispatched {action.tool}: {display} → {ref.id}", mirror=False)
     except Exception:
         store.discard_pending_mirrors(goal_id)
         if dispatch_exc is None:
@@ -345,7 +355,7 @@ async def _dispatch_action(
         # unit: a fresh, separate RESUME_IDLE write.
         store.append_log(goal_id, f"dispatch error ({action.tool}): {exc}")
         store.transition(
-            goal_id, Event.RESUME_IDLE, replace(base, phase="idle", next=action.goal),
+            goal_id, Event.RESUME_IDLE, replace(base, phase="idle", next=display),
             expect=base, consume_steering=consume_steering,
         )
         await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] dispatch failed: {exc}")
@@ -371,13 +381,15 @@ async def _dispatch_action(
             pass
     _engine_kick(engine)
     _trace.record_dispatch(goal_id=goal_id, tool=action.tool, ref_id=ref.id, engine=getattr(engine, "kind", ""))
-    # Notify uses the short label, not the full prompt body — the raw `action.goal`
-    # is a multi-paragraph executor instruction (often 500-1500 chars) and dumping
-    # it to Telegram floods the owner with prompt boilerplate. Full text stays in
-    # log.md above for forensic readability.
+    # Notify uses the short label of the DISPLAY form, not the full prompt
+    # body — the raw `action.goal` is a multi-paragraph executor instruction
+    # (often 500-1500 chars) and dumping it to Telegram floods the owner with
+    # prompt boilerplate; on the thin path even its first line is the advance
+    # brief, which every human surface renders as the objective (#550). The
+    # full brief reaches only the worker.
     await _notify(
         notifier, NotifyLevel.TASK,
-        f"🚀 [{goal_id}] {action.tool}: {_action_label(action)}",
+        f"🚀 [{goal_id}] {action.tool}: {_action_label(replace(action, goal=display))}",
     )
     return Outcome.DISPATCHED
 

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
+from ..advance_brief import display_goal as _display_goal
 from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
 from . import merge as goal_merge
@@ -733,7 +734,10 @@ class GoalService:
             # diagnosis (the #493 bug lived exactly in that gap).
             "lifecycle": s.lifecycle,
             **self._delivery_view(goal_id),
-            "next": s.next,
+            # Display guard (#550): rows written before the dispatch-side fix
+            # may still store the raw advance brief — never surface it as the
+            # goal's "next"; render the embedded objective instead.
+            "next": _display_goal(s.next),
             "blocked_on": s.blocked_on,
             "blocked_kind": s.blocked_kind,
             "in_flight": (
@@ -827,7 +831,8 @@ class GoalService:
             # RAW stored lifecycle (#496) — see get_goal; null is honest.
             "lifecycle": s.lifecycle,
             **self._delivery_view(goal_id),
-            "next": s.next,
+            # Display guard (#550) — see get_goal: legacy rows may store the brief.
+            "next": _display_goal(s.next),
             "blocked_on": s.blocked_on,
             "actions_dispatched": s.actions_dispatched,
             "in_flight": (

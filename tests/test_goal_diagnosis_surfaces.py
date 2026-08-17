@@ -95,3 +95,25 @@ def test_get_goal_degrades_to_unresolvable_on_corrupt_contract(svc, monkeypatch)
     g = svc.get_goal("corrupt")
     assert g["delivery_strategy"] == "unresolvable"
     assert g["goal_branch"] is None
+
+
+def test_get_goal_next_shows_objective_never_advance_brief(svc):
+    """#550 named regression (read-side guard): a status row that stored the
+    raw thin-advance brief as ``next`` — written before the dispatch-side fix —
+    still renders the goal's embedded objective on every read surface;
+    get_goal and tail_goal never leak the brief."""
+    import dataclasses
+
+    _mk(svc, "ledger", mode="long_lived")
+    brief = (
+        "Advance this goal by one substantive, shippable increment using "
+        "speckit, then stop.\n"
+        "Find the CURRENT feature: the smallest not-yet-complete specs/NNN-*/.\n"
+        "\n"
+        "Goal: ship it"
+    )
+    s = svc._goal_store.load_status("ledger")
+    svc._goal_store.save_status("ledger", dataclasses.replace(s, next=brief))
+
+    assert svc.get_goal("ledger")["next"] == "ship it"
+    assert svc.tail_goal("ledger")["next"] == "ship it"

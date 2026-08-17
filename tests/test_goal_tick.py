@@ -3356,3 +3356,53 @@ async def test_db_size_alert_failure_never_breaks_the_heartbeat(tmp_path):
     )
 
     assert out["g"] is Outcome.IDLE    # the sweep survived the alarm crash
+
+
+# ---- human-facing renderings show the objective, never the advance brief (#550)
+
+
+@pytest.mark.asyncio
+async def test_goal_next_and_log_show_objective_never_advance_brief(tmp_path):
+    """#550 named regression — the display half of the #547 class. The
+    thin-advance brief is dispatch plumbing: after an advance dispatch, every
+    human-facing projection of it — ``status.next`` (→ get_goal / console /
+    STATUS.md) and the goal-log head — renders the goal's OBJECTIVE, while the
+    WORKER still receives the full brief verbatim."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")   # objective: "Drive the demo repo to done."
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.DISPATCHED
+    # Machine-facing dispatch plumbing is untouched: the worker gets the brief.
+    action, _, _ = engine.dispatched[0]
+    assert action.goal.startswith("Advance this goal by one substantive")
+    # Human-facing: `next` and the log head carry the objective, never the brief.
+    status = store.load_status("g")
+    assert status.next == "Drive the demo repo to done."
+    log = store.recent_log("g", n=10)
+    assert "dispatched implement_feature: Drive the demo repo to done." in log
+    assert "Advance this goal" not in log
+
+
+@pytest.mark.asyncio
+async def test_delivery_record_and_labels_show_objective_never_advance_brief(tmp_path):
+    """#550: on settle, the delivery record (deliveries.md / tail_goal — and,
+    via the re-stamped ref's label, the trace rows RUN_SUMMARY projects) names
+    the goal's objective, never the raw advance brief."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="ok", gate_passed=True,
+    ))
+
+    await _tick(store, "g", evaluator, engine, notifier)   # dispatch the advance
+    await _tick(store, "g", evaluator, engine, notifier)   # settle it
+
+    deliveries = store.recent_deliveries("g")
+    assert "Drive the demo repo to done." in deliveries
+    assert "Advance this goal" not in deliveries
