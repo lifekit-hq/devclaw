@@ -160,16 +160,42 @@ cancelled work must STAY cancelled (`recover()` only revives `running` rows).
 Primary evidence: `.shakedown/server.log` (recovered=N, notify attempts, reaped,
 spawn errors) and `get_events` per task.
 
-## 5. Teardown + report
+## 5. Teardown: ARCHIVE the run, then clean
+
+Every run's DB is a metrics artifact — `eval_outcomes` rows, the full event
+log, goal/task timings, retry counts. The archive series under
+`~/.devclaw/shakedown-runs/` is how future improvements get measured against
+past behavior (ruled 2026-08-16 after a run's evidence was deleted with the
+rig). **Never `rm` the DB without archiving it first.**
 
 ```bash
-pkill -f devclaw-mcp                                              # the server
+pkill -f devclaw-mcp                                              # server FIRST — a live server
+                                                                  # writes the DB you're archiving
 docker ps -a --filter name=devclaw- -q | xargs -r docker rm -f    # stragglers
+
+RUN_DIR=~/.devclaw/shakedown-runs/$(date -u +%Y-%m-%d)-$(git rev-parse --short HEAD)
+mkdir -p "$RUN_DIR"
+sqlite3 .shakedown/devclaw.db "PRAGMA wal_checkpoint(TRUNCATE);" || true  # fold WAL into the db
+cp .shakedown/devclaw.db .shakedown/server.log "$RUN_DIR"/
+cp -r .shakedown/goals "$RUN_DIR"/goals 2>/dev/null || true               # human-readable views
+cat > "$RUN_DIR"/manifest.md <<EOF
+# Shakedown $(date -u +%Y-%m-%dT%H:%MZ) @ $(git rev-parse --short HEAD)
+- sandbox image: $(docker image inspect devclaw-sandbox:latest --format '{{.Id}}' | cut -c8-19)
+- scope: <layers/scenario run>
+- verdicts: <one line per layer/acceptance item>
+- finds: <issues/PRs filed from this run, or "none">
+EOF
+
 rm -rf .shakedown /tmp/sc-l1 /tmp/sc-l2 /tmp/sc-l4
 # keep devclaw-sandbox:latest — it's reusable
 ```
 
+Fill the manifest's `<…>` lines from the verdict table — the manifest is the
+scannable index, the DB is the raw data. To replay an archived run in the
+console: `DEVCLAW_DB=<archive>/devclaw.db DEVCLAW_TRANSPORT=http devclaw-mcp`
+and open the dashboard read-only.
+
 **Deliverable:** a per-layer verdict table — layer, pass/fail, one line of evidence
-(task id + final status + artifact check). If a layer failed: the seam it names,
-the exact error line from `server.log`/`get_events`, and the stopping point. Never
-report a partial run as a full shakedown.
+(task id + final status + artifact check) — plus the archive path. If a layer
+failed: the seam it names, the exact error line from `server.log`/`get_events`,
+and the stopping point. Never report a partial run as a full shakedown.
