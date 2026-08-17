@@ -232,14 +232,31 @@ safe no-op (`{"cancelled":false}`).
 
 ---
 
-## 9. Teardown
+## 9. Teardown: archive the run, then clean
+
+Every run's DB is a metrics artifact (`eval_outcomes` rows, the full event log,
+goal/task timings, retries). Runs are archived under `~/.devclaw/shakedown-runs/`
+so future improvements can be measured against past behavior — never delete the
+DB without archiving it first (ruled 2026-08-16).
 
 ```bash
-# stop the server (Ctrl-C), then:
+# stop the server (Ctrl-C) FIRST — a live server writes the DB you're archiving
 docker ps -a --filter name=devclaw- -q | xargs -r docker rm -f   # any stragglers
+
+RUN_DIR=~/.devclaw/shakedown-runs/$(date -u +%Y-%m-%d)-$(git rev-parse --short HEAD)
+mkdir -p "$RUN_DIR"
+sqlite3 .shakedown/devclaw.db "PRAGMA wal_checkpoint(TRUNCATE);" || true
+cp .shakedown/devclaw.db .shakedown/server.log "$RUN_DIR"/
+cp -r .shakedown/goals "$RUN_DIR"/goals 2>/dev/null || true
+# write $RUN_DIR/manifest.md: date, commit, sandbox-image id, scope, verdicts, finds
+# (see the /live-shakedown skill for the template)
+
 rm -rf .shakedown /tmp/sc-l1 /tmp/sc-l2 /tmp/sc-l4
 # the sandbox image is reusable; remove only if you want: docker rmi devclaw-sandbox:latest
 ```
+
+Replay an archived run in the console any time:
+`DEVCLAW_DB=<archive>/devclaw.db DEVCLAW_TRANSPORT=http devclaw-mcp` → dashboard, read-only.
 
 ---
 
