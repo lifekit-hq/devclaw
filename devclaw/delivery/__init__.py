@@ -21,6 +21,7 @@ import asyncio
 import os
 import re
 
+from ..advance_brief import is_advance_brief, objective_from_brief
 from ..git_identity import git_identity_env
 
 
@@ -148,18 +149,17 @@ def _is_advance_brief(goal: str) -> bool:
     """The thin-advance pull-brief (``goal/tick.py:_advance_brief``) is generic
     plumbing — "Advance this goal by one substantive, shippable increment…" — not
     a description of any change. Post-demolition it's the task ``goal`` on every
-    long_lived tick, so it must NEVER leak into a PR title."""
-    return goal.strip().startswith("Advance this goal by one substantive")
+    long_lived tick, so it must NEVER leak into a PR title. Detection lives in
+    :mod:`devclaw.advance_brief` (shared with the display half, #550) so the
+    generator and every detector stay in lockstep."""
+    return is_advance_brief(goal)
 
 
 def _objective_from_brief(goal: str) -> str:
     """Pull the ``Goal: <objective>`` line out of the advance-brief — a usable
-    title basis when the worker committed nothing to derive one from."""
-    for line in goal.splitlines():
-        s = line.strip()
-        if s.startswith("Goal:"):
-            return s[len("Goal:") :].strip()
-    return ""
+    title basis when the worker committed nothing to derive one from. Shared
+    implementation: :mod:`devclaw.advance_brief`."""
+    return objective_from_brief(goal)
 
 
 def _link_title_branch(title: str, branch: str, issues: list[int]) -> tuple[str, str]:
