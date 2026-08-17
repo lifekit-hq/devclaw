@@ -176,13 +176,13 @@ _CONTEXT_PREAMBLE = (
     "the job, not a pattern to copy. Follow the project's stated conventions and "
     "sound engineering over blindly mimicking bad surrounding code, and note in your "
     "summary anything pre-existing you had to work around or that needs follow-up. "
-    "AGENTS.md in the repo root is the project's ACCUMULATED AGENT HARNESS — read it "
-    "FIRST so you don't re-derive what's already known (stack, how to run/test, "
-    "layout, conventions, key decisions, gotchas, reusable patterns). As part of "
-    "this change, KEEP IT CURRENT: if it's missing, create it; if you learned or "
-    "decided something a future task would otherwise have to re-reason, record it "
-    "there concisely. It is the memory that saves the next task from re-thinking "
-    "the same topics — treat maintaining it as part of the work, not optional."
+    "AGENTS.md in the repo root is a THIN, BOUNDED pointer file (~1 page: what the "
+    "repo is, exact build/run/test/verify commands, layout pointers, links to "
+    "deeper docs) — read it FIRST so you don't re-derive what it already records. "
+    "KEEP IT HONEST: update it only when the change you shipped makes it wrong. "
+    "NEVER append to it — no learnings, no feature notes, no session history. "
+    "NEVER create AGENTS.md if the repo doesn't have one — authoring it is "
+    "onboarding work, not part of this task."
 )
 # The engineer writes its OWN commit, the way a developer does — so the delivered
 # PR's title/branch/body describe WHAT CHANGED, not the ticket instruction. devclaw
@@ -297,15 +297,17 @@ _KIND_WRAPPERS = {
         "specific focus area was provided, address that first.\n\n"
         "Review focus (if any):\n{goal}"
     ),
-    # Onboarding: analyse the repo and produce a DRAFT AGENTS.md so future tasks
-    # start informed (1b already reads AGENTS.md/CLAUDE.md/README if present —
-    # this generates that file for repos that lack one). Comprehension only —
-    # "what is", NOT direction or a decision log (kept separate per the operating
-    # model). Read-only EXCEPT the single AGENTS.md you write. Human-in-the-loop:
-    # the draft is surfaced for review (git working tree + the summary), and is
-    # NOT authoritative until reviewed — so when an AGENTS.md already exists we
-    # validate it against the real repo and keep what's correct rather than
-    # blindly clobbering it.
+    # Onboarding: analyse the repo and produce the DRAFT doc set so future
+    # tasks start informed (1b already reads AGENTS.md/CLAUDE.md/README if
+    # present — this generates them for repos that lack them). AGENTS.md is a
+    # thin, bounded pointer written inside devclaw's marker pair so a
+    # re-onboard replaces within the markers and preserves everything outside;
+    # narrative lives in ARCHITECTURE.md; decision rationale lives in the
+    # speckit spec, never a parallel ADR log. Read-only EXCEPT the onboarding
+    # artifacts. Human-in-the-loop: drafts are surfaced for review (git working
+    # tree + the summary) and are NOT authoritative until reviewed — an
+    # existing substantive doc is validated against the real repo, never
+    # blindly clobbered.
     "onboard": (
         "You are ONBOARDING this repository: produce the standardized artifacts "
         "so a future engineer (and an automated agent) can start work already "
@@ -313,35 +315,35 @@ _KIND_WRAPPERS = {
         "ONLY — read files and run read-only inspection commands (ls, cat, grep, "
         "git log, find, reading config/manifest/lockfiles, etc.). Do NOT modify, "
         "create, or delete ANY file EXCEPT the onboarding artifacts described "
-        "below — the four documentation files, plus .devcontainer/Dockerfile "
+        "below — the three documentation files, plus .devcontainer/Dockerfile "
         "when the repo has none; in particular do not change any source, build, "
         "or config file.\n\n"
-        "Produce FOUR docs in the repo root — each has one job, do not blur "
+        "Produce THREE docs in the repo root — each has one job, do not blur "
         "them:\n"
-        "  1. AGENTS.md — agent-facing COMPREHENSION: stack, layout, build/run/"
-        "test commands (call out the verify gate), conventions, prerequisites, "
-        "gotchas. Describe WHAT IS.\n"
+        "  1. AGENTS.md — a THIN, BOUNDED pointer (~1 page): what the repo is "
+        "(one line), exact build/run/test commands (call out the verify gate), "
+        "layout pointers, links out to ARCHITECTURE.md, .agent/skills/, and "
+        "specs/ when present. No learnings, feature notes, or design narrative "
+        "here. Write the content you own between <!-- devclaw:managed:start --> "
+        "and <!-- devclaw:managed:end --> markers: a re-onboard REPLACES what is "
+        "between the markers and preserves everything outside them.\n"
         "  2. README.md — human-facing intro: one-paragraph purpose, minimum "
         "quickstart commands, high-level pointer at the layout (link AGENTS.md "
         "for detail), one-line status.\n"
         "  3. ARCHITECTURE.md — component map, data flow, cross-cutting "
-        "concerns, notable design decisions. Diagrams welcome (ASCII / mermaid); "
-        "if you can't draw one, leave `<!-- diagram: ... -->` prose describing "
-        "what should go there.\n"
-        "  4. DECISIONS.md — ADR-style entries (date, title, context, decision, "
-        "consequences, alternatives). Reconstruct from git log + code comments "
-        "+ any prior docs. Mark reconstructed entries `(reconstructed; may need "
-        "review)`. If nothing is inferrable, DECISIONS.md still exists with a "
-        "header + a one-line 'no ADRs captured yet' note.\n\n"
-        "Rules across all four:\n"
+        "concerns, notable design decisions (cross-link the feature's specs/ "
+        "artifacts for full rationale — do NOT create a separate ADR log). "
+        "Diagrams welcome (ASCII / mermaid); if you can't draw one, leave "
+        "`<!-- diagram: ... -->` prose describing what should go there.\n\n"
+        "Rules across all three:\n"
         "  - Each doc you CREATE gets a one-line DRAFT marker at the top for "
         "human review.\n"
         "  - If a doc ALREADY exists and is substantive, do NOT clobber — "
         "validate each part against the repo, keep what's accurate, only "
         "correct / fill missing bits.\n"
         "  - Boundary discipline: don't put ADR reasoning in README, don't put "
-        "quickstart in ARCHITECTURE, don't put decision rationale in AGENTS.md. "
-        "Cross-link instead.\n"
+        "quickstart in ARCHITECTURE, don't put design narrative or decision "
+        "rationale in AGENTS.md. Cross-link instead.\n"
         "  - Read-only for everything else in the repo.\n\n"
         "Then establish the project's dev-environment boilerplate — "
         ".devcontainer/Dockerfile — the ONE environment a human dev and the "
@@ -360,7 +362,7 @@ _KIND_WRAPPERS = {
         "  - Toolchain ONLY: do NOT COPY the app in (the workspace is mounted at "
         "run time) and do NOT install agent tooling (claude/the runner) — devclaw "
         "adds that layer itself. One-line DRAFT comment at the top.\n\n"
-        "End with a short summary to STDOUT: for each of the four docs, whether "
+        "End with a short summary to STDOUT: for each of the three docs, whether "
         "you CREATED / UPDATED / LEFT UNCHANGED it, plus two or three "
         "load-bearing facts you captured per doc; then one line for "
         ".devcontainer/Dockerfile (CREATED with base image + toolchains, or LEFT "

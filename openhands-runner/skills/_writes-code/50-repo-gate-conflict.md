@@ -24,9 +24,9 @@ in scope** for this change, like refactoring what you touch is in scope.
    commit with a reason (`--no-verify`, `SKIP=<hook-id>`). Prefer the real fix;
    bypass only a legitimate gate that just shouldn't apply here. Never disable a
    repo's safety net wholesale or weaken a check to go green.
-3. **Document WHY** in the commit body and in `AGENTS.md`, so the next task
-   doesn't re-hit it. A documented bypass reads as resolving a real conflict; a
-   silent one reads as sneaking past a gate.
+3. **Document WHY** in the commit body and in `AGENTS.md` (if the repo has
+   one), so the next task doesn't re-hit it. A documented bypass reads as
+   resolving a real conflict; a silent one reads as sneaking past a gate.
 
 If the mechanism genuinely can't be touched, **do not appease and do not
 fabricate success** — report it as a blocker: name the mechanism, the forbidden

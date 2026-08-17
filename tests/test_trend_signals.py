@@ -21,7 +21,6 @@ from devclaw.trend_signals import (
     D4AgentsMdStaleness,
     D5ReadmeStaleness,
     D6ArchitectureStaleness,
-    D7DecisionsStaleness,
     H4SteeringFrequency,
     R2RepeatedFixHotspot,
     SignalContext,
@@ -234,11 +233,13 @@ def test_d4_fires_when_agents_md_stale_with_recent_churn(monkeypatch, tmp_path):
     assert result.evidence["agents_md_exists_in_history"] is True
 
 
-# ---- D5 / D6 / D7: sibling doc-staleness signals ---------------------------
-# The three new signals share D4's shape via _DocFileStaleness; we cover the
+# ---- D5 / D6: sibling doc-staleness signals --------------------------------
+# The sibling signals share D4's shape via _DocFileStaleness; we cover the
 # per-signal path filter + evidence-key isolation rather than re-testing the
 # streak arithmetic (which is D4's contract). One integration test per signal
 # is enough to catch a mis-wired doc_path or evidence-slug regression.
+# (D7/DECISIONS.md was retired with the ADR log itself — #552 thin agent-file
+# doctrine: the speckit spec is the decision memory.)
 
 
 @pytest.mark.parametrize(
@@ -246,13 +247,12 @@ def test_d4_fires_when_agents_md_stale_with_recent_churn(monkeypatch, tmp_path):
     [
         (D5ReadmeStaleness, "README.md", "readme_md"),
         (D6ArchitectureStaleness, "ARCHITECTURE.md", "architecture_md"),
-        (D7DecisionsStaleness, "DECISIONS.md", "decisions_md"),
     ],
 )
 def test_new_doc_staleness_signals_fire_when_absent_with_churn(
     monkeypatch, tmp_path, signal_cls, doc_path, slug,
 ):
-    """D5/D6/D7 fire when the tracked doc is absent AND the project has ≥30
+    """D5/D6 fire when the tracked doc is absent AND the project has ≥30
     commits — same shape as D4's `agents_md_exists_in_history=False` path."""
     forty_shas = "\n".join(_unique_sha(i) for i in range(40))
 
@@ -280,7 +280,6 @@ def test_new_doc_staleness_signals_fire_when_absent_with_churn(
     [
         (D5ReadmeStaleness, "README.md"),
         (D6ArchitectureStaleness, "ARCHITECTURE.md"),
-        (D7DecisionsStaleness, "DECISIONS.md"),
     ],
 )
 def test_new_doc_staleness_signals_no_fire_when_touched_recently(
@@ -304,7 +303,7 @@ def test_new_doc_staleness_signals_no_fire_when_touched_recently(
 
 
 def test_new_doc_signals_stay_isolated_per_doc(monkeypatch, tmp_path):
-    """When only ONE of the four docs is stale (say README missing) the
+    """When only ONE of the tracked docs is stale (say README missing) the
     OTHER signals must not also fire — guard against a shared _DocFileStaleness
     base accidentally sharing state."""
     forty_shas = "\n".join(_unique_sha(i) for i in range(40))
@@ -314,10 +313,8 @@ def test_new_doc_signals_stay_isolated_per_doc(monkeypatch, tmp_path):
         # README.md: never committed → D5 fires.
         if "--" in args and "README.md" in args:
             return ""
-        # AGENTS.md / ARCHITECTURE.md / DECISIONS.md: touched at HEAD → no fire.
-        if "--" in args and (
-            "AGENTS.md" in args or "ARCHITECTURE.md" in args or "DECISIONS.md" in args
-        ):
+        # AGENTS.md / ARCHITECTURE.md: touched at HEAD → no fire.
+        if "--" in args and ("AGENTS.md" in args or "ARCHITECTURE.md" in args):
             return head_sha
         return forty_shas
 
@@ -326,7 +323,6 @@ def test_new_doc_signals_stay_isolated_per_doc(monkeypatch, tmp_path):
     assert D5ReadmeStaleness().check(ctx).fired is True
     assert D4AgentsMdStaleness().check(ctx).fired is False
     assert D6ArchitectureStaleness().check(ctx).fired is False
-    assert D7DecisionsStaleness().check(ctx).fired is False
 
 
 # ---- H4: steering frequency ------------------------------------------------
@@ -648,7 +644,7 @@ def test_count_added_dep_lines_ignores_comments_and_blanks():
 def test_all_signals_set():
     sigs = all_signals()
     ids = {s.id for s in sigs}
-    assert ids == {"R2", "D1", "D2", "D3", "D4", "D5", "D6", "D7", "H4"}
+    assert ids == {"R2", "D1", "D2", "D3", "D4", "D5", "D6", "H4"}
     by_scope = {s.scope for s in sigs}
     assert by_scope == {"per_project", "harness_self"}
     # Bookmark-aware signals are exactly D1/D2/D3 in this PR.
@@ -706,7 +702,7 @@ def test_r2_fingerprint_differs_when_hot_file_moves():
 
 
 def test_doc_staleness_fingerprint_stable_when_last_touched_sha_unchanged():
-    """D4/D5/D6/D7 fingerprint hangs off the last-touched SHA. The commits-
+    """D4/D5/D6 fingerprint hangs off the last-touched SHA. The commits-
     since counter grows every commit but the SHA is what defines "situation."
     Same SHA across ticks → same fingerprint → mute suppresses. Prevents the
     D5 README-staleness pattern from firing every day as the counter grows."""
