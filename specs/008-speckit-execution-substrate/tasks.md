@@ -10,7 +10,9 @@ description: "Task list — Speckit Execution Substrate (P1 MVP)"
 **Tests**: REQUIRED — the constitution mandates a named regression test per
 behavior change. Tests are written first and must fail before implementation.
 
-**Scope**: P1 MVP only (US1 + US2). P2 (US3, US4) and the shrink (#539) are an
+**Scope**: P1 MVP (US1 + US2) — SHIPPED (PR #540, Tier-B proven #538).
+**US3 expanded 2026-08-18** (Phase 6, T019+) per the tier-ladder plan update
+(research D9–D13 + resolved questions). US4 and the shrink (#539) remain an
 outline at the end — **not** expanded into tasks.
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -98,17 +100,59 @@ PR, no `PLAN.md`) and a bare repo (a reviewable install PR, zero silent commits)
 
 ---
 
+## Phase 6: User Story 3 — Label-routed ceremony tiers (Priority: P2)
+
+**Goal**: Route dispatched work to the ceremony tier its label/kind earns —
+full / bugfix / hotfix / direct — with the middle tiers vendored from
+MartyBonacci/spec-kit-extensions (frozen, pinned) and routing decided
+mechanically host-side. Ambiguity routes only UP. Per `contracts/tier-routing.md`,
+data-model §6–7, research D9–D13.
+
+**Independent Test**: quickstart.md US3 — feature issue → full `specs/NNN-*/`;
+bug issue → `specs/bugfix-NNN-*/` with regression test before fix; docs issue →
+direct fix, zero artifact dirs; delivery stays on the goal branch in all three.
+
+**Ships as ~2 PRs**: Slice A (T019–T023, vendor+register) and Slice B
+(T024–T029, route+stamp) — independently mergeable in that order.
+
+### Slice A — vendor + register (PR 1)
+
+- [ ] T019 [P] [US3] Vendor-integrity named regression `tests/test_speckit_vendor_pack.py` (write first; must FAIL): asserts `.specify/extensions/workflows/bugfix/` and `.specify/extensions/workflows/hotfix/` exist in devclaw's scaffold source; both `create-*.sh` scripts honor the `SPECKIT_NO_BRANCH` guard (assert the guard string is present — the one allowed upstream delta); a vendor README records the pinned upstream SHA + MIT license; `scaffold_specify()` copies `extensions/` into a bare-repo install.
+- [ ] T020 [US3] Vendor the pack into devclaw's own `.specify/extensions/workflows/{bugfix,hotfix}/`: copy the two workflow templates + `commands/speckit.bugfix.md` + `commands/speckit.hotfix.md` + `scripts/create-bugfix.sh` + `scripts/create-hotfix.sh` from MartyBonacci/spec-kit-extensions at ONE pinned commit SHA (record it); patch both scripts so branch creation/checkout is skipped when `SPECKIT_NO_BRANCH=1` (D12 — delivery owns branches, #486); write `.specify/extensions/workflows/README.md` (upstream SHA, license, the single delta, the #2319 delete-then-reinit upgrade note). `modify`/`refactor`/`deprecate` are NOT vendored.
+- [ ] T021 [US3] Register in the packed harness: add `"extensions"` to `_SCAFFOLD_DIRS` in `devclaw/speckit_setup.py` so adopt/install repos receive the tier workflows; add registry entries via speckit's own mechanism (FR-009) if `.specify/workflows/` requires them for discovery — never a devclaw abstraction. (depends on T020)
+- [ ] T022 [P] [US3] Worker skill content: add `openhands-runner/skills/_writes-code/06-speckit-tiers.md` — plain markdown (Principle II) telling the worker how to execute a stamped bugfix/hotfix/direct tier (bugfix: bug report artifact, regression test BEFORE the fix, minimal plan/tasks; hotfix: expedited + post-mortem section; direct: smallest fix, create NO `specs/` artifacts), pointing at the `.specify/extensions/` paths, with `SPECKIT_NO_BRANCH=1` set in the run environment. NOTE in the PR body: **sandbox image rebuild required on next deploy** (skills are baked in).
+- [ ] T023 [US3] Slice-A gate: `TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q tests/test_speckit_vendor_pack.py` green, then full suite ≥ baseline. (depends on T019–T022)
+
+### Slice B — route + stamp (PR 2)
+
+- [ ] T024 [P] [US3] Named regression `tests/test_tier_routing.py` (write first; must FAIL): table-driven over every row of `contracts/tier-routing.md` Behavior; the monotone property (adding any unknown label never yields a lighter tier than without it); conflicting labels (`feature`+`bug`) → full; `review_repository` → no tier.
+- [ ] T025 [P] [US3] Named regression `tests/test_advance_brief_tiers.py` (write first; must FAIL): the brief stamps the tier-specific block per tier; the `direct` brief forbids artifact creation — assert presence AND absence per the cognition-prompts rule (prove the marker absent from the raw template first); full-tier brief is byte-compatible with today's speckit flow text; idle/blocked paths still add zero cognition (`FakeClaude.calls == 0`).
+- [ ] T026 [US3] Implement `devclaw/goal/tier_routing.py`: pure `route_tier(kind: str | None, labels: list[str] | None) -> Tier` dict lookup (no I/O, no LLM) + the per-tier brief clause each `Tier` carries. Per `contracts/tier-routing.md` — highest-ceremony match wins; no signal/unknown/conflict → full.
+- [ ] T027 [US3] Wire the companion path: in `devclaw/server/tools.py::dispatch_task`, `kind="fix_bug"` routes through `route_tier` and stamps the bugfix-tier block into the task brief; `implement_feature` stamps full. The `kind` enum is UNCHANGED (resolved: no `hotfix` kind — hotfix is label-only). (depends on T026)
+- [ ] T028 [US3] Wire the goal path: where the advance target is a labeled issue, fetch labels mechanically at dispatch (best-effort `gh` subprocess at the existing dispatch-time call site in `devclaw/goal/tick_dispatch.py` — never idle-path; fetch failure ⇒ no labels ⇒ full tier) and pass the resolved `Tier` into `_advance_brief` (`devclaw/goal/tick.py`) to emit the tier block. The worker never re-decides the tier (#358 class stays host-enforced). (depends on T026)
+- [ ] T029 [US3] Slice-B gate: `TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q tests/test_tier_routing.py tests/test_advance_brief_tiers.py` green, then full suite ≥ baseline with all `FakeClaude.calls == 0` idle guards green. (depends on T024–T028)
+
+### US3 Polish
+
+- [ ] T030 [P] [US3] Docs honesty (same-PR rule): sweep `docs/flows/autonomous-issue-pipeline.md` + any doc stating the binary feature-vs-direct routing; update to the tier ladder; bump touched docs' currency tags in `docs/INDEX.md`.
+- [ ] T031 [US3] File the survey follow-up issues on lifekit-hq/devclaw (from research.md resolved-Q3): Quratulain `bugfix` as optional `after_implement` spec-consistency hook for feature-tier work; evaluate `fix-findings` + `ci-guard`; the 0.16.4 hop (RunState TOCTOU); the #2319 vendored-upgrade procedure. Close #534 via the Slice-B PR.
+- [ ] T032 [US3] Tier-B live validation per quickstart.md US3 (three labeled issues against a speckit repo) — tracked as a live-shakedown run, not a code task; AFTER both PRs merge + sandbox image rebuild.
+
+---
+
 ## Dependencies & Execution Order
 
 - **Setup (T001)** → then US1 and US2 in parallel (independent stories).
 - **US1**: T002/T003/T004 (tests, [P]) → T005 → T006; T007/T008 [P]; T009 after T008; T010 gates the phase.
 - **US2**: T011 (test) → T012 → T013/T014 → T015.
 - **Polish**: T016 [P] anytime after its target changes land; T017 after all impl; T018 (live) after merge.
+- **US3** (after P1 shipped — already true): Slice A T019 (test) → T020 → T021; T022 [P] alongside T020/T021; T023 gates PR 1. Slice B T024/T025 (tests, [P]) → T026 → T027 ‖ T028 → T029 gates PR 2. Slice B merges after Slice A. T030 rides whichever PR touches the docs' claims; T031 after PR 2; T032 after both PRs + image rebuild.
 
 ### Parallel opportunities
 - US1 test authoring: T002 ‖ T003 ‖ T004.
 - Cross-file impl: T007 ‖ T008 (different files) while T005→T006 proceed.
 - Whole stories: US1 ‖ US2 after Setup.
+- US3: T019 ‖ T022 (different trees); T024 ‖ T025; T027 ‖ T028 (different files, both after T026).
 
 ## Implementation Strategy
 MVP = US1 + US2. Land US1 first (the load-bearing substitution + fail-closed
@@ -119,10 +163,7 @@ guard rewire), then US2. Validate Tier A (T017), open the PR for human review
 
 ## Out of scope — outline only (do NOT expand here)
 
-- **US3 (P2)** — label-routed ceremony: feature/enhancement → full cycle;
-  bug → `bugfix`; hotfix/`critical-fix` → `hotfix`; chore/docs → direct-advance.
-  Adopt community workflows (MartyBonacci/spec-kit-extensions) via speckit's own
-  `workflow-registry.json` (FR-009) — **vendor, don't author**. Tracked: #534.
+- ~~US3~~ — **expanded into Phase 6 (T019–T032) on 2026-08-18**; tracked: #534.
 - **US4 (P2)** — migrate existing `PLAN.md`-spine repos to speckit; remove the
   legacy `PLAN.md` fallback (D4). Tracked: #535.
 - **Shrink (#539)** — remove the host `investigating→firming→decompose` cognition
