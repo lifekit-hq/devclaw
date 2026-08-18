@@ -631,6 +631,6 @@ async def evaluate(
 
 def default_caller() -> ClaudeCaller:
     """Production cognition caller bound to the evaluator tier (lazy import)."""
-    from ..planner import claude_with_model
+    from ..llm_call import claude_with_model
 
     return claude_with_model(GOAL_EVAL_MODEL, role="evaluator")

@@ -182,6 +182,6 @@ async def evaluate(
 def default_caller() -> ClaudeCaller:
     """Production cognition caller bound to the readiness tier (lazy import so
     tests that inject a fake never touch the subprocess)."""
-    from .planner import claude_with_model
+    from .llm_call import claude_with_model
 
     return claude_with_model(READINESS_MODEL, role="intake_readiness")

@@ -47,16 +47,16 @@ class Cognition(Protocol):
 
 class ClaudeCognition:
     """Production cognition: ``claude --print`` over the user's Pro/Max OAuth.
-    Delegates to :func:`devclaw.planner.call_claude` so the existing timeout,
+    Delegates to :func:`devclaw.llm_call.call_claude` so the existing timeout,
     error classification, and trace recording stay in one place."""
 
     async def __call__(
         self, prompt: str, *, role: str = "unknown", model: Optional[str] = None,
         timeout_ms: Optional[int] = None,
     ) -> str:
-        # Local import: planner imports from this module would cycle on the
-        # `claude_with_model` shim that delegates back here.
-        from .planner import call_claude
+        # Local import kept lazy so tests can patch llm_call.call_claude
+        # before the first call resolves it.
+        from .llm_call import call_claude
 
         return await call_claude(prompt, model=model, role=role, timeout_ms=timeout_ms)
 
@@ -66,7 +66,7 @@ class StubCognition:
 
     ``responses`` is a dict keyed by role; a missing role falls back to
     ``default``. Each call records into the trace exactly like a live call
-    (via :func:`devclaw.planner.call_claude`'s recorder path is bypassed, so
+    (via :func:`devclaw.llm_call.call_claude`'s recorder path is bypassed, so
     we record directly here), so a stub-mode harness produces the same trace
     *shape* as a live one."""
 
@@ -189,7 +189,7 @@ class AgentSDKCognition:
     Invariants held here:
       * **OAuth only** — the env handed to ``query`` is ``os.environ`` with
         ``ANTHROPIC_API_KEY``/``ANTHROPIC_AUTH_TOKEN`` popped (mirrors
-        ``planner.call_claude``), so a stray key never switches an autonomous
+        ``llm_call.call_claude``), so a stray key never switches an autonomous
         run onto metered billing.
       * **Grounding (#227)** — ``cwd`` is a NEUTRAL temp dir and
         ``setting_sources=[]``, so the spawned ``claude`` does NOT read
@@ -204,9 +204,9 @@ class AgentSDKCognition:
         self, prompt: str, *, role: str = "unknown", model: Optional[str] = None,
         timeout_ms: Optional[int] = None,
     ) -> str:
-        # Local imports: planner would cycle (it delegates back to this seam),
-        # and claude_agent_sdk is an OPTIONAL extra the stubbed suite lacks.
-        from .planner import PlannerError
+        # Local imports: claude_agent_sdk is an OPTIONAL extra the stubbed
+        # suite lacks, so nothing here may import it at module load.
+        from .llm_call import PlannerError
         from .loom import trace as _trace
 
         query_fn = self._query_fn

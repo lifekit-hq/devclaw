@@ -294,7 +294,7 @@ class GoalService:
         if not _trend_detector_mod.TREND_ENABLED:
             return None
         if self._trend_detector_inst is None:
-            from ..planner import claude_with_model
+            from ..llm_call import claude_with_model
 
             claude_caller = claude_with_model(
                 _trend_detector_mod.TREND_MODEL, role="trend-detector",

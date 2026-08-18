@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 
 from . import EngineEvent, EngineRequest, EngineResult
-from ..planner import PlannedTask
+from ..program_plan import PlannedTask
 
 # ---- engine ----------------------------------------------------------------
 

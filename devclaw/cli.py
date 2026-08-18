@@ -770,7 +770,7 @@ def _cmd_cognition_breakdown(args) -> int:
     from dataclasses import replace as _replace
 
     from .elicitation import build_grill_prompt, validate_step
-    from .planner import PlannerError, extract_json
+    from .llm_call import PlannerError, extract_json
     from .goal.decomposer import GoalDecomposerError, decompose
     from .goal.firmed import derive_done_when
     from .goal.models import Goal

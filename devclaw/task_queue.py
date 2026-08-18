@@ -44,7 +44,23 @@ from .delivery import deliver_change, delivery_failed
 from .engine import Engine, EngineEvent, EngineRequest
 from .loom.limits import classify_failure, pause_seconds
 from .loom.test_integrity import present_test_names, scan_diff
-from .planner import PlannedTask, PlannerError, plan_program
+from .llm_call import PlannerError
+from .program_plan import PlannedTask
+
+
+async def _no_host_planner(goal: str, workspace_dir: str) -> "list[PlannedTask]":
+    """The queue's default program planner since the host-cognition chain was
+    removed (spec 008 shrink, #539): planning lives in the worker's speckit
+    run, so an un-planned program submission is REFUSED loudly — the existing
+    mark-program-failed + notify path carries the reason to the owner instead
+    of a silent hang. Callers with a real plan pass ``planned=`` (or inject a
+    planner, as tests do); everything else files a goal via ``create_goal``."""
+    raise PlannerError(
+        "host program planning was removed (spec 008 shrink): submit_program "
+        "without pre-planned tasks is no longer supported — pass planned tasks "
+        "explicitly, or file a goal (create_goal) and let the worker plan via "
+        "speckit"
+    )
 from .quality import format_feedback, review_gate
 from .quality.browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .quality.gate_policy import Consequence, gate_consequence
@@ -588,8 +604,9 @@ class TaskQueue(_NotifyMixin):
         # symlink/relative respelling of the same DB can't mint a new id and
         # strand the old id's orphans unreapable.
         self._sandbox_owner: str = sandbox_owner_id(os.path.realpath(store.db_path))
-        # Injectable for tests — default to the real planner / sandcastle runner.
-        self._planner: PlannerFn = planner or (lambda g, w: plan_program(g, w))
+        # Injectable for tests — the default REFUSES loudly (host planning was
+        # removed; see _no_host_planner). The runner defaults to sandcastle.
+        self._planner: PlannerFn = planner or _no_host_planner
         self._runner: RunnerFn = runner or run_sandcastle
         # A short engine-kind label for trace events ("stub" / "sandcastle" /
         # "host" / "claude_sdk") — derived from the runner's qualified name so

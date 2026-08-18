@@ -49,6 +49,6 @@ def default_caller() -> ClaudeCaller:
     """Production summarizer caller, bound to the cheap summary tier. Imported
     lazily from devclaw's shared ``claude --print`` factory so unit tests (which
     inject a fake) never touch the subprocess."""
-    from ..planner import claude_with_model
+    from ..llm_call import claude_with_model
 
     return claude_with_model(GOAL_SUMMARY_MODEL, role="summary")
