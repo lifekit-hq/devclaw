@@ -22,6 +22,7 @@ This is the largest slice and the last — it touches the worker, the slice-guar
 
 - Q: How does onboarding decide which planning workflow a repo uses? → A: **Speckit, always.** No detect-and-bind port, no adapter tree. Present → adopt; absent → install. Future custom workflows ride speckit's own `workflow-registry.json`, not a devclaw layer.
 - Q: What decides full speckit cycle vs a direct fix? → A: **Label-driven.** feature/enhancement → full specify→plan→tasks→implement; bug/chore/docs → direct-advance, no spec (matches the existing "bug fixes / single bounded PRs need no spec" rule).
+- Q (refined 2026-08-15, Denys, recorded on issue #534): Is the routing binary? → A: **No — a tier ladder.** A hotfix/small bug shouldn't run the whole pipeline, but shouldn't be *no* process either. feature/enhancement → full cycle; **bug → bugfix tier** (regression-test-first, lightweight artifact); **critical-fix/hotfix → hotfix tier** (expedited); chore/docs → direct-advance, no artifact. Adopt-not-build: the middle tiers come from vendored community speckit workflows via FR-009, never a devclaw-authored ceremony.
 - Q: Adopt the OpenSpec-style delta model now? → A: **No — plain per-feature specs first.** speckit's per-feature dirs already bound the monolith; delta/archive is a follow-up that earns its way in once the loop runs.
 - Q: When a repo has no planning discipline, does onboarding install speckit? → A: **Yes, via a reviewable PR** (never a silent write). speckit is devclaw's default packed harness.
 
@@ -59,18 +60,21 @@ Every repo devclaw works uses speckit. If `.specify/` is present, devclaw adopts
 
 ---
 
-### User Story 3 - Label-routed ceremony (Priority: P2)
+### User Story 3 - Label-routed ceremony tiers (Priority: P2)
 
-A dispatched issue labeled feature/enhancement runs the full speckit cycle; a bug/chore/docs issue goes direct-advance with no spec. Trivial work does not pay spec-cycle ceremony.
+A dispatched work item is routed to the ceremony tier its label earns: feature/enhancement runs the full speckit cycle; a bug runs the **bugfix tier** (regression-test-first, a lightweight `specs/bugfix-NNN-*/` artifact — real process, not the whole pipeline); a critical-fix/hotfix runs the **hotfix tier** (expedited); chore/docs go direct-advance with no artifact. Trivial work does not pay spec-cycle ceremony, and a real bug does not go process-free.
 
-**Why this priority**: Prevents the "reinvented waterfall" trap — full ceremony on a typo is a cost, not a virtue.
+**Why this priority**: Prevents the "reinvented waterfall" trap — full ceremony on a typo is a cost, not a virtue — without the opposite trap of zero-process bug fixes.
 
-**Independent Test**: Dispatch a feature issue and a bug issue; verify the feature produces a `specs/NNN-*/` set and the bug produces a direct fix with no spec dir.
+**Independent Test**: Dispatch a feature issue, a bug issue, and a docs issue; verify the feature produces a full `specs/NNN-*/` set, the bug produces a `specs/bugfix-*/` lightweight set with a regression test, and the docs issue produces a direct fix with no artifact dir.
 
 **Acceptance Scenarios**:
 
 1. **Given** a feature/enhancement-labeled issue, **When** executed, **Then** the full specify→plan→tasks→implement cycle runs.
-2. **Given** a bug/chore/docs-labeled issue, **When** executed, **Then** it is fixed direct-advance with no spec directory created.
+2. **Given** a bug-labeled issue, **When** executed, **Then** the bugfix tier runs — a lightweight bugfix artifact + regression test written before the fix — and no full feature spec is created.
+3. **Given** a critical-fix/hotfix-labeled issue, **When** executed, **Then** the expedited hotfix tier runs.
+4. **Given** a chore/docs-labeled issue, **When** executed, **Then** it is fixed direct-advance with no artifact directory created.
+5. **Given** an ambiguous or absent label, **When** routed, **Then** the route only ever goes UP the ladder (toward full ceremony) or to needs-human — never silently down to a lighter tier.
 
 ---
 
@@ -103,7 +107,7 @@ Repos currently driven by devclaw's `PLAN.md` are migrated to speckit, and the s
 - **FR-001**: devclaw MUST use speckit as the planning/execution discipline for every repo it works; `PLAN.md` MUST NOT be used as the planning spine.
 - **FR-002**: If a repo has speckit (`.specify/`), devclaw MUST adopt it — its `specs/`, `tasks.md`, and constitution — and MUST NOT write a `PLAN.md`.
 - **FR-003**: If a repo lacks speckit, onboarding MUST install it via a reviewable PR; it MUST NOT silently commit the scaffolding.
-- **FR-004**: A dispatched issue labeled feature/enhancement MUST run the full speckit cycle (specify→plan→tasks→implement); a bug/chore/docs issue MUST go direct-advance with no spec.
+- **FR-004**: A dispatched work item MUST be routed to a ceremony tier by its label/kind: feature/enhancement → full speckit cycle (specify→plan→tasks→implement); bug → bugfix tier (regression-test-first, lightweight artifact); critical-fix/hotfix → hotfix tier (expedited); chore/docs → direct-advance with no artifact. An ambiguous or absent signal MUST route up the ladder (or to needs-human), never silently down.
 - **FR-005**: The slice-guard MUST read the bounded checklist from speckit's `tasks.md` (`[ID] [P?] [Story]` checkbox format) and MUST NOT read `PLAN.md`.
 - **FR-006**: On completion, the executed issue MUST be judged by the grounded done-gate; a non-achievable spec MUST bounce to needs-human.
 - **FR-007**: Existing `PLAN.md`-spine repos MUST be migrated to speckit; after migration `PLAN.md` MUST NOT be read for any decision.
@@ -126,7 +130,7 @@ Repos currently driven by devclaw's `PLAN.md` are migrated to speckit, and the s
 - **SC-002**: 100% of feature-labeled dispatched issues produce a speckit spec/plan/tasks artifact set.
 - **SC-003**: The slice-guard's build-ahead detection operates off `tasks.md` checkbox flips (named regression test), with `PLAN.md` no longer read.
 - **SC-004**: A bare repo receives speckit via a reviewable PR — 0 silent scaffolding commits.
-- **SC-005**: 0 spec directories are created for bug/chore/docs-labeled issues (trivial work skips the cycle).
+- **SC-005**: 0 full feature-spec directories are created for bug/chore/docs-labeled issues; a bug-tier item creates at most its lightweight `specs/bugfix-*/` artifact; chore/docs create 0 artifact directories (trivial work skips the cycle entirely).
 
 ## Assumptions
 

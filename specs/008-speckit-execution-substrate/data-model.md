@@ -70,3 +70,50 @@ settle(increment)
 No other state machine changes in P1. Goal lifecycle
 (`investigating→firming→executing`) is **untouched** in the MVP — its collapse is
 the shrink slice (#539), not this feature.
+
+---
+
+# US3 additions (P2 increment, 2026-08-18)
+
+### 6. Ceremony tier (routing table — pure data, no storage)
+
+| Signal (label or `dispatch_task` kind) | Tier | Workflow the brief stamps | Artifacts |
+|---|---|---|---|
+| `feature` / `enhancement` / kind=`implement_feature` | full | core specify→plan→tasks→implement | full `specs/NNN-*/` set |
+| `bug` / kind=`fix_bug` | bugfix | vendored `speckit.bugfix` (regression-test-first) | lightweight `specs/bugfix-NNN-*/` set |
+| `critical-fix` / `hotfix` | hotfix | vendored `speckit.hotfix` (expedited + post-mortem) | hotfix incident set |
+| `chore` / `docs` | direct | none — direct-advance | **none** |
+| ambiguous / absent / conflicting | full (or needs-human) | careful path | — |
+
+- **Resolution is mechanical** (dict lookup at dispatch, zero LLM — D10); the
+  chosen tier is stamped into the brief; the worker never re-decides it.
+- **Monotone rule**: uncertainty routes only UP the ladder (toward full), never down.
+- Multiple labels: the **highest-ceremony** matching label wins (feature > bugfix
+  ordering-wise; hotfix beats bug; a `feature`+`bug` pair is conflicting ⇒ full).
+
+### 7. Vendored workflow pack (per packed harness, not per repo run)
+
+- **Source of truth**: pinned copy of MartyBonacci/spec-kit-extensions'
+  `bugfix` + `hotfix` workflows inside devclaw's packed speckit scaffold
+  (`.specify/extensions/workflows/{bugfix,hotfix}/` + the two command markdowns
+  as worker-skill content + `scripts/create-{bugfix,hotfix}.sh`).
+- **Pin**: upstream commit SHA recorded in a vendor README in the pack dir;
+  the ONLY local delta is the `SPECKIT_NO_BRANCH=1` branch-creation guard (D12).
+- **Registration**: speckit's own mechanism (`workflow add` from local path /
+  registry entry in the scaffold) — FR-009; no devclaw abstraction.
+- `specs/bugfix-*/tasks.md` is read by the **unchanged** slice-guard glob (D2).
+
+## State: tier routing (dispatch-time, D10)
+
+```
+dispatch(work item)
+   │
+   ├── kind=fix_bug ─────────────────────────────► BUGFIX tier
+   ├── kind=implement_feature, no issue labels ──► FULL cycle
+   └── labeled issue ──► highest-ceremony label match:
+            ├── critical-fix|hotfix ──► HOTFIX tier
+            ├── feature|enhancement ──► FULL cycle
+            ├── bug ─────────────────► BUGFIX tier
+            ├── chore|docs ──────────► DIRECT advance (no artifact)
+            └── none/conflicting ────► FULL cycle (careful path; never silently lighter)
+```

@@ -122,12 +122,27 @@ which is the substance of the change.
 
 ## Phasing (this feature)
 
-- **P1 (MVP, this plan — concrete):** US1 (worker runs speckit + slice-guard reads
-  tasks.md + done-gate on spec) and US2 (adopt-or-install). Ships with 3 named
-  regression tests + a Tier-B live-shakedown (quickstart.md).
-- **P2 (outline only):** US3 label-routed ceremony (feature→full / bug→direct,
-  with adopted community hotfix/bugfix workflows via FR-009), US4 PLAN.md
-  migration.
+- **P1 (MVP — concrete, SHIPPED via PR #540; Tier-B proven #538):** US1 (worker
+  runs speckit + slice-guard reads tasks.md + done-gate on spec) and US2
+  (adopt-or-install). 3 named regression tests + Tier-B live-shakedown.
+- **US3 (P2 increment — concrete as of 2026-08-18, this plan update):**
+  label-routed ceremony **tiers** (refined per Denys 2026-08-15, issue #534:
+  ladder, not binary). Research D9–D13; design in `data-model.md` §6–7 +
+  `contracts/tier-routing.md`; validation in `quickstart.md` US3 section.
+  Shape: ~2 PRs —
+  1. **Vendor + register**: pinned bugfix/hotfix workflows from
+     MartyBonacci/spec-kit-extensions into the packed harness
+     (`speckit_setup.py` scaffold + worker-skill content), `SPECKIT_NO_BRANCH`
+     patch, vendor README + integrity test (FR-009, D9/D11/D12).
+  2. **Route + stamp**: `tier_routing.py` pure router; `dispatch_task` kind- and
+     issue-label wiring; per-tier advance-brief blocks; named regressions
+     (`test_tier_routing.py`, `test_advance_brief_tiers.py`) (FR-004, D10, SC-005).
+  Constitution re-check for US3: II holds (vendored pack is markdown+bash); III
+  holds (routing = dispatch-time dict lookup, zero LLM, idle path untouched); V/VI
+  hold (no gate consulted or weakened; guard glob unchanged). Open for Denys at
+  review: whether `dispatch_task` grows an explicit `hotfix` kind (research.md
+  tail note).
+- **US4 (P2, outline only):** PLAN.md migration.
 - **Shrink (#539, outline only, separate slice):** remove the host
   `investigating→firming→decompose` cognition chain once Tier-B proves the worker
   owns planning. **Gated on Tier-B. Relocation, not deletion — do not touch in P1.**

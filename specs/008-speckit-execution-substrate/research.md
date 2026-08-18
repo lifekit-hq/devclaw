@@ -125,4 +125,104 @@ the work-present path, so the guard holds.
 
 ---
 
-**All NEEDS CLARIFICATION resolved.** No open unknowns block Phase 1.
+# Phase 0 Research — US3 label-routed ceremony tiers (P2 increment, 2026-08-18)
+
+Grounded this session: `specify` CLI v0.16.3 probed live; MartyBonacci/spec-kit-extensions
+read file-by-file via the GitHub API; catalog contents searched.
+
+## D9 — The tier ladder's middle tiers are ADOPTED, not built (FR-009)
+
+**Decision**: Vendor (copy + pin) the `bugfix` and `hotfix` workflows from
+**MartyBonacci/spec-kit-extensions** (MIT, 83★, last push 2025-10-12 — dormant,
+which is *for* pinning, not against it) into devclaw's packed speckit harness.
+Only those two workflows; `modify`/`refactor`/`deprecate` are out of scope.
+Verified facts about the pack:
+
+- Commands are **plain markdown** (`commands/speckit.bugfix.md`, `speckit.hotfix.md`)
+  + **plain bash** (`scripts/create-bugfix.sh`, `create-hotfix.sh`) — agent-agnostic,
+  Principle II-compatible.
+- `bugfix` creates `specs/bugfix-NNN-<slug>/` with a bug-report artifact, then
+  chains into the standard `/speckit.plan → tasks → implement` steps with a
+  **regression-test-before-fix** discipline. Its `bugfix-NNN` counter is a
+  separate number-space from feature `NNN` (globs `specs/bugfix-*`), so it does
+  NOT worsen the #553 numbering collision.
+- `hotfix` creates an incident-log artifact with severity assessment and an
+  expedited plan step, plus a mandatory post-mortem section.
+- Because the tier dirs live under `specs/` and carry `tasks.md`, the P1
+  slice-guard (`specs/*/tasks.md` glob, D2) picks them up **with zero changes**.
+
+**Rationale**: The community pack is exactly Denys's requested middle tier
+(real-but-lightweight); authoring our own duplicates it and violates the
+2026-08-15 adopt-not-build ruling on #534.
+
+**Alternatives rejected**: (a) Author devclaw-native bugfix/hotfix templates —
+re-litigates adopt-not-build. (b) Live dependency on the upstream repo —
+dormant 10 months, unreviewed updates entering an autonomous loop; pin + vendor
+is the loud-safe form. (c) Install from a workflow catalog — verified 2026-08-18:
+neither the official nor the community catalog carries any bugfix/hotfix tier
+(3 full-cycle workflows only), so there is nothing to install from.
+
+## D10 — Routing: host-side mechanical, ambiguity only routes UP
+
+**Decision**: The label→tier route is decided **mechanically at dispatch time**
+(zero LLM): (a) companion path — `dispatch_task`'s existing `kind` is the signal
+(`fix_bug` → bugfix tier; `implement_feature` → full cycle); (b) goal path — when
+the advance target is a labeled issue, the labels fetched at dispatch (existing
+mechanical `gh` call site) map `feature|enhancement → full`, `bug → bugfix`,
+`critical-fix|hotfix → hotfix`, `chore|docs → direct`. The chosen tier is stamped
+into the advance/dispatch brief as the workflow the worker runs. Ambiguous or
+absent signal → **full cycle** (the careful path); nothing ever silently routes
+to a *lighter* tier (spec Edge Case + FR-004). The worker does not re-decide the
+tier; it executes the stamped one.
+
+**Rationale**: Routing is a lookup, not judgment — Principle III (zero idle
+cognition) and the SDLC rule "put each decision where it can be enforced"
+(invariant → python). Stamping in the brief keeps the worker model-agnostic.
+
+**Alternatives rejected**: (a) Worker decides the tier from the issue — moves an
+enforceable invariant into prompt-space; a worker rationalizing "this is just a
+bug" onto a feature is exactly the #358 integrity class. (b) LLM-classified
+routing — burns tokens on a lookup and violates the zero-token dispatch shape.
+
+## D11 — Registration rides speckit's own mechanism (FR-009), v0.16.3 verified
+
+**Decision**: The vendored workflows register through speckit's native workflow
+system: `specify workflow add <local path>` (v0.16.3 CLI verified 2026-08-18:
+`workflow add` installs from catalog, URL, **or local path**; `list/info/enable/
+disable/resolve` all present). The packed harness (what `speckit_setup.py`
+scaffolds into a repo) carries the vendored pack under `.specify/extensions/`
++ the two command markdowns as plain worker-skill content, mirroring D1's
+vendoring of the core commands. No devclaw-side workflow abstraction is built.
+
+**Rationale**: FR-009 verbatim. The catalog *mechanism* is the delivery vehicle;
+the vendored copy is the source (D9c: catalogs carry no tiers).
+
+## D12 — Vendored scripts must NOT own branching (goal-branch delivery wins)
+
+**Decision**: The pack's `create-bugfix.sh`/`create-hotfix.sh` create and check
+out their own `bugfix/NNN-*` branches. In devclaw execution, **delivery owns
+branches** (goal-branch accumulation #486; target_branch contract). The vendored
+copies are patched — branch creation removed behind an env guard
+(`SPECKIT_NO_BRANCH=1`, set in the worker environment), artifact creation kept —
+and the patch is documented in the vendor README inside the pack dir. This is
+the ONLY delta from upstream; everything else is byte-verbatim at the pinned
+commit.
+
+**Rationale**: Two branch-owners is a mechanism collision (the class, not the
+instance: any vendored tool that mutates git state must be subordinated to the
+delivery layer). A documented single-purpose patch beats wrapper indirection.
+
+## D13 — SC-005 refined to tier-appropriate artifacts
+
+**Decision**: Bug-tier work produces at most its lightweight `specs/bugfix-*/`
+set (this is the point of the middle tier); chore/docs produce zero artifact
+dirs; only feature/enhancement produce full `specs/NNN-*/` sets. Encoded in the
+spec (SC-005, US3 scenarios) this session — sourced from Denys's 2026-08-15
+tier-ladder refinement recorded on issue #534, not a new decision.
+
+---
+
+**All NEEDS CLARIFICATION resolved.** No open unknowns block Phase 1 for US3.
+Open question deliberately left for Denys at review (not blocking): whether
+`dispatch_task` grows an explicit `hotfix` kind or the hotfix tier stays
+issue-label-only (companion-path hotfixes are rare; the label route covers them).

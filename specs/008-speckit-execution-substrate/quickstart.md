@@ -49,7 +49,29 @@ Run the real pipeline (logged-in `claude` + docker) per
 **Passing Tier B is the gate** that unlocks the shrink slice (#539) — only then do
 we remove the host `investigating→firming→decompose` chain.
 
+## US3 — label-routed ceremony tiers (P2 increment, added 2026-08-18)
+
+**Tier A (stubbed):**
+```bash
+TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q \
+  tests/test_tier_routing.py \
+  tests/test_advance_brief_tiers.py
+```
+- routing table holds for every signal row; ambiguity/conflict routes to full,
+  never lighter (monotone property);
+- per-tier brief blocks present; the `direct` brief forbids artifact creation
+  (presence AND absence asserted); idle path adds 0 cognition calls;
+- vendored scripts carry the `SPECKIT_NO_BRANCH` guard (vendor-integrity test).
+
+**Tier B (live):** dispatch three real issues against a speckit repo —
+1. `feature`-labeled → full `specs/NNN-*/` set, one slice per PR;
+2. `bug`-labeled → `specs/bugfix-NNN-*/` set with the regression test committed
+   **before** the fix, no full feature spec (SC-005);
+3. `docs`-labeled → direct fix PR, **zero** artifact dirs created (SC-005);
+and confirm delivery stays on the goal branch in all three (no `bugfix/NNN-*`
+branch from the vendored scripts).
+
 ## Out of scope for this validation
-- US3 label-routing / community hotfix+bugfix workflows (P2, FR-009).
 - US4 PLAN.md migration of existing repos (P2).
 - 007 autonomous dispatch (flag stays OFF).
+- `modify`/`refactor`/`deprecate` workflows from the extension pack (not vendored).
