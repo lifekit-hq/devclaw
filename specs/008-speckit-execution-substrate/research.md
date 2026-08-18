@@ -223,6 +223,29 @@ tier-ladder refinement recorded on issue #534, not a new decision.
 ---
 
 **All NEEDS CLARIFICATION resolved.** No open unknowns block Phase 1 for US3.
-Open question deliberately left for Denys at review (not blocking): whether
-`dispatch_task` grows an explicit `hotfix` kind or the hotfix tier stays
-issue-label-only (companion-path hotfixes are rare; the label route covers them).
+
+## Open questions for Denys at review (not blocking Phase 1 design)
+
+1. **`hotfix` kind on `dispatch_task`?** — or the hotfix tier stays
+   issue-label-only (companion-path hotfixes are rare; the label route covers
+   them). Lean: label-only.
+2. **Bugfix-tier source: MartyBonacci vs Quratulain-bilal** (new evidence,
+   2026-08-18 ecosystem survey, post-D9): MartyBonacci's pack is stale
+   (2025-10) AND **pre-manifest-format** — copy-in files predating the
+   extension/catalog era, so vendoring includes hand-porting onto 0.16.x
+   conventions. **Quratulain-bilal/spec-kit-bugfix** (33★, pushed 2026-07,
+   MIT) is **modern extension format** (`specify extension add --from <pinned
+   zip>`), listed in the official community catalog, agent-agnostic — but a
+   different shape: bug→spec-artifact *tracing* (.report/.patch/.switch/
+   .verify) rather than MartyBonacci's regression-test-first workflow. Denys's
+   #534 refinement named the regression-test-first shape; the modern-format
+   alternative halves the vendoring surgery. Options: (a) keep D9, accept the
+   port cost; (b) adopt Quratulain via `--from` pin and add the
+   regression-test-first rule as brief text; (c) hybrid. D9 stands until
+   Denys rules.
+3. **Survey follow-ups worth separate triage** (not US3): upstream 0.16.4
+   RunState TOCTOU fix (concurrent runs); `workflow run --json` + gate
+   verdicts in run JSON as a settle-telemetry surface; `fix-findings` +
+   `ci-guard` extensions (same author as Q2's alternative); the #2319 upgrade
+   footgun (`specify init --here --force` silently skips existing
+   scripts/templates — vendored-pin upgrade procedure must delete-then-reinit).
