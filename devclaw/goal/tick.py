@@ -271,7 +271,10 @@ async def _tick_goal_impl(
             "investigation/firming phases were removed (spec 008 shrink); the "
             "worker plans via speckit",
         )
-        store.update_status_fields(goal_id, lifecycle="executing")
+        # Column-scoped + self-guarding (WHERE lifecycle IN (...)): never a
+        # whole-row write, so a concurrent steer/cancel cannot be clobbered —
+        # see GoalStore.heal_legacy_lifecycle.
+        store.heal_legacy_lifecycle(goal_id)
         status = store.load_status(goal_id)
         phase = _classify(status)
 

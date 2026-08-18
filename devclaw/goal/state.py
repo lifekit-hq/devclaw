@@ -475,6 +475,24 @@ class GoalState:
             )
             self._store._commit()
 
+    def heal_legacy_lifecycle(self, goal_id: str) -> bool:
+        """One-shot migration write (spec 008 shrink): flip a pre-shrink
+        ``investigating``/``firming`` lifecycle to ``executing``. Column-scoped
+        AND self-guarding — the ``WHERE lifecycle IN (...)`` predicate is the
+        CAS: it touches ONLY the lifecycle column (so it can never clobber a
+        concurrent phase/in_flight transition — no whole-row write), and it
+        no-ops once anything else has already changed the value. Returns True
+        iff a row was healed."""
+        with self._store._lock:
+            cur = self._store._db.execute(
+                "UPDATE goal_status SET lifecycle = 'executing', "
+                "version = version + 1, updated_at = ? "
+                "WHERE goal_id = ? AND lifecycle IN ('investigating', 'firming')",
+                (_now_ms(), goal_id),
+            )
+            self._store._commit()
+            return cur.rowcount > 0
+
     def set_inbox_ingest_cursor(self, goal_id: str, n: int) -> None:
         """Column-only ``UPDATE`` of ``inbox_ingest_cursor`` — the PR5 write
         side of the ingest boundary (how many ``inbox.md`` lines have been
