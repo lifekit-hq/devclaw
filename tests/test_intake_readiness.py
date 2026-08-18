@@ -34,8 +34,17 @@ class FakeGh:
     ``pending`` is the ungraded-issue set the recovery sweep discovers;
     ``unreadable`` issues return no body (models a gh read hiccup)."""
 
-    def __init__(self, body: str | None = None, pending=None, unreadable=()):
+    def __init__(
+        self,
+        body: str | None = None,
+        pending=None,
+        unreadable=(),
+        title: str = "",
+        state: str = "OPEN",
+    ):
         self.body = body
+        self.title = title
+        self.state = state
         self.pending = list(pending or [])
         self.unreadable = set(unreadable)
         self.list_calls: list[str] = []
@@ -60,10 +69,10 @@ class FakeGh:
     async def comment(self, repo, issue, body):
         self.comments.append((repo, issue, body))
 
-    async def read_issue(self, repo, issue):
-        if issue in self.unreadable:
+    async def view_issue(self, repo, issue):
+        if issue in self.unreadable or self.body is None:
             return None
-        return self.body
+        return {"title": self.title, "body": self.body, "state": self.state}
 
     def added_labels(self) -> list[str]:
         return [l for _, _, labels in self.added for l in labels]
@@ -518,3 +527,244 @@ def test_serve_start_kicks_the_readiness_recovery_sweep(monkeypatch):
 
     asyncio.run(drive())
     assert called["n"] == 1
+
+
+# ---- spec 009: universal issue adoption (format-tolerant regrade) -----------
+
+def _registered(tmp_path):
+    reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
+    reg.create(
+        id="finance-sentry",
+        name="Finance Sentry",
+        repo_url="https://github.com/lifekit-hq/finance-sentry.git",
+        workspace_dir=str(tmp_path / "ws"),
+    )
+    return reg
+
+
+ISSUE_7 = "https://github.com/lifekit-hq/finance-sentry/issues/7"
+
+
+def test_regrade_adopts_plain_issue_without_what_section(tmp_path):
+    """A hand-written issue (no intake sections) grades via the title+body
+    fallback: the ask is the issue as it stands, done_when renders as absent,
+    and the readiness label + mirror comment land exactly as for intake-filed
+    issues (spec 009 FR-001/FR-002)."""
+    reg = _registered(tmp_path)
+    gh = FakeGh(
+        title="Refresh endpoint returns stale balances",
+        body="After POST /refresh, GET /balances still serves the old numbers.",
+    )
+    caller = CannedClaude(READY_JSON)
+    result = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=caller, gh=gh,
+        )
+    )
+    assert result["readiness"] == intake.READY_LABEL
+    assert intake.READY_LABEL in gh.added_labels()
+    assert gh.comments  # the verdict mirror comment lands on adopted issues too
+    # title AND body both became the ask
+    assert "Refresh endpoint returns stale balances" in caller.last_prompt
+    assert "still serves the old numbers" in caller.last_prompt
+    # no done_when was fabricated — the prompt shows it as absent
+    assert "(none provided)" in caller.last_prompt
+
+
+def test_regrade_intake_format_issue_behavior_unchanged(tmp_path):
+    """SC-003: an issue WITH intake sections never touches the fallback — the
+    structured what/done_when are honored exactly as before the adoption
+    change (the issue title is NOT folded into the ask)."""
+    reg = _registered(tmp_path)
+    body = _intake_body(
+        "Rename Balance.cs to AccountBalance.cs and update its callers.",
+        "The type is renamed and the build passes.",
+    )
+    gh = FakeGh(body=body, title="[intake] rename balance type")
+    caller = CannedClaude(READY_JSON)
+    result = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=caller, gh=gh,
+        )
+    )
+    assert result["readiness"] == intake.READY_LABEL
+    assert "Rename Balance.cs to AccountBalance.cs" in caller.last_prompt
+    assert "The type is renamed and the build passes." in caller.last_prompt
+    # structured done_when means the absent-marker must NOT appear
+    assert "(none provided)" not in caller.last_prompt.split("context:")[0]
+    # the GitHub title is not folded into a structured ask
+    assert "[intake] rename balance type" not in caller.last_prompt
+
+
+def test_regrade_rejects_closed_issue_loudly(tmp_path):
+    """Adoption targets open work: a non-OPEN issue is a loud IntakeError
+    BEFORE any cognition is spent (spec 009 edge case)."""
+    reg = _registered(tmp_path)
+    gh = FakeGh(title="Old bug", body="Long fixed.", state="CLOSED")
+    caller = CannedClaude(READY_JSON)
+    with pytest.raises(intake.IntakeError, match="not open"):
+        asyncio.run(
+            intake.regrade(
+                reg, project_id="finance-sentry", issue=ISSUE_7,
+                claude_caller=caller, gh=gh,
+            )
+        )
+    assert caller.calls == 0
+    assert gh.added == []
+
+
+# ---- spec 009 US2: bulk backlog onboarding (grade_backlog) -------------------
+
+class BacklogGh(FakeGh):
+    """Serves a whole backlog: ``issues`` maps url -> {title, body, state,
+    labels, createdAt, unreadable}. ``list_open_issues`` renders the gh listing
+    shape; ``view_issue`` serves per-issue."""
+
+    def __init__(self, issues: dict, list_fails: bool = False):
+        super().__init__()
+        self.issues = issues
+        self.list_fails = list_fails
+
+    async def list_open_issues(self, repo):
+        if self.list_fails:
+            return None
+        return [
+            {
+                "url": url,
+                "labels": [{"name": n} for n in meta.get("labels", ())],
+                "createdAt": meta.get("createdAt", ""),
+            }
+            for url, meta in self.issues.items()
+        ]
+
+    async def view_issue(self, repo, issue):
+        meta = self.issues.get(issue)
+        if meta is None or meta.get("unreadable"):
+            return None
+        return {
+            "title": meta.get("title", "t"),
+            "body": meta.get("body", "b"),
+            "state": meta.get("state", "OPEN"),
+        }
+
+
+def _u(n: int) -> str:
+    return f"https://github.com/lifekit-hq/finance-sentry/issues/{n}"
+
+
+def test_grade_backlog_caps_batch_and_reports_remainder_without_continuing(
+    tmp_path, monkeypatch
+):
+    """One invocation grades at most the cap, priority-band-first then oldest;
+    the remainder is named in the report and NOT graded — continuation is only
+    ever a fresh explicit invocation (spec 009 FR-007a)."""
+    monkeypatch.setattr(intake, "BULK_GRADE_CAP", 2)
+    reg = _registered(tmp_path)
+    gh = BacklogGh({
+        _u(1): {"labels": ("P1",), "createdAt": "2026-01-02T00:00:00Z"},
+        _u(2): {"labels": ("P0",), "createdAt": "2026-01-03T00:00:00Z"},
+        _u(3): {"labels": (), "createdAt": "2026-01-01T00:00:00Z"},
+        _u(4): {"labels": ("P1",), "createdAt": "2026-01-01T00:00:00Z"},
+        _u(5): {"labels": (intake.READY_LABEL,), "createdAt": "2026-01-01T00:00:00Z"},
+    })
+    caller = CannedClaude(READY_JSON)
+    report = asyncio.run(
+        intake.grade_backlog(
+            reg, project_id="finance-sentry", gh=gh, claude_caller=caller
+        )
+    )
+    # P0 first, then the older P1; unlabeled sorts last
+    assert report["graded_ready"] == [_u(2), _u(4)]
+    assert report["not_yet_graded"] == [_u(1), _u(3)]
+    assert report["skipped_already_graded"] == [_u(5)]
+    assert report["cap"] == 2
+    assert caller.calls == 2  # exactly the batch — no automatic continuation
+
+
+def test_grade_backlog_skips_graded_and_spends_zero_cognition_when_none_pending(
+    tmp_path,
+):
+    reg = _registered(tmp_path)
+    gh = BacklogGh({
+        _u(1): {"labels": (intake.READY_LABEL,)},
+        _u(2): {"labels": (intake.NEEDS_REFINEMENT_LABEL, "P0")},
+    })
+    caller = CannedClaude(READY_JSON)
+    report = asyncio.run(
+        intake.grade_backlog(
+            reg, project_id="finance-sentry", gh=gh, claude_caller=caller
+        )
+    )
+    assert caller.calls == 0
+    assert report["graded_ready"] == [] and report["graded_needs_refinement"] == []
+    assert sorted(report["skipped_already_graded"]) == [_u(1), _u(2)]
+    assert report["not_yet_graded"] == []
+
+
+def test_grade_backlog_resumes_by_rederiving_pending_from_labels(
+    tmp_path, monkeypatch
+):
+    """No progress store: the second invocation re-derives the pending set from
+    the labels GitHub now carries and grades exactly the remainder."""
+    monkeypatch.setattr(intake, "BULK_GRADE_CAP", 2)
+    reg = _registered(tmp_path)
+    issues = {
+        _u(1): {"labels": ("P0",), "createdAt": "2026-01-01T00:00:00Z"},
+        _u(2): {"labels": ("P0",), "createdAt": "2026-01-02T00:00:00Z"},
+        _u(3): {"labels": ("P1",), "createdAt": "2026-01-01T00:00:00Z"},
+    }
+    gh = BacklogGh(issues)
+    caller = CannedClaude(READY_JSON)
+    first = asyncio.run(
+        intake.grade_backlog(
+            reg, project_id="finance-sentry", gh=gh, claude_caller=caller
+        )
+    )
+    assert first["graded_ready"] == [_u(1), _u(2)]
+    assert first["not_yet_graded"] == [_u(3)]
+    # the labels landed on GitHub (simulate what the first batch wrote)
+    for url in first["graded_ready"]:
+        issues[url]["labels"] = issues[url]["labels"] + (intake.READY_LABEL,)
+    second = asyncio.run(
+        intake.grade_backlog(
+            reg, project_id="finance-sentry", gh=gh, claude_caller=caller
+        )
+    )
+    assert second["graded_ready"] == [_u(3)]  # exactly the remainder
+    assert sorted(second["skipped_already_graded"]) == [_u(1), _u(2)]
+    assert caller.calls == 3  # 2 + 1 — nothing re-graded
+
+
+def test_grade_backlog_one_issue_failure_never_stops_the_batch(tmp_path):
+    """A mid-batch unreadable issue lands in failed[] with a reason; the rest
+    of the batch still grades (recovery-sweep convention)."""
+    reg = _registered(tmp_path)
+    gh = BacklogGh({
+        _u(1): {"labels": ("P0",), "createdAt": "2026-01-01T00:00:00Z"},
+        _u(2): {"labels": ("P0",), "createdAt": "2026-01-02T00:00:00Z", "unreadable": True},
+        _u(3): {"labels": ("P1",), "createdAt": "2026-01-01T00:00:00Z"},
+    })
+    caller = CannedClaude(READY_JSON)
+    report = asyncio.run(
+        intake.grade_backlog(
+            reg, project_id="finance-sentry", gh=gh, claude_caller=caller
+        )
+    )
+    assert report["graded_ready"] == [_u(1), _u(3)]
+    assert [f["url"] for f in report["failed"]] == [_u(2)]
+    assert "could not read" in report["failed"][0]["reason"]
+
+
+def test_grade_backlog_rejects_loudly_when_listing_fails(tmp_path):
+    """An explicit operator action never silently degrades to an empty sweep."""
+    reg = _registered(tmp_path)
+    gh = BacklogGh({}, list_fails=True)
+    with pytest.raises(intake.IntakeError, match="could not list open issues"):
+        asyncio.run(
+            intake.grade_backlog(
+                reg, project_id="finance-sentry", gh=gh,
+                claude_caller=CannedClaude(READY_JSON),
+            )
+        )

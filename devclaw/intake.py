@@ -47,6 +47,14 @@ CHANNELS = ("chat", "telegram", "a2a", "other")
 #: at dispatch.
 MIN_DONE_WHEN_CHARS = 20
 
+#: spec 009: one bulk-grade invocation spends at most this many cognition calls
+#: (clarify ruling 2026-08-18 — quota spend stays in operator-triggered chunks;
+#: the remainder is reported and continued only by an explicit re-invocation).
+BULK_GRADE_CAP = 20
+
+#: the ``gh issue list`` page bound — stated in the bulk report, never silent.
+LISTING_LIMIT = 200
+
 _TITLE_MAX = 240
 
 
@@ -139,8 +147,9 @@ class GhAdapter(Protocol):
     async def add_labels(self, repo: str, issue: str, labels: list[str]) -> None: ...
     async def remove_labels(self, repo: str, issue: str, labels: list[str]) -> None: ...
     async def comment(self, repo: str, issue: str, body: str) -> None: ...
-    async def read_issue(self, repo: str, issue: str) -> Optional[str]: ...
+    async def view_issue(self, repo: str, issue: str) -> Optional[dict]: ...
     async def list_intake_awaiting_grade(self, repo: str) -> list[str]: ...
+    async def list_open_issues(self, repo: str) -> Optional[list[dict]]: ...
 
 
 async def _run(*args: str) -> tuple[int, str]:
@@ -194,11 +203,20 @@ class GhCli:
     async def comment(self, repo: str, issue: str, body: str) -> None:
         await _run("gh", "issue", "comment", issue, "--repo", repo, "--body", body)
 
-    async def read_issue(self, repo: str, issue: str) -> Optional[str]:
+    async def view_issue(self, repo: str, issue: str) -> Optional[dict]:
+        """One read for everything the re-grade needs — ``{title, body, state}``
+        (the single-issue verb rejects non-OPEN targets before any cognition)."""
         rc, out = await _run(
-            "gh", "issue", "view", issue, "--repo", repo, "--json", "body", "-q", ".body"
+            "gh", "issue", "view", issue, "--repo", repo,
+            "--json", "title,body,state",
         )
-        return out if rc == 0 else None
+        if rc != 0 or not out.strip():
+            return None
+        try:
+            data = json.loads(out)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
 
     async def list_intake_awaiting_grade(self, repo: str) -> list[str]:
         """Open intake issues that carry the intake label but NEITHER readiness
@@ -224,6 +242,26 @@ class GhCli:
                 if url:
                     pending.append(url)
         return pending
+
+    async def list_open_issues(self, repo: str) -> Optional[list[dict]]:
+        """All open issues (any label, any format — PRs excluded by ``gh issue
+        list`` itself), for the bulk-grade partition (spec 009). Unlike the
+        recovery lister above, a ``gh`` failure returns ``None`` so the bulk
+        verb can reject LOUDLY — an explicit operator action must never
+        silently degrade to an empty sweep."""
+        rc, out = await _run(
+            "gh", "issue", "list", "--repo", repo, "--state", "open",
+            "--limit", str(LISTING_LIMIT), "--json", "url,labels,createdAt",
+        )
+        if rc != 0:
+            return None
+        if not out.strip():
+            return []
+        try:
+            items = json.loads(out)
+        except (json.JSONDecodeError, ValueError):
+            return None
+        return items if isinstance(items, list) else None
 
 
 # ---- the doorway ------------------------------------------------------------
@@ -425,11 +463,14 @@ async def regrade(
     claude_caller=None,
     gh: Optional[GhAdapter] = None,
 ) -> dict:
-    """Manual re-trigger (FR-010): read the (possibly amended) intake issue,
-    re-run the readiness grade, and swap the readiness label. Reads the issue
-    ON DEMAND — no automatic watching of edits. Raises ``IntakeError`` (loud,
-    synchronous) when the target can't be resolved or the issue can't be read;
-    the grade itself still fails CLOSED via :func:`grade_and_label`."""
+    """Grade any OPEN issue on the registered project's repo — the manual
+    re-trigger (006 FR-010) and the universal adoption verb (spec 009) in one.
+    Intake-format issues keep their structured sections; any other format is
+    read as-is — title + body become the ask (009 FR-001), and the grade judges
+    verifiable intent from the ask itself. Reads the issue ON DEMAND — no
+    automatic watching of edits. Raises ``IntakeError`` (loud, synchronous) when
+    the target can't be resolved, the issue can't be read, or the issue is not
+    open; the grade itself still fails CLOSED via :func:`grade_and_label`."""
     from . import intake_readiness
 
     project = registry.get((project_id or "").strip())
@@ -446,18 +487,32 @@ async def regrade(
         )
 
     gh = gh or GhCli()
-    body = await gh.read_issue(slug, issue)
-    if not body:
+    view = await gh.view_issue(slug, issue)
+    if view is None:
         raise IntakeError(
             f"regrade failed: could not read issue {issue} on {slug} "
             "(is gh authenticated, the issue reachable?)"
         )
+    state = str(view.get("state") or "").upper()
+    if state and state != "OPEN":
+        raise IntakeError(
+            f"regrade rejected: issue {issue} on {slug} is {state.lower()}, "
+            "not open — grading targets open work only"
+        )
+    body = view.get("body") or ""
     what, done_when, context = parse_issue_fields(body)
     if not what.strip():
-        raise IntakeError(
-            f"regrade failed: issue {issue} has no readable '## What' section — "
-            "is it a devclaw intake issue?"
-        )
+        # No intake sections — a hand-written issue. The issue as it stands IS
+        # the ask (009 FR-001): title + body, no done_when (the grade judges
+        # verifiable intent from the ask itself; absent intent fails closed).
+        title = (view.get("title") or "").strip()
+        what = (title + "\n\n" + body.strip()).strip()
+        done_when, context = "", ""
+        if not what:
+            raise IntakeError(
+                f"regrade failed: issue {issue} on {slug} has no readable "
+                "title or body — nothing to grade"
+            )
 
     caller = claude_caller or intake_readiness.default_caller()
     label = await grade_and_label(
@@ -520,3 +575,100 @@ async def recover_pending_grades(
                     f"readiness recovery: grade failed on {slug} {issue}: {exc}\n"
                 )
     return graded
+
+
+# ---- bulk backlog onboarding (spec 009, US2) ---------------------------------
+
+def _priority_band(label_names: set) -> int:
+    """Backlog triage order: ``P0`` < ``P1`` < … < ``P5`` < unlabeled — the same
+    priority-band-then-oldest convention the repo backlogs (and spec 007's claim
+    order) use."""
+    for n in range(6):
+        if f"P{n}" in label_names:
+            return n
+    return 99
+
+
+async def grade_backlog(
+    registry,
+    *,
+    project_id: str,
+    gh: Optional[GhAdapter] = None,
+    claude_caller=None,
+) -> dict:
+    """Grade up to :data:`BULK_GRADE_CAP` open, not-yet-graded issues on one
+    registered project through the identical single-issue :func:`regrade` path
+    (spec 009 US2). Already-graded issues are skipped with zero cognition; the
+    pending set is derived from the readiness labels themselves, so the verb is
+    idempotent and resumable by construction — no progress store, no automatic
+    continuation. One issue's failure never stops the batch (recovery-sweep
+    convention); a LISTING failure rejects loudly — an explicit operator action
+    never silently degrades to an empty sweep.
+
+    Returns a report accounting for every listed open issue by URL in exactly
+    one bucket: ``graded_ready`` / ``graded_needs_refinement`` / ``failed``
+    (with reasons) / ``skipped_already_graded`` / ``not_yet_graded`` (beyond
+    the cap — run again to continue), plus the ``cap`` and the stated
+    ``listing_limit`` page bound."""
+    project = registry.get((project_id or "").strip())
+    if project is None:
+        raise IntakeError(
+            f"grade_backlog rejected: unknown project '{project_id}' — the target "
+            "must be a registered project (see list_projects)"
+        )
+    slug = repo_slug(project.repo_url)
+    if slug is None:
+        raise IntakeError(
+            f"grade_backlog rejected: project '{project.id}' has no GitHub repo_url "
+            "in the registry — set it with update_project"
+        )
+    gh = gh or GhCli()
+    items = await gh.list_open_issues(slug)
+    if items is None:
+        raise IntakeError(
+            f"grade_backlog failed: could not list open issues on {slug} "
+            "(is gh authenticated, the repo reachable?)"
+        )
+
+    skipped: list[str] = []
+    pending: list[tuple[int, str, str]] = []
+    for it in items:
+        url = (it or {}).get("url")
+        if not url:
+            continue
+        names = {(l or {}).get("name") for l in (it.get("labels") or [])}
+        if names & set(_READINESS_LABELS):
+            skipped.append(url)
+        else:
+            pending.append((_priority_band(names), it.get("createdAt") or "", url))
+    pending.sort()
+    batch = [url for _, _, url in pending[:BULK_GRADE_CAP]]
+    remainder = [url for _, _, url in pending[BULK_GRADE_CAP:]]
+
+    report: dict = {
+        "project_id": project.id,
+        "repo": slug,
+        "graded_ready": [],
+        "graded_needs_refinement": [],
+        "failed": [],
+        "skipped_already_graded": skipped,
+        "not_yet_graded": remainder,
+        "cap": BULK_GRADE_CAP,
+        "listing_limit": LISTING_LIMIT,
+    }
+    for url in batch:
+        try:
+            result = await regrade(
+                registry, project_id=project.id, issue=url,
+                claude_caller=claude_caller, gh=gh,
+            )
+        except Exception as exc:  # noqa: BLE001 — one issue never stops the batch
+            report["failed"].append({"url": url, "reason": str(exc)})
+            continue
+        bucket = (
+            "graded_ready"
+            if result.get("readiness") == READY_LABEL
+            else "graded_needs_refinement"
+        )
+        report[bucket].append(url)
+    return report

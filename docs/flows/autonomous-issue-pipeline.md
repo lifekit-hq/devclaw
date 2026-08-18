@@ -8,10 +8,15 @@
 > - **P1** — `specs/006-intake-readiness-gate` (specify + clarify done)
 > - **P2** — `specs/007-autonomous-issue-dispatch` (scoped + clarify done, unsized)
 > - **P3** — `specs/008-speckit-execution-substrate` (scoped + clarify done, unsized)
+> - **Adoption** — `specs/009-universal-issue-adoption` (**SHIPPED**): the grade accepts
+>   ANY open issue — hand-written backlogs included — via `regrade_intake`, plus a
+>   batch-capped `grade_backlog` for onboarding a whole backlog. The door below is
+>   no longer the only entrance to Stage 1.
 >
 > Interactive version: an Artifact was generated from this doc (ask the owner for the link).
 
-The one-line shape: **an ask enters one door, is graded for readiness, is dispatched
+The one-line shape: **an ask enters one door (or an existing issue is adopted
+as-is — spec 009), is graded for readiness, is dispatched
 (by a human, or autonomously once you flip a flag), is scoped by speckit, built one
 slice per PR, gated, and merged by a human — with the GitHub issue as the source of
 truth throughout and PLAN.md gone.**
@@ -30,6 +35,8 @@ truth throughout and PLAN.md gone.**
                  │
                  ▼
   STAGE 1 · READINESS GRADE                                [P1]  (async)
+    also enters here: any EXISTING open issue, any format,
+    via regrade_intake / grade_backlog (spec 009)  [exists]
     ground the ask vs the repo: locatable surface +
     concrete change + verifiable intent?  fail-closed →
         ├── devclaw-ready ─────────────────┐

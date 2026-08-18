@@ -352,14 +352,17 @@ def _schedule_readiness_grade(
 
 @mcp.tool
 async def regrade_intake(project_id: str, issue_url: str) -> str:
-    """Re-run the intake readiness grade on an existing intake issue (spec 006,
-    FR-010). The manual re-trigger: after a ``needs-refinement`` ask is amended
-    (edit the issue), call this to re-read the issue, re-grade it against the
-    repo, and swap the readiness label (``needs-refinement`` ⇄ ``devclaw-ready``)
-    — no re-filing, and devclaw does NOT auto-watch issue edits.
+    """Grade (or re-grade) ANY open issue on a registered project's repo —
+    devclaw intake format or hand-written (spec 006 FR-010 + spec 009 universal
+    adoption). Intake-format issues keep their structured sections; any other
+    format is read as-is: title + body become the ask, and an issue with no
+    verifiable completion intent grades ``needs-refinement`` with the missing
+    element named. Re-reads the issue on demand — devclaw does NOT auto-watch
+    issue edits. Grading is admission to *grading*, never execution: it does not
+    dispatch, does not edit the issue, and does not alter provenance.
 
     - ``project_id`` — the registered project the issue lives on.
-    - ``issue_url`` — the intake issue's URL (the receipt).
+    - ``issue_url`` — the issue's URL (must be open; closed issues reject).
 
     Returns ``{issue_url, project_id, repo, readiness}``. The grade fails
     CLOSED: any failure to reach a confident ready verdict lands
@@ -368,6 +371,29 @@ async def regrade_intake(project_id: str, issue_url: str) -> str:
         result = await _intake.regrade(
             registry, project_id=project_id, issue=issue_url
         )
+    except _intake.IntakeError as exc:
+        raise ToolError(str(exc)) from exc
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool
+async def grade_backlog(project_id: str) -> str:
+    """Bulk-onboard a registered project's existing backlog into the readiness
+    pipeline (spec 009): grade up to 20 open, not-yet-graded issues — any
+    format, priority-band-first (P0…P5, oldest first within a band) — through
+    the same fail-closed grade as ``regrade_intake``. Already-graded issues are
+    skipped with zero cognition. When more remain beyond the cap they are
+    reported ``not_yet_graded``; continuing is a fresh explicit call — there is
+    NO automatic continuation. The pending set is derived from the readiness
+    labels themselves, so re-invocation resumes exactly where the last run
+    stopped. Grades only — never dispatches, never edits issues.
+
+    Returns the per-issue report: ``graded_ready`` / ``graded_needs_refinement``
+    / ``failed`` (with reasons) / ``skipped_already_graded`` / ``not_yet_graded``,
+    plus ``cap`` and the ``listing_limit`` page bound. A listing failure raises
+    loudly — an explicit call never silently degrades to an empty sweep."""
+    try:
+        result = await _intake.grade_backlog(registry, project_id=project_id)
     except _intake.IntakeError as exc:
         raise ToolError(str(exc)) from exc
     return json.dumps(result, indent=2)
