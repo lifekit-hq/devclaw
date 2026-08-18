@@ -102,3 +102,19 @@ async def test_default_queue_planner_refuses_loudly(tmp_path):
         assert "host program planning was removed" in (p.error or "")
     finally:
         store.close()
+
+
+def test_oversized_plan_trips_the_program_task_brake():
+    """The MAX_PROGRAM_TASKS cost brake survives the shrink at the order_tasks
+    choke point: an oversized DAG is rejected before any row could be written
+    (reborn from the deleted checklist-adapter brake test — spec 008 shrink)."""
+    from devclaw.program_plan import MAX_PROGRAM_TASKS, PlannedTask, order_tasks
+
+    tasks = [
+        PlannedTask(key=f"t{i}", goal=f"task {i}", kind="implement_feature")
+        for i in range(MAX_PROGRAM_TASKS + 1)
+    ]
+    with pytest.raises(PlannerError, match="program brake"):
+        order_tasks(tasks)
+    # At the cap exactly: allowed.
+    assert len(order_tasks(tasks[:MAX_PROGRAM_TASKS])) == MAX_PROGRAM_TASKS
