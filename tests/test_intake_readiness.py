@@ -768,3 +768,36 @@ def test_grade_backlog_rejects_loudly_when_listing_fails(tmp_path):
                 claude_caller=CannedClaude(READY_JSON),
             )
         )
+
+
+# ---- #561: placeholder asks must not pass the readiness rubric ---------------
+
+def test_readiness_prompt_demands_after_state_and_flags_deferred_scoping():
+    """#561 (live false-ready): an ask that named a capability plus explicit
+    deferral language ("Deliberately unsized; revisit after M1") graded
+    devclaw-ready. The rubric must (a) define a concrete change as a stated
+    after-state — naming a component/theme is not a change, (b) judge the three
+    elements independently so a strong surface cannot compensate, and (c) name
+    self-deferred scoping as needs-refinement by construction."""
+    from devclaw.prompts import _read
+
+    # the rules live in the raw template itself, not in any injected input
+    raw = _read("intake-readiness")
+    assert "a stated after-state" in raw
+    assert "not itself a change" in raw
+    assert "never compensates" in raw
+    assert "defers its own scoping" in raw
+    assert "revisit later" in raw
+
+    # and they render into the built prompt for a placeholder-shaped ask
+    prompt = intake_readiness.build_prompt(
+        what=(
+            "Next platform rung — event-bus/outbox (named only). "
+            "Deliberately unsized; revisit after M1."
+        ),
+        done_when="",
+        repo_context=REPO_CTX,
+    )
+    assert "a stated after-state" in prompt
+    assert "never compensates" in prompt
+    assert "defers its own scoping" in prompt

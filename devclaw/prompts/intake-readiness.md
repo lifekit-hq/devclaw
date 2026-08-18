@@ -10,8 +10,15 @@ names or clearly implies all three:
 
 - a locatable surface (a file, module, component, endpoint, or capability the
   Repository context shows exists, or a clearly-named new one to add);
-- a concrete change (what should be different after the work);
-- a verifiable intent (an outcome someone could later check).
+- a concrete change (a stated after-state: what is different when the work is
+  done — naming a component, capability, or theme is not itself a change);
+- a verifiable intent (an outcome someone could concretely check, not an
+  aspiration).
+
+Judge the three elements independently; a strong surface never compensates for
+a missing change or intent. An ask that only names a direction or capability,
+or that defers its own scoping ("placeholder", "named only", "unsized",
+"revisit later"), lacks a concrete change and is needs-refinement.
 
 An ask is needs-refinement when any of the three is missing or too vague to
 locate — it names nothing that exists in the repo, describes no concrete
