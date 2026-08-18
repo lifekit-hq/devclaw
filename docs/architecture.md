@@ -244,7 +244,9 @@ and `tests/test_self_triage.py`.
   `intake.py` (`file_intake`, the single-intake-doorway stage 1 — same
   pure-gh-subprocess class: validates the intake shape, files a labeled issue
   on a registered project's repo, can only create issues, never dispatch; see
-  [`reference/intake-shape.md`](./reference/intake-shape.md)), and —
+  [`reference/intake-shape.md`](./reference/intake-shape.md) — plus the
+  readiness-grading verbs `regrade_intake`/`grade_backlog` (spec 009: any open
+  issue, any format; grade labels only, still never dispatch)), and —
   for the **direct-task intake**
   (`dispatch_task`, the v1 task-runner path re-surfaced by
   [ADR 0011](./decisions/0011-branch-target-delivery-seam.md)) —
