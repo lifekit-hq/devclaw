@@ -199,7 +199,7 @@ def test_missing_repo_context_fails_closed_with_distinct_reason():
 def test_paused_cognition_defers_grade_to_needs_refinement_not_ready():
     # a usage-limit pause surfaces as an exception from the caller → fail closed.
     gh = FakeGh()
-    from devclaw.planner import PlannerError
+    from devclaw.llm_call import PlannerError
 
     caller = RaisingClaude(PlannerError("Claude usage limit reached; quota resets"))
     label = _grade(gh=gh, claude_caller=caller)

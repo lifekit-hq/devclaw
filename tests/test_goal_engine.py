@@ -13,7 +13,7 @@ import pytest
 from devclaw.engine import EngineRequest
 from devclaw.goal.engine import InProcessEngine, _gate_passed, _task_detail
 from devclaw.goal.models import Action, Goal
-from devclaw.planner import PlannedTask
+from devclaw.program_plan import PlannedTask
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 

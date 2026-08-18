@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from devclaw import planner
+from devclaw import llm_call as planner
 
 
 # ---- the env parse (pure, fail-safe) ----
@@ -49,11 +49,11 @@ def test_cognition_timeout_invalid_or_nonpositive_falls_back_to_default():
 # ---- the module-level constant actually derives from the env at import ----
 
 _REPO_ROOT = Path(planner.__file__).resolve().parents[1]
-_PRINT_TIMEOUT = "import devclaw.planner as p; print(p.PLANNER_TIMEOUT_MS)"
+_PRINT_TIMEOUT = "import devclaw.llm_call as p; print(p.PLANNER_TIMEOUT_MS)"
 
 
 def _import_time_timeout(env_value: str | None) -> str:
-    """Import devclaw.planner in a FRESH interpreter (the constant is read at
+    """Import devclaw.llm_call in a FRESH interpreter (the constant is read at
     import time, same pattern as CLAUDE_BIN) and print PLANNER_TIMEOUT_MS.
     cwd is pinned to this checkout's root so the tree under test wins over the
     shared venv's editable .pth (see .claude/rules/testing.md)."""

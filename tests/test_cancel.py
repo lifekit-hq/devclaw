@@ -15,7 +15,7 @@ import asyncio
 import pytest
 
 from devclaw.engine import EngineRequest
-from devclaw.planner import PlannedTask
+from devclaw.program_plan import PlannedTask
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 

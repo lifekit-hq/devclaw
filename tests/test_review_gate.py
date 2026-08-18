@@ -16,7 +16,7 @@ import pytest
 from devclaw import task_queue
 from devclaw import quality as review_gate
 from devclaw.engine import EngineRequest
-from devclaw.planner import PLANNER_TIMEOUT_MS, PlannerError
+from devclaw.llm_call import PLANNER_TIMEOUT_MS, PlannerError
 from devclaw.quality import (
     build_review_prompt,
     format_feedback,
