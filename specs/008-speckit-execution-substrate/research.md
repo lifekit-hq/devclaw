@@ -224,28 +224,29 @@ tier-ladder refinement recorded on issue #534, not a new decision.
 
 **All NEEDS CLARIFICATION resolved.** No open unknowns block Phase 1 for US3.
 
-## Open questions for Denys at review (not blocking Phase 1 design)
+## Open questions — RESOLVED 2026-08-18 (Denys: "lets go"; file-level verification same session)
 
-1. **`hotfix` kind on `dispatch_task`?** — or the hotfix tier stays
-   issue-label-only (companion-path hotfixes are rare; the label route covers
-   them). Lean: label-only.
-2. **Bugfix-tier source: MartyBonacci vs Quratulain-bilal** (new evidence,
-   2026-08-18 ecosystem survey, post-D9): MartyBonacci's pack is stale
-   (2025-10) AND **pre-manifest-format** — copy-in files predating the
-   extension/catalog era, so vendoring includes hand-porting onto 0.16.x
-   conventions. **Quratulain-bilal/spec-kit-bugfix** (33★, pushed 2026-07,
-   MIT) is **modern extension format** (`specify extension add --from <pinned
-   zip>`), listed in the official community catalog, agent-agnostic — but a
-   different shape: bug→spec-artifact *tracing* (.report/.patch/.switch/
-   .verify) rather than MartyBonacci's regression-test-first workflow. Denys's
-   #534 refinement named the regression-test-first shape; the modern-format
-   alternative halves the vendoring surgery. Options: (a) keep D9, accept the
-   port cost; (b) adopt Quratulain via `--from` pin and add the
-   regression-test-first rule as brief text; (c) hybrid. D9 stands until
-   Denys rules.
-3. **Survey follow-ups worth separate triage** (not US3): upstream 0.16.4
-   RunState TOCTOU fix (concurrent runs); `workflow run --json` + gate
-   verdicts in run JSON as a settle-telemetry surface; `fix-findings` +
-   `ci-guard` extensions (same author as Q2's alternative); the #2319 upgrade
-   footgun (`specify init --here --force` silently skips existing
-   scripts/templates — vendored-pin upgrade procedure must delete-then-reinit).
+1. **`hotfix` kind on `dispatch_task`?** → **No.** The hotfix tier is
+   issue-label-only (`critical-fix`/`hotfix`); companion-path hotfixes are rare
+   and human-in-the-loop there anyway. `dispatch_task`'s kind enum is unchanged.
+2. **Bugfix-tier source** → **D9 STANDS (MartyBonacci, vendored frozen).**
+   The survey surfaced Quratulain-bilal/spec-kit-bugfix (modern extension
+   format, active 2026-07) as an alternative, but file-level verification
+   killed the swap: her extension is **feature-scoped** — `.report` writes
+   `specs/{feature}/bugs/BUG-NNN.md` inside an existing feature dir located
+   "by branch name or most recently modified" and `.patch` edits that
+   feature's spec/plan/tasks. It repairs spec drift on bugs in already-spec'd
+   features; it is NOT a standalone ceremony for an arbitrary bug issue (which
+   on a brownfield repo often has no owning feature spec — the locate
+   heuristic would attach reports to unrelated features). MartyBonacci's
+   standalone `specs/bugfix-NNN-*/` shape is the tier. The format-era gap
+   costs little in practice: per D1/D11 the packed harness copies command
+   markdown + scripts into the scaffold either way; `specify extension add`
+   UX was never load-bearing. The `SPECKIT_NO_BRANCH` delta (D12) remains.
+3. **Named follow-ups (filed with US3's PR, not built in it):**
+   Quratulain's `bugfix` as an optional `after_implement` spec-consistency
+   hook for FEATURE-tier work (right tool, that scope) + her `fix-findings` /
+   `ci-guard`; upstream 0.16.4 hop (RunState TOCTOU fix — concurrent runs);
+   `workflow run --json` + gate verdicts as settle telemetry; the #2319
+   upgrade footgun (`specify init --here --force` silently skips existing
+   scripts/templates — vendored-pin upgrades must delete-then-reinit).
