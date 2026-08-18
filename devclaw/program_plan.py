@@ -39,10 +39,19 @@ class PlannedTask:
 
 def order_tasks(tasks: list[PlannedTask]) -> list[PlannedTask]:
     """Validate the DAG shape and return tasks in topological order. Raises
-    :class:`PlannerError` on duplicate keys, self-deps, dangling refs, or
-    cycles — a cycle that reaches the queue deadlocks the DAG (no task ever
-    becomes ready), so every producer of ``list[PlannedTask]`` goes through
-    this one check."""
+    :class:`PlannerError` on duplicate keys, self-deps, dangling refs, cycles,
+    or a plan larger than :data:`MAX_PROGRAM_TASKS` — a cycle that reaches the
+    queue deadlocks the DAG (no task ever becomes ready), and an uncapped plan
+    would enqueue an unbounded fleet of sandboxed runs, so every producer of
+    ``list[PlannedTask]`` goes through this one check. (The size brake moved
+    here from the deleted checklist adapter — spec 008 shrink — so it stays
+    enforced at the single choke point.)"""
+    if len(tasks) > MAX_PROGRAM_TASKS:
+        raise PlannerError(
+            f"plan has {len(tasks)} tasks; the program brake is "
+            f"{MAX_PROGRAM_TASKS}. Split the work into smaller programs (or a "
+            "durable goal, which executes incrementally) instead."
+        )
     seen: set[str] = set()
     for t in tasks:
         if t.key in seen:

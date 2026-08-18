@@ -26,7 +26,6 @@ MODEL_DEEP = os.environ.get("DEVCLAW_MODEL_DEEP", "opus") or None
 #: calls at volume (reviews, evals, grilling). Light = mechanical prose
 #: (summaries, failure classification).
 _ROLE_TIER: dict[str, str | None] = {
-    "goal_planner": MODEL_STANDARD, # next-action pick (bounded JSON, light)
     "goal_eval": MODEL_STANDARD,    # direction evaluator
     "intake_readiness": MODEL_STANDARD,  # intake gate — is an ask groundable enough to firm?
     "triage": MODEL_STANDARD,       # self-triage propose step (dedupe + one-line fix)

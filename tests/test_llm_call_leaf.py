@@ -1,12 +1,12 @@
-"""llm_call is a LEAF module — the quality gate imports it without the planner.
+"""llm_call is a LEAF module — the quality gate imports it without the heavies.
 
 The quality gate needed exactly three symbols (`PlannerError`,
-`claude_with_model`, `extract_json`) but imported them from `planner`, which
-drags `state_store` + `task_git` and closed the
-``quality → planner → loom → goal`` import cycle. The primitive now lives in
-``llm_call.py`` (only internal dep: ``loom.trace``, itself pure stdlib) and
-``planner`` re-exports it for back-compat. These pin the leaf-ness, the
-rewiring, and the re-export contract so the cycle can't silently return.
+`claude_with_model`, `extract_json`) but historically imported them from the
+(now-deleted) `planner`, which dragged `state_store` + `task_git` and closed
+the ``quality → planner → loom → goal`` import cycle. The primitive lives in
+``llm_call.py`` (only internal dep: ``loom.trace``, itself pure stdlib).
+These pin the leaf-ness and the gate's rewiring so the cycle can't silently
+return via any heavy module.
 """
 
 import subprocess
@@ -22,7 +22,7 @@ def test_llm_call_imports_without_planner_or_state_store():
     # Fresh interpreter: importing the leaf must not pull the heavy modules.
     code = (
         "import sys; import devclaw.llm_call; "
-        "heavy = [m for m in ('devclaw.planner', 'devclaw.state_store', "
+        "heavy = [m for m in ('devclaw.state_store', "
         "'devclaw.task_git', 'devclaw.task_queue', 'devclaw.goal') "
         "if m in sys.modules]; "
         "assert not heavy, f'leaf pulled heavy modules: {heavy}'; print('leaf-ok')"
@@ -34,13 +34,16 @@ def test_llm_call_imports_without_planner_or_state_store():
     assert "leaf-ok" in out.stdout
 
 
-def test_quality_modules_import_llm_call_not_planner():
-    # Static source pin: the gate's modules must never re-grow the planner
-    # import (that would silently re-close the quality → planner cycle).
+def test_quality_modules_import_llm_call_not_heavy_modules():
+    # Static source pin: the gate's modules take the LLM primitive from the
+    # leaf, never from a heavy module (task_queue/goal drag state_store +
+    # task_git and would re-close the old quality → planner-shaped cycle).
     for mod in ("__init__.py", "eval_judge.py", "reachability.py"):
         src = (_REPO / "devclaw" / "quality" / mod).read_text()
         assert "from ..llm_call import" in src, mod
-        assert "from ..planner import" not in src, mod
+        for heavy in ("from ..task_queue import", "from ..goal import",
+                      "from ..state_store import", "from ..task_git import"):
+            assert heavy not in src, f"{mod}: {heavy}"
 
 
 async def _no_spawn(*argv, **kwargs):  # pragma: no cover - must not be reached
@@ -70,21 +73,3 @@ def test_call_claude_strips_api_keys_from_subprocess_env(monkeypatch):
     assert "ANTHROPIC_AUTH_TOKEN" not in seen["env"]
 
 
-def test_planner_reexports_are_the_same_objects():
-    # Back-compat contract: `from .planner import …` call sites (and tests
-    # patching planner.call_claude — cognition resolves it lazily through the
-    # planner namespace) keep working because planner re-exports the SAME
-    # objects, not copies.
-    from devclaw import llm_call, planner
-
-    for name in (
-        "PlannerError",
-        "call_claude",
-        "claude_with_model",
-        "extract_json",
-        "parse_cli_envelope",
-        "CliEnvelope",
-        "CLAUDE_BIN",
-        "PLANNER_TIMEOUT_MS",
-    ):
-        assert getattr(planner, name) is getattr(llm_call, name), name

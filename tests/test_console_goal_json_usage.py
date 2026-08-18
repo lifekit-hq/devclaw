@@ -13,7 +13,6 @@ import pytest
 from starlette.requests import Request
 
 import devclaw.server.http as http_mod
-from devclaw.goal.phases import registry
 from devclaw.goal.service import GoalConfig, GoalService
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
@@ -26,11 +25,6 @@ def db(tmp_path):
     yield s
     s.close()
 
-
-@pytest.fixture(autouse=True)
-def reset_phase_registry():
-    yield
-    registry.reset()
 
 
 def _svc(tmp_path, db):

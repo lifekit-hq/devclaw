@@ -34,8 +34,8 @@ from typing import Any, Awaitable, Callable, Optional, Protocol
 
 
 class Cognition(Protocol):
-    """One LLM call. ``role`` labels the cognition site (planner, evaluator,
-    grill, judge, summary, review, goal_planner) for the trace + (future)
+    """One LLM call. ``role`` labels the cognition site (evaluator, grill,
+    judge, summary, review) for the trace + (future)
     backend-specific routing. ``model`` is the tier the caller selected (alias
     or full id); ``None`` → backend default."""
 

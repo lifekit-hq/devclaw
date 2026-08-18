@@ -112,7 +112,7 @@ def test_thin_advance_brief_is_not_double_scope_bounded(tmp_path):
     one bound per surface, per the each-rule-once prompt style."""
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g")
-    brief = _advance_brief(store.load_effective_goal("g"), "")
+    brief = _advance_brief(store.load_goal("g"), "")
     assert "story-slice" in brief.lower()  # its own bound, now speckit-shaped
     assert "one reviewable pr" in brief.lower()
     assert _SCOPE_MARKER not in brief

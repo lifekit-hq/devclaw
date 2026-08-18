@@ -50,7 +50,7 @@ def test_advance_brief_binds_the_increment_to_the_current_milestone(tmp_path):
     plan in one PR."""
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")
-    brief = _advance_brief(store.load_effective_goal("g"), "")
+    brief = _advance_brief(store.load_goal("g"), "")
     assert "story-slice" in brief.lower()
     assert "do not build ahead" in brief.lower()
     assert "one reviewable pr" in brief.lower()
@@ -208,7 +208,7 @@ async def test_dispatch_prepends_the_repo_brief_to_the_goal_text(tmp_path):
     assert dispatched_goal.startswith("[Repo notes")
     assert "build is pnpm-only" in dispatched_goal
     # the brief is a PREFIX — the advance brief itself rides byte-unchanged
-    assert dispatched_goal.endswith(_advance_brief(store.load_effective_goal("g"), ""))
+    assert dispatched_goal.endswith(_advance_brief(store.load_goal("g"), ""))
 
 
 @pytest.mark.asyncio
@@ -248,7 +248,7 @@ async def test_empty_brief_leaves_the_goal_text_byte_identical(tmp_path):
     await _tick(store, "g", engine)
 
     # no brief stored → the dispatched goal is EXACTLY the advance brief
-    assert engine.dispatched[0][0].goal == _advance_brief(store.load_effective_goal("g"), "")
+    assert engine.dispatched[0][0].goal == _advance_brief(store.load_goal("g"), "")
 
 
 @pytest.mark.asyncio

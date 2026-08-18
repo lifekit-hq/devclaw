@@ -336,42 +336,6 @@ async def _resolve_polling_action(
             store=ctx.store, notifier=ctx.notifier, summarize=ctx.summary_caller,
         )
 
-    # ---- structural per-item circuit breaker (#6) --------------------------
-    # If this failed settle just tripped an addressed item to ``blocked``
-    # (ITEM_MAX_ATTEMPTS straight failures — see _settle_addressed_items), the
-    # planner must stop re-picking it: park the whole goal for a human with a
-    # named OWNER ping, rather than spinning the same ticket. This is the
-    # STRUCTURAL replacement for the planner-authored "CIRCUIT BREAKER" prose
-    # that was the only brake in the closeloop-bench 2026-07-18 run — and that
-    # a forgetful planner sometimes never wrote (the parallel closeloop
-    # deletion loop got three drift-accumulating attempts with no clause). The
-    # block rides a SEPARATE transition after the settle committed, CAS'd
-    # against the just-written status; auto-merge below is skipped anyway on a
-    # non-``done`` poll, so ordering is safe.
-    if updated_checklist is not None:
-        tripped = [
-            i.id for i in updated_checklist.items
-            if i.id in addresses and i.status == "blocked"
-        ]
-        if tripped:
-            reason = (
-                f"circuit breaker: checklist item(s) {', '.join(tripped)} failed "
-                f"{ITEM_MAX_ATTEMPTS} straight attempts — parked for your decision. "
-                f"Steer a different approach, fix by hand, or re-scope the item(s)."
-            )
-            ctx.store.transition(
-                goal_id, Event.BLOCK,
-                replace(new_status, phase="blocked", blocked_on=reason,
-                        blocked_kind="needs_answer"),
-                expect=new_status,
-            )
-            ctx.store.append_log(goal_id, reason)
-            await _notify(
-                ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {reason}",
-                summarize=ctx.summary_caller,
-            )
-            return Outcome.BLOCKED
-
     # ---- speckit tasks.md build-ahead guardrail (SDLC pipeline) -------------
     # A well-sliced nightly increment advances ONE story-slice; an increment that
     # advances >1 ``specs/*/tasks.md`` story-slice (a ``[US<n>]`` whose tasks it
@@ -470,7 +434,7 @@ async def _resolve_polling_action(
     # ``automerge: false`` override resolved the merger to None, the off
     # switch) never said so. An owner who flipped automerge on must never have
     # to infer "it silently didn't engage" from an open PR and an empty log.
-    in_checklist_dispatch = bool(addresses)
+    in_checklist_dispatch = bool(ref.addresses)  # LEGACY stored refs only — nothing sets addresses anymore
     # #486: key the auto-merge SKIP on the delivery TOPOLOGY, not on the presence
     # of ``addresses``. A long_lived goal-branch delivery carries no addresses
     # (there is no checklist), but its PR is the SAME cumulative goal-branch PR a

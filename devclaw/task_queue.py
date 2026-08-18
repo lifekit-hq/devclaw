@@ -45,7 +45,7 @@ from .engine import Engine, EngineEvent, EngineRequest
 from .loom.limits import classify_failure, pause_seconds
 from .loom.test_integrity import present_test_names, scan_diff
 from .llm_call import PlannerError
-from .program_plan import PlannedTask
+from .program_plan import PlannedTask, order_tasks
 
 
 async def _no_host_planner(goal: str, workspace_dir: str) -> "list[PlannedTask]":
@@ -1467,12 +1467,17 @@ class TaskQueue(_NotifyMixin):
 
         ``open_pr`` / ``verify_cmd`` / ``parent_goal_id`` mirror
         :meth:`submit_program` — child tasks inherit the PR + gate contract
-        via ``_persist_plan``. The one-shot goal dispatch (ADR 0003 stage 2)
-        is the caller that needs them: its plan is the goal's own checklist,
-        so the queue must NOT re-plan, but the reviewable-slice contract and
-        the goal-owner pointer still apply. ``pump=False`` (see
-        :meth:`submit`): rows only — the goal tick's atomic dispatch
-        transaction commits first, then kicks the queue."""
+        via ``_persist_plan``. ``pump=False`` (see :meth:`submit`): rows only
+        — a caller's atomic dispatch transaction commits first, then kicks
+        the queue.
+
+        The DAG is VALIDATED here (``order_tasks``: duplicate/self-dep/
+        dangling/cycle rejection + the ``MAX_PROGRAM_TASKS`` cost brake) —
+        the validation used to live in the deleted checklist adapter (spec
+        008 shrink); it moved to this consumer boundary so no producer can
+        hand the queue a deadlocking or unbounded plan. Raises
+        :class:`PlannerError` before any row is written."""
+        planned = order_tasks(list(planned))
         program_id = str(uuid.uuid4())
         self._store.create_program(
             id=program_id, goal=goal, workspace_dir=workspace_dir,

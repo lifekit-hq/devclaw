@@ -271,8 +271,7 @@ class GoalStatusMixin:
             # genuine entry, never per tick. kind = blocked_kind, message =
             # blocked_on. record_problem is best-effort (never raises), so this
             # is safe inside the transaction. See state_store/problems.py.
-            _BLOCKED = (State.BLOCKED, State.FIRMING_BLOCKED)
-            if target in _BLOCKED and cur_state not in _BLOCKED:
+            if target is State.BLOCKED and cur_state is not State.BLOCKED:
                 self._state.record_problem(
                     category="block",
                     kind=written.blocked_kind or "block",
@@ -361,7 +360,7 @@ class GoalStatusMixin:
             # Observability: the illegal-transition escape hatch is always a
             # blocked-kind="bug" entry — record it (deduped), guarded so a goal
             # already blocked isn't re-recorded. Best-effort; never raises.
-            if cur_state not in (State.BLOCKED, State.FIRMING_BLOCKED):
+            if cur_state is not State.BLOCKED:
                 self._state.record_problem(
                     category="block",
                     kind="bug",
