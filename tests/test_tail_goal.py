@@ -29,13 +29,12 @@ def _svc(tmp_path, db):
 
 
 def test_tail_goal_returns_artifacts_and_deliveries(tmp_path, db):
-    """tail_goal surfaces the grounded deliveries tail + discovery/spec artifacts —
+    """tail_goal surfaces the grounded deliveries tail + the spec artifact —
     the things get_goal omits."""
     svc, goals_dir = _svc(tmp_path, db)
     seed_goal(goals_dir, "g")
     svc._goal_store.save_status("g", GoalStatus(phase="idle"))
     svc._goal_store.append_delivery("g", "add /health endpoint", "shipped it; gate green; PR #3")
-    svc._goal_store.write_discovery("g", "current: bare repo. gap: no endpoints.")
     svc._goal_store.write_spec("g", "build a tiny FastAPI service")
 
     out = svc.tail_goal("g")
@@ -43,7 +42,7 @@ def test_tail_goal_returns_artifacts_and_deliveries(tmp_path, db):
     assert out["id"] == "g"
     assert out["phase"] == "idle"
     assert "PR #3" in out["deliveries"]
-    assert "no endpoints" in out["discovery"]
+    assert "discovery" not in out  # died with the investigating phase (spec 008 shrink)
     assert "FastAPI" in out["spec"]
     assert out["live_events"] == []  # nothing in flight
 
