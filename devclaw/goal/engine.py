@@ -67,13 +67,11 @@ class InProcessEngine:
         ws = goal.workspace_dir
         nu = notify_url or None
         if action.tool == "start_program" and action.planned:
-            # ALREADY-PLANNED program (one-shot mode, ADR 0003 stage 2): the
-            # goal layer decomposed once and its checklist IS the plan — submit
-            # it verbatim instead of letting the queue re-run the decomposer on
-            # the goal string (a second cognition call planning the same work,
-            # with no guarantee of the same items). Same inheritance contract
-            # as the plan-in-queue branch below (open_pr / verify_cmd /
-            # parent_goal_id); pump=False for the same atomic-dispatch reason.
+            # ALREADY-PLANNED program: submit the caller's DAG verbatim.
+            # (Nothing in the goal layer produces this since the checklist
+            # died — spec 008 shrink — but the queue mechanism stays for
+            # explicit-planned callers/tests.) Same inheritance contract as
+            # the branch below; pump=False for the atomic-dispatch reason.
             program_id = self._queue.start_planned_program(
                 goal=action.goal, workspace_dir=ws,
                 planned=list(action.planned), notify_url=nu,
@@ -88,8 +86,8 @@ class InProcessEngine:
         if action.tool == "start_program":
             # Program-child tasks inherit ``open_pr`` and ``verify_cmd`` — the
             # standing-goal / reviewable-slice contract. Under a mission goal
-            # (``open_pr: true``), the decomposer's tasks each deliver as a
-            # PR instead of committing straight to the workspace branch.
+            # (``open_pr: true``), each child task delivers as a PR instead of
+            # committing straight to the workspace branch.
             # Closes the 2026-07-03 closeloop-mission-v2 defect where the
             # activity-timeline program pushed direct-to-main because the
             # flags stopped at ``submit_program``.
@@ -279,9 +277,9 @@ class InProcessEngine:
             for t in tasks:
                 parts.append(f"- [{t.status}] {t.goal[:120]}" + (f"  PR {t.pr_url}" if t.pr_url else ""))
             detail = "\n".join(parts)[:4000]
-            # Per-child breakdown (one-shot mode, ADR 0003 stage 2): the goal
-            # settle path grades each checklist item by ITS OWN child task —
-            # plan_key is the join (it IS the item id on the one-shot path).
+            # Per-child breakdown: callers can grade each child task by its
+            # own plan_key. (The goal layer no longer consumes this — the
+            # checklist settle died with the shrink — kept for observability.)
             tasks_out = [
                 {
                     "plan_key": t.plan_key,
@@ -353,7 +351,7 @@ def _diff_stats(result_json: Optional[str]) -> Optional[dict]:
 
 
 #: How much of ``agent_output`` to keep when building task detail. For most
-#: kinds this is a work summary written to deliveries.md (which the planner
+#: kinds this is a work summary written to deliveries.md (which the evaluator
 #: reads next tick) — 6 KB is plenty. But ``review_repository`` agent_output
 #: IS the report the done-gate evaluator judges against; truncating it at 6 KB
 #: kept only the SDK's user-message panel echoing the brief (which contains

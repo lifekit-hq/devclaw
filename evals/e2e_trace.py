@@ -81,16 +81,16 @@ async def _run_stub(out_dir: Path, ticks: int) -> Tracer:
     store = GoalStore(tmp, now=Clock())
     seed_goal(tmp, "g", backlog=["add /health"])
     store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="investigating",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "act1", "task", "advance"),
     ))
     notifier = RecordingNotifier()
 
     tracer = Tracer(label="stub")
     set_tracer(tracer)
     try:
-        # 1) discovery settles → executing
-        record_note("tick 1 — discovery settles")
+        # 1) in-flight action settles
+        record_note("tick 1 — action settles")
         await tick_goal(
             "g", store=store,
             engine=FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo OK")),
