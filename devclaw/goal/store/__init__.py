@@ -7,7 +7,7 @@ Behavior-preserving decomposition of the old ``goal/store.py`` god-file:
   discipline, goal facts, clock helpers).
 - :mod:`.status` — :class:`GoalStatusMixin`, the single-writer / CAS choke
   point (``transition`` / ``force_block`` / the STATUS.md view).
-- :mod:`.content` — :class:`GoalContentMixin` + :class:`GoalDocCorrupt` (log,
+- :mod:`.content` — :class:`GoalContentMixin` (log,
   settlements, deliveries, checklist, firmed-draft, inbox/steering).
 
 Every public name the pre-split ``store.py`` exported is re-exported here, so no
@@ -20,11 +20,9 @@ from __future__ import annotations
 
 from ..transitions import LEGAL
 from .base import GoalStore, _default_now, parse_duration
-from .content import GoalDocCorrupt
 
 __all__ = [
     "GoalStore",
-    "GoalDocCorrupt",
     "parse_duration",
     "LEGAL",
     "_default_now",

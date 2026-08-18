@@ -1,7 +1,7 @@
 """Blocking guards + the no-progress watchdog — the goal-tick failure handlers.
 
 These are the "fail loud, not silent" handlers (CLAUDE.md hardening philosophy):
-a workspace-prep failure, a corrupt contract file, a lost in-flight ref each
+a workspace-prep failure and a lost in-flight ref each
 block the goal legibly with an owner ping instead of wedging the tick loop; the
 watchdog fires one owner ping when an executing goal stops shipping. Split out of
 :mod:`devclaw.goal.tick`; imported by tick_dispatch / tick_settle and re-exported
@@ -20,7 +20,7 @@ from .engine import GoalEngineError
 from .models import Goal, GoalStatus
 from .notify import Notifier
 from ..llm_call import ClaudeCaller
-from .store import GoalDocCorrupt, GoalStore
+from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
 from ..task_git import _ls_remote_ok_sync
@@ -108,48 +108,6 @@ async def _block_on_prep_failure(
     return Outcome.BLOCKED
 
 
-async def _block_on_corrupt_doc(
-    goal_id: str, status: GoalStatus, exc: "GoalDocCorrupt",
-    *, store: GoalStore, notifier: Notifier, summarize: "ClaudeCaller | None",
-) -> Outcome:
-    """A goal contract file (checklist.yaml / firmed-draft.yaml) EXISTS on disk
-    but won't parse. Before T0.4 this degraded SILENTLY: a torn checklist read
-    as "no checklist" and flipped the goal into the backlog planning pipeline;
-    a torn firmed draft made ``load_effective_goal`` return the base goal,
-    dropping the firmed done_when / stub_acceptable / verify_cmd contract with
-    zero signal. Neither self-heals — nothing rewrites these files on its own.
-
-    So: block with the real parse error as ``blocked_on`` and tell the owner
-    once, at OWNER altitude (same shape as :func:`_block_on_prep_failure`).
-    ``in_flight`` is preserved AS-IS — blocking stops new cognition, it must
-    not orphan a running action; the ref settles normally once the file is
-    fixed. ``lifecycle`` is pinned to ``executing`` so the goal routes through
-    the blocked-guard once it can tick again. A repeat tick on the SAME
-    corruption idles quietly (no log spam, no re-ping) — this handler runs
-    before the blocked-guard can gate it, so it dedupes on ``blocked_on``
-    itself. Recovery: fix (or delete) the file — the next tick's contract
-    probe auto-heals the block mechanically (:func:`_autoheal_corrupt_doc`,
-    damped by ``heal_attempts``) — or steer."""
-    msg = str(exc)
-    if status.phase == "blocked" and status.blocked_on == msg:
-        store.update_status_fields(goal_id, last_tick_at=store.now_iso())
-        return Outcome.IDLE
-    store.append_log(goal_id, f"goal contract file corrupt — blocking for the owner: {msg}")
-    store.transition(
-        goal_id, Event.BLOCK,
-        replace(status, lifecycle="executing", phase="blocked", blocked_on=msg,
-                blocked_kind="mechanical:corrupt_doc", next=""),
-        expect=status,
-    )
-    await _notify(
-        notifier, NotifyLevel.OWNER,
-        f"🟡 [{goal_id}] a goal contract file is corrupted — I've paused rather than "
-        f"work from the wrong contract; fix or steer: {msg}",
-        summarize=summarize,
-    )
-    return Outcome.BLOCKED
-
-
 async def _block_on_lost_ref(
     goal_id: str, status: GoalStatus, exc: GoalEngineError, ctx: TickContext,
 ) -> Outcome:
@@ -174,8 +132,8 @@ async def _block_on_lost_ref(
     bug must still surface through the catch-all, not be absorbed as a lost
     ref.
 
-    DELIBERATELY HUMAN-GATED — never auto-healed. Unlike a corrupt doc (the
-    file can parse again) or a prep failure (the remote can come back), this
+    DELIBERATELY HUMAN-GATED — never auto-healed. Unlike a prep failure
+    (the remote can come back), this
     block is structurally unhealable by mechanism: ``in_flight`` is destroyed
     right here at block time (the ``in_flight=None`` below), so the lost id
     survives only in the ``blocked_on`` prose — there is nothing machine-
@@ -210,66 +168,10 @@ async def _block_on_lost_ref(
 #: a planner call (+ a block ping) per cycle. Past the cap the goal stays
 #: blocked at zero cost until a human lifts it (steer_goal), which restores the
 #: budget; a productive settle also earns it back (see tick_settle).
-CORRUPT_DOC_HEAL_CAP = 3
-
-
-async def _autoheal_corrupt_doc(
-    goal_id: str, status: GoalStatus,
-    *, store: GoalStore, notifier: Notifier,
-) -> "GoalStatus | None":
-    """Mechanically lift a ``mechanical:corrupt_doc`` block whose condition no
-    longer holds. The caller (the tick's contract-file choke point) has JUST
-    re-parsed the contract docs successfully — that probe runs every tick
-    anyway, so the recheck is free: zero LLM, zero subprocess, the exact
-    mirror of the quota pause's timestamp-compare auto-resume.
-
-    Fires ONLY on ``blocked_kind == "mechanical:corrupt_doc"`` (the caller
-    gates on it). Never on ``needs_answer`` (the owner must answer), ``bug``
-    (the force_block escape hatch), ``mechanical:lost_ref`` (structurally
-    unhealable — see :func:`_block_on_lost_ref`), or ``mechanical:dispatch_cap``
-    (a review-my-PRs backstop, a human decision by design).
-
-    Healing means RE-ATTEMPTING, not suppressing: the write mirrors
-    resume_goal's shape (actions + plan cadence reset so the tick actually
-    re-plans — the ensuing plan is the intended cost of a real heal), and a
-    preserved in-flight ref is restored to its polling phase instead of
-    orphaned. The block itself stays exactly as loud as today; the only
-    notification this path ever sends is the gave-up ping when the
-    ``heal_attempts`` budget (see :data:`CORRUPT_DOC_HEAL_CAP`) runs out —
-    sent PLAIN (never through the summarizer LLM), exactly once (the counter
-    is bumped one past the cap as the pause_notified-style once-marker).
-
-    Returns the healed (fresh-versioned) status, or ``None`` when it refused
-    to heal — the caller then proceeds with the still-blocked status, which
-    idles at zero cognition like any other blocked tick."""
-    if status.heal_attempts > CORRUPT_DOC_HEAL_CAP:
-        # Budget exhausted AND the owner already heard the gave-up ping (the
-        # sentinel bump below) — stay blocked, zero cost, until a human lifts it.
-        return None
-    if status.heal_attempts >= CORRUPT_DOC_HEAL_CAP:
-        await _heal_give_up(
-            goal_id, store=store, notifier=notifier, cap=CORRUPT_DOC_HEAL_CAP,
-            reason="the contract file keeps re-corrupting after each fix",
-        )
-        return None
-    n = status.heal_attempts + 1
-    healed = _heal_unblock(goal_id, status, store, heal_attempts=n)
-    store.append_log(
-        goal_id,
-        f"auto-resumed: contract file parses again (heal {n}/{CORRUPT_DOC_HEAL_CAP})",
-    )
-    return healed
-
-
-#: Prep-heal budget. Larger than the corrupt-doc cap on purpose: a transient
-#: remote outage (GitHub incident, DNS blip) legitimately takes several
-#: backoff windows to clear, while a contract file that keeps re-corrupting
-#: after 3 fixes is somebody actively fighting the store.
 PREP_HEAL_CAP = 5
 
 #: Exponential backoff for the prep recheck: 30min · 2^heal_attempts, capped.
-#: The corrupt-doc recheck is FREE (the tick's contract probe runs anyway);
-#: this one is a git subprocess, so between windows a blocked goal must stay
+#: The recheck is a git subprocess, so between windows a blocked goal must stay
 #: a zero-subprocess tick — the persisted ``next_heal_at`` window enforces it.
 PREP_BACKOFF_BASE_S = 30 * 60
 PREP_BACKOFF_MAX_S = 6 * 3600
@@ -293,16 +195,14 @@ async def _autoheal_prep(
     *, store: GoalStore, notifier: Notifier,
 ) -> "GoalStatus | None":
     """Mechanically lift a ``mechanical:prep`` block once the repo is reachable
-    again — the sibling of :func:`_autoheal_corrupt_doc` (same scope rules,
-    same damping contract, same plain-ping-only-on-give-up notification
-    policy; see its docstring), with one difference: the recheck COSTS a git
+    again. The recheck COSTS a git
     subprocess, so it runs on a persisted exponential backoff instead of every
     tick. ``next_heal_at`` gates it — before that instant the tick returns
     immediately (zero subprocess, zero cognition); a FAILED recheck pushes the
     window out (30min · 2^attempts, capped at 6h) and spends one attempt.
 
-    A successful recheck fires the same resume-shaped UNBLOCK as the
-    corrupt-doc heal: the next dispatch runs the REAL prepare_ws — ls-remote
+    A successful recheck fires the resume-shaped UNBLOCK
+    (:func:`_heal_unblock`): the next dispatch runs the REAL prepare_ws — ls-remote
     proves reachability, not that the clone will succeed — and if prep still
     fails it re-blocks loudly and the backoff continues where it left off
     (``heal_attempts`` persists across the heal; only a human unblock or a
@@ -348,10 +248,9 @@ async def _autoheal_prep(
 def _heal_unblock(
     goal_id: str, status: GoalStatus, store: GoalStore, *, heal_attempts: int,
 ) -> GoalStatus:
-    """The shared resume-shaped UNBLOCK write both mechanical heals fire:
-    actions + plan cadence reset so the tick actually re-plans, the backoff
-    window cleared, and a preserved in-flight ref (corrupt-doc blocks keep it
-    — see :func:`_block_on_corrupt_doc`) restored to its polling phase so it
+    """The resume-shaped UNBLOCK write the mechanical heal fires: actions +
+    plan cadence reset so the tick actually re-plans, the backoff window
+    cleared, and a preserved in-flight ref restored to its polling phase so it
     settles normally instead of being orphaned."""
     if status.in_flight is not None:
         restored_phase = "verifying" if status.in_flight.is_done_check else "in_flight"

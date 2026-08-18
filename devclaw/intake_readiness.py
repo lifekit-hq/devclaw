@@ -1,4 +1,4 @@
-"""The intake readiness gate — "is this ask scoped enough to attempt firming?".
+"""The intake readiness gate — "is this ask scoped enough for autonomous execution?".
 
 Spec: ``specs/006-intake-readiness-gate/spec.md`` (P1 of the autonomous
 issue-driven pipeline). This is a one-shot cognition caller in the shape of
@@ -6,7 +6,7 @@ issue-driven pipeline). This is a one-shot cognition caller in the shape of
 seam (OAuth-only), parse JSON, return a parsed :class:`ReadinessVerdict`. It
 decides ONLY groundability — a locatable surface, a concrete change, a
 verifiable intent — and never derives ``done_when`` or a checklist (that stays
-firming's job; FR-006 non-overlap).
+the worker's speckit specify/plan job; FR-006 non-overlap).
 
 Layering (``.claude/rules/cognition-prompts.md``): this module returns parsed
 output; the intake layer (:mod:`devclaw.intake`) is what persists the verdict

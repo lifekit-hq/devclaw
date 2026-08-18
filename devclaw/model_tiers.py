@@ -22,13 +22,10 @@ MODEL_STANDARD = os.environ.get("DEVCLAW_MODEL_STANDARD", "sonnet") or None
 MODEL_DEEP = os.environ.get("DEVCLAW_MODEL_DEEP", "opus") or None
 
 #: role → tier. Deep = rare, high-leverage calls where a wrong answer is
-#: expensive to unwind (plans, decompositions, firming). Standard = judgment
+#: expensive to unwind. Standard = judgment
 #: calls at volume (reviews, evals, grilling). Light = mechanical prose
 #: (summaries, failure classification).
 _ROLE_TIER: dict[str, str | None] = {
-    "firming": MODEL_DEEP,          # goal firming — the contract the rest executes
-    "decomposer": MODEL_DEEP,       # goal/program → checklist (the ONE planning spine)
-    "world_research": MODEL_DEEP,   # investigation discovery brief
     "goal_planner": MODEL_STANDARD, # next-action pick (bounded JSON, light)
     "goal_eval": MODEL_STANDARD,    # direction evaluator
     "intake_readiness": MODEL_STANDARD,  # intake gate — is an ask groundable enough to firm?

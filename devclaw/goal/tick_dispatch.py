@@ -1,11 +1,9 @@
-"""Action & investigation dispatch — the goal-tick engine-launch paths.
+"""Action dispatch — the goal-tick engine-launch path.
 
-Everything that hands work to the engine (or resolves the discovery/decompose
-step that precedes execution): the dispatch-cap backstop + atomic action
-dispatch, the checklist in-flight flagging, the phase-handler shim, and the
-investigating-phase paths (repo-research vs. from-scratch world-research, then
-discovery synthesis + decomposition). Split out of :mod:`devclaw.goal.tick`;
-imports tick_context + tick_guards, and is called by tick_settle /
+The dispatch-cap backstop + atomic action dispatch. (The investigation/
+firming/decompose dispatch family died with the host-cognition chain, spec 008
+shrink — the worker plans via speckit in-sandbox.) Split out of
+:mod:`devclaw.goal.tick`; imports tick_context + tick_guards, and is called by
 tick._tick_goal_impl / tick._handle_executing via the tick.py re-export facade.
 """
 
@@ -28,11 +26,7 @@ from .tick_context import (
     _run_atomic,
 )
 from .tick_guards import _block_on_prep_failure
-from . import checklist as _checklist
-from . import decomposer as _decomposer
-from . import research as _research
 from . import slice_guard as _slice_guard
-from . import world_research as _world_research
 from . import delivery_strategy as _delivery
 from . import repo_brief as _repo_brief
 from .engine import GoalEngine
@@ -70,104 +64,6 @@ async def _branch_staleness(workspace_dir: str, goal_id: str) -> "dict | None":
         return None
 
 
-def _flag_items_in_flight(store: GoalStore, goal_id: str, item_ids: list[str]) -> None:
-    """When a dispatched action carries ``addresses``, mark those checklist
-    items ``in_flight`` so the planner's ``ready_items`` filter excludes them
-    on the next tick (no re-pick of the same item before settle). No-op when
-    no checklist exists or the action has no addresses.
-
-    PR7: this now ALWAYS runs INSIDE the dispatch transaction (its one
-    production call site, in ``_dispatch_action``) — row-only writes
-    (``mirror=False`` / ``write_checklist(..., render_view=False)``) so an
-    aborted dispatch (CAS conflict, a raised ``engine.dispatch``) can't
-    leave an item flagged ``in_flight`` for work that never actually
-    dispatched (a small extra honesty win over the pre-PR7 behavior, where
-    this write was NOT part of the dispatch's atomic unit and could survive
-    a rollback). The caller's ``render_mirrors()``/``discard_pending_mirrors()``
-    flushes or drops these deferred writes after the transaction resolves."""
-    if not item_ids:
-        return
-    current = store.read_checklist(goal_id)
-    if current is None:
-        return
-    updated = current
-    for item_id in item_ids:
-        try:
-            updated = _checklist.update_item(updated, item_id, status="in_flight")
-        except KeyError:
-            # planner cited an unknown id — log + skip; the planner's next
-            # round will pick a real one from ready_items
-            store.append_log(
-                goal_id,
-                f"checklist warn: action addresses unknown item {item_id!r}",
-                mirror=False,
-            )
-    store.write_checklist(goal_id, updated, render_view=False)
-
-
-#: Cap on the prior-attempts digest inlined into a dispatched worker brief
-#: (same shape as :data:`devclaw.goal.repo_brief.MAX_BRIEF_CHARS`). Oldest
-#: notes are dropped first — recent failures are the actionable ones — behind
-#: a loud elision marker. Uncapped, a repeatedly re-dispatched item's
-#: failure_log grew the worker's initial prompt without bound (contributed to
-#: a real "Prompt is too long" failure, 2026-08-12).
-MAX_DIGEST_CHARS = 4000
-
-#: Headroom reserved inside the budget for the elision/truncation markers, so
-#: adding them can't push a capped digest back over MAX_DIGEST_CHARS.
-_DIGEST_MARKER_RESERVE = 120
-
-_DIGEST_TRUNC_SUFFIX = " …[note hard-trimmed to fit the digest budget]"
-
-
-def _prior_attempts_digest(checklist, addresses: list[str]) -> str:
-    """Blank-safe brief section from the addressed items' failure_log — the
-    cross-dispatch half of the continuity gap: the planner sees the failure
-    history in its context, but the WORKER's brief was authored fresh each
-    dispatch, so a re-dispatched item re-discovered failed approaches one
-    attempt at a time. Empty string when no addressed item has failures
-    (byte-identical dispatch — the common case). Rides INSIDE the dispatched
-    goal text (the same channel the acceptance criteria use), not the
-    recorded action: status `next` and the log line stay clean."""
-    if checklist is None or not addresses:
-        return ""
-    by_id = {i.id: i for i in checklist.items}
-    lines: list[str] = []
-    for item_id in addresses:
-        item = by_id.get(item_id)
-        if item is None or not item.failure_log:
-            continue
-        for note in item.failure_log:
-            lines.append(f"- [{item_id}] {note}")
-    if not lines:
-        return ""
-    # Budget: keep the MOST RECENT notes (the actionable ones), drop the
-    # oldest whole entries first behind a loud marker; hard-trim mid-entry
-    # only when a single note alone exceeds the budget. Under-budget digests
-    # take none of these branches — byte-identical to the uncapped output.
-    if len("\n".join(lines)) > MAX_DIGEST_CHARS:
-        budget = MAX_DIGEST_CHARS - _DIGEST_MARKER_RESERVE
-        dropped = 0
-        while len(lines) > 1 and len("\n".join(lines)) > budget:
-            lines.pop(0)
-            dropped += 1
-        if len(lines) == 1 and len(lines[0]) > budget:
-            keep = max(0, budget - len(_DIGEST_TRUNC_SUFFIX))
-            lines[0] = lines[0][:keep] + _DIGEST_TRUNC_SUFFIX
-        if dropped:
-            lines.insert(
-                0,
-                f"- [devclaw] {dropped} older failure note(s) dropped to fit "
-                "the digest size budget; the most recent are kept below:",
-            )
-    header = (
-        "PRIOR ATTEMPTS ON THIS WORK ITEM (all failed - do not repeat "
-        "these approaches; diagnose why they failed and take a different "
-        "route):"
-    )
-    return "\n\n" + header + "\n" + "\n".join(lines)
-
-
 async def _dispatch_action(
     goal_id: str, goal: Goal, base: GoalStatus, action: Action,
     *, store: GoalStore, engine: GoalEngine, notifier: Notifier,
@@ -176,27 +72,19 @@ async def _dispatch_action(
     consume_steering: "list[int] | None" = None,
 ) -> Outcome:
     # Runaway backstop (mechanism, not cognition): never spawn more than the
-    # goal's known-bounded work surface + a small margin without a human. A
-    # looping planner can't burn unbounded quota — it blocks instead.
-    #
-    # In backlog mode the cap is ``len(backlog) + 2`` — tight, matched to the
-    # owner's brain-dump of starting tasks. In checklist mode (Pillar 1) the
-    # decomposer's checklist IS the bounded work surface and is typically much
-    # larger than the backlog hint that produced it (29-item checklist from a
-    # 5-item backlog is normal); take the MAX so a checklist goal doesn't
-    # block every backlog-size dispatches. Live-found 2026-06-26 when
-    # finance-sentry-mcp-v3 hit a cap=7 with 22 ready items left.
+    # goal's known-bounded work surface + a small margin without a human. The
+    # cap is ``len(backlog) + 2`` — tight, matched to the owner's brain-dump of
+    # starting tasks. (The checklist-mode cap widening died with the checklist,
+    # spec 008 shrink.)
     #
     # The counter is progress-aware: a dispatch that settles successfully
     # (done, gate passed or gateless) is refunded on settle (see
     # _resolve_polling_action), so the cap measures OUTSTANDING failed or
     # gate-failed dispatches, not lifetime throughput. A healthy auto-merging
     # mission goal — including its own verification reviews — never trips it;
-    # a planner looping on failures still does. Live-found 2026-07-07 (blocked
-    # on merged work) and again 2026-07-09 (blocked on on_track reviews).
-    base_cap = len(goal.backlog) + 2
-    checklist = store.read_checklist(goal_id)
-    cap = max(base_cap, len(checklist.items) + 2) if checklist else base_cap
+    # a looping advance still does. Live-found 2026-07-07 (blocked on merged
+    # work) and again 2026-07-09 (blocked on on_track reviews).
+    cap = len(goal.backlog) + 2
     if base.actions_dispatched >= cap:
         store.append_log(goal_id, f"dispatch cap {cap} reached — blocking for review")
         store.transition(
@@ -207,25 +95,13 @@ async def _dispatch_action(
         )
         await _notify(notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] dispatch cap ({cap}) reached — paused for your review", summarize=summarize)
         return Outcome.BLOCKED
-    # L3 (#222): derive the scaffold flag MECHANICALLY from the addressed
-    # checklist items — the decomposer already made this call conservatively at
-    # decompose time; here we just propagate it onto the Action → task row so the
-    # queue skips the ADVERSARIAL REVIEW gate for a pure-scaffolding dispatch
-    # (generated boilerplate, e.g. `ng new` / `dotnet new`, crashes that reviewer
-    # and shouldn't be diff-reviewed anyway). The per-tick planner LLM never sets
-    # this — only the decomposer can — which caps the over-tag blast radius. The
-    # verify gate + test-integrity are UNAFFECTED and still run in the queue.
-    if not action.scaffold:  # honour an already-set flag; else derive
-        action = replace(
-            action, scaffold=_checklist.addresses_are_scaffold(checklist, action.addresses)
-        )
-    # Give the engine a pristine checkout. Legacy mode resets to origin/<default>
-    # for per-action freshness; checklist mode (Pillar 1) checks out the goal's
-    # ``goal/<id>`` branch instead so each item's commits STACK on the prior
-    # items rather than fork off main and re-implement the foundation (the
-    # 2026-06-26 finance-sentry-mcp-v3 PR-fan-out failure). Read-only
+    # Give the engine a pristine checkout. Per-action mode resets to
+    # origin/<default> for freshness; goal-branch mode checks out ``goal/<id>``
+    # instead so each increment's commits STACK on the prior ones rather than
+    # fork off main and re-implement the foundation (the 2026-06-26
+    # finance-sentry-mcp-v3 PR-fan-out failure). Read-only
     # ``review_repository`` actions always run on the default branch — they
-    # don't write — even when a checklist exists.
+    # don't write.
     branch_for_dispatch: str | None = None
     if action.tool != "review_repository":
         branch_for_dispatch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
@@ -308,10 +184,9 @@ async def _dispatch_action(
     try:
         with store.transaction():
             try:
-                digest = _prior_attempts_digest(checklist, list(action.addresses))
                 dispatch_action = (
-                    replace(action, goal=brief_prefix + action.goal + digest)
-                    if (digest or brief_prefix) else action
+                    replace(action, goal=brief_prefix + action.goal)
+                    if brief_prefix else action
                 )
                 ref = _run_atomic(engine.dispatch(dispatch_action, goal, notify_url))
             except Exception as exc:  # noqa: BLE001 — caught again below, outside the txn
@@ -327,11 +202,6 @@ async def _dispatch_action(
             # OBJECTIVE, never the dispatch instruction.
             if dispatch_action is not action or display != action.goal:
                 ref = replace(ref, goal=display)
-            # Carry the action's checklist addresses onto the in-flight ref so
-            # the settle hook can update the right items without re-reading
-            # the plan.
-            if action.addresses:
-                ref = replace(ref, addresses=list(action.addresses))
             store.transition(
                 goal_id, Event.DISPATCH_ACTION,
                 replace(
@@ -340,10 +210,6 @@ async def _dispatch_action(
                 ),
                 expect=base, consume_steering=consume_steering,
             )
-            # Checklist mode: flip addressed items to in_flight so the planner
-            # doesn't re-pick them next tick before this one settles. No-op in
-            # legacy mode. Row-only write — see _flag_items_in_flight.
-            _flag_items_in_flight(store, goal_id, list(action.addresses))
             store.append_log(goal_id, f"dispatched {action.tool}: {display} → {ref.id}", mirror=False)
     except Exception:
         store.discard_pending_mirrors(goal_id)
@@ -394,330 +260,3 @@ async def _dispatch_action(
     return Outcome.DISPATCHED
 
 
-async def _dispatch_phase_handler(
-    goal_id: str, goal: Goal, status: GoalStatus, ctx: TickContext, name: str,
-) -> Outcome:
-    """Hand a phase off to the registered :class:`PhaseHandler`. Tick is the
-    dispatcher; the handler owns its own cognition, persistence, and notify.
-    Maps the handler's string outcome back to an :class:`Outcome` enum so the
-    rest of tick is unchanged.
-
-    A missing handler is a silent no-op (sleep this tick) — that should never
-    happen in practice (the Phase enum is the source of truth) but the conservative
-    fallback keeps a typo from wedging a goal."""
-    from .phases.registry import handler_for
-
-    handler = handler_for(name)
-    if handler is None:
-        ctx.store.append_log(goal_id, f"no handler registered for phase {name!r} — sleeping")
-        return Outcome.SLEPT
-    if not await handler.can_run(goal, status, ctx.store):
-        # The handler decided this isn't its tick (e.g. firming parked on
-        # owner-answers). Mechanism, zero tokens.
-        ctx.store.update_status_fields(goal_id, last_tick_at=ctx.store.now_iso())
-        return Outcome.IDLE
-    result = await handler.run(goal_id, goal, status, ctx)
-    try:
-        return Outcome(result.outcome)
-    except ValueError:
-        ctx.store.append_log(
-            goal_id,
-            f"handler {name!r} returned unknown outcome {result.outcome!r} — treating as slept",
-        )
-        return Outcome.SLEPT
-
-
-async def _open_world_research(
-    goal_id: str, goal: Goal, status: GoalStatus,
-    *, store: GoalStore, notifier: Notifier,
-    world_research_caller: "ClaudeCaller | None",
-    summarize: "ClaudeCaller | None" = None,
-) -> Outcome:
-    """From-scratch investigation path — world-research instead of repo-research.
-
-    Synchronous (no engine dispatch): one cognition call, write the brief to
-    ``discovery.md``, transition the lifecycle the same way ``_resolve_discovery``
-    does after a repo-research analysis completes.
-
-    Failure is non-fatal — an empty brief means we proceed without one rather
-    than wedging the goal. The owner sees the failure in the log.
-    """
-    caller = world_research_caller or _world_research.default_caller()
-    spec = store.read_spec(goal_id)
-    try:
-        brief = await _world_research.world_brief(goal, spec, caller=caller)
-        store.write_discovery(goal_id, brief)
-        store.append_log(goal_id, "world-research brief written")
-        synth_ok = True
-    except Exception as exc:  # noqa: BLE001 — world-research must not wedge the goal
-        store.append_log(goal_id, f"world-research failed ({exc}) — proceeding without brief")
-        synth_ok = False
-
-    # Same lifecycle transition logic as _resolve_discovery (repo-research's
-    # resolution): firming sits between investigating and executing when
-    # enabled. The decomposer runs against the FIRMED goal in that case, so
-    # we don't fire it here.
-    from .phases.firming import FIRMING_ENABLED as _FIRMING_ENABLED
-
-    next_lifecycle = "firming" if _FIRMING_ENABLED else "executing"
-    next_note = (
-        "world-research done → firming" if _FIRMING_ENABLED
-        else "world-research done → executing"
-    )
-    store.transition(
-        goal_id, Event.RESOLVE_INVESTIGATION,
-        replace(status, lifecycle=next_lifecycle, phase="idle", next=next_note),
-        expect=status,
-    )
-    msg = (
-        f"🌍 [{goal_id}] researched what good looks like for \"{goal.objective}\""
-        f" — written exemplars + MVP bar + defer list. Starting work."
-        if synth_ok
-        else f"🌍 [{goal_id}] starting work on \"{goal.objective}\""
-    )
-    await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summarize)
-    return Outcome.ADVANCED
-
-
-async def _open_investigation(
-    goal_id: str, goal: Goal, status: GoalStatus,
-    *, store: GoalStore, engine: GoalEngine, notifier: Notifier,
-    notify_url: str, prepare_ws: WorkspacePrep, summarize: "ClaudeCaller | None" = None,
-    world_research_caller: "ClaudeCaller | None" = None,
-) -> Outcome:
-    """A new outcome goal investigates before it executes.
-
-    Two paths, branched on ``world_research.should_fire(goal)``:
-
-    1. **From-scratch goal** (no ``repo_url``): fire WORLD-research
-       synchronously. There's no repo to analyze, but the model's training
-       knowledge of real software in this category gives the chain something
-       concrete to align against (real exemplars, MVP bar, deliberately-defer
-       list). Synthesis writes ``discovery.md`` and transitions the
-       lifecycle the same way ``_resolve_discovery`` does after repo-research.
-
-    2. **Existing-repo goal**: dispatch a read-only ``review_repository``
-       analysis. Its terminal result feeds the discovery synthesis
-       (``_resolve_discovery``) — repo-research, not world-research, because
-       the ground truth is in the codebase. This is the senior-dev move:
-       research, then act.
-
-    A *dispatch* failure skips straight to executing — investigation is an
-    enhancement, not a gate. A *prep* failure does NOT skip: the workspace it
-    couldn't build is the same one executing needs, so deferring just hides
-    the error one tick longer. Block on it instead (legibly).
-    """
-    # Long_lived goals do not investigate (demolition P4): the detour's output
-    # (discovery.md) is never read on the thin advance path — the worker pulls
-    # its own context in-session. create_goal no longer stamps them
-    # investigating; this guard catches a long_lived goal that was ALREADY in
-    # investigating in a live DB when this shipped (or reached it some other
-    # way) and skips it straight to executing on its next tick — zero cognition,
-    # no engine round-trip. one_shot still investigates below.
-    #
-    # Skipping investigation also skips firming for long_lived (firming is only
-    # reached via the investigation-resolve hooks). That is INTENTIONAL and
-    # off-by-default today (DEVCLAW_GOAL_FIRMING); the long_lived done-gate keeps
-    # its criterion — it reads the owner's `done_when` from create_goal, never
-    # discovery.md. Shrinking firming to the thin done_when-agreement is separate
-    # P4 work.
-    if goal.mode == "long_lived":
-        store.transition(
-            goal_id, Event.RESOLVE_INVESTIGATION,
-            replace(status, lifecycle="executing", phase="idle",
-                    next="long_lived: skipping investigation → executing"),
-            expect=status,
-        )
-        store.append_log(goal_id, "long_lived: skipping investigation → executing")
-        return Outcome.ADVANCED
-
-    # Branch 1: from-scratch goal → world-research, no engine dispatch.
-    if _world_research.should_fire(goal):
-        return await _open_world_research(
-            goal_id, goal, status,
-            store=store, notifier=notifier,
-            world_research_caller=world_research_caller,
-            summarize=summarize,
-        )
-
-    # Branch 2: existing-repo goal → today's path (prep workspace, dispatch
-    # review_repository, await terminal, _resolve_discovery turns it into a
-    # brief).
-    try:
-        await prepare_ws(goal.workspace_dir, goal.repo_url, None)
-    except WorkspaceError as exc:
-        return await _block_on_prep_failure(
-            goal_id, status, exc, store=store, notifier=notifier, summarize=summarize,
-        )
-    review = Action(
-        engine="devclaw", tool="review_repository",
-        goal=(
-            f"Read-only analysis: what does this repository actually do today?\n"
-            f"The owner's desired outcome is: {goal.objective}\n"
-            f"Describe the current functionality, structure, and how close it is to that outcome."
-        ),
-        open_pr=False,
-    )
-    # Atomic dispatch (PR7) — same shape as _dispatch_action's; see that
-    # function's comment for the dispatch_exc/txn-nesting rationale.
-    dispatch_exc: "Exception | None" = None
-    try:
-        with store.transaction():
-            try:
-                ref = _run_atomic(engine.dispatch(review, goal, notify_url))
-            except Exception as exc:  # noqa: BLE001
-                dispatch_exc = exc
-                raise
-            ref = replace(ref, is_discovery=True)
-            store.transition(
-                goal_id, Event.DISPATCH_DISCOVERY,
-                replace(status, lifecycle="investigating", phase="in_flight", in_flight=ref), expect=status,
-            )
-            store.append_log(goal_id, f"investigating → repo analysis {ref.id}", mirror=False)
-    except Exception:
-        store.discard_pending_mirrors(goal_id)
-        if dispatch_exc is None:
-            raise
-        exc = dispatch_exc
-        store.append_log(goal_id, f"investigation dispatch failed ({exc}) — skipping to executing")
-        store.transition(
-            goal_id, Event.RESOLVE_INVESTIGATION,
-            replace(status, lifecycle="executing", phase="idle"), expect=status,
-        )
-        return Outcome.SLEPT
-    store.render_mirrors(goal_id)
-    _engine_kick(engine)
-    _trace.record_dispatch(goal_id=goal_id, tool=review.tool, ref_id=ref.id, engine=getattr(engine, "kind", ""), is_discovery=True)
-    await _notify(
-        notifier, NotifyLevel.OWNER,
-        f"🔍 [{goal_id}] taking a look at what's there today — I'll come back with what it does and what 'better' could mean",
-        summarize=summarize,
-    )
-    return Outcome.DISPATCHED
-
-
-async def _resolve_discovery(
-    goal_id: str, goal: Goal, status: GoalStatus, repo_analysis: str,
-    *, store: GoalStore, research_caller: ClaudeCaller, notifier: Notifier,
-    summarize: "ClaudeCaller | None" = None,
-    decompose_enabled: bool = False,
-    decomposer_caller: "ClaudeCaller | None" = None,
-) -> Outcome:
-    """The investigating analysis finished — synthesize the discovery brief
-    (current state · gap-to-good · best-practice checklist) and persist it,
-    optionally run the decomposer to emit a structured per-tool checklist
-    (Pillar 1), then transition to executing. Synthesis and decomposition are
-    each non-fatal — a failure in either falls back to backlog-driven mode."""
-    # Persist the RAW analysis FIRST — the prose brief below is deliberately
-    # tight and skimmable, and record_settlement keeps only ref/kind/status,
-    # so without this row the review_repository output (the decomposer's
-    # ground truth, up to ~200KB) is unrecoverable by the time the
-    # firming-path decomposer runs (triage F2). Best-effort like the
-    # synthesis below: a persist hiccup degrades with a log line, never
-    # wedges a settle that already committed.
-    try:
-        store.write_repo_analysis(goal_id, repo_analysis)
-    except Exception as exc:  # noqa: BLE001 — grounding must not wedge the goal
-        store.append_log(goal_id, f"repo-analysis persist failed ({exc}) — proceeding")
-    # Ground the synthesis in the ACTUAL goal workspace: on a failed/empty
-    # review, `repo_analysis` degrades to a placeholder ("review failed (no
-    # analysis captured)") and host-side claude — which inherits devclaw's own
-    # cwd — would otherwise fill the gap with the WRONG repo (triage F4
-    # 2026-07-13, sibling of the #227 wrong-codebase review). The workspace was
-    # already prepped at dispatch, so the checkout exists on the happy AND
-    # failed-review paths. Best-effort and collected OUTSIDE the try below: it
-    # never raises, so a git hiccup gathering context can't trip the non-fatal
-    # synthesis fallback.
-    repo_context = await _research._workspace_snapshot(goal.workspace_dir)
-    brief = ""
-    try:
-        brief = await _research.discovery_brief(
-            goal, repo_analysis, caller=research_caller, repo_context=repo_context,
-        )
-        store.write_discovery(goal_id, brief)
-        store.append_log(goal_id, "discovery brief written")
-        synth_ok = True
-    except Exception as exc:  # noqa: BLE001 — investigation must not wedge the goal
-        store.append_log(goal_id, f"discovery synthesis failed ({exc}) — proceeding")
-        synth_ok = False
-
-    # Firming, when enabled, gates the decomposer: the decomposer should run
-    # against the FIRMED goal, not the pre-firming goal.yaml. Skip the
-    # in-discovery decomposer call in that case — a later session will wire the
-    # decomposer to fire off firmed.yaml (proposal step 7).
-    from .phases.firming import FIRMING_ENABLED as _FIRMING_ENABLED_FOR_DECOMPOSE
-
-    decompose_ok = False
-    # A ONE-SHOT goal IS its checklist (ADR 0003 stage 2): without one it can
-    # only hit the loud no-checklist block — so one_shot overrides BOTH the
-    # DEVCLAW_GOAL_DECOMPOSE migration flag AND the done_when presence gate
-    # (the start_program alias files spec-only goals whose done_when is empty
-    # until firming derives it; the decomposer prompt renders "(not
-    # specified)" and plans from objective + brief + digest). Live-found
-    # 2026-07-19 shakedown: with default env the alias ALWAYS blocked here.
-    must_decompose = goal.mode == "one_shot"
-    if (
-        (decompose_enabled or must_decompose)
-        and (goal.done_when or must_decompose)
-        and not _FIRMING_ENABLED_FOR_DECOMPOSE
-    ):
-        # Mechanical repo identity rides along with the digest — the digest is
-        # the agent's prose, the snapshot is git's own facts (remote/branch/
-        # key-file probes). Best-effort, never raises (see _collect_repo_context).
-        from .phases.firming import _collect_repo_context as _repo_ctx
-
-        caller = decomposer_caller or research_caller
-        try:
-            cl = await _decomposer.decompose(
-                goal,
-                claude_caller=caller,
-                discovery_brief=brief,
-                repo_digest=repo_analysis,
-                repo_context=await _repo_ctx(goal.workspace_dir),
-            )
-            store.write_checklist(goal_id, cl)
-            store.append_log(
-                goal_id,
-                f"decomposer emitted checklist: {len(cl.items)} items, "
-                f"{len(cl.open_questions)} open question(s)",
-            )
-            decompose_ok = True
-        except Exception as exc:  # noqa: BLE001 — decomposition must not wedge the goal
-            store.append_log(
-                goal_id,
-                f"decomposition failed ({exc}) — "
-                + (
-                    "one-shot goal will block loudly next tick (no backlog fallback in this mode)"
-                    if must_decompose
-                    else "falling back to backlog mode"
-                ),
-            )
-
-    # Firming sits between investigating and executing when enabled — its
-    # handler will re-tick under lifecycle=firming on the very next loop turn
-    # (the ADVANCED outcome we return below pokes the heartbeat).
-    from .phases.firming import FIRMING_ENABLED as _FIRMING_ENABLED
-
-    next_lifecycle = "firming" if _FIRMING_ENABLED else "executing"
-    next_phase_note = (
-        "discovery done → firming" if _FIRMING_ENABLED else "discovery done → executing"
-    )
-    store.transition(
-        goal_id, Event.RESOLVE_INVESTIGATION,
-        replace(status, lifecycle=next_lifecycle, phase="idle", next=next_phase_note),
-        expect=status,
-    )
-    if decompose_ok:
-        msg = (
-            f"🔍 [{goal_id}] I looked at \"{goal.objective}\" — written what's there + "
-            f"a structured plan ({len(store.read_checklist(goal_id).items)} items). Starting work."
-        )
-    elif synth_ok:
-        msg = (
-            f"🔍 [{goal_id}] I looked at what's there for \"{goal.objective}\" — "
-            f"I've written up what it does today and what 'better' looks like. Starting work now."
-        )
-    else:
-        msg = f"🔍 [{goal_id}] starting work on \"{goal.objective}\""
-    await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summarize)
-    return Outcome.ADVANCED

@@ -69,7 +69,7 @@ class GoalStatusMixin:
         the first ``save_status`` creates the row). A STATUS.md that EXISTS —
         even truncated/corrupt — is parsed with the current frontmatter reader
         (which degrades every field to its default, never raising: T0.4's
-        GoalDocCorrupt is for checklist/firmed, NOT status) and INSERTed inside
+        a corrupt status row raises plainly, never silently degrades) and INSERTed inside
         a ``transaction()``, seeding ``goal_phase_history`` from its current
         phase_history."""
         if self._goal_state.has_status(goal_id):

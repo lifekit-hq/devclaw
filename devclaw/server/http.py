@@ -379,13 +379,13 @@ def _goal_row(goal_id: str) -> dict:
 
 # Fixed left-to-right order the Goal Detail phase-timeline renders. Keep in
 # sync with `phaseNames` in the Claude Design mock (Goal Detail.dc.html:373).
-_TIMELINE_PHASES = ["investigating", "firming", "executing", "verifying", "done"]
+_TIMELINE_PHASES = ["executing", "verifying", "done"]
 
 
 def _phase_index(current: str | None) -> int:
     """Where along the timeline the goal is right now. Non-timeline phases
-    (idle, in_flight, blocked, cancelled, error) collapse to 'executing' —
-    they all represent forward-of-firming work in the current lifecycle."""
+    (idle, in_flight, blocked, cancelled, error — and legacy pre-shrink
+    investigating/firming stamps) collapse to 'executing'."""
     if current is None:
         return 0
     if current in _TIMELINE_PHASES:
@@ -478,8 +478,7 @@ async def goal_resume(request: Request) -> Response:
     """Console-facing Resume button — the recovery verb. Wraps
     goal_service.resume_goal: re-attempts the SAME contract on a blocked goal
     whose blocker was cleared out-of-band (no steering recorded, objective
-    untouched). Idempotent — a no-op on a goal that isn't blocked. A goal blocked
-    in FIRMING is refused by the service (answers must come through /answer)."""
+    untouched). Idempotent — a no-op on a goal that isn't blocked."""
     goal_id = request.path_params["goal_id"]
     try:
         result = goals.resume_goal(goal_id)
@@ -515,33 +514,6 @@ async def goal_strictness(request: Request) -> Response:
         return JSONResponse({"error": "not_found", "id": goal_id}, status_code=404)
     except ValueError as exc:
         return JSONResponse({"error": "bad_strictness", "detail": str(exc)}, status_code=400)
-    return JSONResponse(result)
-
-
-@mcp.custom_route("/goals/{goal_id}/answer", methods=["POST"])
-async def goal_answer(request: Request) -> Response:
-    """Console-facing Answer button for a goal blocked in firming. Body is JSON
-    `{"answers": {"<unknown_id>": "<answer>", ...}}` covering EVERY current
-    unknown. Wraps goal_service.answer_unknowns (fires the next firming round).
-    A partial/extra answer map, or a goal with no draft, returns 400 with the
-    reason rather than a silent no-op."""
-    goal_id = request.path_params["goal_id"]
-    try:
-        body = await request.json()
-    except Exception:
-        return JSONResponse({"error": "invalid_json"}, status_code=400)
-    answers = (body or {}).get("answers")
-    if not isinstance(answers, dict) or not answers:
-        return JSONResponse(
-            {"error": "answers_required", "hint": "POST {\"answers\": {id: str}}"},
-            status_code=400,
-        )
-    try:
-        result = await goals.answer_unknowns(goal_id, answers)
-    except KeyError:
-        return JSONResponse({"error": "not_found", "id": goal_id}, status_code=404)
-    except ValueError as exc:
-        return JSONResponse({"error": "bad_answers", "detail": str(exc)}, status_code=400)
     return JSONResponse(result)
 
 
@@ -1146,24 +1118,11 @@ async def goal_json(request: Request) -> Response:
                 "timestampMs": _iso_to_ms(stamp_iso) if stamp_iso else None,
             }
         )
-    # Dispatch cap = the runaway backstop the goal tick already enforces
-    # (max(len(backlog)+2, len(checklist)+2) — see goal/tick.py:1028). Surface
-    # it so the console can show "N / cap" and, when phase=blocked, the banner
-    # can render "N of N dispatched — merge to unblock".
-    backlog_len = len(g.get("backlog") or [])
-    base_cap = backlog_len + 2
-    dispatch_cap: int
-    try:
-        # Console DISPLAY path: read the checklist off the GOAL store (the
-        # module-level `store` is the SQLite StateStore and has no checklist
-        # — the old call here always raised AttributeError into the fallback).
-        # on_corrupt="none": a torn checklist must degrade the cap readout,
-        # never 500 the dashboard — the tick blocks the goal loudly instead.
-        checklist = goals._goal_store.read_checklist(goal_id, on_corrupt="none")
-        cap_c = (len(checklist.items) + 2) if checklist else base_cap
-        dispatch_cap = max(base_cap, cap_c)
-    except Exception:
-        dispatch_cap = base_cap
+    # Dispatch cap = the runaway backstop the goal tick enforces
+    # (len(backlog)+2 — see goal/tick_dispatch._dispatch_action). Surface it so
+    # the console can show "N / cap" and, when phase=blocked, the banner can
+    # render "N of N dispatched — merge to unblock".
+    dispatch_cap = len(g.get("backlog") or []) + 2
     # Dispatched tasks — every Task the goal heartbeat filed against this goal
     # (parent_goal_id match). Includes both live and terminal tasks; the
     # console renders them as a timeline of what the goal actually dispatched.
@@ -1173,29 +1132,6 @@ async def goal_json(request: Request) -> Response:
     # number the block exists to answer).
     task_rows = store.list_tasks(parent_goal_id=goal_id, limit=500)
     dispatched_tasks = [_task_row(t) for t in task_rows[:50]]
-    # Firming unknowns — only meaningful (and only read) when the goal is blocked
-    # awaiting owner answers. Best-effort: a torn/absent draft degrades to [] so
-    # the console shows a plain Resume rather than 500-ing the detail view.
-    unknowns: list[dict] = []
-    if phase == "blocked":
-        try:
-            draft = goals._goal_store.read_firmed_draft(goal_id)
-            if draft is not None:
-                unknowns = [
-                    {
-                        "id": u.id,
-                        "question": u.question,
-                        "why": getattr(u, "why", ""),
-                        # The firming model already emits structured options per
-                        # unknown; carrying them through lets the console render
-                        # one-tap choices instead of a bare textarea.
-                        "options": list(getattr(u, "options", []) or []),
-                        "defaultIfNoAnswer": getattr(u, "default_if_no_answer", None),
-                    }
-                    for u in draft.unknowns
-                ]
-        except Exception:
-            unknowns = []
     # §6 structured decision blocks (ADR 0010): the planner's options for a
     # needs_answer block, so the console renders click-to-steer buttons. Only
     # read for needs_answer — a mechanical re-block must NEVER surface a stale
@@ -1246,7 +1182,6 @@ async def goal_json(request: Request) -> Response:
             "timeline": timeline,
             "blockedOn": g.get("blocked_on"),
             "blockedKind": g.get("blocked_kind", ""),
-            "unknowns": unknowns,
             "blockOptions": block_options,
             "usage": usage,
             "tasks": dispatched_tasks,

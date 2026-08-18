@@ -318,9 +318,9 @@ async def _resolve_done_gate(
         await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] done-gate eval failed: {exc}")
         return Outcome.ERROR
     if ev.verdict == "achieved" and remote_checker is not None and goal.repo_url:
-        # Only checklist-mode goals accumulate work on a shared goal branch
-        # whose check surface is meaningful at close time; legacy per-action
-        # PRs were already merged (or reviewed) one by one.
+        # Only goal-branch goals accumulate work on a shared branch whose
+        # check surface is meaningful at close time; legacy per-action PRs
+        # were already merged (or reviewed) one by one.
         branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
         if branch is not None:
             try:
@@ -389,7 +389,7 @@ async def _resolve_done_gate(
             expect=status, consume_steering=consume_steering,
         )
         # Close-out artifact: RUN_SUMMARY.md, a projection of the goal's own
-        # rows (delivery traces + cognition totals + phase history + checklist)
+        # rows (delivery traces + cognition totals + phase history)
         # rendered once, AFTER the ACHIEVE transition committed — a rolled-back
         # close can't leave a summary behind. Best-effort end to end: a summary
         # hiccup logs and the verified close proceeds untouched (same
@@ -403,7 +403,6 @@ async def _resolve_done_gate(
                 base,
                 store.read_goal_traces(goal_id, kind="delivery"),
                 totals=store.goal_trace_totals(goal_id),
-                checklist=store.read_checklist(goal_id),
                 objective=goal.objective,
             )
             store.write_run_summary_view(goal_id, md)

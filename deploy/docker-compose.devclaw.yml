@@ -39,7 +39,7 @@ services:
       resources:
         limits:
           # 3g — devclaw spawns multiple concurrent `claude --print` subprocesses
-          # per tick (decomposer, evaluator, firming); each Node Claude CLI is
+          # per tick (evaluator, gates, summaries); each Node Claude CLI is
           # 200-400MB during a call. 1g OOM-killed subprocesses (2026-07-03).
           memory: 3g
     # group_add: grant the non-root `node` user access to the host docker

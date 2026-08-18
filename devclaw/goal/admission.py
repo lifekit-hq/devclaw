@@ -95,7 +95,7 @@ class GoalAdmissionRejected(Exception):
 #: stubs like "ship it" / "make it better" / "build a CRM" are ~7-15 chars; a
 #: real testable clause ("GET /health returns 200 with status:ok") is ~40+.
 #: The bar is intentionally low — we're catching obvious laziness, not grading
-#: completeness (which is the firming + decomposer's job).
+#: completeness (which is the worker's speckit specify/plan job).
 _MIN_DONE_WHEN_CHARS = 20
 
 import re as _re
@@ -178,7 +178,7 @@ def _check_scope_anchor_for_from_scratch(
 ) -> Optional[AdmissionCondition]:
     """From-scratch goals (no ``repo_url``) need SOME anchor for the chef to
     plan against: a spec (preferred), or at least a starting backlog. Without
-    either, the decomposer has only the objective + done_when and is likely
+    either, the worker has only the objective + done_when and is likely
     to invent shape rather than reflect intent."""
     if repo_url:
         return None  # existing repo — the discovery brief will be the anchor
@@ -188,7 +188,7 @@ def _check_scope_anchor_for_from_scratch(
         code="no_scope_anchor_for_from_scratch",
         message=(
             "this is a from-scratch goal (no repo_url) but no spec and no "
-            "backlog were provided. The decomposer has nothing concrete to "
+            "backlog were provided. The worker has nothing concrete to "
             "plan against and will invent shape. Run scope_grill to produce a "
             "spec, or pass a starting backlog of acceptance items."
         ),

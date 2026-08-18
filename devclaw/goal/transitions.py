@@ -2,7 +2,7 @@
 
 Before this PR every phase/lifecycle/in_flight change was a bespoke
 ``replace(status, phase=..., lifecycle=..., ...)`` + ``save_status`` call
-scattered across ``tick.py`` / ``service.py`` / ``phases/firming.py``, with no
+scattered across ``tick.py`` / ``service.py``, with no
 mechanism stopping two writers (a tick's planner await racing a concurrent
 ``steer_goal``/``cancel_goal``) from both reading the same snapshot and one
 clobbering the other's write — the stale-snapshot un-cancel class. This module
@@ -29,10 +29,6 @@ class State(str, Enum):
     """The goal's coarse machine state, derived from ``GoalStatus`` — never
     hand-constructed outside :func:`derive_state` / a legacy-row rehydrate."""
 
-    INVESTIGATING_IDLE = "investigating_idle"
-    DISCOVERY_IN_FLIGHT = "discovery_in_flight"
-    FIRMING_IDLE = "firming_idle"
-    FIRMING_BLOCKED = "firming_blocked"
     EXECUTING_IDLE = "executing_idle"
     ACTION_IN_FLIGHT = "action_in_flight"
     VERIFYING = "verifying"
@@ -42,27 +38,15 @@ class State(str, Enum):
 
 
 class Event(str, Enum):
-    """The domain action a handler is asking to perform. One event can map to
-    different targets depending on the FROM state (e.g. ``RESOLVE_INVESTIGATION``
-    lands on ``FIRMING_IDLE`` or ``EXECUTING_IDLE`` depending on whether the
-    firming phase is enabled) — see :data:`LEGAL`."""
+    """The domain action a handler is asking to perform — see :data:`LEGAL`.
+    (The investigation/firming event family was removed with the host-cognition
+    chain, spec 008 shrink: the worker plans via speckit in-sandbox.)"""
 
-    DISPATCH_DISCOVERY = "dispatch_discovery"
-    DISCOVERY_SETTLED = "discovery_settled"
-    RESOLVE_INVESTIGATION = "resolve_investigation"
-    FIRMING_ADVANCE = "firming_advance"
-    FIRMING_NEEDS_ANSWERS = "firming_needs_answers"
     DISPATCH_ACTION = "dispatch_action"
     ACTION_SETTLED = "action_settled"
     OPEN_DONE_GATE = "open_done_gate"
     DONE_GATE_SETTLED = "done_gate_settled"
     RESUME_IDLE = "resume_idle"
-    #: one-shot recovery (2026-07-19 shakedown): the goal reached executing
-    #: with NO checklist and NO discovery brief — investigation was skipped
-    #: (a prep failure blocked the discovery dispatch and the mechanical heal
-    #: resumed PAST it; the prep block pins lifecycle=executing for
-    #: blocked-routing). Re-enter investigating so the plan gets built.
-    REOPEN_INVESTIGATION = "reopen_investigation"
     ACHIEVE = "achieve"
     BLOCK = "block"
     UNBLOCK = "unblock"
@@ -85,19 +69,17 @@ def derive_state(status: GoalStatus) -> State:
     if status.phase == "cancelled":
         return State.CANCELLED
     if status.phase == "blocked":
-        return State.FIRMING_BLOCKED if status.lifecycle == "firming" else State.BLOCKED
+        return State.BLOCKED
     if status.in_flight is not None:
         ref = status.in_flight
-        if getattr(ref, "is_discovery", False):
-            return State.DISCOVERY_IN_FLIGHT
         if getattr(ref, "is_done_check", False):
             return State.VERIFYING
         return State.ACTION_IN_FLIGHT
-    lifecycle = status.lifecycle or "executing"
-    if lifecycle == "investigating":
-        return State.INVESTIGATING_IDLE
-    if lifecycle == "firming":
-        return State.FIRMING_IDLE
+    # Any lifecycle string — "executing", a legacy NULL, or a pre-shrink
+    # "investigating"/"firming" row surviving in the DB — is executing now:
+    # the states those values used to map to were removed with the
+    # host-cognition chain (spec 008 shrink), and the tick heals the stored
+    # value loudly on first touch. Total: never raises.
     return State.EXECUTING_IDLE
 
 
@@ -106,7 +88,7 @@ state_of = derive_state
 
 
 #: (from_state, event) -> legal target states. Built by walking every
-#: production write site in tick.py / service.py / phases/firming.py (Tranche
+#: production write site in tick.py / service.py (Tranche
 #: 1/PR4) — NOT a theoretical state machine. BLOCK and CANCEL are legal from
 #: every non-terminal state (any handler can block or cancel a goal no matter
 #: what it's doing); DONE/CANCELLED are terminal (no outgoing events).
@@ -120,28 +102,9 @@ state_of = derive_state
 #: sweep; formerly the per-tick `_readopt_orphaned_program`) re-adopting a
 #: lost ref from a blocked goal.
 LEGAL: dict[tuple[State, Event], frozenset[State]] = {
-    (State.INVESTIGATING_IDLE, Event.DISPATCH_DISCOVERY): frozenset({State.DISCOVERY_IN_FLIGHT}),
-    (State.INVESTIGATING_IDLE, Event.RESOLVE_INVESTIGATION): frozenset(
-        {State.FIRMING_IDLE, State.EXECUTING_IDLE}
-    ),
-    (State.INVESTIGATING_IDLE, Event.BLOCK): frozenset({State.BLOCKED}),
-    (State.INVESTIGATING_IDLE, Event.CANCEL): frozenset({State.CANCELLED}),
-    (State.DISCOVERY_IN_FLIGHT, Event.DISCOVERY_SETTLED): frozenset({State.INVESTIGATING_IDLE}),
-    (State.DISCOVERY_IN_FLIGHT, Event.BLOCK): frozenset({State.BLOCKED}),
-    (State.DISCOVERY_IN_FLIGHT, Event.CANCEL): frozenset({State.CANCELLED}),
-    (State.FIRMING_IDLE, Event.FIRMING_ADVANCE): frozenset({State.EXECUTING_IDLE}),
-    (State.FIRMING_IDLE, Event.FIRMING_NEEDS_ANSWERS): frozenset({State.FIRMING_BLOCKED}),
-    (State.FIRMING_IDLE, Event.BLOCK): frozenset({State.BLOCKED}),
-    (State.FIRMING_IDLE, Event.CANCEL): frozenset({State.CANCELLED}),
-    (State.FIRMING_BLOCKED, Event.FIRMING_ADVANCE): frozenset({State.EXECUTING_IDLE}),
-    (State.FIRMING_BLOCKED, Event.FIRMING_NEEDS_ANSWERS): frozenset({State.FIRMING_BLOCKED}),
-    (State.FIRMING_BLOCKED, Event.UNBLOCK): frozenset({State.FIRMING_IDLE}),
-    (State.FIRMING_BLOCKED, Event.BLOCK): frozenset({State.BLOCKED}),
-    (State.FIRMING_BLOCKED, Event.CANCEL): frozenset({State.CANCELLED}),
     (State.EXECUTING_IDLE, Event.DISPATCH_ACTION): frozenset({State.ACTION_IN_FLIGHT}),
     (State.EXECUTING_IDLE, Event.OPEN_DONE_GATE): frozenset({State.VERIFYING}),
     (State.EXECUTING_IDLE, Event.RESUME_IDLE): frozenset({State.EXECUTING_IDLE}),
-    (State.EXECUTING_IDLE, Event.REOPEN_INVESTIGATION): frozenset({State.INVESTIGATING_IDLE}),
     (State.EXECUTING_IDLE, Event.ACHIEVE): frozenset({State.DONE}),
     (State.EXECUTING_IDLE, Event.BLOCK): frozenset({State.BLOCKED}),
     (State.EXECUTING_IDLE, Event.CANCEL): frozenset({State.CANCELLED}),
@@ -151,7 +114,7 @@ LEGAL: dict[tuple[State, Event], frozenset[State]] = {
     (State.VERIFYING, Event.DONE_GATE_SETTLED): frozenset({State.EXECUTING_IDLE}),
     (State.VERIFYING, Event.BLOCK): frozenset({State.BLOCKED}),
     (State.VERIFYING, Event.CANCEL): frozenset({State.CANCELLED}),
-    # UNBLOCK may land back on an in-flight/verifying/discovery state, not just
+    # UNBLOCK may land back on an in-flight/verifying state, not just
     # EXECUTING_IDLE: the corrupt-doc block deliberately PRESERVES a running
     # in_flight ref (see tick_guards._block_on_corrupt_doc), so any unblock of
     # such a goal — the F8 auto-heal, or a steer_goal on it — restores the ref
@@ -161,7 +124,6 @@ LEGAL: dict[tuple[State, Event], frozenset[State]] = {
             State.EXECUTING_IDLE,
             State.ACTION_IN_FLIGHT,
             State.VERIFYING,
-            State.DISCOVERY_IN_FLIGHT,
         }
     ),
     (State.BLOCKED, Event.DISPATCH_ACTION): frozenset({State.ACTION_IN_FLIGHT}),

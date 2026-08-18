@@ -764,12 +764,12 @@ class GoalState:
     #: file view (up to ~200KB of machine-read ground truth for the
     #: decomposer, not a human-skimmable artifact). spec/discovery stay plain
     #: files (display/prompt inputs, not consumed-state).
-    DOC_KINDS = frozenset({"checklist", "firmed_draft", "repo_analysis", "block_options"})
+    DOC_KINDS = frozenset({"checklist", "firmed_draft", "repo_analysis", "block_options"})  # first three = legacy kinds (pre-shrink rows stay readable)
 
     def has_doc(self, goal_id: str, kind: str) -> bool:
         """Whether a ``goal_docs`` row exists for ``(goal_id, kind)`` — the
-        DB-row-vs-legacy-file branch :meth:`GoalStore.read_checklist` /
-        :meth:`GoalStore.read_firmed_draft` use."""
+        DB-row-vs-legacy-file branch the goal-doc readers
+        use."""
         assert kind in self.DOC_KINDS, f"has_doc: unknown kind {kind!r}"
         with self._store._lock:
             row = self._store._db.execute(
@@ -793,7 +793,7 @@ class GoalState:
     def read_doc(self, goal_id: str, kind: str) -> "str | None":
         """The current document content, or None if no row exists yet
         (legacy goal pre-migration, or a goal this doc's phase hasn't
-        reached — e.g. no decomposer run, no firming run)."""
+        reached)."""
         assert kind in self.DOC_KINDS, f"read_doc: unknown kind {kind!r}"
         with self._store._lock:
             row = self._store._db.execute(

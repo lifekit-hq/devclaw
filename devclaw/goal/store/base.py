@@ -36,7 +36,7 @@ The class was split into a package for legibility (behavior-preserving):
   the transaction/mirror discipline, goal facts, clock helpers).
 - :mod:`.status` — :class:`GoalStatusMixin`, the single-writer/CAS choke point
   (``load_status`` / ``transition`` / ``force_block`` / the STATUS.md view).
-- :mod:`.content` — :class:`GoalContentMixin` + :class:`GoalDocCorrupt`, the
+- :mod:`.content` — :class:`GoalContentMixin`, the
   log / settlements / deliveries / checklist / firmed-draft / inbox surfaces.
 
 The mixins run on the same ``self._state`` / ``self._goal_state`` /
@@ -159,7 +159,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
     # still open, because a rollback can still undo the DB row it would be
     # mirroring — a file written early would then show state the DB no
     # longer has (the emergency-downgrade rail depends on files always
-    # matching the rolled-back DB). append_log/append_delivery/write_checklist
+    # matching the rolled-back DB). append_log/append_delivery
     # accept mirror=False/render_view=False for exactly this: skip the file
     # write and remember it in self._pending_mirrors instead.
     # transition()/save_status()/force_block()/update_status_fields() do the
@@ -262,7 +262,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         nested transaction() calls into one outer commit), so rendering the
         file immediately would show state a rollback could still undo.
         Deferred writes join the SAME pending-mirror list append_log /
-        append_delivery / write_checklist use — the caller's render_mirrors()
+        append_delivery use — the caller's render_mirrors()
         (called right after ITS OWN transaction() exits) flushes it, or
         discard_pending_mirrors() drops it on the exception path. Standalone
         (non-nested) callers — the overwhelming majority of call sites —

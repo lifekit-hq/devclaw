@@ -63,7 +63,7 @@ def _extract_verdict(preview: str) -> Optional[str]:
     """Pull the verdict string out of an evaluator response (the full
     ``response_text`` since T0.5; the 240-char ``response_preview`` for legacy
     rows). Returns None when the text doesn't look like an evaluator response
-    (which happens for planner/decomposer roles too — the caller filters
+    (which happens for other cognition roles too — the caller filters
     by role first, but this stays defensive)."""
     if not preview:
         return None
@@ -193,7 +193,7 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
         except (TypeError, json.JSONDecodeError):
             continue
         # Cognition usage sums span EVERY in-window cognition call (planner,
-        # firming, evaluator, gates…) — same real-usage-else-estimate
+        # evaluator, gates…) — same real-usage-else-estimate
         # preference as StateStore.trace_totals. The evaluator filter below
         # applies only to verdict counting.
         if p.get("tokens_in") is not None or p.get("tokens_out") is not None:

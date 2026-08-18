@@ -1,18 +1,13 @@
 """Delivery strategy — how a goal's task work maps onto git branches + PRs.
 
-This NAMES a decision that already existed implicitly, smeared across the tick
-and delivery layers as ad-hoc ``store.read_checklist(...)`` / ``f"goal/{id}"``
-conditionals: a checklist-mode goal accumulates every item's commits on a shared
-``goal/<id>`` branch (one cumulative PR per goal — Pillar 1); a legacy /
-non-checklist goal delivers each action as its own branch + PR off the default
-branch.
+An executing goal accumulates every increment's commits on a shared
+``goal/<id>`` branch (one cumulative PR per goal); a legacy goal with no
+recorded lifecycle delivers each action as its own branch + PR off the
+default branch.
 
-It is the seam a second topology (per-task PRs to main) plugs into later, instead
-of threading a new conditional through every call site. TODAY it owns ONLY the
-branch-selection decision — the one part that extracts with provably zero
-behaviour change: ``Checklist`` is a plain frozen dataclass (always truthy, no
-``__bool__``/``__len__``), so the pre-existing ``is not None`` vs. truthiness
-split across the three call sites collapses to a single predicate.
+It is the seam a second topology (per-task PRs to main) plugs into later,
+instead of threading a new conditional through every call site. TODAY it owns
+ONLY the branch-selection decision.
 
 Auto-merge eligibility (the tick still keys off ``bool(addresses)``) and the
 scheduler dep-gate stay at their call sites on purpose: they carry latent
@@ -51,8 +46,8 @@ class DeliveryStrategy(Protocol):
 
 
 class GoalBranchStrategy:
-    """Every item's commits stack on ``goal/<id>``; one cumulative PR per goal.
-    Today's behaviour for checklist-mode goals (Pillar 1)."""
+    """Every increment's commits stack on ``goal/<id>``; one cumulative PR
+    per goal — the default for every executing goal."""
 
     name = "goal-branch"
 
@@ -61,8 +56,8 @@ class GoalBranchStrategy:
 
 
 class PerActionStrategy:
-    """Each action delivers its own branch + PR off the default branch; no shared
-    goal branch. Today's behaviour for legacy / non-checklist goals."""
+    """Each action delivers its own branch + PR off the default branch; no
+    shared goal branch. Legacy goals (no recorded lifecycle) only."""
 
     name = "per-action"
 
@@ -78,32 +73,23 @@ PER_ACTION: "DeliveryStrategy" = PerActionStrategy()
 def resolve_strategy(store: "GoalStore", goal_id: str) -> "DeliveryStrategy":
     """The delivery strategy for a goal:
 
-    * ``goal-branch`` once the decomposer has produced a checklist (a one-shot
-      goal's items accumulate on one branch — Pillar 1), OR when the goal is a
-      **long_lived goal in the ``executing`` lifecycle** (2026-08-08 amnesia fix:
-      thin-advance runs one "advance one increment" task per night, and a
-      per-action strategy resets the workspace to ``origin/main`` before every
-      task — which, because the goal's single PR isn't merged, wipes the prior
-      night's accumulated work and forces a from-scratch rebuild every night;
-      ``goal/<id>`` accumulation is what preserves compounding progress);
-    * ``per-action`` for everything else — one_shot goals with no checklist yet,
-      and legacy goals with no lifecycle recorded (``lifecycle is None`` reads as
-      executing elsewhere, but delivery stays per-action for them, unchanged).
+    * ``goal-branch`` for any goal in the **explicit** ``executing`` lifecycle
+      — both modes stamp it at creation now (spec 008 shrink: one execution
+      path). The 2026-08-08 amnesia fix is the reason accumulation is the
+      default: a per-action strategy resets the workspace to ``origin/main``
+      before every task, and because the goal's single PR isn't merged that
+      wipes the prior increment's work and forces a from-scratch rebuild —
+      ``goal/<id>`` accumulation preserves compounding progress.
+    * ``per-action`` only for legacy goals with no lifecycle recorded
+      (``lifecycle is None``/pre-shrink strings read as executing elsewhere,
+      but delivery stays per-action for them, unchanged — the tick's heal
+      re-stamps a pre-shrink row on first touch, after which it accumulates).
 
-    Reproduces EXACTLY the ``store.read_checklist(goal_id) is not None`` gate that
-    guarded the inline ``f"goal/{goal_id}"`` computations before extraction — and
-    keeps their default ``on_corrupt="raise"`` semantics, so a corrupt contract
-    still fails loud here rather than being silently downgraded to per-action. The
-    long_lived branch is a pure read of goal state (mode + lifecycle); it adds no
-    LLM call and no writer to goal state.
+    (The old ``read_checklist is not None`` gate died with the checklist —
+    the checklist WAS the goal-branch signal; the explicit lifecycle string
+    is the signal now.) A pure read of goal state; no LLM call, no writer.
     """
-    if store.read_checklist(goal_id) is not None:
-        return GOAL_BRANCH
-    # A long_lived goal accumulates its nightly increments on ``goal/<id>`` too —
-    # require the *executing* lifecycle explicitly (NOT the legacy ``None`` that
-    # merely behaves-as-executing) so legacy per-action goals are untouched.
-    goal = store.load_goal(goal_id)
     status = store.load_status(goal_id)
-    if goal.mode == "long_lived" and status.lifecycle == "executing":
+    if status.lifecycle == "executing":
         return GOAL_BRANCH
     return PER_ACTION
