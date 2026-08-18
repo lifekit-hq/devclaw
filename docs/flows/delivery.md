@@ -9,13 +9,15 @@ registry's `automerge` override wins, else the fleet-wide
 `DEVCLAW_GOAL_AUTOMERGE` default (`goal/merge.py:resolve_automerge`). "On"
 means the tick is handed a merger callable; "off" means it is handed none.
 
-## Shape 1 — legacy/backlog mode: one task = one PR
+## Shape 1 — per-action mode (legacy rows only): one task = one PR
 
-Standing mission goals (e.g. `closeloop-mission-v2`). The planner invents each
-next action; every dispatch forks a fresh branch off current `main`.
+Only goals predating the executing-only lifecycle (`lifecycle=NULL` rows —
+`goal/delivery_strategy.py` picks per-action for those alone; every goal
+created today gets Shape 2). Every dispatch forks a fresh branch off current
+`main`.
 
 ```
-                 planner picks action
+              heartbeat dispatches an advance
                         |
                         v
         workspace reset to origin/main  (pristine checkout)
@@ -32,10 +34,10 @@ next action; every dispatch forks a fresh branch off current `main`.
           v                           v
    automerge ON?                 PR left open
      |        |                  counts +1 toward dispatch cap
-     | yes    | no               planner told the failure detail
+     | yes    | no               settle detail records the failure
      v        v
   squash-   PR left open,
-  merge     planner told
+  merge     settle detail says
   to main   "pr_state=open (unmerged —
      |       owner review pending)"
      v
@@ -45,29 +47,27 @@ next action; every dispatch forks a fresh branch off current `main`.
 
 **Automerge off + dependent tasks is a misconfiguration in this mode**: the
 next dispatch forks from a `main` that lacks the previous (unmerged) delivery,
-so the engineer re-implements or conflicts. Use checklist mode instead, or
-turn automerge on.
+so the engineer re-implements or conflicts. The goal branch (Shape 2) exists
+to prevent exactly this — legacy rows can be cancelled and recreated.
 
-## Shape 2 — checklist mode (Pillar 1): one goal = one PR, many commits
+## Shape 2 — goal branch (the standard shape): one goal = one PR, many commits
 
-Bounded "build X" goals (e.g. `closeloop-bench-2026-07-05`). The decomposer
-emits an atomic checklist up front; the checklist is the work surface.
+Every goal with `lifecycle="executing"` — i.e. every goal created since the
+spec-008 shrink. The worker plans in-sandbox (speckit `specs/*/` artifacts in
+the repo); the shared goal branch is the delivery surface.
 
 ```
-   decomposer -> checklist (N items)
-                        |
-                        v
         every dispatch checks out the SHARED
         branch  goal/<goal-id>   (not main)
                         |
                         v
-        item k commits STACK on item k-1
+        advance k commits STACK on advance k-1
         all pushes go to the SAME PR
                         |
                         v
-        automerge deliberately SKIPPED per item
+        automerge deliberately SKIPPED per advance
         (merging would delete the shared branch
-         and fork item k+1 back to main)
+         and fork the next advance back to main)
                         |
                         v
         done-gate = the single review moment
@@ -79,9 +79,11 @@ is safe with automerge off.
 
 ## Shape 3 — programs: one program = a stack of PRs + reconcile at settle
 
-When the planner decides work is too big for one dispatch it fires
-`start_program` — a DAG of tasks the engine runs as a unit. Each task opens
-its own PR **based on the previous task's branch** (closeloop #66 → #67 → #68).
+Programs are the queue's DAG substrate. Since the spec-008 shrink nothing
+host-side *produces* a plan (the default planner refuses loudly), so a
+program runs only when a caller submits an explicitly pre-planned DAG. Each
+task opens its own PR **based on the previous task's branch** (closeloop
+#66 → #67 → #68).
 
 A program settles with `gate_passed=None` (many per-task gates, no single
 verdict), so Shape 1's automerge can't touch the stack. Before 2026-07-09 the
@@ -107,11 +109,9 @@ source PRs stayed open as zombies. The **reconcile step** replaces that:
                   "superseded"      (same merger   reason in the summary
                   comment           as Shape 1)        |
                                                        v
-                                          planner sees it in
-                                          finished_detail and decides
-                                          whether a fix dispatch is
-                                          worth it (cognition stays
-                                          in the planner)
+                                          surfaced in finished_detail;
+                                          the owner decides whether a
+                                          fix is worth it
 ```
 
 Sequential on purpose: merging PR k re-bases k+1 and re-runs its checks, so
@@ -122,7 +122,8 @@ program PRs by hand, same contract as Shape 1.
 
 ## The dispatch cap (runaway backstop, all shapes)
 
-`cap = max(len(backlog), len(checklist)) + 2`. Progress-aware since #172/#173:
+`cap = len(backlog) + 2` (it no longer widens on a checklist — the checklist
+is gone with the host planning chain). Progress-aware since #172/#173:
 
 ```
    dispatch            -> counter +1
@@ -135,10 +136,9 @@ program PRs by hand, same contract as Shape 1.
 ```
 
 Both `steer_goal` and `resume_goal` clear the counter; the cap block is
-human-gated by design — unlike `mechanical:corrupt_doc`/`mechanical:prep`,
-it never auto-heals.
+human-gated by design — unlike `mechanical:prep`, it never auto-heals.
 
-Only a planner looping on **broken** dispatches accumulates to the cap. A
+Only a goal looping on **broken** dispatches accumulates to the cap. A
 healthy goal — including one that grounds every delivery in a read-only
 verification review — never blocks. Churn on successful-but-aimless work is
 caught by the direction evaluator (every `EVAL_EVERY` deliveries) and the 6h

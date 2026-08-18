@@ -71,7 +71,6 @@ class Outcome(str, Enum):
     DISPATCHED = "dispatched"
     VERIFYING = "verifying"  # done-gate review dispatched
     SLEPT = "slept"
-    ADVANCED = "advanced"    # lifecycle transitioned without dispatching a task; re-tick immediately
     BLOCKED = "blocked"
     DONE = "done"
     SKIP_DONE = "skip_done"

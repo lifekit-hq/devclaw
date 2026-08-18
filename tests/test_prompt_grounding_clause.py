@@ -11,15 +11,9 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1] / "devclaw"
 
+# decomposer.md / firming.md rows were removed with the host-cognition chain
+# (spec 008 shrink — the templates themselves are deleted).
 _TEMPLATES = {
-    _ROOT / "prompts" / "decomposer.md": [
-        "Ground every repo fact in what you are given",
-        "working directory",
-    ],
-    _ROOT / "prompts" / "firming.md": [
-        "Ground every repo fact in what you are given",
-        "working directory",
-    ],
     _ROOT / "prompts" / "goal-evaluator.md": [
         "Ground every repository fact in what you are given",
         "working directory",
@@ -27,6 +21,16 @@ _TEMPLATES = {
     ],
     _ROOT / "quality" / "prompts" / "review-gate.md": [
         "Ground every repo fact in what you are given",
+        "working directory",
+        "repository you have seen before",
+    ],
+    _ROOT / "prompts" / "intake-readiness.md": [
+        "Ground every repo fact in the Repository context",
+        "working directory",
+        "repository you have seen before",
+    ],
+    _ROOT / "prompts" / "self-triage.md": [
+        "Ground every claim in the Repository context",
         "working directory",
         "repository you have seen before",
     ],

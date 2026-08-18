@@ -48,7 +48,7 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • write /var/lib/devclaw/goals/<id>/goal.yaml (facts,   │
      │  │       plain file) + the first goal_status SQLite row        │
      │  │       (STATUS.md is rendered alongside as a generated view) │
-     │  │     • lifecycle="investigating", phase="idle"               │
+     │  │     • lifecycle="executing", phase="idle"                   │
      │  │     • return {goal_id, ...} to the waiter                   │
      │  │                                                             │
      │  │  Step B — heartbeat (15-min loop in goal/service.py):       │
@@ -56,10 +56,11 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       (SQLite, cheap, 0 tokens — STATUS.md/inbox.md are     │
      │  │       the generated views of the same rows, since T1)       │
      │  │     • if phase==idle and no in_flight:                      │
-     │  │         planner.py invokes `claude --print` ◄────┐          │
-     │  │           - reads inbox steering + log tail      │          │
-     │  │           - emits a JSON next-action plan        │          │
-     │  │     • dispatches the next implement_feature      │          │
+     │  │         advance_brief.py builds the mechanical   │          │
+     │  │           advance brief (steering + settle       │          │
+     │  │           detail; ZERO LLM — the worker plans    │          │
+     │  │           in-sandbox via speckit, spec 008)      │          │
+     │  │     • dispatches the next advance task           │          │
      │  │                                                  │ Pro/Max OAuth (~/.claude on host),
      │  │  Step C — engine/sandcastle.run_sandcastle():    │ no API key
      │  │     • _validate_workspace(workspace_dir)          │                                │ PR #117: empty dir → fail-fast
@@ -92,9 +93,9 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       export env so agent + verify gate inherit  │                                 │ agent spends anything
      │  │       it; no declaration → zero-cost no-op       │                                 │
      │  │     • build wrapped_goal (skills + quality bar   │                                 │
-     │  │       + the task body — which for a code task    │                                 │
-     │  │       carries the planner's per-task acceptance  │                                 │
-     │  │       criteria/constraints inside the goal — +   │                                 │
+     │  │       + the task body — which for a goal-        │                                 │
+     │  │       dispatched task carries the mechanical     │                                 │
+     │  │       advance brief inside the goal — +          │                                 │
      │  │       a structured return contract as the last   │                                 │
      │  │       section, _wrap_goal)                       │                                 │
      │  │     • from openhands.sdk import Conversation,    │                                 │
@@ -186,7 +187,7 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
 
 ## How the 2026-06-25 cascade maps onto these steps
 
-| Failure | Step | Symptom seen by the planner | Real fix |
+| Failure | Step | Symptom seen upstream | Real fix |
 |---|---|---|---|
 | Empty workspace bind | Step C — `_translate_workspace_path` passed an out-of-prefix path → host bind was empty | Sandbox starts, claude finds empty repo, hits wall-clock | PR #117 — `_validate_workspace()` in Step C |
 | Wrong sandbox image | Step C — an image without the needed SDK and no toolchain declaration in the repo | Sandbox runs, claude writes scaffold OK, **Step F** `dotnet test` exits 127 | Declare the toolchain in the repo (`global.json` / `.mise.toml`) — the Step-D pre-step provisions it (ADR 0005; gate passed live 2026-07-21, finance-sentry#291 on the lean image). Escape hatch for a stack mise can't provision: the project's `sandbox_image` registry override |
@@ -201,7 +202,7 @@ couldn't distinguish *"the docker run from Step C never happened"* from
 1. **Failure-mode disambiguation in Step H.** Distinct error strings for:
    "the `docker run` in Step C never returned a container ID" vs "the
    sandbox started, ran, and exited 1" vs "the sandbox produced no
-   `result:` line." All three look identical today; the planner has to
+   `result:` line." All three look identical today; the operator has to
    guess and usually picks the wrong fix.
 2. **Toolchain precheck (Step C, sibling of PR #117).** Before `docker
    run`, exec `command -v <first-token-of-verify_cmd>` inside the sandbox
@@ -226,7 +227,7 @@ couldn't distinguish *"the docker run from Step C never happened"* from
 
 Everything above traces a task the GOAL layer dispatched. The same sequence
 also runs for a **direct task** (`dispatch_task` at layer 1 → `queue.submit`
-→ Steps C–K) with no goal, no heartbeat, no planner — the v1-helper path
+→ Steps C–K) with no goal and no heartbeat — the v1-helper path
 re-surfaced by [ADR 0011](../decisions/0011-branch-target-delivery-seam.md).
 Two optional inputs shape ONLY Step J (delivery) and a new pre-step:
 

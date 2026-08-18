@@ -87,26 +87,10 @@ class _ConflictInjectingEngine(InProcessEngine):
         return ref
 
 
-class _ConflictInjectingFakeEngine(FakeEngine):
-    """Same trick as :class:`_ConflictInjectingEngine`, over the lightweight
-    FakeEngine double (no real task/program row) for tests that only need
-    an isolated GoalStore, not the shared-store production wiring."""
-
-    def __init__(self, goal_store, goal_id, **kw):
-        super().__init__(**kw)
-        self._goal_store = goal_store
-        self._goal_id = goal_id
-
-    async def dispatch(self, action, goal, notify_url):
-        ref = await super().dispatch(action, goal, notify_url)
-        self._goal_store.update_status_fields(self._goal_id, last_tick_at="conflict-injected")
-        return ref
-
-
 class _MidPollConflictEngine(FakeEngine):
     """FakeEngine whose poll() bumps the goal's status version as a side
     effect before returning — the settle-side counterpart of
-    _ConflictInjectingFakeEngine, forcing a CAS conflict inside the atomic
+    _ConflictInjectingEngine, forcing a CAS conflict inside the atomic
     settle transaction (poll() runs OUTSIDE that transaction, so the bump
     lands before the transaction even opens, same net effect)."""
 
@@ -336,14 +320,11 @@ async def test_mirror_discipline_aborted_settle_leaves_files_untouched(tmp_path)
 @pytest.mark.asyncio
 async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
     """The counterpart of the aborted case above: a successful settle's
-    mirrors (log.md / deliveries.md / checklist.yaml) match what actually
-    landed in the rows."""
+    mirrors (log.md / deliveries.md) match what actually landed in the
+    rows."""
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g")
-    store.write_checklist("g", Checklist(items=[
-        ChecklistItem(id="scaffold", requirement="do it", evidence_target="x", status="in_flight"),
-    ]))
-    ref = InFlight("devclaw", "implement_feature", "t1", "task", "do it", addresses=["scaffold"])
+    ref = InFlight("devclaw", "implement_feature", "t1", "task", "do it")
     store.save_status("g", GoalStatus(phase="in_flight", lifecycle="executing", in_flight=ref))
 
     poll_result = PollResult(
@@ -363,9 +344,6 @@ async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
     assert "implement_feature t1 → done" in (tmp_path / "g" / "log.md").read_text()
     assert "did it" in store.recent_deliveries("g")
     assert "did it" in (tmp_path / "g" / "deliveries.md").read_text()
-    cl_rows = store.read_checklist("g")
-    assert cl_rows.items[0].status == "done"
-    assert "status: done" in (tmp_path / "g" / "checklist.yaml").read_text()
 
 
 # ---- 6. settlement seeding ---------------------------------------------------

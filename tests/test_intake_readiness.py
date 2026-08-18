@@ -383,8 +383,12 @@ def test_readiness_prompt_carries_grounding_clause_and_repo_facts():
     assert "absent ⇒" in prompt
     # repo facts are grounded in the injected context block
     assert "tracked_top_level: src, tests" in prompt
-    # non-overlap: readiness explicitly does NOT derive done_when / a checklist
-    assert "firming phase owns that" in prompt
+    # non-overlap: readiness explicitly does NOT derive done_when / a plan —
+    # the worker's execution-time planning does (spec 008 shrink retired the
+    # firming phase; the prompt must not reference it anymore)
+    assert "execution-time planning owns that" in prompt
+    assert "autonomous execution" in prompt
+    assert "firming" not in prompt
 
 
 def test_readiness_prompt_omits_repo_facts_when_absent():
