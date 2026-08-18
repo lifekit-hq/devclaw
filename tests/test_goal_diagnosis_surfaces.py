@@ -47,19 +47,20 @@ def _mk(svc, goal_id, *, mode):
     )
 
 
-def test_get_goal_surfaces_goal_branch_strategy_for_long_lived_executing(svc):
+def test_get_goal_surfaces_goal_branch_strategy_for_both_modes(svc):
+    # Spec 008 shrink: create_goal stamps lifecycle="executing" for BOTH
+    # modes, so every fresh goal surfaces goal-branch delivery.
     _mk(svc, "ledger", mode="long_lived")
     g = svc.get_goal("ledger")
     assert g["delivery_strategy"] == "goal-branch"
     assert g["goal_branch"] == "goal/ledger"
     assert g["lifecycle"] == "executing"  # stamped at creation (#493)
 
-
-def test_get_goal_surfaces_per_action_for_one_shot_without_checklist(svc):
     _mk(svc, "quick", mode="one_shot")
-    g = svc.get_goal("quick")
-    assert g["delivery_strategy"] == "per-action"
-    assert g["goal_branch"] is None
+    g2 = svc.get_goal("quick")
+    assert g2["delivery_strategy"] == "goal-branch"
+    assert g2["goal_branch"] == "goal/quick"
+    assert g2["lifecycle"] == "executing"
 
 
 def test_surfaces_return_raw_lifecycle_never_coalesced(svc):
@@ -80,21 +81,6 @@ def test_surfaces_return_raw_lifecycle_never_coalesced(svc):
     assert row["lifecycle"] is None
     # and the strategy shown is what delivery actually resolves: per-action
     assert row["delivery_strategy"] == "per-action"
-
-
-def test_get_goal_degrades_to_unresolvable_on_corrupt_contract(svc, monkeypatch):
-    """Display path: a corrupt checklist contract must not 500 the read
-    surface (the tick blocks the goal loudly) — but it must surface as an
-    explicit "unresolvable", never a silently-wrong strategy name."""
-    _mk(svc, "corrupt", mode="long_lived")
-    monkeypatch.setattr(
-        svc._goal_store,
-        "read_checklist",
-        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("corrupt contract")),
-    )
-    g = svc.get_goal("corrupt")
-    assert g["delivery_strategy"] == "unresolvable"
-    assert g["goal_branch"] is None
 
 
 def test_get_goal_next_shows_objective_never_advance_brief(svc):

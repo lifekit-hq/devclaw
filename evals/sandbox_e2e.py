@@ -393,7 +393,7 @@ async def _run_goal_mode(scenario: Scenario, env: dict) -> dict:
     state_db = env["state_db"]
 
     _seed_goal_yaml(goals_dir, goal_id, scenario.goal, workspace_dir)
-    lifecycle_start = scenario.goal.get("lifecycle_start", "investigating")
+    lifecycle_start = scenario.goal.get("lifecycle_start", "executing")
     GoalStore(goals_dir).save_status(goal_id, GoalStatus(lifecycle=lifecycle_start))
 
     if scenario.goal.get("spec"):

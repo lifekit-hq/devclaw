@@ -7,7 +7,7 @@
 >
 > - **P1** — `specs/006-intake-readiness-gate` (specify + clarify done)
 > - **P2** — `specs/007-autonomous-issue-dispatch` (scoped + clarify done, unsized)
-> - **P3** — `specs/008-speckit-execution-substrate` (scoped + clarify done, unsized)
+> - **P3** — `specs/008-speckit-execution-substrate` (substrate LANDED — speckit drives execution, host planning chain removed; label-routing still open)
 > - **Adoption** — `specs/009-universal-issue-adoption` (**SHIPPED**): the grade accepts
 >   ANY open issue — hand-written backlogs included — via `regrade_intake`, plus a
 >   batch-capped `grade_backlog` for onboarding a whole backlog. The door below is
@@ -55,7 +55,7 @@ truth throughout and PLAN.md gone.**
                                             │
                                             ▼
   STAGE 3 · SCOPE via SPECKIT                               [P3]
-    goal lifecycle: investigating → firming → executing
+    goal lifecycle: executing (goals are born executing)
     label-routed:
       feature/enhancement → specify→plan→tasks (specs/NNN/)
       bug/chore/docs       → direct-advance, no spec
@@ -101,7 +101,7 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
 3. **Dispatch.** Flag is ON. The tick's cheap check sees a claimable ready issue,
    human-filed (no promotion needed), highest priority → **claims it (CAS)** →
    `create_goal(#430)`, label → **in-progress**. *[P2]*
-4. **Scope.** Firming sees the `feature` label → runs **speckit**:
+4. **Scope.** The `feature` label routes the worker's first advance to **speckit**:
    `specs/030-cashflow-forecast/` with spec.md, plan.md, and a `tasks.md` — T001 forecast
    service, T002 sentinel rule, T003 API endpoint, T004 tests (some marked `[P]`). *[P3]*
 5. **Implement.** The worker does **T001 only**; the slice-guard watches `tasks.md` and
@@ -124,7 +124,7 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
   **provenance wall** holds it until *you* promote it. No self-dealing. *[P2]*
 - **A bug** (`fix: forecast off-by-one`) → Stage 3 routes it **direct-advance, no spec** —
   no speckit ceremony on a one-liner. *[P3]*
-- **Can't scope cleanly** → firming fails → **needs-human**, never a garbage plan. *[P3]*
+- **Can't scope cleanly** → the scope step fails → **needs-human**, never a garbage plan. *[P3]*
 - **Flag OFF** (today, and until you trust it) → Stage 2 is just *you* dispatching a
   `devclaw-ready` issue. Everything else identical.
 

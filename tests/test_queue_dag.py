@@ -7,7 +7,7 @@ sticky failure, and event recording — the logic the old test:dag harness cover
 import pytest
 
 from devclaw.engine import EngineEvent, EngineRequest
-from devclaw.planner import PlannedTask
+from devclaw.program_plan import PlannedTask
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 
@@ -187,17 +187,6 @@ async def test_program_child_task_row_carries_scaffold_flag(store):
     await q.drain()
     by_goal = {t.goal: bool(t.scaffold) for t in store.list_program_tasks(program_id)}
     assert by_goal == {"ng new app": True, "wire the endpoint": False}
-
-
-async def test_program_default_planner_is_the_decomposer_adapter(store):
-    """The queue's default _planner slot routes through plan_program (the
-    decomposer spine), not the retired plan_goal."""
-    from devclaw import task_queue as tq
-
-    assert not hasattr(tq, "plan_goal")
-    q = TaskQueue(store, runner=_ok_runner([]))
-    # the default lambda closes over plan_program
-    assert "plan_program" in q._planner.__code__.co_names
 
 
 async def test_start_planned_program_inherits_pr_gate_owner_and_plan_key(store):

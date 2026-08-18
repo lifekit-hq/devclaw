@@ -1,16 +1,15 @@
 """Dry cognition MCP tools — pure-cognition wrappers that never file a goal.
 
 These tools exist so the customer (via the waiter, or a Claude Code session with
-devclaw-mcp registered) can *think about* a project — see what world-research
-would say, see how the decomposer would break it up, see how the evaluator would
-grade a hypothetical review — without workspace_dir / repo_url / a persisted
-goal. The pins here guard three properties:
+devclaw-mcp registered) can *think about* a project — see how the evaluator
+would grade a hypothetical review — without workspace_dir / repo_url / a
+persisted goal. (dry_world_research / dry_decompose were amputated with the
+host-cognition chain, spec 008 shrink.) The pins here guard three properties:
 
-  1. Each tool returns the module's actual artifact shape (brief markdown / YAML
-     checklist / EvalResult JSON) — so a caller can chain scope_grill →
-     dry_world_research → dry_decompose → dry_evaluate and get real cognition
+  1. The tool returns the module's actual artifact shape (EvalResult JSON) —
+     so a caller can chain scope_grill → dry_evaluate and get real cognition
      back at every stage.
-  2. Each tool refuses empty inputs with a ToolError — no silent stub runs.
+  2. The tool refuses empty inputs with a ToolError — no silent stub runs.
   3. NO goal is created and NO file lands under the goals dir — dry means dry.
 """
 
@@ -49,84 +48,6 @@ def _no_goals_dir_writes(tmp_path, monkeypatch):
     assert not goals_dir.exists() or not any(goals_dir.iterdir()), (
         f"dry cognition tool wrote to goals_dir at {goals_dir}"
     )
-
-
-# --------------------------- dry_world_research ---------------------------
-
-
-async def test_dry_world_research_returns_brief(monkeypatch):
-    from devclaw.goal import world_research as _world
-
-    brief = (
-        "## Real-world exemplars\n- HubSpot: contact-first, deal pipeline\n"
-        "## What good MVP looks like\n- Auth, contacts, one pipeline view\n"
-        "## Deliberately defer\n- Reporting, integrations"
-    )
-    monkeypatch.setattr(_world, "default_caller", lambda: _stub_caller(brief))
-
-    result = await _tools.dry_world_research(
-        objective="build a CRM for SMB sales teams",
-    )
-    assert result == brief
-    assert "## Real-world exemplars" in result
-
-
-async def test_dry_world_research_rejects_empty_objective():
-    with pytest.raises(ToolError, match="non-empty objective"):
-        await _tools.dry_world_research(objective="   ")
-
-
-async def test_dry_world_research_surfaces_module_errors(monkeypatch):
-    from devclaw.goal import world_research as _world
-
-    monkeypatch.setattr(_world, "default_caller", lambda: _stub_caller("   "))
-    with pytest.raises(ToolError, match="dry_world_research failed"):
-        await _tools.dry_world_research(objective="build a CRM")
-
-
-# --------------------------- dry_decompose ---------------------------
-
-
-_MIN_CHECKLIST_YAML = """
-checklist:
-  - id: t1
-    milestone: m1
-    requirement: add a GET /health endpoint returning 200
-    addresses_files:
-      - src/routes/health.py
-    evidence_target: src/routes/health.py contains a router with GET /health
-    depends_on: []
-    model_tier: sonnet
-open_questions: []
-""".strip()
-
-
-async def test_dry_decompose_returns_checklist_yaml(monkeypatch):
-    from devclaw.goal import decomposer as _decomp
-
-    monkeypatch.setattr(_decomp, "default_caller", lambda: _stub_caller(_MIN_CHECKLIST_YAML))
-
-    yaml_out = await _tools.dry_decompose(
-        objective="add a health endpoint to the API",
-        done_when="GET /health returns 200",
-        backlog=["add health route"],
-    )
-    assert "checklist:" in yaml_out
-    assert "add a GET /health endpoint" in yaml_out
-    assert "src/routes/health.py" in yaml_out
-
-
-async def test_dry_decompose_rejects_empty_objective():
-    with pytest.raises(ToolError, match="non-empty objective"):
-        await _tools.dry_decompose(objective="")
-
-
-async def test_dry_decompose_surfaces_schema_errors(monkeypatch):
-    from devclaw.goal import decomposer as _decomp
-
-    monkeypatch.setattr(_decomp, "default_caller", lambda: _stub_caller("not valid yaml: ][["))
-    with pytest.raises(ToolError, match="dry_decompose failed"):
-        await _tools.dry_decompose(objective="add a health endpoint")
 
 
 # --------------------------- dry_evaluate ---------------------------
@@ -214,12 +135,10 @@ async def test_dry_evaluate_rejects_missing_objective():
 
 
 async def test_dry_tools_do_not_use_goal_store(monkeypatch, tmp_path):
-    """The negative pin: none of the three tools should call goals.create_goal
-    or verify_goal or otherwise interact with the goal store. If any of them
-    ever grows a side-effecting import path, this test flips red."""
-    from devclaw.goal import decomposer as _decomp
+    """The negative pin: the surviving dry tool (dry_evaluate) must not call
+    goals.create_goal or verify_goal or otherwise interact with the goal store.
+    If it ever grows a side-effecting import path, this test flips red."""
     from devclaw.goal import evaluator as _eval
-    from devclaw.goal import world_research as _world
     from devclaw.server import _state
 
     calls: list[str] = []
@@ -236,12 +155,8 @@ async def test_dry_tools_do_not_use_goal_store(monkeypatch, tmp_path):
 
     monkeypatch.setattr(_state.goals, "create_goal", tripwire_create)
     monkeypatch.setattr(_state.goals, "verify_goal", tripwire_verify)
-    monkeypatch.setattr(_world, "default_caller", lambda: _stub_caller("## brief"))
-    monkeypatch.setattr(_decomp, "default_caller", lambda: _stub_caller(_MIN_CHECKLIST_YAML))
     monkeypatch.setattr(_eval, "default_caller", lambda: _stub_caller(_ACHIEVED_JSON))
 
-    await _tools.dry_world_research(objective="build a CRM")
-    await _tools.dry_decompose(objective="add /health", done_when="200")
     await _tools.dry_evaluate(
         objective="ship /health", done_when="GET /health returns 200",
         review_report="## Per-clause evidence\n1. satisfied",

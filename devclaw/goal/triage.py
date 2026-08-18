@@ -197,7 +197,7 @@ def default_caller() -> ClaudeCaller:
     """The production cognition caller, bound to the triage tier. Imported lazily
     from devclaw's shared ``claude --print`` factory so unit tests (which inject
     a fake) never touch the subprocess."""
-    from ..planner import claude_with_model
+    from ..llm_call import claude_with_model
 
     return claude_with_model(TRIAGE_MODEL, role="triage")
 

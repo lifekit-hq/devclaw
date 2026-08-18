@@ -180,10 +180,12 @@ def seed_goal(
 ) -> None:
     """Write a minimal goal.yaml under goals_dir/<goal_id>/.
 
-    ``repo_url`` defaults to a fake existing-repo URL so the investigating
-    phase takes the repo-research path (which most tests historically
-    exercise). Pass ``repo_url=None`` to seed a from-scratch goal that
-    triggers the world-research path instead.
+    ``repo_url`` defaults to a fake existing-repo URL (the existing-repo shape
+    most tests historically exercise). Pass ``repo_url=None`` to seed a
+    from-scratch goal. (The investigating/world-research phases this default
+    used to route between were removed with the host-cognition chain, spec 008
+    shrink — every goal executes directly; the worker grounds itself
+    in-sandbox.)
 
     ``workspace_dir`` defaults to a shared fake path; override it when a test
     needs distinct goals to resolve to distinct projects (e.g. per-project

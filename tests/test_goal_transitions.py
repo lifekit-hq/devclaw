@@ -73,8 +73,8 @@ def test_every_state_is_a_legal_target_or_a_reachable_initial_state():
     targets = {t for target_set in LEGAL.values() for t in target_set}
     # The two shapes production code stamps BEFORE any transition() call ever
     # runs: a brand-new/legacy default (GoalStatus()) and create_goal's
-    # explicit "investigating" stamp.
-    initial = {derive_state(GoalStatus()), derive_state(GoalStatus(lifecycle="investigating"))}
+    # explicit "executing" stamp (both modes, spec 008 shrink).
+    initial = {derive_state(GoalStatus()), derive_state(GoalStatus(lifecycle="executing"))}
     for s in State:
         assert s in targets or s in initial, f"{s.value} is neither a legal target nor reachable initially"
 
@@ -87,14 +87,9 @@ def test_every_state_is_a_legal_target_or_a_reachable_initial_state():
     [
         ("idle", None, None),  # legacy goal, no lifecycle stamped
         ("idle", "executing", None),
-        ("idle", "investigating", None),
-        ("idle", "firming", None),
         ("in_flight", "executing", "action"),
-        ("in_flight", "investigating", "discovery"),
         ("verifying", "executing", "done_check"),
         ("blocked", "executing", None),
-        ("blocked", "firming", None),
-        ("blocked", "investigating", None),
         ("blocked", "executing", "action"),  # preserved ref — corrupt-doc / lost-ref block
         ("done", "executing", None),
         ("done", None, "action"),  # done wins even with a stale in_flight
@@ -107,8 +102,6 @@ def test_derive_state_is_total(phase, lifecycle, in_flight):
     ref = None
     if in_flight == "action":
         ref = InFlight("devclaw", "implement_feature", "t1", "task", "do it")
-    elif in_flight == "discovery":
-        ref = InFlight("devclaw", "review_repository", "t1", "task", "look", is_discovery=True)
     elif in_flight == "done_check":
         ref = InFlight("devclaw", "review_repository", "t1", "task", "verify", is_done_check=True)
     status = GoalStatus(phase=phase, lifecycle=lifecycle, in_flight=ref)
@@ -116,8 +109,36 @@ def test_derive_state_is_total(phase, lifecycle, in_flight):
     assert isinstance(result, State)
 
 
-def test_derive_state_blocked_plus_firming_lifecycle_is_firming_blocked():
-    assert derive_state(GoalStatus(phase="blocked", lifecycle="firming")) is State.FIRMING_BLOCKED
+@pytest.mark.parametrize(
+    "phase,lifecycle,in_flight,expected",
+    [
+        # Pre-shrink rows surviving in the DB (spec 008 shrink removed the
+        # investigating/firming state family): any lifecycle string derives
+        # into the executing family; blocked always wins.
+        ("idle", "investigating", None, State.EXECUTING_IDLE),
+        ("idle", "firming", None, State.EXECUTING_IDLE),
+        ("in_flight", "investigating", "discovery", State.ACTION_IN_FLIGHT),
+        ("blocked", "firming", None, State.BLOCKED),
+        ("blocked", "investigating", None, State.BLOCKED),
+    ],
+)
+def test_legacy_pre_shrink_lifecycle_rows_derive_into_executing_family(
+    phase, lifecycle, in_flight, expected
+):
+    """Legacy "investigating"/"firming" rows (and old is_discovery refs) must
+    still derive LEGALLY — mapped onto the surviving executing-family states,
+    never a crash and never a resurrected removed state."""
+    ref = None
+    if in_flight == "discovery":
+        ref = InFlight("devclaw", "review_repository", "t1", "task", "look", is_discovery=True)
+    status = GoalStatus(phase=phase, lifecycle=lifecycle, in_flight=ref)
+    assert derive_state(status) is expected
+
+
+def test_derive_state_blocked_plus_firming_lifecycle_is_blocked():
+    """Inverse of the pre-shrink FIRMING_BLOCKED mapping: blocked + a legacy
+    "firming" lifecycle is plain BLOCKED now — the firming states are gone."""
+    assert derive_state(GoalStatus(phase="blocked", lifecycle="firming")) is State.BLOCKED
 
 
 def test_derive_state_blocked_wins_over_a_preserved_in_flight_ref():

@@ -36,7 +36,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
 from .loom import trace as _trace
-from .planner import extract_json
+from .llm_call import extract_json
 from .state_store import StateStore
 from .trend_signals import Scope, Signal, SignalContext, SignalResult, all_signals
 

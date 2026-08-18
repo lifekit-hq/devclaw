@@ -27,7 +27,6 @@ from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
 from . import merge as goal_merge
 from . import remote_checks as goal_remote_checks
-from . import research as goal_research
 from . import summary as goal_summary
 from . import triage as goal_triage
 from .engine import InProcessEngine
@@ -294,7 +293,7 @@ class GoalService:
         if not _trend_detector_mod.TREND_ENABLED:
             return None
         if self._trend_detector_inst is None:
-            from ..planner import claude_with_model
+            from ..llm_call import claude_with_model
 
             claude_caller = claude_with_model(
                 _trend_detector_mod.TREND_MODEL, role="trend-detector",
@@ -605,27 +604,17 @@ class GoalService:
         # spec it landed on so the evaluator judges done against the shared contract.
         if spec and spec.strip():
             self._goal_store.write_spec(goal_id, spec)
-        # Investigating (read-only repo analysis → discovery brief → optional
-        # decompose) is a ONE-SHOT concern: its output (discovery.md + the
-        # checklist) feeds the one_shot decomposer and the one_shot reopen-gate
-        # (tick.py "no checklist and no discovery brief"). A long_lived goal's
-        # worker PULLS its own context in-session (_advance_brief: the speckit
-        # specs/*/ artifacts + the repo) and never reads discovery.md — so for it the whole
-        # detour (an engine review_repository + one/two discovery-cognition
-        # calls) is pure wasted push (demolition P4, §3a trust-the-input). Only
-        # one_shot stamps investigating; long_lived starts executing directly.
-        if goal_research.INVESTIGATE_ENABLED and mode == "one_shot":
-            self._goal_store.save_status(goal_id, GoalStatus(lifecycle="investigating"))
-        elif mode == "long_lived":
-            # "Starts executing directly" must be PERSISTED, not implied: a NULL
-            # lifecycle reads-as-executing on every display surface, but
-            # delivery_strategy.resolve_strategy requires the EXPLICIT
-            # ``executing`` string to put the goal on its ``goal/<id>``
-            # accumulation branch — NULL silently downgrades every fresh
-            # long_lived goal to per-action reset-to-main delivery, the exact
-            # amnesia #486 exists to kill (live-found: ledger night 1,
-            # 2026-08-10 — three unmerged scaffold PRs, main never moved).
-            self._goal_store.save_status(goal_id, GoalStatus(lifecycle="executing"))
+        # ONE execution path (spec 008 shrink): both modes start executing —
+        # the worker plans via speckit in-sandbox; the investigating/firming
+        # detour is gone. "Executing" must be PERSISTED, not implied: a NULL
+        # lifecycle reads-as-executing on every display surface, but
+        # delivery_strategy.resolve_strategy requires the EXPLICIT
+        # ``executing`` string to put the goal on its ``goal/<id>``
+        # accumulation branch — NULL silently downgrades a fresh goal to
+        # per-action reset-to-main delivery, the exact amnesia #486 exists to
+        # kill (live-found: ledger night 1, 2026-08-10 — three unmerged
+        # scaffold PRs, main never moved).
+        self._goal_store.save_status(goal_id, GoalStatus(lifecycle="executing"))
         self._goal_store.append_log(goal_id, "goal created")
         self.poke()  # advance it on the next loop turn without waiting a full interval
         result = self.get_goal(goal_id)
@@ -716,15 +705,8 @@ class GoalService:
     def get_goal(self, goal_id: str) -> dict:
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
-        # Effective goal so the MCP-exposed view shows what cognition actually
-        # uses (firmed-derived done_when, firmed stub_acceptable) — not the
-        # original owner statement that's already been firmed past.
-        # Display path: a corrupt firmed draft degrades to the base goal here
-        # (the tick blocks the goal loudly; blocked_on carries the signal —
-        # a dashboard read must never 500 over it).
-        g = self._goal_store.load_effective_goal(goal_id, on_corrupt="none")
+        g = self._goal_store.load_goal(goal_id)
         s = self._goal_store.load_status(goal_id)
-        firmed_draft = self._firmed_draft_payload(goal_id)
         return {
             "id": g.id,
             "objective": g.objective,
@@ -759,40 +741,8 @@ class GoalService:
                 if s.last_eval_verdict else None
             ),
             "recent_log": self._goal_store.recent_log(goal_id, n=15),
-            "firmed_draft": firmed_draft,
             "phase_history": [dict(e) for e in s.phase_history],
             "dispatch_hold": self._dispatch_hold(goal_id),
-        }
-
-    def _firmed_draft_payload(self, goal_id: str) -> Optional[dict]:
-        """Serialize the goal's current firmed-draft for the waiter — only the
-        fields the waiter renders (status, round, unknowns + their options/why,
-        success_criteria). Returns None when firming hasn't run yet — and on a
-        corrupt draft too (display path: the waiter's render must not raise;
-        the tick blocks the goal loudly and blocked_on names the doc)."""
-        draft = self._goal_store.read_firmed_draft(goal_id, on_corrupt="none")
-        if draft is None:
-            return None
-        return {
-            "status": draft.status,
-            "round": draft.round,
-            "intent": draft.intent,
-            "success_criteria": [
-                {"id": c.id, "text": c.text, "verifiable_by": c.verifiable_by}
-                for c in draft.success_criteria
-            ],
-            "conventions_to_follow": list(draft.conventions_to_follow),
-            "unknowns": [
-                {
-                    "id": u.id, "question": u.question, "why": u.why,
-                    "options": list(u.options),
-                    "default_if_no_answer": u.default_if_no_answer,
-                }
-                for u in draft.unknowns
-            ],
-            "blockers": list(draft.blockers),
-            "stub_acceptable": list(draft.stub_acceptable),
-            "descoped": list(draft.descoped),
         }
 
     def tail_goal(
@@ -811,8 +761,7 @@ class GoalService:
         time). Everything is bounded — read-only, never mutates the goal."""
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
-        # Display path (see get_goal): corrupt firmed draft → base goal, no raise.
-        g = self._goal_store.load_effective_goal(goal_id, on_corrupt="none")
+        g = self._goal_store.load_goal(goal_id)
         s = self._goal_store.load_status(goal_id)
 
         live_events: list[dict] = []
@@ -856,7 +805,6 @@ class GoalService:
             ),
             "recent_log": self._goal_store.recent_log(goal_id, n=log_lines),
             "deliveries": self._goal_store.recent_deliveries(goal_id, chars=deliveries_chars),
-            "discovery": self._goal_store.read_discovery(goal_id),
             "spec": self._goal_store.read_spec(goal_id),
             "live_events": live_events,
             "dispatch_hold": self._dispatch_hold(goal_id),
@@ -950,14 +898,9 @@ class GoalService:
         Not a field patch either — the goal contract (objective / done_when /
         backlog) is untouched.
 
-        Legible no-ops instead of errors:
-
-        - a non-blocked goal has no UNBLOCK edge — return a message, never
-          raise ``IllegalTransition`` (idempotent: a second resume is a no-op);
-        - a firming-blocked goal is REFUSED — it waits on owner answers only
-          ``answer_unknowns`` can supply. A bare unblock would strand it in
-          FIRMING_IDLE limbo: round-1 firming already wrote firmed-draft.yaml,
-          so ``FirmingHandler.can_run`` stays False and no event ever fires.
+        Legible no-op instead of an error: a non-blocked goal has no UNBLOCK
+        edge — return a message, never raise ``IllegalTransition`` (idempotent:
+        a second resume is a no-op).
         """
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
@@ -966,15 +909,6 @@ class GoalService:
             return {
                 "goal_id": goal_id, "resumed": False,
                 "message": f"goal is not blocked (phase={s.phase!r}) — nothing to resume",
-            }
-        if (s.lifecycle or "executing") == "firming":
-            return {
-                "goal_id": goal_id, "resumed": False,
-                "message": (
-                    "goal is blocked in FIRMING awaiting owner answers — resume_goal "
-                    "cannot supply those; call answer_unknowns(goal_id, "
-                    "{unknown_id: answer, ...}) instead"
-                ),
             }
         was_blocked_on = s.blocked_on or ""
         # Same unblock write shape as steer_goal (actions_dispatched=0 so the
@@ -1008,12 +942,7 @@ class GoalService:
         verdict. Reports + steers (corrections → inbox); does not block on demand."""
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
-        # Effective goal so the evaluator's stub-policy check honors any
-        # stub_acceptable the owner added during firming. Cognition path, NOT
-        # display: a corrupt firmed draft raises GoalDocCorrupt to the caller
-        # — evaluating direction against the base goal would judge the wrong
-        # contract, which is exactly the silent loss T0.4 closed.
-        g = self._goal_store.load_effective_goal(goal_id)
+        g = self._goal_store.load_goal(goal_id)
         s = self._goal_store.load_status(goal_id)
         # Same grounding as the tick paths (triage F3): the workspace snapshot
         # + the agreed spec. The on-demand eval used to omit BOTH — its
@@ -1041,55 +970,6 @@ class GoalService:
             "rationale": ev.rationale, "corrections": ev.corrections,
             "question": ev.question,
         }
-
-    async def answer_unknowns(self, goal_id: str, answers: dict[str, str]) -> dict:
-        """Owner-side input for the firming phase. The MCP tool wraps this.
-        Validates that ``answers`` covers every current unknown id (no partials,
-        no extras), then fires firming round N+1 via the FirmingHandler. Returns
-        the structured next state (``firmed`` or ``needs_more_answers``)."""
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        # Control path, NOT display: a corrupt draft raises GoalDocCorrupt
-        # here — merging owner answers into a torn contract must fail loudly,
-        # not read as "firming hasn't run" (the ValueError below).
-        draft = self._goal_store.read_firmed_draft(goal_id)
-        if draft is None:
-            raise ValueError(
-                f"goal {goal_id!r} has no firmed-draft.yaml yet — firming round 1 "
-                "must run first (created via the heartbeat after discovery completes)"
-            )
-        expected = {u.id for u in draft.unknowns}
-        provided = {k for k, v in (answers or {}).items() if str(v).strip()}
-        missing = expected - provided
-        extra = provided - expected
-        if missing or extra:
-            raise ValueError(
-                f"answers must cover EVERY current unknown exactly once — "
-                f"missing={sorted(missing)} extra={sorted(extra)}"
-            )
-
-        from .phases.firming import FirmingHandler
-        from .phases.registry import handler_for
-        from .tick import TickContext
-
-        handler = handler_for("firming")
-        if not isinstance(handler, FirmingHandler):
-            raise RuntimeError("firming handler is not registered")
-        goal = self._goal_store.load_goal(goal_id)
-        ctx = TickContext(
-            store=self._goal_store, engine=self._engine,
-            evaluator_caller=self._evaluator(),
-            notifier=self._notifier, notify_url=self._cfg.notify_url,
-            eval_every=self._cfg.eval_every, verify_done=self._verify_done(goal),
-            autodeploy=self._autodeploy(goal),
-            summary_caller=self._summary(), merger=self._merger(goal),
-            remote_checker=self._remote_checker(),
-        )
-        result = await handler.handle_answer(goal_id, answers, ctx=ctx)
-        # Decomposer + first executor tick fire on the next heartbeat; poke it now
-        # so a firmed goal starts working immediately rather than waiting 900s.
-        self.poke()
-        return result
 
     def cancel_goal(self, goal_id: str) -> dict:
         """Abort a durable goal. Sets phase to 'cancelled' (terminal — skipped on

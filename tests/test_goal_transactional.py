@@ -3,9 +3,9 @@
 Closes the two remaining crash/race windows the goal heartbeat had:
 1. dispatch — task/program row creation + the DISPATCH transition + the log
    row now commit (or roll back) as ONE unit.
-2. settle — the settlement row + delivery row + log row + checklist update
-   + the *_SETTLED transition now commit (or roll back) as ONE unit; merge/
-   reconcile/mirror-renders happen strictly AFTER commit.
+2. settle — the settlement row + delivery row + log row + the *_SETTLED
+   transition now commit (or roll back) as ONE unit; merge/reconcile/
+   mirror-renders happen strictly AFTER commit.
 
 Also pins the mirror-discipline mechanism (file writes deferred while a
 transaction() is open, flushed/discarded by the caller), the lazy
@@ -22,7 +22,7 @@ import json
 import pytest
 
 from devclaw.goal.engine import InProcessEngine
-from devclaw.goal.models import Checklist, ChecklistItem, GoalStatus, InFlight, PollResult
+from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import (
     Outcome,
@@ -87,26 +87,10 @@ class _ConflictInjectingEngine(InProcessEngine):
         return ref
 
 
-class _ConflictInjectingFakeEngine(FakeEngine):
-    """Same trick as :class:`_ConflictInjectingEngine`, over the lightweight
-    FakeEngine double (no real task/program row) for tests that only need
-    an isolated GoalStore, not the shared-store production wiring."""
-
-    def __init__(self, goal_store, goal_id, **kw):
-        super().__init__(**kw)
-        self._goal_store = goal_store
-        self._goal_id = goal_id
-
-    async def dispatch(self, action, goal, notify_url):
-        ref = await super().dispatch(action, goal, notify_url)
-        self._goal_store.update_status_fields(self._goal_id, last_tick_at="conflict-injected")
-        return ref
-
-
 class _MidPollConflictEngine(FakeEngine):
     """FakeEngine whose poll() bumps the goal's status version as a side
     effect before returning — the settle-side counterpart of
-    _ConflictInjectingFakeEngine, forcing a CAS conflict inside the atomic
+    _ConflictInjectingEngine, forcing a CAS conflict inside the atomic
     settle transaction (poll() runs OUTSIDE that transaction, so the bump
     lands before the transaction even opens, same net effect)."""
 
@@ -291,64 +275,24 @@ async def test_dispatch_error_leaves_no_task_row(tmp_path):
     assert s.in_flight is None
 
 
-# ---- 4. no phantom flag_items ----------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_no_phantom_flag_items_on_aborted_dispatch(tmp_path):
-    """A checklist item the dispatch hook would flag in_flight must NOT
-    survive a rolled-back dispatch transaction. Pre-PR7 this write was NOT
-    part of the dispatch's atomic unit and COULD survive a rollback
-    (a small honesty gap PR7 closes by moving _flag_items_in_flight inside
-    the transaction)."""
-    store = GoalStore(tmp_path, now=Clock())
-    seed_goal(tmp_path, "g")
-    store.write_checklist("g", Checklist(items=[
-        ChecklistItem(id="scaffold", requirement="do it", evidence_target="x"),
-    ]))
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
-
-    act_with_addresses = json.dumps({
-        "decision": "act", "note": "scaffold",
-        "actions": [{
-            "tool": "implement_feature", "goal": "do it", "open_pr": True, "addresses": ["scaffold"],
-        }],
-    })
-    engine = _ConflictInjectingFakeEngine(store, "g")
-
-    out = await tick_goal(
-        "g", store=store, engine=engine,
-        evaluator_caller=FakeClaude(),
-        notifier=RecordingNotifier(), notify_url="", prepare_ws=fake_prepare,
-    )
-
-    assert out is Outcome.CONFLICT
-    cl = store.read_checklist("g")
-    assert cl.items[0].status == "not_started"  # NOT left in_flight
-
-
 # ---- 5. mirror discipline ---------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_mirror_discipline_aborted_settle_leaves_files_untouched(tmp_path):
-    """An aborted settle transaction must leave log.md / deliveries.md /
-    checklist.yaml byte-identical to before — a rollback must never leave a
-    file mirroring state the DB no longer has. Exercises the settle
-    resolver directly (rather than through tick_goal) so the assertion is a
-    true byte-compare, unconfounded by tick_goal's OWN separate "tick
-    abandoned" log line on TransitionConflict."""
+    """An aborted settle transaction must leave log.md / deliveries.md
+    byte-identical to before — a rollback must never leave a file mirroring
+    state the DB no longer has. Exercises the settle resolver directly
+    (rather than through tick_goal) so the assertion is a true byte-compare,
+    unconfounded by tick_goal's OWN separate "tick abandoned" log line on
+    TransitionConflict."""
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g")
-    store.write_checklist("g", Checklist(items=[
-        ChecklistItem(id="scaffold", requirement="do it", evidence_target="x", status="in_flight"),
-    ]))
-    ref = InFlight("devclaw", "implement_feature", "t1", "task", "do it", addresses=["scaffold"])
+    ref = InFlight("devclaw", "implement_feature", "t1", "task", "do it")
     store.save_status("g", GoalStatus(phase="in_flight", lifecycle="executing", in_flight=ref))
     store.append_log("g", "seed line")  # log.md exists with known content
 
     log_before = (tmp_path / "g" / "log.md").read_text()
-    checklist_before = (tmp_path / "g" / "checklist.yaml").read_text()
     deliveries_path = tmp_path / "g" / "deliveries.md"
     deliveries_existed_before = deliveries_path.exists()
     deliveries_before = deliveries_path.read_text() if deliveries_existed_before else None
@@ -368,7 +312,6 @@ async def test_mirror_discipline_aborted_settle_leaves_files_untouched(tmp_path)
         await _resolve_polling_action("g", goal, status, ctx)
 
     assert (tmp_path / "g" / "log.md").read_text() == log_before
-    assert (tmp_path / "g" / "checklist.yaml").read_text() == checklist_before
     assert deliveries_path.exists() == deliveries_existed_before
     if deliveries_existed_before:
         assert deliveries_path.read_text() == deliveries_before
@@ -377,14 +320,11 @@ async def test_mirror_discipline_aborted_settle_leaves_files_untouched(tmp_path)
 @pytest.mark.asyncio
 async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
     """The counterpart of the aborted case above: a successful settle's
-    mirrors (log.md / deliveries.md / checklist.yaml) match what actually
-    landed in the rows."""
+    mirrors (log.md / deliveries.md) match what actually landed in the
+    rows."""
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g")
-    store.write_checklist("g", Checklist(items=[
-        ChecklistItem(id="scaffold", requirement="do it", evidence_target="x", status="in_flight"),
-    ]))
-    ref = InFlight("devclaw", "implement_feature", "t1", "task", "do it", addresses=["scaffold"])
+    ref = InFlight("devclaw", "implement_feature", "t1", "task", "do it")
     store.save_status("g", GoalStatus(phase="in_flight", lifecycle="executing", in_flight=ref))
 
     poll_result = PollResult(
@@ -404,9 +344,6 @@ async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
     assert "implement_feature t1 → done" in (tmp_path / "g" / "log.md").read_text()
     assert "did it" in store.recent_deliveries("g")
     assert "did it" in (tmp_path / "g" / "deliveries.md").read_text()
-    cl_rows = store.read_checklist("g")
-    assert cl_rows.items[0].status == "done"
-    assert "status: done" in (tmp_path / "g" / "checklist.yaml").read_text()
 
 
 # ---- 6. settlement seeding ---------------------------------------------------

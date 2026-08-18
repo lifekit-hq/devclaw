@@ -475,6 +475,24 @@ class GoalState:
             )
             self._store._commit()
 
+    def heal_legacy_lifecycle(self, goal_id: str) -> bool:
+        """One-shot migration write (spec 008 shrink): flip a pre-shrink
+        ``investigating``/``firming`` lifecycle to ``executing``. Column-scoped
+        AND self-guarding — the ``WHERE lifecycle IN (...)`` predicate is the
+        CAS: it touches ONLY the lifecycle column (so it can never clobber a
+        concurrent phase/in_flight transition — no whole-row write), and it
+        no-ops once anything else has already changed the value. Returns True
+        iff a row was healed."""
+        with self._store._lock:
+            cur = self._store._db.execute(
+                "UPDATE goal_status SET lifecycle = 'executing', "
+                "version = version + 1, updated_at = ? "
+                "WHERE goal_id = ? AND lifecycle IN ('investigating', 'firming')",
+                (_now_ms(), goal_id),
+            )
+            self._store._commit()
+            return cur.rowcount > 0
+
     def set_inbox_ingest_cursor(self, goal_id: str, n: int) -> None:
         """Column-only ``UPDATE`` of ``inbox_ingest_cursor`` — the PR5 write
         side of the ingest boundary (how many ``inbox.md`` lines have been
@@ -764,12 +782,12 @@ class GoalState:
     #: file view (up to ~200KB of machine-read ground truth for the
     #: decomposer, not a human-skimmable artifact). spec/discovery stay plain
     #: files (display/prompt inputs, not consumed-state).
-    DOC_KINDS = frozenset({"checklist", "firmed_draft", "repo_analysis", "block_options"})
+    DOC_KINDS = frozenset({"checklist", "firmed_draft", "repo_analysis", "block_options"})  # first three = legacy kinds (pre-shrink rows stay readable)
 
     def has_doc(self, goal_id: str, kind: str) -> bool:
         """Whether a ``goal_docs`` row exists for ``(goal_id, kind)`` — the
-        DB-row-vs-legacy-file branch :meth:`GoalStore.read_checklist` /
-        :meth:`GoalStore.read_firmed_draft` use."""
+        DB-row-vs-legacy-file branch the goal-doc readers
+        use."""
         assert kind in self.DOC_KINDS, f"has_doc: unknown kind {kind!r}"
         with self._store._lock:
             row = self._store._db.execute(
@@ -793,7 +811,7 @@ class GoalState:
     def read_doc(self, goal_id: str, kind: str) -> "str | None":
         """The current document content, or None if no row exists yet
         (legacy goal pre-migration, or a goal this doc's phase hasn't
-        reached — e.g. no decomposer run, no firming run)."""
+        reached)."""
         assert kind in self.DOC_KINDS, f"read_doc: unknown kind {kind!r}"
         with self._store._lock:
             row = self._store._db.execute(

@@ -11,7 +11,7 @@ import json
 import pytest
 
 from devclaw.elicitation import next_step, validate_step
-from devclaw.planner import PlannerError
+from devclaw.llm_call import PlannerError
 
 
 # ---- validate_step ----

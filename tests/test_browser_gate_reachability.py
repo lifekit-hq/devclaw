@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from devclaw import task_queue
-from devclaw.planner import PlannerError
+from devclaw.llm_call import PlannerError
 from devclaw.quality.reachability import (
     build_reachability_prompt,
     judge_reachability,

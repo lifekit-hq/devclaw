@@ -11,9 +11,10 @@ completion criteria, and a self-executing loop carries it — plan → sandboxed
 execution → verify gate → evaluate → iterate — with hard brakes (retry caps,
 no-progress watchdog, `stalled`/`needs_human` verdicts) so it never optimizes into
 the void. **One primitive, one dial** (ADR 0003): goal and program are the same
-thing; `create_goal(mode=long_lived|one_shot)` selects the re-evaluation cadence —
-per-tick planning vs plan-once-run-the-checklist-as-one-parallel-program — over an
-identical execution stack (`start_program` is a deprecated alias for the latter). It sits **behind MCP** and is driven by an **OpenClaw waiter agent** that
+thing; `create_goal(mode=long_lived|one_shot)` selects the re-evaluation cadence over
+ONE identical execution path — the worker plans and executes via speckit
+in-sandbox (spec 008; the host-cognition chain was removed by the 008 shrink) —
+(`start_program` is a deprecated alias for one_shot). It sits **behind MCP** and is driven by an **OpenClaw waiter agent** that
 translates chat into tool calls; devclaw never talks to the user. Cognition is
 always `claude` over Pro/Max **OAuth — no API key, no metered billing**.
 
@@ -25,8 +26,8 @@ Only layer 5 is an agent harness in the technical sense.
 | # | Layer | Code | Put a change here if it's about… |
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, console, transport — pure protocol |
-| 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`investigating → firming → executing`), the ~15-min tick |
-| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`, `decomposer.py`, `phases/firming.py`; `devclaw/elicitation.py` | a one-shot `claude --print` prompt/parse (firming, decompose, direction eval — the per-tick planner was cut, demolition P3b) |
+| 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`executing` only since the 008 shrink), the ~15-min tick |
+| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/elicitation.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, scope-grill, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink) |
 | 4 | **TaskQueue + engine** | `devclaw/task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `openhands-runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
 
@@ -56,7 +57,7 @@ spawn containers itself — it goes through the engine).
   and (as of Tranche 1) lives in SQLite in the same `devclaw.db` — `goal_status`,
   `goal_steering`, `goal_log`, `goal_deliveries`, `goal_docs`, `goal_phase_history`,
   plus goal-transcending `project_docs` (the repo brief, keyed by workspace path).
-  `STATUS.md`/`log.md`/`inbox.md`/`deliveries.md`/`checklist.yaml`/`firmed-draft.yaml`/`RUN_SUMMARY.md`
+  `STATUS.md`/`log.md`/`inbox.md`/`deliveries.md`/`RUN_SUMMARY.md`
   are generated **views** — human- and rollback-readable, never read back for
   decisions. Mutation is NOT heartbeat-exclusive: `steer_goal`/`resume_goal`/`cancel_goal` write from
   the MCP-tool call path too, concurrently with the heartbeat — `GoalStore.transition()`
@@ -140,7 +141,7 @@ devclaw/
 ├── quality/         gates past green tests — the self-contained fail-closed gate (own prompts/ + README), pre-PR adversarial review, eval_judge, evals
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
-├── planner.py · cognition.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
+├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
 openhands-runner/runner.py   OpenHands SDK inside the sandbox — line-delimited JSON on stdout
 .sandcastle/Dockerfile       per-task sandbox image
 docs/                        architecture + flows + env + runbooks (start at docs/INDEX.md)

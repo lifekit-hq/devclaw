@@ -17,7 +17,7 @@ import pytest
 from devclaw import cognition
 from devclaw.cognition import AgentSDKCognition, ClaudeCognition, get_cognition, set_cognition
 from devclaw.loom.limits import FailureKind, classify_failure
-from devclaw.planner import PlannerError
+from devclaw.llm_call import PlannerError
 
 
 # --- fabricated SDK message shapes (class NAMES match the real SDK) -----------

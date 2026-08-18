@@ -44,7 +44,23 @@ from .delivery import deliver_change, delivery_failed
 from .engine import Engine, EngineEvent, EngineRequest
 from .loom.limits import classify_failure, pause_seconds
 from .loom.test_integrity import present_test_names, scan_diff
-from .planner import PlannedTask, PlannerError, plan_program
+from .llm_call import PlannerError
+from .program_plan import PlannedTask, order_tasks
+
+
+async def _no_host_planner(goal: str, workspace_dir: str) -> "list[PlannedTask]":
+    """The queue's default program planner since the host-cognition chain was
+    removed (spec 008 shrink, #539): planning lives in the worker's speckit
+    run, so an un-planned program submission is REFUSED loudly — the existing
+    mark-program-failed + notify path carries the reason to the owner instead
+    of a silent hang. Callers with a real plan pass ``planned=`` (or inject a
+    planner, as tests do); everything else files a goal via ``create_goal``."""
+    raise PlannerError(
+        "host program planning was removed (spec 008 shrink): submit_program "
+        "without pre-planned tasks is no longer supported — pass planned tasks "
+        "explicitly, or file a goal (create_goal) and let the worker plan via "
+        "speckit"
+    )
 from .quality import format_feedback, review_gate
 from .quality.browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .quality.gate_policy import Consequence, gate_consequence
@@ -588,8 +604,9 @@ class TaskQueue(_NotifyMixin):
         # symlink/relative respelling of the same DB can't mint a new id and
         # strand the old id's orphans unreapable.
         self._sandbox_owner: str = sandbox_owner_id(os.path.realpath(store.db_path))
-        # Injectable for tests — default to the real planner / sandcastle runner.
-        self._planner: PlannerFn = planner or (lambda g, w: plan_program(g, w))
+        # Injectable for tests — the default REFUSES loudly (host planning was
+        # removed; see _no_host_planner). The runner defaults to sandcastle.
+        self._planner: PlannerFn = planner or _no_host_planner
         self._runner: RunnerFn = runner or run_sandcastle
         # A short engine-kind label for trace events ("stub" / "sandcastle" /
         # "host" / "claude_sdk") — derived from the runner's qualified name so
@@ -1450,12 +1467,17 @@ class TaskQueue(_NotifyMixin):
 
         ``open_pr`` / ``verify_cmd`` / ``parent_goal_id`` mirror
         :meth:`submit_program` — child tasks inherit the PR + gate contract
-        via ``_persist_plan``. The one-shot goal dispatch (ADR 0003 stage 2)
-        is the caller that needs them: its plan is the goal's own checklist,
-        so the queue must NOT re-plan, but the reviewable-slice contract and
-        the goal-owner pointer still apply. ``pump=False`` (see
-        :meth:`submit`): rows only — the goal tick's atomic dispatch
-        transaction commits first, then kicks the queue."""
+        via ``_persist_plan``. ``pump=False`` (see :meth:`submit`): rows only
+        — a caller's atomic dispatch transaction commits first, then kicks
+        the queue.
+
+        The DAG is VALIDATED here (``order_tasks``: duplicate/self-dep/
+        dangling/cycle rejection + the ``MAX_PROGRAM_TASKS`` cost brake) —
+        the validation used to live in the deleted checklist adapter (spec
+        008 shrink); it moved to this consumer boundary so no producer can
+        hand the queue a deadlocking or unbounded plan. Raises
+        :class:`PlannerError` before any row is written."""
+        planned = order_tasks(list(planned))
         program_id = str(uuid.uuid4())
         self._store.create_program(
             id=program_id, goal=goal, workspace_dir=workspace_dir,

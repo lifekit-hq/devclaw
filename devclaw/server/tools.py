@@ -518,11 +518,10 @@ async def start_program(
 ) -> str:
     """DEPRECATED sugar for create_goal(mode='one_shot') — ADR 0003 stage 2b:
     a program and a goal are the same thing, differing only in the
-    re-evaluation dial. This tool now files a ONE-SHOT GOAL: the same intake
-    spine (investigate → firm → decompose) plans the brief end-to-end, then the
-    whole checklist runs as one parallel program with per-item verification,
-    PR-per-slice delivery, and a grounded done-gate close — plus steering,
-    resume, and console visibility that raw programs never had.
+    re-evaluation dial. This tool now files a ONE-SHOT GOAL: the worker plans
+    and executes via speckit in-sandbox (spec 008), with PR-per-slice
+    delivery and a grounded done-gate close — plus steering, resume, and
+    console visibility that raw programs never had.
 
     Returns {goal_id, mode, ...}; poll get_goal(goal_id) / tail_goal. The child
     program appears in list_programs once the goal dispatches it. Prefer
@@ -535,9 +534,9 @@ async def start_program(
     resolved = _resolve_project_or_reject(project_id, "start_program")
     goal_id = _one_shot_goal_id(goal)
     try:
-        # The brief rides as the SPEC (the scope contract firming derives
-        # done_when from) — the same acceptance parity the old direct-queue
-        # path had: a substantial brief plans; there is no separate done_when.
+        # The brief rides as the SPEC (the scope contract the done-gate
+        # evaluator judges against) — the same acceptance parity the old
+        # direct-queue path had: there is no separate done_when.
         result = goals.create_goal(
             goal_id, objective=goal, workspace_dir=resolved.workspace_dir,
             repo_url=resolved.repo_url, spec=goal, mode="one_shot",
@@ -548,7 +547,7 @@ async def start_program(
     out = {
         "goal_id": goal_id,
         "mode": "one_shot",
-        "lifecycle": result.get("lifecycle", "investigating"),
+        "lifecycle": result.get("lifecycle", "executing"),
         "phase": result.get("phase", "idle"),
         "note": (
             "start_program now files a one-shot GOAL (ADR 0003). Poll "
@@ -829,84 +828,6 @@ def _dry_goal(
 
 
 @mcp.tool
-async def dry_world_research(
-    objective: str,
-    spec: str = "",
-    done_when: str = "",
-) -> str:
-    """PURE COGNITION — no goal filed, no workspace, no side effects.
-
-    Runs the world-research brief the chef fires at investigation-open time for a
-    from-scratch goal (the same module used when ``repo_url`` is absent). Returns
-    the ``## Real-world exemplars`` / ``## What good MVP looks like`` / ``##
-    Deliberately defer`` brief as markdown. Use this to test the harness's read
-    of "build me X" ideas without filing a real goal — no workspace or repo URL
-    required.
-
-    Inputs:
-      objective: the durable aim (e.g., "build a CRM for SMB sales teams").
-      spec: optional aligned spec markdown (e.g., what ``scope_grill`` returned).
-      done_when: optional completion contract if you have one.
-    """
-    if not objective or not objective.strip():
-        raise ToolError("dry_world_research requires a non-empty objective")
-    from ..goal import world_research as _world
-
-    goal = _dry_goal(objective=objective, done_when=done_when)
-    try:
-        return await _world.world_brief(goal, spec, caller=_world.default_caller())
-    except Exception as err:  # noqa: BLE001
-        raise ToolError(f"dry_world_research failed: {err}")
-
-
-@mcp.tool
-async def dry_decompose(
-    objective: str,
-    spec: str = "",
-    done_when: str = "",
-    backlog: Optional[list[str]] = None,
-    discovery_brief: str = "",
-    repo_digest: str = "",
-    stub_acceptable: Optional[list[str]] = None,
-) -> str:
-    """PURE COGNITION — no goal filed, no workspace, no side effects.
-
-    Runs the goal decomposer against an in-memory objective and returns the
-    CHECKLIST YAML it would persist to ``checklist.yaml``. Use this to test how
-    the harness would break a goal into milestones + atomic items with
-    per-item ``evidence_target``/``depends_on`` — without filing a real goal.
-
-    Inputs:
-      objective / done_when / backlog / stub_acceptable — the goal facts the
-        prompt reads verbatim.
-      discovery_brief: optional prior pass (e.g., dry_world_research output) so
-        the decomposer plans against a real-world MVP shape.
-      repo_digest: optional curated repo excerpt — passing one exercises the
-        existing-repo decomposition path; leaving it empty exercises the
-        from-scratch path.
-    """
-    if not objective or not objective.strip():
-        raise ToolError("dry_decompose requires a non-empty objective")
-    from ..goal import decomposer as _decomp
-    from ..goal.checklist import dump_checklist
-
-    goal = _dry_goal(
-        objective=objective, done_when=done_when, backlog=backlog,
-        stub_acceptable=stub_acceptable,
-    )
-    try:
-        checklist = await _decomp.decompose(
-            goal,
-            claude_caller=_decomp.default_caller(),
-            discovery_brief=discovery_brief,
-            repo_digest=repo_digest,
-        )
-    except Exception as err:  # noqa: BLE001
-        raise ToolError(f"dry_decompose failed: {err}")
-    return dump_checklist(checklist)
-
-
-@mcp.tool
 async def dry_evaluate(
     objective: str,
     done_when: str,
@@ -988,10 +909,10 @@ async def create_goal(
 
     mode selects the execution dial (ADR 0003): 'long_lived' (default) is the
     per-tick loop — plan the single next action each heartbeat, steerable
-    mid-flight. 'one_shot' plans ONCE (grill → firm → decompose) and runs the
-    whole checklist as a single parallel program, then proposes done when it
-    drains — same gates, no per-tick planning. Use one_shot for a
-    fully-specified batch of work; long_lived for a direction driven over time.
+    mid-flight. 'one_shot' rides the SAME advance loop and proposes done as
+    soon as an advance session lands — same gates; the worker owns the plan
+    (speckit, spec 008). Use one_shot for a fully-specified batch of work;
+    long_lived for a direction driven over time.
 
     goal_id: a short stable slug (the on-disk folder name). objective: the durable
     aim. done_when: the prose completion test the evaluator judges against. backlog:
@@ -1143,9 +1064,7 @@ async def resume_goal(goal_id: str) -> str:
     are untouched. This does NOT change direction (use steer_goal for that)
     and is NOT a field-patch/update tool — nothing about the goal is edited.
 
-    Idempotent: on a goal that is not blocked it no-ops with a message. A goal
-    blocked in FIRMING (awaiting owner answers) is refused — those answers can
-    only come through answer_unknowns."""
+    Idempotent: on a goal that is not blocked it no-ops with a message."""
     if not goal_id:
         raise ToolError("resume_goal requires goal_id")
     try:
@@ -1202,37 +1121,6 @@ async def evaluate_goal(goal_id: str) -> str:
         return json.dumps(await goals.evaluate_goal(goal_id), indent=2)
     except KeyError:
         raise ToolError(f"unknown goal_id: {goal_id}")
-
-
-@mcp.tool
-async def answer_unknowns(goal_id: str, answers: dict[str, str]) -> str:
-    """Answer the open ``unknowns`` from a goal's firmed-draft so DevClaw can
-    finish firming and start work. Synchronous: fires firming round N+1 inside
-    the call, then either transitions the goal to executing (decomposer fires
-    on the next heartbeat) or returns a new set of unknowns that the prior
-    answers exposed.
-
-    ``answers`` MUST cover EVERY currently open unknown id exactly once — no
-    partials, no extras. Get the current unknowns from ``get_goal(goal_id)``'s
-    ``firmed_draft.unknowns`` field; pass them as ``{unknown_id: answer_text}``.
-    The waiter is responsible for collecting a complete answer set from the
-    owner before calling this tool.
-
-    Response:
-      {"status": "firmed", "round": N, "unknowns": []}
-      {"status": "needs_more_answers", "round": N, "unknowns": [{...}, ...]}
-    """
-    if not goal_id:
-        raise ToolError("answer_unknowns requires goal_id")
-    if not isinstance(answers, dict) or not answers:
-        raise ToolError("answer_unknowns requires a non-empty answers map")
-    try:
-        result = await goals.answer_unknowns(goal_id, answers)
-    except KeyError:
-        raise ToolError(f"unknown goal_id: {goal_id}")
-    except ValueError as exc:
-        raise ToolError(str(exc))
-    return json.dumps(result, indent=2)
 
 
 @mcp.tool

@@ -22,7 +22,7 @@ import pytest
 
 from devclaw import task_queue
 from devclaw.engine import EngineRequest
-from devclaw.planner import PlannerError
+from devclaw.llm_call import PlannerError
 from devclaw import quality
 from devclaw.quality import review_diff, review_gate
 from devclaw.state_store import StateStore

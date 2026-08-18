@@ -4,7 +4,7 @@ A finished goal used to leave only scattered evidence (log lines, delivery
 sections, trace rows); nothing answered "what did this run actually do" in
 one read. The close now renders a projection of the goal's own rows —
 delivery traces (gate/PR/diff stats), cognition totals, phase-history
-duration, checklist progress — as a generated view next to STATUS.md, and
+duration — as a generated view next to STATUS.md, and
 rides a compact line on the owner's goal-complete ping. Best-effort: a
 summary hiccup never disturbs a verified close.
 """
@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from devclaw.goal.models import Checklist, ChecklistItem, GoalStatus, InFlight, PollResult
+from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.run_summary import build_run_summary
 from devclaw.goal.tick import Outcome
 from tests.goal_fakes import (
@@ -72,14 +72,8 @@ def test_run_summary_aggregates_deliveries_prs_diff_and_tokens():
         "cognition_tokens_in": 900_000, "cognition_tokens_out": 300_000,
         "cognition_cost_usd": 4.2,
     }
-    cl = Checklist(items=[
-        ChecklistItem(id="a", requirement="r", evidence_target="e", status="done"),
-        ChecklistItem(id="b", requirement="r", evidence_target="e", status="done"),
-        ChecklistItem(id="c", requirement="r", evidence_target="e", status="blocked"),
-    ])
-
     md, compact = build_run_summary("g1", status, traces, totals=totals,
-                                    checklist=cl, objective="ship the thing")
+                                    objective="ship the thing")
 
     # compact line: everything at a glance
     assert "3 deliveries" in compact
@@ -91,7 +85,6 @@ def test_run_summary_aggregates_deliveries_prs_diff_and_tokens():
     assert "# g1 — run summary" in md
     assert "**Objective:** ship the thing" in md
     assert "2 gate-passed, 1 gate-failed" in md
-    assert "2/3 checklist items done (1 blocked)" in md
     assert "https://x/pr/1" in md and "https://x/pr/2" in md
     assert "task b · gate=FAILED" in md
     assert "all clauses pass" in md
@@ -99,7 +92,7 @@ def test_run_summary_aggregates_deliveries_prs_diff_and_tokens():
 
 
 def test_run_summary_degrades_on_empty_rows():
-    # no traces, no totals, no checklist, no history → still renders; the
+    # no traces, no totals, no history → still renders; the
     # compact line stays honest (no fake zeros beyond the delivery count)
     md, compact = build_run_summary("g1", GoalStatus(phase="done"), [])
     assert compact == "0 deliveries"

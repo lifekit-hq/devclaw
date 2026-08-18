@@ -31,7 +31,7 @@ the technical sense — the rest is orchestration.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | tools, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | the goal state machine + the ~15-min tick |
-| 3 | **Cognition callers** | `goal/{evaluator,decomposer,research,world_research,summary,triage}.py`, `goal/phases/firming.py`, `devclaw/planner.py`, `devclaw/elicitation.py` | one-shot `claude --print` prompt/parse calls |
+| 3 | **Cognition callers** | `goal/{evaluator,summary,triage}.py`, `devclaw/elicitation.py`, `devclaw/intake_readiness.py` | one-shot `claude --print` prompt/parse calls (planning cognition relocated into the worker's speckit run — spec 008 shrink) |
 | 4 | **TaskQueue + engine** | `task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `openhands-runner/runner.py` (inside the sandbox) | the in-sandbox agent turn-loop, skills, hooks, `verify_cmd` |
 
@@ -54,12 +54,16 @@ through another, and none of them cache another's state.
 machine over the goal lifecycle:
 
 ```
-investigating → firming → executing → (done-gate) → done
-     │              │          │            │
-  repo/world     lock the   dispatch      grounded eval of the firmed
-  research       contract   actions,      done_when; closes ONLY if the
-                 (done_when) settle them   evaluator says "achieved"
+executing → (done-gate) → done
+     │            │
+  dispatch     grounded eval of done_when/spec; closes ONLY
+  actions,     if the evaluator says "achieved"
+  settle them
 ```
+
+(The old `investigating → firming` prelude was removed by the spec 008
+shrink — the worker plans via speckit in-sandbox; legacy rows heal to
+`executing` loudly on first tick touch.)
 
 Two properties make the heartbeat cheap and safe, and both are load-bearing:
 
@@ -87,9 +91,9 @@ When the tick decides to *do* something (not just think):
 
 1. **Branch selection** (`tick_dispatch._dispatch_action`) — a
    `DeliveryStrategy` (`goal/delivery_strategy.py`) decides the branch:
-   checklist-mode goals accumulate every item's commits on one shared
-   `goal/<id>` branch (one cumulative PR); legacy/per-action goals deliver each
-   action as its own branch + PR.
+   executing goals accumulate every increment's commits on one shared
+   `goal/<id>` branch (one cumulative PR); legacy goals with no recorded
+   lifecycle deliver each action as its own branch + PR.
 2. **Prepare the workspace** — `prepare_workspace()` gives the engine a pristine
    checkout on the chosen branch.
 3. **Atomic dispatch** — the task-row creation + the `DISPATCH_ACTION`
@@ -127,8 +131,8 @@ When the tick decides to *do* something (not just think):
    branch/PR *before* `done` is observable, so a poller never reads "done
    without a PR". A delivery that can't push/PR settles `failed`, never a silent
    success.
-7. **Settle atomically** — settlement row + delivery row + log + checklist
-   update + the `ACTION_SETTLED` transition, as one unit (`tick_settle`).
+7. **Settle atomically** — settlement row + delivery row + log + the
+   `ACTION_SETTLED` transition, as one unit (`tick_settle`).
    Auto-merge and program-stack reconcile run strictly *after* the settle
    commits.
 
@@ -144,9 +148,9 @@ goal layer lives in the same DB as the task queue: `goal_status`,
 `goal_phase_history`, plus the goal-transcending `project_docs` (the repo
 brief workers accumulate, keyed by normalized workspace path — it survives
 goal cancel+refile on purpose). The familiar files — `STATUS.md`, `log.md`, `inbox.md`,
-`deliveries.md`, `checklist.yaml`, `firmed-draft.yaml` — are **generated
-views**: human- and rollback-readable, **never read back for decisions**. Only
-`goal.yaml`, `spec.md`, `discovery.md` stay plain files.
+`deliveries.md` — are **generated views**: human- and rollback-readable,
+**never read back for decisions**. Only `goal.yaml` and `spec.md` stay plain
+files.
 
 **Single writer.** Only the `TaskQueue` mutates task rows; `StateStore` is an
 append-only event log and its views are projections. Goal state is owned by
@@ -276,26 +280,17 @@ and `tests/test_self_triage.py`.
   `TaskQueue` + `Engine`); calling `claude` directly (must go through a
   cognition caller); mutating `goal_status`'s phase/lifecycle/in_flight outside
   `GoalStore.transition()` (the CAS'd choke point).
-- **The execution dial (ADR 0003 stage 2):** a goal carries `mode:
-  long_lived | one_shot` in `goal.yaml`. `long_lived` (default) is the
-  per-tick loop described throughout this doc — the planner picks one ready
-  checklist item per heartbeat. `one_shot` runs ZERO per-tick planner
-  cognition: the decomposer's checklist IS the plan, the executing phase
-  dispatches every pending item as ONE already-planned program
-  (`Action.planned` → `start_planned_program`, no re-plan in the queue),
-  per-item verdicts settle back via each child task row's `plan_key`, failed
-  items re-dispatch as a smaller remainder program (bounded by the per-item
-  circuit breaker + dispatch cap), and a drained checklist proposes done
-  MECHANICALLY — the close is still gated on the grounded done-gate review +
-  evaluator, and a not-achieved verdict parks the goal for the owner
-  (`needs_answer`) instead of looping reviews. Same intake (grill → firm →
-  decompose), same gates, one dial.
+- **The execution dial (ADR 0003):** a goal carries `mode:
+  long_lived | one_shot` in `goal.yaml`. Both modes ride ONE execution path
+  since the spec 008 shrink — the speckit advance loop (the worker owns the
+  plan in `specs/*/`), the done-gate proposal after each settled advance, and
+  the same gates. The dial is re-evaluation cadence only; a one_shot goal's
+  first advance fires immediately and the done-gate's corrections chain
+  work-present advances until achieved.
 - **Tested by:** `tests/test_goal_*.py` (e.g. `test_goal_tick.py`,
-  `test_goal_engine.py`, `test_goal_reconcile.py`), `tests/test_firming_handler.py`,
-  `tests/test_goal_tick_firming.py` — single ticks with stubbed cognition +
-  stubbed engine; `tests/test_goal_one_shot.py` (the one-shot dial's
-  zero-planner-calls contract). The SQLite substrate: `tests/test_goal_state.py`,
-  `tests/test_goal_store.py`, `tests/test_goal_store_checklist.py`,
+  `test_goal_engine.py`, `test_goal_reconcile.py`) — single ticks with stubbed
+  cognition + stubbed engine. The SQLite substrate: `tests/test_goal_state.py`,
+  `tests/test_goal_store.py`,
   `tests/test_goal_transitions.py` (the `LEGAL` table + CAS in isolation).
 
 ### Layer 3 — Cognition callers
@@ -312,18 +307,9 @@ and `tests/test_self_triage.py`.
   invariant below.
 - **Forbidden:** writing to the goal store directly (return parsed output, let
   layer 2 persist it); reaching into the task queue.
-- **Tested by:** `tests/test_cognition.py`, `tests/test_goal_decomposer.py`,
+- **Tested by:** `tests/test_cognition.py`,
   `tests/test_goal_evaluator.py` — prompt rendering + response parsing in
   isolation, LLM call stubbed.
-- **Operator inspection:** `devclaw cognition decompose "<obj>" --done-when
-  "<text>" [--repo D]` dry-runs the decomposer — ONE real cognition call,
-  rendered as a milestone checklist, with **no docker, no queue, no state
-  mutation** (it constructs neither the registry nor a `GoalStore`). This is
-  the ONE planning spine both durable goals and programs ride (ADR 0003 stage
-  1 routed `start_program` through it; the coarse `plan_goal` + `cognition
-  plan` retired with it). Reuses this layer's own
-  `build_prompt`/`parse_checklist`; `--json` scripts the parsed output, `-v`
-  prints the exact prompt. Tested by `tests/test_cli_cognition.py`.
 
 ### Layer 4 — TaskQueue + Engine
 
@@ -388,8 +374,7 @@ and `tests/test_self_triage.py`.
 ### Grounded cognition
 
 Every host-side cognition caller that reasons about the target repository —
-planner (per-tick and the program adapter `plan_program`), evaluator, decomposer, firming, discovery
-research, and the pre-PR review gate — is fed a **read-only git snapshot of the
+the done-gate evaluator and the pre-PR review gate — is fed a **read-only git snapshot of the
 goal's actual workspace** (`task_git._review_repo_context_sync`: remote, branch,
 HEAD, key-file probes, tracked layout), and its prompt forbids inferring repo
 facts from the host process, cwd, or remembered repositories. Collection is
@@ -523,7 +508,7 @@ devclaw/
 ├── goal/            layer 2/3 — the heartbeat + cognition callers
 │   ├── tick.py + tick_{context,guards,dispatch,donegate,settle}.py   the loop
 │   ├── store/       GoalStore package (base · status[CAS] · content)
-│   ├── evaluator.py · decomposer.py · research.py · transitions.py   cognition + the LEGAL table
+│   ├── evaluator.py · transitions.py                                cognition + the LEGAL table
 │   └── delivery_strategy.py · merge.py · engine.py                   dispatch seams
 ├── engine/          layer 4 — sandcastle.py (docker run --rm), host.py, stub.py
 ├── delivery/        commit → branch → push → PR; deploy.py; repo.py

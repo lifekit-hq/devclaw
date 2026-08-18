@@ -1,62 +1,25 @@
-"""Tranche 1 / PR6 — checklist.yaml / firmed-draft.yaml move onto ``goal_docs``
-rows (the torn-write class T0.4 hardened the file view against becomes
-structurally impossible once a goal has a row); log.md / deliveries.md move
-onto ``goal_log`` / ``goal_deliveries`` rows, with the files as generated
-mirrors (same pattern PR3's STATUS.md and PR5's steering rows use).
+"""Tranche 1 / PR6 — log.md / deliveries.md move onto ``goal_log`` /
+``goal_deliveries`` rows, with the files as generated mirrors (same pattern
+PR3's STATUS.md and PR5's steering rows use).
 ``append_delivery`` gains a nullable ``ref_id`` idempotency key —
 ``UNIQUE(goal_id, ref_id)`` + INSERT OR IGNORE — closing a PR4-review nuance:
 a ``TransitionConflict`` landing in the settle-retry window could make the
 tick's retry append the SAME delivery twice.
 
 Named regression tests, each with a one-line comment naming the failure class
-it closes. See ``devclaw/goal/store.py`` (log/deliveries/checklist/firmed
-sections + ``GoalDocCorrupt``), ``devclaw/goal/state.py`` (the ``goal_log`` /
-``goal_deliveries`` / ``goal_docs`` row surface), and ``devclaw/goal/tick.py``'s
-``_resolve_polling_action`` (the ``ref_id=ref.id`` call-site fix)."""
+it closes. See ``devclaw/goal/store.py`` (log/deliveries sections),
+``devclaw/goal/state.py`` (the ``goal_log`` / ``goal_deliveries`` row
+surface), and ``devclaw/goal/tick.py``'s ``_resolve_polling_action`` (the
+``ref_id=ref.id`` call-site fix). The checklist/firmed-draft ``goal_docs``
+round-trips this module used to cover were amputated with host cognition
+(spec 008 shrink)."""
 
 from __future__ import annotations
 
-import pytest
-
-from devclaw.goal.checklist import dump_checklist
-from devclaw.goal.firmed import FirmedGoal, SuccessCriterion, dump_firmed
-from devclaw.goal.models import Checklist, ChecklistItem
 from devclaw.goal.state import GoalState
-from devclaw.goal.store import GoalDocCorrupt, GoalStore
+from devclaw.goal.store import GoalStore
 from devclaw.state_store import StateStore
 from tests.goal_fakes import Clock, seed_goal
-
-
-def _example_checklist() -> Checklist:
-    return Checklist(
-        items=[
-            ChecklistItem(
-                id="scaffold",
-                requirement="Create the csproj.",
-                evidence_target="backend/src/Foo.csproj",
-                addresses_files=["backend/src/Foo.csproj"],
-            ),
-        ],
-        open_questions=[],
-        notes=[],
-    )
-
-
-def _example_firmed() -> FirmedGoal:
-    return FirmedGoal(
-        status="firmed", round=1, intent="x",
-        success_criteria=[SuccessCriterion(id="c1", text="clause")],
-    )
-
-
-def _peek_goal_docs(store: GoalStore, goal_id: str) -> list[str]:
-    """Every kind with a row for ``goal_id`` — used to assert a corrupt
-    LEGACY file was never ingested (no row appears)."""
-    with store._state._lock:
-        rows = store._state._db.execute(
-            "SELECT kind FROM goal_docs WHERE goal_id = ?", (goal_id,)
-        ).fetchall()
-    return [r["kind"] for r in rows]
 
 
 def _peek_log_row_count(store: GoalStore, goal_id: str) -> int:
@@ -187,90 +150,6 @@ def test_deliveries_byte_parity_on_migration(tmp_path):
     store.recent_deliveries("g")
     assert _peek_delivery_row_count(store, "g") == 2
 
-
-# ---- 4. checklist / firmed-draft round-trip through the DB ----------------
-
-
-def test_checklist_roundtrip_through_db_survives_hand_deleted_file(tmp_path):
-    """write -> read equality; the yaml view matches the DB content; a
-    hand-deleted checklist.yaml does NOT lose the contract — the DB row wins,
-    because the torn-write class the file used to be exposed to is dead."""
-    store = GoalStore(tmp_path, now=Clock())
-    seed_goal(tmp_path, "g")
-    cl = _example_checklist()
-
-    store.write_checklist("g", cl)
-    assert store.read_checklist("g") == cl
-    file_text = (tmp_path / "g" / "checklist.yaml").read_text()
-    assert file_text == dump_checklist(cl)
-
-    (tmp_path / "g" / "checklist.yaml").unlink()
-    assert store.read_checklist("g") == cl  # DB row wins — the file was only ever a view
-
-
-def test_firmed_draft_roundtrip_through_db_survives_hand_deleted_file(tmp_path):
-    store = GoalStore(tmp_path, now=Clock())
-    seed_goal(tmp_path, "g")
-    firmed = _example_firmed()
-
-    store.write_firmed_draft("g", firmed)
-    assert store.read_firmed_draft("g") == firmed
-    file_text = (tmp_path / "g" / "firmed-draft.yaml").read_text()
-    assert file_text == dump_firmed(firmed)
-
-    (tmp_path / "g" / "firmed-draft.yaml").unlink()
-    assert store.read_firmed_draft("g") == firmed
-
-
-# ---- 5. corrupt LEGACY file still blocks loudly ----------------------------
-
-
-def test_corrupt_legacy_checklist_still_blocks_loudly_and_is_never_ingested(tmp_path):
-    """No DB row + a garbled checklist.yaml: read_checklist raises
-    GoalDocCorrupt (on_corrupt='none' degrades to None); the corrupt file
-    must NEVER be ingested into goal_docs — a torn contract must not become
-    'migrated' truth."""
-    store = GoalStore(tmp_path, now=Clock())
-    seed_goal(tmp_path, "g")
-    (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
-
-    with pytest.raises(GoalDocCorrupt) as excinfo:
-        store.read_checklist("g")
-    assert excinfo.value.goal_id == "g"
-    assert excinfo.value.doc == "checklist.yaml"
-    assert store.read_checklist("g", on_corrupt="none") is None
-    assert "checklist" not in _peek_goal_docs(store, "g")  # never laundered into the DB
-
-
-def test_corrupt_legacy_firmed_draft_still_blocks_loudly_and_is_never_ingested(tmp_path):
-    store = GoalStore(tmp_path, now=Clock())
-    seed_goal(tmp_path, "g")
-    (tmp_path / "g" / "firmed-draft.yaml").write_text("status: [garbage\n")
-
-    with pytest.raises(GoalDocCorrupt) as excinfo:
-        store.read_firmed_draft("g")
-    assert excinfo.value.goal_id == "g"
-    assert excinfo.value.doc == "firmed-draft.yaml"
-    assert store.read_firmed_draft("g", on_corrupt="none") is None
-    assert "firmed_draft" not in _peek_goal_docs(store, "g")
-
-
-def test_corrupt_db_row_content_keeps_the_t04_split(tmp_path):
-    """The 'should be impossible' path: SQLite's atomic upsert means a
-    goal_docs row can't be torn by a crash, but a hand-poked garbled row must
-    keep the T0.4 contract — the DEFAULT (cognition/gating) read raises
-    GoalDocCorrupt so the tick blocks loudly, while on_corrupt='none' (the
-    display paths — get_goal/tail_goal are documented as 'a dashboard read
-    must never 500 over it') degrades to None. The tick's default read is
-    the loud channel; the dashboard stays readable while the owner
-    diagnoses."""
-    store = GoalStore(tmp_path, now=Clock())
-    seed_goal(tmp_path, "g")
-    store._goal_state.write_doc("g", "checklist", "not yaml: [garbage\n", 1)
-
-    with pytest.raises(GoalDocCorrupt):
-        store.read_checklist("g")
-    assert store.read_checklist("g", on_corrupt="none") is None
 
 
 # ---- 6. log append keeps mirror + rows in lockstep -------------------------

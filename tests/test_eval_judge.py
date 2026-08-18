@@ -11,7 +11,7 @@ from devclaw.quality.eval_judge import (
     summarize_verdicts,
     validate_verdict,
 )
-from devclaw.planner import PlannerError
+from devclaw.llm_call import PlannerError
 
 
 # ---- validate_verdict ----

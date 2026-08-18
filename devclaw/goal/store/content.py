@@ -1,11 +1,11 @@
 """Content surfaces — everything the goal accretes that ISN'T the status row.
 
-:class:`GoalContentMixin` carries the log, settlements, deliveries, checklist,
-firmed-draft, discovery/spec, and inbox/steering surfaces — each row-first
-(SQLite is the source of truth since Tranche 1/PR5–PR7) with the ``.md`` files
-as generated / hand-append mirrors, plus the lazy one-shot migrations that seed
-those rows from legacy on-disk files. :class:`GoalDocCorrupt` (the loud
-fail-closed on a torn acceptance contract) lives here too.
+:class:`GoalContentMixin` carries the log, settlements, deliveries, spec, and
+inbox/steering surfaces — each row-first (SQLite is the source of truth since
+Tranche 1/PR5–PR7) with the ``.md`` files as generated / hand-append mirrors,
+plus the lazy one-shot migrations that seed those rows from legacy on-disk
+files. (The checklist/firmed-draft/discovery contract docs died with the
+host-cognition chain, spec 008 shrink.)
 
 Split out of ``GoalStore`` as a mixin on the SAME instance — every method here
 runs against the ``self._state`` / ``self._goal_state`` / ``self._now`` /
@@ -21,36 +21,6 @@ import re
 from ..models import Goal, GoalStatus
 from ...state_store import _now_ms
 from .base import _SETTLE_ARROW_RE
-
-
-class GoalDocCorrupt(RuntimeError):
-    """A goal's acceptance-contract document exists but cannot be parsed.
-
-    Distinct from "missing" on purpose: a missing checklist/firmed-draft is a
-    legitimate state (backlog mode / pre-firming base goal), but a torn or
-    garbled doc means the goal's acceptance contract is GONE and nothing may
-    silently fall back — a corrupt checklist used to read as "no checklist"
-    and quietly flip the goal into the backlog planning pipeline; a corrupt
-    firmed draft used to silently drop the firmed ``done_when`` /
-    ``stub_acceptable`` / ``verify_cmd``. The tick catches this at one choke
-    point and blocks loudly; display paths opt into graceful degrade via
-    ``on_corrupt="none"``.
-
-    Since Tranche 1/PR6, ``checklist``/``firmed_draft`` live in the
-    ``goal_docs`` table. A LEGACY goal (no DB row yet) can still have a torn
-    ``checklist.yaml``/``firmed-draft.yaml`` on disk, and this exception
-    still fires for it exactly as before — the file is never ingested, so
-    the corruption isn't laundered into the DB by a later read. Once a goal
-    HAS a row, SQLite's atomic upsert makes a new torn write structurally
-    impossible; this class then only fires on a "should be impossible"
-    DB-content parse failure, which still raises rather than silently
-    downgrading (see ``read_checklist``/``read_firmed_draft``)."""
-
-    def __init__(self, goal_id: str, doc: str, cause: Exception) -> None:
-        self.goal_id = goal_id
-        self.doc = doc
-        self.cause = cause
-        super().__init__(f"{doc} for goal {goal_id!r} is corrupt: {cause}")
 
 
 class GoalContentMixin:
@@ -265,48 +235,6 @@ class GoalContentMixin:
         with path.open("a") as fh:
             fh.write(block)
 
-    def write_discovery(self, goal_id: str, brief: str) -> None:
-        """Persist the ``investigating`` phase's discovery brief (current state ·
-        gap-to-good · best-practice checklist) as a durable artifact the planner
-        and evaluator draw on. Overwritten if investigation re-runs."""
-        ts = self._now().isoformat(timespec="seconds")
-        self._write_atomic(
-            goal_id, "discovery.md",
-            f"# {goal_id} — discovery brief\n\n_generated {ts}_\n\n{brief.strip()}\n",
-        )
-
-    def read_discovery(self, goal_id: str) -> str:
-        """The discovery brief, or '' if the investigating phase hasn't run."""
-        path = self._dir(goal_id) / "discovery.md"
-        return path.read_text() if path.exists() else ""
-
-    # ---- repo analysis (raw review_repository output) ----------------------
-    # goal_docs kind "repo_analysis" — row-only, no .md view: this is the
-    # decomposer's machine-read ground truth (up to ~200KB — see
-    # engine._TASK_DETAIL_SUMMARY_KEEP), not a human-skimmable artifact; the
-    # skimmable synthesis is discovery.md.
-
-    def write_repo_analysis(self, goal_id: str, analysis: str) -> None:
-        """Persist the RAW repo analysis from the discovery review — written
-        at discovery settle, alongside the prose brief. The brief is
-        deliberately tight and skimmable (research-discovery.md) and
-        ``record_settlement`` keeps only ref/kind/status, so without this row
-        the review_repository output is unrecoverable by the time the
-        firming-path decomposer needs the ground truth its prompt demands.
-        Overwritten if investigation re-runs."""
-        self._goal_state.write_doc(goal_id, "repo_analysis", analysis, _now_ms())
-
-    def read_repo_analysis(self, goal_id: str) -> str:
-        """The raw repo analysis, or '' when no discovery review has settled
-        (legacy goals, from-scratch goals that world-research instead)."""
-        return self._goal_state.read_doc(goal_id, "repo_analysis") or ""
-
-    # ---- repo brief (project-scoped worker memory — MC borrow item 3) -----
-    # project_docs kind "repo_brief" — row-only, keyed by NORMALIZED workspace
-    # path so it outlives any one goal (goal cancel+refile keeps the brief).
-    # Written at settle from the worker's REPO NOTES hand-back; read at
-    # dispatch and prepended to the next worker's goal text.
-
     def write_repo_brief(self, scope_key: str, content: str) -> None:
         """Upsert the accumulated repo brief for a workspace scope key."""
         self._goal_state.write_project_doc(scope_key, "repo_brief", content, _now_ms())
@@ -315,143 +243,6 @@ class GoalContentMixin:
         """The accumulated repo brief, or '' when no worker on this repo has
         handed back notes yet."""
         return self._goal_state.read_project_doc(scope_key, "repo_brief") or ""
-
-    # ---- checklist (decomposer output — the durable structured plan) ------
-    # PR6: goal_docs (kind "checklist") is the source of truth; checklist.yaml
-    # is a generated view, same shape as STATUS.md/log.md/deliveries.md.
-
-    def write_checklist(
-        self, goal_id: str, checklist: "Checklist", *, render_view: bool = True,  # type: ignore[name-defined]
-    ) -> None:
-        """Persist the decomposer's full output. Writes the ``goal_docs`` row
-        FIRST (the source of truth the per-tick planner picks actions from;
-        mutable across ticks — settle hook + steer can rewrite items), then
-        the ``checklist.yaml`` view via the same atomic tmp+os.replace
-        treatment ``STATUS.md`` gets — the rollback path, and a legible
-        artifact to read without a DB client.
-
-        ``render_view=False`` (PR7): skip the file write and remember the
-        rendered content in ``self._pending_mirrors`` — same deferral
-        contract as :meth:`append_log`, for callers (the dispatch hook's
-        in_flight flag, a settle's checklist update) writing inside an open
-        ``transaction()``."""
-        from ..checklist import dump_checklist
-
-        content = dump_checklist(checklist)
-        self._goal_state.write_doc(goal_id, "checklist", content, _now_ms())
-        if not render_view:
-            self._pending_mirrors.setdefault(goal_id, []).append(("doc", "checklist.yaml", content))
-            return
-        self._write_atomic(goal_id, "checklist.yaml", content)
-
-    def read_checklist(
-        self, goal_id: str, *, on_corrupt: str = "raise"
-    ) -> "Checklist | None":  # type: ignore[name-defined]
-        """The current checklist, or ``None`` if the decomposer hasn't run
-        yet (legacy goals + brand-new goals before the decomposing phase
-        completes). The per-tick planner falls back to backlog-driven mode
-        when this is ``None``.
-
-        DB-first: a ``goal_docs`` row exists → parse it. A parse failure on
-        DB content still raises :class:`GoalDocCorrupt` — SQLite's atomic
-        upsert makes a torn ROW structurally impossible, so this branch
-        should be unreachable, but "should be impossible" is not a license
-        to silently downgrade (fail loud, per T0.4).
-
-        No row → LEGACY file path (a goal that predates PR6, or one where
-        the decomposer genuinely hasn't run): file absent → ``None``
-        (legitimate); file present but corrupt → the EXACT pre-PR6 behavior
-        (:class:`GoalDocCorrupt`, or ``None`` for ``on_corrupt="none"``) —
-        the corrupt file is NEVER ingested into the DB, so a torn contract
-        can't be laundered into "migrated" truth. A file that parses cleanly
-        IS migrated (the row is written with its content verbatim) so this
-        goal never takes the legacy path again."""
-        from ..checklist import ChecklistParseError, parse_checklist
-
-        content = self._goal_state.read_doc(goal_id, "checklist")
-        if content is not None:
-            try:
-                return parse_checklist(content)
-            except ChecklistParseError as exc:
-                # Honor the T0.4 split even on this should-be-impossible
-                # branch: cognition/gating raises, display degrades.
-                if on_corrupt == "none":
-                    return None
-                raise GoalDocCorrupt(goal_id, "checklist.yaml", exc) from exc
-        path = self._dir(goal_id) / "checklist.yaml"
-        if not path.exists():
-            return None
-        text = path.read_text()
-        try:
-            parsed = parse_checklist(text)
-        except ChecklistParseError as exc:
-            if on_corrupt == "none":
-                return None  # display-grade degrade — never for cognition/gating
-            raise GoalDocCorrupt(goal_id, "checklist.yaml", exc) from exc
-        self._goal_state.write_doc(goal_id, "checklist", text, _now_ms())  # migrate
-        return parsed
-
-    # ---- firmed-draft (firming-phase output) -------------------------------
-    # PR6: goal_docs (kind "firmed_draft") is the source of truth;
-    # firmed-draft.yaml is a generated view — same DB-first/legacy-fallback
-    # shape as read_checklist above.
-
-    def write_firmed_draft(self, goal_id: str, firmed: "FirmedGoal") -> None:  # type: ignore[name-defined]
-        """Persist the firming-phase output. One doc for both the in-progress
-        (``status: needs_owner_answers``) and the ready-for-decomposer
-        (``status: firmed``) states — the ``goal_docs`` row's history (and
-        git history on the ``firmed-draft.yaml`` view) is the audit log."""
-        from ..firmed import dump_firmed
-
-        content = dump_firmed(firmed)
-        self._goal_state.write_doc(goal_id, "firmed_draft", content, _now_ms())
-        self._write_atomic(goal_id, "firmed-draft.yaml", content)
-
-    def read_firmed_draft(
-        self, goal_id: str, *, on_corrupt: str = "raise"
-    ) -> "FirmedGoal | None":  # type: ignore[name-defined]
-        """The current firmed draft, or ``None`` if firming hasn't run yet
-        (legacy goals + new goals before firming completes).
-
-        DB-first, same shape as :meth:`read_checklist`: a row's parse
-        failure still raises (should be impossible post-migration — SQLite's
-        atomic upsert kills the torn-write class — but never silently
-        downgrades). No row → legacy file path: absent → ``None``; present
-        but corrupt → NOT "absent" — treating it as such made
-        :meth:`load_effective_goal` silently return the base goal, dropping
-        the firmed ``done_when`` / ``stub_acceptable`` / ``verify_cmd``
-        acceptance contract with zero signal — so this raises
-        :class:`GoalDocCorrupt` (or degrades to ``None`` for
-        ``on_corrupt="none"``) and is NEVER ingested; a clean parse migrates
-        the row verbatim."""
-        from ..firmed import FirmedParseError, parse_firmed
-
-        content = self._goal_state.read_doc(goal_id, "firmed_draft")
-        if content is not None:
-            try:
-                return parse_firmed(content)
-            except FirmedParseError as exc:
-                # Honor the T0.4 split even on this should-be-impossible
-                # branch: cognition/gating raises, display degrades.
-                if on_corrupt == "none":
-                    return None
-                raise GoalDocCorrupt(goal_id, "firmed-draft.yaml", exc) from exc
-        path = self._dir(goal_id) / "firmed-draft.yaml"
-        if not path.exists():
-            return None
-        text = path.read_text()
-        try:
-            parsed = parse_firmed(text)
-        except FirmedParseError as exc:
-            if on_corrupt == "none":
-                return None  # display-grade degrade — never for cognition/gating
-            raise GoalDocCorrupt(goal_id, "firmed-draft.yaml", exc) from exc
-        self._goal_state.write_doc(goal_id, "firmed_draft", text, _now_ms())  # migrate
-        return parsed
-
-    # ---- block options (§6 structured decision blocks, ADR 0010) -----------
-    # DB-only (no file view): transient state that lives only while a goal is
-    # needs_answer-blocked, not a rollback-readable contract like the checklist.
 
     def write_block_options(self, goal_id: str, options, recommended: str) -> None:
         """Persist a ``needs_answer`` block's structured §6 options + the
@@ -484,50 +275,6 @@ class GoalContentMixin:
         except (ValueError, TypeError):
             return None
         return parsed if isinstance(parsed, dict) else None
-
-    def load_effective_goal(self, goal_id: str, *, on_corrupt: str = "raise") -> Goal:
-        """The goal as it currently is, with firming's outputs overlaid on the
-        original ``goal.yaml`` facts. Use this everywhere cognition + gating
-        need the CURRENT effective state (decomposer, planner, evaluator,
-        done-gate) — ``load_goal`` stays available for code that wants the
-        owner's original statement (audit, history, the firming handler's own
-        derived-goal builder).
-
-        Only firmed-status drafts overlay. While firming is in flight (status
-        ``needs_owner_answers``) the base goal is returned — the partial draft
-        is not authoritative yet.
-
-        ``on_corrupt`` is forwarded to :meth:`read_firmed_draft`: the default
-        raises :class:`GoalDocCorrupt` on a torn draft (returning the base
-        goal would silently drop the firmed acceptance contract); display
-        paths pass ``"none"`` to fall back to the base goal gracefully."""
-        base = self.load_goal(goal_id)
-        firmed = self.read_firmed_draft(goal_id, on_corrupt=on_corrupt)
-        if firmed is None or firmed.status != "firmed":
-            return base
-        from dataclasses import replace as _replace
-
-        from ..firmed import derive_done_when
-
-        derived_done_when = derive_done_when(firmed) or base.done_when
-        derived_stub_acceptable = (
-            list(firmed.stub_acceptable) if firmed.stub_acceptable
-            else list(base.stub_acceptable)
-        )
-        # verify_cmd: firming's value WINS when present. Closes the cf-11 churn
-        # root cause — without this, a cascade can't update its own gate even
-        # when firming derived a stricter contract (e.g. "gate runs pytest AND
-        # playwright"), and the agent invents workarounds (Makefiles, pytest
-        # wrappers) to smuggle new tools through the stale gate.
-        derived_verify_cmd = firmed.verify_cmd or base.verify_cmd
-        return _replace(
-            base,
-            done_when=derived_done_when,
-            stub_acceptable=derived_stub_acceptable,
-            verify_cmd=derived_verify_cmd,
-        )
-
-    # ---- scope spec (handed in by the waiter via create_goal) ---------------
 
     def write_spec(self, goal_id: str, spec: str) -> None:
         """Persist the agreed scope spec — what to build, what's out, constraints.

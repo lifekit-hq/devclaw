@@ -27,22 +27,19 @@ Engine = Literal["devclaw"]
 #: kinds plus the program decomposer.
 GoalTool = Literal["start_program", "implement_feature", "fix_bug", "review_repository"]
 Phase = Literal["idle", "in_flight", "verifying", "blocked", "done", "cancelled"]
-#: The OUTCOME lifecycle — a goal stated as an outcome investigates the repo
-#: (research → discovery brief) before it executes, so devclaw behaves like a
-#: senior dev handed an outcome by a non-technical owner. Distinct from ``Phase``
-#: (the per-tick execution state): ``Lifecycle`` is the coarse stage of the goal.
-#: ``None`` on a stored status means a legacy goal created before the lifecycle
-#: existed — treated as ``executing`` so it keeps running the flat backlog.
-Lifecycle = Literal["investigating", "firming", "executing"]
+#: The goal lifecycle — ``executing`` only since the host-cognition chain was
+#: removed (spec 008 shrink: the worker plans via speckit in-sandbox). ``None``
+#: on a stored status means a legacy goal created before the lifecycle existed
+#: — treated as ``executing`` everywhere except delivery-strategy resolution;
+#: a pre-shrink row still carrying "investigating"/"firming" is healed loudly
+#: by the tick on first touch.
+Lifecycle = Literal["executing"]
 Decision = Literal["act", "sleep", "blocked", "done"]
 EvalVerdict = Literal["on_track", "off_track", "achieved", "stalled", "needs_human"]
-#: The execution dial (ADR 0003): ``long_lived`` is the per-tick loop (the
-#: planner picks one ready item per heartbeat, steerable mid-flight, and — once
-#: stage 3 lands — re-scopes per iteration). ``one_shot`` plans ONCE and runs
-#: the whole checklist as a single parallel program with ZERO per-tick planner
-#: cognition, then proposes done mechanically when the checklist drains — the
-#: dial is re-evaluation cadence, never a different execution stack ("done" is
-#: still a proposal gated on the grounded done-gate review in both modes).
+#: The execution dial (ADR 0003): both modes ride ONE execution path (the
+#: speckit advance loop, spec 008); the dial is re-evaluation cadence, never a
+#: different execution stack ("done" is still a proposal gated on the grounded
+#: done-gate review in both modes).
 GoalMode = Literal["long_lived", "one_shot"]
 
 #: the gate strictness dial (ADR 0007). ``strict`` = a dial-able gate that fails
@@ -141,13 +138,12 @@ class InFlight:
     #: True when this is the read-only review dispatched by the done-gate (its
     #: terminal result feeds the evaluator, not the next-action planner).
     is_done_check: bool = False
-    #: True when this is the read-only repo analysis dispatched by the
-    #: ``investigating`` lifecycle phase (its terminal result feeds the discovery
-    #: synthesis, not the planner or the done-gate evaluator).
+    #: LEGACY (pre-shrink): the read-only repo analysis the removed
+    #: ``investigating`` phase used to dispatch. Kept so stored pre-shrink refs
+    #: still deserialize; nothing sets or routes on it anymore.
     is_discovery: bool = False
-    #: checklist item ids this in-flight action serves (Pillar 1). The settle
-    #: hook reads these back and updates the checklist (status + evidence) on
-    #: terminal poll. Empty in legacy backlog-mode goals.
+    #: LEGACY (pre-shrink): checklist item ids. Kept for deserialization of
+    #: stored refs; nothing sets or reads them since the checklist died.
     addresses: list[str] = field(default_factory=list)
 
 
@@ -248,11 +244,10 @@ class GoalStatus:
 
 @dataclass(frozen=True)
 class Action:
-    """One engine call the planner chose. ``addresses`` carries the checklist
-    item ids this action serves when the goal is in checklist-mode (Pillar 1) —
-    the dispatch hook flips those items to ``in_flight`` and the settle hook
-    fills their ``evidence`` + flips them to ``done`` on success. Empty for
-    legacy backlog-mode goals."""
+    """One engine call the tick dispatches. ``addresses``/``planned``/
+    ``scaffold`` are retained for the queue's program mechanism and legacy
+    row deserialization — nothing in the goal layer produces them since the
+    checklist died (spec 008 shrink)."""
 
     engine: Engine
     tool: GoalTool
@@ -269,21 +264,13 @@ class Action:
     #: Optional: when None, delivery falls back to the engineer's own commit
     #: subject, then the diff-grounded _pr_title(goal, kind) heuristic.
     title: Optional[str] = None
-    #: True when the checklist item(s) this action serves are all generated
-    #: scaffolding (see :attr:`ChecklistItem.scaffold`). DERIVED mechanically at
-    #: dispatch from the addressed items (not chosen by the per-tick planner LLM),
-    #: then threaded onto the task row so the queue skips the adversarial review
-    #: gate for it. Default False. SAFETY: skips review ONLY — the verify gate +
-    #: test-integrity still run (enforced in task_queue._run_and_settle).
+    #: True when the action is generated scaffolding — threads onto the task
+    #: row so the queue skips the adversarial review gate for it. SAFETY:
+    #: skips review ONLY — verify + test-integrity still run.
     scaffold: bool = False
-    #: ALREADY-PLANNED task DAG (a ``list[devclaw.planner.PlannedTask]``,
-    #: untyped here to keep this module a leaf) for a ``start_program`` action
-    #: whose plan the goal layer computed itself — the one-shot mode dispatch
-    #: (ADR 0003 stage 2): the checklist IS the plan, so the engine submits it
-    #: via ``start_planned_program`` instead of re-running the decomposer
-    #: inside the queue (a second cognition call planning the same work).
-    #: ``None`` (the default, and the only value the per-tick planner LLM can
-    #: produce) keeps the existing plan-in-queue path byte-identical.
+    #: ALREADY-PLANNED task DAG (a ``list[devclaw.program_plan.PlannedTask]``,
+    #: untyped here to keep this module a leaf) for a ``start_program`` action.
+    #: Nothing in the goal layer produces this since the checklist died.
     planned: Optional[list] = None
 
 
@@ -316,167 +303,6 @@ class PlanResult:
     recommended: str = ""
     #: human-readable summary for the log + notify, any decision
     note: str = ""
-
-
-#: An item's lifecycle inside the checklist. ``not_started`` is the
-#: planner's pick-pool; ``in_flight`` is dispatched and not yet settled;
-#: ``done`` is verified with non-null evidence; ``blocked`` waits on a human
-#: decision; ``mis_specified`` is the executor's "this item doesn't match the
-#: code I'm seeing" signal — surfaces as a steer event for the owner.
-ItemStatus = Literal["not_started", "in_flight", "done", "blocked", "mis_specified"]
-#: model-tier hint per item (defaults to the global executor tier when absent)
-ItemModelTier = Literal["haiku", "sonnet", "opus"]
-#: the two mechanically-checkable acceptance-assert kinds. Deliberately NOT an
-#: arbitrary shell command: both are pure, read-only host-side checks (a path
-#: probe and a regex over a file), so enforcing them at settle can never run
-#: attacker-influenced code on the host. Closing the fabrication class does not
-#: require arbitrary execution — a lockfile grep catches the ng-zorro fake
-#: install; an ``absent`` grep catches a ``not_yet_available`` stub masquerading
-#: as real work.
-AssertKind = Literal["file_exists", "grep"]
-
-
-@dataclass(frozen=True)
-class ItemAssert:
-    """A mechanically-checkable acceptance predicate the decomposer attaches to
-    a :class:`ChecklistItem` — the reality anchor under the LLM review gate
-    (#2/#4, ADR 0003). The review gate reads a *diff* and can be fooled by a
-    plausible-looking one (the finance-sentry-ui-library ng-zorro exhibit: the
-    worker bumped ``package.json`` and wrote AGENTS.md prose claiming the
-    dependency was installed, with no real lockfile entry — and the gate passed
-    it). A ``file_exists`` / ``grep`` probe against the delivered tree cannot be
-    talked into a false pass, so it is a mechanical CROSS-CHECK on the gate's
-    verdict: an item cannot flip to ``done`` unless its asserts hold, and a
-    failing assert routes the item into the same failure/retry/circuit-breaker
-    path as a gate-failed settle. Enforced at :func:`tick_settle` against the
-    host ``workspace_dir``. Optional and grounded — the decomposer emits an
-    assert ONLY when the repo digest lets it name a concrete, checkable path.
-
-    - ``kind='file_exists'`` — ``path`` must exist in the workspace (or, with
-      ``absent=True``, must NOT exist).
-    - ``kind='grep'`` — ``pattern`` (a regex) must match somewhere in ``path``
-      (or, with ``absent=True``, must NOT match).
-
-    ``path`` is ALWAYS workspace-relative and validated to stay inside the tree
-    (no absolute paths, no ``..`` traversal) — an assert can never read outside
-    the checkout."""
-
-    kind: AssertKind
-    #: workspace-relative file path the assert probes. Never absolute, never
-    #: escapes the workspace root (enforced at parse + re-guarded at check).
-    path: str
-    #: regex searched in ``path`` for ``kind='grep'``; ignored for
-    #: ``file_exists``. Empty for a grep assert is invalid (dropped at parse).
-    pattern: str = ""
-    #: invert the sense: ``file_exists`` → must be ABSENT; ``grep`` → pattern
-    #: must NOT match. The stub-detection lever (``absent`` grep for
-    #: ``not_yet_available``).
-    absent: bool = False
-
-    def describe(self) -> str:
-        """One-line human/log description of what this assert requires."""
-        if self.kind == "file_exists":
-            return f"file {'absent' if self.absent else 'exists'}: {self.path}"
-        sense = "must NOT match" if self.absent else "must match"
-        return f"grep {self.path} {sense} /{self.pattern}/"
-
-
-@dataclass(frozen=True)
-class ChecklistItem:
-    """One atomic unit of work the decomposer emitted. Each item is one
-    focused commit's worth — small enough that ONE agent finishes it in one
-    sandbox cycle. The whole point is per-item verifiability: the `evidence`
-    string is what the gate confirms exists in the diff/repo before flipping
-    `status` to `done`. See ``devclaw/prompts/decomposer.md`` for the
-    schema contract this matches."""
-
-    id: str
-    requirement: str
-    evidence_target: str
-    addresses_files: list[str] = field(default_factory=list)
-    depends_on: list[str] = field(default_factory=list)
-    status: ItemStatus = "not_started"
-    #: filled by the executor on settle — concrete proof the item was met
-    #: (file:line + symbol/test names). Null until the gate verifies the diff.
-    evidence: Optional[str] = None
-    #: rough focused-agent-time estimate; the scheduler reads this to budget
-    #: per-tick dispatch. None → scheduler picks a default.
-    effort_minutes: Optional[int] = None
-    #: per-item model tier hint; None → the global executor tier
-    #: (DEVCLAW_EXEC_MODEL) is used.
-    model_tier: Optional[ItemModelTier] = None
-    #: free-form one-liner from the decomposer for the executor; prefix
-    #: ``legit_stub: `` marks the item as a deliberate not_yet_available
-    #: stub rather than work-to-do.
-    note: str = ""
-    #: the milestone (phase) this item rolls up to, matching one of the
-    #: heading strings under the spec's ``## Milestones`` section. Lets the
-    #: planner pick a coherent set of next items, the dashboard render
-    #: milestone-grouped progress, and the evaluator judge milestone-level
-    #: completion. ``None`` is valid — small checklists may omit milestones
-    #: entirely, and legacy decomposer output that pre-dated this field
-    #: still parses cleanly without it.
-    milestone: Optional[str] = None
-    #: True when this item is *generated scaffolding* — a boilerplate-setup step
-    #: whose diff is generator output (``ng new``, ``dotnet new``, a workspace /
-    #: test-project skeleton), not hand-authored logic. The decomposer tags it
-    #: (L3, issue #222) so the dispatch path can skip the ADVERSARIAL CODE-REVIEW
-    #: gate for it — an oversized generated diff crashes that reviewer and, more
-    #: fundamentally, scaffolding is a different operation than implementing logic
-    #: and is verified STRUCTURALLY (does it build?) not by reading the diff.
-    #: SAFETY: this flag ONLY skips adversarial review. A scaffold item MUST still
-    #: pass the verify_cmd/build gate + the test-integrity scan, so an over-tagged
-    #: real code task is at worst "unreviewed but still must build + pass tests" —
-    #: never "ships broken or untested." Tag CONSERVATIVELY: only clear generator-
-    #: output steps. Default False = a normal, fully-reviewed item.
-    scaffold: bool = False
-    #: how many times a dispatch addressing this item has come back FAILED
-    #: (gate-failed or errored) — incremented at settle by
-    #: :func:`devclaw.goal.tick_settle._settle_addressed_items`. Drives the
-    #: structural per-item circuit breaker (#6): once it reaches
-    #: ``DEVCLAW_ITEM_MAX_ATTEMPTS`` the item is flipped to ``blocked`` and the
-    #: goal is parked for a human, instead of the planner re-picking the same
-    #: failing ticket indefinitely (the closeloop-bench 2026-07-18 pattern where
-    #: a hand-written "CIRCUIT BREAKER" clause in the task prose was the only —
-    #: and unreliable — thing stopping a 4th identical attempt). Reset to 0 on a
-    #: successful settle of the item. Persisted in checklist.yaml only when > 0.
-    attempts: int = 0
-    #: compact per-failure notes ("what went wrong"), appended at settle by
-    #: :func:`devclaw.goal.tick_settle._settle_addressed_items` alongside the
-    #: ``attempts`` bump. The dispatch path renders these into the NEXT
-    #: worker's brief so a re-dispatched item doesn't re-discover a failed
-    #: approach one attempt at a time (the cross-dispatch half of the
-    #: continuity gap; the intra-dispatch half is task_queue's accumulated
-    #: retry history). Bounded (newest kept); cleared on a successful settle
-    #: with the attempts reset. Persisted in checklist.yaml only when
-    #: non-empty.
-    failure_log: list[str] = field(default_factory=list)
-    #: mechanically-checkable acceptance predicates (:class:`ItemAssert`) — the
-    #: reality anchor under the LLM review gate (#2/#4). The decomposer emits
-    #: these; :func:`tick_settle` enforces them against the delivered workspace
-    #: before an addressed item may flip to ``done``. Empty (the default and the
-    #: common case) means "no mechanical anchor — trust the gate alone", exactly
-    #: today's behavior; a non-empty list adds a fail-closed cross-check the
-    #: worker cannot fabricate past. Persisted in checklist.yaml only when
-    #: non-empty.
-    asserts: list["ItemAssert"] = field(default_factory=list)
-
-
-@dataclass(frozen=True)
-class Checklist:
-    """The full decomposer output for one goal — the durable structured plan
-    the planner picks actions from, the gate verifies against, and the owner
-    edits via steer. Stored under ``<goal_id>/checklist.yaml`` alongside
-    ``STATUS.md`` etc., mutable across ticks."""
-
-    items: list[ChecklistItem] = field(default_factory=list)
-    #: questions for the owner the decomposer couldn't decide from the digest
-    open_questions: list[str] = field(default_factory=list)
-    #: free-form observations for the per-tick planner (file overlaps,
-    #: conditional outcomes the executor must resolve, etc.)
-    notes: list[str] = field(default_factory=list)
-
-
 @dataclass(frozen=True)
 class ClauseVerdict:
     """One atomic ``done_when`` clause + the evaluator's per-clause finding.

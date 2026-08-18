@@ -330,14 +330,14 @@ def _readiness_comment(label: str, verdict) -> str:
     if label == READY_LABEL:
         return (
             "> DevClaw readiness gate: **devclaw-ready**.\n\n"
-            "This ask is scoped enough to attempt firming. It is now eligible for "
+            "This ask is scoped enough for autonomous execution. It is now eligible for "
             "a human to dispatch (readiness is not auto-dispatch)."
         )
     missing = verdict.missing or ["the ask could not be grounded against the repo"]
     lines = "\n".join(f"- {m}" for m in missing)
     return (
         "> DevClaw readiness gate: **needs-refinement**.\n\n"
-        "This ask is not yet groundable enough to attempt firming. Concrete "
+        "This ask is not yet groundable enough for autonomous execution. Concrete "
         f"missing element(s):\n\n{lines}\n\n"
         "Amend the ask (edit this issue) and re-run the grade "
         "(`regrade_intake`) — no need to re-file."

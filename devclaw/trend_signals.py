@@ -14,7 +14,7 @@ signals share SQL to justify the dedup.
 
 Boundary rules (carried from the thesis — do not violate inside ``check``):
   * NEVER call any goal-store write method (no ``append_steering``,
-    ``write_checklist``, etc.). The detector observes; humans encode.
+    etc.). The detector observes; humans encode.
   * NEVER create tasks, alter ``done_when``, or edit ``AGENTS.md``.
   * Substrate reads only — git plumbing, ``GoalStore._inbox_lines`` (read), the
     sqlite ``tasks`` / ``traces`` tables (read). If a future signal looks like

@@ -21,7 +21,7 @@ import json
 import os
 from typing import Awaitable, Callable
 
-from .planner import PlannerError, claude_with_model, extract_json
+from .llm_call import PlannerError, claude_with_model, extract_json
 
 #: conversational requirement-gathering — Sonnet is the right tier. Empty →
 #: account default. Read at call time so the env stays the single source.

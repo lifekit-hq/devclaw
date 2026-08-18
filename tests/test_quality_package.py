@@ -15,13 +15,13 @@ from pathlib import Path
 _REPO = Path(__file__).resolve().parents[1]
 
 
-def test_quality_imports_without_planner_queue_goal_or_state_store():
+def test_quality_imports_without_queue_goal_or_state_store():
     # Fresh interpreter: the gate must not pull the heavy modules at import.
     code = (
         "import sys; import devclaw.quality; "
         "import devclaw.quality.browser_gate, devclaw.quality.reachability, "
         "devclaw.quality.eval_judge, devclaw.quality.evals; "
-        "heavy = [m for m in ('devclaw.planner', 'devclaw.task_queue', "
+        "heavy = [m for m in ('devclaw.task_queue', "
         "'devclaw.goal', 'devclaw.state_store', 'devclaw.task_git') "
         "if m in sys.modules]; "
         "assert not heavy, f'gate pulled heavy modules: {heavy}'; print('gate-ok')"

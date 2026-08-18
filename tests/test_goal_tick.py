@@ -165,6 +165,26 @@ async def test_first_tick_dispatches_advance_session(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_one_shot_mode_rides_the_advance_path(tmp_path):
+    """mode="one_shot" converged onto the SAME execution path as long_lived
+    (spec 008 shrink): its tick dispatches the thin ADVANCE brief — no
+    checklist/decompose machinery is consulted (there is none left)."""
+    from devclaw.advance_brief import ADVANCE_BRIEF_MARKER
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", mode="one_shot")  # no STATUS yet → cadence due
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.DISPATCHED
+    assert evaluator.calls == 0
+    assert len(engine.dispatched) == 1
+    action, _, _ = engine.dispatched[0]
+    assert action.goal.strip().startswith(ADVANCE_BRIEF_MARKER)  # the advance brief, one path
+
+
+@pytest.mark.asyncio
 async def test_workspace_prepped_before_dispatch(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -257,59 +277,6 @@ async def test_dispatch_cap_blocks_runaway(tmp_path):
     assert out is Outcome.BLOCKED
     assert engine.dispatched == []
     assert any("cap" in m for m in notifier.sent)
-
-
-@pytest.mark.asyncio
-async def test_dispatch_cap_lifts_in_checklist_mode(tmp_path):
-    """When a checklist exists, the cap floor rises to the checklist size +
-    margin — backlog size alone would block a long-checklist goal every few
-    items (live-found 2026-06-26 on finance-sentry-mcp-v3: cap=7 from a
-    5-item backlog blocked a goal with 22 ready items remaining)."""
-    from devclaw.goal.models import Checklist, ChecklistItem
-
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", backlog=["a", "b"])  # backlog cap would be 4
-
-    # 20 atomic items in the checklist — the bounded work surface is much larger
-    cl = Checklist(items=[
-        ChecklistItem(id=f"i-{i}", requirement="r", evidence_target="t")
-        for i in range(20)
-    ])
-    store.write_checklist("g", cl)
-
-    # actions_dispatched=5 would trip the legacy backlog cap (=4) — but
-    # checklist mode lifts the floor to 20+2=22, so this tick proceeds.
-    store.save_status("g", GoalStatus(phase="idle", actions_dispatched=5))
-    engine = FakeEngine()  # dispatch only
-    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
-
-    assert out is Outcome.DISPATCHED
-    assert len(engine.dispatched) == 1
-
-
-@pytest.mark.asyncio
-async def test_dispatch_cap_still_blocks_when_checklist_exhausted(tmp_path):
-    """The cap is checklist_size + small margin — a goal that's already
-    dispatched more than every checklist item gets blocked, even in
-    checklist mode (the loop is genuinely spinning)."""
-    from devclaw.goal.models import Checklist, ChecklistItem
-
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", backlog=["a"])
-
-    cl = Checklist(items=[
-        ChecklistItem(id=f"i-{i}", requirement="r", evidence_target="t")
-        for i in range(5)
-    ])
-    store.write_checklist("g", cl)
-    # cap = max(1+2, 5+2) = 7; dispatched 7 → blocked
-    store.save_status("g", GoalStatus(phase="idle", actions_dispatched=7))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", FakeClaude(), FakeEngine(), notifier)
-
-    assert out is Outcome.BLOCKED
-    assert any("(7)" in m for m in notifier.sent)
 
 
 @pytest.mark.asyncio
@@ -588,29 +555,6 @@ def test_resume_goal_noops_legibly_when_not_blocked(tmp_path):
         assert saved.phase == "idle"
         assert saved.actions_dispatched == 2           # untouched — a true no-op
         assert svc._goal_store.unread_steering_rows("g") == []
-    finally:
-        db.close()
-
-
-def test_resume_goal_refuses_firming_blocked_and_points_to_answer_unknowns(tmp_path):
-    """A firming-blocked goal waits on owner answers only answer_unknowns can
-    supply — a bare unblock would strand it in FIRMING_IDLE limbo (round-1
-    firming already wrote the draft, so FirmingHandler.can_run stays False and
-    no event ever fires). resume_goal must refuse WITHOUT transitioning."""
-    svc, db, goals_dir = _resume_service(tmp_path)
-    try:
-        seed_goal(goals_dir, "g")
-        svc._goal_store.save_status("g", GoalStatus(
-            phase="blocked", lifecycle="firming", blocked_on="2 unknowns need owner answers",
-        ))
-
-        out = svc.resume_goal("g")
-
-        assert out["resumed"] is False
-        assert "answer_unknowns" in out["message"]
-        saved = svc._goal_store.load_status("g")
-        assert saved.phase == "blocked" and saved.lifecycle == "firming"   # no transition fired
-        assert saved.blocked_on == "2 unknowns need owner answers"
     finally:
         db.close()
 
@@ -967,22 +911,26 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
 
 @pytest.mark.asyncio
 async def test_owner_notification_is_plain_summarized(tmp_path, monkeypatch):
-    """An OWNER-level message (a blocker — here a corrupt contract file) is
+    """An OWNER-level message (a blocker — here a workspace-prep failure) is
     rewritten by the summarizer before it reaches the notifier; the owner sees
     the plain text, not the raw line."""
     monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-    summarizer = RecordingSummarizer("🟡 A planning file broke; I paused the goal for you.")
+    summarizer = RecordingSummarizer("🟡 The repo could not be cloned; I paused the goal for you.")
 
-    out = await _tick(store, "g", evaluator, engine, notifier, summary_caller=summarizer)
+    out = await tick_goal(
+        "g", store=store, engine=engine,
+        evaluator_caller=evaluator, notifier=notifier,
+        notify_url="http://relay", prepare_ws=_failing_prepare,
+        eval_every=99, summary_caller=summarizer,
+    )
 
     assert out is Outcome.BLOCKED
     assert len(summarizer.prompts) == 1                       # summarizer ran once
-    assert "corrupted" in summarizer.prompts[0]               # raw line fed in
-    assert notifier.sent == ["🟡 A planning file broke; I paused the goal for you."]  # plain text sent
+    assert "Repository not found" in summarizer.prompts[0]    # raw line fed in
+    assert notifier.sent == ["🟡 The repo could not be cloned; I paused the goal for you."]  # plain text sent
 
 
 @pytest.mark.asyncio
@@ -1018,28 +966,6 @@ async def test_idle_tick_never_invokes_summarizer(tmp_path, monkeypatch):
     assert out is Outcome.IDLE
     assert summarizer.prompts == []
     assert evaluator.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_discovery_goes_straight_to_executing(tmp_path):
-    """Scope alignment is owned by the OpenClaw waiter (scope_grill MCP tool) —
-    when investigation finishes, the chef writes the discovery brief and steps
-    directly into executing, with no in-chef grill phase in between."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="investigating",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
-    ))
-    researcher = FakeClaude("## Current state\nbare API")   # evaluator-tier = discovery synthesis
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo analysis"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", researcher, engine, notifier)
-
-    assert out is Outcome.ADVANCED
-    assert store.load_status("g").lifecycle == "executing"
-    assert store.read_discovery("g")                        # brief still written
 
 
 # ---- auto-merge on gate-green (hands-off; gated + best-effort) --------------
@@ -1721,96 +1647,42 @@ async def test_auto_deploy_disabled_returns_empty_without_deploying(tmp_path):
     assert out == ""
 
 
-# ---- outcome lifecycle: investigate before executing -----------------------
+# ---- legacy lifecycles (pre-shrink rows) heal to "executing" ----------------
 
 
 @pytest.mark.asyncio
-async def test_new_goal_opens_investigation(tmp_path):
-    """A new one_shot outcome goal's first tick dispatches a read-only repo
-    analysis and enters 'investigating' — it does NOT plan/act yet (research
-    before acting). Investigating is one_shot-only now (demolition P4): a
-    long_lived goal skips it (test_goal_one_shot.py covers the skip)."""
+async def test_legacy_lifecycle_heals_loudly_to_executing_on_first_tick(tmp_path):
+    """A pre-shrink row stored with lifecycle="investigating" (or "firming") is
+    healed to "executing" at the top of its first tick, with a legible log line
+    — and the heal itself is mechanism, not cognition: when no work/cadence is
+    due the tick stays at zero cognition calls. A TERMINAL goal is
+    short-circuited before the heal ever looks at it: a cancelled goal keeps
+    its legacy lifecycle and gets no log write."""
     store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", mode="one_shot")
-    store.save_status("g", GoalStatus(lifecycle="investigating"))
+    seed_goal(tmp_path, "g", cadence="1d")
+    # idle + plan cadence not due → nothing to do this tick beyond the heal
+    store.save_status("g", GoalStatus(
+        phase="idle", lifecycle="investigating", last_plan_at=store.now_iso(),
+    ))
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
     out = await _tick(store, "g", evaluator, engine, notifier)
 
-    assert out is Outcome.DISPATCHED
-    assert evaluator.calls == 0       # no cognition yet
-    assert len(engine.dispatched) == 1
-    action, _, _ = engine.dispatched[0]
-    assert action.tool == "review_repository" and action.open_pr is False
+    assert out is Outcome.IDLE
     saved = store.load_status("g")
-    assert saved.lifecycle == "investigating"
-    assert saved.in_flight is not None and saved.in_flight.is_discovery is True
-    assert any("look" in m.lower() for m in notifier.sent)
+    assert saved.lifecycle == "executing"                    # healed, durably
+    assert "healed to 'executing'" in store.recent_log("g")  # loud, not silent
+    assert evaluator.calls == 0                              # zero-token guard holds
+    assert engine.dispatched == []
 
-
-@pytest.mark.asyncio
-async def test_investigation_running_is_zero_tokens(tmp_path):
-    """While the discovery analysis runs, the tick costs zero tokens."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="investigating",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
-    ))
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.IN_FLIGHT
+    # terminal short-circuit: a CANCELLED goal is never healed
+    seed_goal(tmp_path, "c", cadence="1d")
+    store.save_status("c", GoalStatus(phase="cancelled", lifecycle="firming"))
+    out = await _tick(store, "c", evaluator, engine, notifier)
+    assert out is Outcome.SKIP_CANCELLED
+    assert store.load_status("c").lifecycle == "firming"     # untouched
+    assert "healed" not in store.recent_log("c")             # no log write
     assert evaluator.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_discovery_resolves_writes_brief_and_advances_to_executing(tmp_path):
-    """When the analysis returns, the brief is synthesized + persisted, the owner
-    is told, and the goal advances to 'executing'."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="investigating",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
-    ))
-    # the research caller in tick_goal is the evaluator-tier caller:
-    researcher = FakeClaude("## Current state\nbare API\n## Gap to good\nno UI\n## What good looks like\n- pages")
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="repo has 3 endpoints, no frontend"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", researcher, engine, notifier)
-
-    assert out is Outcome.ADVANCED
-    assert researcher.calls == 1                              # the brief was synthesized
-    assert "3 endpoints" in researcher.last_prompt           # repo analysis fed to synthesis
-    assert store.load_status("g").lifecycle == "executing"   # advanced
-    assert "Current state" in store.read_discovery("g")      # brief persisted
-    assert any("look" in m.lower() for m in notifier.sent)
-
-
-@pytest.mark.asyncio
-async def test_discovery_synthesis_failure_still_advances(tmp_path):
-    """A synthesis failure must never wedge a goal in investigation — it proceeds
-    to executing anyway."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="investigating",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "analyze", is_discovery=True),
-    ))
-    researcher = FakeClaude("")   # empty → GoalResearchError inside synthesis
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="analysis"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", researcher, engine, notifier)
-
-    assert out is Outcome.ADVANCED
-    assert store.load_status("g").lifecycle == "executing"   # not stuck
-    assert notifier.sent                                     # owner still told
 
 
 @pytest.mark.asyncio
@@ -2082,20 +1954,15 @@ class FakeRemoteChecker:
         return self.result
 
 
-def _verifying_checklist_goal(store, tmp_path, goal_id="g"):
-    """Seed a checklist-mode goal parked at the done-gate review settle."""
-    from devclaw.goal.models import Checklist, ChecklistItem
+def _verifying_goal_branch_goal(store, tmp_path, goal_id="g"):
+    """Seed a goal-branch-topology goal parked at the done-gate review settle.
 
+    The checker keys on the delivery topology, which since spec 008 shrink is
+    the explicit ``lifecycle="executing"`` stamp (the checklist that used to be
+    the goal-branch signal is gone)."""
     seed_goal(tmp_path, goal_id)
-    store.write_checklist(goal_id, Checklist(items=[
-        ChecklistItem(
-            id="scaffold", requirement="Create the csproj.",
-            evidence_target="backend/src/Foo.csproj",
-            addresses_files=["backend/src/Foo.csproj"], status="done",
-        ),
-    ]))
     store.save_status(goal_id, GoalStatus(
-        phase="verifying",
+        phase="verifying", lifecycle="executing",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
 
@@ -2105,7 +1972,7 @@ async def test_failing_remote_checks_block_the_close(tmp_path):
     from devclaw.goal.remote_checks import RemoteChecksResult
 
     store = _store(tmp_path, Clock())
-    _verifying_checklist_goal(store, tmp_path)
+    _verifying_goal_branch_goal(store, tmp_path)
     checker = FakeRemoteChecker(RemoteChecksResult("failing", "32 failed of 32 (32× startup_failure)"))
     evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
@@ -2132,7 +1999,7 @@ async def test_never_ran_ci_blocks_the_close_under_strict_gate(tmp_path, monkeyp
 
     monkeypatch.setattr(_rc, "CI_GATE_MODE", "strict")
     store = _store(tmp_path, Clock())
-    _verifying_checklist_goal(store, tmp_path)
+    _verifying_goal_branch_goal(store, tmp_path)
     checker = FakeRemoteChecker(RemoteChecksResult("none", "workflows exist but zero runs"))
     evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
@@ -2154,7 +2021,7 @@ async def test_broken_ci_infra_closes_with_annotation_under_flexible_gate(tmp_pa
     from devclaw.goal.remote_checks import RemoteChecksResult
 
     store = _store(tmp_path, Clock())
-    _verifying_checklist_goal(store, tmp_path)
+    _verifying_goal_branch_goal(store, tmp_path)
     checker = FakeRemoteChecker(
         RemoteChecksResult("infra_broken", "5 of 5 died at startup — CI infrastructure never executed")
     )
@@ -2172,7 +2039,7 @@ async def test_broken_ci_infra_closes_with_annotation_under_flexible_gate(tmp_pa
 @pytest.mark.asyncio
 async def test_passing_remote_checks_let_the_goal_close(tmp_path):
     store = _store(tmp_path, Clock())
-    _verifying_checklist_goal(store, tmp_path)
+    _verifying_goal_branch_goal(store, tmp_path)
     checker = FakeRemoteChecker()  # passing
     evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
@@ -2190,7 +2057,7 @@ async def test_unknown_remote_state_fails_open_but_logs(tmp_path):
     from devclaw.goal.remote_checks import RemoteChecksResult
 
     store = _store(tmp_path, Clock())
-    _verifying_checklist_goal(store, tmp_path)
+    _verifying_goal_branch_goal(store, tmp_path)
     checker = FakeRemoteChecker(RemoteChecksResult("unknown", "gh: network unreachable"))
     evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
@@ -2206,7 +2073,7 @@ async def test_unknown_remote_state_fails_open_but_logs(tmp_path):
 @pytest.mark.asyncio
 async def test_checker_exception_fails_open(tmp_path):
     store = _store(tmp_path, Clock())
-    _verifying_checklist_goal(store, tmp_path)
+    _verifying_goal_branch_goal(store, tmp_path)
     checker = FakeRemoteChecker(exc=RuntimeError("gh exploded"))
     evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
@@ -2219,8 +2086,9 @@ async def test_checker_exception_fails_open(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_legacy_goal_without_checklist_skips_the_checker(tmp_path):
-    # No shared goal branch → nothing meaningful to check; behaviour unchanged.
+async def test_legacy_per_action_goal_skips_the_checker(tmp_path):
+    # No lifecycle recorded → per-action topology → no shared goal branch →
+    # nothing meaningful to check; behaviour unchanged.
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
@@ -2535,94 +2403,16 @@ async def test_lost_done_gate_ref_blocks_and_notifies_owner(tmp_path):
     assert len(notifier.sent) == 1 and "t_gate" in notifier.sent[0]
 
 
-# ---- corrupt contract files block loudly (T0.4) -----------------------------
+# ---- goal.yaml is the whole contract (checklist/firmed overlays died) -------
 
 
 @pytest.mark.asyncio
-async def test_corrupt_checklist_blocks_tick_loudly_then_idles(tmp_path):
-    """A checklist.yaml that EXISTS but won't parse must BLOCK the goal with
-    the real parse error — not silently read as "no checklist" and revert the
-    goal to backlog mode. One OWNER ping, zero cognition; the next tick on the
-    same corruption idles quietly (no wedge loop, no re-ping)."""
+async def test_goal_yaml_alone_is_the_whole_contract(tmp_path):
+    """A goal directory holding ONLY goal.yaml advances normally — the
+    checklist.yaml / firmed-draft.yaml overlays (and their corrupt-doc probe)
+    died with the host-cognition chain (spec 008 shrink)."""
     store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")  # no STATUS yet → would plan+dispatch if healthy
-    (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.BLOCKED
-    assert evaluator.calls == 0  # corruption preempts cognition
-    assert engine.dispatched == []
-    s = store.load_status("g")
-    assert s.phase == "blocked"
-    assert "checklist.yaml" in s.blocked_on  # blocked_on names the doc
-    assert len(notifier.sent) == 1 and "corrupted" in notifier.sent[0]
-    assert "checklist.yaml" in store.recent_log("g")
-
-    # Tick again with the file still torn — idle, no re-ping, no log spam.
-    out2 = await _tick(store, "g", evaluator, engine, notifier)
-    assert out2 is Outcome.IDLE
-    assert evaluator.calls == 0
-    assert len(notifier.sent) == 1
-
-
-@pytest.mark.asyncio
-async def test_corrupt_firmed_draft_blocks_tick_via_load_effective_goal(tmp_path):
-    """A torn firmed-draft.yaml used to make load_effective_goal silently
-    return the BASE goal — dropping the firmed done_when / stub_acceptable /
-    verify_cmd acceptance contract. Now it blocks at the tick's choke point
-    with the same loud-once / idle-after shape as the checklist case."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    (tmp_path / "g" / "firmed-draft.yaml").write_text("status: [garbage\n")
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.BLOCKED
-    assert evaluator.calls == 0
-    assert engine.dispatched == []
-    s = store.load_status("g")
-    assert s.phase == "blocked"
-    assert "firmed-draft.yaml" in s.blocked_on
-    assert len(notifier.sent) == 1 and "corrupted" in notifier.sent[0]
-
-    out2 = await _tick(store, "g", evaluator, engine, notifier)
-    assert out2 is Outcome.IDLE
-    assert len(notifier.sent) == 1
-
-
-@pytest.mark.asyncio
-async def test_corrupt_doc_block_preserves_running_in_flight_ref(tmp_path):
-    """Blocking on a corrupt contract file stops NEW cognition — it must not
-    clobber the ref to an action that is already running. The ref survives the
-    block so the action settles normally once the file is fixed."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status(
-        "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "start_program", "p1", "program")),
-    )
-    (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.BLOCKED
-    assert engine.polls == 0  # blocked before polling — no new work of any kind
-    s = store.load_status("g")
-    assert s.phase == "blocked"
-    assert s.in_flight is not None and s.in_flight.id == "p1"  # ref preserved
-
-
-@pytest.mark.asyncio
-async def test_missing_checklist_and_firmed_draft_stay_backlog_mode(tmp_path):
-    """MISSING contract files remain the legitimate pre-decomposer /
-    pre-firming state: the goal advances from the base goal alone, no block,
-    no corruption noise."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")  # neither checklist.yaml nor firmed-draft.yaml
+    seed_goal(tmp_path, "g")  # goal.yaml only
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
     out = await _tick(store, "g", evaluator, engine, notifier)
@@ -2642,22 +2432,21 @@ async def test_missing_checklist_and_firmed_draft_stay_backlog_mode(tmp_path):
 @pytest.mark.asyncio
 async def test_blocked_kind_stamped_per_block_site(tmp_path):
     """Each block class stamps its machine-readable kind next to the prose:
-    a torn checklist.yaml → mechanical:corrupt_doc, the dispatch-cap backstop
+    a workspace-prep failure → mechanical:prep, the dispatch-cap backstop
     → mechanical:dispatch_cap, the done-gate blocking for a human decision
     → needs_answer, and force_block (the illegal-transition escape hatch) → bug."""
     store = _store(tmp_path, Clock())
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
-    # mechanical:corrupt_doc — a contract file that exists but won't parse
+    # mechanical:prep — the workspace couldn't be prepared (clone 404)
     seed_goal(tmp_path, "gc")
-    (tmp_path / "gc" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    assert await _tick(store, "gc", evaluator, engine, notifier) is Outcome.BLOCKED
+    assert await _tick_prep(store, "gc", engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
     s = store.load_status("gc")
-    assert s.phase == "blocked" and s.blocked_kind == "mechanical:corrupt_doc"
+    assert s.phase == "blocked" and s.blocked_kind == "mechanical:prep"
     # the STATUS.md view surfaces the kind next to blocked_on (frontmatter + body)
     text = (tmp_path / "gc" / "STATUS.md").read_text()
-    assert GoalStore._read_frontmatter(text)["blocked_kind"] == "mechanical:corrupt_doc"
-    assert "blocked [mechanical:corrupt_doc] —" in text
+    assert GoalStore._read_frontmatter(text)["blocked_kind"] == "mechanical:prep"
+    assert "blocked [mechanical:prep] —" in text
 
     # mechanical:dispatch_cap — the runaway backstop (backlog 2 → cap 4)
     seed_goal(tmp_path, "gd")
@@ -2759,118 +2548,26 @@ def test_resume_goal_restores_the_autoheal_budget(tmp_path):
         db.close()
 
 
-# ---- corrupt-doc auto-heal (F8): mechanical recheck, damped, human-capped ----
-# The tick's contract-file probe re-parses the docs every tick anyway — on a
-# fixed doc that success IS the heal signal (zero LLM, zero subprocess). The
-# persisted heal_attempts budget stops a FLAPPING file from turning the
-# zero-token blocked steady-state into a plan + ping per cycle; only
-# mechanical:corrupt_doc heals — needs_answer/bug/lost_ref/dispatch_cap stay
-# human-gated.
-
-#: a checklist.yaml body that parses cleanly (validate_checklist rejects an
-#: empty list, so the minimal "fixed" doc carries one valid item).
-GOOD_CHECKLIST = (
-    "checklist:\n"
-    "  - id: i-1\n"
-    "    requirement: do the thing\n"
-    "    evidence_target: tests pass\n"
-)
-
-
 @pytest.mark.asyncio
-async def test_corrupt_doc_block_autoheals_when_doc_parses_again(tmp_path):
-    """Torn checklist → BLOCKED (one ping, zero cognition). Fix the file → the
-    very next tick auto-unblocks mechanically (log line, NO ping, heal 1/3)
-    and proceeds to dispatch the advance session. A later productive settle
-    earns the heal budget back."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    (tmp_path / "g" / "checklist.yaml").write_text("not yaml: [garbage\n")
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-
-    assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.BLOCKED
-    assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.IDLE
-    assert evaluator.calls == 0 and engine.dispatched == []  # zero cost while torn
-    assert len(notifier.sent) == 1                       # the block ping only
-
-    (tmp_path / "g" / "checklist.yaml").write_text(GOOD_CHECKLIST)
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.DISPATCHED                     # tick proceeded to dispatch
-    assert len(engine.dispatched) == 1
-    s = store.load_status("g")
-    assert s.phase == "in_flight" and s.blocked_kind == ""
-    assert s.heal_attempts == 1
-    assert "auto-resumed: contract file parses again (heal 1/3)" in store.recent_log("g")
-    assert len(notifier.sent) == 1                       # a heal logs; it never pings
-
-    # A productive settle (same signal as the dispatch-cap refund) earns the
-    # auto-heal budget back — the goal is demonstrably stable again.
-    engine.poll_result = PollResult(terminal=True, status="done", detail="ok", gate_passed=True)
-    await _tick(store, "g", evaluator, engine, notifier)
-    assert store.load_status("g").heal_attempts == 0
-
-
-@pytest.mark.asyncio
-async def test_corrupt_doc_flapping_capped_after_three_heals(tmp_path):
-    """tear/fix ×3 heals fine; the 4th fix does NOT heal — the goal parks
-    blocked with exactly one plain gave-up ping, and every further tick is
-    zero-cognition idle. (tear/fix via the goal_docs row — after the first
-    heal the checklist is DB-backed, the file is just a view. A heal
-    re-attempts by design: the first one dispatches an advance session; later
-    heals restore the preserved in-flight ref to its polling phase.)"""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="30d")
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
-
-    def tear():
-        store._goal_state.write_doc("g", "checklist", "not yaml: [garbage", 1)
-
-    def fix():
-        store._goal_state.write_doc("g", "checklist", GOOD_CHECKLIST, 1)
-
-    for n in (1, 2, 3):
-        tear()
-        assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.BLOCKED
-        fix()
-        out = await _tick(store, "g", evaluator, engine, notifier)
-        assert out is not Outcome.BLOCKED
-        s = store.load_status("g")
-        assert s.phase != "blocked" and s.heal_attempts == n   # healed, mechanically
-    assert evaluator.calls == 0                                # heals cost zero cognition
-    assert len(engine.dispatched) == 1                         # heal 1 re-attempted; 2+3 restored the same ref
-
-    # 4th flap: budget spent — the fix must NOT heal. (The preserved in-flight
-    # ref still gets its mechanical poll — 0 tokens — so the tick reports
-    # IN_FLIGHT, but the block itself stays.)
-    tear()
-    assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.BLOCKED
-    fix()
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.IN_FLIGHT
-    s = store.load_status("g")
-    assert s.phase == "blocked" and s.blocked_kind == "mechanical:corrupt_doc"
-    assert len([m for m in notifier.sent if "gave up" in m]) == 1
-
-    # Parked: further ticks are zero-cognition, zero-ping, zero-dispatch.
-    pings = len(notifier.sent)
-    for _ in range(3):
-        assert await _tick(store, "g", evaluator, engine, notifier) is Outcome.IN_FLIGHT
-    assert evaluator.calls == 0 and len(engine.dispatched) == 1
-    assert len(notifier.sent) == pings                         # exactly one gave-up ping, ever
-    assert store.load_status("g").phase == "blocked"
-
-
-@pytest.mark.asyncio
-async def test_autoheal_never_fires_on_needs_answer_or_bug_blocks(tmp_path):
-    """A healthy store (the contract probe passes) must NOT unblock a
-    needs_answer block (the owner has a question to answer) or a bug block
-    (the force_block escape hatch) — auto-heal is corrupt_doc-only."""
+async def test_autoheal_never_fires_on_human_gated_blocks(tmp_path):
+    """A healthy store must NOT unblock a needs_answer block (the owner has a
+    question to answer), a bug block (the force_block escape hatch), or a
+    legacy mechanical:corrupt_doc block (its contract files died with the
+    host-cognition chain — spec 008 shrink — so there is nothing mechanical
+    left to recheck; resume_goal is the way out). Auto-heal is prep-only."""
     store = _store(tmp_path, Clock())
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    # legacy mechanical:corrupt_doc — a pre-shrink row still parked on it
+    seed_goal(tmp_path, "gl")
+    store.save_status("gl", GoalStatus(
+        phase="blocked", blocked_on="checklist.yaml is corrupted",
+        blocked_kind="mechanical:corrupt_doc",
+    ))
+    assert await _tick(store, "gl", evaluator, engine, notifier) is Outcome.IDLE
+    sl = store.load_status("gl")
+    assert sl.phase == "blocked" and sl.blocked_kind == "mechanical:corrupt_doc"
+    assert sl.heal_attempts == 0                          # never even attempted
 
     # needs_answer — the owner has a question to answer (kind-stamping from a
     # real block site is covered by test_blocked_kind_stamped_per_block_site).

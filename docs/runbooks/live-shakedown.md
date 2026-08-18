@@ -111,32 +111,33 @@ whole engine seam (host → docker → runner → OpenHands → claude → back)
 
 ---
 
-## 4. L2 — a program (planner → DAG)
+## 4. L2 — a one-shot goal (the advance loop)
 
 ```bash
 mkdir -p /tmp/sc-l2 && cd /tmp/sc-l2 && git init -q && cd -
+python drive.py register_project \
+  '{"project_id":"sc-l2","name":"L2 shakedown","workspace_dir":"/tmp/sc-l2"}'
 python drive.py start_program \
-  '{"workspace_dir":"/tmp/sc-l2","goal":"create a Python package mathx with an add() and a mul() function, each in its own module, plus a tests/ file that imports both"}'
+  '{"project_id":"sc-l2","goal":"create a Python package mathx with an add() and a mul() function, each in its own module, plus a tests/ file that imports both"}'
 # → {"goal_id":"…","mode":"one_shot",…}   (ADR 0003: start_program files a ONE-SHOT GOAL)
 ```
 
 ```bash
-python drive.py get_goal '{"goal_id":"<id>"}'         # watch the goal: investigating → executing
-python drive.py tail_goal '{"goal_id":"<id>"}'        # the log tail
-python drive.py list_programs '{}'                    # the CHILD program appears once the goal dispatches it
-python drive.py get_program '{"program_id":"<child>"}' # then watch its task DAG advance
+python drive.py get_goal '{"goal_id":"<id>"}'         # goals are born executing; watch phase idle → running
+python drive.py tail_goal '{"goal_id":"<id>"}'        # the log + deliveries tail
+python drive.py list_tasks '{}'                       # each dispatched advance appears as a task
 ```
 
-The goal plans on its heartbeat (investigate → firm → decompose), then dispatches
-the whole checklist as one parallel program. Confirm the child program's tasks
-run in dependency order, the program reaches `done`, and the goal closes through
-its done-gate.
+The heartbeat dispatches one advance at a time with a mechanical brief (zero
+host planning — spec 008); the worker plans in-sandbox with speckit (`specs/*/`
+in the workspace). After a settled advance the one-shot goal proposes done —
+confirm the goal closes through its grounded done-gate.
 
 ---
 
 ## 5. L3 — crash recovery (the durability proof)
 
-Start a program (L2), then **kill the server mid-run** and restart it:
+Start a goal (L2), then **kill the server mid-run** and restart it:
 
 ```bash
 # while a task is 'running':
@@ -145,12 +146,12 @@ Start a program (L2), then **kill the server mid-run** and restart it:
 devclaw-mcp
 ```
 
-On restart the log shows `recovered=N` and the heartbeat resumes the DAG with **no
-new submission** — the orphaned `running` tasks are reset to `pending` and re-run.
-Confirm the program still reaches `done`:
+On restart the log shows `recovered=N` and the heartbeat resumes the goal with
+**no new submission** — orphaned `running` tasks are reset to `pending` and
+re-run. Confirm the goal still closes:
 
 ```bash
-python drive.py get_program '{"program_id":"<id>"}'
+python drive.py get_goal '{"goal_id":"<id>"}'
 ```
 
 (In-flight sandbox containers from the dead process: `docker ps` to spot any, they
@@ -173,8 +174,10 @@ Append the user's answer to the last turn and call again until the response is
 `{"action":"done","spec":"…"}` — then file the goal with the spec attached:
 
 ```bash
+python drive.py register_project \
+  '{"project_id":"sc-l4","name":"L4 shakedown","workspace_dir":"/tmp/sc-l4"}'
 python drive.py create_goal \
-  '{"goal_id":"jyq","objective":"ship the cli","workspace_dir":"/tmp/sc-l4","spec":"<the finalized spec>"}'
+  '{"goal_id":"jyq","objective":"ship the cli","project_id":"sc-l4","spec":"<the finalized spec>"}'
 ```
 
 The build is now a durable goal — watch it on the console / `get_goal` /
@@ -184,29 +187,29 @@ The build is now a durable goal — watch it on the console / `get_goal` /
 
 ## 6b. L5 — abort a running build (the kill switch)
 
-Crash recovery (L3) is automatic; this is the *deliberate* stop. Start any program
-(L2) or build (L4), let a task reach `running`, then abort it:
+Crash recovery (L3) is automatic; this is the *deliberate* stop. Start any goal
+(L2 or L4), let its advance task reach `running`, then abort it:
 
 ```bash
 # abort one task (its sandbox is torn down; the task goes terminal 'cancelled'):
 python drive.py cancel_task '{"task_id":"<id>"}'        # → {"cancelled":true,"status":"cancelled"}
 
-# or abort the whole program (stops scheduling + tears down every running child):
-python drive.py cancel_program '{"program_id":"<id>"}'  # → {"cancelled":true,"status":"cancelled"}
+# or abort the whole goal (terminal 'cancelled'; tears down the in-flight advance):
+python drive.py cancel_goal '{"goal_id":"<id>"}'
 ```
 
 Confirm the abort holds:
 
 ```bash
-python drive.py get_program '{"program_id":"<id>"}'   # status: cancelled; tasks cancelled
+python drive.py get_goal '{"goal_id":"<id>"}'         # phase: cancelled
 docker ps --filter name=devclaw-                      # the sandbox container is gone (rm -f)
 ```
 
 **The recovery interplay is the point.** `cancelled` is terminal, and startup
 `recover()` only revives `running` rows — so kill the server right after a cancel
 and restart it: the cancelled work stays cancelled (it is NOT resurrected, unlike
-an orphaned `running` task). `cancel_program` on an already-terminal program is a
-safe no-op (`{"cancelled":false}`).
+an orphaned `running` task). `cancel_goal` on an already-terminal goal is a
+graceful no-op — safe to call more than once.
 
 ---
 

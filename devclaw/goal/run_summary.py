@@ -5,7 +5,7 @@ the run actually did: deliveries and their PRs, gate verdicts, total diff
 volume (per-delivery stats captured at settle since the DeliveryEvent gained
 them), real token/cost totals from the cognition traces, and wall-clock
 duration from the phase history. Everything here is a **projection of
-existing rows** (traces + phase_history + checklist) — computed at the
+existing rows** (traces + phase_history) — computed at the
 ACHIEVE close, written as a generated view alongside STATUS.md/log.md/
 deliveries.md, and never read back for decisions.
 
@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from .models import Checklist, GoalStatus
+from .models import GoalStatus
 
 
 def _parse_iso_ms(ts: str) -> Optional[float]:
@@ -61,7 +61,6 @@ def build_run_summary(
     status: GoalStatus,
     traces: list[dict],
     totals: Optional[dict] = None,
-    checklist: Optional[Checklist] = None,
     objective: str = "",
 ) -> tuple[str, str]:
     """Render the summary from rows. Returns ``(markdown, compact_line)`` —
@@ -113,13 +112,6 @@ def build_run_summary(
             duration = _fmt_duration(last - first)
 
     items_line = ""
-    if checklist is not None and checklist.items:
-        done = sum(1 for i in checklist.items if i.status == "done")
-        blocked = sum(1 for i in checklist.items if i.status == "blocked")
-        items_line = f"{done}/{len(checklist.items)} checklist items done"
-        if blocked:
-            items_line += f" ({blocked} blocked)"
-
     tokens_line = ""
     if isinstance(totals, dict):
         tok = (totals.get("cognition_tokens_in") or 0) + (

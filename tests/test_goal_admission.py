@@ -148,8 +148,8 @@ def test_from_scratch_with_spec_only_is_admitted():
 
 
 def test_existing_repo_needs_no_scope_anchor():
-    """When repo_url is set, the investigating phase produces the discovery
-    brief as the anchor — no spec/backlog required at admission time."""
+    """When repo_url is set, the worker grounds itself in the repo in-sandbox
+    (execution-time planning) — no spec/backlog required at admission time."""
     r = verify_goal(
         objective="add /health endpoint", workspace_dir="/ws",
         done_when="GET /health returns HTTP 200.",
@@ -240,14 +240,13 @@ def test_create_goal_admits_with_warning(svc):
     assert any("pytest" in w and "PATH" in w for w in result["warnings"])
 
 
-# ---- investigating is a one_shot concern (demolition P4) ---------------------
+# ---- both modes start executing (spec 008 shrink) ----------------------------
 
 
-def test_long_lived_goal_starts_executing_not_investigating(svc):
-    """Demolition P4: a long_lived goal skips the investigating detour — its
-    worker pulls repo context in-session (_advance_brief), so create_goal does
-    NOT stamp it investigating (no wasted discovery cognition / review_repository
-    round-trip). It starts in the default executing lifecycle."""
+def test_both_modes_start_executing(svc):
+    """Spec 008 shrink: the investigating/firming detour is gone for BOTH
+    modes — the worker plans in-sandbox (speckit), so create_goal stamps
+    lifecycle="executing" whether the goal is long_lived or one_shot."""
     svc.create_goal(
         "g-ll",
         objective="keep the dashboard healthy",
@@ -256,16 +255,8 @@ def test_long_lived_goal_starts_executing_not_investigating(svc):
         backlog=["add /health controller", "add test"],
         mode="long_lived",
     )
-    assert svc._goal_store.load_status("g-ll").lifecycle != "investigating"
+    assert svc._goal_store.load_status("g-ll").lifecycle == "executing"
 
-
-def test_one_shot_goal_still_starts_investigating(svc):
-    """The contrast: one_shot still investigates — its discovery brief feeds the
-    decomposer + the one_shot reopen-gate, so create_goal stamps it
-    investigating when INVESTIGATE_ENABLED is on (the default)."""
-    from devclaw.goal import research as goal_research
-
-    assert goal_research.INVESTIGATE_ENABLED  # default env — guards the contrast below
     svc.create_goal(
         "g-os",
         objective="ship the health endpoint",
@@ -274,7 +265,7 @@ def test_one_shot_goal_still_starts_investigating(svc):
         backlog=["add /health controller", "add test"],
         mode="one_shot",
     )
-    assert svc._goal_store.load_status("g-os").lifecycle == "investigating"
+    assert svc._goal_store.load_status("g-os").lifecycle == "executing"
 
 
 # ---- service.verify_goal pre-flight surface ---------------------------------

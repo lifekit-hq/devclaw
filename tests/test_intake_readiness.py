@@ -199,7 +199,7 @@ def test_missing_repo_context_fails_closed_with_distinct_reason():
 def test_paused_cognition_defers_grade_to_needs_refinement_not_ready():
     # a usage-limit pause surfaces as an exception from the caller → fail closed.
     gh = FakeGh()
-    from devclaw.planner import PlannerError
+    from devclaw.llm_call import PlannerError
 
     caller = RaisingClaude(PlannerError("Claude usage limit reached; quota resets"))
     label = _grade(gh=gh, claude_caller=caller)
@@ -383,8 +383,12 @@ def test_readiness_prompt_carries_grounding_clause_and_repo_facts():
     assert "absent ⇒" in prompt
     # repo facts are grounded in the injected context block
     assert "tracked_top_level: src, tests" in prompt
-    # non-overlap: readiness explicitly does NOT derive done_when / a checklist
-    assert "firming phase owns that" in prompt
+    # non-overlap: readiness explicitly does NOT derive done_when / a plan —
+    # the worker's execution-time planning does (spec 008 shrink retired the
+    # firming phase; the prompt must not reference it anymore)
+    assert "execution-time planning owns that" in prompt
+    assert "autonomous execution" in prompt
+    assert "firming" not in prompt
 
 
 def test_readiness_prompt_omits_repo_facts_when_absent():

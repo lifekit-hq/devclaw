@@ -13,9 +13,9 @@ import pytest
 
 from devclaw.quality import eval_judge
 from devclaw import elicitation
-from devclaw import planner
+from devclaw import llm_call
 from devclaw.engine import sandcastle as sandcastle_runner
-from devclaw.planner import _build_claude_argv, call_claude, claude_with_model
+from devclaw.llm_call import _build_claude_argv, call_claude, claude_with_model
 
 
 # ---- argv construction (pure) ----
@@ -26,7 +26,7 @@ def test_argv_includes_model_when_set():
     assert "--model" in argv
     assert argv[argv.index("--model") + 1] == "sonnet"
     # T0.5: json output format — the CLI envelope carries real token usage.
-    assert argv[:3] == [planner.CLAUDE_BIN, "--print", "--output-format=json"]
+    assert argv[:3] == [llm_call.CLAUDE_BIN, "--print", "--output-format=json"]
     # 2026-07-03 argv → stdin migration: prompt no longer rides on argv,
     # protecting against ``[Errno 7] Argument list too long`` on long prompts.
     assert "do the thing" not in argv
@@ -74,7 +74,7 @@ async def test_call_claude_passes_prompt_on_stdin(monkeypatch):
         captured["stdin_kw"] = kwargs.get("stdin")
         return _FakeProc()
 
-    monkeypatch.setattr(planner.asyncio, "create_subprocess_exec", fake_spawn)
+    monkeypatch.setattr(llm_call.asyncio, "create_subprocess_exec", fake_spawn)
     out = await call_claude("this is a very long prompt " * 5_000, model="sonnet")
     assert out == "ok"
     # Verified: prompt reached stdin, not argv.
@@ -82,7 +82,7 @@ async def test_call_claude_passes_prompt_on_stdin(monkeypatch):
     assert not any(b"very long prompt" in a.encode() for a in captured["argv"]), (
         "prompt leaked into argv"
     )
-    assert captured["stdin_kw"] == planner.asyncio.subprocess.PIPE
+    assert captured["stdin_kw"] == llm_call.asyncio.subprocess.PIPE
 
 
 # ---- the model-binding factory ----
@@ -98,7 +98,7 @@ async def test_claude_with_model_forwards_model(monkeypatch):
         captured["timeout_ms"] = timeout_ms
         return "ok"
 
-    monkeypatch.setattr(planner, "call_claude", fake_call)
+    monkeypatch.setattr(llm_call, "call_claude", fake_call)
     caller = claude_with_model("claude-opus-4-8", role="planner")
     out = await caller("hello")
     assert out == "ok"
@@ -110,15 +110,15 @@ async def test_claude_with_model_forwards_model(monkeypatch):
 
 async def test_claude_with_model_forwards_timeout(monkeypatch):
     """Per-role timeout override threads through bind → ClaudeCognition →
-    call_claude. The decomposer is the canonical user."""
+    call_claude."""
     captured = {}
 
     async def fake_call(prompt, model=None, *, role="unknown", timeout_ms=None):
         captured["timeout_ms"] = timeout_ms
         return "ok"
 
-    monkeypatch.setattr(planner, "call_claude", fake_call)
-    caller = claude_with_model("opus", role="goal_decomposer", timeout_ms=300000)
+    monkeypatch.setattr(llm_call, "call_claude", fake_call)
+    caller = claude_with_model("opus", role="grill", timeout_ms=300000)
     await caller("hi")
     assert captured["timeout_ms"] == 300000
 
@@ -127,31 +127,27 @@ async def test_claude_with_model_forwards_timeout(monkeypatch):
 
 
 def test_shipped_default_tiers():
-    from devclaw.goal.decomposer import DECOMPOSER_MODEL
-
-    assert DECOMPOSER_MODEL == "opus"  # the ONE planning spine — rare + high-leverage
     assert elicitation.GRILL_MODEL == "sonnet"  # conversational
     assert eval_judge.JUDGE_MODEL == "haiku"  # bounded classification
     assert sandcastle_runner.EXEC_MODEL == "claude-sonnet-4-6"  # the coding bulk
 
 
 def test_planner_role_retired_with_plan_goal():
-    """ADR 0003 stage 1: program planning routes through the decomposer, so the
-    'planner' tier row is gone — model_for fails loud on it rather than
+    """The host planning chain is gone (ADR 0003 stage 1 retired 'planner';
+    spec 008 shrink #539 amputated firming/decomposer/world_research) — the
+    tier rows are gone with it, and model_for fails loud on each rather than
     silently tiering a dead role."""
     from devclaw.model_tiers import model_for
 
-    with pytest.raises(KeyError):
-        model_for("planner")
+    for retired in ("planner", "firming", "decomposer", "world_research"):
+        with pytest.raises(KeyError):
+            model_for(retired)
 
 
 # ---- each role's default caller is wired to its tier ----
 
 
 def test_role_default_callers_are_tiered():
-    # program planning → the decomposer tier (plan_program binds lazily via
-    # goal.decomposer.default_caller; assert the factory is the decomposer's)
-    assert inspect.signature(planner.plan_program).parameters["claude_caller"].default is None
     # grill → grill tier (next_step binds lazily via default_caller; assert the
     # factory routes the configured tier)
     assert elicitation.default_caller.__module__ == "devclaw.elicitation"

@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pytest
 
-from devclaw import planner
+from devclaw import llm_call as planner
 from devclaw.loom import trace as _trace
 from devclaw.loom.limits import FailureKind, classify_failure
-from devclaw.planner import PlannerError, call_claude, parse_cli_envelope
+from devclaw.llm_call import PlannerError, call_claude, parse_cli_envelope
 
 FIXTURE = Path(__file__).parent / "fixtures" / "claude_print_json_envelope.json"
 

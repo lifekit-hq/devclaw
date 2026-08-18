@@ -65,23 +65,12 @@ VERIFY_DONE = True
 AUTODEPLOY_ENABLED: "bool | None" = None
 
 
-#: when True, the investigating phase dispatches the decomposer after the
-#: discovery brief is written — emitting an atomic checklist that the per-tick
-#: planner picks actions from instead of the free-form backlog. Pillar 1 of the
-#: planning-engine rework; default OFF so legacy goals are unaffected until the
-#: operator opts in (per-goal env or stack-wide).
-DECOMPOSE_ENABLED = os.environ.get("DEVCLAW_GOAL_DECOMPOSE", "0") not in ("0", "false", "")
-
-
-
-
 class Outcome(str, Enum):
     IDLE = "idle"            # cheap check found nothing — 0 tokens
     IN_FLIGHT = "in_flight"  # dispatched action still running — 0 tokens
     DISPATCHED = "dispatched"
     VERIFYING = "verifying"  # done-gate review dispatched
     SLEPT = "slept"
-    ADVANCED = "advanced"    # lifecycle transitioned without dispatching a task; re-tick immediately
     BLOCKED = "blocked"
     DONE = "done"
     SKIP_DONE = "skip_done"
@@ -205,11 +194,8 @@ class Phase(str, Enum):
 
     TERMINAL_DONE = "terminal_done"
     TERMINAL_CANCELLED = "terminal_cancelled"
-    POLLING_DISCOVERY = "polling_discovery"
     POLLING_DONE_GATE = "polling_done_gate"
     POLLING_ACTION = "polling_action"
-    INVESTIGATING = "investigating"
-    FIRMING = "firming"
     EXECUTING = "executing"
 
 
@@ -224,19 +210,13 @@ def _classify(status: GoalStatus) -> Phase:
         return Phase.TERMINAL_CANCELLED
     if status.in_flight is not None:
         ref = status.in_flight
-        if getattr(ref, "is_discovery", False):
-            return Phase.POLLING_DISCOVERY
         if getattr(ref, "is_done_check", False):
             return Phase.POLLING_DONE_GATE
         return Phase.POLLING_ACTION
-    # No in-flight work — dispatch on lifecycle. A None lifecycle (legacy goal)
-    # behaves as "executing"; "investigating" without an in-flight ref re-opens
-    # the investigation (the discovery never resolved — dispatch it again).
-    lifecycle = status.lifecycle or "executing"
-    if lifecycle == "investigating":
-        return Phase.INVESTIGATING
-    if lifecycle == "firming":
-        return Phase.FIRMING
+    # No in-flight work → executing. Every lifecycle value lands here now: the
+    # investigating/firming phases were removed with the host-cognition chain
+    # (spec 008 shrink) — a legacy row still carrying one of those strings is
+    # healed loudly by the tick before dispatch.
     return Phase.EXECUTING
 
 
@@ -258,17 +238,8 @@ class TickContext:
     #: deploy iff the workspace has an app surface (resolved at the done-gate).
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED
     no_progress_s: int = NO_PROGRESS_S
-    decompose_enabled: bool = DECOMPOSE_ENABLED
     summary_caller: "ClaudeCaller | None" = None
     merger: "_merge.Merger | None" = None
-    #: Pillar 1 cognition caller for the decomposer. None → the decomposer's
-    #: own ``default_caller()``; explicit injection lets tests stub it.
-    decomposer_caller: "ClaudeCaller | None" = None
-    #: cognition caller for world-research (from-scratch goal grounding —
-    #: real-world exemplars + MVP bar + defer list). None → handlers use
-    #: ``world_research.default_caller()``; explicit injection lets tests stub
-    #: the brief without touching subprocess.
-    world_research_caller: "ClaudeCaller | None" = None
     #: grounded remote-checks verification at the done-gate (the 2026-07-06
     #: benchmark fix: ``achieved`` is only honored when the goal branch's REAL
     #: CI doesn't contradict it). None → skipped (legacy behaviour);

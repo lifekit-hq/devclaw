@@ -16,11 +16,8 @@ real code — but the static blocks they assemble live here.
 Use:
 
     from devclaw.prompts import load_prompt
-    prompt = load_prompt("decomposer")
-    prompt = load_prompt("research-discovery",
-                         objective="ship a CLI",
-                         done_when="ship it",
-                         repo_analysis="…")
+    prompt = load_prompt("goal-evaluator")
+    prompt = load_prompt("scope-grill")
 """
 
 from __future__ import annotations

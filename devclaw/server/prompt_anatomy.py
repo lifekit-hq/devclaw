@@ -50,7 +50,6 @@ _KNOWN: tuple[tuple[str, str, str | None], ...] = (
     ("recent event log", "data", "log"),        # evaluator
     ("repository context", "data", "repo_context"),
     ("repo digest", "data", "repo_digest"),
-    ("discovery brief", "data", "discovery_brief"),
     ("trend signals", "data", "trend_signals"),
     ("checklist", "data", "checklist"),
     ("the action that just finished", "data", "engine_result"),
