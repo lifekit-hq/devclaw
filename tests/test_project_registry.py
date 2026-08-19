@@ -535,7 +535,7 @@ def test_backfill_stamps_project_id_from_legacy_workspace(tmp_path):
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
     reg.create(id="proj", name="P", workspace_dir="/repos/demo", automerge=True)
     cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900,
-                     eval_every=99, verify_done=False)
+                     verify_done=False)
     svc = GoalService(TaskQueue(db), db, config=cfg, project_registry=reg)
     seed_goal(goals_dir, "legacy-g")  # workspace_dir=/repos/demo, NO project_id
     assert svc._goal_store.load_goal("legacy-g").project_id is None

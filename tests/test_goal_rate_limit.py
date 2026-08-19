@@ -85,7 +85,7 @@ async def test_goal_cognition_rate_limit_pauses_layer(tmp_path):
 
     out = await tick_all(
         store=store, engine=eng, evaluator_caller=evaluator,
-        notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
     assert out["g"] is Outcome.RATE_LIMITED
@@ -103,7 +103,7 @@ async def test_tick_all_skips_all_cognition_while_paused(tmp_path):
 
     out = await tick_all(
         store=store, engine=eng, evaluator_caller=evaluator,
-        notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
     assert out["g"] is Outcome.RATE_LIMITED
@@ -119,7 +119,7 @@ async def test_expired_pause_clears_and_proceeds(tmp_path):
 
     out = await tick_all(
         store=store, engine=eng, evaluator_caller=evaluator,
-        notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
     assert eng.global_pause()[0] == 0          # expired pause was cleared
@@ -157,7 +157,7 @@ class FlaggedPausableEngine(PausableEngine):
 async def _tick(store, eng, notifier, evaluator=None):
     return await tick_all(
         store=store, engine=eng, evaluator_caller=evaluator or FakeClaude(),
-        notifier=notifier, prepare_ws=fake_prepare, eval_every=99,
+        notifier=notifier, prepare_ws=fake_prepare,
     )
 
 

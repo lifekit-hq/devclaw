@@ -79,7 +79,7 @@ async def test_speckit_brief_change_keeps_idle_tick_zero_token(tmp_path):
     out = await tick_goal(
         "g", store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
-        eval_every=99, verify_done=True,
+        verify_done=True,
     )
 
     assert out is Outcome.IDLE

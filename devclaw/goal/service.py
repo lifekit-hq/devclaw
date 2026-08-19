@@ -34,7 +34,7 @@ from .evaluator import ClaudeCaller
 from .models import Goal, GoalStatus
 from .notify import HttpNotifier, Notifier, NullNotifier
 from .store import GoalStore
-from .tick import AUTODEPLOY_ENABLED, EVAL_EVERY, VERIFY_DONE, sweep_orphaned_refs, tick_all, tick_goal
+from .tick import AUTODEPLOY_ENABLED, VERIFY_DONE, sweep_orphaned_refs, tick_all, tick_goal
 from .transitions import Event
 from ..dispatch_gate import next_window_open_ms, operator_block, schedule_blocks
 from ..loom import trace as _trace
@@ -65,7 +65,6 @@ class GoalConfig:
     goals_dir: Path
     notify_url: str
     tick_seconds: int
-    eval_every: int
     verify_done: bool
     #: three-way: True/False pins the fleet; None (the default) = conditional —
     #: deploy on completion only if the workspace has an app surface (#554).
@@ -78,7 +77,6 @@ class GoalConfig:
             goals_dir=Path(os.path.expanduser(raw)),
             notify_url=os.environ.get("DEVCLAW_GOAL_NOTIFY_URL", ""),
             tick_seconds=int(os.environ.get("DEVCLAW_GOAL_TICK_SECONDS", "900")),
-            eval_every=EVAL_EVERY,
             verify_done=VERIFY_DONE,
             autodeploy=AUTODEPLOY_ENABLED,
         )
@@ -445,7 +443,7 @@ class GoalService:
             store=self._goal_store, engine=self._engine,
             evaluator_caller=self._evaluator(),
             notifier=self._notifier, notify_url="",
-            eval_every=self._cfg.eval_every, verify_done=self._cfg.verify_done,
+            verify_done=self._cfg.verify_done,
             verify_done_resolver=self._verify_done_resolver(),
             autodeploy=self._cfg.autodeploy, autodeploy_resolver=self._autodeploy_resolver(),
             summary_caller=self._summary(), merger_resolver=self._merger_resolver(),
@@ -468,7 +466,7 @@ class GoalService:
                 goal_id, store=self._goal_store, engine=self._engine,
                 evaluator_caller=self._evaluator(),
                 notifier=self._notifier, notify_url="",
-                eval_every=self._cfg.eval_every, verify_done=self._verify_done(goal),
+                verify_done=self._verify_done(goal),
                 autodeploy=self._autodeploy(goal),
                 summary_caller=self._summary(), merger=self._merger(goal),
                 trend_detector=self._trend_detector(),

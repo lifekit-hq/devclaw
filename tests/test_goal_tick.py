@@ -55,12 +55,12 @@ def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _tick(store, goal_id, evaluator, engine, notifier, *, eval_every=99, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
+async def _tick(store, goal_id, evaluator, engine, notifier, *, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
-        eval_every=eval_every, verify_done=verify_done, summary_caller=summary_caller,
+        verify_done=verify_done, summary_caller=summary_caller,
         merger=merger, remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
     )
@@ -198,7 +198,7 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine, evaluator_caller=evaluator,
-        notifier=notifier, notify_url="", prepare_ws=rec_prepare, eval_every=99,
+        notifier=notifier, notify_url="", prepare_ws=rec_prepare,
     )
     assert out is Outcome.DISPATCHED
     # seed_goal now sets a fake repo_url so the investigating phase takes the
@@ -427,7 +427,7 @@ def test_steer_goal_resets_dispatch_counter_on_blocked(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         # Seed + read back through the service's OWN store: since Tranche 1/PR3
         # status lives in the shared StateStore (not STATUS.md), so a separate
@@ -461,7 +461,7 @@ def test_steer_goal_clears_blocked_on(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         svc._goal_store.save_status(
             "g",
@@ -497,7 +497,7 @@ def _resume_service(tmp_path):
 
     goals_dir = tmp_path / "goals"
     db = StateStore(str(tmp_path / "state.db"))
-    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
     return GoalService(TaskQueue(db), db, config=cfg), db, goals_dir
 
 
@@ -870,7 +870,7 @@ async def test_done_gate_verified_wording_kept_when_review_grounded(tmp_path, mo
 # ---- periodic direction evaluation: CUT (demolition P1) --------------------
 # docs/proposals/cognition-demolition.md — the per-tick mid-flight direction
 # evaluator (`_run_mid_flight_eval`) is removed. Direction is no longer re-judged
-# by an LLM every EVAL_EVERY deliveries; the mechanical brakes stand (no-progress
+# by an LLM on a delivery cadence; the mechanical brakes stand (no-progress
 # watchdog, done-gate, per-item circuit breaker). The old fires-and-steers /
 # carries-repo-context / stalled-blocks tests are replaced by the contract below.
 
@@ -887,7 +887,7 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
     """
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    # Past the old cadence threshold (deliveries_since_eval bumps 2→3, eval_every=3):
+    # Past the old cadence threshold (deliveries_since_eval bumps 2→3):
     # under the old code this fired the mid-flight eval; now it must not.
     store.save_status("g", GoalStatus(
         phase="in_flight", deliveries_since_eval=2,
@@ -898,7 +898,7 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="shipped"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", evaluator, engine, notifier, eval_every=3)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert evaluator.calls == 0                       # the mid-flight cognition boundary is gone
     assert out is not Outcome.BLOCKED                 # a direction verdict can no longer block mid-flight
@@ -925,7 +925,7 @@ async def test_owner_notification_is_plain_summarized(tmp_path, monkeypatch):
         "g", store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=_failing_prepare,
-        eval_every=99, summary_caller=summarizer,
+        summary_caller=summarizer,
     )
 
     assert out is Outcome.BLOCKED
@@ -1773,7 +1773,7 @@ async def _tick_prep(store, goal_id, engine, notifier, *, prepare_ws):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=FakeClaude(), notifier=notifier,
-        notify_url="http://relay", prepare_ws=prepare_ws, eval_every=99,
+        notify_url="http://relay", prepare_ws=prepare_ws,
     )
 
 
@@ -2494,7 +2494,7 @@ def test_blocked_kind_cleared_on_unblock(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         svc._goal_store.save_status(
             "g", GoalStatus(phase="blocked", blocked_on="cap hit",
@@ -2529,7 +2529,7 @@ def test_resume_goal_restores_the_autoheal_budget(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         svc._goal_store.save_status(
             "g", GoalStatus(phase="blocked", blocked_on="clone failed: repo not found",

@@ -77,7 +77,6 @@ def test_fresh_goals_of_both_modes_resolve_goal_branch_delivery(tmp_path):
         goals_dir=tmp_path / "goals",
         notify_url="",
         tick_seconds=900,
-        eval_every=5,
         verify_done=False,
     )
     svc = GoalService(queue, store, cfg)

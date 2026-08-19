@@ -34,7 +34,7 @@ async def _thin_tick(store, goal_id, evaluator, engine, notifier, *, verify_done
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
-        eval_every=99, verify_done=verify_done, )
+        verify_done=verify_done, )
 
 
 # ---- the guardrail: thin idle / blocked ticks are zero-token ---------------

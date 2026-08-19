@@ -39,10 +39,6 @@ from ..loom import trace as _trace
 WorkspacePrep = Callable[[str, "str | None", "str | None"], Awaitable[str]]
 
 
-#: deliveries between periodic direction evaluations (0 → only at the done-gate)
-EVAL_EVERY = 3
-
-
 #: wall-clock seconds an EXECUTING goal may go without a delivery before the
 #: no-progress watchdog pings the owner once. Complements the per-task timeout
 #: (which kills one hung run) by catching a goal that keeps churning — dispatching,
@@ -232,7 +228,6 @@ class TickContext:
     notifier: Notifier
     notify_url: str = ""
     prepare_ws: WorkspacePrep = prepare_workspace
-    eval_every: int = EVAL_EVERY
     verify_done: bool = VERIFY_DONE
     #: three-way: True/False = pinned (project override); None = conditional —
     #: deploy iff the workspace has an app surface (resolved at the done-gate).

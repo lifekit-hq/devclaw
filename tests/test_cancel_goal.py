@@ -25,7 +25,6 @@ def _svc(tmp_path, db):
         goals_dir=goals_dir,
         notify_url="",
         tick_seconds=900,
-        eval_every=3,
         verify_done=False,
     )
     queue = TaskQueue(db)
@@ -123,7 +122,7 @@ async def test_cancelled_goal_is_skipped_on_tick(tmp_path):
     out = await tick_goal(
         "g", store=store, engine=engine,
         evaluator_caller=evaluator,
-        notifier=notifier, notify_url="", prepare_ws=fake_prepare, eval_every=99,
+        notifier=notifier, notify_url="", prepare_ws=fake_prepare,
     )
 
     assert out is Outcome.SKIP_CANCELLED

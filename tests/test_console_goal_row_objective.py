@@ -23,7 +23,7 @@ def _svc(tmp_path):
     goals_dir = tmp_path / "goals"
     cfg = GoalConfig(
         goals_dir=goals_dir, notify_url="", tick_seconds=900,
-        eval_every=3, verify_done=False,
+        verify_done=False,
     )
     svc = GoalService(
         TaskQueue(db), db, config=cfg, notifier=RecordingNotifier(),

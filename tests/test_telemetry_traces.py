@@ -321,7 +321,7 @@ def test_goal_service_make_tracer_binds_goals_dir(store, tmp_path, monkeypatch):
     goals_dir = tmp_path / "goals"
     cfg = GoalConfig(
         goals_dir=goals_dir, notify_url="", tick_seconds=900,
-        eval_every=3, verify_done=False,
+        verify_done=False,
     )
     svc = GoalService(TaskQueue(store), store, config=cfg)
     tracer = svc._make_tracer("g1")
