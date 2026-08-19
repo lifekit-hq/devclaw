@@ -66,23 +66,6 @@ class InProcessEngine:
         queue via ``kick()`` AFTER its transaction commits."""
         ws = goal.workspace_dir
         nu = notify_url or None
-        if action.tool == "start_program" and action.planned:
-            # ALREADY-PLANNED program: submit the caller's DAG verbatim.
-            # (Nothing in the goal layer produces this since the checklist
-            # died — spec 008 shrink — but the queue mechanism stays for
-            # explicit-planned callers/tests.) Same inheritance contract as
-            # the branch below; pump=False for the atomic-dispatch reason.
-            program_id = self._queue.start_planned_program(
-                goal=action.goal, workspace_dir=ws,
-                planned=list(action.planned), notify_url=nu,
-                open_pr=action.open_pr,
-                verify_cmd=action.verify_cmd or goal.verify_cmd,
-                parent_goal_id=goal.id,
-                strictness=goal.strictness,
-                project_id=goal.project_id,
-                pump=False,
-            )
-            return InFlight("devclaw", "start_program", program_id, "program", action.goal)
         if action.tool == "start_program":
             # Program-child tasks inherit ``open_pr`` and ``verify_cmd`` — the
             # standing-goal / reviewable-slice contract. Under a mission goal
@@ -112,7 +95,6 @@ class InProcessEngine:
                 notify_url=nu,
                 verify_cmd=None if is_review else (action.verify_cmd or goal.verify_cmd),
                 deliver=False if is_review else action.open_pr,
-                title=None if is_review else action.title,
                 parent_goal_id=goal.id,
                 # L3 (#222): a pure-scaffolding item skips the adversarial review
                 # gate (verified structurally by the build gate instead). Never

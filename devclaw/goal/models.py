@@ -3,8 +3,7 @@
 Folded in from goalclaw. A :class:`Goal` is the durable objective (read from
 ``goal.yaml``); a :class:`GoalStatus` is the mutable point-in-time state
 (``STATUS.md`` frontmatter), overwritten each tick. An :class:`Action` is a
-single engine call the planner decided on; a :class:`PlanResult` is the whole
-next-action decision. :class:`EvalResult` is the direction evaluator's verdict —
+single engine call the tick dispatches. :class:`EvalResult` is the direction evaluator's verdict —
 the layer that asks "is this going the right way?" not just "did it ship?".
 
 These are deliberately separate from the task/program types in
@@ -34,7 +33,6 @@ Phase = Literal["idle", "in_flight", "verifying", "blocked", "done", "cancelled"
 #: a pre-shrink row still carrying "investigating"/"firming" is healed loudly
 #: by the tick on first touch.
 Lifecycle = Literal["executing"]
-Decision = Literal["act", "sleep", "blocked", "done"]
 EvalVerdict = Literal["on_track", "off_track", "achieved", "stalled", "needs_human"]
 #: The execution dial (ADR 0003): both modes ride ONE execution path (the
 #: speckit advance loop, spec 008); the dial is re-evaluation cadence, never a
@@ -251,10 +249,9 @@ class GoalStatus:
 
 @dataclass(frozen=True)
 class Action:
-    """One engine call the tick dispatches. ``addresses``/``planned``/
-    ``scaffold`` are retained for the queue's program mechanism and legacy
-    row deserialization — nothing in the goal layer produces them since the
-    checklist died (spec 008 shrink)."""
+    """One engine call the tick dispatches. ``addresses``/``scaffold`` are
+    retained for legacy row deserialization — nothing in the goal layer
+    produces them since the checklist died (spec 008 shrink)."""
 
     engine: Engine
     tool: GoalTool
@@ -262,54 +259,12 @@ class Action:
     verify_cmd: Optional[str] = None
     open_pr: bool = True
     addresses: list[str] = field(default_factory=list)
-    #: A concise conventional-commit-shaped PR title the PLANNER chose based on
-    #: what it's asking the executor to build — e.g. ``feat: add /health
-    #: endpoint``. Threaded planner → Task → delivery so the opened PR reads as
-    #: what was asked, not what a summary of a mid-work commit subject
-    #: interpreted after the fact (see plan.md §Production-ready C7 and commit
-    #: d41d27b which grounded the fallback but couldn't remove the guesswork).
-    #: Optional: when None, delivery falls back to the engineer's own commit
-    #: subject, then the diff-grounded _pr_title(goal, kind) heuristic.
-    title: Optional[str] = None
     #: True when the action is generated scaffolding — threads onto the task
     #: row so the queue skips the adversarial review gate for it. SAFETY:
     #: skips review ONLY — verify + test-integrity still run.
     scaffold: bool = False
-    #: ALREADY-PLANNED task DAG (a ``list[devclaw.program_plan.PlannedTask]``,
-    #: untyped here to keep this module a leaf) for a ``start_program`` action.
-    #: Nothing in the goal layer produces this since the checklist died.
-    planned: Optional[list] = None
 
 
-@dataclass(frozen=True)
-class BlockOption:
-    """One selectable answer for a ``needs_answer`` block (§6, ADR 0010). The
-    planner emits these at block time; the console renders them as buttons.
-    ``steer`` is the pre-baked ``steer_goal`` message applied when the owner
-    picks this option — the model writes the resolution for each branch it saw."""
-
-    key: str
-    label: str
-    detail: str = ""
-    steer: str = ""
-
-
-@dataclass(frozen=True)
-class PlanResult:
-    """The next-action planner's full decision for one wakeup."""
-
-    decision: Decision
-    #: present when decision == "act"
-    actions: list[Action] = field(default_factory=list)
-    #: present when decision == "blocked"
-    question: str = ""
-    #: §6 (ADR 0010): structured options for a needs_answer block. Blank-safe —
-    #: absent/malformed ⇒ [] ⇒ the block renders exactly as it did pre-§6.
-    options: list[BlockOption] = field(default_factory=list)
-    #: the key of the option the planner recommends (may be "" / unknown-key).
-    recommended: str = ""
-    #: human-readable summary for the log + notify, any decision
-    note: str = ""
 @dataclass(frozen=True)
 class ClauseVerdict:
     """One atomic ``done_when`` clause + the evaluator's per-clause finding.
