@@ -1,6 +1,6 @@
 [project]
 name = "devclaw"
-version = "0.2.0"
+version = "0.3.0"
 description = "DevClaw — MCP server orchestrating OpenHands for autonomous coding tasks"
 requires-python = ">=3.11"
 dependencies = [

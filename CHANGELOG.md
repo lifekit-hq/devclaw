@@ -2,6 +2,63 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.3.0](https://github.com/lifekit-hq/devclaw/compare/v0.2.0...v0.3.0) (2026-08-19)
+
+
+### Features
+
+* **delivery:** Claude-Code-style PR bodies (## Summary / ## Testing) ([#527](https://github.com/lifekit-hq/devclaw/issues/527)) ([2c23827](https://github.com/lifekit-hq/devclaw/commit/2c23827e038ca28ade37376f063aa9b9e560f477))
+* **deploy:** autodeploy default follows app-surface semantics — libraries no longer get preview containers ([#554](https://github.com/lifekit-hq/devclaw/issues/554)) ([#559](https://github.com/lifekit-hq/devclaw/issues/559)) ([f58729f](https://github.com/lifekit-hq/devclaw/commit/f58729fd4d40b72e4b93bd8977d9224e9e64160b))
+* **deploy:** devclaw builds + ships its own image; own compose project (spec 005) ([1c039a7](https://github.com/lifekit-hq/devclaw/commit/1c039a725bb5b4c0ad98d9991e689c595e114eb4))
+* **dispatch:** P2 direct-path auto-prep — clone a missing workspace from repo_url instead of rejecting ([#525](https://github.com/lifekit-hq/devclaw/issues/525)) ([fffb7a5](https://github.com/lifekit-hq/devclaw/commit/fffb7a53d0c676b23a739f8130d7297501c3a9ef))
+* **dispatch:** registry as the single source of truth — project_id reference key + preflight (P1, [#520](https://github.com/lifekit-hq/devclaw/issues/520)) ([#522](https://github.com/lifekit-hq/devclaw/issues/522)) ([e477109](https://github.com/lifekit-hq/devclaw/commit/e4771093d6adcd7e2470afc635472e9b23b9b725))
+* **gate:** trust drops the per-increment adversarial review (spec 001) ([#519](https://github.com/lifekit-hq/devclaw/issues/519)) ([80c0882](https://github.com/lifekit-hq/devclaw/commit/80c08820cf87d6926965c0cbb44a16eda47baf3e))
+* **goal:** speckit execution substrate — slice-guard reads tasks.md, adopt/install (spec 008 P1) ([#540](https://github.com/lifekit-hq/devclaw/issues/540)) ([4dc7e17](https://github.com/lifekit-hq/devclaw/commit/4dc7e176fc36148c48b553393f6da40d1e10a9c9))
+* **intake:** autonomous issue-pipeline arc scope + P1 intake readiness gate (spec 006) ([#531](https://github.com/lifekit-hq/devclaw/issues/531)) ([a74fdda](https://github.com/lifekit-hq/devclaw/commit/a74fdda3dcee2e72938098977a0767e869bc6c42))
+* **intake:** recover ungraded intake issues at serve-start (spec 006 P2) ([#532](https://github.com/lifekit-hq/devclaw/issues/532)) ([244e58e](https://github.com/lifekit-hq/devclaw/commit/244e58e43144014d3f91d81ae0d4ddaeee3893b5))
+* **intake:** universal issue adoption — format-tolerant regrade + capped grade_backlog (spec 009) ([#560](https://github.com/lifekit-hq/devclaw/issues/560)) ([8ca93eb](https://github.com/lifekit-hq/devclaw/commit/8ca93eb0f721dc89a86d0a1bc3c2d9c288cb5069))
+* **registry:** P3 — key project↔goal/task joins by project_id; retire the workspace-path scan ([#528](https://github.com/lifekit-hq/devclaw/issues/528)) ([d9d4196](https://github.com/lifekit-hq/devclaw/commit/d9d4196bd9c2a62bdc0ea63941dabd89f2063061))
+* **runner:** ACP-direct worker — retire the OpenHands SDK (spec 011, [#542](https://github.com/lifekit-hq/devclaw/issues/542)) ([#575](https://github.com/lifekit-hq/devclaw/issues/575)) ([468b072](https://github.com/lifekit-hq/devclaw/commit/468b072f3efb46c97af3342c9270363e832f7262))
+* **server:** one operator surface — /dashboard redirects to /console ([#549](https://github.com/lifekit-hq/devclaw/issues/549)) ([#556](https://github.com/lifekit-hq/devclaw/issues/556)) ([df4a2dd](https://github.com/lifekit-hq/devclaw/commit/df4a2dda5b6c61401e2d7190b8a36520189efe8c))
+
+
+### Bug Fixes
+
+* **cognition:** readiness rubric demands a stated after-state — placeholder asks stop grading ready ([#561](https://github.com/lifekit-hq/devclaw/issues/561)) ([#562](https://github.com/lifekit-hq/devclaw/issues/562)) ([a3d53df](https://github.com/lifekit-hq/devclaw/commit/a3d53df92ce46aaf97a05232bfb82d4e39323d6a))
+* **delivery:** goal-branch PR titles prefer the worker's commit subject; word-boundary fallback truncation ([#551](https://github.com/lifekit-hq/devclaw/issues/551)) ([#557](https://github.com/lifekit-hq/devclaw/issues/557)) ([718cfc9](https://github.com/lifekit-hq/devclaw/commit/718cfc9364c14621dfcf0cdf9320bdce09c54579))
+* **delivery:** goal-branch PRs render the objective, never the advance brief ([#547](https://github.com/lifekit-hq/devclaw/issues/547)) ([ea8fbcd](https://github.com/lifekit-hq/devclaw/commit/ea8fbcdf283ba3871130bca9cb340c549cec5799))
+* **deploy:** devclaw owns its env file — default /srv/devclaw/.env ([#541](https://github.com/lifekit-hq/devclaw/issues/541)) ([1a3da69](https://github.com/lifekit-hq/devclaw/commit/1a3da694bee80f18b063406fcf1077113190971c))
+* **deploy:** log in to ghcr unconditionally — tag/rollback deploys pull private packages ([#545](https://github.com/lifekit-hq/devclaw/issues/545)) ([622e712](https://github.com/lifekit-hq/devclaw/commit/622e712a94c31db92dac43b927e5971f7609ec08))
+* **engine:** bind sandbox claude identity pair as disposable rw copies, not ro host files ([#544](https://github.com/lifekit-hq/devclaw/issues/544)) ([ee30c6a](https://github.com/lifekit-hq/devclaw/commit/ee30c6a9b40221b7c6030b506abb74fbde45405f))
+* **evaluator:** done-gate verdict owned by done_when; structural axis rides the strictness dial; churn brake ([#571](https://github.com/lifekit-hq/devclaw/issues/571)) ([71ce9b5](https://github.com/lifekit-hq/devclaw/commit/71ce9b5a055d829a376bcec02a5207ee0629c46a))
+* **goal:** a failed settle's terminal reason rides the next advance brief; context overflow is a named class; dispatch log stops lying ([#572](https://github.com/lifekit-hq/devclaw/issues/572)) ([8fdae1c](https://github.com/lifekit-hq/devclaw/commit/8fdae1cfe02e14b067b0ff80a41f589f7384481c))
+* **goal:** human-facing goal renderings show the objective, never the advance brief ([#550](https://github.com/lifekit-hq/devclaw/issues/550)) ([#558](https://github.com/lifekit-hq/devclaw/issues/558)) ([26c43a8](https://github.com/lifekit-hq/devclaw/commit/26c43a8057d97259ec437f99c36b5ba63dd80dcb))
+* **queue:** retry preamble instructs reproduce-first — a non-reproducing failure is flakiness, not a phantom bug ([#564](https://github.com/lifekit-hq/devclaw/issues/564) R1) ([#566](https://github.com/lifekit-hq/devclaw/issues/566)) ([c8f4a6a](https://github.com/lifekit-hq/devclaw/commit/c8f4a6a64c7e66871729c0df3a9b210aea4f479e))
+* **runner:** agent_output is the agent's final message, not the stdout transcript echo ([#570](https://github.com/lifekit-hq/devclaw/issues/570)) ([8ce6169](https://github.com/lifekit-hq/devclaw/commit/8ce6169850aa3a9675c23c1b2ba0157cdb457e6a))
+* **worker:** adopt speckit's thin agent-file doctrine — keep-honest-only AGENTS.md, onboard slims to three docs ([#555](https://github.com/lifekit-hq/devclaw/issues/555)) ([41d838f](https://github.com/lifekit-hq/devclaw/commit/41d838fb59c7c8cf54f90e944c2b5cdd466ace9c))
+* **worker:** retire the PLAN.md skill — durable memory is the speckit artifacts (spec 008, [#535](https://github.com/lifekit-hq/devclaw/issues/535) pulled forward) ([#546](https://github.com/lifekit-hq/devclaw/issues/546)) ([831e06f](https://github.com/lifekit-hq/devclaw/commit/831e06f0d790d9c16d3ae87c494d7c6ac776daaf))
+
+
+### Refactoring
+
+* **runner:** rename openhands-runner/ → runner/ — the mechanical follow-up closing the spec-011 arc ([#577](https://github.com/lifekit-hq/devclaw/issues/577)) ([b688803](https://github.com/lifekit-hq/devclaw/commit/b688803dd0856f16e8c46b5071fc2d4e132c6e42))
+* **shrink:** amputation round 2 — the vestigial census cut (net −677 lines) ([#574](https://github.com/lifekit-hq/devclaw/issues/574)) ([8da9ad5](https://github.com/lifekit-hq/devclaw/commit/8da9ad5400c49f52056615dcb21d368e4488209c))
+* **shrink:** remove the host-cognition chain — one execution path (spec 008 shrink, [#539](https://github.com/lifekit-hq/devclaw/issues/539)) ([#563](https://github.com/lifekit-hq/devclaw/issues/563)) ([0d1e9b0](https://github.com/lifekit-hq/devclaw/commit/0d1e9b0298f1f616118676737b19db380a7b5e1f))
+
+
+### Hardening
+
+* **delivery:** atomic milestone commits + live goal-branch PR title/body ([#518](https://github.com/lifekit-hq/devclaw/issues/518)) ([10d88c5](https://github.com/lifekit-hq/devclaw/commit/10d88c50d0ebfe94951e9253d188fb011ef0cada))
+
+
+### Documentation
+
+* promote self-deploy runbook to CURRENT — first real cutover executed ([#543](https://github.com/lifekit-hq/devclaw/issues/543)) ([1f54fa5](https://github.com/lifekit-hq/devclaw/commit/1f54fa56079b051ebe22e9a4dfffb16759677c0a))
+* **runbooks:** project_id dispatch cutover runbook ([#520](https://github.com/lifekit-hq/devclaw/issues/520)) — written from the live deploy ([#529](https://github.com/lifekit-hq/devclaw/issues/529)) ([1d72253](https://github.com/lifekit-hq/devclaw/commit/1d722535b93eab893460e5124f2a01578a88a918))
+* **shakedown:** teardown archives every run — the metrics series for measuring improvements ([#548](https://github.com/lifekit-hq/devclaw/issues/548)) ([759ff78](https://github.com/lifekit-hq/devclaw/commit/759ff78f5550c1fa7fb0202cfc6cd2c76c0f2097))
+* **specs:** auth-session-refresh — self-heal expired OAuth token instead of pausing (spec only) ([#526](https://github.com/lifekit-hq/devclaw/issues/526)) ([e5d96ab](https://github.com/lifekit-hq/devclaw/commit/e5d96ab597dfdf5dc1f1a5d4f4da3bf369ceabaa))
+* **specs:** planning-strategy-dial — self_contained | github_issues dial (spec only) ([#521](https://github.com/lifekit-hq/devclaw/issues/521)) ([57aa38a](https://github.com/lifekit-hq/devclaw/commit/57aa38abee0219f6f2ea0a878bee21ff47613e6c))
+
 ## [2026-06-26 → 2026-07-20] — consolidated (177 commits, PRs #215–#299)
 
 Day-by-day entries paused for this stretch; the arcs, each with named regression tests and PR-level detail in the git history:
