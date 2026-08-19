@@ -5,7 +5,7 @@ direction evaluator judges (plus a grounded remote-CI cross-check); only an
 ``achieved`` verdict closes the goal, and a completed goal is best-effort
 auto-deployed to a durable URL. Split out of :mod:`devclaw.goal.tick`; imports
 tick_context (+ its shared _apply_corrections) and is called by
-tick_settle._resolve_polling_done_gate and tick._handle_executing. Re-exported
+tick_settle._resolve_polling_done_gate and tick._handle_long_lived_advance. Re-exported
 from tick.py.
 """
 

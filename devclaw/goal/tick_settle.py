@@ -279,7 +279,7 @@ async def _resolve_polling_action(
             # state isn't durable first the tick aborts with in_flight still
             # pointing at the just-finished action and the next tick
             # re-ships it (duplicate-merge loop, dogfood 2026-06-21). Thread
-            # the RETURNED (fresh-versioned) status onward — _handle_executing's
+            # the RETURNED (fresh-versioned) status onward — _handle_long_lived_advance's
             # `expect=` calls CAS against THIS version, not the pre-settle
             # snapshot.
             new_status = ctx.store.transition(goal_id, Event.ACTION_SETTLED, new_status, expect=status)

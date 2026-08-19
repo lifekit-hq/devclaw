@@ -340,7 +340,7 @@ async def _tick_goal_impl(
 
     # Lifecycle phase (in_flight is None).
     if phase is Phase.EXECUTING:
-        return await _handle_executing(goal_id, goal, status, finished_detail, ctx)
+        return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
 
     raise RuntimeError(f"unhandled phase {phase} for goal {goal_id}")
 
@@ -404,11 +404,16 @@ def _advance_brief(goal: Goal, steering: str, failure_context: str = "") -> str:
 async def _handle_long_lived_advance(
     goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
 ) -> Outcome:
-    """The long_lived executing path — ZERO per-tick planner cognition
-    (the planner was cut, demolition P3b). The worker owns the
-    plan (the speckit ``specs/*/`` artifacts in the repo); the control plane only
-    dispatches "advance the goal via speckit" and lets the grounded done-gate
-    judge done:
+    """The ONE executing path for both modes (spec 008 shrink) — ZERO
+    per-tick planner cognition (the planner was cut, demolition P3b). The mode
+    dial selects only the re-evaluation cadence (ADR 0003): a one_shot goal
+    rides this same advance loop — its first advance fires immediately (no
+    ``last_plan_at`` yet ⇒ cadence due) and the done-gate's corrections chain
+    work-present advances until achieved, so it drives to done without
+    waiting out the cadence. The worker owns the plan (the speckit
+    ``specs/*/`` artifacts in the repo); the control plane only dispatches
+    "advance the goal via speckit" and lets the grounded done-gate judge
+    done:
 
       * a SUCCESSFUL advance session just settled → propose done. The done-gate
         verifies against ``done_when``: ``achieved`` closes the goal; not-achieved
@@ -457,7 +462,7 @@ async def _handle_long_lived_advance(
     steering = "\n".join(line for _, line in rows)
     # unread_steering_rows() may have lazily ingested inbox lines, bumping
     # version; reload so the dispatch's expect= CAS's against the current row
-    # (same reason as _handle_executing).
+    # (same reason as _handle_long_lived_advance).
     status = store.load_status(goal_id)
     work = bool(finished_detail) or bool(steering)
     if status.phase == "blocked":
@@ -491,20 +496,6 @@ async def _handle_long_lived_advance(
         notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
         summarize=ctx.summary_caller, consume_steering=consume_ids,
     )
-
-
-async def _handle_executing(
-    goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
-) -> Outcome:
-    """ONE execution path for both modes (spec 008 shrink — the checklist-as-
-    program one_shot branch died with the host-cognition chain): every
-    executing goal advances via the speckit pull-brief. The mode dial is back
-    to selecting only the re-evaluation cadence (ADR 0003): a one_shot goal
-    rides the same advance loop — its first advance fires immediately (no
-    ``last_plan_at`` yet ⇒ cadence due) and the done-gate's corrections chain
-    work-present advances until achieved, so it still drives to done without
-    waiting out the cadence."""
-    return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
 
 
 
