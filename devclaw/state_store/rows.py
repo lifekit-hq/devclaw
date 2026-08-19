@@ -324,6 +324,11 @@ _FAILURE_CLASS_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("test_integrity", ("test-integrity",)),
     ("verify_failed", ("verify gate failed", "verify gate timed out")),
     ("timeout", ("wall-clock timeout",)),
+    # A worker-conversation context overflow is deterministic at the QUEUE level
+    # (a same-conversation retry replays the overflow) but a GOAL-level fresh
+    # session may legitimately take a smaller bite — named so telemetry and the
+    # advance brief's failure context can speak about the class.
+    ("context_overflow", ("prompt is too long",)),
     ("delivery_failed", ("gate passed but delivery failed",)),
     ("no_result_line", ("no result line",)),
     # AUTH before the rate/quota bucket, mirroring loom.limits' priority: an

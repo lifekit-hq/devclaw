@@ -288,3 +288,12 @@ def test_ingest_directory_skips_incompatible_reports_without_crashing(tmp_path, 
     finally:
         s.close()
     assert [r["ticket"] for r in rows] == ["crons-by-id"]
+
+
+def test_prompt_too_long_classifies_as_context_overflow():
+    """Named regression (2026-08-19): the class fell into the engine_error
+    catch-all, so telemetry could not speak about it and the goal loop could
+    not distinguish it from a transient crash."""
+    assert derive_failure_class(
+        "Conversation run failed for id=x: Internal error: Prompt is too long"
+    ) == "context_overflow"

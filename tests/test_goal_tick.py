@@ -3104,3 +3104,53 @@ async def test_delivery_record_and_labels_show_objective_never_advance_brief(tmp
     deliveries = store.recent_deliveries("g")
     assert "Drive the demo repo to done." in deliveries
     assert "Advance this goal" not in deliveries
+
+
+@pytest.mark.asyncio
+async def test_failed_settle_reason_rides_the_next_advance_brief(tmp_path):
+    """Named regression (2026-08-19 night run): a terminal task failure was
+    collapsed to bool(finished_detail) — the 3h context-overflow and the 1h
+    wall-clock burns were each followed by a byte-identical advance brief.
+    The next session must SEE the terminal reason so it can adapt (smaller
+    slice), and the dispatch log must not render the steered/failure-context
+    re-dispatch identically to a blind one."""
+    from devclaw.advance_brief import FAILURE_CONTEXT_MARKER
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight", actions_dispatched=0,
+            in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance"),
+        ),
+    )
+    reason = (
+        "Prompt is too long — the worker conversation overflowed the model "
+        "context. Re-dispatch this task with a smaller scope."
+    )
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="failed", detail=reason))
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert FAILURE_CONTEXT_MARKER in action.goal
+    assert "overflowed the model context" in action.goal
+
+
+@pytest.mark.asyncio
+async def test_steering_only_advance_brief_carries_no_failure_context(tmp_path):
+    """The absence pin: an advance triggered by owner steering alone must not
+    grow a failure-context section."""
+    from devclaw.advance_brief import FAILURE_CONTEXT_MARKER
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(phase="idle"))
+    store.append_steering("g", ["try the other API"], source="owner")
+    engine = FakeEngine()
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert FAILURE_CONTEXT_MARKER not in action.goal
+    assert "try the other API" in action.goal
