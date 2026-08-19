@@ -1,5 +1,5 @@
 """Claude Code workspace-trust seeding — the config twin of the mise trust
-seam (openhands-runner's ``_mise_run`` / ``MISE_TRUSTED_CONFIG_PATHS``).
+seam (runner's ``_mise_run`` / ``MISE_TRUSTED_CONFIG_PATHS``).
 
 Claude Code began hard-enforcing *workspace trust* around 2026-07: in a
 directory whose ``projects[<abs-path>].hasTrustDialogAccepted`` is not set in

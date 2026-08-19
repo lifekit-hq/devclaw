@@ -3,8 +3,8 @@
 `implement_feature` used to pass the raw goal straight through, so the engineer
 started blind on an existing repo — no read of the project's conventions, no
 self-verification. The wrappers now brief it and tell it to verify. These pin
-that behavior. The runner lives at openhands-runner/runner.py (not a package);
-its openhands-sdk imports are inside main(), so a top-level import is SDK-free.
+that behavior. The runner lives at runner/runner.py (not a package);
+its runner is stdlib-only since spec 011, so a top-level import is dependency-free.
 """
 
 import importlib.util
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-_RUNNER_PATH = Path(__file__).resolve().parents[1] / "openhands-runner" / "runner.py"
+_RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")

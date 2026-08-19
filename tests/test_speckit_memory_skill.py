@@ -1,4 +1,4 @@
-"""The speckit-memory worker skill (openhands-runner/skills/_writes-code/05-speckit-memory.md).
+"""The speckit-memory worker skill (runner/skills/_writes-code/05-speckit-memory.md).
 
 Spec 008: speckit is the universal execution substrate — the worker's durable
 cross-session memory is the repo's ``specs/NNN-*/`` artifacts (spec.md,
@@ -28,9 +28,9 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_SKILLS_SRC = _REPO_ROOT / "openhands-runner" / "skills"
+_SKILLS_SRC = _REPO_ROOT / "runner" / "skills"
 _SKILL = _SKILLS_SRC / "_writes-code" / "05-speckit-memory.md"
-_RUNNER_PATH = _REPO_ROOT / "openhands-runner" / "runner.py"
+_RUNNER_PATH = _REPO_ROOT / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")

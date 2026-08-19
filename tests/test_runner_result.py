@@ -15,14 +15,14 @@ from pathlib import Path
 
 import pytest
 
-_RUNNER_PATH = Path(__file__).resolve().parents[1] / "openhands-runner" / "runner.py"
+_RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")
 def runner():
     spec = importlib.util.spec_from_file_location("oh_runner_result", _RUNNER_PATH)
     mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)  # top-level only; openhands imports live in main()
+    spec.loader.exec_module(mod)  # top-level import; the runner is stdlib-only (spec 011)
     return mod
 
 

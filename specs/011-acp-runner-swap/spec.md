@@ -6,9 +6,9 @@
 
 **Status**: Implemented 2026-08-19 (PR 1 — the swap; PR 2 rename pending)
 
-**Issue**: [#542 — Worker executor swap: replace openhands-runner with headless claude in the sandbox](https://github.com/lifekit-hq/devclaw/issues/542)
+**Issue**: [#542 — Worker executor swap: replace runner with headless claude in the sandbox](https://github.com/lifekit-hq/devclaw/issues/542)
 
-**Input**: User description: "Worker executor swap (#542): replace the OpenHands SDK runtime inside the sandbox (openhands-runner/runner.py) with a direct ACP client driving claude-agent-acp — cutting the OpenHands dependency while keeping the runner⇄host line-delimited JSON stdout contract, the plain-markdown skills + bash hooks + MCP worker discipline, and OAuth-only key-stripping byte-unchanged."
+**Input**: User description: "Worker executor swap (#542): replace the OpenHands SDK runtime inside the sandbox (runner/runner.py) with a direct ACP client driving claude-agent-acp — cutting the OpenHands dependency while keeping the runner⇄host line-delimited JSON stdout contract, the plain-markdown skills + bash hooks + MCP worker discipline, and OAuth-only key-stripping byte-unchanged."
 
 ## Context & Motivation *(informative)*
 
@@ -62,7 +62,7 @@ seam) instead of an OpenHands symbol — same-PR, never silently (FR-010).
 - Q: ACP-direct (thin runner-owned JSON-RPC client to `claude-agent-acp`) vs headless `claude -p` behind a homegrown adapter? → A: **ACP-direct.** The swap seam stays an industry protocol; owning a few hundred lines of protocol client is the accepted cost.
 - Q: What does the client answer to mid-session ACP permission requests in an autonomous run? → A: **Blanket grant.** The docker sandbox is the security boundary (throwaway container, key-stripped env, delivery gated host-side); auto-approve everything, no deadlock path.
 - Q: How hard is per-run token-usage accounting (today sourced from the OpenHands conversation object)? → A: **Best-effort.** Preserved when the ACP session exposes numbers, otherwise declared-absent — never fabricated. Usage-limit pause detection is unaffected (it rides error classification, not these stats).
-- Q: Does `openhands-runner/` get renamed now that OpenHands is gone from it? → A: **Yes, as a mechanical rename-only follow-up PR in the same arc** (e.g. to `runner/`). The swap PR lands under the old name so its diff stays reviewable; a dir named after a deleted dependency is a stale-doc smell and does not survive the arc.
+- Q: Does `runner/` get renamed now that OpenHands is gone from it? → A: **Yes, as a mechanical rename-only follow-up PR in the same arc** (e.g. to `runner/`). The swap PR lands under the old name so its diff stays reviewable; a dir named after a deleted dependency is a stale-doc smell and does not survive the arc.
 - Q: ACP client vendored inline in `runner.py` or a separate sibling module? → A: **Separate module** (e.g. `acp_client.py` beside `runner.py`, copied into the image the same way). Directly importable for protocol-level unit tests in the stubbed suite; keeps the client cleanly deletable/swappable.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -136,7 +136,7 @@ harness config.
 ### User Story 3 - The sandbox image sheds the dependency (Priority: P2)
 
 The sandbox image builds without the OpenHands SDK and its dependency tail;
-`openhands-runner/requirements.txt` shrinks to the runner's real needs;
+`runner/requirements.txt` shrinks to the runner's real needs;
 rebuild time and image size drop measurably.
 
 **Why this priority**: The concrete payoff (smaller tracking surface, faster
@@ -151,7 +151,7 @@ the image still passes the runner's smoke path.
 1. **Given** the new image, **When** built, **Then** no OpenHands package is
    installed and the build succeeds.
 2. **Given** the repo, **When** searched, **Then** no `openhands.sdk` import
-   remains in runner code; the `openhands-runner/` directory is renamed by a
+   remains in runner code; the `runner/` directory is renamed by a
    mechanical rename-only follow-up PR closing the arc (clarified
    2026-08-19).
 
@@ -212,7 +212,7 @@ the image still passes the runner's smoke path.
   exercising the runner's full drive path (session lifecycle, streamed
   events, final message, failure modes) with no docker and no claude —
   stubbed like everything else in `tests/`.
-- **FR-009**: The sandbox image and `openhands-runner/requirements.txt` MUST
+- **FR-009**: The sandbox image and `runner/requirements.txt` MUST
   drop the OpenHands SDK and its transitive tail; the image MUST build and
   pass the smoke path without it.
 - **FR-010**: The constitution (Principle II) and the CLAUDE.md

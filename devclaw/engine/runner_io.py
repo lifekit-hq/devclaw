@@ -1,7 +1,7 @@
 """Shared protocol reader for engine runners.
 
 Both engines — the docker sandbox (`sandcastle_runner`) and the host
-(`host_runner`) — spawn ``openhands-runner/runner.py``, which streams
+(`host_runner`) — spawn ``runner/runner.py``, which streams
 ``event: <json>`` lines plus one terminating ``result: <json>`` line. This
 consumes that protocol off a subprocess's stdout: dispatching events to the
 callback and returning the parsed result (or an error if none arrived).

@@ -1,6 +1,6 @@
 """Decode raw OpenHands worker events into a readable, turn-by-turn trace.
 
-The worker (openhands-runner) emits one ``event:`` line per SDK turn; the host
+The worker (runner) emits one ``event:`` line per SDK turn; the host
 stores each as a ``TaskEvent`` whose ``payload_json`` is that event's
 ``model_dump`` (``llm_message`` for a message, the tool/args for an action, the
 output for an observation). The console's existing ``_event_kind`` maps only the

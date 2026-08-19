@@ -2,7 +2,7 @@
 
 TypeScript is gone; this is the all-Python host runtime. The MCP server,
 planner, SQLite state store, task queue, and docker-sandbox runner all live
-here. The only other code is ``openhands-runner/runner.py``, which runs the
+here. The only other code is ``runner/runner.py``, which runs the
 OpenHands SDK *inside* the per-task sandbox container.
 """
 

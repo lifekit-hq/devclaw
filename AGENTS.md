@@ -2,7 +2,7 @@
 
 ## Stack
 
-- **Python** ≥3.11; package root `devclaw/`; sandbox runner at `openhands-runner/runner.py`
+- **Python** ≥3.11; package root `devclaw/`; sandbox runner at `runner/runner.py`
 - **Database**: SQLite (`devclaw.db`), single-writer/lock discipline; `StateStore` owns all mutations
 - **MCP surface**: FastMCP via `devclaw/server/http.py` + `devclaw/server/tools.py`
 - **Tests**: pytest (fully stubbed, no docker, no claude) — ~1900 tests in ~190s
@@ -25,13 +25,13 @@ Always use a private TMPDIR — `/tmp/pytest-of-<user>` can be root-owned on thi
 | `devclaw/state_store/` | All DB writes; `ProblemsMixin`, `GoalStore`, `StateStore` |
 | `devclaw/goal/` | Goal state machine, tick, planner, evaluator |
 | `devclaw/engine/` | Sandbox container launcher |
-| `openhands-runner/runner.py` | In-sandbox agent harness (layer 5) |
-| `openhands-runner/skills/` | Skill markdown files (synced to `/opt/devclaw/skills/`) |
+| `runner/runner.py` | In-sandbox agent harness (layer 5) |
+| `runner/skills/` | Skill markdown files (synced to `/opt/devclaw/skills/`) |
 | `tests/` | Pytest suite — all stubbed |
 
 ## Key conventions
 
-- `/opt/devclaw/skills/_common.md` is the installed copy of `openhands-runner/skills/_common.md` — keep them in sync when editing either.
+- `/opt/devclaw/skills/_common.md` is the installed copy of `runner/skills/_common.md` — keep them in sync when editing either.
 - `store.list_problems(since_ms=...)` accepts an epoch-ms lower bound; `None` = no filter.
 - `/problems.json` defaults to a 30-day lookback; `?since_ms=0` bypasses it for all-time.
 - OAuth only — `ANTHROPIC_API_KEY` is actively stripped; never add an API-key code path.
@@ -41,4 +41,4 @@ Always use a private TMPDIR — `/tmp/pytest-of-<user>` can be root-owned on thi
 ## Gotchas
 
 - In a git worktree, verify `python -c "import devclaw; print(devclaw.__file__)"` points to the WORKTREE, not the main checkout.
-- `tests/test_runner_wrappers.py` tests the in-sandbox runner (`openhands-runner/runner.py`) by loading it directly — it runs against `/opt/devclaw/skills/`, not the source copy.
+- `tests/test_runner_wrappers.py` tests the in-sandbox runner (`runner/runner.py`) by loading it directly — it runs against `/opt/devclaw/skills/`, not the source copy.

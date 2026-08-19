@@ -11,8 +11,8 @@ import subprocess
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parents[1]
-_SKILLS = _REPO / "openhands-runner" / "skills"
-_HOOK = _REPO / "openhands-runner" / "hooks" / "post-run.sh"
+_SKILLS = _REPO / "runner" / "skills"
+_HOOK = _REPO / "runner" / "hooks" / "post-run.sh"
 
 
 # ---- skill doctrine content ---------------------------------------------------

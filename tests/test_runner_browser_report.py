@@ -1,5 +1,5 @@
 """Regression tests for the runner-side browser-report parser
-(``_read_browser_report`` in openhands-runner/runner.py) — the proof-of-execution
+(``_read_browser_report`` in runner/runner.py) — the proof-of-execution
 crux: the host browser-gate trusts these parsed Playwright counts as evidence a
 real browser ran. A silent parse regression would make every UI change read as
 never-ran (fail closed forever), so the parse is pinned here.
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_RUNNER_PATH = _REPO_ROOT / "openhands-runner" / "runner.py"
+_RUNNER_PATH = _REPO_ROOT / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")

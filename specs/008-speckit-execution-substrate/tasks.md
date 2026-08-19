@@ -18,7 +18,7 @@ outline at the end — **not** expanded into tasks.
 - **[Story]**: US1 / US2.
 
 ## Path Conventions
-Brownfield devclaw — edits to existing modules (`devclaw/…`, `openhands-runner/…`)
+Brownfield devclaw — edits to existing modules (`devclaw/…`, `runner/…`)
 and new tests under `tests/`. No new package.
 
 ---

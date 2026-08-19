@@ -84,8 +84,8 @@ def test_harness_paths_point_at_this_checkout():
     dockerfile, context = pi.harness_paths()
     assert dockerfile.endswith(os.path.join(".sandcastle", "Dockerfile"))
     assert os.path.isfile(dockerfile), "harness Dockerfile must exist in the checkout"
-    assert os.path.isdir(os.path.join(context, "openhands-runner")), (
-        "harness build context must be the repo root (it COPYs openhands-runner/)"
+    assert os.path.isdir(os.path.join(context, "runner")), (
+        "harness build context must be the repo root (it COPYs runner/)"
     )
 
 

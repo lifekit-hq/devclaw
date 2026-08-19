@@ -5,7 +5,7 @@ Decision / Rationale / Alternatives, grounded in code read this session.
 
 ## D1 — How the worker runs speckit, model-agnostically (Principle II)
 
-**Decision**: The worker (layer 5, `openhands-runner`) runs the speckit flow using
+**Decision**: The worker (layer 5, `runner`) runs the speckit flow using
 (a) the repo's `.specify/scripts/bash/*.sh` (create-new-feature, setup-plan,
 setup-tasks, check-prerequisites) — these are already agent-agnostic bash — and
 (b) the speckit **command prompt-content vendored as plain-markdown worker skills**

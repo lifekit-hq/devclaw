@@ -80,7 +80,7 @@ specs/011-acp-runner-swap/
 ### Source Code (repository root)
 
 ```text
-openhands-runner/            # renamed → runner/ by a trailing mechanical PR (clarified)
+runner/            # renamed → runner/ by a trailing mechanical PR (clarified)
 ├── runner.py                # EDIT: drive block swapped (openhands imports → acp_client), rest untouched
 ├── acp_client.py            # NEW: zero-dep JSON-RPC/ACP client (D1–D3, D7)
 ├── requirements.txt         # EDIT: empty of SDKs (stdlib-only runner)
@@ -110,7 +110,7 @@ rename to `runner/` is deliberately NOT in the swap PR (clarified 2026-08-19)
   block, requirements/Dockerfile shrink, fake agent + all tests, constitution
   + CLAUDE.md wording, docs sweep. One PR because the image cannot build
   half-swapped (requirements and code must move together).
-- **PR 2 — mechanical rename** `openhands-runner/` → `runner/` (paths in
+- **PR 2 — mechanical rename** `runner/` → `runner/` (paths in
   Dockerfile, tests, docs; zero logic).
 - Live proof (quickstart L1–L3/L5 + #538 scenario replay) gates calling the
   arc done — evidence, not a PR.

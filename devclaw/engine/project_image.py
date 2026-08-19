@@ -71,7 +71,7 @@ def project_image_tags(workspace_dir: str) -> tuple[str, str]:
 def harness_paths() -> tuple[str, str]:
     """``(harness_dockerfile, harness_context)`` — devclaw's own
     ``.sandcastle/Dockerfile`` and repo root (its context, since it COPYs
-    ``openhands-runner/``), located relative to this installed package. Assumes
+    ``runner/``), located relative to this installed package. Assumes
     devclaw runs from a source checkout (the live VPS deploy is one); a bare
     pip-install without ``.sandcastle/`` would raise at build time, loud."""
     root = Path(__file__).resolve().parents[2]

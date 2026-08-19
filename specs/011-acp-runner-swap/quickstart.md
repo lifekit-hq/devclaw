@@ -22,7 +22,7 @@ seam can be proven end-to-end without claude (SC-006):
 
 ```bash
 DEVCLAW_ACP_COMMAND=".venv/bin/python tests/acp_fake_agent.py --script ok" \
-  .venv/bin/python openhands-runner/runner.py <<'EOF'
+  .venv/bin/python runner/runner.py <<'EOF'
 {"kind": "feature", "goal": "smoke", "workspace_dir": "/tmp/acp-smoke", "task_id": "t-smoke"}
 EOF
 ```
