@@ -1,4 +1,4 @@
-"""Host engine — run OpenHands directly on the host, with NO docker sandbox.
+"""Host engine — run the worker runner directly on the host, with NO docker sandbox.
 
 ``DEVCLAW_ENGINE=host`` wires this in place of the sandcastle (docker) engine.
 It runs ``openhands-runner/runner.py`` as a host subprocess in the task's
@@ -26,7 +26,8 @@ from ..git_identity import git_identity_env
 _REPO = Path(__file__).resolve().parents[1]
 # the in-sandbox runner, run here on the host
 RUNNER_PY = os.environ.get("DEVCLAW_RUNNER_PY", str(_REPO / "openhands-runner" / "runner.py"))
-# the python that has openhands-sdk — the openhands-runner venv if present
+# the runner is stdlib-only (spec 011); the legacy openhands-runner venv
+# is still preferred if present, else this interpreter
 _OH_VENV = _REPO / "openhands-runner" / ".venv" / "bin" / "python"
 RUNNER_PYTHON = os.environ.get("DEVCLAW_RUNNER_PYTHON") or (
     str(_OH_VENV) if _OH_VENV.exists() else sys.executable

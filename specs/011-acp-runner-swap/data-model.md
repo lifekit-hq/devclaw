@@ -12,7 +12,7 @@ The spawned agent subprocess + its stdio channel.
 | `argv` | `list[str]` | from the command seam (payload → env → `["claude-agent-acp"]`) |
 | `env` | `dict[str,str]` | explicit allowlist: `CLAUDE_CODE_EXECUTABLE`, `CLAUDE_CONFIG_DIR`, `PATH`, `HOME`, optional `ANTHROPIC_MODEL` (D5, D9) |
 | `proc` | `subprocess.Popen` | stdin/stdout pipes = JSON-RPC channel; stderr → bounded ring buffer |
-| `idle_timeout_s` | `int` | `DEVCLAW_ACP_IDLE_TIMEOUT_S`, default 900 (D7) |
+| `idle_timeout_s` | `int` | `DEVCLAW_ACP_IDLE_TIMEOUT_S`, default 1800 (D7) |
 
 Lifecycle: spawn → `initialize` → `session/new` → one `session/prompt` turn →
 teardown (graceful `session/cancel` + terminate/kill escalation). Any

@@ -1,12 +1,8 @@
-# Pinned so the host venv and the sandbox image stay byte-aligned.
-# Bump deliberately (sandbox image must be rebuilt + pre-pulled on VPS).
-openhands-sdk==1.24.0
-openhands-tools==1.24.0
-# TRANSITIVE dep of openhands-sdk, pinned explicitly: openhands-sdk 1.24.0
-# calls conn.prompt(prompt_blocks, session_id) POSITIONALLY, and acp 0.11.0
-# flipped the signature to (session_id, prompt) — every sandbox agent turn
-# then dies with a swapped-fields PromptRequest validation error (live-found
-# 2026-07-11 by the T1 exit shakedown, L1; the unpinned dep rode into both
-# the local AND the VPS image via --no-cache rebuilds). Bump ONLY together
-# with an openhands-sdk version whose acp_agent matches the new order.
-agent-client-protocol==0.10.1
+# Intentionally empty (spec 011): the runner and its ACP client are
+# stdlib-only. The OpenHands SDK (openhands-sdk / openhands-tools) and the
+# agent-client-protocol pin are gone — the runner speaks JSON-RPC to the ACP
+# agent subprocess directly (openhands-runner/acp_client.py). The in-sandbox
+# agent stack (claude CLI + claude-agent-acp) is installed via npm in
+# .sandcastle/Dockerfile, not pip. Add a dependency here only if the runner
+# itself genuinely needs it — the sandbox image installs nothing from this
+# file while it stays empty.

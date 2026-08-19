@@ -116,7 +116,7 @@ still classifies error text.
   `_detect_usage_limit` classifies clear quota errors into
   `status="rate_limited"` + retry-after. Byte-same result contract.
 - **Idle timeout (new, closes a latent gap)**: no protocol traffic for
-  `DEVCLAW_ACP_IDLE_TIMEOUT_S` (default 900s) → cancel + kill the agent,
+  `DEVCLAW_ACP_IDLE_TIMEOUT_S` (default 1800s) → cancel + kill the agent,
   fail loud with a legible reason. A hung session never wedges the task
   until the host's container kill.
 - Context-overflow error text passes through verbatim so the host's #572

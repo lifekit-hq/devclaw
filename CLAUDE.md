@@ -46,7 +46,10 @@ spawn containers itself — it goes through the engine).
   frontmatter, no native `Skill(...)` calls); hooks are **bash `.sh` files** invoked
   by `runner.py` (never a `settings.json`); cross-tool capability goes through **MCP**,
   not vendor tool-wiring; per-repo discovery is `ls .agent/skills/` + `cat`. The day
-  `claude-code` is swapped for another agent, only the `ACPAgent` call changes.
+  `claude-code` is swapped for another ACP-speaking agent, only the runner's
+  agent-drive seam changes — the agent command (`acp_command` payload /
+  `DEVCLAW_ACP_COMMAND`) its zero-dep ACP client spawns (spec 011; the
+  fake-agent regression tests enforce this).
 - **Zero-token idle guard.** An idle goal and an in-flight-still-running goal cost
   **~0 `claude` calls** — the heartbeat is mechanism; cognition runs only when there's
   real work. Ordered on purpose in `devclaw/goal/tick.py` (the cheap SQLite/timestamp
@@ -147,7 +150,7 @@ devclaw/
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
 ├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
-openhands-runner/runner.py   OpenHands SDK inside the sandbox — line-delimited JSON on stdout
+openhands-runner/runner.py   the in-sandbox worker harness — drives the ACP agent via acp_client.py; line-delimited JSON on stdout
 .sandcastle/Dockerfile       per-task sandbox image
 docs/                        architecture + flows + env + runbooks (start at docs/INDEX.md)
 tests/                       pytest — fully stubbed (no docker, no claude)
@@ -161,8 +164,8 @@ pip install -e ".[dev]"
 pytest        # ~1870 tests, all stubbed — no docker, no claude
 ```
 
-Engine modes (`DEVCLAW_ENGINE`): **unset** = OpenHands in a per-task docker sandbox
-(production); `host` = OpenHands on the host, no sandbox (dev/CI); `stub` =
+Engine modes (`DEVCLAW_ENGINE`): **unset** = the worker runner in a per-task docker
+sandbox (production); `host` = the runner on the host, no sandbox (dev/CI); `stub` =
 deterministic, no docker/no claude (the mode the test suite and `evals/run_all.py`
 use). For the real pipeline (a logged-in `claude` + docker), follow
 [`docs/runbooks/live-shakedown.md`](./docs/runbooks/live-shakedown.md).

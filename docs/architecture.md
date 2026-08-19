@@ -410,8 +410,10 @@ The worker harness (layer 5) is the *only* place model-coupling is allowed.
 3. **Tools cross via MCP**, not vendor wiring.
 4. **Per-repo discovery is `ls` + `cat`** — no agent-specific catalog API.
 
-Swapping `claude-code` for another agent should change only the `ACPAgent`
-call.
+Swapping `claude-code` for another ACP-speaking agent should change only the
+runner's agent-drive seam — the payload/env-selectable agent command
+(`acp_command` / `DEVCLAW_ACP_COMMAND`) its `AcpClient` spawns (spec 011;
+enforced by the fake-agent regression tests).
 
 ### Persistence
 

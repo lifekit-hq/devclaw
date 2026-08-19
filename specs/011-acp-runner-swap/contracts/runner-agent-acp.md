@@ -33,7 +33,7 @@ verify gate judge the work) · `refusal` → failure, last message as reason ·
 
 - Malformed frame, EOF, process death mid-turn → `AcpError` with verbatim
   text (host/runner classification unchanged; quota text → `rate_limited`).
-- Idle timeout (`DEVCLAW_ACP_IDLE_TIMEOUT_S`, default 900s of protocol
+- Idle timeout (`DEVCLAW_ACP_IDLE_TIMEOUT_S`, default 1800s of protocol
   silence) → cancel, kill, legible failure.
 - Teardown escalation: `session/cancel` → SIGTERM → SIGKILL.
 
