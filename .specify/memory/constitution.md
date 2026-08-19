@@ -17,7 +17,10 @@ metered billing.
 ### II. Model-agnostic worker layer
 Skills are plain markdown; hooks are bash `.sh` files; cross-tool capability
 goes through MCP, not vendor tool-wiring. Swapping `claude-code` for another
-agent must only change the `ACPAgent` call.
+ACP-speaking agent must only change the runner's agent-drive seam — the
+payload/env-selectable agent command (`acp_command` / `DEVCLAW_ACP_COMMAND`)
+its ACP client spawns — and the seam stays continuously test-enforced (the
+fake-agent regressions, spec 011).
 
 ### III. Zero-token idle
 An idle goal and an in-flight-still-running goal cost ~0 `claude` calls.
@@ -81,7 +84,9 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.1.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-14
-(2.1.0 — Principle V: the strictness dial sets which gates are *consulted*; under
-`trust` the per-increment adversarial diff review is dropped from the task gate
-chain. Spec `001-review-gate-repositioning`.)
+**Version**: 2.2.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-19
+(2.2.0 — Principle II: the swap seam is named abstractly (the runner's
+agent-drive seam / agent command) instead of the deleted OpenHands `ACPAgent`
+symbol; the invariant's spirit is unchanged and now test-enforced. Spec
+`011-acp-runner-swap`. Prior: 2.1.0, 2026-08-14 — Principle V strictness-dial
+consultation semantics, spec `001-review-gate-repositioning`.)

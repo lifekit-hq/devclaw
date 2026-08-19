@@ -10,6 +10,9 @@ Both run with the same auth posture (curated ~/.claude allowlist), the same
 sandbox image, the same workspace bind. The only difference is the in-container
 process. If the SDK path matches OpenHands on pass rate at substantially less
 maintenance surface (the openhands-runner script + pinned SDK), drop OpenHands.
+(Resolved by spec 011, 2026-08-19: the SDK is gone — the sandcastle engine now
+drives the agent via the runner's own ACP client; the 'openhands' label below
+is the sandcastle engine's historical name in this comparison harness.)
 
 Run on a host with:
   - logged-in `claude` CLI (Pro/Max OAuth)

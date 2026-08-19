@@ -98,15 +98,14 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       advance brief inside the goal — +          │                                 │
      │  │       a structured return contract as the last   │                                 │
      │  │       section, _wrap_goal)                       │                                 │
-     │  │     • from openhands.sdk import Conversation,    │                                 │
-     │  │           ACPAgent                               │                                 │
-     │  │     • agent = ACPAgent(                          │                                 │
-     │  │           acp_command=cfg, # DEVCLAW_ACP_COMMAND │                                 │
-     │  │           acp_model="claude-sonnet-4-6")         │                                 │
-     │  │     • conv = Conversation(agent, workspace=      │                                 │
-     │  │           "/workspace", callbacks=[on_event])    │                                 │
-     │  │     • conv.send_message(wrapped_goal)            │                                 │
-     │  │     • conv.run()    ──────► spawns subprocess:  │                                  │
+     │  │     • acp = _load_acp_client()  # sibling module │                                 │
+     │  │     • client = acp.AcpClient(                    │                                 │
+     │  │           acp_command, # DEVCLAW_ACP_COMMAND     │                                 │
+     │  │           acp_env,     # allowlist + model tier  │                                 │
+     │  │           on_event=_emit_event)                  │                                 │
+     │  │     • client.run("/workspace", wrapped_goal)     │                                 │
+     │  │       (initialize → session/new → session/prompt)│                                 │
+     │  │                     ──────► spawns subprocess:  │                                  │
      │  │                                                  │                                 │
      │  │     ┌──────────────────────────────────────┐     │                                 │
      │  │     │  claude-agent-acp  (a binary)        │     │                                 │
@@ -114,20 +113,20 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     │     │                                │     │                                 │
      │  │     │     │ Uses ITS OWN tools — Bash,     │     │                                 │
      │  │     │     │ Read, Edit, Write, Grep —      │     │                                 │
-     │  │     │     │ NOT OpenHands' (those are      │     │                                 │
-     │  │     │     │ NotImplementedError on the     │     │                                 │
-     │  │     │     │ ACP path).                     │     │                                 │
+     │  │     │     │ never client-provided ones     │     │                                 │
+     │  │     │     │ (the runner advertises no fs/  │     │                                 │
+     │  │     │     │ terminal capability).          │     │                                 │
      │  │     │     │                                │     │                                 │
      │  │     │     │ Reads /workspace/CLAUDE.md +   │     │                                 │
      │  │     │     │ AGENTS.md, plans, edits files  │     │                                 │
      │  │     │     │ via Bash + Write, runs         │     │                                 │
      │  │     │     │ commands inside /workspace.    │     │                                 │
      │  │     │     │                                │     │                                 │
-     │  │     │     │ Streams events back to the     │     │                                 │
-     │  │     │     │ ACPAgent in the runner via     │     │                                 │
+     │  │     │     │ Streams session/update back    │     │                                 │
+     │  │     │     │ to the runner's AcpClient via  │     │                                 │
      │  │     │     │ JSON-RPC over stdio.           │     │                                 │
      │  │     │     │                                │     │                                 │
-     │  │     │     │ Finishes turn → FinishAction.  │     │                                 │
+     │  │     │     │ Finishes turn → stopReason.    │     │                                 │
      │  │     └──────────────────────────────────────┘     │                                 │
      │  │                                                  │                                 │
      │  │  Step E — every event from claude:               │                                 │

@@ -2,7 +2,7 @@
 
 Everything in the test suite runs against **stubs** (no `claude`, no docker). This
 runbook exercises the real pipeline against the **actual engine**: a logged-in
-`claude` driving OpenHands inside a real docker sandbox. Work top-to-bottom — each
+the runner driving `claude` (via claude-agent-acp) inside a real docker sandbox. Work top-to-bottom — each
 layer builds on the last, so a failure tells you exactly which seam broke.
 
 > **Cost note.** Every real run spends your Claude Pro/Max session (no API key —
@@ -35,7 +35,7 @@ cd <repo root>
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 
-# the per-task sandbox image (python3.13 + openhands-sdk + claude CLI + ACP)
+# the per-task sandbox image (python3.13 + claude CLI + claude-agent-acp)
 docker build -t devclaw-sandbox:latest -f .sandcastle/Dockerfile .
 docker image ls devclaw-sandbox:latest   # confirm it exists
 ```
@@ -89,7 +89,7 @@ python drive.py list_tasks            # [] — confirms the client works
 
 ## 3. L1 — a single real task (smallest end-to-end)
 
-Prove one OpenHands run works in a sandbox before anything fancy.
+Prove one agent run works in a sandbox before anything fancy.
 
 ```bash
 mkdir -p /tmp/sc-l1 && cd /tmp/sc-l1 && git init -q && cd -
@@ -102,12 +102,12 @@ Watch it (poll, or use the console):
 
 ```bash
 python drive.py get_status '{"task_id":"<the id>"}'   # pending → running → done
-python drive.py get_events '{"task_id":"<the id>"}'   # the live OpenHands event stream
+python drive.py get_events '{"task_id":"<the id>"}'   # the live worker event stream
 ls /tmp/sc-l1/hello.txt                               # the artifact, on success
 ```
 
 **This is the make-or-break step.** If it reaches `done` and the file exists, the
-whole engine seam (host → docker → runner → OpenHands → claude → back) works.
+whole engine seam (host → docker → runner → ACP agent → claude → back) works.
 
 ---
 
@@ -216,7 +216,7 @@ graceful no-op — safe to call more than once.
 ## 7. What to watch
 
 - **Console** `http://localhost:8000/console` → open the goal for the live event tail + per-task drill-ins.
-- **`get_events`** — the raw OpenHands events per task/program (Action/Observation, etc.).
+- **`get_events`** — the raw worker events per task/program (messages, tool calls, verify).
 - **`$DEVCLAW_GOALS_DIR/<goal-id>/`** — `goal.yaml` + the generated views (`STATUS.md`, `log.md`, `deliveries.md`); state itself lives in SQLite (`get_goal`/`tail_goal` are the truth).
 - **Server stderr** — `recovered=N`, notify attempts, `reaped` logs, sandbox spawn errors.
 
@@ -228,7 +228,7 @@ graceful no-op — safe to call more than once.
 |---|---|---|
 | task → `failed`, error `failed to spawn docker` | docker not reachable from the host process | `docker info`; check socket perms |
 | task → `failed`, `sandbox exited N without a result line` | runner crashed inside the container | run the image by hand: `docker run --rm -v /tmp/sc-l1:/workspace -v ~/.claude:/home/agent/.claude:ro devclaw-sandbox:latest '{"kind":"implement_feature","workspace_dir":"/workspace","goal":"touch x"}'` and read stderr |
-| runner error `openhands-sdk not importable` | image built wrong | rebuild the sandbox image (§1) |
+| runner error `acp_client.py not loadable` | image built wrong (acp_client.py not copied beside runner.py) | rebuild the sandbox image (§1) |
 | agent can't auth / 401 from claude | `~/.claude` not logged in, or mounted empty | log in on the host; confirm `~/.claude` has session files |
 | server won't start, `ANTHROPIC_API_KEY` complaints | a key is set in the env | `unset ANTHROPIC_API_KEY` |
 | many containers pile up | global cap too high for the box | lower `DEVCLAW_MAX_CONCURRENT` |

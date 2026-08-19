@@ -83,16 +83,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && mkdir -p /home/agent/.local/share/mise \
  && chown -R agent:agent /home/agent/.local
 
-# Install python deps system-wide so the agent user can import them without
-# its own venv. openhands-sdk pulls in a long tail of deps; the image is fat
-# but that's fine — it's built once per sandbox version.
-COPY openhands-runner/requirements.txt /tmp/requirements.txt
-# `python3 -m pip` (not bare `pip`): a project base may ship no `pip` shim, and
-# --break-system-packages tolerates a debian base's externally-managed marker
-# (a no-op on the non-managed default python image). Installs against whichever
-# python3 PATH resolves — the base's on the default image, debian's on a
-# project base.
-RUN python3 -m pip install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
+# No python deps: the runner + its ACP client are stdlib-only (spec 011 —
+# the OpenHands SDK and its dependency tail are gone; the runner drives the
+# ACP agent subprocess directly over JSON-RPC on stdio).
 
 # Claude CLI + claude-agent-acp via npm. Pinned so image is reproducible.
 # @playwright/mcp is the MCP server the agent reaches Playwright through
@@ -109,7 +102,8 @@ RUN npm install -g \
 # SANDBOX_CLAUDE_ALLOWLIST exists to prevent).
 COPY --chown=agent:agent openhands-runner/sandbox-mcp.json /opt/devclaw/sandbox-mcp.json
 
-COPY --chown=agent:agent openhands-runner/runner.py /opt/devclaw/runner.py
+COPY --chown=agent:agent openhands-runner/runner.py     /opt/devclaw/runner.py
+COPY --chown=agent:agent openhands-runner/acp_client.py /opt/devclaw/acp_client.py
 # Skill bundle + hooks baked into the image. Skills are markdown files
 # runner.py concatenates per-task-kind and prepends to the goal; hooks are
 # best-effort bash scripts runner.py invokes around the agent loop.
