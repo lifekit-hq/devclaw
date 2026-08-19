@@ -350,8 +350,6 @@ class GoalState:
                     "ref_kind": f.ref_kind,
                     "goal": f.goal,
                     "is_done_check": f.is_done_check,
-                    "is_discovery": f.is_discovery,
-                    "addresses": list(f.addresses),
                 }
             )
         with self._store._lock:
@@ -911,12 +909,6 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
     in_flight = None
     if row["in_flight_json"]:
         f = json.loads(row["in_flight_json"])
-        raw_addr = f.get("addresses") or []
-        addresses = (
-            [str(a) for a in raw_addr if str(a).strip()]
-            if isinstance(raw_addr, list)
-            else []
-        )
         in_flight = InFlight(
             engine=f["engine"],
             tool=f["tool"],
@@ -924,8 +916,6 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
             ref_kind=f["ref_kind"],
             goal=f.get("goal", ""),
             is_done_check=bool(f.get("is_done_check", False)),
-            is_discovery=bool(f.get("is_discovery", False)),
-            addresses=addresses,
         )
     return GoalStatus(
         phase=row["phase"] or "idle",

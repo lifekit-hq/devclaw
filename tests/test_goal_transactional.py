@@ -380,8 +380,8 @@ async def test_settlement_seeding_from_legacy_log(tmp_path):
 @pytest.mark.asyncio
 async def test_sweep_extends_to_tasks(tmp_path):
     """The startup sweep re-adopts a lost TASK ref, not just programs — the
-    PR7 extension. Re-adopted as a plain action ref (no is_done_check/
-    is_discovery — those flags lived only on the lost ref)."""
+    PR7 extension. Re-adopted as a plain action ref (no is_done_check —
+    the flag lived only on the lost ref)."""
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
@@ -396,7 +396,6 @@ async def test_sweep_extends_to_tasks(tmp_path):
     assert s.in_flight.ref_kind == "task"
     assert s.in_flight.tool == "implement_feature"
     assert s.in_flight.is_done_check is False
-    assert s.in_flight.is_discovery is False
 
 
 @pytest.mark.asyncio

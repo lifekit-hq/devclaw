@@ -104,7 +104,6 @@ class DispatchEvent:
     tool: str = ""
     ref_id: str = ""
     engine: str = ""           # stub | sandcastle | host | claude_sdk
-    is_discovery: bool = False
     is_done_check: bool = False
 
     def to_dict(self) -> dict:
@@ -299,8 +298,6 @@ class Tracer:
                     lines.append(f"    - response: _{e.get('response_preview', '')}_")
             elif kind == "dispatch":
                 tags = []
-                if e.get("is_discovery"):
-                    tags.append("discovery")
                 if e.get("is_done_check"):
                     tags.append("done-check")
                 engine = e.get("engine", "")
@@ -443,14 +440,14 @@ def record_tick(*, goal_id: str, lifecycle: str, phase: str, outcome: str) -> No
 
 def record_dispatch(
     *, goal_id: str, tool: str, ref_id: str,
-    engine: str = "", is_discovery: bool = False, is_done_check: bool = False,
+    engine: str = "", is_done_check: bool = False,
 ) -> None:
     t = _current.get()
     if t is None:
         return
     t.append(DispatchEvent(
         goal_id=goal_id, tool=tool, ref_id=ref_id, engine=engine,
-        is_discovery=is_discovery, is_done_check=is_done_check,
+        is_done_check=is_done_check,
     ))
 
 

@@ -136,13 +136,6 @@ class InFlight:
     #: True when this is the read-only review dispatched by the done-gate (its
     #: terminal result feeds the evaluator, not the next-action planner).
     is_done_check: bool = False
-    #: LEGACY (pre-shrink): the read-only repo analysis the removed
-    #: ``investigating`` phase used to dispatch. Kept so stored pre-shrink refs
-    #: still deserialize; nothing sets or routes on it anymore.
-    is_discovery: bool = False
-    #: LEGACY (pre-shrink): checklist item ids. Kept for deserialization of
-    #: stored refs; nothing sets or reads them since the checklist died.
-    addresses: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -247,16 +240,13 @@ class GoalStatus:
 
 @dataclass(frozen=True)
 class Action:
-    """One engine call the tick dispatches. ``addresses``/``scaffold`` are
-    retained for legacy row deserialization — nothing in the goal layer
-    produces them since the checklist died (spec 008 shrink)."""
+    """One engine call the tick dispatches."""
 
     engine: Engine
     tool: GoalTool
     goal: str
     verify_cmd: Optional[str] = None
     open_pr: bool = True
-    addresses: list[str] = field(default_factory=list)
     #: True when the action is generated scaffolding — threads onto the task
     #: row so the queue skips the adversarial review gate for it. SAFETY:
     #: skips review ONLY — verify + test-integrity still run.

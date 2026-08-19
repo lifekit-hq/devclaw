@@ -975,8 +975,8 @@ async def test_idle_tick_never_invokes_summarizer(tmp_path, monkeypatch):
 def _delivery_status():
     # A legacy PER-ACTION delivery: lifecycle=None reads-as-executing for the
     # phase classifier but resolves to the per-action topology (each action its
-    # own branch + PR off main). #486/Part C re-keyed the auto-merge SKIP on the
-    # delivery TOPOLOGY, not on ``addresses``, so the per-action auto-merge
+    # own branch + PR off main). #486/Part C keyed the auto-merge SKIP on the
+    # delivery TOPOLOGY, so the per-action auto-merge
     # machinery these tests exercise needs a genuinely per-action goal — a
     # long_lived *executing* goal now accumulates on a goal branch and its
     # cumulative PR is left OPEN for the done-gate instead of auto-merging.
@@ -1129,54 +1129,17 @@ async def test_program_settle_without_merger_leaves_stack_alone(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_checklist_mode_dispatch_is_not_auto_merged(tmp_path, monkeypatch):
-    """Pillar 2 invariant: when the settled action carries checklist
-    addresses, its PR is the SHARED goal-branch PR every item keeps pushing
-    to. Auto-merging it now would delete the goal branch and force item N+1
-    to re-fork from main — the 2026-06-26 finance-sentry-mcp-v4 regression.
-    Auto-merge is skipped in that case; the done-gate is the single review
-    moment for the cumulative work."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    # In-flight ref carries checklist addresses (set by the dispatch hook).
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="executing",
-        in_flight=InFlight(
-            "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=["scaffold"],  # ← Pillar 1 marker
-        ),
-    ))
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="ok",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    # Merger never invoked — the PR is the shared goal-branch PR.
-    assert merger.merged == []
-    # No "merged" owner ping either.
-    assert not any("merged" in m.lower() for m in notifier.sent)
-
-
-@pytest.mark.asyncio
-async def test_legacy_dispatch_without_addresses_still_auto_merges(tmp_path, monkeypatch):
-    """Backwards-compat: a legacy PER-ACTION goal (no addresses AND the per-action
-    topology — lifecycle=None) keeps the existing per-action auto-merge behaviour.
-    Only goal-branch topologies (Pillar 1 checklist OR long_lived executing) skip
-    the merge, leaving the cumulative PR for the done-gate (#486/Part C)."""
+async def test_legacy_per_action_dispatch_still_auto_merges(tmp_path, monkeypatch):
+    """Backwards-compat: a legacy PER-ACTION goal (lifecycle=None resolves to
+    the per-action topology) keeps the existing per-action auto-merge
+    behaviour. Only the goal-branch topology skips the merge, leaving the
+    cumulative PR for the done-gate (#486/Part C)."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
         phase="in_flight", lifecycle=None,  # ← legacy per-action topology
-        in_flight=InFlight(
-            "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=[],  # ← legacy mode, no checklist
-        ),
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
     ))
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
@@ -1299,9 +1262,8 @@ async def test_slice_guardrail_never_runs_on_per_action_topology(tmp_path, monke
 
 @pytest.mark.asyncio
 async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatch):
-    """#486 (Part C): a long_lived goal-branch delivery carries NO ``addresses``
-    (there is no checklist), but its PR is the SAME cumulative goal-branch PR a
-    checklist goal's is — auto-merging it mid-flight would delete the goal branch
+    """#486 (Part C): a long_lived goal-branch delivery's PR is the
+    cumulative goal-branch PR — auto-merging it mid-flight would delete the goal branch
     and wipe the accumulated work on the next night's re-fork. The skip is
     re-keyed off the delivery TOPOLOGY, so this PR stays open for the done-gate
     and the skip is logged legibly."""
@@ -1326,39 +1288,6 @@ async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatc
 
 
 # ---- #394: total merge-policy resolution + settle-time mergeability --------
-
-
-@pytest.mark.asyncio
-async def test_checklist_mode_merge_skip_is_logged_legibly(tmp_path, monkeypatch):
-    """#394 done-when 3 (the closeloop PR #8 hole): a checklist-mode delivery
-    skips auto-merge BY DESIGN, but the skip must be legible — a night of
-    gate-green deliveries with automerge ON and no 'auto-merged'/'auto-merge
-    failed'/'skipped' line anywhere forced the owner to infer 'it silently
-    never engaged' (2026-07-28 morning). The skip resolves as an explicit
-    logged reason."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="executing",
-        in_flight=InFlight(
-            "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=["scaffold"],
-        ),
-    ))
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="ok",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == []  # the pillar-2 skip itself is unchanged
-    log = (tmp_path / "g" / "log.md").read_text()
-    assert "auto-merge skipped (checklist-mode" in log
-    assert "https://github.com/o/r/pull/9" in log
 
 
 @pytest.mark.asyncio
@@ -1396,8 +1325,7 @@ async def test_conflicting_pr_at_settle_pings_owner_and_logs_conflict(tmp_path, 
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight(
             "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=["scaffold"],  # checklist-mode: PR stays open → probed
-        ),
+        ),  # goal-branch topology: PR stays open → probed
     ))
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
@@ -2357,7 +2285,7 @@ async def test_lost_discovery_ref_blocks_and_notifies_owner(tmp_path):
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
         phase="in_flight", lifecycle="investigating",
-        in_flight=InFlight("devclaw", "review_repository", "t_disc", "task", "analyze", is_discovery=True),
+        in_flight=InFlight("devclaw", "review_repository", "t_disc", "task", "analyze"),
     ))
     evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_disc"))

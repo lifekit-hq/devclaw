@@ -96,17 +96,10 @@ class GoalStatusMixin:
         inflight = None
         if fm.get("in_flight"):
             f = fm["in_flight"]
-            raw_addr = f.get("addresses") or []
-            addresses = (
-                [str(a) for a in raw_addr if str(a).strip()]
-                if isinstance(raw_addr, list) else []
-            )
             inflight = InFlight(
                 engine=f["engine"], tool=f["tool"], id=f["id"],
                 ref_kind=f["ref_kind"], goal=f.get("goal", ""),
                 is_done_check=bool(f.get("is_done_check", False)),
-                is_discovery=bool(f.get("is_discovery", False)),
-                addresses=addresses,
             )
         raw_history = fm.get("phase_history") or []
         history: tuple[dict, ...] = tuple(
@@ -398,8 +391,6 @@ class GoalStatusMixin:
                     "ref_kind": status.in_flight.ref_kind,
                     "goal": status.in_flight.goal,
                     "is_done_check": status.in_flight.is_done_check,
-                    "is_discovery": status.in_flight.is_discovery,
-                    "addresses": list(status.in_flight.addresses),
                 }
                 if status.in_flight
                 else None
