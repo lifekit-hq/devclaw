@@ -125,7 +125,14 @@ When the tick decides to *do* something (not just think):
    **advises-and-ships** — recorded loud in the log + problems catalog and
    surfaced in the PR body, with the human merge as the backstop — rather than
    wedging. The verify gate, test-integrity gate, and the done-gate stay
-   **always-hard** in both modes, and every *unreviewable* case (a gate crash,
+   **always-hard** in both modes — for the done-gate that means its
+   `done_when` clause grading: an unmet clause holds the goal open under
+   either dial. The done-gate's *structural* axis (the review's code-shape
+   concerns) rides the dial like the review-shaped gates: under `trust`
+   reported concerns advise-and-ship as follow-ups on the close, under
+   `strict` they hold it open. A done-gate that refuses to close the same
+   goal 3 rounds in a row parks it for the owner (`donegate_churn`) instead
+   of re-advancing forever. Every *unreviewable* case (a gate crash,
    quota, worker-block) still fails closed regardless of the dial (#186 holds).
 6. **Deliver, then settle** — for `deliver=True` tasks the change becomes a
    branch/PR *before* `done` is observable, so a poller never reads "done

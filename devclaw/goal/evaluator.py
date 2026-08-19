@@ -32,7 +32,7 @@ import os
 import re
 from typing import Awaitable, Callable, Optional
 
-from .models import ClauseVerdict, EvalResult, Goal, GoalStatus, is_standing
+from .models import ClauseVerdict, EvalResult, Goal, GoalStatus, Strictness, is_standing
 from .prompt_budget import cap_deliveries, cap_log
 
 # The review gate's workspace-snapshot collector (#227), reused to ground the
@@ -184,26 +184,24 @@ def build_prompt(
     if at_done_gate:
         parts.append(
             "\n## CONTEXT: this is the DONE-GATE.\n"
-            "The next-action planner believes the goal is complete. Decide whether "
-            "the goal is TRULY done — which means BOTH axes pass:\n"
+            "The worker proposed done. Grade BOTH axes and report each:\n"
             "  (A) FUNCTIONAL — every clause in done_when is satisfied by specific "
-            "repo evidence in the review's ``## Per-clause evidence`` section.\n"
-            "  (B) STRUCTURAL — the review's ``## Structural health`` section "
-            "verdicts ``clean`` (or, at worst, ``concerns`` whose named items are "
-            "individually too minor to block the goal). A ``poor`` structural "
-            "verdict, OR ``concerns`` with substantive named items (god objects, "
+            "repo evidence in the review's ``## Per-clause evidence`` section. "
+            "This axis sets the verdict: ``achieved`` when every clause is "
+            "satisfied with evidence; ``off_track`` with clause-tagged "
+            "corrections when any is not.\n"
+            "  (B) STRUCTURAL — the review's ``## Structural health`` section, "
+            "reported in ``structural_health`` + ``structural_concerns`` (each "
+            "item specific: file:line + the senior-eng move; god objects, "
             "untested behaviour the new code added, coupled responsibilities "
             "that should have been split, no-op stubs satisfying the literal "
-            "clause without doing the work), means the goal is NOT done.\n\n"
-            "Return ``achieved`` only when BOTH axes pass. If functional clauses "
-            "are unmet, return ``off_track`` with the missing-clause corrections. "
-            "If functional clauses ARE all met but structural health is poor or "
-            "has substantive concerns, return ``off_track`` with those concerns "
-            "as corrections (each one specific: file:line + the senior-eng move "
-            "the agent should make). The literal-clauses-pass-but-codebase-is-"
-            "worse failure mode (closeloop's App.tsx grew to 1827 LOC through 4 "
-            "PRs that each verdicted ``achieved`` on the functional axis) is "
-            "exactly what this second axis exists to catch."
+            "clause without doing the work). Report this axis honestly and "
+            "fully — the host applies the goal's strictness dial to it — but "
+            "it never sets the verdict and its items never go in "
+            "``corrections``. The literal-clauses-pass-but-codebase-is-worse "
+            "failure mode (closeloop's App.tsx grew to 1827 LOC through 4 PRs "
+            "that each verdicted ``achieved`` on the functional axis) is "
+            "exactly what this axis exists to catch."
         )
         if is_standing(goal.done_when):
             parts.append(
@@ -414,6 +412,7 @@ def validate(
     at_done_gate: bool = False,
     stub_acceptable: list[str] | None = None,
     standing: bool = False,
+    strictness: Strictness = "strict",
 ) -> EvalResult:
     """Validate + normalize the model's evaluation. When ``at_done_gate=True``,
     ``achieved`` requires (a) every clause in ``clauses`` to be ``satisfied=True``
@@ -442,11 +441,41 @@ def validate(
     if verdict == "needs_human" and not question:
         # tolerate a model that put the ask in rationale rather than question
         question = rationale or "the evaluator needs a human decision (no question given)"
+    if at_done_gate and verdict == "off_track" and clauses:
+        unsatisfied = [c for c in clauses if not c.satisfied or not c.evidence]
+        if not unsatisfied:
+            # A met contract typed off_track: every clause satisfied with
+            # evidence, so whatever sits in ``corrections`` is improvement the
+            # contract does not require (a DI preference, a parameter default,
+            # a "senior move") — the structural axis, not contract work.
+            # Demote it there and route through the achieved checks below: the
+            # stub/existence normalization and the structural dial apply the
+            # SAME close bar either way, so the verdict label alone cannot
+            # hold a met contract open on taste.
+            if corrections:
+                structural_concerns = list(structural_concerns) + corrections
+                if structural_health not in ("poor", "concerns"):
+                    structural_health = "concerns"
+                corrections = []
+            verdict = "achieved"
+        elif not corrections:
+            # Contract work remains but the model named no fix — derive the
+            # steering from the unsatisfied clauses themselves so the next
+            # advance brief is never byte-identical to the last.
+            corrections = [
+                f"[clause: {c.clause}] {c.evidence or 'no evidence provided'} — "
+                f"address this before declaring done."
+                for c in unsatisfied
+            ]
+    if verdict == "off_track" and not corrections and structural_concerns:
+        # Steering must never land empty on an actionable verdict (an empty
+        # corrections list re-dispatches a byte-identical brief — a blind
+        # loop). With no clause grading to derive from, the structural items
+        # are the only steering available.
+        corrections = [f"[structural] {c}" for c in structural_concerns]
     if verdict == "off_track" and not corrections and not structural_concerns:
         # off_track is only actionable with corrections; treat a bare off_track as
-        # a soft on_track so we don't silently stall without steering. Structural
-        # concerns count as corrections at the done-gate (below), but for a plain
-        # off_track without either, drop to on_track.
+        # a soft on_track so we don't silently stall without steering.
         return EvalResult(
             verdict="on_track", rationale=rationale or "no corrections given",
             clauses=clauses, structural_health=structural_health,
@@ -530,18 +559,19 @@ def validate(
                 structural_concerns=structural_concerns,
             )
         # Functional axis passes — now the structural axis (C3, plan.md
-        # §Production-ready). ``poor`` is an unconditional flip. ``concerns``
-        # with itemized items is a flip too — the prompt tells the model to
-        # only itemize substantive items; when the model reports concerns AND
-        # names any, we trust its own judgment that the item is worth blocking.
-        # ``clean`` and empty-``concerns`` both pass. Missing structural_health
-        # is treated as unknown (no flip) — legacy responses stay observable
-        # rather than silently failing; the prompt now mandates the field.
+        # §Production-ready), which obeys the goal's strictness dial (ADR
+        # 0007): under ``strict`` a reported concern holds the close open
+        # (the downgrade below); under ``trust`` it advises-and-ships — the
+        # concerns ride the close as loud follow-ups (surfaced by the
+        # done-gate close path; the human PR review is the backstop) and do
+        # NOT hold a met contract open. Missing structural_health is treated
+        # as unknown (no flip) — legacy responses stay observable rather than
+        # silently failing; the prompt mandates the field.
         structural_fail = (
             structural_health == "poor"
             or (structural_health == "concerns" and structural_concerns)
         )
-        if structural_fail:
+        if structural_fail and strictness == "strict":
             derived = [
                 f"[structural: {structural_health}] {c}"
                 for c in (structural_concerns or ["structural review reported "
@@ -622,7 +652,7 @@ async def evaluate(
         raise GoalEvalError(f"evaluator emitted invalid JSON: {exc}", raw) from exc
     return validate(
         parsed, at_done_gate=at_done_gate, stub_acceptable=goal.stub_acceptable,
-        standing=is_standing(goal.done_when),
+        standing=is_standing(goal.done_when), strictness=goal.strictness,
     )
 
 

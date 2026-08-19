@@ -55,7 +55,7 @@ evidence makes the clause UNSATISFIED.
 placeholder) satisfies a clause ONLY when the goal's `stub_acceptable` list
 (in the `## Goal` block) explicitly names that capability slug. No list, no
 stubs — mark the clause unsatisfied and put it in `corrections` so the
-planner builds the real capability.
+worker builds the real capability.
 
 **4. Choose the verdict from clause coverage:**
 - `achieved` — done-gate only; EVERY clause has specific, repo-confirmed
@@ -94,7 +94,7 @@ Respond with STRICT JSON ONLY — no prose, no markdown fences. Schema:
     // Empty when clean; mandatory when poor.
   ],
   "corrections": [
-    // present iff verdict == 'off_track'
+    // present iff verdict == 'off_track'; ONLY clause-tagged fixes
     "[clause N] <concrete next step naming the unsatisfied clause>"
   ],
   "question": "<present iff verdict == 'needs_human'>"
@@ -105,6 +105,7 @@ own output):
 - `achieved` requires every `clauses` entry `"satisfied": true` with
   non-empty `"evidence"`. Anything less at the done-gate is `off_track`
   with corrections — never `achieved`, never `on_track`.
-- `achieved` also requires `structural_health` `clean`, or `concerns` whose
-  items are individually minor. `poor` — or `concerns` with substantive
-  items — is `off_track`, each concern surfaced as a correction.
+- The structural axis never sets the verdict: report `structural_health`
+  and `structural_concerns` honestly, and put any improvement no clause
+  requires there — never in `corrections`. The host applies the goal's
+  strictness dial to the structural axis.
