@@ -1,7 +1,7 @@
 # Intentionally empty (spec 011): the runner and its ACP client are
 # stdlib-only. The OpenHands SDK (openhands-sdk / openhands-tools) and the
 # agent-client-protocol pin are gone — the runner speaks JSON-RPC to the ACP
-# agent subprocess directly (openhands-runner/acp_client.py). The in-sandbox
+# agent subprocess directly (runner/acp_client.py). The in-sandbox
 # agent stack (claude CLI + claude-agent-acp) is installed via npm in
 # .sandcastle/Dockerfile, not pip. Add a dependency here only if the runner
 # itself genuinely needs it — the sandbox image installs nothing from this

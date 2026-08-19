@@ -60,7 +60,7 @@ The worker harness reads two complementary layers of doctrine each task:
 
 | Layer | Lives in | Owned by | Purpose |
 |---|---|---|---|
-| **Universal** | `/opt/devclaw/skills/` + `/opt/devclaw/hooks/` (baked into the sandbox image from `openhands-runner/skills/` and `openhands-runner/hooks/` in this repo) | DevClaw | Cross-repo doctrine — quality bar, verify-gate coverage, commit hygiene. The runner prepends per-task-kind skill bundles to the goal; universal hooks run mechanical pre/post checks. |
+| **Universal** | `/opt/devclaw/skills/` + `/opt/devclaw/hooks/` (baked into the sandbox image from `runner/skills/` and `runner/hooks/` in this repo) | DevClaw | Cross-repo doctrine — quality bar, verify-gate coverage, commit hygiene. The runner prepends per-task-kind skill bundles to the goal; universal hooks run mechanical pre/post checks. |
 | **Per-repo** | `<repo>/.agent/skills/` + `<repo>/.agent/hooks/` (alongside `AGENTS.md`) | The project | Project-specific notes — auth flow, migration commands, deploy steps. Agent-discovered (the universal `_common` skill tells it to `ls .agent/skills/`); per-repo hooks fire after universal ones with a `[name:repo]` tag. |
 
 Same pattern as `AGENTS.md`: universal devclaw doctrine + per-repo project facts. The universal layer stays consistent across every cascade; the per-repo layer evolves at the project's own pace.
@@ -68,7 +68,7 @@ Same pattern as `AGENTS.md`: universal devclaw doctrine + per-repo project facts
 The universal layer is itself split by **nature**, not by kind:
 
 - **Doctrine — always-on.** `_common.md`, the `_writes-code/*` tier (quality bar, verify-gate coverage, verify-iterate, repo-gate conflict, commit hygiene), and each `<kind>/*` tier. The runner concatenates these into the brief every task whether or not the agent thinks they apply — they're non-negotiable.
-- **Craft — self-selected.** How-to references in `openhands-runner/skills/craft/` (e.g. `frontend-design`, `playwright`) baked to `/opt/devclaw/skills/craft/`. These are **not** concatenated; `_common` points the agent at the dir and it `ls`/`cat`s only the guides a task calls for (progressive disclosure). Same discovery mechanism as per-repo `.agent/skills/` — no tagging or conditional-loading logic, plain `ls` + read.
+- **Craft — self-selected.** How-to references in `runner/skills/craft/` (e.g. `frontend-design`, `playwright`) baked to `/opt/devclaw/skills/craft/`. These are **not** concatenated; `_common` points the agent at the dir and it `ls`/`cat`s only the guides a task calls for (progressive disclosure). Same discovery mechanism as per-repo `.agent/skills/` — no tagging or conditional-loading logic, plain `ls` + read.
 
 #### Model-agnostic invariants
 
@@ -136,13 +136,13 @@ devclaw/
 ├── task_queue.py       # async task lifecycle, concurrency, on-settle hook → goal poke
 ├── project_registry.py # control plane: repos → driving goals → live status rollup
 └── cli.py              # devclaw projects/trace/scorecard/schedule/cognition … (terminal face of the control plane)
-openhands-runner/runner.py  # OpenHands SDK inside the sandbox; emits event/result lines
+runner/runner.py  # OpenHands SDK inside the sandbox; emits event/result lines
 .sandcastle/Dockerfile      # per-task sandbox image
 tests/                      # pytest — stubbed engine; no docker, no claude
 docs/architecture.md        # the system doc — read before touching the runner/store/sandbox
 ```
 
-DevClaw is all Python. The only language boundary left is the process boundary: `openhands-runner/runner.py` runs the OpenHands SDK *inside* the sandbox container, isolated from the long-running host process — it talks to the host over a line-delimited JSON protocol on stdout.
+DevClaw is all Python. The only language boundary left is the process boundary: `runner/runner.py` runs the OpenHands SDK *inside* the sandbox container, isolated from the long-running host process — it talks to the host over a line-delimited JSON protocol on stdout.
 
 ## MCP tools (the chef's menu)
 
@@ -292,7 +292,7 @@ DevClaw inherits a `claude` OAuth session — it never uses an API key. `ANTHROP
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-pip install -r openhands-runner/requirements.txt   # only inside the sandbox image
+pip install -r runner/requirements.txt   # only inside the sandbox image
 npm install -g @agentclientprotocol/claude-agent-acp
 
 DEVCLAW_TRANSPORT=stdio devclaw-mcp        # local dev (MCP over stdio)

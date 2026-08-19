@@ -12,9 +12,9 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_RUNNER_PATH = _REPO_ROOT / "openhands-runner" / "runner.py"
-_SKILLS_SRC = _REPO_ROOT / "openhands-runner" / "skills"
-_HOOKS_SRC = _REPO_ROOT / "openhands-runner" / "hooks"
+_RUNNER_PATH = _REPO_ROOT / "runner" / "runner.py"
+_SKILLS_SRC = _REPO_ROOT / "runner" / "skills"
+_HOOKS_SRC = _REPO_ROOT / "runner" / "hooks"
 
 
 @pytest.fixture(scope="module")

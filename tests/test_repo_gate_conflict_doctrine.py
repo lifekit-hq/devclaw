@@ -20,9 +20,9 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
-_SKILLS = _REPO / "openhands-runner" / "skills"
+_SKILLS = _REPO / "runner" / "skills"
 _DOCTRINE = _SKILLS / "_writes-code" / "50-repo-gate-conflict.md"
-_RUNNER_PATH = _REPO / "openhands-runner" / "runner.py"
+_RUNNER_PATH = _REPO / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")

@@ -22,7 +22,7 @@ Thumbs.db
 *.db
 *.db-shm
 *.db-wal
-openhands-runner/.venv/
+runner/.venv/
 __pycache__/
 *.pyc
 .pytest_cache/

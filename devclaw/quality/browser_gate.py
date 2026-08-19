@@ -8,7 +8,7 @@ reviewer reads *code*. Nothing boots the app in Chromium. A component like
 ``cmn-select`` passed every gate while throwing ``NG05105`` the instant its
 dropdown opened, because no gate rendered the integrated app. The sandbox already
 ships Chromium + ``@playwright/mcp`` (``.sandcastle/Dockerfile``,
-``openhands-runner/sandbox-mcp.json``); what was missing is a deterministic
+``runner/sandbox-mcp.json``); what was missing is a deterministic
 host-side assertion that a browser suite *actually ran and passed*.
 
 This module is that assertion — a pure verdict function consulted at settle time,

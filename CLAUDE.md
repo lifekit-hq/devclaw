@@ -29,7 +29,7 @@ Only layer 5 is an agent harness in the technical sense.
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`executing` only since the 008 shrink), the ~15-min tick |
 | 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/elicitation.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, scope-grill, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink) |
 | 4 | **TaskQueue + engine** | `devclaw/task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
-| 5 | **Worker harness** | `openhands-runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
+| 5 | **Worker harness** | `runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
 
 The chain is strict: `1 → 2 → 3` (cognition) or `1 → 2 → 4 → 5` (execution). No
 layer reaches through another (layer 1 must not dispatch tasks; layer 2 must not
@@ -40,7 +40,7 @@ spawn containers itself — it goes through the engine).
 - **OAuth only.** `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are **actively stripped**
   at the cognition caller (`devclaw/cognition.py`), the LLM-call primitive (`devclaw/llm_call.py`),
   host engine (`devclaw/engine/host.py`), and sandbox
-  (`devclaw/engine/sandcastle.py`, `openhands-runner/runner.py`) — a stray key
+  (`devclaw/engine/sandcastle.py`, `runner/runner.py`) — a stray key
   must never silently switch autonomous runs onto metered billing.
 - **Model-agnostic worker layer.** Skills are **plain markdown** (no model-specific
   frontmatter, no native `Skill(...)` calls); hooks are **bash `.sh` files** invoked
@@ -150,7 +150,7 @@ devclaw/
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
 ├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
-openhands-runner/runner.py   the in-sandbox worker harness — drives the ACP agent via acp_client.py; line-delimited JSON on stdout
+runner/runner.py   the in-sandbox worker harness — drives the ACP agent via acp_client.py; line-delimited JSON on stdout
 .sandcastle/Dockerfile       per-task sandbox image
 docs/                        architecture + flows + env + runbooks (start at docs/INDEX.md)
 tests/                       pytest — fully stubbed (no docker, no claude)

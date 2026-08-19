@@ -36,7 +36,7 @@ _ACTION = {"thought": "run the test suite to see the baseline",
 _OBS = {"content": "Passed!  - Failed: 0, Passed: 20, Skipped: 0"}
 # The ACP path's dominant event (Claude Code): a tool call with a human ``title``,
 # ``raw_input`` args, and the OUTPUT nested under ``content`` — the real shape the
-# runner stores. Matches openhands-runner's ACPToolCallEvent model_dump.
+# runner stores. Matches runner's ACPToolCallEvent model_dump.
 _ACP_TOOLCALL = {
     "id": "be733681", "timestamp": "2026-08-07T09:27:00", "source": "agent",
     "tool_call_id": "toolu_015KC2um", "status": "completed", "is_error": False,

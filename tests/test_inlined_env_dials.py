@@ -43,7 +43,7 @@ _INLINED = {
 
 def _source_files() -> list[Path]:
     files = list((_REPO / "devclaw").rglob("*.py"))
-    files += list((_REPO / "openhands-runner").glob("*.py"))
+    files += list((_REPO / "runner").glob("*.py"))
     return files
 
 

@@ -5,7 +5,7 @@
 # host's ~/.claude read-only at /home/agent/.claude, then exec's runner.py.
 # Container vaporizes on exit.
 #
-# Image is rebuilt whenever openhands-runner/ or this Dockerfile changes.
+# Image is rebuilt whenever runner/ or this Dockerfile changes.
 # Build from the repo root:
 #   docker build -t devclaw-sandbox:latest -f .sandcastle/Dockerfile .
 #
@@ -100,15 +100,15 @@ RUN npm install -g \
 # /workspace/.mcp.json at task start so claude auto-discovers Playwright MCP
 # WITHOUT mounting the host's mcpServers (which would re-open the leak
 # SANDBOX_CLAUDE_ALLOWLIST exists to prevent).
-COPY --chown=agent:agent openhands-runner/sandbox-mcp.json /opt/devclaw/sandbox-mcp.json
+COPY --chown=agent:agent runner/sandbox-mcp.json /opt/devclaw/sandbox-mcp.json
 
-COPY --chown=agent:agent openhands-runner/runner.py     /opt/devclaw/runner.py
-COPY --chown=agent:agent openhands-runner/acp_client.py /opt/devclaw/acp_client.py
+COPY --chown=agent:agent runner/runner.py     /opt/devclaw/runner.py
+COPY --chown=agent:agent runner/acp_client.py /opt/devclaw/acp_client.py
 # Skill bundle + hooks baked into the image. Skills are markdown files
 # runner.py concatenates per-task-kind and prepends to the goal; hooks are
 # best-effort bash scripts runner.py invokes around the agent loop.
-COPY --chown=agent:agent openhands-runner/skills/ /opt/devclaw/skills/
-COPY --chown=agent:agent openhands-runner/hooks/  /opt/devclaw/hooks/
+COPY --chown=agent:agent runner/skills/ /opt/devclaw/skills/
+COPY --chown=agent:agent runner/hooks/  /opt/devclaw/hooks/
 RUN chmod +x /opt/devclaw/hooks/*.sh
 
 USER agent

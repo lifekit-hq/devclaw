@@ -1,5 +1,5 @@
 """Worker-prompt doctrine from #508: judgment-call return contract, precedent
-rule, one-shot scope bound (openhands-runner/skills/_writes-code/).
+rule, one-shot scope bound (runner/skills/_writes-code/).
 
 Three pull-compatible rules, all worker-side plain markdown (the model-agnostic
 worker layer — no host-side scouting/pre-digestion):
@@ -27,8 +27,8 @@ from devclaw.goal.tick import _advance_brief
 from tests.goal_fakes import Clock, seed_goal
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_SKILLS_SRC = _REPO_ROOT / "openhands-runner" / "skills"
-_RUNNER_PATH = _REPO_ROOT / "openhands-runner" / "runner.py"
+_SKILLS_SRC = _REPO_ROOT / "runner" / "skills"
+_RUNNER_PATH = _REPO_ROOT / "runner" / "runner.py"
 
 _COMMIT_SKILL = _SKILLS_SRC / "_writes-code" / "90-commit.md"
 _QUALITY_SKILL = _SKILLS_SRC / "_writes-code" / "10-quality-bar.md"

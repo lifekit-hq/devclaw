@@ -14,8 +14,8 @@ inherit it. These tests pin the contract:
     file in /workspace would dirty the diff the review gate sees);
   - the per-project cache volume mount is part of the docker argv posture.
 
-The runner lives at openhands-runner/runner.py (not a package); its
-openhands-sdk imports are inside main(), so a top-level import is SDK-free.
+The runner lives at runner/runner.py (not a package); its
+runner is stdlib-only since spec 011, so a top-level import is dependency-free.
 """
 
 import importlib.util
@@ -28,7 +28,7 @@ import pytest
 
 import devclaw.engine.sandcastle as sc
 
-_RUNNER_PATH = Path(__file__).resolve().parents[1] / "openhands-runner" / "runner.py"
+_RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")

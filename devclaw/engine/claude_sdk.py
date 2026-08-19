@@ -3,7 +3,7 @@
 A direct ``claude --print`` agent inside the same sandcastle container, no
 OpenHands SDK in the picture. The point of the spike is to measure whether a
 substantially smaller engine (~150 lines vs OpenHands SDK + the
-``openhands-runner/`` script + a pinned 1.24.0 dependency) hits the same
+``runner/`` script + a pinned 1.24.0 dependency) hits the same
 5/5 build-from-scratch pass rate the production sandcastle engine does.
 
 Same sandbox posture as :mod:`devclaw.engine.sandcastle`:

@@ -24,7 +24,7 @@ slice gated on Tier-B live proof (relocation, not deletion).
 
 ## Technical Context
 
-**Language/Version**: Python 3.12 (devclaw host + `openhands-runner`); bash for the
+**Language/Version**: Python 3.12 (devclaw host + `runner`); bash for the
 `.specify/` scripts; speckit v0.16.3 (`workflow-registry.json` + `workflow.yml`).
 
 **Primary Dependencies**: existing — FastMCP (layer 1), OpenHands SDK (layer 5
@@ -106,7 +106,7 @@ devclaw/
 └── delivery/
     └── repo.py / delivery.py   # install-PR path reuse (US2) — reviewable, never silent
 
-openhands-runner/
+runner/
 └── (worker skill content)      # speckit flow as plain-markdown skill + .specify scripts (US1, Principle II)
 
 tests/

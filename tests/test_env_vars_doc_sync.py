@@ -31,7 +31,7 @@ _ROW_RE = re.compile(r"^\| `(DEVCLAW_[A-Z_]+)`", re.MULTILINE)
 
 def _runtime_reads() -> set[str]:
     files = list((_REPO / "devclaw").rglob("*.py"))
-    files += list((_REPO / "openhands-runner").glob("*.py"))
+    files += list((_REPO / "runner").glob("*.py"))
     assert files, "runtime source not found — repo layout changed?"
     reads: set[str] = set()
     for f in files:

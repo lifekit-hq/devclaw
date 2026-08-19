@@ -712,7 +712,7 @@ def _load_acp_client():
     """Import the sibling ``acp_client`` module file-relative (spec 011 D8).
 
     Works identically whether runner.py lives at /opt/devclaw (sandbox),
-    openhands-runner/ (host engine mode), or was itself loaded via
+    runner/ (host engine mode), or was itself loaded via
     ``spec_from_file_location`` (tests) — no sys.path mutation, no package.
     """
     import importlib.util
@@ -1302,7 +1302,7 @@ def main() -> None:
 
     # The ACP client — devclaw's own agent-drive seam (spec 011). Loaded
     # file-relative so it resolves identically in the sandbox image
-    # (/opt/devclaw/), host engine mode (openhands-runner/), and the test
+    # (/opt/devclaw/), host engine mode (runner/), and the test
     # suite's spec_from_file_location pattern.
     try:
         acp = _load_acp_client()

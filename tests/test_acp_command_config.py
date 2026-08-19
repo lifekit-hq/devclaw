@@ -7,8 +7,8 @@ the host threads it through the runner JSON payload exactly like ``model``
 (host env vars do NOT cross the container boundary, so a payload ride is the
 only channel that works in the sandbox). These pin that seam.
 
-The runner lives at openhands-runner/runner.py (not a package); its
-openhands-sdk imports are inside main(), so a top-level import is SDK-free.
+The runner lives at runner/runner.py (not a package); its
+runner is stdlib-only since spec 011, so a top-level import is dependency-free.
 """
 
 import importlib.util
@@ -19,7 +19,7 @@ import pytest
 from devclaw.engine import EngineRequest
 from devclaw.engine import sandcastle
 
-_RUNNER_PATH = Path(__file__).resolve().parents[1] / "openhands-runner" / "runner.py"
+_RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")

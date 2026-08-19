@@ -1,4 +1,4 @@
-"""Content-integrity tests for the baked worker skills (``openhands-runner/skills/``).
+"""Content-integrity tests for the baked worker skills (``runner/skills/``).
 
 The curation rules for anything a worker reads at task time, mechanically
 enforced (these are the model-agnostic invariants from CLAUDE.md/README):
@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_BAKED = _REPO_ROOT / "openhands-runner" / "skills"
+_BAKED = _REPO_ROOT / "runner" / "skills"
 
 _FORBIDDEN_PHRASES = [
     # unattended workers cannot ask; ambiguity goes to the summary or fails loudly

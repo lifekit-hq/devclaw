@@ -1,7 +1,7 @@
 # Contract — Worker advance brief (US1)
 
 **Where**: `devclaw/goal/tick.py` `_advance_brief` (layer 2 builds the string; the
-worker in `openhands-runner` consumes it, layer 5).
+worker in `runner` consumes it, layer 5).
 
 ## Before (today)
 Orders the worker to "First read PLAN.md (create and maintain it as you go) … and

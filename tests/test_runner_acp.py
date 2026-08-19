@@ -1,6 +1,6 @@
 """Runner-through-fake-agent tests (spec 011, T007/T009/T010).
 
-Runs ``openhands-runner/runner.py`` as a real subprocess driving the scripted
+Runs ``runner/runner.py`` as a real subprocess driving the scripted
 fake ACP agent via the agent-command seam — the executable proof that the
 swap holds the frozen wire contract (contracts/runner-host-wire.md) and that
 the executor is swappable with zero runner-code change. No docker, no claude.
@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
-_RUNNER = _ROOT / "openhands-runner" / "runner.py"
+_RUNNER = _ROOT / "runner" / "runner.py"
 _FAKE_AGENT = Path(__file__).resolve().parent / "acp_fake_agent.py"
 
 
@@ -167,7 +167,7 @@ def test_client_env_allowlist_never_leaks_key_to_agent(tmp_path, monkeypatch):
     fake agent reports LEAKED-API-KEY if it ever sees one)."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-leaked")
     spec = importlib.util.spec_from_file_location(
-        "acp_client_allowlist_test", _ROOT / "openhands-runner" / "acp_client.py"
+        "acp_client_allowlist_test", _ROOT / "runner" / "acp_client.py"
     )
     acp = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(acp)

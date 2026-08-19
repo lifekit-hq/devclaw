@@ -106,7 +106,7 @@ class Classification:
 
 # --- patterns (checked in priority order; first hit wins) --------------------
 # NB: a vendored subset of these patterns (AUTH/QUOTA/RATE + the relative
-# retry-after parser) lives in openhands-runner/runner.py — the in-sandbox
+# retry-after parser) lives in runner/runner.py — the in-sandbox
 # runner can't import devclaw, so it carries its own copy to emit a structured
 # status="rate_limited" result. Keep the two in sync when editing.
 # AUTH first: harness-shaped auth wording must classify as AUTH even when the

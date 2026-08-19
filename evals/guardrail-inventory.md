@@ -107,7 +107,7 @@ the cognitive half is the movable part).
 
 ### C4. MAX_PAUSE_REQUEUES bound — **S (mechanical)**. Anti-infinite-loop bound. Zero LLM.
 
-## D. openhands-runner/runner.py — worker prompt layer (instrument: `measure_passrate`)
+## D. runner/runner.py — worker prompt layer (instrument: `measure_passrate`)
 
 ### D1. Skills wiring + kind-wrappers + quality-bar/verify-coda/return-contract — **C**
 - `_load_skills`, `_wrap_goal`, `_KIND_WRAPPERS`, `_RETURN_CONTRACT`, `_VERIFY_CODA`, `_QUALITY_BAR`, `_CONTEXT_PREAMBLE`.

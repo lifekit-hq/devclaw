@@ -31,7 +31,7 @@ For each doc, find when it last changed and what code moved since:
 
 ```bash
 git log -1 --format="%h %cs" -- docs/<file>.md
-git log --oneline <that-hash>..HEAD -- devclaw/ openhands-runner/ .sandcastle/
+git log --oneline <that-hash>..HEAD -- devclaw/ runner/ .sandcastle/
 ```
 
 A doc whose subject area has no commits since its last edit needs only a spot

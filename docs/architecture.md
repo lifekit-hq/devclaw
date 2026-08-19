@@ -33,7 +33,7 @@ the technical sense — the rest is orchestration.
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | the goal state machine + the ~15-min tick |
 | 3 | **Cognition callers** | `goal/{evaluator,summary,triage}.py`, `devclaw/elicitation.py`, `devclaw/intake_readiness.py` | one-shot `claude --print` prompt/parse calls (planning cognition relocated into the worker's speckit run — spec 008 shrink) |
 | 4 | **TaskQueue + engine** | `task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
-| 5 | **Worker harness** | `openhands-runner/runner.py` (inside the sandbox) | the in-sandbox agent turn-loop, skills, hooks, `verify_cmd` |
+| 5 | **Worker harness** | `runner/runner.py` (inside the sandbox) | the in-sandbox agent turn-loop, skills, hooks, `verify_cmd` |
 
 There are exactly **two paths through the stack**, and they never cross layers:
 
@@ -397,7 +397,7 @@ wrong-codebase review bug and its siblings, fixed 2026-07-13).
 keys `env.pop`'d — at all **five** first-party call sites, the authoritative
 enforcement list: `devclaw/cognition.py`, `devclaw/llm_call.py`,
 `devclaw/engine/host.py`, `devclaw/engine/sandcastle.py`, and
-`openhands-runner/runner.py`. A stray key must never silently flip an
+`runner/runner.py`. A stray key must never silently flip an
 autonomous run onto metered billing.
 
 ### Model-agnostic worker layer
@@ -526,7 +526,7 @@ devclaw/
 ├── state_store/     StateStore package (rows · control · core) — the append-only log
 ├── task_queue.py + task_{git,notify}.py    layer 4 — dispatch, concurrency, settle
 └── prompts/         system prompts as .md files (load_prompt(slug)); gate prompts live in quality/prompts/
-openhands-runner/runner.py    layer 5 — the in-sandbox harness
+runner/runner.py    layer 5 — the in-sandbox harness
 ```
 
 ## Where to look next

@@ -2,7 +2,7 @@
 
 This is the one concrete Engine implementation (see ``engine.py`` for the seam).
 Spawns ``docker run --rm`` against the devclaw-sandbox image for each task. The
-container's ENTRYPOINT runs the OpenHands runner (``openhands-runner/runner.py``),
+container's ENTRYPOINT runs the OpenHands runner (``runner/runner.py``),
 which streams one prefixed JSON line per event (``event: {...}``) plus a single
 terminating ``result: {...}`` line. This module:
 

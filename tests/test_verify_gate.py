@@ -19,7 +19,7 @@ from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue, _verify_failure_summary
 
-_RUNNER_PATH = Path(__file__).resolve().parents[1] / "openhands-runner" / "runner.py"
+_RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
 
 @pytest.fixture(scope="module")

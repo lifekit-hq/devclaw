@@ -1,6 +1,6 @@
 # Keep the docker build context lean (applies to deploy/Dockerfile AND
 # .sandcastle/Dockerfile — both build from the repo root). Do NOT exclude
-# openhands-runner/ (the sandbox image COPYs it) or devclaw/server/console/src
+# runner/ (the sandbox image COPYs it) or devclaw/server/console/src
 # (the MCP image builds the console from it).
 
 .git

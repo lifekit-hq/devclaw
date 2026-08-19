@@ -2,7 +2,7 @@
 
 All decisions grounded in the current code (runner.py @ 8da9ad5,
 `devclaw/server/worker_events.py`, `.sandcastle/Dockerfile`,
-`openhands-runner/requirements.txt`, `tests/test_runner_*.py`).
+`runner/requirements.txt`, `tests/test_runner_*.py`).
 
 ## D1 — Client basis: hand-rolled minimal JSON-RPC, zero new dependencies
 
@@ -129,7 +129,7 @@ still classifies error text.
 `acp_client.py` sits beside `runner.py`; `runner.py` loads it
 file-relative (`importlib` from `os.path.dirname(__file__)`), which works
 identically in the sandbox (`/opt/devclaw/`), host engine mode
-(`openhands-runner/`), and the test suite's `spec_from_file_location`
+(`runner/`), and the test suite's `spec_from_file_location`
 pattern. No sys.path mutation, no package install.
 
 ## D9 — Key-stripping unchanged

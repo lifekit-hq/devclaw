@@ -1,6 +1,6 @@
 """Protocol-level tests for the runner's ACP client (spec 011, T004).
 
-Drives ``openhands-runner/acp_client.py`` against the scripted fake agent
+Drives ``runner/acp_client.py`` against the scripted fake agent
 subprocess — no docker, no claude, no SDK. These are the tests that make the
 agent-drive seam continuously verified instead of a doc claim.
 """
@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 _CLIENT_PATH = (
-    Path(__file__).resolve().parents[1] / "openhands-runner" / "acp_client.py"
+    Path(__file__).resolve().parents[1] / "runner" / "acp_client.py"
 )
 _FAKE_AGENT = Path(__file__).resolve().parent / "acp_fake_agent.py"
 
