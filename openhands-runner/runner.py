@@ -19,9 +19,7 @@ CLAUDE_CONFIG_DIR env vars. No ANTHROPIC_API_KEY required or accepted.
 """
 
 import atexit
-import contextlib
 import glob as _glob
-import io
 import json
 import os
 import re
@@ -596,31 +594,6 @@ def _parse_blocked_reason(agent_message: str | None) -> str | None:
     return reason or "worker reported BLOCKED without a stated reason"
 
 
-def _collect_usage(conversation) -> dict | None:
-    """Best-effort per-task usage from the SDK's conversation stats.
-
-    The ACP agent records each turn's token usage (and, when the CLI reports
-    one, its cost) into the conversation's combined metrics; this flattens
-    them into a plain dict that rides the result payload to the host. Usage
-    is telemetry, never a gate: any schema drift or absent stats degrades to
-    None (block omitted) rather than failing a finished run. All-zero stats
-    also return None — an ACP server that doesn't report usage should read
-    as "unknown", not "free".
-    """
-    try:
-        metrics = conversation.conversation_stats.get_combined_metrics()
-        tokens = getattr(metrics, "accumulated_token_usage", None)
-        usage = {
-            "input_tokens": int(getattr(tokens, "prompt_tokens", 0) or 0),
-            "output_tokens": int(getattr(tokens, "completion_tokens", 0) or 0),
-            "cache_read_tokens": int(getattr(tokens, "cache_read_tokens", 0) or 0),
-            "cost_usd": round(float(getattr(metrics, "accumulated_cost", 0.0) or 0.0), 6),
-        }
-        return usage if any(usage.values()) else None
-    except Exception:
-        return None
-
-
 # The hand-back's REPO NOTES field — durable repo-level facts for FUTURE tasks
 # on the same repo (build/test quirks, non-obvious commands). Same parsing
 # philosophy as the BLOCKED line: anchored to line start, light markdown
@@ -687,11 +660,9 @@ def _agent_message_text(payload: dict) -> str:
     return "".join(parts)
 
 
-# `sys.__stdout__` is the original stdout the process was started with —
-# `contextlib.redirect_stdout` swaps `sys.stdout` but leaves `__stdout__`
-# alone. We write our prefixed protocol lines (`event:` / `result:`)
-# straight to it so SDK decorative output captured by the redirect block
-# can't swallow them.
+# `sys.__stdout__` is the original stdout the process was started with.
+# The prefixed protocol lines (`event:` / `result:`) go straight to it so a
+# stray library print into a swapped `sys.stdout` can never swallow them.
 _PROTO_OUT = sys.__stdout__
 
 
@@ -735,6 +706,24 @@ def _resolve_acp_command(req: dict) -> list[str]:
     if not raw:
         return list(_DEFAULT_ACP_COMMAND)
     return shlex.split(raw)
+
+
+def _load_acp_client():
+    """Import the sibling ``acp_client`` module file-relative (spec 011 D8).
+
+    Works identically whether runner.py lives at /opt/devclaw (sandbox),
+    openhands-runner/ (host engine mode), or was itself loaded via
+    ``spec_from_file_location`` (tests) — no sys.path mutation, no package.
+    """
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "acp_client.py")
+    spec = importlib.util.spec_from_file_location("devclaw_acp_client", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load acp_client from {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # --- toolchain provisioning (ADR 0005) --------------------------------------
@@ -1212,7 +1201,7 @@ def main() -> None:
         sys.exit(2)
 
     # Wrap the user's goal with kind-specific operating instructions. The
-    # OpenHands ACP-driven Claude session reads this as the user message,
+    # ACP-driven agent session reads this as the user message,
     # so prepending instructions here is the cheapest way to bias behavior
     # without a custom system prompt. Skills now live in /opt/devclaw/skills/
     # and are loaded per-kind by _wrap_goal.
@@ -1256,7 +1245,7 @@ def main() -> None:
     # Put mise's shims dir on PATH BEFORE the agent starts, so a toolchain the
     # agent provisions itself mid-task (a .csproj/.sln repo the pre-agent step
     # can't detect) lands on its shell PATH without hand-prefixing. MUST run
-    # before the ACPAgent below reads os.environ["PATH"] into acp_env.
+    # before the AcpClient env below reads os.environ["PATH"].
     _ensure_mise_shims_on_path()
 
     # Drop the sandbox-only MCP config into the workspace so claude auto-
@@ -1311,100 +1300,54 @@ def main() -> None:
     claude_exec = os.environ.get("CLAUDE_CODE_EXECUTABLE") or "claude"
     claude_cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
 
+    # The ACP client — devclaw's own agent-drive seam (spec 011). Loaded
+    # file-relative so it resolves identically in the sandbox image
+    # (/opt/devclaw/), host engine mode (openhands-runner/), and the test
+    # suite's spec_from_file_location pattern.
     try:
-        from openhands.sdk.agent import ACPAgent
-        from openhands.sdk.conversation import Conversation
-        from openhands.sdk.event.base import Event
-    except ImportError as exc:
+        acp = _load_acp_client()
+    except Exception as exc:
         _emit_result(
             {
                 "status": "error",
                 "error": (
-                    "openhands-sdk not importable. Install with: "
-                    "`pip install -r openhands-runner/requirements.txt`."
+                    "acp_client.py not loadable next to runner.py — the "
+                    "runner install is incomplete."
                 ),
-                "trace": str(exc),
+                "trace": f"{exc.__class__.__name__}: {exc}",
             }
         )
         sys.exit(2)
 
-    # OpenHands SDK + ACP transport write decorative output (banner, panels,
-    # finish messages) to stdout. Capture all of it so the only lines on
-    # actual stdout are our prefixed `event:` / `result:` lines.
-    captured_stdout = io.StringIO()
-    os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
+    # The agent subprocess env is an explicit ALLOWLIST: beyond _refuse_api_key
+    # above, a refused credential can never ride an inherited environ into the
+    # agent. ANTHROPIC_MODEL tiers the agent (ACP has no standard model field;
+    # the claude CLI honors the env var); unset → the agent's default.
+    acp_env = {
+        "CLAUDE_CODE_EXECUTABLE": claude_exec,
+        "CLAUDE_CONFIG_DIR": claude_cfg,
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+    }
+    if acp_model:
+        acp_env["ANTHROPIC_MODEL"] = acp_model
 
-    # Last text the AGENT itself emitted (a mutable holder so the callback can
-    # write it). We parse this — not the decorative captured_stdout, which also
-    # echoes the prompt's literal "BLOCKED: <reason>" contract text — for the
-    # engineer's honest-exit self-report after the run completes.
-    last_agent_message: list[str] = [""]
-
-    def on_event(event: Event) -> None:
-        """Forward each SDK Event to the TS caller as a prefixed JSON line.
-
-        Runs in whatever thread the SDK invokes callbacks on; print + flush
-        are thread-safe at the line granularity we care about. Swallow our
-        own exceptions — a bad event must not crash the agent loop.
-        """
-        try:
-            payload = event.model_dump(mode="json")
-        except Exception:
-            # Some events may have unencodable fields in edge cases.
-            payload = {"repr": repr(event)}
-        # Track the agent's own final message so we can honor a BLOCKED self-
-        # report after the run. Best-effort — a bad event must not crash the loop.
-        try:
-            if (
-                event.__class__.__name__ == "MessageEvent"
-                and str(getattr(event, "source", "")) == "agent"
-            ):
-                text = _agent_message_text(payload)
-                if text:
-                    last_agent_message[0] = text
-        except Exception:
-            pass
-        try:
-            _emit_event(
-                {
-                    "id": getattr(event, "id", None),
-                    "type": event.__class__.__name__,
-                    "source": str(getattr(event, "source", "")),
-                    "ts": getattr(event, "timestamp", None) or time.time(),
-                    "payload": payload,
-                }
-            )
-        except Exception:
-            # stdout broken? nothing else we can do; let the run continue.
-            pass
+    client = acp.AcpClient(acp_command, acp_env, on_event=_emit_event)
 
     usage: dict | None = None
     try:
-        with contextlib.redirect_stdout(captured_stdout):
-            # acp_command is configurable (DEVCLAW_ACP_COMMAND / payload); the
-            # acp_env below is still claude-shaped (CLAUDE_* vars are harmless
-            # extras to a non-claude agent, but a real swap likely needs its own
-            # env threaded too — see docs/reference/env-vars.md).
-            agent = ACPAgent(
-                acp_command=acp_command,
-                acp_env={
-                    "CLAUDE_CODE_EXECUTABLE": claude_exec,
-                    "CLAUDE_CONFIG_DIR": claude_cfg,
-                    "PATH": os.environ.get("PATH", ""),
-                    "HOME": os.environ.get("HOME", ""),
-                },
-                # Tier the agent's model; None → the ACP server's default.
-                acp_model=acp_model,
+        try:
+            outcome = client.run(workspace_dir, wrapped_goal)
+        finally:
+            client.close()
+        usage = outcome.usage
+        if outcome.stop_reason == "refusal":
+            # A refusal is a failed task with the agent's own words as the
+            # reason — never a silent success.
+            raise acp.AcpError(
+                "agent refused the task: "
+                + (outcome.last_agent_message or "(no final message)")
             )
-            conversation = Conversation(
-                agent=agent,
-                workspace=workspace_dir,
-                callbacks=[on_event],
-            )
-            conversation.send_message(wrapped_goal)
-            conversation.run()
-            usage = _collect_usage(conversation)
-            agent.close()
     except Exception as exc:
         # A clear usage/rate limit becomes status="rate_limited" so the host
         # pauses-and-resumes instead of retry-burning quota; anything ambiguous
@@ -1413,7 +1356,7 @@ def main() -> None:
             str(exc),
             trace=traceback.format_exc(),
             agent_output=_agent_last_words(
-                last_agent_message[0], captured_stdout.getvalue()
+                client.last_agent_message, client.stderr_tail()
             ),
         )
         if hook_warnings:
@@ -1429,15 +1372,15 @@ def main() -> None:
     # approval, so we short-circuit BEFORE the verify gate and NEVER settle
     # "ok" (fail-closed). Parsed from the agent's OWN final message, not the
     # captured decorative stdout (which echoes the prompt's contract text).
-    blocked_reason = _parse_blocked_reason(last_agent_message[0])
-    repo_notes = _parse_repo_notes(last_agent_message[0])
+    blocked_reason = _parse_blocked_reason(client.last_agent_message)
+    repo_notes = _parse_repo_notes(client.last_agent_message)
     if blocked_reason is not None:
         blocked_payload: dict = {
             "status": "blocked",
             "reason": blocked_reason,
             "workspace_dir": workspace_dir,
             "agent_output": _agent_last_words(
-            last_agent_message[0], captured_stdout.getvalue()
+            client.last_agent_message, client.stderr_tail()
         ),
         }
         if usage:
@@ -1460,9 +1403,9 @@ def main() -> None:
     result_payload = {
         "status": "ok",
         "workspace_dir": workspace_dir,
-        "message": "OpenHands completed.",
+        "message": "agent run completed.",
         "agent_output": _agent_last_words(
-            last_agent_message[0], captured_stdout.getvalue()
+            client.last_agent_message, client.stderr_tail()
         ),
     }
     if usage:
