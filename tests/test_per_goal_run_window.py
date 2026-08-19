@@ -33,7 +33,7 @@ async def test_windowed_out_goal_is_skipped_others_tick(tmp_path):
 
     out = await tick_all(
         store=store, engine=engine, evaluator_caller=evaluator,
-        notifier=RecordingNotifier(), prepare_ws=fake_prepare, eval_every=99,
+        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
     )
 
     assert out["night"] is Outcome.RATE_LIMITED   # outside its window → held

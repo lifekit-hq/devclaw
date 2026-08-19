@@ -81,7 +81,6 @@ def _build_status(raw: dict) -> GoalStatus:
         last_tick_at=raw.get("last_tick_at"),
         inbox_cursor=int(raw.get("inbox_cursor", 0)),
         actions_dispatched=int(raw.get("actions_dispatched", 0)),
-        deliveries_since_eval=int(raw.get("deliveries_since_eval", 0)),
         last_eval_verdict=raw.get("last_eval_verdict"),
         last_eval_at=raw.get("last_eval_at"),
         last_eval_note=str(raw.get("last_eval_note", "")),

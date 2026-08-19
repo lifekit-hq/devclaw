@@ -1,11 +1,12 @@
-"""The done-gate — the planner's "done" is a proposal, gated on grounded review.
+"""The done-gate — the worker's "done" is a proposal, gated on grounded review.
 
-A planner ``done`` opens a read-only ``review_repository`` whose report the
+A settled advance session whose settle header reads done opens a read-only
+``review_repository`` whose report the
 direction evaluator judges (plus a grounded remote-CI cross-check); only an
 ``achieved`` verdict closes the goal, and a completed goal is best-effort
 auto-deployed to a durable URL. Split out of :mod:`devclaw.goal.tick`; imports
 tick_context (+ its shared _apply_corrections) and is called by
-tick_settle._resolve_polling_done_gate and tick._handle_executing. Re-exported
+tick_settle._resolve_polling_done_gate and tick._handle_long_lived_advance. Re-exported
 from tick.py.
 """
 
@@ -49,8 +50,8 @@ from ..loom import trace as _trace
 DONEGATE_ROUND_CAP = 3
 
 def _done_gate_review_brief(goal: "Goal") -> str:
-    """The instruction the in-sandbox read-only reviewer gets when the planner
-    proposes done. The reviewer's report is then fed to the direction evaluator
+    """The instruction the in-sandbox read-only reviewer gets when a settled
+    advance session proposes done. The reviewer's report is then fed to the direction evaluator
     — both sides speak the same vocabulary: ``done_when`` is decomposed into
     atomic clauses, and each clause needs SPECIFIC repo evidence (file path +
     symbol + test name) to count as satisfied. This closes the
@@ -387,7 +388,7 @@ async def _resolve_done_gate(
     now = store.now_iso()
     base = replace(
         status, last_eval_verdict=ev.verdict, last_eval_at=now,
-        last_eval_note=ev.rationale, deliveries_since_eval=0, last_tick_at=now,
+        last_eval_note=ev.rationale, last_tick_at=now,
     )
     store.append_log(goal_id, f"done-gate: {ev.verdict} — {ev.rationale[:500]}")
     if ev.verdict == "achieved":
@@ -455,27 +456,6 @@ async def _resolve_done_gate(
             expect=status, consume_steering=consume_steering,
         )
         await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] not done — {q}", summarize=summarize)
-        return Outcome.BLOCKED
-    if goal.mode == "one_shot":
-        # One-shot (ADR 0003 stage 2): the single pass is spent — its checklist
-        # drained, yet the grounded review says done_when isn't met (scope the
-        # decomposition missed, or work that didn't land). "Keep going" has no
-        # meaning here: there is no planner to consume corrections, so
-        # RESUME_IDLE would re-drain → re-review every tick, burning a sandbox
-        # review per heartbeat forever. Park it for the owner instead — resume
-        # re-judges the same contract; steer/cancel changes it. Fail loud over
-        # silent review-looping.
-        q = (
-            f"one-shot run finished but done_when is not confirmed: "
-            f"{ev.rationale[:250]}"
-        )
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q, blocked_kind="needs_answer", next=""),
-            expect=status, consume_steering=consume_steering,
-        )
-        _apply_corrections(store, goal_id, ev)  # visible in inbox for the owner's decision
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q}", summarize=summarize)
         return Outcome.BLOCKED
     # #430: a per-action goal that shipped a green PR we never merged (auto-merge
     # off) can NEVER satisfy its own done-gate — the gate reviews the default
@@ -549,7 +529,7 @@ async def _open_done_gate(
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
 ) -> Outcome:
-    """The planner proposed done. Don't trust it: either dispatch a read-only
+    """A settled advance session proposed done. Don't trust it: either dispatch a read-only
     review of the repo against done_when (the grounded path) and let the next
     tick judge it, or — if done-verification is disabled — run an artifact-only
     done evaluation now.

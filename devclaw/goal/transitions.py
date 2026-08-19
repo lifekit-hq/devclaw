@@ -95,7 +95,7 @@ state_of = derive_state
 #:
 #: BLOCKED carries planning-family outgoing edges (DISPATCH_ACTION,
 #: OPEN_DONE_GATE, RESUME_IDLE, ACHIEVE) because `_classify` routes a
-#: phase=blocked+no-ref goal to EXECUTING, and `_handle_executing` still plans
+#: phase=blocked+no-ref goal to EXECUTING, and `_handle_long_lived_advance` still plans
 #: when unread steering exists — so a blocked goal can dispatch, propose done,
 #: sleep, or re-block, exactly like an executing_idle one. `BLOCKED,
 #: DISPATCH_ACTION` also covers `tick._readopt_orphaned_ref` (PR7's startup

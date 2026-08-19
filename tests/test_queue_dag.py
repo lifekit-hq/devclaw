@@ -213,33 +213,6 @@ async def test_start_planned_program_inherits_pr_gate_owner_and_plan_key(store):
     assert all(t.status == "pending" for t in tasks.values())
 
 
-async def test_engine_dispatches_planned_action_without_replanning(store):
-    """An Action carrying `planned` must submit via start_planned_program —
-    the queue's own planner (a cognition call) must NOT run."""
-    from devclaw.goal.engine import InProcessEngine
-    from devclaw.goal.models import Action, Goal
-
-    async def booby_trapped_planner(goal, workspace_dir):  # pragma: no cover
-        raise AssertionError("queue planner must not run for a planned action")
-
-    q = TaskQueue(store, planner=booby_trapped_planner, runner=_ok_runner([]))
-    engine = InProcessEngine(q, store)
-    goal_obj = Goal(id="g1", objective="obj", cadence="1d", engine="devclaw",
-                    workspace_dir="/ws", verify_cmd="pytest -q", mode="one_shot")
-    action = Action(
-        engine="devclaw", tool="start_program", goal="one-shot batch",
-        open_pr=True, addresses=["scaffold"],
-        planned=[PlannedTask(key="scaffold", goal="g1", kind="implement_feature",
-                             depends_on_keys=[], scaffold=True)],
-    )
-    ref = await engine.dispatch(action, goal_obj, "")
-    assert ref.ref_kind == "program" and ref.tool == "start_program"
-    p = store.get_program(ref.id)
-    assert p.parent_goal_id == "g1"
-    child = store.list_program_tasks(ref.id)[0]
-    assert child.plan_key == "scaffold" and bool(child.scaffold) and child.deliver
-
-
 async def test_program_poll_carries_per_child_breakdown(store):
     """A terminal program's PollResult lists each child's plan_key/status so
     the goal settle path can grade checklist items individually."""

@@ -150,7 +150,7 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │  Back in NODE 2 — devclaw-mcp (consume_runner_output):      │                      │
      │  │                                                             │                      │
      │  │  Step H — parse the stream:                                 │                      │
-     │  │     • event: lines → on_event callback (logging, dashboard) │                      │
+     │  │     • event: lines → on_event callback (logging, console) │                      │
      │  │     • final result: line → EngineResult                     │                      │
      │  │     • if no result line → "sandbox exited 1 without a       │                      │
      │  │       result line" (the misleading error string)            │                      │

@@ -55,12 +55,12 @@ def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _tick(store, goal_id, evaluator, engine, notifier, *, eval_every=99, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
+async def _tick(store, goal_id, evaluator, engine, notifier, *, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
-        eval_every=eval_every, verify_done=verify_done, summary_caller=summary_caller,
+        verify_done=verify_done, summary_caller=summary_caller,
         merger=merger, remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
     )
@@ -198,7 +198,7 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
 
     out = await tick_goal(
         "g", store=store, engine=engine, evaluator_caller=evaluator,
-        notifier=notifier, notify_url="", prepare_ws=rec_prepare, eval_every=99,
+        notifier=notifier, notify_url="", prepare_ws=rec_prepare,
     )
     assert out is Outcome.DISPATCHED
     # seed_goal now sets a fake repo_url so the investigating phase takes the
@@ -427,7 +427,7 @@ def test_steer_goal_resets_dispatch_counter_on_blocked(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         # Seed + read back through the service's OWN store: since Tranche 1/PR3
         # status lives in the shared StateStore (not STATUS.md), so a separate
@@ -461,7 +461,7 @@ def test_steer_goal_clears_blocked_on(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         svc._goal_store.save_status(
             "g",
@@ -497,7 +497,7 @@ def _resume_service(tmp_path):
 
     goals_dir = tmp_path / "goals"
     db = StateStore(str(tmp_path / "state.db"))
-    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
     return GoalService(TaskQueue(db), db, config=cfg), db, goals_dir
 
 
@@ -870,7 +870,7 @@ async def test_done_gate_verified_wording_kept_when_review_grounded(tmp_path, mo
 # ---- periodic direction evaluation: CUT (demolition P1) --------------------
 # docs/proposals/cognition-demolition.md — the per-tick mid-flight direction
 # evaluator (`_run_mid_flight_eval`) is removed. Direction is no longer re-judged
-# by an LLM every EVAL_EVERY deliveries; the mechanical brakes stand (no-progress
+# by an LLM on a delivery cadence; the mechanical brakes stand (no-progress
 # watchdog, done-gate, per-item circuit breaker). The old fires-and-steers /
 # carries-repo-context / stalled-blocks tests are replaced by the contract below.
 
@@ -887,10 +887,10 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
     """
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    # Past the old cadence threshold (deliveries_since_eval bumps 2→3, eval_every=3):
-    # under the old code this fired the mid-flight eval; now it must not.
+    # Under the old code a goal at the eval cadence fired the mid-flight
+    # eval; now it must not.
     store.save_status("g", GoalStatus(
-        phase="in_flight", deliveries_since_eval=2,
+        phase="in_flight",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
     ))
     # A `stalled` verdict WOULD have blocked the goal under the old mid-flight eval.
@@ -898,7 +898,7 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="shipped"))
     notifier = RecordingNotifier()
 
-    out = await _tick(store, "g", evaluator, engine, notifier, eval_every=3)
+    out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert evaluator.calls == 0                       # the mid-flight cognition boundary is gone
     assert out is not Outcome.BLOCKED                 # a direction verdict can no longer block mid-flight
@@ -925,7 +925,7 @@ async def test_owner_notification_is_plain_summarized(tmp_path, monkeypatch):
         "g", store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=_failing_prepare,
-        eval_every=99, summary_caller=summarizer,
+        summary_caller=summarizer,
     )
 
     assert out is Outcome.BLOCKED
@@ -975,8 +975,8 @@ async def test_idle_tick_never_invokes_summarizer(tmp_path, monkeypatch):
 def _delivery_status():
     # A legacy PER-ACTION delivery: lifecycle=None reads-as-executing for the
     # phase classifier but resolves to the per-action topology (each action its
-    # own branch + PR off main). #486/Part C re-keyed the auto-merge SKIP on the
-    # delivery TOPOLOGY, not on ``addresses``, so the per-action auto-merge
+    # own branch + PR off main). #486/Part C keyed the auto-merge SKIP on the
+    # delivery TOPOLOGY, so the per-action auto-merge
     # machinery these tests exercise needs a genuinely per-action goal — a
     # long_lived *executing* goal now accumulates on a goal branch and its
     # cumulative PR is left OPEN for the done-gate instead of auto-merging.
@@ -1129,54 +1129,17 @@ async def test_program_settle_without_merger_leaves_stack_alone(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_checklist_mode_dispatch_is_not_auto_merged(tmp_path, monkeypatch):
-    """Pillar 2 invariant: when the settled action carries checklist
-    addresses, its PR is the SHARED goal-branch PR every item keeps pushing
-    to. Auto-merging it now would delete the goal branch and force item N+1
-    to re-fork from main — the 2026-06-26 finance-sentry-mcp-v4 regression.
-    Auto-merge is skipped in that case; the done-gate is the single review
-    moment for the cumulative work."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    # In-flight ref carries checklist addresses (set by the dispatch hook).
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="executing",
-        in_flight=InFlight(
-            "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=["scaffold"],  # ← Pillar 1 marker
-        ),
-    ))
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="ok",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    # Merger never invoked — the PR is the shared goal-branch PR.
-    assert merger.merged == []
-    # No "merged" owner ping either.
-    assert not any("merged" in m.lower() for m in notifier.sent)
-
-
-@pytest.mark.asyncio
-async def test_legacy_dispatch_without_addresses_still_auto_merges(tmp_path, monkeypatch):
-    """Backwards-compat: a legacy PER-ACTION goal (no addresses AND the per-action
-    topology — lifecycle=None) keeps the existing per-action auto-merge behaviour.
-    Only goal-branch topologies (Pillar 1 checklist OR long_lived executing) skip
-    the merge, leaving the cumulative PR for the done-gate (#486/Part C)."""
+async def test_legacy_per_action_dispatch_still_auto_merges(tmp_path, monkeypatch):
+    """Backwards-compat: a legacy PER-ACTION goal (lifecycle=None resolves to
+    the per-action topology) keeps the existing per-action auto-merge
+    behaviour. Only the goal-branch topology skips the merge, leaving the
+    cumulative PR for the done-gate (#486/Part C)."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
         phase="in_flight", lifecycle=None,  # ← legacy per-action topology
-        in_flight=InFlight(
-            "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=[],  # ← legacy mode, no checklist
-        ),
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
     ))
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
@@ -1299,9 +1262,8 @@ async def test_slice_guardrail_never_runs_on_per_action_topology(tmp_path, monke
 
 @pytest.mark.asyncio
 async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatch):
-    """#486 (Part C): a long_lived goal-branch delivery carries NO ``addresses``
-    (there is no checklist), but its PR is the SAME cumulative goal-branch PR a
-    checklist goal's is — auto-merging it mid-flight would delete the goal branch
+    """#486 (Part C): a long_lived goal-branch delivery's PR is the
+    cumulative goal-branch PR — auto-merging it mid-flight would delete the goal branch
     and wipe the accumulated work on the next night's re-fork. The skip is
     re-keyed off the delivery TOPOLOGY, so this PR stays open for the done-gate
     and the skip is logged legibly."""
@@ -1326,39 +1288,6 @@ async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatc
 
 
 # ---- #394: total merge-policy resolution + settle-time mergeability --------
-
-
-@pytest.mark.asyncio
-async def test_checklist_mode_merge_skip_is_logged_legibly(tmp_path, monkeypatch):
-    """#394 done-when 3 (the closeloop PR #8 hole): a checklist-mode delivery
-    skips auto-merge BY DESIGN, but the skip must be legible — a night of
-    gate-green deliveries with automerge ON and no 'auto-merged'/'auto-merge
-    failed'/'skipped' line anywhere forced the owner to infer 'it silently
-    never engaged' (2026-07-28 morning). The skip resolves as an explicit
-    logged reason."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="executing",
-        in_flight=InFlight(
-            "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=["scaffold"],
-        ),
-    ))
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="ok",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == []  # the pillar-2 skip itself is unchanged
-    log = (tmp_path / "g" / "log.md").read_text()
-    assert "auto-merge skipped (checklist-mode" in log
-    assert "https://github.com/o/r/pull/9" in log
 
 
 @pytest.mark.asyncio
@@ -1396,8 +1325,7 @@ async def test_conflicting_pr_at_settle_pings_owner_and_logs_conflict(tmp_path, 
         phase="in_flight", lifecycle="executing",
         in_flight=InFlight(
             "devclaw", "implement_feature", "t1", "task", "add /health",
-            addresses=["scaffold"],  # checklist-mode: PR stays open → probed
-        ),
+        ),  # goal-branch topology: PR stays open → probed
     ))
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(
@@ -1773,7 +1701,7 @@ async def _tick_prep(store, goal_id, engine, notifier, *, prepare_ws):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=FakeClaude(), notifier=notifier,
-        notify_url="http://relay", prepare_ws=prepare_ws, eval_every=99,
+        notify_url="http://relay", prepare_ws=prepare_ws,
     )
 
 
@@ -2357,7 +2285,7 @@ async def test_lost_discovery_ref_blocks_and_notifies_owner(tmp_path):
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
         phase="in_flight", lifecycle="investigating",
-        in_flight=InFlight("devclaw", "review_repository", "t_disc", "task", "analyze", is_discovery=True),
+        in_flight=InFlight("devclaw", "review_repository", "t_disc", "task", "analyze"),
     ))
     evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = FakeEngine(poll_exc=GoalEngineError("unknown task_id: t_disc"))
@@ -2494,7 +2422,7 @@ def test_blocked_kind_cleared_on_unblock(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         svc._goal_store.save_status(
             "g", GoalStatus(phase="blocked", blocked_on="cap hit",
@@ -2529,7 +2457,7 @@ def test_resume_goal_restores_the_autoheal_budget(tmp_path):
 
     db = StateStore(str(tmp_path / "state.db"))
     try:
-        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, eval_every=99, verify_done=False)
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
         svc = GoalService(TaskQueue(db), db, config=cfg)
         svc._goal_store.save_status(
             "g", GoalStatus(phase="blocked", blocked_on="clone failed: repo not found",
@@ -3127,6 +3055,34 @@ async def test_done_gate_off_track_below_cap_counts_the_round(tmp_path):
     s = store.load_status("g")
     assert s.phase == "idle"
     assert s.donegate_rounds == 1
+
+
+@pytest.mark.asyncio
+async def test_one_shot_done_gate_off_track_rides_the_advance_loop_with_the_churn_brake(tmp_path):
+    """Named regression (round-2 amputation): a one_shot goal's non-achieved
+    done-gate rides the SAME path as long_lived — both modes share ONE
+    execution path (spec 008), so "keep going" is meaningful for one_shot
+    too: the corrections steer the next advance, and runaway rounds are the
+    churn brake's job (DONEGATE_ROUND_CAP), not a block-on-first-refusal.
+    The goal lands idle with the round counted and the correction in unread
+    steering — NOT blocked."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", mode="one_shot")
+    store.save_status("g", GoalStatus(
+        phase="verifying",
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+    ))
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "clause 2 unmet",
+        "corrections": ["[clause 2] add the parity test"],
+    }))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+    assert out is Outcome.SLEPT
+    s = store.load_status("g")
+    assert s.phase == "idle"
+    assert s.donegate_rounds == 1
+    assert "[clause 2] add the parity test" in store.unread_steering("g")
 
 
 @pytest.mark.asyncio

@@ -103,7 +103,6 @@ class GoalState:
                   last_plan_at          TEXT,
                   last_tick_at          TEXT,
                   actions_dispatched    INTEGER,
-                  deliveries_since_eval INTEGER,
                   donegate_rounds       INTEGER NOT NULL DEFAULT 0,
                   last_eval_verdict     TEXT,
                   last_eval_at          TEXT,
@@ -351,8 +350,6 @@ class GoalState:
                     "ref_kind": f.ref_kind,
                     "goal": f.goal,
                     "is_done_check": f.is_done_check,
-                    "is_discovery": f.is_discovery,
-                    "addresses": list(f.addresses),
                 }
             )
         with self._store._lock:
@@ -361,12 +358,12 @@ class GoalState:
                 INSERT INTO goal_status (
                   goal_id, version, state, phase, lifecycle, blocked_on, blocked_kind,
                   heal_attempts, next_heal_at, "next",
-                  last_plan_at, last_tick_at, actions_dispatched, deliveries_since_eval,
+                  last_plan_at, last_tick_at, actions_dispatched,
                   donegate_rounds,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, open_unmerged_pr, in_flight_ref_id, in_flight_kind,
                   in_flight_json, inbox_ingest_cursor, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -380,7 +377,6 @@ class GoalState:
                   last_plan_at          = excluded.last_plan_at,
                   last_tick_at          = excluded.last_tick_at,
                   actions_dispatched    = excluded.actions_dispatched,
-                  deliveries_since_eval = excluded.deliveries_since_eval,
                   donegate_rounds       = excluded.donegate_rounds,
                   last_eval_verdict     = excluded.last_eval_verdict,
                   last_eval_at          = excluded.last_eval_at,
@@ -407,7 +403,6 @@ class GoalState:
                     status.last_plan_at,
                     status.last_tick_at,
                     status.actions_dispatched,
-                    status.deliveries_since_eval,
                     status.donegate_rounds,
                     status.last_eval_verdict,
                     status.last_eval_at,
@@ -439,7 +434,6 @@ class GoalState:
         "last_eval_verdict": "last_eval_verdict",
         "last_eval_at": "last_eval_at",
         "last_eval_note": "last_eval_note",
-        "deliveries_since_eval": "deliveries_since_eval",
         "donegate_rounds": "donegate_rounds",
         # heal_attempts / next_heal_at are damping bookkeeping (never read by
         # derive_state) — the column-only path exists so the auto-heal's
@@ -788,7 +782,7 @@ class GoalState:
     #: file view (up to ~200KB of machine-read ground truth for the
     #: decomposer, not a human-skimmable artifact). spec/discovery stay plain
     #: files (display/prompt inputs, not consumed-state).
-    DOC_KINDS = frozenset({"checklist", "firmed_draft", "repo_analysis", "block_options"})  # first three = legacy kinds (pre-shrink rows stay readable)
+    DOC_KINDS = frozenset({"checklist", "firmed_draft", "repo_analysis", "block_options"})  # all legacy kinds (pre-shrink rows stay readable; nothing writes them)
 
     def has_doc(self, goal_id: str, kind: str) -> bool:
         """Whether a ``goal_docs`` row exists for ``(goal_id, kind)`` — the
@@ -915,12 +909,6 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
     in_flight = None
     if row["in_flight_json"]:
         f = json.loads(row["in_flight_json"])
-        raw_addr = f.get("addresses") or []
-        addresses = (
-            [str(a) for a in raw_addr if str(a).strip()]
-            if isinstance(raw_addr, list)
-            else []
-        )
         in_flight = InFlight(
             engine=f["engine"],
             tool=f["tool"],
@@ -928,8 +916,6 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
             ref_kind=f["ref_kind"],
             goal=f.get("goal", ""),
             is_done_check=bool(f.get("is_done_check", False)),
-            is_discovery=bool(f.get("is_discovery", False)),
-            addresses=addresses,
         )
     return GoalStatus(
         phase=row["phase"] or "idle",
@@ -946,7 +932,6 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         last_tick_at=row["last_tick_at"] or None,
         inbox_cursor=int(row["inbox_ingest_cursor"] or 0),
         actions_dispatched=int(row["actions_dispatched"] or 0),
-        deliveries_since_eval=int(row["deliveries_since_eval"] or 0),
         donegate_rounds=int(row["donegate_rounds"] or 0),
         last_eval_verdict=row["last_eval_verdict"] or None,
         last_eval_at=row["last_eval_at"] or None,

@@ -132,13 +132,13 @@ def _readopt_ref(
 ) -> None:
     """Write the actual re-adoption: restore ``in_flight`` (DISPATCH_ACTION)
     + a log line, as ONE transaction; mirrors flush after commit. A lost
-    done-check/discovery ref is deliberately re-adopted as a PLAIN action ref
-    — WITHOUT its ``is_done_check``/``is_discovery`` flag, since that flag
-    lived only on the lost ref and cannot be recovered from the task/program
-    row alone. This is conservative by construction: the settle just records
-    a delivery (instead of re-entering the done-gate/discovery resolution
-    path directly), and the planner naturally re-proposes done — or
-    investigation resumes on backlog — on its own next tick if warranted."""
+    done-check ref is deliberately re-adopted as a PLAIN action ref —
+    WITHOUT its ``is_done_check`` flag, since that flag lived only on the
+    lost ref and cannot be recovered from the task/program row alone. This
+    is conservative by construction: the settle just records a delivery
+    (instead of re-entering the done-gate resolution path directly), and
+    the worker naturally re-proposes done on its own next advance if
+    warranted."""
     ref = InFlight("devclaw", tool, ref_id, ref_kind, ref_goal)
     try:
         with store.transaction():
@@ -248,7 +248,6 @@ async def _resolve_polling_action(
     productive = 1 if (poll.status == "done" and poll.gate_passed is not False) else 0
     new_status = replace(
         status, in_flight=None, phase="idle",
-        deliveries_since_eval=status.deliveries_since_eval + delivered,
         actions_dispatched=max(0, status.actions_dispatched - productive),
         # A productive settle also earns the mechanical auto-heal budget back
         # (tick_guards._autoheal_corrupt_doc) — the SAME stability signal as
@@ -280,7 +279,7 @@ async def _resolve_polling_action(
             # state isn't durable first the tick aborts with in_flight still
             # pointing at the just-finished action and the next tick
             # re-ships it (duplicate-merge loop, dogfood 2026-06-21). Thread
-            # the RETURNED (fresh-versioned) status onward — _handle_executing's
+            # the RETURNED (fresh-versioned) status onward — _handle_long_lived_advance's
             # `expect=` calls CAS against THIS version, not the pre-settle
             # snapshot.
             new_status = ctx.store.transition(goal_id, Event.ACTION_SETTLED, new_status, expect=status)
@@ -415,33 +414,18 @@ async def _resolve_polling_action(
     # (or off when the default is on), defeating the whole point of a
     # per-project override.
     #
-    # Pillar 2 exception: when this action was a checklist-mode dispatch
-    # (action carries ``addresses`` of one or more checklist items), the PR
-    # is the SHARED goal-branch PR that subsequent items will keep pushing
-    # to. Auto-merging it now deletes the goal branch and forces item N+1
-    # to re-fork from main, fanning out into a new PR (the 2026-06-26
-    # finance-sentry-mcp-v4 regression that broke the v3 rerun's "one PR
-    # per goal" guarantee on item 1). Skip auto-merge in that case — the
-    # done-gate is the natural moment for a single human review of the
-    # cumulative work.
     # #394 totality: every gate-green delivery that produced a PR resolves to
     # exactly ONE of merged | left-for-owner(reason) | skipped(reason), and the
     # resolution is always visible in the goal log. The two skip paths below
-    # used to fall through in silence — the 2026-07-28 morning: automerge ON
-    # fleet-wide, a night of checklist-mode deliveries on closeloop PR #8, and
-    # neither an "auto-merged" nor an "auto-merge failed" line anywhere,
-    # because the checklist-mode exception (and, for a project whose own
-    # ``automerge: false`` override resolved the merger to None, the off
-    # switch) never said so. An owner who flipped automerge on must never have
-    # to infer "it silently didn't engage" from an open PR and an empty log.
-    in_checklist_dispatch = bool(ref.addresses)  # LEGACY stored refs only — nothing sets addresses anymore
-    # #486: key the auto-merge SKIP on the delivery TOPOLOGY, not on the presence
-    # of ``addresses``. A long_lived goal-branch delivery carries no addresses
-    # (there is no checklist), but its PR is the SAME cumulative goal-branch PR a
-    # checklist goal's is — auto-merging it mid-flight deletes the goal branch and
-    # forces the next night to re-fork from main, wiping the accumulated PR. Both
-    # topologies want the single cumulative PR left OPEN for the done-gate; only a
-    # per-action (``goal_branch(...) is None``) delivery auto-merges per action.
+    # used to fall through in silence — a goal whose skip path never said so
+    # forced the owner to infer "it silently didn't engage" from an open PR
+    # and an empty log.
+    # #486: the auto-merge SKIP keys on the delivery TOPOLOGY. A goal-branch
+    # delivery's PR is the cumulative goal-branch PR — auto-merging it
+    # mid-flight deletes the goal branch and forces the next night to re-fork
+    # from main, wiping the accumulated PR. The cumulative PR stays OPEN for
+    # the done-gate; only a per-action (``goal_branch(...) is None``) delivery
+    # auto-merges per action.
     on_goal_branch = (
         _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
     )
@@ -449,9 +433,7 @@ async def _resolve_polling_action(
     merge_failed_pinged = False  # an OWNER ping already fired for this PR this settle
     merge_skip = ""  # non-empty ⇒ this green delivery's PR was deliberately not merged
     green_pr = bool(poll.status == "done" and poll.gate_passed and poll.pr_url)
-    if green_pr and in_checklist_dispatch:
-        merge_skip = "checklist-mode: shared goal-branch PR stays open for the done-gate"
-    elif green_pr and on_goal_branch:
+    if green_pr and on_goal_branch:
         merge_skip = "goal-branch: cumulative PR stays open for the done-gate"
     elif green_pr and ctx.merger is None:
         merge_skip = "auto-merge is off for this repo"
@@ -487,21 +469,18 @@ async def _resolve_polling_action(
         # is what escalates when the skipped PR also cannot land).
         ctx.store.append_log(goal_id, f"auto-merge skipped ({merge_skip}): {poll.pr_url}")
 
-    # #430: remember a per-action green PR we shipped but did NOT land (auto-merge
+    # #430: remember a green PR we shipped but did NOT land (auto-merge
     # off/failed), so the done-gate can tell it is reviewing a ref (the default
     # branch) that cannot see the fix — and block for a merge instead of
-    # re-dispatching the same work forever (closeloop's wasted night). Cleared the
-    # moment such a PR merges. Checklist-mode is excluded: its shared-branch PR
-    # staying open until the done-gate is by design, and that gate reviews the
-    # goal branch (no wrong-ref trap). A column-only write AFTER the atomic
-    # settle (the merge attempt above is async, outside the transaction) — and
-    # its returned fresh-versioned status is threaded onward so _handle_executing's
-    # `expect=` still CAS's against the current version. The done-gate consumer of
-    # this marker (tick_donegate) is itself guarded on ``goal_branch(...) is None``,
-    # so a long_lived goal-branch PR that lands here (no addresses) sets a marker
-    # the goal-branch done-gate never reads — benign; keyed on ``in_checklist_dispatch``
-    # unchanged, since #486 only re-keys the auto-merge SKIP above.
-    if green_pr and not in_checklist_dispatch:
+    # re-dispatching the same work forever. Cleared the moment such a PR
+    # merges. A column-only write AFTER the atomic settle (the merge attempt
+    # above is async, outside the transaction) — and its returned
+    # fresh-versioned status is threaded onward so the advance handler's
+    # `expect=` still CAS's against the current version. The done-gate consumer
+    # of this marker (tick_donegate) is guarded on ``goal_branch(...) is
+    # None``, so a goal-branch PR that lands here sets a marker the goal-branch
+    # done-gate never reads — benign.
+    if green_pr:
         new_status = ctx.store.update_status_fields(
             goal_id, open_unmerged_pr=(None if merged_now else poll.pr_url)
         )

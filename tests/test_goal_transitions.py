@@ -30,7 +30,7 @@ async def _tick(store, goal_id, evaluator, engine, notifier, *, prepare=fake_pre
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
-        notify_url="http://relay", prepare_ws=prepare, eval_every=99,
+        notify_url="http://relay", prepare_ws=prepare,
     )
 
 
@@ -125,12 +125,12 @@ def test_derive_state_is_total(phase, lifecycle, in_flight):
 def test_legacy_pre_shrink_lifecycle_rows_derive_into_executing_family(
     phase, lifecycle, in_flight, expected
 ):
-    """Legacy "investigating"/"firming" rows (and old is_discovery refs) must
+    """Legacy "investigating"/"firming" rows (and old discovery refs) must
     still derive LEGALLY — mapped onto the surviving executing-family states,
     never a crash and never a resurrected removed state."""
     ref = None
     if in_flight == "discovery":
-        ref = InFlight("devclaw", "review_repository", "t1", "task", "look", is_discovery=True)
+        ref = InFlight("devclaw", "review_repository", "t1", "task", "look")
     status = GoalStatus(phase=phase, lifecycle=lifecycle, in_flight=ref)
     assert derive_state(status) is expected
 

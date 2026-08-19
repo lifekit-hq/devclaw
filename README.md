@@ -195,7 +195,7 @@ In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts c
 1. **Cheap check** (0 tokens) — poll the in-flight action via a local SQLite read.
 2. **Per-delivery evidence** (0 tokens) — on a finished action, read the *full* task result (agent output + gate verdict) and append a grounded note to `deliveries.md`.
 3. **Advance dispatch** (0 tokens) — build the mechanical advance brief (objective + steering + settle detail) and dispatch the next advance in-process; the worker plans the actual work in-sandbox.
-4. **Direction evaluation** (periodic LLM call) — every `DEVCLAW_GOAL_EVAL_EVERY` deliveries, judge whether the *delivered work* is achieving the objective; corrections are fed back as steering, a hard verdict blocks.
+4. **Direction evaluation** (LLM call at the done-gate, or on demand via `evaluate_goal`) — judge whether the *delivered work* is achieving the objective; corrections are fed back as steering, a hard verdict blocks.
 5. **Done-gate** — the worker's `done` is only a *proposal*; it triggers a read-only `review_repository` against the goal's `done_when` + `stub_acceptable`, and the goal closes **only if the evaluator confirms `achieved`** from that review. "Done" is gated on grounded evaluation, not on counting PRs.
 
 The zero-token idle guard is load-bearing: an idle goal and an in-flight-still-running goal cost **0 `claude` calls** (the heartbeat is mechanism; cognition runs only when there's real work). Canonical: [`docs/architecture.md`](./docs/architecture.md) §Invariants.

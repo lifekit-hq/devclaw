@@ -24,7 +24,7 @@ def _rich_status() -> GoalStatus:
         lifecycle="executing",
         in_flight=InFlight(
             "devclaw", "review_repository", "t42", "task", "verify done",
-            is_done_check=True, is_discovery=False, addresses=["i1", "i2"],
+            is_done_check=True,
         ),
         blocked_on=None,
         next="verify the done gate",
@@ -32,7 +32,6 @@ def _rich_status() -> GoalStatus:
         last_tick_at="2026-06-06T12:05:00+00:00",
         inbox_cursor=4,
         actions_dispatched=7,
-        deliveries_since_eval=2,
         last_eval_verdict="on_track",
         last_eval_at="2026-06-06T12:04:00+00:00",
         last_eval_note="progressing nicely",
@@ -57,16 +56,15 @@ def test_save_then_load_roundtrips_every_field(tmp_path):
     assert back.last_tick_at == "2026-06-06T12:05:00+00:00"
     assert back.inbox_cursor == 4
     assert back.actions_dispatched == 7
-    assert back.deliveries_since_eval == 2
     assert back.last_eval_verdict == "on_track"
     assert back.last_eval_at == "2026-06-06T12:04:00+00:00"
     assert back.last_eval_note == "progressing nicely"
     assert back.last_progress_at == "2026-06-06T12:03:00+00:00"
     assert back.no_progress_notified is True
-    # in_flight rehydrates fully (all flags + addresses)
+    # in_flight rehydrates fully
     assert back.in_flight == InFlight(
         "devclaw", "review_repository", "t42", "task", "verify done",
-        is_done_check=True, is_discovery=False, addresses=["i1", "i2"],
+        is_done_check=True,
     )
     # phase_history got its one transition entry (idle→verifying)
     assert [e["phase"] for e in back.phase_history] == ["verifying"]
@@ -105,7 +103,6 @@ def test_status_md_view_recovers_state_via_current_reader(tmp_path):
     assert fm["lifecycle"] == "executing"
     assert fm["in_flight"]["id"] == "t42"
     assert fm["in_flight"]["is_done_check"] is True
-    assert fm["in_flight"]["addresses"] == ["i1", "i2"]
     assert fm["actions_dispatched"] == 7
     assert [e["phase"] for e in fm["phase_history"]] == ["verifying"]
 
@@ -176,8 +173,7 @@ def test_migration_carries_in_flight_and_phase_history(tmp_path):
     clock.advance(60)
     gen.save_status("g", GoalStatus(
         phase="in_flight", lifecycle="executing",
-        in_flight=InFlight("devclaw", "implement_feature", "t5", "task", "add /health",
-                           addresses=["item-1"]),
+        in_flight=InFlight("devclaw", "implement_feature", "t5", "task", "add /health"),
     ))
     status_md = (src / "g" / "STATUS.md").read_text()
     gen._state.close()
@@ -191,7 +187,6 @@ def test_migration_carries_in_flight_and_phase_history(tmp_path):
         migrated = store.load_status("g")
         assert migrated.in_flight == InFlight(
             "devclaw", "implement_feature", "t5", "task", "add /health",
-            addresses=["item-1"],
         )
         # both phase transitions survived the migration, in order
         assert [e["phase"] for e in migrated.phase_history] == ["idle", "in_flight"]

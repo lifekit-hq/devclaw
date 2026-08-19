@@ -121,7 +121,7 @@ async def _block_on_lost_ref(
 
     Instead: clear the lost ref, block with the real error as ``blocked_on``,
     and tell the owner ONCE at OWNER altitude. Blocked goals are not re-poked
-    by cadence (see :func:`_handle_executing`) — only steering unblocks them —
+    by cadence (see :func:`_handle_long_lived_advance`) — only steering unblocks them —
     so this is one legible failure, and the owner decides how to proceed
     (typically steer_goal to re-plan). ``lifecycle`` is pinned to ``executing``
     for the same reason :func:`_block_on_prep_failure` pins it: a lost

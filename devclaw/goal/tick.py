@@ -54,7 +54,6 @@ from ..engine.workspace import prepare_workspace
 # tick_context <- tick_guards <- {tick_dispatch, tick_donegate} <- tick_settle.
 from .tick_context import (  # noqa: F401 (re-exported)
     AUTODEPLOY_ENABLED,
-    EVAL_EVERY,
     NO_PROGRESS_S,
     VERIFY_DONE,
     NotifyLevel,
@@ -109,7 +108,6 @@ async def tick_goal(
     notifier: Notifier,
     notify_url: str = "",
     prepare_ws: WorkspacePrep = prepare_workspace,
-    eval_every: int = EVAL_EVERY,
     verify_done: bool = VERIFY_DONE,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
@@ -145,7 +143,7 @@ async def tick_goal(
                 store=store, engine=engine,
                 evaluator_caller=evaluator_caller,
                 notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
-                eval_every=eval_every, verify_done=verify_done, autodeploy=autodeploy,
+                verify_done=verify_done, autodeploy=autodeploy,
                 no_progress_s=no_progress_s,
                 summary_caller=summary_caller, merger=merger,
                 remote_checker=remote_checker,
@@ -217,7 +215,6 @@ async def _tick_goal_impl(
     notifier: Notifier,
     notify_url: str = "",
     prepare_ws: WorkspacePrep = prepare_workspace,
-    eval_every: int = EVAL_EVERY,
     verify_done: bool = VERIFY_DONE,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
@@ -242,7 +239,7 @@ async def _tick_goal_impl(
         store=store, engine=engine,
         evaluator_caller=evaluator_caller,
         notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
-        eval_every=eval_every, verify_done=verify_done, autodeploy=autodeploy,
+        verify_done=verify_done, autodeploy=autodeploy,
         no_progress_s=no_progress_s,
         summary_caller=summary_caller, merger=merger,
         remote_checker=remote_checker,
@@ -278,21 +275,20 @@ async def _tick_goal_impl(
         status = store.load_status(goal_id)
         phase = _classify(status)
 
-    # The goal contract is goal.yaml alone now — the firmed.yaml overlay (and
-    # the checklist.yaml corrupt-doc probe) died with the host-cognition chain
-    # (spec 008 shrink): the worker's speckit artifacts live in the repo, and
-    # the store's goal docs (log/deliveries/inbox/spec) parse trivially.
+    # The goal contract is goal.yaml alone; the worker's speckit artifacts
+    # live in the repo, and the store's goal docs (log/deliveries/inbox/spec)
+    # parse trivially.
     goal = store.load_goal(goal_id)
 
     # Mechanical auto-heal (F8): lift a mechanical:* block whose condition no
     # longer holds — no LLM, ever (the mirror of the quota pause's
     # timestamp-compare auto-resume in tick_all), damped by the persisted
     # per-goal heal budget so a flapping condition can't turn the zero-token
-    # blocked steady-state into a plan + ping per cycle. One healable kind
-    # remains: ``prep`` — its recheck costs a git subprocess (ls-remote), so it
-    # runs on the persisted next_heal_at exponential backoff, not every tick.
-    # (``mechanical:corrupt_doc`` died with its contract files — a legacy row
-    # still blocked on it stays human-gated: resume_goal clears it.)
+    # blocked steady-state into a plan + ping per cycle. One healable kind:
+    # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs
+    # on the persisted next_heal_at exponential backoff, not every tick. A
+    # legacy row still blocked on ``mechanical:corrupt_doc`` stays
+    # human-gated: resume_goal clears it.
     # needs_answer / bug / lost_ref / dispatch_cap stay human-gated (see the
     # heal guards' docstrings). A refused heal (budget spent / window closed /
     # still broken) leaves the blocked status untouched and the tick idles
@@ -343,7 +339,7 @@ async def _tick_goal_impl(
 
     # Lifecycle phase (in_flight is None).
     if phase is Phase.EXECUTING:
-        return await _handle_executing(goal_id, goal, status, finished_detail, ctx)
+        return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
 
     raise RuntimeError(f"unhandled phase {phase} for goal {goal_id}")
 
@@ -407,11 +403,16 @@ def _advance_brief(goal: Goal, steering: str, failure_context: str = "") -> str:
 async def _handle_long_lived_advance(
     goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
 ) -> Outcome:
-    """The long_lived executing path — ZERO per-tick planner cognition
-    (the planner was cut, demolition P3b). The worker owns the
-    plan (the speckit ``specs/*/`` artifacts in the repo); the control plane only
-    dispatches "advance the goal via speckit" and lets the grounded done-gate
-    judge done:
+    """The ONE executing path for both modes (spec 008 shrink) — ZERO
+    per-tick planner cognition (the planner was cut, demolition P3b). The mode
+    dial selects only the re-evaluation cadence (ADR 0003): a one_shot goal
+    rides this same advance loop — its first advance fires immediately (no
+    ``last_plan_at`` yet ⇒ cadence due) and the done-gate's corrections chain
+    work-present advances until achieved, so it drives to done without
+    waiting out the cadence. The worker owns the plan (the speckit
+    ``specs/*/`` artifacts in the repo); the control plane only dispatches
+    "advance the goal via speckit" and lets the grounded done-gate judge
+    done:
 
       * a SUCCESSFUL advance session just settled → propose done. The done-gate
         verifies against ``done_when``: ``achieved`` closes the goal; not-achieved
@@ -460,7 +461,7 @@ async def _handle_long_lived_advance(
     steering = "\n".join(line for _, line in rows)
     # unread_steering_rows() may have lazily ingested inbox lines, bumping
     # version; reload so the dispatch's expect= CAS's against the current row
-    # (same reason as _handle_executing).
+    # (same reason as _handle_long_lived_advance).
     status = store.load_status(goal_id)
     work = bool(finished_detail) or bool(steering)
     if status.phase == "blocked":
@@ -496,20 +497,6 @@ async def _handle_long_lived_advance(
     )
 
 
-async def _handle_executing(
-    goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
-) -> Outcome:
-    """ONE execution path for both modes (spec 008 shrink — the checklist-as-
-    program one_shot branch died with the host-cognition chain): every
-    executing goal advances via the speckit pull-brief. The mode dial is back
-    to selecting only the re-evaluation cadence (ADR 0003): a one_shot goal
-    rides the same advance loop — its first advance fires immediately (no
-    ``last_plan_at`` yet ⇒ cadence due) and the done-gate's corrections chain
-    work-present advances until achieved, so it still drives to done without
-    waiting out the cadence."""
-    return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
-
-
 
 # ---- multi-goal driver -----------------------------------------------------
 
@@ -522,7 +509,6 @@ async def tick_all(
     notifier: Notifier,
     notify_url: str = "",
     prepare_ws: WorkspacePrep = prepare_workspace,
-    eval_every: int = EVAL_EVERY,
     verify_done: bool = VERIFY_DONE,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
@@ -681,7 +667,7 @@ async def tick_all(
                     goal_id, store=store, engine=engine,
                     evaluator_caller=evaluator_caller,
                     notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
-                    eval_every=eval_every, verify_done=goal_verify_done,
+                    verify_done=goal_verify_done,
                     autodeploy=goal_autodeploy, no_progress_s=no_progress_s,
                     summary_caller=summary_caller, merger=goal_merger,
                     trend_detector=trend_detector,

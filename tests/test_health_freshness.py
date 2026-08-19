@@ -148,7 +148,6 @@ async def test_tick_all_stamps_last_tick_at_only_on_a_completed_pass(
         goals_dir=tmp_path / "goals",
         notify_url="",
         tick_seconds=900,
-        eval_every=3,
         verify_done=False,
     )
     queue = TaskQueue(store)

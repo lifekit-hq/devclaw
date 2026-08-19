@@ -39,7 +39,7 @@ async def _tick(store, *, notifier, engine=None, planner=None, window=WINDOW):
         "g", store=store, engine=engine or FakeEngine(),
         evaluator_caller=FakeClaude(),
         notifier=notifier, prepare_ws=fake_prepare,
-        no_progress_s=window, eval_every=99,
+        no_progress_s=window,
     )
 
 

@@ -33,7 +33,6 @@ def svc(tmp_path):
         goals_dir=tmp_path / "goals",
         notify_url="",
         tick_seconds=900,
-        eval_every=5,
         verify_done=False,
     )
     svc = GoalService(queue, store, cfg)

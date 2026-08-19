@@ -33,7 +33,6 @@ def _svc(tmp_path, db):
         goals_dir=goals_dir,
         notify_url="",
         tick_seconds=900,
-        eval_every=3,
         verify_done=False,
     )
     queue = TaskQueue(db)

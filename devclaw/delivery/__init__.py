@@ -522,8 +522,8 @@ async def deliver_change(
     """Commit the workspace's change to a branch and (best-effort) push + open a PR.
     Returns a verdict dict; never raises. ``kind`` shapes the conventional-commit
     title (feat/fix/…); ``verify`` (the gate verdict) goes into the PR body.
-    ``title`` is the PLANNER's chosen PR title (see Action.title / plan.md
-    §Production-ready C7). When present and non-empty it wins over the
+    ``title`` is the caller's chosen PR title (the task row's ``title``
+    column). When present and non-empty it wins over the
     engineer's own commit subject and the goal-derived heuristic; a resolved
     issue reference then decorates it (title ``(#N)`` + branch) via
     ``_resolve_title``.

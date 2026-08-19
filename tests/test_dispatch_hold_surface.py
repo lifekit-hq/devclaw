@@ -29,7 +29,7 @@ def _svc(tmp_path, db):
     goals_dir = tmp_path / "goals"
     cfg = GoalConfig(
         goals_dir=goals_dir, notify_url="", tick_seconds=900,
-        eval_every=3, verify_done=False,
+        verify_done=False,
     )
     queue = TaskQueue(db)
     return GoalService(queue, db, config=cfg), goals_dir

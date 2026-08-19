@@ -4,7 +4,7 @@ The dispatch-cap backstop + atomic action dispatch. (The investigation/
 firming/decompose dispatch family died with the host-cognition chain, spec 008
 shrink — the worker plans via speckit in-sandbox.) Split out of
 :mod:`devclaw.goal.tick`; imports tick_context + tick_guards, and is called by
-tick._tick_goal_impl / tick._handle_executing via the tick.py re-export facade.
+tick._tick_goal_impl / tick._handle_long_lived_advance via the tick.py re-export facade.
 """
 
 from __future__ import annotations

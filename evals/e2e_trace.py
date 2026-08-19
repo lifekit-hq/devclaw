@@ -147,7 +147,7 @@ async def _run_live(out_dir: Path, goals_dir: Path, goal_id: Optional[str], tick
     queue = TaskQueue(store)
     cfg = GoalConfig(
         goals_dir=Path(os.path.expanduser(str(goals_dir))),
-        notify_url="", tick_seconds=900, eval_every=3, verify_done=True,
+        notify_url="", tick_seconds=900, verify_done=True,
     )
     svc = GoalService(queue, store, cfg)
 

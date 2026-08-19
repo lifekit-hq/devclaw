@@ -35,7 +35,7 @@ async def _tick(store, goal_id, engine, *, evaluator=None):
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator or FakeClaude(),
         notifier=RecordingNotifier(), notify_url="http://relay",
-        prepare_ws=fake_prepare, eval_every=99, verify_done=True,
+        prepare_ws=fake_prepare, verify_done=True,
     )
 
 

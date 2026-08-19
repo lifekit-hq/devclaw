@@ -43,7 +43,7 @@ async def _tick(store, goal_id, evaluator, engine, notifier, *, prepare=fake_pre
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
-        notify_url="http://relay", prepare_ws=prepare, eval_every=99,
+        notify_url="http://relay", prepare_ws=prepare,
     )
 
 

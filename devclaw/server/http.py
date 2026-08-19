@@ -93,11 +93,11 @@ async def health(_request: Request) -> Response:
 
 
 # ---- Legacy dashboard → console redirects (#549, one operator surface) ----
-# The server-rendered dashboard pages (programs · goals · projects, pure
-# renderers in `devclaw/server/dashboard.py`) are retired behind 302s onto
-# their console equivalents. Deep links map where a mapping exists, else fall
-# back to the console goals list; the incoming query string (the `?token=`
-# auth) rides along so gated deployments stay reachable after the hop.
+# The server-rendered dashboard pages are retired behind 302s onto their
+# console equivalents (their renderers are deleted). Deep links map where a
+# mapping exists, else fall back to the console goals list; the incoming
+# query string (the `?token=` auth) rides along so gated deployments stay
+# reachable after the hop.
 
 
 def _console_redirect(request: Request, to: str) -> Response:
@@ -1132,18 +1132,9 @@ async def goal_json(request: Request) -> Response:
     # number the block exists to answer).
     task_rows = store.list_tasks(parent_goal_id=goal_id, limit=500)
     dispatched_tasks = [_task_row(t) for t in task_rows[:50]]
-    # §6 structured decision blocks (ADR 0010): the planner's options for a
-    # needs_answer block, so the console renders click-to-steer buttons. Only
-    # read for needs_answer — a mechanical re-block must NEVER surface a stale
-    # menu. Best-effort: any hiccup degrades to {} (plain Steer box), never 500s.
+    # Frozen empty shape kept for console compat: ADR 0010's planner-emitted
+    # decision menus died with the 008 shrink, but the JSON field stays.
     block_options: dict = {}
-    if phase == "blocked" and g.get("blocked_kind", "") == "needs_answer":
-        try:
-            stored = goals._goal_store.read_block_options(goal_id)
-            if stored:
-                block_options = stored
-        except Exception:
-            block_options = {}
     # Usage rollup — cognition from the goal's trace totals, worker from the
     # per-task "usage" blocks the runner records into result_json. Pure reads;
     # best-effort: a torn trace/row degrades to null, never 500s the view.

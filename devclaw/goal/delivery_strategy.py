@@ -9,11 +9,9 @@ It is the seam a second topology (per-task PRs to main) plugs into later,
 instead of threading a new conditional through every call site. TODAY it owns
 ONLY the branch-selection decision.
 
-Auto-merge eligibility (the tick still keys off ``bool(addresses)``) and the
-scheduler dep-gate stay at their call sites on purpose: they carry latent
-per-action-vs-per-goal signal mismatches that must be reconciled *deliberately*
-in the PR that actually changes their behaviour — not laundered through a
-"pure refactor".
+Auto-merge eligibility keys off this strategy at its call site
+(tick_settle): a goal-branch delivery's cumulative PR stays open for the
+done-gate; only a per-action delivery auto-merges.
 
 Resolution mirrors :func:`devclaw.goal.merge.resolve_automerge`: a pure function
 of goal state, trivially unit-testable.

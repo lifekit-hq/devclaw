@@ -4,7 +4,7 @@ Layout:
   - ``_state``   — FastMCP instance + long-lived services (store, queue,
                    goals, registry) + env-driven config. Imported by the rest.
   - ``tools``    — every ``@mcp.tool`` decorator (the chef's menu).
-  - ``http``     — every ``@mcp.custom_route`` handler (dashboard + SSE).
+  - ``http``     — every ``@mcp.custom_route`` handler (console + SSE).
   - ``lifecycle``— ``main()`` entrypoint, the stdio/http serve loops, and the
                    bearer-token auth middleware.
 

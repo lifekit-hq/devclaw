@@ -58,9 +58,8 @@ class Task:
     deliver: bool
     #: the delivered PR URL (or None if not delivered / only a local branch)
     pr_url: Optional[str]
-    #: Planner-chosen PR title (see Action.title). Optional; when None, delivery
-    #: falls back to the engineer's own commit subject or the goal-derived
-    #: heuristic.
+    #: Caller-chosen PR title. Optional; when None, delivery falls back to
+    #: the engineer's own commit subject or the goal-derived heuristic.
     title: Optional[str] = None
     #: The durable goal that owns this task. Set when the goal heartbeat
     #: dispatches a task; None for standalone user-initiated dispatches
