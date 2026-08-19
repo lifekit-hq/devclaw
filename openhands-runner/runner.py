@@ -651,6 +651,21 @@ def _parse_repo_notes(agent_message: str | None) -> str | None:
     return notes
 
 
+def _agent_last_words(final_message: str, transcript: str, keep: int = 20_000) -> str:
+    """The ``agent_output`` the result contract ships: the agent's last words.
+
+    The agent's own final message IS the result (the structured hand-back for
+    code kinds, the filled report for reviews). The captured decorative stdout
+    is a transcript whose HEAD is banner + a verbatim echo of the wrapped
+    prompt — never ship it as the result. Fall back to the transcript TAIL
+    only when the agent never produced a message (a run that died mid-flight):
+    the tail holds the last actions before death, the head only decoration.
+    """
+    if final_message and final_message.strip():
+        return final_message.strip()
+    return transcript[-keep:]
+
+
 def _agent_message_text(payload: dict) -> str:
     """Pull the plain text out of a MessageEvent payload (``model_dump`` shape).
 
@@ -1397,7 +1412,9 @@ def main() -> None:
         err_payload = _failure_result(
             str(exc),
             trace=traceback.format_exc(),
-            agent_output=captured_stdout.getvalue(),
+            agent_output=_agent_last_words(
+                last_agent_message[0], captured_stdout.getvalue()
+            ),
         )
         if hook_warnings:
             err_payload["hook_warnings"] = hook_warnings
@@ -1419,7 +1436,9 @@ def main() -> None:
             "status": "blocked",
             "reason": blocked_reason,
             "workspace_dir": workspace_dir,
-            "agent_output": captured_stdout.getvalue(),
+            "agent_output": _agent_last_words(
+            last_agent_message[0], captured_stdout.getvalue()
+        ),
         }
         if usage:
             blocked_payload["usage"] = usage
@@ -1442,7 +1461,9 @@ def main() -> None:
         "status": "ok",
         "workspace_dir": workspace_dir,
         "message": "OpenHands completed.",
-        "agent_output": captured_stdout.getvalue(),
+        "agent_output": _agent_last_words(
+            last_agent_message[0], captured_stdout.getvalue()
+        ),
     }
     if usage:
         result_payload["usage"] = usage

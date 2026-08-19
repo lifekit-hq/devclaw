@@ -186,11 +186,22 @@ def test_task_detail_keeps_full_agent_output_for_review_repository():
     assert "All satisfied." in detail
 
 
-def test_task_detail_still_truncates_other_kinds():
-    """For implement_feature / fix_bug, the ``agent_output`` is a work summary
-    that gets written to deliveries.md and fed to the planner. 6 KB is plenty
-    — bloating deliveries.md with full transcripts would hurt planner context."""
-    big_summary = "x" * 50_000
-    result = json.dumps({"status": "ok", "agent_output": big_summary})
+def test_task_detail_keeps_the_agent_handback_for_code_kinds():
+    """Named regression (2026-08-19 fs-book-figures night run): the runner used
+    to ship the full stdout transcript as ``agent_output`` and this helper
+    HEAD-sliced it at 6 KB — every implement_feature "Agent summary" was 100%
+    worker preamble and the evaluator judged boilerplate. The summary must
+    survive intact for code kinds too; only an absurd payload hits the safety
+    cap, and it keeps the TAIL so the STATUS/CHANGED hand-back at the end
+    survives."""
+    handback = "STATUS: DONE\nCHANGED: added the endpoint.\nACCEPTANCE: met."
+    result = json.dumps({"status": "ok", "agent_output": handback})
     detail = _task_detail("implement_feature", result, None, None)
-    assert len(detail) < 10_000  # bounded
+    assert "STATUS: DONE" in detail
+    assert "ACCEPTANCE: met." in detail
+
+    oversized = ("preamble " * 30_000) + handback  # ~270 KB — tail must win
+    result = json.dumps({"status": "ok", "agent_output": oversized})
+    detail = _task_detail("implement_feature", result, None, None)
+    assert "STATUS: DONE" in detail
+    assert len(detail) <= 210_000
