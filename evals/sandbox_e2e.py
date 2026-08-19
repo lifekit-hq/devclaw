@@ -417,7 +417,7 @@ async def _run_goal_mode(scenario: Scenario, env: dict) -> dict:
 
     cfg = GoalConfig(
         goals_dir=goals_dir, notify_url="",
-        tick_seconds=900, eval_every=3, verify_done=False,
+        tick_seconds=900, verify_done=False,
     )
     svc = GoalService(queue, store, cfg)
 
