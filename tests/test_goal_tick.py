@@ -3058,6 +3058,34 @@ async def test_done_gate_off_track_below_cap_counts_the_round(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_one_shot_done_gate_off_track_rides_the_advance_loop_with_the_churn_brake(tmp_path):
+    """Named regression (round-2 amputation): a one_shot goal's non-achieved
+    done-gate rides the SAME path as long_lived — both modes share ONE
+    execution path (spec 008), so "keep going" is meaningful for one_shot
+    too: the corrections steer the next advance, and runaway rounds are the
+    churn brake's job (DONEGATE_ROUND_CAP), not a block-on-first-refusal.
+    The goal lands idle with the round counted and the correction in unread
+    steering — NOT blocked."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", mode="one_shot")
+    store.save_status("g", GoalStatus(
+        phase="verifying",
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+    ))
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "clause 2 unmet",
+        "corrections": ["[clause 2] add the parity test"],
+    }))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+    assert out is Outcome.SLEPT
+    s = store.load_status("g")
+    assert s.phase == "idle"
+    assert s.donegate_rounds == 1
+    assert "[clause 2] add the parity test" in store.unread_steering("g")
+
+
+@pytest.mark.asyncio
 async def test_done_gate_churn_brake_parks_after_cap_rounds(tmp_path):
     """Named regression (2026-08-19 fs-book-figures night): four consecutive
     done-gate refusals re-advanced the same goal all night; only the 05:00 run
