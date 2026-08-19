@@ -45,10 +45,9 @@ def cap_section(text: str, *, keep: int, marker: str) -> str:
 LOG_KEEP = 24_000
 
 #: Rendered as its own line where content was elided, so the model knows it is
-#: reading the TAIL of the log, not the whole history. Text kept identical to the
-#: planner's original #426 marker so its cap stays a pure refactor.
+#: reading the TAIL of the log, not the whole history.
 LOG_TRUNCATION_MARKER = (
-    "[…older log lines elided to fit the planning budget: most-recent events "
+    "[…older log lines elided to fit the prompt budget: most-recent events "
     "kept — the full history is in the goal log / task records]"
 )
 

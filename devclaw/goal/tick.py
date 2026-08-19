@@ -275,21 +275,20 @@ async def _tick_goal_impl(
         status = store.load_status(goal_id)
         phase = _classify(status)
 
-    # The goal contract is goal.yaml alone now — the firmed.yaml overlay (and
-    # the checklist.yaml corrupt-doc probe) died with the host-cognition chain
-    # (spec 008 shrink): the worker's speckit artifacts live in the repo, and
-    # the store's goal docs (log/deliveries/inbox/spec) parse trivially.
+    # The goal contract is goal.yaml alone; the worker's speckit artifacts
+    # live in the repo, and the store's goal docs (log/deliveries/inbox/spec)
+    # parse trivially.
     goal = store.load_goal(goal_id)
 
     # Mechanical auto-heal (F8): lift a mechanical:* block whose condition no
     # longer holds — no LLM, ever (the mirror of the quota pause's
     # timestamp-compare auto-resume in tick_all), damped by the persisted
     # per-goal heal budget so a flapping condition can't turn the zero-token
-    # blocked steady-state into a plan + ping per cycle. One healable kind
-    # remains: ``prep`` — its recheck costs a git subprocess (ls-remote), so it
-    # runs on the persisted next_heal_at exponential backoff, not every tick.
-    # (``mechanical:corrupt_doc`` died with its contract files — a legacy row
-    # still blocked on it stays human-gated: resume_goal clears it.)
+    # blocked steady-state into a plan + ping per cycle. One healable kind:
+    # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs
+    # on the persisted next_heal_at exponential backoff, not every tick. A
+    # legacy row still blocked on ``mechanical:corrupt_doc`` stays
+    # human-gated: resume_goal clears it.
     # needs_answer / bug / lost_ref / dispatch_cap stay human-gated (see the
     # heal guards' docstrings). A refused heal (budget spent / window closed /
     # still broken) leaves the blocked status untouched and the tick idles

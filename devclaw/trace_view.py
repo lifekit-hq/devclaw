@@ -20,7 +20,7 @@ Usage::
     python -m devclaw.trace_view <goals-dir> --goal <goal_id>  # picks the goal
     python -m devclaw.trace_view <dir> --show 3                # full prompt+response of call #3
     python -m devclaw.trace_view <dir> --errors                # only calls that carried an error
-    python -m devclaw.trace_view <dir> --role goal_decomposer  # filter by cognition role
+    python -m devclaw.trace_view <dir> --role goal_eval        # filter by cognition role
     python -m devclaw.trace_view <dir> --grep done_when        # calls whose text matches
 """
 

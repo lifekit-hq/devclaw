@@ -1,6 +1,7 @@
-"""The done-gate — the planner's "done" is a proposal, gated on grounded review.
+"""The done-gate — the worker's "done" is a proposal, gated on grounded review.
 
-A planner ``done`` opens a read-only ``review_repository`` whose report the
+A settled advance session whose settle header reads done opens a read-only
+``review_repository`` whose report the
 direction evaluator judges (plus a grounded remote-CI cross-check); only an
 ``achieved`` verdict closes the goal, and a completed goal is best-effort
 auto-deployed to a durable URL. Split out of :mod:`devclaw.goal.tick`; imports
@@ -49,8 +50,8 @@ from ..loom import trace as _trace
 DONEGATE_ROUND_CAP = 3
 
 def _done_gate_review_brief(goal: "Goal") -> str:
-    """The instruction the in-sandbox read-only reviewer gets when the planner
-    proposes done. The reviewer's report is then fed to the direction evaluator
+    """The instruction the in-sandbox read-only reviewer gets when a settled
+    advance session proposes done. The reviewer's report is then fed to the direction evaluator
     — both sides speak the same vocabulary: ``done_when`` is decomposed into
     atomic clauses, and each clause needs SPECIFIC repo evidence (file path +
     symbol + test name) to count as satisfied. This closes the
@@ -549,7 +550,7 @@ async def _open_done_gate(
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
 ) -> Outcome:
-    """The planner proposed done. Don't trust it: either dispatch a read-only
+    """A settled advance session proposed done. Don't trust it: either dispatch a read-only
     review of the repo against done_when (the grounded path) and let the next
     tick judge it, or — if done-verification is disabled — run an artifact-only
     done evaluation now.

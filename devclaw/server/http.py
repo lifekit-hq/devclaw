@@ -93,11 +93,11 @@ async def health(_request: Request) -> Response:
 
 
 # ---- Legacy dashboard → console redirects (#549, one operator surface) ----
-# The server-rendered dashboard pages (programs · goals · projects, pure
-# renderers in `devclaw/server/dashboard.py`) are retired behind 302s onto
-# their console equivalents. Deep links map where a mapping exists, else fall
-# back to the console goals list; the incoming query string (the `?token=`
-# auth) rides along so gated deployments stay reachable after the hop.
+# The server-rendered dashboard pages are retired behind 302s onto their
+# console equivalents (their renderers are deleted). Deep links map where a
+# mapping exists, else fall back to the console goals list; the incoming
+# query string (the `?token=` auth) rides along so gated deployments stay
+# reachable after the hop.
 
 
 def _console_redirect(request: Request, to: str) -> Response:
