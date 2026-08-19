@@ -34,7 +34,7 @@ from . import triage as _triage
 # it: tests monkeypatch ``devclaw.goal.tick._deploy.deploy_project`` and both
 # modules bind the SAME ..delivery.deploy module object, so patching it here is
 # what makes the deploy stub visible to the moved _auto_deploy.
-from ..advance_brief import ADVANCE_BRIEF_MARKER
+from ..advance_brief import ADVANCE_BRIEF_MARKER, FAILURE_CONTEXT_MARKER, STEERING_MARKER
 from ..delivery import deploy as _deploy  # noqa: F401 (re-export/monkeypatch anchor)
 from .engine import GoalEngine
 from .models import Action, Goal, GoalStatus
@@ -357,7 +357,7 @@ async def _tick_goal_impl(
 # so the EXECUTING handler can chain on the same tick.
 
 
-def _advance_brief(goal: Goal, steering: str) -> str:
+def _advance_brief(goal: Goal, steering: str, failure_context: str = "") -> str:
     """The light pull-brief for a thin-path advance session (demolition P3;
     speckit substrate, spec 008 US1).
 
@@ -390,8 +390,17 @@ def _advance_brief(goal: Goal, steering: str) -> str:
     ]
     if goal.done_when.strip():
         parts += ["", f"Done when: {goal.done_when.strip()}"]
+    if failure_context.strip():
+        parts += [
+            "",
+            FAILURE_CONTEXT_MARKER + " (failed task or failed gate) — its "
+            "terminal reason, verbatim. Read it and ADAPT this session (a "
+            "context overflow or timeout means: take a strictly smaller "
+            "slice); do not repeat the attempt unchanged:",
+            failure_context.strip()[:800],
+        ]
     if steering.strip():
-        parts += ["", "Steering from the owner — incorporate it:", steering.strip()]
+        parts += ["", STEERING_MARKER, steering.strip()]
     return "\n".join(parts)
 
 
@@ -465,10 +474,17 @@ async def _handle_long_lived_advance(
     consume_ids = [rid for rid, _ in rows]
     now = store.now_iso()
     base = replace(status, last_plan_at=now, last_tick_at=now)
+    # A non-ok settle reaching this dispatch (failed task, or done-with-
+    # failed-gate) carries its terminal reason in finished_detail — thread it
+    # into the brief so the next session ADAPTS instead of re-running blind
+    # (the reason used to be collapsed to bool(finished_detail): the 3h
+    # context-overflow and the 1h wall-clock burns of 2026-08-19 were each
+    # followed by a byte-identical brief).
+    failure_context = finished_detail if finished_detail else ""
     action = Action(
         engine="devclaw",
         tool="implement_feature",
-        goal=_advance_brief(goal, steering),
+        goal=_advance_brief(goal, steering, failure_context=failure_context),
         verify_cmd=goal.verify_cmd,
         open_pr=goal.open_pr,
     )
