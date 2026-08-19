@@ -61,7 +61,8 @@ class EngineRequest:
 
 
 #: Terminal verdict from one task. ``status == "ok"`` carries
-#: ``workspaceDir``/``message`` (+ ``agent_output`` for debugging);
+#: ``workspaceDir``/``message`` (+ ``agent_output`` — the agent's final
+#: message: the structured hand-back for code kinds, the report for reviews);
 #: ``status == "error"`` carries ``error`` (+ optional ``trace``);
 #: ``status == "rate_limited"`` carries ``error`` + ``retry_after`` (the host
 #: pauses-and-resumes); ``status == "blocked"`` carries ``reason`` — the worker's
