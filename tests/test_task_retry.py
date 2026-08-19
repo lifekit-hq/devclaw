@@ -268,3 +268,25 @@ async def test_timeout_is_not_retried(store, monkeypatch):
     t = store.get_task(tid)
     assert t.status == "failed" and "wall-clock timeout" in t.error
     assert len(calls) == 1  # a stuck run is escalated, not retried
+
+
+async def test_retry_prompt_tells_worker_to_reproduce_before_diagnosing(store, monkeypatch):
+    # Night 2026-08-18 (#564): the retry preamble said only "diagnose and fix",
+    # so a pre-existing FLAKY test failure sent the worker on a 32-minute hunt
+    # for a phantom bug in its own change — burning the conversation context
+    # until it overflowed. The retry prompt now instructs: re-run the failing
+    # command FIRST; a non-reproducing failure is flakiness to fix (or re-run
+    # verify), not a defect in the change.
+    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    calls: list = []
+    q = TaskQueue(store, runner=_flaky_runner(fail_times=1, calls=calls))
+    q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
+    await q.drain()
+    assert len(calls) == 2
+    # first attempt carries no reproduce-first instruction (nothing failed yet)
+    assert "re-run the failing command" not in calls[0]
+    retry = calls[1]
+    # reproduce-first comes BEFORE diagnose — order is the instruction
+    assert "First re-run the failing command" in retry
+    assert "flaky" in retry
+    assert retry.index("re-run the failing command") < retry.index("diagnose the cause")

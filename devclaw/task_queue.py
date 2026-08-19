@@ -1710,7 +1710,11 @@ class TaskQueue(_NotifyMixin):
                     f"{resume_brief}{goal}\n\n[Automatic retry {attempt}/{attempts - 1}] Your previous "
                     f"attempt did not pass verification. What went wrong in each "
                     f"prior attempt this run:\n{history}\n\n"
-                    f"Diagnose the cause and fix it; do not repeat any of these mistakes."
+                    f"First re-run the failing command to confirm the failure still "
+                    f"reproduces. If it does not reproduce, the test is flaky — fix "
+                    f"the flakiness itself (or re-run verify) instead of hunting a "
+                    f"phantom bug in your change. If it does reproduce, diagnose the "
+                    f"cause and fix it; do not repeat any of these mistakes."
                 )
             request = EngineRequest(
                 kind=kind,
