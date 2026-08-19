@@ -83,8 +83,13 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   its findings; under `strict` it is consulted and fails closed exactly as before.
   The browser-E2E gate stays dial-able — under `trust` a surviving finding
   advises-and-ships (loud + surfaced in the PR, human merge is the backstop)
-  instead of wedging; under `strict` it fails closed. The verify/test-integrity/done
-  gates stay always-hard, and every *unreviewable* case (crash/quota) in a
+  instead of wedging; under `strict` it fails closed. The done-gate's verdict is owned by the
+  ``done_when`` contract in both modes; its *structural* axis rides the same
+  dial (under ``trust`` reported concerns advise-and-ship as follow-ups on the
+  close, under ``strict`` they hold it open), and a done-gate that refuses to
+  close the same goal 3 rounds in a row parks it for the owner
+  (``donegate_churn``) instead of re-advancing forever. The
+  verify/test-integrity/done gates stay always-hard, and every *unreviewable* case (crash/quota) in a
   *consulted* gate still fails closed in both modes — #186 governs consulted gates,
   and a gate not consulted under `trust` produces no silence to ship on.
 - **An unreviewable change fails closed *and fast*, not forever.** When the review gate

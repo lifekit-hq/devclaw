@@ -41,6 +41,13 @@ from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 
 
+#: Done-gate treadmill brake: consecutive done-proposal rounds the gate refused
+#: to close before the goal parks for the owner (3 matches the checklist
+#: circuit-breaker convention). Reset on achieved and on a human vouch
+#: (steer_goal / resume_goal) — never on a productive settle: every treadmill
+#: round settles productively.
+DONEGATE_ROUND_CAP = 3
+
 def _done_gate_review_brief(goal: "Goal") -> str:
     """The instruction the in-sandbox read-only reviewer gets when the planner
     proposes done. The reviewer's report is then fed to the direction evaluator
@@ -380,14 +387,24 @@ async def _resolve_done_gate(
     now = store.now_iso()
     base = replace(
         status, last_eval_verdict=ev.verdict, last_eval_at=now,
-        last_eval_note=ev.rationale[:300], deliveries_since_eval=0, last_tick_at=now,
+        last_eval_note=ev.rationale, deliveries_since_eval=0, last_tick_at=now,
     )
-    store.append_log(goal_id, f"done-gate: {ev.verdict} — {ev.rationale[:200]}")
+    store.append_log(goal_id, f"done-gate: {ev.verdict} — {ev.rationale[:500]}")
     if ev.verdict == "achieved":
         store.transition(
-            goal_id, Event.ACHIEVE, replace(base, phase="done", next=ev.rationale[:200]),
+            goal_id, Event.ACHIEVE,
+            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0),
             expect=status, consume_steering=consume_steering,
         )
+        if ev.structural_concerns:
+            # Trust-dial close: the structural axis advises-and-ships (ADR
+            # 0007) — loud in the goal log + the owner ping, never a silent
+            # drop; the human PR review is the backstop.
+            store.append_log(
+                goal_id,
+                "advisory follow-ups shipped with the close (structural axis, "
+                "not gating): " + "; ".join(ev.structural_concerns),
+            )
         # Close-out artifact: RUN_SUMMARY.md, a projection of the goal's own
         # rows (delivery traces + cognition totals + phase history)
         # rendered once, AFTER the ACHIEVE transition committed — a rolled-back
@@ -424,7 +441,11 @@ async def _resolve_done_gate(
                  "verify_done is off for this project)"
         )
         summary_suffix = f"\n{summary_line}" if summary_line else ""
-        await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label} — {ev.rationale[:200]}{live}{summary_suffix}", summarize=summarize)
+        followups = (
+            f" — {len(ev.structural_concerns)} advisory follow-up(s) in the goal log"
+            if ev.structural_concerns else ""
+        )
+        await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label} — {ev.rationale[:200]}{followups}{live}{summary_suffix}", summarize=summarize)
         return Outcome.DONE
     if ev.verdict in ("stalled", "needs_human"):
         q = ev.question or ev.rationale or "done-gate flagged a problem"
@@ -485,10 +506,33 @@ async def _resolve_done_gate(
         )
         await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q}", summarize=summarize)
         return Outcome.BLOCKED
-    # on_track / off_track → not done yet. Steer corrections back in and continue.
+    # on_track / off_track → not done yet. Count the round: a gate that
+    # refuses to close the same goal DONEGATE_ROUND_CAP times in a row is a
+    # treadmill (fresh nits per round, each round burning a worker + a review
+    # + an eval), not convergence — park it for the owner with the FULL last
+    # verdict instead of re-advancing forever. Below the cap, steer
+    # corrections back in and continue.
+    rounds = status.donegate_rounds + 1
+    if rounds >= DONEGATE_ROUND_CAP:
+        q = (
+            f"done-gate churn brake: {rounds} consecutive done proposals did not "
+            f"close the goal. Latest verdict: {ev.rationale[:1000]} — review the "
+            f"open PR yourself, then resume (re-judges the same contract), steer, "
+            f"or cancel."
+        )
+        store.transition(
+            goal_id, Event.BLOCK,
+            replace(base, phase="blocked", blocked_on=q, blocked_kind="donegate_churn",
+                    donegate_rounds=rounds, next=""),
+            expect=status, consume_steering=consume_steering,
+        )
+        _apply_corrections(store, goal_id, ev)  # visible in inbox for the owner's decision
+        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}", summarize=summarize)
+        return Outcome.BLOCKED
     store.transition(
         goal_id, Event.RESUME_IDLE,
-        replace(base, phase="idle", next="done-gate said keep going"),
+        replace(base, phase="idle", next="done-gate said keep going",
+                donegate_rounds=rounds),
         expect=status, consume_steering=consume_steering,
     )
     _apply_corrections(store, goal_id, ev)

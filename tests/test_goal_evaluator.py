@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -815,3 +816,121 @@ def test_done_gate_brief_requires_browser_run_evidence_for_ui_clauses():
     # …and the brief must call out that unit tests / stories are NOT sufficient.
     assert "storybook" in lowered
     assert "not proof" in lowered
+
+
+# ---- 2026-08-19 done-gate treadmill fixes: the strictness dial on the
+# structural axis + contract-bound corrections (verdict owned by done_when) ----
+
+
+def _met_clauses():
+    return [
+        {"clause": "/health returns 200", "satisfied": True,
+         "evidence": "src/Health.cs:12"},
+        {"clause": "/health is tested", "satisfied": True,
+         "evidence": "HealthTests.cs:8 Health_Returns200"},
+    ]
+
+
+def test_done_gate_structural_concerns_advise_and_ship_under_trust():
+    """Named regression (2026-08-19 fs-book-figures night): four consecutive
+    done proposals were each held open by fresh advisory nits on a met
+    contract; the 05:00 run window was the only brake. Under the trust dial
+    the structural axis advises-and-ships (ADR 0007): a met contract closes,
+    the concerns ride the close as follow-ups."""
+    r = validate(
+        {
+            "verdict": "achieved", "rationale": "all clauses met",
+            "clauses": _met_clauses(),
+            "structural_health": "concerns",
+            "structural_concerns": [
+                "RiskModule.cs:51 — DI registration belongs in a cross-cutting point"
+            ],
+        },
+        at_done_gate=True, strictness="trust",
+    )
+    assert r.verdict == "achieved"
+    assert r.structural_concerns  # preserved for the close-path surfacing
+
+
+def test_done_gate_structural_concerns_still_block_under_strict():
+    r = validate(
+        {
+            "verdict": "achieved", "rationale": "all clauses met",
+            "clauses": _met_clauses(),
+            "structural_health": "concerns",
+            "structural_concerns": ["RiskModule.cs:51 — move the DI registration"],
+        },
+        at_done_gate=True, strictness="strict",
+    )
+    assert r.verdict == "off_track"
+    assert any("[structural" in c for c in r.corrections)
+
+
+def test_done_gate_taste_corrections_cannot_hold_a_met_contract_open():
+    """off_track whose corrections carry no [clause N] tag while every clause
+    is satisfied with evidence is an achieved-grade evidence set typed
+    off_track — the untagged items demote to the structural axis and the dial
+    decides the close, exactly as if the model had typed achieved."""
+    payload = {
+        "verdict": "off_track", "rationale": "minor improvements remain",
+        "clauses": _met_clauses(),
+        "corrections": [
+            "Move the DI registration to Program.cs",
+            "Make BookSnapshot.InvestedUsd a required parameter",
+        ],
+    }
+    r = validate(payload, at_done_gate=True, strictness="trust")
+    assert r.verdict == "achieved"
+    assert any("InvestedUsd" in c for c in r.structural_concerns)
+    r = validate(payload, at_done_gate=True, strictness="strict")
+    assert r.verdict == "off_track"
+
+
+def test_done_gate_unmet_clause_still_fails_closed_under_trust():
+    """The dial recalibrates the structural axis ONLY — an unmet done_when
+    clause holds the goal open in BOTH modes (fail-closed, the #186 class),
+    and when the model names no fix the steering derives from the clause so
+    the next advance brief is never byte-identical."""
+    r = validate(
+        {
+            "verdict": "off_track", "rationale": "parity untested",
+            "clauses": [
+                {"clause": "parity test passes", "satisfied": False, "evidence": ""}
+            ],
+        },
+        at_done_gate=True, strictness="trust",
+    )
+    assert r.verdict == "off_track"
+    assert any(c.lower().startswith("[clause") for c in r.corrections)
+
+
+def test_off_track_with_only_structural_concerns_carries_derived_steering():
+    """Blind-loop regression: off_track with structural_concerns but empty
+    corrections used to pass validate() with no steering at all — the next
+    advance brief was byte-identical and the goal spun. Steering must never
+    land empty on an actionable verdict."""
+    r = validate(
+        {
+            "verdict": "off_track", "rationale": "shape needs work",
+            "structural_health": "concerns",
+            "structural_concerns": ["App.tsx — split the monolith"],
+        }
+    )
+    assert r.verdict == "off_track"
+    assert r.corrections
+    assert r.corrections[0].startswith("[structural]")
+
+
+def test_goal_evaluator_prompt_binds_verdict_to_clause_coverage_not_structure():
+    """Presence AND absence, proven on the RAW template (per testing rules):
+    the template must say the structural axis never sets the verdict, and the
+    old self-policing rule (concerns => off_track corrections) must be gone —
+    it taught the model the treadmill the host now prevents."""
+    raw = (
+        Path(__file__).resolve().parents[1]
+        / "devclaw" / "prompts" / "goal-evaluator.md"
+    ).read_text()
+    assert "never sets the verdict" in raw
+    assert "ONLY clause-tagged fixes" in raw
+    assert "each concern surfaced as a correction" not in raw
+    assert "planner" not in raw.lower()

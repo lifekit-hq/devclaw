@@ -186,6 +186,13 @@ class GoalStatus:
     #: between windows a blocked goal stays a zero-subprocess,
     #: zero-cognition tick.
     next_heal_at: Optional[str] = None
+    #: consecutive done-gate rounds that did NOT close the goal (the
+    #: on_track/off_track resolutions). The done-gate treadmill brake: each
+    #: non-closing round increments it; at ``DONEGATE_ROUND_CAP`` the goal
+    #: parks for the owner instead of re-advancing forever. Reset on achieved
+    #: and when a HUMAN vouches (steer_goal / resume_goal) — never on a
+    #: productive settle: every treadmill round settles productively.
+    donegate_rounds: int = 0
     #: human note of the intended next step
     next: str = ""
     #: ISO ts of the last time the plan step (LLM) ran

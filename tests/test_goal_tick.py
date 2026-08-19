@@ -19,6 +19,7 @@ from devclaw.goal.engine import GoalEngineError
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import Outcome, sweep_orphaned_refs, tick_all, tick_goal
+from devclaw.goal.tick_donegate import DONEGATE_ROUND_CAP
 from tests.goal_fakes import (
     Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal, seed_marker_repo,
 )
@@ -3104,3 +3105,73 @@ async def test_delivery_record_and_labels_show_objective_never_advance_brief(tmp
     deliveries = store.recent_deliveries("g")
     assert "Drive the demo repo to done." in deliveries
     assert "Advance this goal" not in deliveries
+
+
+@pytest.mark.asyncio
+async def test_done_gate_off_track_below_cap_counts_the_round(tmp_path):
+    """Each non-closing done-gate round increments the persisted counter —
+    the churn brake's bookkeeping."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="verifying",
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+    ))
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "clause 2 unmet",
+        "corrections": ["[clause 2] add the parity test"],
+    }))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+    assert out is Outcome.SLEPT
+    s = store.load_status("g")
+    assert s.phase == "idle"
+    assert s.donegate_rounds == 1
+
+
+@pytest.mark.asyncio
+async def test_done_gate_churn_brake_parks_after_cap_rounds(tmp_path):
+    """Named regression (2026-08-19 fs-book-figures night): four consecutive
+    done-gate refusals re-advanced the same goal all night; only the 05:00 run
+    window stopped it. At DONEGATE_ROUND_CAP consecutive non-closing rounds
+    the goal parks for the owner (human-gated: donegate_churn is not a
+    mechanical:* kind, so no auto-heal touches it) with the full verdict in
+    blocked_on."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="verifying", donegate_rounds=DONEGATE_ROUND_CAP - 1,
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+    ))
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "clause 2 unmet",
+        "corrections": ["[clause 2] add the parity test"],
+    }))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
+    notifier = RecordingNotifier()
+    out = await _tick(store, "g", evaluator, engine, notifier)
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.phase == "blocked"
+    assert s.blocked_kind == "donegate_churn"
+    assert "churn brake" in (s.blocked_on or "")
+    # the correction still lands as steering so a resumed goal has direction
+    assert "[clause 2] add the parity test" in store.unread_steering("g")
+
+
+@pytest.mark.asyncio
+async def test_resume_goal_resets_the_donegate_round_count(tmp_path):
+    """A human vouching for a parked goal (resume/steer) restores the full
+    round budget — same contract as heal_attempts."""
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        seed_goal(goals_dir, "g")
+        store = svc._goal_store
+        store.save_status("g", GoalStatus(
+            phase="blocked", blocked_on="done-gate churn brake: parked",
+            donegate_rounds=DONEGATE_ROUND_CAP,
+        ))
+        svc.resume_goal("g")
+        assert store.load_status("g").donegate_rounds == 0
+    finally:
+        db.close()
