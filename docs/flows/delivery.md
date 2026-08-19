@@ -141,8 +141,8 @@ human-gated by design — unlike `mechanical:prep`, it never auto-heals.
 Only a goal looping on **broken** dispatches accumulates to the cap. A
 healthy goal — including one that grounds every delivery in a read-only
 verification review — never blocks. Churn on successful-but-aimless work is
-caught by the direction evaluator (every `EVAL_EVERY` deliveries) and the 6h
-no-progress watchdog, not by this counter.
+caught by the done-gate's direction evaluation after each settled advance
+(plus its churn brake) and the 6h no-progress watchdog, not by this counter.
 
 ## Field history that shaped this
 
