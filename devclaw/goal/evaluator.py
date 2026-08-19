@@ -94,14 +94,11 @@ async def _repo_context(workspace_dir: str) -> str:
         return ""
 
 
-#: Headroom for the review report inside the evaluator prompt. The worker's
-#: ``agent_output`` is the SDK's full captured-stdout transcript — banners,
-#: prompt echo, per-tool-call panels (each shown twice: status=pending then
-#: status=completed) — and is regularly 60–160 KB. The actual per-clause
-#: report the brief asks for lives at the END. Truncating from the head
-#: literally kept the EMPTY template lines from the brief plus the first few
-#: `status=pending` tool-call panels — and the evaluator concluded "review
-#: was cut off mid-exploration." Keep enough tail to fit the report comfortably.
+#: Headroom for the review report inside the evaluator prompt. Modern runner
+#: results carry the agent's final message — the report itself. HISTORICAL
+#: task rows on disk instead hold the SDK's full captured-stdout transcript
+#: (banner, prompt echo, tool panels; 60–160 KB) with the filled report at the
+#: END. ``_extract_review_report`` copes with both shapes.
 _REVIEW_REPORT_KEEP = 20000
 
 
