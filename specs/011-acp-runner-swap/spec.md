@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-19
 
-**Status**: Draft (pre-clarify)
+**Status**: Draft — clarified 2026-08-19, ready for `/speckit-plan`
 
 **Issue**: [#542 — Worker executor swap: replace openhands-runner with headless claude in the sandbox](https://github.com/lifekit-hq/devclaw/issues/542)
 
@@ -33,7 +33,7 @@ OpenHands SDK still costs:
 - **Operator dislike, long-standing** — the worker-harness rework direction
   (2026-07-19) predates every recent arc.
 
-**Chosen direction (session ruling 2026-08-19): ACP-direct.** The runner grows
+**Chosen direction (ruled 2026-08-19, clarify-confirmed): ACP-direct.** The runner grows
 a thin ACP client (JSON-RPC over stdio) and drives the same `claude-agent-acp`
 subprocess directly — the OpenHands SDK is deleted, the protocol seam is kept.
 Harness-agnosticism *improves*: the swap-point remains an industry protocol
@@ -46,8 +46,7 @@ session-resume story, but it relocates the harness-agnostic seam from an
 industry protocol to a per-agent parser zoo: every future executor (aider,
 codex-CLI, …) would need its own bespoke stream adapter, and the "swap the
 agent by swapping one command" property degrades to "write a new parser per
-agent". Recorded here so the decision survives the conversation; the clarify
-step re-confirms it.
+agent". Confirmed in the 2026-08-19 clarify session (see Clarifications).
 
 **Constitutional note (explicit, per governance):** Principle II's letter says
 swapping the agent "must only change the `ACPAgent` call". This spec deletes
@@ -55,6 +54,16 @@ that call; the *spirit* (exactly one swap seam in the runner) is preserved and
 strengthened. The constitution and the matching CLAUDE.md sentence MUST be
 re-worded in this arc to name the seam abstractly (the runner's agent-drive
 seam) instead of an OpenHands symbol — same-PR, never silently (FR-010).
+
+## Clarifications
+
+### Session 2026-08-19
+
+- Q: ACP-direct (thin runner-owned JSON-RPC client to `claude-agent-acp`) vs headless `claude -p` behind a homegrown adapter? → A: **ACP-direct.** The swap seam stays an industry protocol; owning a few hundred lines of protocol client is the accepted cost.
+- Q: What does the client answer to mid-session ACP permission requests in an autonomous run? → A: **Blanket grant.** The docker sandbox is the security boundary (throwaway container, key-stripped env, delivery gated host-side); auto-approve everything, no deadlock path.
+- Q: How hard is per-run token-usage accounting (today sourced from the OpenHands conversation object)? → A: **Best-effort.** Preserved when the ACP session exposes numbers, otherwise declared-absent — never fabricated. Usage-limit pause detection is unaffected (it rides error classification, not these stats).
+- Q: Does `openhands-runner/` get renamed now that OpenHands is gone from it? → A: **Yes, as a mechanical rename-only follow-up PR in the same arc** (e.g. to `runner/`). The swap PR lands under the old name so its diff stays reviewable; a dir named after a deleted dependency is a stale-doc smell and does not survive the arc.
+- Q: ACP client vendored inline in `runner.py` or a separate sibling module? → A: **Separate module** (e.g. `acp_client.py` beside `runner.py`, copied into the image the same way). Directly importable for protocol-level unit tests in the stubbed suite; keeps the client cleanly deletable/swappable.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -142,8 +151,9 @@ the image still passes the runner's smoke path.
 1. **Given** the new image, **When** built, **Then** no OpenHands package is
    installed and the build succeeds.
 2. **Given** the repo, **When** searched, **Then** no `openhands.sdk` import
-   remains in runner code (the directory/module naming decision — whether
-   `openhands-runner/` itself is renamed — is settled in clarify).
+   remains in runner code; the `openhands-runner/` directory is renamed by a
+   mechanical rename-only follow-up PR closing the arc (clarified
+   2026-08-19).
 
 ---
 
@@ -157,9 +167,9 @@ the image still passes the runner's smoke path.
   overflow error legibly so the host's context-overflow handling (#572 class)
   engages — not a generic `error` with an opaque trace.
 - **Permission requests from the agent**: an autonomous sandbox run has no
-  human to answer an ACP permission round-trip; the client's policy (grant
-  within the sandbox / configured mode) must be explicit and recorded, never
-  an accidental deadlock waiting on an answer that cannot come.
+  human to answer an ACP permission round-trip; the client auto-grants every
+  request — the docker sandbox is the security boundary and delivery is gated
+  host-side — so no deadlock path exists (clarified 2026-08-19).
 - **Usage accounting**: today's per-run usage stats come from the OpenHands
   conversation object. If the protocol session does not expose equivalent
   numbers, the field degrades *declared-absent* (omitted/null and documented),
@@ -210,15 +220,19 @@ the image still passes the runner's smoke path.
   swap seam abstractly (the runner's agent-drive seam) instead of the
   `ACPAgent` symbol — same PR as the wording becomes stale, never silently.
 - **FR-011**: The ACP client MUST implement only what the runner needs
-  (initialize, session, prompt, streamed updates, permission policy,
+  (initialize, session, prompt, streamed updates, permission handling,
   cancellation/teardown) — a minimal client, not a general SDK; anything
-  unimplemented fails loud, not silently.
+  unimplemented fails loud, not silently. Permission requests are
+  auto-granted (the sandbox is the security boundary); the grant path MUST
+  never block awaiting input.
 
 ### Key Entities
 
-- **ACP client**: the runner-owned protocol driver — spawns the agent
-  subprocess, speaks JSON-RPC over stdio, streams session updates into the
-  runner's existing event/result emission. Replaces `ACPAgent`+`Conversation`.
+- **ACP client**: the runner-owned protocol driver — a separate module
+  beside the runner (clarified 2026-08-19), spawns the agent subprocess,
+  speaks JSON-RPC over stdio, streams session updates into the runner's
+  existing event/result emission. Replaces `ACPAgent`+`Conversation`.
+  Directly unit-testable in the stubbed suite.
 - **Agent command seam**: the one configuration point selecting the executor
   binary (payload → env → default). Pre-exists; this spec freezes it as the
   harness-agnosticism contract.
@@ -254,27 +268,16 @@ the image still passes the runner's smoke path.
   (Principle I) — this spec changes the *drive mechanism*, never the model.
 - The ACP client is small (a few hundred lines) and lives in the worker
   layer; whether it is vendored into `runner.py` or split as a sibling
-  module — and whether `openhands-runner/` is renamed (e.g. `runner/`) — are
-  clarify/plan-level decisions, not spec blockers.
-- Per-run usage stats are carried forward on a best-effort basis: preserved
-  if the protocol session exposes them, otherwise declared-absent (omitted
-  field), never fabricated.
+  module is settled below (Clarifications).
+- Per-run usage stats are best-effort (clarified 2026-08-19): preserved if
+  the protocol session exposes them, otherwise declared-absent (omitted
+  field), never fabricated. Usage-limit pause detection does not depend on
+  them.
 - Sequencing gate from #542 is satisfied: the amputation landed (#563,
   2026-08-18) and round 2 (#574) is merged; the runner swap no longer resets
   any in-flight live evidence.
 - Slicing: US1+US2 are one increment (the swap is only safe with its proof);
-  US3 (image slim-down) can land in the same PR or trail as a follow-up —
-  firmed at plan time under the N-PRs/end-of-week cap discipline.
+  US3 (image slim-down) can land in the same PR or trail as a follow-up, and
+  the directory rename is a separate mechanical trailing PR — firmed at plan
+  time under the N-PRs/end-of-week cap discipline.
 
-## Deferred to clarify (with Denys, one at a time)
-
-1. Re-confirm ACP-direct over headless-print (recorded above as the session
-   ruling; the clarify step makes it durable).
-2. Directory/module naming: does `openhands-runner/` get renamed in this arc
-   or stay put to keep the diff reviewable?
-3. Usage accounting: is best-effort/declared-absent acceptable, or is usage
-   a hard requirement worth extra client work?
-4. Permission policy for the ACP session in an autonomous sandbox: blanket
-   in-sandbox grant vs a configured allowlist.
-5. Vendored single-file client vs a small separate module (test surface
-   differs).

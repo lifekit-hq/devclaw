@@ -38,6 +38,6 @@
   (001, 008, 009) carry the same house style. Genuinely open implementation
   choices (vendored vs module client, directory rename) are explicitly
   pushed to clarify/plan rather than decided here.
-- The mandatory `/speckit-clarify` session still runs next; the "Deferred to
-  clarify" section of the spec lists the five queued questions, including
-  re-confirming the ACP-direct ruling.
+- The mandatory `/speckit-clarify` session ran 2026-08-19: all five queued
+  questions answered and integrated (see the spec's Clarifications section);
+  the "Deferred to clarify" section is resolved and removed.
