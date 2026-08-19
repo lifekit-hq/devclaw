@@ -103,7 +103,6 @@ class GoalState:
                   last_plan_at          TEXT,
                   last_tick_at          TEXT,
                   actions_dispatched    INTEGER,
-                  deliveries_since_eval INTEGER,
                   donegate_rounds       INTEGER NOT NULL DEFAULT 0,
                   last_eval_verdict     TEXT,
                   last_eval_at          TEXT,
@@ -361,12 +360,12 @@ class GoalState:
                 INSERT INTO goal_status (
                   goal_id, version, state, phase, lifecycle, blocked_on, blocked_kind,
                   heal_attempts, next_heal_at, "next",
-                  last_plan_at, last_tick_at, actions_dispatched, deliveries_since_eval,
+                  last_plan_at, last_tick_at, actions_dispatched,
                   donegate_rounds,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, open_unmerged_pr, in_flight_ref_id, in_flight_kind,
                   in_flight_json, inbox_ingest_cursor, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -380,7 +379,6 @@ class GoalState:
                   last_plan_at          = excluded.last_plan_at,
                   last_tick_at          = excluded.last_tick_at,
                   actions_dispatched    = excluded.actions_dispatched,
-                  deliveries_since_eval = excluded.deliveries_since_eval,
                   donegate_rounds       = excluded.donegate_rounds,
                   last_eval_verdict     = excluded.last_eval_verdict,
                   last_eval_at          = excluded.last_eval_at,
@@ -407,7 +405,6 @@ class GoalState:
                     status.last_plan_at,
                     status.last_tick_at,
                     status.actions_dispatched,
-                    status.deliveries_since_eval,
                     status.donegate_rounds,
                     status.last_eval_verdict,
                     status.last_eval_at,
@@ -439,7 +436,6 @@ class GoalState:
         "last_eval_verdict": "last_eval_verdict",
         "last_eval_at": "last_eval_at",
         "last_eval_note": "last_eval_note",
-        "deliveries_since_eval": "deliveries_since_eval",
         "donegate_rounds": "donegate_rounds",
         # heal_attempts / next_heal_at are damping bookkeeping (never read by
         # derive_state) — the column-only path exists so the auto-heal's
@@ -946,7 +942,6 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         last_tick_at=row["last_tick_at"] or None,
         inbox_cursor=int(row["inbox_ingest_cursor"] or 0),
         actions_dispatched=int(row["actions_dispatched"] or 0),
-        deliveries_since_eval=int(row["deliveries_since_eval"] or 0),
         donegate_rounds=int(row["donegate_rounds"] or 0),
         last_eval_verdict=row["last_eval_verdict"] or None,
         last_eval_at=row["last_eval_at"] or None,

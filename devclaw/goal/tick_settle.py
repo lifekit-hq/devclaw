@@ -248,7 +248,6 @@ async def _resolve_polling_action(
     productive = 1 if (poll.status == "done" and poll.gate_passed is not False) else 0
     new_status = replace(
         status, in_flight=None, phase="idle",
-        deliveries_since_eval=status.deliveries_since_eval + delivered,
         actions_dispatched=max(0, status.actions_dispatched - productive),
         # A productive settle also earns the mechanical auto-heal budget back
         # (tick_guards._autoheal_corrupt_doc) — the SAME stability signal as

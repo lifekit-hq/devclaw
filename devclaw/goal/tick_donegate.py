@@ -387,7 +387,7 @@ async def _resolve_done_gate(
     now = store.now_iso()
     base = replace(
         status, last_eval_verdict=ev.verdict, last_eval_at=now,
-        last_eval_note=ev.rationale, deliveries_since_eval=0, last_tick_at=now,
+        last_eval_note=ev.rationale, last_tick_at=now,
     )
     store.append_log(goal_id, f"done-gate: {ev.verdict} — {ev.rationale[:500]}")
     if ev.verdict == "achieved":

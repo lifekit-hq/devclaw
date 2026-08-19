@@ -127,7 +127,6 @@ class GoalStatusMixin:
             last_tick_at=fm.get("last_tick_at") or None,
             inbox_cursor=int(fm.get("inbox_cursor", 0)),
             actions_dispatched=int(fm.get("actions_dispatched", 0)),
-            deliveries_since_eval=int(fm.get("deliveries_since_eval", 0)),
             last_eval_verdict=fm.get("last_eval_verdict") or None,
             last_eval_at=fm.get("last_eval_at") or None,
             last_eval_note=fm.get("last_eval_note", "") or "",
@@ -285,7 +284,7 @@ class GoalStatusMixin:
     def update_status_fields(self, goal_id: str, **fields) -> GoalStatus:
         """Column-only telemetry update — ``last_tick_at`` / ``last_plan_at`` /
         ``last_progress_at`` / ``no_progress_notified`` / ``last_eval_verdict``
-        / ``last_eval_at`` / ``last_eval_note`` / ``deliveries_since_eval`` /
+        / ``last_eval_at`` / ``last_eval_note`` /
         ``heal_attempts`` / ``next_heal_at`` / ``open_unmerged_pr`` ONLY (see
         :data:`GoalState.STATUS_FIELD_COLUMNS`). NEVER a full-row
         rewrite, so it can never be the write that clobbers a concurrent
@@ -414,7 +413,6 @@ class GoalStatusMixin:
             "last_tick_at": status.last_tick_at,
             "inbox_cursor": status.inbox_cursor,
             "actions_dispatched": status.actions_dispatched,
-            "deliveries_since_eval": status.deliveries_since_eval,
             "last_eval_verdict": status.last_eval_verdict,
             "last_eval_at": status.last_eval_at,
             "last_eval_note": status.last_eval_note,

@@ -209,8 +209,6 @@ class GoalStatus:
     inbox_cursor: int = 0
     #: total engine actions dispatched for this goal — a runaway backstop
     actions_dispatched: int = 0
-    #: delivered actions since the last direction evaluation — drives eval cadence
-    deliveries_since_eval: int = 0
     #: the last direction-eval verdict + when, surfaced via get_goal (observe surface)
     last_eval_verdict: Optional[EvalVerdict] = None
     last_eval_at: Optional[str] = None

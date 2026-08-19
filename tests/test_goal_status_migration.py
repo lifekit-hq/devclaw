@@ -32,7 +32,6 @@ def _rich_status() -> GoalStatus:
         last_tick_at="2026-06-06T12:05:00+00:00",
         inbox_cursor=4,
         actions_dispatched=7,
-        deliveries_since_eval=2,
         last_eval_verdict="on_track",
         last_eval_at="2026-06-06T12:04:00+00:00",
         last_eval_note="progressing nicely",
@@ -57,7 +56,6 @@ def test_save_then_load_roundtrips_every_field(tmp_path):
     assert back.last_tick_at == "2026-06-06T12:05:00+00:00"
     assert back.inbox_cursor == 4
     assert back.actions_dispatched == 7
-    assert back.deliveries_since_eval == 2
     assert back.last_eval_verdict == "on_track"
     assert back.last_eval_at == "2026-06-06T12:04:00+00:00"
     assert back.last_eval_note == "progressing nicely"

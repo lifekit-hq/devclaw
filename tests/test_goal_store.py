@@ -169,7 +169,6 @@ def test_status_roundtrip_with_eval_and_done_check(tmp_path):
         next="verifying done",
         last_plan_at="2026-06-06T12:00:00+00:00",
         inbox_cursor=2,
-        deliveries_since_eval=3,
         last_eval_verdict="on_track",
         last_eval_note="progressing",
     )
@@ -180,7 +179,6 @@ def test_status_roundtrip_with_eval_and_done_check(tmp_path):
     assert back.in_flight.id == "t9"
     assert back.in_flight.is_done_check is True
     assert back.inbox_cursor == 2
-    assert back.deliveries_since_eval == 3
     assert back.last_eval_verdict == "on_track"
 
 
@@ -189,7 +187,6 @@ def test_missing_status_is_default(tmp_path):
     s = store.load_status("never")
     assert s.phase == "idle"
     assert s.in_flight is None
-    assert s.deliveries_since_eval == 0
 
 
 def test_log_append_and_recent(tmp_path):

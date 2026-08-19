@@ -887,10 +887,10 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
     """
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    # Past the old cadence threshold (deliveries_since_eval bumps 2→3):
-    # under the old code this fired the mid-flight eval; now it must not.
+    # Under the old code a goal at the eval cadence fired the mid-flight
+    # eval; now it must not.
     store.save_status("g", GoalStatus(
-        phase="in_flight", deliveries_since_eval=2,
+        phase="in_flight",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
     ))
     # A `stalled` verdict WOULD have blocked the goal under the old mid-flight eval.
