@@ -394,7 +394,7 @@ class GoalContentMixin:
         """Append steering lines. Writes UNCONSUMED ``goal_steering`` rows
         (the source of truth the planner reads) AND mirrors the same lines
         into ``inbox.md`` in the historical ``- [{source} {ts}] {line}``
-        format — kept EXACTLY, so ``devclaw.trend_signals``' H4 signal, which
+        format — kept EXACTLY, so downstream readers, which
         parses that prefix straight off the file, keeps working unchanged.
 
         The row stores the SAME formatted line as the file, not the bare

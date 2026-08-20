@@ -2722,49 +2722,6 @@ async def test_prep_heal_checks_workspace_git_when_no_repo_url(tmp_path, monkeyp
 # ---- trace volume hygiene (harden/trace-retention, 2026-07-15) --------------
 
 
-class RecordingTrendDetector:
-    """Trend-detector double — records which goals got a per-goal sweep."""
-
-    def __init__(self):
-        self.per_goal: list[str] = []
-        self.harness_self = 0
-
-    async def run_per_goal(self, *, goal_id: str, workspace_dir: str) -> None:
-        self.per_goal.append(goal_id)
-
-    async def run_harness_self(self) -> None:
-        self.harness_self += 1
-
-
-@pytest.mark.asyncio
-async def test_trend_sweep_skips_cancelled_and_done_goals(tmp_path):
-    """Dead goals get no trend sweep. Production 2026-07-15: the detector wrote
-    ~350 trend rows per goal per night across 17 goals of which 15 were
-    cancelled/done — the sweep must select only live goals. The harness-self
-    pass (which observes devclaw itself, not any goal) still runs once."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "live", workspace_dir="/repos/live")
-    seed_goal(tmp_path, "dead", workspace_dir="/repos/dead")
-    seed_goal(tmp_path, "finished", workspace_dir="/repos/finished")
-    store.save_status("live", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    store.save_status("dead", GoalStatus(phase="cancelled"))
-    store.save_status("finished", GoalStatus(phase="done"))
-
-    td = RecordingTrendDetector()
-    evaluator = FakeClaude()
-    engine, notifier = FakeEngine(), RecordingNotifier()
-
-    await tick_all(
-        store=store, engine=engine, evaluator_caller=evaluator,
-        notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
-        trend_detector=td,
-    )
-
-    assert td.per_goal == ["live"]      # terminal goals not swept
-    assert td.harness_self == 1         # the global pass still ran
-    assert evaluator.calls == 0
-
-
 class PruningEngine(FakeEngine):
     """FakeEngine that exposes both retention prune seams + the vacuum seam."""
 

@@ -169,47 +169,6 @@ class NoteEvent:
         return asdict(self)
 
 
-@dataclass
-class TrendCheckEvent:
-    """One trend-detector pre-filter pass that actually FIRED. Volume hygiene
-    (2026-07-15, 402MB devclaw.db): non-fired passes no longer get a row per
-    (signal, scope, heartbeat) — they collapse into one :class:`TrendSweepEvent`
-    per sweep, which still answers the calibration question ("why didn't R2
-    fire last Tuesday?") via its per-signal ``skipped`` map."""
-
-    kind: str = "trend_check"
-    ts: str = field(default_factory=_now_iso)
-    signal: str = ""           # e.g. "R2"
-    scope: str = ""            # "per_project" | "harness_self"
-    fired: bool = False
-    actual: Optional[float] = None
-    threshold: Optional[float] = None
-    #: "fired" | "below_threshold" | "cooldown" | "disabled" | "error:<ExcClass>"
-    reason: str = ""
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-
-@dataclass
-class TrendSweepEvent:
-    """One compact per-sweep summary of every trend-detector pre-filter pass
-    that did NOT fire — evidence the sweep ran, without a row per no-op.
-    ``skipped`` maps signal id → reason ("below_threshold actual=… threshold=…",
-    "cooldown", "disabled", "fingerprint_dupe", "error:<ExcClass>"), so the
-    per-signal calibration answer survives the collapse. Fired checks keep
-    their own :class:`TrendCheckEvent` rows beside this one."""
-
-    kind: str = "trend_sweep"
-    ts: str = field(default_factory=_now_iso)
-    scope: str = ""            # "per_project" | "harness_self"
-    checked: int = 0
-    fired: int = 0
-    skipped: dict = field(default_factory=dict)  # signal id -> reason
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
 
 class Tracer:
     """Append-only event recorder. Thread-safe-by-not-being-concurrent: a single
@@ -325,26 +284,6 @@ class Tracer:
                 lines.append(f"- `[{ts}]` **notify** ({e.get('level', '')}) — _{_preview(e.get('text', ''))}_")
             elif kind == "note":
                 lines.append(f"- `[{ts}]` **·** _{e.get('text', '')}_")
-            elif kind == "trend_check":
-                fired = e.get("fired", False)
-                sig = e.get("signal", "")
-                scope = e.get("scope", "")
-                reason = e.get("reason", "")
-                actual = e.get("actual")
-                threshold = e.get("threshold")
-                if fired:
-                    head = f"- `[{ts}]` **trend_check** `{sig}` ({scope}) **FIRED** — actual={actual} threshold={threshold}"
-                else:
-                    head = f"- `[{ts}]` **trend_check** `{sig}` ({scope}) — {reason}"
-                lines.append(head)
-            elif kind == "trend_sweep":
-                scope = e.get("scope", "")
-                skipped = e.get("skipped") or {}
-                detail = ", ".join(f"{k}: {v}" for k, v in skipped.items())
-                lines.append(
-                    f"- `[{ts}]` **trend_sweep** ({scope}) checked={e.get('checked', 0)} "
-                    f"fired={e.get('fired', 0)} — {detail or 'nothing skipped'}"
-                )
         return "\n".join(lines) + "\n"
 
     def dump_timeline(self, path: Path) -> Path:
@@ -497,44 +436,6 @@ def record_note(text: str) -> None:
     if t is None:
         return
     t.append(NoteEvent(text=text))
-
-
-def record_trend_check(
-    *,
-    signal: str,
-    scope: str,
-    fired: bool,
-    actual: Optional[float] = None,
-    threshold: Optional[float] = None,
-    reason: str = "",
-) -> None:
-    """Record one trend-detector pre-filter pass. No-op when no tracer is
-    attached (matches the rest of the recorder API)."""
-    t = _current.get()
-    if t is None:
-        return
-    t.append(TrendCheckEvent(
-        signal=signal, scope=scope, fired=fired,
-        actual=actual, threshold=threshold, reason=reason,
-    ))
-
-
-def record_trend_sweep(
-    *,
-    scope: str,
-    checked: int,
-    fired: int,
-    skipped: dict[str, str],
-) -> None:
-    """Record one compact summary of a trend-detector sweep's non-fired
-    checks (see :class:`TrendSweepEvent`). No-op when no tracer is attached
-    (matches the rest of the recorder API)."""
-    t = _current.get()
-    if t is None:
-        return
-    t.append(TrendSweepEvent(
-        scope=scope, checked=checked, fired=fired, skipped=dict(skipped),
-    ))
 
 
 # ---- persistent tracer (production telemetry) ------------------------------

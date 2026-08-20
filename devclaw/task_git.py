@@ -100,7 +100,7 @@ def _git_diff_sync(host_dir: str, base: str = "") -> str:
     ``goal/<id>``: judging only the uncommitted tree made a fully-committed
     change look like a no-op to the integrity + review gates (live-found
     2026-07-11: three bench tasks in a row got "requested changes" on a diff of
-    trend-file noise while the real work sat committed on the goal branch).
+    generated-file noise while the real work sat committed on the goal branch).
     Without ``base`` — or when the ref is unresolvable — fall back to the
     legacy uncommitted-only view.
 

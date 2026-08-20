@@ -388,11 +388,6 @@ def _fmt_trace_event(row: dict) -> str:
         detail = f"gate={gate} {p.get('pr_url') or ''} {p.get('action_label', '')}".rstrip()
     elif kind == "notify":
         detail = f"[{p.get('level', '')}] {str(p.get('text', ''))[:120]}"
-    elif kind == "trend_check":
-        detail = (
-            f"{p.get('signal', '')} ({p.get('scope', '')}) "
-            f"{'FIRED' if p.get('fired') else p.get('reason', '')}"
-        )
     else:
         detail = json.dumps({k: v for k, v in p.items() if k != "kind"}, default=str)[:120]
     return f"{_trace_ts_iso(row.get('ts', 0))}  #{row.get('id', '?'):<7} {kind:<11} goal={goal:<24} {detail}"
@@ -556,7 +551,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     t_list = tsub.add_parser("list", help="list trace events, newest N, filtered in SQL")
     t_list.add_argument("--goal", help="only this goal's events")
-    t_list.add_argument("--kind", help="event kind (cognition, tick, dispatch, subprocess, delivery, notify, trend_check)")
+    t_list.add_argument("--kind", help="event kind (cognition, tick, dispatch, subprocess, delivery, notify)")
     t_list.add_argument("--role", help="cognition role (planner, evaluator, ...)")
     t_list.add_argument("--since", help="lower bound: 30m/24h/7d or an ISO timestamp (naive=UTC)")
     t_list.add_argument("--errors-only", action="store_true",

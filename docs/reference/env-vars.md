@@ -159,9 +159,6 @@ zero-token-by-default background signal, not a cognition role.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_TREND_ENABLED` | `1` | Master switch for trend detection. `0` disables entirely. |
-| `DEVCLAW_TREND_DISABLE` | — | Comma-separated signal ids to mute individually (e.g. `R2,H4`) while a signal is being calibrated, without disabling the rest. |
-| `DEVCLAW_TREND_HARNESS_SELF_FILE` | `~/memory/projects/devclaw/trends.md` | Where detected trends are appended for Denys to review. |
 
 ## What's NOT here on purpose
 

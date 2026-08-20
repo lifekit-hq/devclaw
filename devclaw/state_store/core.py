@@ -7,7 +7,7 @@ serializes access because FastMCP may touch the store from the event loop and
 from background tasks. WAL mode gives concurrent reads with a single writer.
 
 The thin typed ``meta`` wrappers (quota pause, operator hold, run windows,
-workspace breaker, trend cooldowns) live on :class:`ControlPlaneMixin` in
+workspace breaker) live on :class:`ControlPlaneMixin` in
 ``control.py``; the pure data (dataclasses + row mappers + literals) lives in
 ``rows.py``. This module holds the connection, the transaction machinery, and
 the task/program/event/trace CRUD.

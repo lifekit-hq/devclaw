@@ -32,7 +32,6 @@ _ROLE_TIER: dict[str, str | None] = {
     "grill": MODEL_STANDARD,        # scope_grill conversation turns
     "review": MODEL_STANDARD,       # pre-PR adversarial review gate
     "reachability": MODEL_STANDARD, # browser-gate reachability escape-valve judge
-    "trend": MODEL_STANDARD,        # trend-signal summarize/classify
     "summary": MODEL_LIGHT,         # per-delivery plain-prose summary
 }
 

@@ -268,7 +268,7 @@ async def prepare_workspace(
         cwd=workspace_dir,
     )
     # Both checkouts force (-f): harness writes between actions (e.g. the
-    # trend detector appending to a TRACKED .devclaw/trends.md) leave
+    # a tool appending to a TRACKED .devclaw file) leave
     # tracked-file modifications that `clean -fdx` can't touch, and an
     # unforced `checkout -B` refuses to overwrite them — wedging the goal on
     # its own mechanism output. Pristine means pristine: local dirt never

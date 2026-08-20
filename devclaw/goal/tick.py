@@ -113,7 +113,6 @@ async def tick_goal(
     no_progress_s: int = NO_PROGRESS_S,
     summary_caller: "ClaudeCaller | None" = None,
     merger: "_merge.Merger | None" = None,
-    trend_detector: "object | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_merge.MergeabilityProbe | None" = None,
 ) -> Outcome:
@@ -121,11 +120,6 @@ async def tick_goal(
     incoming (lifecycle, phase) and outgoing outcome — the only place the trace
     sees a tick. All the cognition / dispatch / delivery / notify events fired
     during the body land between this tick and the next.
-
-    ``trend_detector`` (typed as ``object`` to avoid an import cycle with
-    ``devclaw.trend_detector``): when set, runs per-project trend signals after
-    the tick body settles. Telemetry-shaped: a detector exception NEVER breaks
-    the tick — it is recorded as a note and swallowed.
 
     The ENTIRE body runs under this goal's :func:`_tick_lock` (PR8) — a
     concurrent tick for the SAME goal (tick_one racing tick_all's sweep) waits
@@ -180,25 +174,6 @@ async def tick_goal(
             # for steer_goal/cancel_goal, which stay lock-free by design.
             store.append_log(goal_id, f"tick abandoned — state changed mid-tick: {exc}")
             outcome = Outcome.CONFLICT
-        if trend_detector is not None:
-            try:
-                # Volume hygiene (2026-07-15): a terminal goal gets no trend
-                # sweep — production showed ~350 trend_check rows per goal per
-                # night across 17 goals of which 15 were cancelled/done. The
-                # skip lives HERE (where the sweep selects goals), not inside
-                # the detector; re-read the status so a goal that went terminal
-                # DURING this very tick (done-gate closed it, cancel raced in)
-                # is skipped too. Cheap SQLite read — zero LLM either way.
-                if store.load_status(goal_id).phase not in ("done", "cancelled"):
-                    goal = store.load_goal(goal_id)
-                    await trend_detector.run_per_goal(
-                        goal_id=goal_id, workspace_dir=goal.workspace_dir,
-                    )
-            except Exception as exc:  # noqa: BLE001 — telemetry must not break ticks
-                _trace.record_note(
-                    f"trend_detector.run_per_goal failed for {goal_id}: "
-                    f"{exc.__class__.__name__}: {exc}"
-                )
         _trace.record_tick(
             goal_id=goal_id, lifecycle=lifecycle_before,
             phase=phase_before.value, outcome=outcome.value,
@@ -518,7 +493,6 @@ async def tick_all(
     verify_done_resolver: "Callable[[Goal], bool] | None" = None,
     autodeploy_resolver: "Callable[[Goal], bool | None] | None" = None,
     tracer_factory: "Callable[[str], _trace.Tracer | None] | None" = None,
-    trend_detector: "object | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     triage_caller: "ClaudeCaller | None" = None,
     mergeability_probe: "_merge.MergeabilityProbe | None" = None,
@@ -538,11 +512,6 @@ async def tick_all(
     the same idea for the done-gate re-check flag and the on-complete deploy
     flag: fresh per goal, each taking precedence over its flat counterpart.
 
-    ``trend_detector`` (typed as ``object`` to avoid the import cycle with
-    ``devclaw.trend_detector``): when set, runs per-project signals inside each
-    per-goal tracer scope, and runs harness-self signals once after the loop
-    inside a sentinel-keyed (``_harness_self_``) tracer scope. Telemetry-shaped
-    catches: a detector exception NEVER breaks the heartbeat.
     """
     outcomes: dict[str, Outcome] = {}
 
@@ -670,7 +639,6 @@ async def tick_all(
                     verify_done=goal_verify_done,
                     autodeploy=goal_autodeploy, no_progress_s=no_progress_s,
                     summary_caller=summary_caller, merger=goal_merger,
-                    trend_detector=trend_detector,
                     remote_checker=remote_checker,
                     mergeability_probe=mergeability_probe,
                 )
@@ -684,19 +652,6 @@ async def tick_all(
             else:
                 store.append_log(goal_id, f"tick error (isolated): {str(exc)[:160]}")
                 outcomes[goal_id] = Outcome.ERROR
-
-    # Harness-self trend pass — runs ONCE per heartbeat after the per-goal loop.
-    # Sentinel goal_id keeps the trace events in the same table for replay via
-    # get_trace; the detector observes devclaw itself, not any specific goal.
-    if trend_detector is not None:
-        harness_tracer = (
-            tracer_factory("_harness_self_") if tracer_factory else None
-        )
-        try:
-            with _trace.tracer_scope(harness_tracer):
-                await trend_detector.run_harness_self()
-        except Exception:  # noqa: BLE001 — telemetry must not break the heartbeat
-            pass
 
     return outcomes
 

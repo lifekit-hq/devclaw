@@ -379,8 +379,7 @@ def compute_trace_report(store: Any, *, since_ms: int) -> dict:
 
     Sections: tasks dispatched/settled by status + failed-task error classes,
     cognition calls by role (count / p50 / p90 / max latency, timeouts), retry
-    storms (same task title attempted more than once), OWNER notifications,
-    trend_check volume."""
+    storms (same task title attempted more than once), OWNER notifications."""
     with store._lock:  # noqa: SLF001 — telemetry co-designs with state_store
         dispatched_row = store._db.execute(
             "SELECT COUNT(*) AS n FROM tasks WHERE created_at >= ?",
@@ -417,17 +416,6 @@ def compute_trace_report(store: Any, *, since_ms: int) -> dict:
             "WHERE kind = 'notify' AND ts >= ? GROUP BY lvl",
             (since_ms,),
         ).fetchall()
-        trend_total_row = store._db.execute(
-            "SELECT COUNT(*) AS n FROM traces "
-            "WHERE kind = 'trend_check' AND ts >= ?",
-            (since_ms,),
-        ).fetchone()
-        trend_fired_row = store._db.execute(
-            "SELECT COUNT(*) AS n FROM traces "
-            "WHERE kind = 'trend_check' AND ts >= ? "
-            "AND json_extract(payload_json, '$.fired')",
-            (since_ms,),
-        ).fetchone()
 
     error_classes: dict[str, int] = {}
     for r in failed_rows:
@@ -483,10 +471,6 @@ def compute_trace_report(store: Any, *, since_ms: int) -> dict:
             "owner": int(notify_by_level.get("OWNER", 0)),
             "by_level": notify_by_level,
         },
-        "trend_checks": {
-            "total": int(trend_total_row["n"] if trend_total_row else 0),
-            "fired": int(trend_fired_row["n"] if trend_fired_row else 0),
-        },
     }
 
 
@@ -534,8 +518,6 @@ def format_trace_report(rep: dict) -> str:
     for lvl, n in sorted(rep["notifications"]["by_level"].items()):
         if lvl != "OWNER":
             lines.append(f"  {lvl:<12} {n}")
-    tc = rep["trend_checks"]
-    lines.append(f"trend checks: {tc['total']} ({tc['fired']} fired)")
     return "\n".join(lines)
 
 

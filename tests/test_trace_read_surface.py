@@ -41,7 +41,7 @@ def store(tmp_path):
 
 def _seed_representative_rows(store: StateStore) -> None:
     """A representative overnight window: cognition (incl. one TIMEOUT), a
-    dispatch, notifications at both altitudes, trend checks, plus tasks with
+    dispatch, notifications at both altitudes, plus tasks with
     a retry storm and a failed settle. Payload shapes mirror trace.py."""
     # -- traces -----------------------------------------------------------
     store.append_trace_event(
@@ -77,16 +77,6 @@ def _seed_representative_rows(store: StateStore) -> None:
     store.append_trace_event(
         trace_id="t2", goal_id="g2", kind="notify", ts=NOW_MS - 1 * HOUR_MS,
         payload={"kind": "notify", "level": "TASK", "text": "dispatched backlog item"},
-    )
-    store.append_trace_event(
-        trace_id="t3", goal_id="g1", kind="trend_check", ts=NOW_MS - 1 * HOUR_MS,
-        payload={"kind": "trend_check", "signal": "R2", "scope": "per_project",
-                 "fired": True, "reason": "fired"},
-    )
-    store.append_trace_event(
-        trace_id="t3", goal_id="g1", kind="trend_check", ts=NOW_MS - 1 * HOUR_MS,
-        payload={"kind": "trend_check", "signal": "R2", "scope": "harness_self",
-                 "fired": False, "reason": "below_threshold"},
     )
     # an OLD cognition row, outside any since window the tests use
     store.append_trace_event(
@@ -196,12 +186,11 @@ def test_trace_report_flags_retry_storms_by_repeated_title(store):
     assert rep["retry_storms"] == [{"title": "add /health endpoint", "attempts": 2}]
 
 
-def test_trace_report_counts_owner_notifications_and_trend_checks(store):
+def test_trace_report_counts_owner_notifications(store):
     _seed_representative_rows(store)
     rep = compute_trace_report(store, since_ms=NOW_MS - 24 * HOUR_MS)
     assert rep["notifications"]["owner"] == 1
     assert rep["notifications"]["by_level"] == {"OWNER": 1, "TASK": 1}
-    assert rep["trend_checks"] == {"total": 2, "fired": 1}
 
 
 def test_trace_report_renders_human_readable(store):
@@ -212,7 +201,6 @@ def test_trace_report_renders_human_readable(store):
     assert "timeouts 1" in text
     assert "2x  add /health endpoint" in text
     assert "OWNER 1" in text
-    assert "trend checks: 2 (1 fired)" in text
 
 
 # ---- parse_since ------------------------------------------------------------
