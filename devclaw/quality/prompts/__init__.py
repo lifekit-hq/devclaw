@@ -1,6 +1,6 @@
 """The gate's own prompt templates — inside the package boundary by design.
 
-The three judge prompts (``review-gate.md``, ``eval-judge.md``,
+The judge prompts (``review-gate.md``,
 ``browser-reachability.md``) moved here from ``devclaw/prompts/`` (2026-07-19)
 so the quality gate is self-contained: everything the gate needs to render a
 verdict — logic, prompts, loader — lives under ``devclaw/quality/`` and moves

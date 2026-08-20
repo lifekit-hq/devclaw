@@ -11,7 +11,6 @@ import inspect
 
 import pytest
 
-from devclaw.quality import eval_judge
 from devclaw import elicitation
 from devclaw import llm_call
 from devclaw.engine import sandcastle as sandcastle_runner
@@ -128,7 +127,6 @@ async def test_claude_with_model_forwards_timeout(monkeypatch):
 
 def test_shipped_default_tiers():
     assert elicitation.GRILL_MODEL == "sonnet"  # conversational
-    assert eval_judge.JUDGE_MODEL == "haiku"  # bounded classification
     assert sandcastle_runner.EXEC_MODEL == "claude-sonnet-4-6"  # the coding bulk
 
 
@@ -151,8 +149,6 @@ def test_role_default_callers_are_tiered():
     # grill → grill tier (next_step binds lazily via default_caller; assert the
     # factory routes the configured tier)
     assert elicitation.default_caller.__module__ == "devclaw.elicitation"
-    # judge → judge tier
-    assert inspect.signature(eval_judge.judge_run).parameters["claude_caller"].default is eval_judge.judge_caller
 
 
 def test_call_claude_accepts_model_kwarg():

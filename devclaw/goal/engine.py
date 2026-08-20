@@ -48,7 +48,7 @@ class InProcessEngine:
     @property
     def kind(self) -> str:
         """Pass-through to the task queue's engine label ("stub" / "sandcastle"
-        / "host" / "claude_sdk"). Used by trace recorders so the timeline
+        / "host"). Used by trace recorders so the timeline
         shows which engine actually ran each dispatch."""
         return getattr(self._queue, "engine_kind", "unknown")
 

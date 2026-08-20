@@ -3,7 +3,7 @@
 Pins:
   1. Each kind (implement_feature, fix_bug, review_repository) reaches
      queue.submit with the correct ``kind`` string, so downstream routing
-     (planner _VALID_TOOLS, claude_sdk._PROMPT_SLUGS, engine.py review branch,
+     (planner _VALID_TOOLS, engine.py review branch,
      state_store.TaskKind) keeps working unchanged.
   2. review_repository ignores verify_cmd + open_pr — the old dedicated tool
      never accepted them, and the merge must not smuggle a gate/PR into a

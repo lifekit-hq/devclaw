@@ -61,17 +61,6 @@ elif _engine == "host":
         "isolation (agent has full filesystem access). Dev/validation only.\n"
     )
     queue = TaskQueue(store, runner=run_host)
-elif _engine == "claude_sdk":
-    # Spike alternative: claude --print directly inside the sandcastle container,
-    # no OpenHands SDK. Same sandbox posture (auth allowlist, --rm, workspace
-    # mount). Decide-after-data whether to make it the default.
-    from ..engine.claude_sdk import run_claude_sdk
-
-    sys.stderr.write(
-        "⚠ DEVCLAW_ENGINE=claude_sdk — claude --print engine in sandcastle "
-        "(spike; OpenHands SDK not in this path).\n"
-    )
-    queue = TaskQueue(store, runner=run_claude_sdk)
 else:
     queue = TaskQueue(store)
 
