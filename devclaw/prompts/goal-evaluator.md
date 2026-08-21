@@ -30,6 +30,15 @@ wrong-repo `stalled`/`needs_human` falsely blocks the goal.
 independent requirements joined by AND — *"...with X, including Y, and Z"*
 is three clauses. An "OR" inside a clause means "at least one must hold".
 
+**1a. A clause must assert repository behaviour.** Delivery mechanics are
+not completion criteria: how the work ships, how many PRs it takes, which
+branch it lands on, whether it is merged, who merges it, and which issues or
+pull requests get closed or labelled. Drop such text at this step — it never
+becomes a numbered clause, never appears in `clauses`, and never holds a
+goal open. Name what you dropped in `rationale` so the owner sees it.
+Judge the behaviour the repository must exhibit; devclaw's delivery layer
+and the owner own everything after that.
+
 **2. For EACH clause, find SPECIFIC evidence.** At the done-gate your
 primary source is the fresh repo review: it must explicitly confirm the
 clause with a file path, function name, test name, or observed behaviour —

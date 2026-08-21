@@ -447,6 +447,14 @@ never on counting PRs or backlog items. The owner notification says
 "(verified)" only when a repo review actually grounded the close; an
 artifact-only close (per-project `verify_done` off) is labeled as such.
 
+Clause decomposition admits **repository behavior only**. Delivery mechanics —
+how the work ships, PR count, target branch, merge state, issue/PR closure and
+labelling — are dropped at step 1a of `prompts/goal-evaluator.md` and named in
+the verdict's rationale, so they never become clauses and never hold a goal
+open. This narrows what may BE a criterion; it relaxes nothing about how an
+admitted criterion is judged, and an unmet behavior clause still fails closed
+under either strictness dial.
+
 ### Loud failure over silent degradation
 
 Verification fails closed (#186); an unreviewable change fails closed *and

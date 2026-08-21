@@ -934,3 +934,64 @@ def test_goal_evaluator_prompt_binds_verdict_to_clause_coverage_not_structure():
     assert "ONLY clause-tagged fixes" in raw
     assert "each concern surfaced as a correction" not in raw
     assert "planner" not in raw.lower()
+
+
+# ---- done_when is behaviour, never delivery ceremony -----------------------
+#
+# Backstory (three consecutive nights, 2026-08-18→21): fs-book-figures'
+# done_when ended "delivered as PRs (~2) ... merge stays human" and
+# lkd-feed-honesty's demanded "MERGED evidence ... close PR #64 ... issues
+# closed". The gate confirmed every substantive clause and refused to close
+# anyway, because the ceremony text decomposed into clauses of its own that no
+# sandbox run can satisfy — the goal-branch strategy never merges
+# (tick_settle: "cumulative PR stays open for the done-gate") and the sandbox
+# carries no GitHub credential. Both goals were closed by hand. The fix is at
+# decomposition: ceremony never becomes a clause, so it can never hold a goal
+# open. Nothing about verification is relaxed — a behaviour clause without
+# repo evidence still fails closed.
+
+
+def test_evaluator_prompt_excludes_delivery_mechanics_from_clauses():
+    """Presence AND absence, proven on the RAW template (per testing rules).
+
+    The template must tell the model that delivery mechanics are not
+    completion criteria and must be dropped at decomposition — and must NOT
+    tell it to merge, close issues, or otherwise act on the ceremony it drops.
+    """
+    raw = (
+        Path(__file__).resolve().parents[1]
+        / "devclaw" / "prompts" / "goal-evaluator.md"
+    ).read_text()
+    # the rule is stated, and stated at decomposition (step 1a, before clauses exist)
+    assert "A clause must assert repository behaviour" in raw
+    assert "becomes a numbered clause" in raw
+    assert "never appears in `clauses`" in raw
+    assert raw.index("A clause must assert repository behaviour") < raw.index(
+        "**2. For EACH clause, find SPECIFIC evidence.**"
+    )
+    # the dropped text is surfaced, not silently swallowed (loud over silent)
+    assert "Name what you dropped in `rationale`" in raw
+    # the named ceremony forms from the three incidents
+    for ceremony in ("how many PRs", "whether it is merged", "who merges it"):
+        assert ceremony in raw
+    # and the gate is NOT told to perform delivery itself
+    assert "you must merge" not in raw.lower()
+
+
+def test_behaviour_clause_without_evidence_still_fails_closed():
+    """The exclusion rule must not become a loophole: dropping ceremony at
+    decomposition leaves every behaviour clause judged exactly as before."""
+    r = validate(
+        {
+            "verdict": "off_track",
+            "rationale": "dropped 'merge stays human' as delivery mechanics; clause 1 unmet",
+            "clauses": [
+                {"clause": "service owns the computation", "satisfied": False, "evidence": ""},
+            ],
+            "structural_health": "clean",
+            "corrections": ["[clause 1] extract the canonical service"],
+        },
+        at_done_gate=True,
+    )
+    assert r.verdict == "off_track"
+    assert r.corrections
