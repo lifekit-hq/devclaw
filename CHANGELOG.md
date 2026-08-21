@@ -2,6 +2,15 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.3.1](https://github.com/lifekit-hq/devclaw/compare/v0.3.0...v0.3.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **evaluator:** "present" is existence evidence only when it describes a FILE ([#584](https://github.com/lifekit-hq/devclaw/issues/584)) ([91ab826](https://github.com/lifekit-hq/devclaw/commit/91ab826c929664c1755be26e15bfea0a4745b39b))
+* **evaluator:** done_when is repository behavior — delivery ceremony never becomes a clause ([#579](https://github.com/lifekit-hq/devclaw/issues/579)) ([5d194c5](https://github.com/lifekit-hq/devclaw/commit/5d194c5ff69b049e59713aad6b305894713fb40f))
+* **sandcastle:** stage the sandbox identity copies where the host can bind them ([#582](https://github.com/lifekit-hq/devclaw/issues/582)) ([9d4f416](https://github.com/lifekit-hq/devclaw/commit/9d4f41651bc8c292a19220131ef14172ea9125b4))
+
 ## [0.3.0](https://github.com/lifekit-hq/devclaw/compare/v0.2.0...v0.3.0) (2026-08-19)
 
 
