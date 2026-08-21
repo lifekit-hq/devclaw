@@ -71,6 +71,14 @@ spawn containers itself — it goes through the engine).
   a read-only `review_repository` against the firmed `done_when` + `stub_acceptable`; the
   goal closes **only if the evaluator confirms `achieved`**. Never gate completion on
   counting PRs or backlog items.
+- **`done_when` is repository behavior, never delivery ceremony.** How the work ships,
+  how many PRs it takes, which branch it lands on, whether/who merges it, and which
+  issues or PRs get closed are NOT completion criteria — the evaluator drops them at
+  decomposition (`prompts/goal-evaluator.md` step 1a) and names the drop in its
+  rationale. Writing ceremony into a contract is how a goal ends up unclosable: under
+  `goal-branch` the cumulative PR deliberately stays open for the done-gate, and the
+  sandbox carries no GitHub credential, so no run can ever satisfy such a clause. Hold
+  this when you AUTHOR a goal — the gate's drop is a backstop, not a licence.
 
 ## Hardening philosophy (Tranche 0 — baked in, not in the README yet)
 
