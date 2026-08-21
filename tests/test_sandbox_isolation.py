@@ -10,6 +10,8 @@ untouched). These pin the mount posture so the leak can't silently come back,
 and assert it stays unit-testable (pure arg build, no docker).
 """
 
+from pathlib import Path
+
 import pytest
 
 from devclaw.engine import EngineRequest
@@ -288,15 +290,17 @@ async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_p
 
     seen: dict = {}
 
-    def fake_write_trusted_copy(src, workspace_path):
+    def fake_write_trusted_copy(src, workspace_path, *, dest_dir=None):
         seen["copy_args"] = (src, workspace_path)
+        seen["copy_dest_dir"] = dest_dir
         return str(fake_copy)
 
     monkeypatch.setattr(sc, "write_trusted_copy", fake_write_trusted_copy)
 
-    def fake_disposable_copy(src):
-        seen["cred_src"] = src
-        return str(fake_cred)
+    def fake_disposable_copy(rel, host_claude_dir):
+        seen["cred_rel"] = rel
+        seen["cred_host_dir"] = host_claude_dir
+        return sc._SharedCopy(str(fake_cred), f"{host_claude_dir}/{fake_cred.name}")
 
     monkeypatch.setattr(sc, "_disposable_copy", fake_disposable_copy)
 
@@ -320,9 +324,75 @@ async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_p
     assert result == {"status": "ok"}
     # It asked write_trusted_copy to trust the CONTAINER workspace path...
     assert seen["copy_args"][1] == sc.CONTAINER_WORKSPACE
-    # ...bound both copies into the container read-write...
-    assert f"{fake_copy}:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:rw" in seen["docker_args"]
-    assert f"{fake_cred}:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw" in seen["docker_args"]
-    # ...and cleaned up both temp copies once the container exited.
+    # ...bound both copies into the container read-write, using the HOST-namespace
+    # path as the bind source (docker resolves bind sources on the host, so a
+    # path only this process can see would silently degrade to the RO fallback)...
+    host_dir = seen["cred_host_dir"]
+    assert (
+        f"{host_dir}/{fake_copy.name}:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:rw"
+        in seen["docker_args"]
+    )
+    assert (
+        f"{host_dir}/{fake_cred.name}:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw"
+        in seen["docker_args"]
+    )
+    # ...staged the .claude.json copy in the SHARED claude dir, not the system temp dir...
+    assert seen["copy_dest_dir"] == sc._local_claude_dir()
+    # ...and cleaned up both temp copies (by their LOCAL path) once the container exited.
     assert not fake_copy.exists()
     assert not fake_cred.exists()
+
+
+# ---- the credential copy must work when devclaw itself is containerized -----
+#
+# Live-found 2026-08-21 (issue #581). DEVCLAW_HOST_CLAUDE_DIR is a HOST path
+# handed to docker as a bind source; inside devclaw-mcp it does not resolve at
+# all ("No such file or directory"). _disposable_copy read THAT path, so it
+# raised, returned None, and every containerized run silently fell back to a
+# read-only bind of the live credential — meaning the in-sandbox claude could
+# never refresh an expired OAuth token. The #538 EROFS fix had been inert in
+# production since it landed. Two halves to pin: read through the LOCAL view,
+# and stage the copy where the HOST can see it.
+
+
+def test_disposable_copy_reads_through_the_container_visible_dir(tmp_path, monkeypatch):
+    """The source is read via CLAUDE_CONFIG_DIR (the in-container mount), never
+    via the host path — which is unreadable from inside devclaw-mcp."""
+    local = tmp_path / "local-claude"
+    local.mkdir()
+    (local / ".credentials.json").write_text('{"token": "x"}')
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(local))
+
+    got = sc._disposable_copy(".credentials.json", "/home/lifekit/.claude")
+
+    assert got is not None, "a readable credential must produce a copy"
+    assert Path(got.local).read_text() == '{"token": "x"}'
+
+
+def test_disposable_copy_is_staged_where_the_host_can_bind_it(tmp_path, monkeypatch):
+    """The copy lands INSIDE the shared claude dir, so it has a path in both
+    namespaces. Its host path is the same basename under the host dir — a bind
+    source docker can actually resolve."""
+    local = tmp_path / "local-claude"
+    local.mkdir()
+    (local / ".credentials.json").write_text("{}")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(local))
+
+    got = sc._disposable_copy(".credentials.json", "/home/lifekit/.claude")
+
+    assert got is not None
+    assert Path(got.local).parent == local, "copy must be staged in the SHARED dir"
+    assert got.host == f"/home/lifekit/.claude/{Path(got.local).name}"
+    assert got.host != got.local, "host and local views are different paths"
+
+
+def test_unreadable_credential_falls_back_loudly_not_silently(tmp_path, monkeypatch, capsys):
+    """The RO fallback stays (never a sandbox-writable host file), but it must
+    announce itself — a silent degradation is what hid this for weeks."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "does-not-exist"))
+
+    assert sc._disposable_copy(".credentials.json", "/home/lifekit/.claude") is None
+
+    err = capsys.readouterr().err
+    assert "falling back to a read-only bind" in err
+    assert "refresh an expired OAuth token" in err

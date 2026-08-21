@@ -103,12 +103,21 @@ def ensure_trusted_in_place(config_path: str, workspace_path: str) -> bool:
     return True
 
 
-def write_trusted_copy(src_config_path: str, workspace_path: str) -> str | None:
+def write_trusted_copy(
+    src_config_path: str, workspace_path: str, *, dest_dir: str | None = None
+) -> str | None:
     """Write a COPY of the ``.claude.json`` at ``src_config_path`` with
     ``workspace_path`` trusted, to a temp file, and return its path. For the
     sandbox — the host file must never be edited in place; the caller binds
     this copy read-WRITE (the in-sandbox claude writes its own config; the
     copy is disposable) and deletes it after the container exits.
+
+    ``dest_dir`` places the temp file somewhere the caller chooses. The sandbox
+    caller passes the SHARED claude dir, because that directory is bind-mounted
+    host<->container and so gives the copy a path in both namespaces — a docker
+    bind source must resolve in the HOST namespace, which this process's own
+    temp dir does not (see ``sandcastle._disposable_copy``). Default None keeps
+    the system temp dir for any caller that only reads the copy locally.
 
     Returns None when the source can't be read/parsed, so the caller falls back
     to binding the raw host file (today's behavior — never a *regression*, and
@@ -118,7 +127,7 @@ def write_trusted_copy(src_config_path: str, workspace_path: str) -> str | None:
         return None
     apply_trust(cfg, workspace_path)
     try:
-        fd, path = tempfile.mkstemp(prefix="devclaw-claude-", suffix=".json")
+        fd, path = tempfile.mkstemp(prefix=".devclaw-claude-", suffix=".json", dir=dest_dir)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh)
         # The sandbox agent user may differ in uid from the devclaw-mcp process
