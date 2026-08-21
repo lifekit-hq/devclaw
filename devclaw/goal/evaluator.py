@@ -314,8 +314,17 @@ def _looks_like_stub(text: str) -> bool:
 _TEST_CLAUSE_RE = re.compile(
     r"\btest(?:s|ed|ing)?\b|\bcoverage\b|\be2e\b", re.IGNORECASE,
 )
+# ``present`` is only existence wording when it describes a FILE. Bare
+# ``present`` also describes DATA — "asserts the counts row is absent when
+# `_errors` present" is a behavioral assertion, not a presence check — and
+# matching it flipped a satisfied clause on lkd-honest-widgets-2026-08-21
+# (2026-08-21), holding a fully-met contract open. Error-state testing uses
+# "<field> present" constantly, so the collision is systematic, not a one-off.
+# The file-ish alternatives below keep every real presence phrasing.
 _EXISTENCE_EVIDENCE_RE = re.compile(
-    r"\bexists?\b|\bexistence\b|\bpresent\b|\bchecked[- ]in\b",
+    r"\bexists?\b|\bexistence\b|\bchecked[- ]in\b"
+    r"|\b(?:file|files|spec|specs|suite|module)s?\s+(?:is\s+|are\s+)?present\b"
+    r"|\bpresent\s+(?:in|at)\s+(?:the\s+)?(?:repo|repository|tree|codebase|directory)\b",
     re.IGNORECASE,
 )
 _EXECUTION_EVIDENCE_RE = re.compile(

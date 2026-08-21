@@ -995,3 +995,59 @@ def test_behaviour_clause_without_evidence_still_fails_closed():
     )
     assert r.verdict == "off_track"
     assert r.corrections
+
+
+# ---- "present" describing DATA is not existence evidence -------------------
+#
+# Live-found 2026-08-21 on goal lkd-honest-widgets-2026-08-21. The evaluator
+# returned achieved with all 15 clauses satisfied and repo-confirmed, and the
+# host flipped one of them to unsatisfied — holding a fully-met contract open.
+# The flipped clause's evidence was:
+#   "Home.test.tsx:213-233 asserts queryByText(/running|total/i) absent when
+#    _errors present with zero counts; fails if the Home.tsx:91 guard is removed."
+# `_EXISTENCE_EVIDENCE_RE` matched the bare word "present" — which here describes
+# the _errors PAYLOAD in the test's input, not a file on disk. Mutation-sensitivity
+# evidence ("fails if the guard is removed") is the strongest coverage evidence
+# there is; reading it as "the file exists" is backwards. Error-state testing says
+# "<field> present" constantly, so the collision is systematic.
+
+
+def test_payload_present_wording_is_not_existence_evidence():
+    """The live false positive: "_errors present" describes data, not a file."""
+    r = validate(
+        _achieved_with([
+            {
+                "clause": "A test asserts zeros never render without an accompanying error",
+                "satisfied": True,
+                "evidence": (
+                    "Home.test.tsx:213-233 asserts queryByText(/running|total/i) absent "
+                    "when _errors present with zero counts; fails if the Home.tsx:91 "
+                    "guard is removed."
+                ),
+            },
+        ]),
+        at_done_gate=True,
+        strictness="trust",
+    )
+    assert r.verdict == "achieved"
+    assert r.clauses[0].satisfied
+
+
+def test_file_present_wording_is_still_existence_evidence():
+    """The narrowing must not blunt the net: presence phrasings that really do
+    describe a FILE still fail closed."""
+    for evidence in (
+        "the test file is present under tests/",
+        "parser specs present in the repo",
+        "tests/e2e/walking-skeleton.spec.ts exists",
+    ):
+        r = validate(
+            _achieved_with([
+                {"clause": "the parser is covered by tests", "satisfied": True,
+                 "evidence": evidence},
+            ]),
+            at_done_gate=True,
+            strictness="trust",
+        )
+        assert r.verdict == "off_track", f"should stay closed for: {evidence}"
+        assert "existence-only" in r.clauses[0].evidence
