@@ -35,8 +35,10 @@ import json
 import os
 import re
 import subprocess
+import sys
 import uuid
 from pathlib import Path
+from typing import NamedTuple
 
 from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
@@ -334,24 +336,74 @@ def _toolchain_volume_name(host_bind_path: str) -> str:
     return f"devclaw-toolchains-{slug or 'workspace'}-{digest}"
 
 
-def _disposable_copy(src_path: str) -> str | None:
-    """A per-task throwaway copy of a host identity file, for a WRITABLE bind
-    into the sandbox (see ``_build_claude_mounts``). ``mkstemp`` keeps the
-    0600 mode — same-uid host↔sandbox is already the load-bearing contract for
-    the raw bind's readability today. Best-effort: any failure (host file
-    unreadable from this process, e.g. containerized devclaw without the
-    mount) ⇒ None, and the caller falls back to the raw read-only bind —
-    never a sandbox-writable host file."""
+def _local_claude_dir() -> str:
+    """The path THIS process reads the claude config through.
+
+    ``DEVCLAW_HOST_CLAUDE_DIR`` is a HOST path handed to docker as a bind
+    SOURCE; on the containerized deployment it deliberately does not resolve
+    inside devclaw-mcp at all. ``CLAUDE_CONFIG_DIR`` names the in-container
+    mount of that very directory (``deploy/docker-compose.devclaw.yml`` binds
+    the two to each other), so they are ONE directory seen from two
+    namespaces. Read through this one; hand docker the host one.
+    """
+    return os.environ.get("CLAUDE_CONFIG_DIR") or str(Path.home() / ".claude")
+
+
+class _SharedCopy(NamedTuple):
+    """A temp copy staged in the SHARED claude dir, so it has a path in both
+    namespaces: ``local`` is how this process wrote it (and later unlinks it),
+    ``host`` is the bind source the docker daemon resolves."""
+
+    local: str
+    host: str
+
+
+def _shared_paths(local_path: str, host_claude_dir: str) -> _SharedCopy:
+    """Pair a file staged in the shared claude dir with its host-namespace
+    path. Only the basename differs between the two views."""
+    return _SharedCopy(
+        local_path,
+        os.path.join(host_claude_dir.rstrip("/"), os.path.basename(local_path)),
+    )
+
+
+def _disposable_copy(rel: str, host_claude_dir: str) -> "_SharedCopy | None":
+    """A per-task throwaway copy of an identity file, for a WRITABLE bind into
+    the sandbox (see ``_build_claude_mounts``).
+
+    The copy is staged INSIDE the shared claude dir, not this process's own
+    temp dir. That directory is bind-mounted host<->container, so a file
+    created there has a path in BOTH namespaces — the one thing a docker bind
+    source needs. Staging in ``/tmp`` produced a path the HOST docker daemon
+    cannot resolve, and reading through ``DEVCLAW_HOST_CLAUDE_DIR`` (a host
+    path) raised inside the container: together those made this function
+    return None on every containerized run, silently degrading to the
+    read-only fallback so the in-sandbox claude could never refresh an expired
+    OAuth token (live-found 2026-08-21 — the #538 EROFS fix had been inert in
+    production since it landed).
+
+    ``mkstemp`` keeps the 0600 mode — same-uid host<->sandbox is already the
+    load-bearing contract for the raw bind's readability. Best-effort: any
+    failure => None and a LOUD log, and the caller falls back to the raw
+    read-only bind — never a sandbox-writable host file.
+    """
     import shutil
     import tempfile
 
+    local_dir = _local_claude_dir()
     try:
-        fd, path = tempfile.mkstemp(prefix="devclaw-cred-", suffix=".json")
+        fd, local = tempfile.mkstemp(prefix=".devclaw-cred-", suffix=".json", dir=local_dir)
         os.close(fd)
-        shutil.copyfile(src_path, path)
-        return path
-    except OSError:
+        shutil.copyfile(os.path.join(local_dir, rel), local)
+    except OSError as err:
+        sys.stderr.write(
+            f"sandcastle: could not stage a writable copy of {rel} in {local_dir} "
+            f"({err.__class__.__name__}: {err}) — falling back to a read-only bind "
+            "of the host file; the in-sandbox claude will NOT be able to refresh an "
+            "expired OAuth token (see issue #581)\n"
+        )
         return None
+    return _shared_paths(local, host_claude_dir)
 
 
 def _build_claude_mounts(
@@ -514,12 +566,14 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
     # Either copy None (host file unreadable from this process) → that entry
     # falls back to the raw read-only bind. Both deleted after the container
     # exits.
-    trusted_claude_json = write_trusted_copy(
-        os.path.join(claude_dir.rstrip("/"), ".claude.json"), CONTAINER_WORKSPACE
+    # Read through the LOCAL view and stage the copies in the shared claude dir;
+    # hand docker their HOST paths. See _local_claude_dir / _disposable_copy.
+    _local_dir = _local_claude_dir()
+    _trusted_local = write_trusted_copy(
+        os.path.join(_local_dir, ".claude.json"), CONTAINER_WORKSPACE, dest_dir=_local_dir
     )
-    disposable_credentials = _disposable_copy(
-        os.path.join(claude_dir.rstrip("/"), ".credentials.json")
-    )
+    trusted_claude_json = _shared_paths(_trusted_local, claude_dir) if _trusted_local else None
+    disposable_credentials = _disposable_copy(".credentials.json", claude_dir)
 
     docker_args = _build_docker_args(
         container_name=container_name,
@@ -528,8 +582,8 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
         payload=payload,
         sandbox_image=req.sandbox_image,
         owner_id=req.owner_id,
-        claude_json_src=trusted_claude_json,
-        credentials_src=disposable_credentials,
+        claude_json_src=trusted_claude_json.host if trusted_claude_json else None,
+        credentials_src=disposable_credentials.host if disposable_credentials else None,
     )
 
     try:
@@ -570,6 +624,6 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
         for tmp in (trusted_claude_json, disposable_credentials):
             if tmp:
                 try:
-                    os.unlink(tmp)
+                    os.unlink(tmp.local)
                 except OSError:
                     pass
