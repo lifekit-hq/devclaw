@@ -18,7 +18,7 @@
 # runtime (compose). No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, ever
 # (Constitution I — OAuth-only).
 
-# node:22-trixie (Debian 13) ships Python 3.13; openhands-sdk 1.23+ needs >=3.12.
+# node:22-trixie (Debian 13) ships Python 3.13; the devclaw host runtime needs >=3.12.
 FROM node:22-trixie
 
 # ---- system deps -----------------------------------------------------------
@@ -107,7 +107,6 @@ ENV DEVCLAW_TRANSPORT=http \
     DEVCLAW_DB=/var/lib/devclaw/devclaw.db \
     CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude \
     CLAUDE_CONFIG_DIR=/home/node/.claude \
-    OPENHANDS_SUPPRESS_BANNER=1 \
     DEVCLAW_SKILL_LIBRARY=/app/skill-library
 
 # ---- build identity (LAST layer — bust only this on each commit) -----------

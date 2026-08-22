@@ -1,8 +1,8 @@
-"""Per-task docker sandbox runner — the OpenHands :class:`~devclaw.engine.Engine`.
+"""Per-task docker sandbox runner — the production :class:`~devclaw.engine.Engine`.
 
 This is the one concrete Engine implementation (see ``engine.py`` for the seam).
 Spawns ``docker run --rm`` against the devclaw-sandbox image for each task. The
-container's ENTRYPOINT runs the OpenHands runner (``runner/runner.py``),
+container's ENTRYPOINT runs the worker harness (``runner/runner.py``),
 which streams one prefixed JSON line per event (``event: {...}``) plus a single
 terminating ``result: {...}`` line. This module:
 
@@ -47,7 +47,7 @@ from ..git_identity import git_identity_env
 
 SANDBOX_IMAGE = os.environ.get("DEVCLAW_SANDBOX_IMAGE", "devclaw-sandbox:latest")
 DOCKER_BIN = os.environ.get("DEVCLAW_DOCKER_BIN", "docker")
-# The model the in-sandbox OpenHands agent runs on — this is the heavy coding
+# The model the in-sandbox agent runs on — this is the heavy coding
 # path and the bulk of the Pro/Max quota burn, so it defaults to Sonnet (strong
 # at code, far lighter than Opus); set DEVCLAW_EXEC_MODEL=claude-opus-4-8 to opt
 # a run up to Opus. Passed to the runner, which hands it to ACPAgent as the
@@ -526,8 +526,6 @@ def _build_docker_args(
         f"{CONTAINER_CLAUDE_DIR}/session-env:rw,exec",
         "--tmpfs",
         f"{CONTAINER_CLAUDE_DIR}/shell-snapshots:rw,exec",
-        "-e",
-        "OPENHANDS_SUPPRESS_BANNER=1",
         # Pin git authorship to devclaw for every commit the agent makes in
         # here: env beats every git config level, so an identity baked into the
         # image or leaked through a mount can't put the owner's name on agent

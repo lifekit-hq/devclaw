@@ -5,8 +5,8 @@ description: Run the devclaw live shakedown — exercise the REAL pipeline (logg
 
 # Live shakedown — real pipeline, layer by layer
 
-Exercises the actual engine seam: a logged-in `claude` driving OpenHands inside a
-real docker sandbox. Work the layers strictly in order — each builds on the last,
+Exercises the actual engine seam: the worker runner driving a logged-in `claude`
+over ACP inside a real docker sandbox. Work the layers strictly in order — each builds on the last,
 so the first failing layer names the broken seam. Narrative background:
 [`docs/runbooks/live-shakedown.md`](../../../docs/runbooks/live-shakedown.md).
 
@@ -78,7 +78,7 @@ python $DRIVE implement_feature \
 ```
 
 **Pass:** status `done` AND `/tmp/sc-l1/hello.txt` exists.
-**Proves:** host → docker → runner → OpenHands → claude → back. If L1 fails, nothing
+**Proves:** host → docker → runner → ACP → claude → back. If L1 fails, nothing
 else can work — go to Troubleshooting.
 
 ### L2 — program (planner → DAG)
@@ -151,7 +151,7 @@ cancelled work must STAY cancelled (`recover()` only revives `running` rows).
 |---|---|---|
 | task `failed`: `failed to spawn docker` | docker unreachable from host process | `docker info`; socket perms |
 | task `failed`: `sandbox exited N without a result line` | runner crashed in-container | run the image by hand: `docker run --rm -v /tmp/sc-l1:/workspace -v ~/.claude:/home/agent/.claude:ro devclaw-sandbox:latest '{"kind":"implement_feature","workspace_dir":"/workspace","goal":"touch x"}'` and read stderr |
-| runner: `openhands-sdk not importable` | image built wrong | rebuild image (§1) |
+| runner: `skills_missing` / agent binary not found | image built wrong (no `runner/skills/` baked, or no `claude-agent-acp`) | rebuild image (§1) |
 | agent 401 / can't auth | `~/.claude` not logged in or mounted empty | log in on host; confirm session files exist |
 | server won't start: `ANTHROPIC_API_KEY` complaint | key in env | `unset ANTHROPIC_API_KEY` |
 | everything stalls, owner ping about usage limit | Pro/Max cap hit → account-wide pause | expected; auto-resumes at reset — report and stop |

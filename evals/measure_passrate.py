@@ -2,7 +2,7 @@
 
 The June-15 "measured pass-rate" must-have: run a basket of real, machine-
 verifiable backend tasks on lifekit-dashboard through the REAL engine
-(run_sandcastle → docker sandbox → OpenHands → claude), gate each with
+(run_sandcastle → docker sandbox → worker runner → claude), gate each with
 `cd backend && dotnet test`, deliver each as a PR (open_pr) — and report the
 rate. This also live-validates the PR push, the one delivery part still only
 unit-tested.

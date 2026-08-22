@@ -1,6 +1,6 @@
-"""Decode raw OpenHands worker events into a readable, turn-by-turn trace.
+"""Decode raw worker events into a readable, turn-by-turn trace.
 
-The worker (runner) emits one ``event:`` line per SDK turn; the host
+The worker (runner) emits one ``event:`` line per agent turn; the host
 stores each as a ``TaskEvent`` whose ``payload_json`` is that event's
 ``model_dump`` (``llm_message`` for a message, the tool/args for an action, the
 output for an observation). The console's existing ``_event_kind`` maps only the
@@ -14,7 +14,7 @@ into ``{kind, title, summary, detail, raw}`` so the owner can watch what the
 agent actually did, turn by turn. It is:
 
   * **pure** — no I/O, trivially testable;
-  * **defensive** — the exact OpenHands payload shapes are SDK internals and may
+  * **defensive** — the exact payload shapes come from the agent and may
     drift, so every extractor best-efforts a known field then falls back to a
     pretty JSON dump. It NEVER raises and NEVER hides content: ``raw`` always
     carries the full untruncated payload, exactly the #455 "show the whole thing"

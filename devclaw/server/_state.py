@@ -49,15 +49,15 @@ if _engine == "stub":
 
     sys.stderr.write(
         "⚠ DEVCLAW_ENGINE=stub — deterministic stub engine + cognition "
-        "(NO OpenHands, NO claude). For harness validation only.\n"
+        "(NO sandbox, NO claude). For harness validation only.\n"
     )
     queue = TaskQueue(store, planner=stub_goal_planner, runner=stub_engine)
 elif _engine == "host":
-    # Real cognition + real OpenHands, but run on the HOST with NO sandbox.
+    # Real cognition + the real worker runner, but on the HOST with NO sandbox.
     from ..engine.host import run_host
 
     sys.stderr.write(
-        "⚠ DEVCLAW_ENGINE=host — OpenHands runs on the HOST with NO sandbox "
+        "⚠ DEVCLAW_ENGINE=host — the worker runs on the HOST with NO sandbox "
         "isolation (agent has full filesystem access). Dev/validation only.\n"
     )
     queue = TaskQueue(store, runner=run_host)

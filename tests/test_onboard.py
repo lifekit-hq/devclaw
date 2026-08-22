@@ -9,7 +9,7 @@ human-reviewed (not authoritative until then), so when a doc already exists
 the agent validates-and-keeps rather than clobbering.
 
 Two layers, both SDK-/docker-/claude-free: the goal-wrapper prompt (runner) and
-the TaskQueue wiring (a stub engine stands in for OpenHands).
+the TaskQueue wiring (a stub engine stands in for the sandbox worker).
 """
 
 import importlib.util

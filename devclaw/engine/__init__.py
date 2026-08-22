@@ -2,12 +2,12 @@
 
 DevClaw's orchestration (task queue, planner, state store) drives an *Engine* —
 the thing that actually executes one coding task in isolation and streams back
-events. OpenHands-in-a-docker-sandbox is the only implementation today
+events. The worker-runner-in-a-docker-sandbox is the only implementation today
 (:func:`devclaw.engine.sandcastle.run_sandcastle`), but the orchestration
-depends ONLY on this interface, never on OpenHands directly.
+depends ONLY on this interface, never on the agent behind it.
 
 That's the "orchestration ⊥ engine" decoupling from the architecture: the
-engine is pinned (OpenHands) but swappable behind one method, and the
+engine is pinned but swappable behind one method, and the
 orchestration stays testable with a stub engine (the tests inject one).
 
 An Engine is any async callable ``(EngineRequest) -> EngineResult`` — a plain

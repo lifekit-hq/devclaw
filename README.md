@@ -14,11 +14,11 @@ Coding agents are excellent at *tasks* and unreliable at *goals*. Prompting one 
 
 **Measured, not vibes.** The first pass-rate probe — real docker sandbox, real `claude`, one production .NET repo (`lifekit-dashboard`) — shipped **5/5 tickets gate-verified**: four net-new API features and one hardening fix, delivered as PRs, **+19 net-new tests, zero existing tests deleted/skipped/weakened, zero regressions**. That is a single-repo, n=5, gate-verified-**at-ship** measurement — the precursor to the formal **v0.1 proof** (10 tickets across ≥2 repos, scored *merged-without-rework* ≥6/10), whose verdict is still **pending** (see [`ROADMAP.md`](./ROADMAP.md) and `evals/`). Honest scope: small-to-medium machine-verifiable backend tasks; UI and ambiguous specs still need a human.
 
-> **DevClaw is the chef.** The waiter — an [OpenClaw](https://openclaw.ai) chat agent, the user-facing assistant — takes orders and translates chat into structured MCP tool calls; devclaw cooks. It owns the **craft of software development as a service**: durable goals, sandbox execution (via [OpenHands](https://github.com/All-Hands-AI/OpenHands), the open-source coding-agent SDK), pre-PR adversarial review, gate verification, and grounded direction evaluation — planning happens in-sandbox, where the worker scopes each advance with speckit (`specs/*/` artifacts committed to the repo). (An experimental Tailscale deploy path exists but is not yet load-bearing — it can't yet host the owner's stack; see #401.) devclaw never talks to the user directly.
+> **DevClaw is the chef.** The waiter — an [OpenClaw](https://openclaw.ai) chat agent, the user-facing assistant — takes orders and translates chat into structured MCP tool calls; devclaw cooks. It owns the **craft of software development as a service**: durable goals, sandbox execution (a `claude-code` session driven over ACP by devclaw's own zero-dependency worker harness), pre-PR adversarial review, gate verification, and grounded direction evaluation — planning happens in-sandbox, where the worker scopes each advance with speckit (`specs/*/` artifacts committed to the repo). (An experimental Tailscale deploy path exists but is not yet load-bearing — it can't yet host the owner's stack; see #401.) devclaw never talks to the user directly.
 
 Cognition is always `claude` over a Pro/Max OAuth session — **no `ANTHROPIC_API_KEY`, no metered billing** for autonomous runs.
 
-It is **not** a chatbot and **not** a rebuild of OpenHands. OpenHands owns the agent loop (tool use, code edits, git). DevClaw owns everything *around* it: durable goals + direction evaluation, state, isolation, observability, and delivery. (Durable deploy is an experimental path, not yet in production — #401.)
+It is **not** a chatbot and **not** a rebuild of the coding agent. The **agent** owns the agent loop (tool use, code edits, git). DevClaw owns everything *around* it: durable goals + direction evaluation, state, isolation, observability, and delivery. (Durable deploy is an experimental path, not yet in production — #401.)
 
 ```
 Denys
@@ -35,7 +35,7 @@ DevClaw (the chef — this repo, FastMCP)
   └── sandcastle_runner — `docker run --rm` per task; RO ~/.claude mount; destroyed on exit
         │
         ▼
-  OpenHands (Python SDK) — agent loop, runs `claude` via ACP (Pro OAuth)
+  runner/runner.py — worker harness; drives `claude` over ACP (Pro OAuth)
 ```
 
 ### Layered view — where the agent harness actually lives
@@ -81,7 +81,7 @@ The day we swap claude-code for another harness, the entire skill/hook system su
 | Concern | Owner |
 |---|---|
 | Conversation with Denys | **OpenClaw waiter agent** (system prompt + tool calls) |
-| Agent loop, sandbox coding, git | **OpenHands** |
+| Agent loop, sandbox coding, git | **the ACP agent** (`claude-code` + `claude-agent-acp`) |
 | Direction eval, review gate, done-gate | DevClaw |
 | Planning (speckit, in-sandbox) | The worker |
 | Task/program state | DevClaw state store (SQLite) |
@@ -89,7 +89,7 @@ The day we swap claude-code for another harness, the entire skill/hook system su
 | Durable hosting / handoff | DevClaw deploy (Tailscale) — **experimental**, not yet hosting the owner's stack (#401) |
 | Interface to the waiter | DevClaw FastMCP server |
 
-The full rationale — including why OpenHands and sandbox isolation are **orthogonal** layers (the agent vs. the box it runs in), and why this calls `docker run` directly instead of depending on `@ai-hero/sandcastle` — lives in [`docs/decisions/0001-openhands-engine.md`](./docs/decisions/0001-openhands-engine.md).
+The full rationale — including why the agent and sandbox isolation are **orthogonal** layers (the agent vs. the box it runs in), and why this calls `docker run` directly instead of depending on `@ai-hero/sandcastle` — lives in [`docs/decisions/0001-openhands-engine.md`](./docs/decisions/0001-openhands-engine.md) (frozen: written when the in-sandbox agent was the OpenHands SDK, replaced by the ACP runner in spec 011; the sandbox-isolation reasoning is unchanged).
 
 ## Layout
 
@@ -136,13 +136,13 @@ devclaw/
 ├── task_queue.py       # async task lifecycle, concurrency, on-settle hook → goal poke
 ├── project_registry.py # control plane: repos → driving goals → live status rollup
 └── cli.py              # devclaw projects/trace/scorecard/schedule/cognition … (terminal face of the control plane)
-runner/runner.py  # OpenHands SDK inside the sandbox; emits event/result lines
+runner/runner.py  # worker harness inside the sandbox; emits event/result lines
 .sandcastle/Dockerfile      # per-task sandbox image
 tests/                      # pytest — stubbed engine; no docker, no claude
 docs/architecture.md        # the system doc — read before touching the runner/store/sandbox
 ```
 
-DevClaw is all Python. The only language boundary left is the process boundary: `runner/runner.py` runs the OpenHands SDK *inside* the sandbox container, isolated from the long-running host process — it talks to the host over a line-delimited JSON protocol on stdout.
+DevClaw is all Python. The only language boundary left is the process boundary: `runner/runner.py` drives the ACP agent *inside* the sandbox container, isolated from the long-running host process — it talks to the host over a line-delimited JSON protocol on stdout.
 
 ## MCP tools (the chef's menu)
 
@@ -308,9 +308,9 @@ DEVCLAW_TRANSPORT=http DEVCLAW_PORT=8000 devclaw-mcp
 
 | Value | Engine | Isolation | Use |
 |---|---|---|---|
-| *(unset)* | OpenHands in a per-task **docker sandbox** | ✅ full | production |
-| `host` | OpenHands **on the host** (no container) | ⚠ **none** — agent has full filesystem access | dev/CI/validation where docker is unavailable |
-| `stub` | deterministic stub (no OpenHands, no claude) | n/a | harness validation (`evals/`) |
+| *(unset)* | the worker runner in a per-task **docker sandbox** | ✅ full | production |
+| `host` | the worker runner **on the host** (no container) | ⚠ **none** — agent has full filesystem access | dev/CI/validation where docker is unavailable |
+| `stub` | deterministic stub (no sandbox, no claude) | n/a | harness validation (`evals/`) |
 
 ### Environment variables
 
@@ -322,7 +322,7 @@ Copy [`.env.example`](./.env.example) to `.env` (gitignored) and uncomment what 
 | `DEVCLAW_PORT` | `8000` | HTTP port |
 | `DEVCLAW_DB` | `./devclaw.db` | SQLite path for state |
 | `DEVCLAW_GOALS_DIR` | `~/memory/goals` | one folder per durable goal |
-| `DEVCLAW_ENGINE` | *(unset)* | engine mode: unset = OpenHands sandbox, `host` / `stub` / `claude_sdk` |
+| `DEVCLAW_ENGINE` | *(unset)* | engine mode: unset = docker sandbox, `host` / `stub` |
 | `DEVCLAW_EXEC_MODEL` | `claude-sonnet-4-6` | the in-sandbox coding agent's model (full id) |
 | `GITHUB_TOKEN` / `GH_TOKEN` | — | repo push + PR access for `open_pr` delivery |
 
@@ -335,7 +335,7 @@ pip install -e ".[dev]"
 pytest          # state store + queue/DAG + goal layer + gates, all stubbed — no docker, no claude
 ```
 
-To validate the **real** pipeline (a logged-in `claude` driving OpenHands in a docker sandbox), follow the layered runbook in [`docs/runbooks/live-shakedown.md`](./docs/runbooks/live-shakedown.md).
+To validate the **real** pipeline (a logged-in `claude` driven over ACP in a docker sandbox), follow the layered runbook in [`docs/runbooks/live-shakedown.md`](./docs/runbooks/live-shakedown.md).
 
 ## Status
 
@@ -345,7 +345,7 @@ DevClaw is the live runtime. As of mid-2026 it serves as the chef behind an Open
 
 - **Not a chatbot.** It's a backend service the OpenClaw waiter calls.
 - **Not a general assistant.** It executes software-development goals, nothing else.
-- **Not a rebuild of OpenHands or Claude Code.** OpenHands is the wrapper, `claude-code` + `claude-agent-acp` is the agent harness inside the sandbox; DevClaw is the orchestration above it.
+- **Not a rebuild of Claude Code.** `claude-code` + `claude-agent-acp` is the agent harness inside the sandbox; DevClaw is the orchestration above it.
 - **Not novel reasoning.** The intelligence is Claude's, used twice: as a one-shot reasoning API for direction/done evaluation, and as the interactive worker harness inside the sandbox (which also plans, via speckit). DevClaw is the state machine + scheduler + persistence + prompts that make one goal span days.
 - **Not infallible.** Autonomous means "doesn't need the next prompt," not "can't ship broken work." Today's done-gate is Claude judging Claude's output; that's structurally circular and has shipped green-tests-but-broken-UI cascades. The in-progress E2E test layer exists to break that circle with mechanical browser evidence before the evaluator weighs in.
 

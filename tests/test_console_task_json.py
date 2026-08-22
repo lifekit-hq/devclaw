@@ -49,7 +49,7 @@ def _get(fn, path_params: dict):
 
 _RESULT = {
     "status": "done",
-    "message": "OpenHands completed.",
+    "message": "agent run completed.",
     "agent_output": "x" * 50_000,  # the bulk that must NOT ride along
     "verify": {"ran": True, "cmd": "dotnet test", "passed": True,
                "exit_code": 0, "timed_out": False, "output": "Passed! 56"},

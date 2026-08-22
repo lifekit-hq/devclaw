@@ -69,7 +69,7 @@ def _runner_env() -> dict[str, str]:
 
 
 async def run_host(req: EngineRequest) -> EngineResult:
-    """Run one task by invoking the OpenHands runner on the host (no container).
+    """Run one task by invoking the worker runner on the host (no container).
     The workspace path is used as-is (no bind-mount / no path translation)."""
     Path(req.workspace_dir).mkdir(parents=True, exist_ok=True)
     payload = json.dumps(

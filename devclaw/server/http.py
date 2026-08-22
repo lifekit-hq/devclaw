@@ -1669,7 +1669,7 @@ def _valid_task_id(task_id: str) -> bool:
 @mcp.custom_route("/tasks/{task_id}/events.json", methods=["GET"])
 async def task_events_json(request: Request) -> Response:
     """Turn-by-turn execution trace of ONE task — the worker's actual run,
-    readable AFTER it settles. Decodes each stored OpenHands event into a
+    readable AFTER it settles. Decodes each stored worker event into a
     readable row (agent message text / tool action / observation output), with
     the full untruncated ``raw`` payload attached so nothing is hidden (the #455
     guarantee). ``?since=<id>`` resumes after a cursor; ``?limit=<n>`` (default

@@ -1,5 +1,5 @@
 """
-DevClaw — OpenHands runner (runs inside the per-task sandbox container).
+DevClaw — worker runner (runs inside the per-task sandbox container).
 
 Spawned by the host sandcastle runner via ``docker run``. Reads a single JSON
 request from argv[1] and streams progress to stdout, one prefixed line at a
@@ -490,7 +490,7 @@ def _agent_last_words(final_message: str, transcript: str, keep: int = 20_000) -
 def _agent_message_text(payload: dict) -> str:
     """Pull the plain text out of a MessageEvent payload (``model_dump`` shape).
 
-    The OpenHands ``MessageEvent`` carries ``llm_message.content`` — a list of
+    The agent's ``MessageEvent`` carries ``llm_message.content`` — a list of
     typed content parts; we concatenate the ``text`` parts. Defensive by design
     (best-effort, never raises): a schema drift degrades to ``""`` rather than
     crashing the event callback."""

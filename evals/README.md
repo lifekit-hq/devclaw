@@ -4,7 +4,7 @@ Two layers of measurement against the chef:
 
 1. **Sandbox e2e suite** (`sandbox_e2e.py` + `run_all.py`) — isolated, scenario-driven runs that exercise every real path the chef supports (single task, full goal lifecycle, scope grill, blocked planner, steered goal, failing verify, no-progress watchdog, quota pause, off-track done-gate). Default mode uses stub cognition (free, deterministic, CI-runnable) and the stub engine (no docker, no real PRs); opt into real `claude --print` with `--cognition claude`. **This is the regression metric** — run it before/after any change that touches the runtime path.
 
-2. **Real-pipeline harnesses** — drive the actual `claude + docker + OpenHands` pipeline end-to-end against a real repo. Used for pass-rate measurement, gate-discrimination validation, and quality-vs-greenness checks. These cost real OAuth quota and dispatch real PRs; treat them as periodic measurement, not CI.
+2. **Real-pipeline harnesses** — drive the actual `claude + docker + worker runner` pipeline end-to-end against a real repo. Used for pass-rate measurement, gate-discrimination validation, and quality-vs-greenness checks. These cost real OAuth quota and dispatch real PRs; treat them as periodic measurement, not CI.
 
 ## Sandbox e2e suite
 
@@ -82,7 +82,6 @@ Add a new scenario by dropping a YAML in `evals/sandbox/scenarios/`. No runner e
 | `measure_quality_todo.py` | Quality vs gate-greenness on harder tasks (ambiguous / multi-file / pure-UI tasks on `todo-fullstack-demo`; PRs reviewed adversarially after the gate passes). |
 | `validate_review_gate.py` | Discrimination power of the pre-PR review gate. |
 | `e2e_trace.py` | Single-goal live trace — points at a real `DEVCLAW_GOALS_DIR` and ticks one goal under the trace recorder. |
-| `compare_engines.py` | Run the same task suite through OpenHands and the Claude-SDK engine, side by side, on real claude + docker. |
 
 ```bash
 # inside the devclaw-mcp container or a host with claude + docker + the dotnet image:
@@ -90,7 +89,6 @@ Add a new scenario by dropping a YAML in `evals/sandbox/scenarios/`. No runner e
 .venv/bin/python evals/measure_quality_todo.py
 DEVCLAW_REVIEW_MODEL=sonnet .venv/bin/python evals/validate_review_gate.py
 .venv/bin/python evals/e2e_trace.py --mode live --goals-dir ~/memory/goals --goal-id <id>
-.venv/bin/python evals/compare_engines.py --workspace /tmp/spike-ws --task '<the task>'
 ```
 
 Each driver wires the engine exactly like the server does (`StateStore` + `TaskQueue(runner=run_sandcastle)`), so what it measures is what production behaves like. No mocks past the test boundary.
@@ -104,7 +102,7 @@ Each driver wires the engine exactly like the server does (`StateStore` + `TaskQ
 | L1 | `pytest -q` (~1226 unit) | The static contract: types, pure functions, prompt loading, store invariants. | seconds, free | every change |
 | L2 | `run_all.py` (stub e2e, 11 scenarios) | Orchestration regression: every runtime path (single-task, full lifecycle, grill, blocked planner, steered goal, failing verify, watchdog, quota pause, off-track done-gate). Stub cognition + stub engine. | ~30s, free | every change touching runtime path |
 | L3 | `run_all.py --cognition claude` | Real cognition makes sensible decisions on the same 11 scenarios. Catches prompt drift and decision-quality regressions. | ~2-3 min, OAuth quota | before merging anything that touches a prompt or cognition seam |
-| L4 | `measure_passrate.py` (5 lifekit-dashboard tasks) | The full pipeline (run_sandcastle → docker → OpenHands → claude → open_pr) actually ships verified PRs. The end-to-end smoke. | ~30-60 min, OAuth quota, 5 real PRs | pre-release, after any engine/delivery change |
+| L4 | `measure_passrate.py` (5 lifekit-dashboard tasks) | The full pipeline (run_sandcastle → docker → worker runner → claude → open_pr) actually ships verified PRs. The end-to-end smoke. | ~30-60 min, OAuth quota, 5 real PRs | pre-release, after any engine/delivery change |
 | L5 | `measure_quality_todo.py` (harder todo-fullstack tasks) | Deliverable quality holds on ambiguous/multi-file/pure-UI tasks where the gate alone can't tell good from bad. | ~60 min, OAuth quota, real PRs reviewed adversarially | periodic (monthly), after any quality-bar/preamble change |
 | L6 | `validate_review_gate.py` (3 real green + 2 synthetic bad diffs) | The pre-PR review gate discriminates: low false-positive on real green diffs, catches dead/no-test diffs. | ~5 min, OAuth quota | whenever review_diff/review prompt changes |
 | L7 | `e2e_trace.py --mode live` against one real goal | The live tick path (real cognition, real engine, real goal store) emits the trace shape the harness expects — no blind refactor regressions in the on-disk goal artifacts. | ~5 min + real engine dispatch, OAuth quota | pre-release smoke |

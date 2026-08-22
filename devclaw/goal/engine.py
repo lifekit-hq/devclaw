@@ -394,7 +394,7 @@ def _task_detail(
         lines.append(f"PR: {pr_url}")
     if isinstance(data, dict):
         # Prefer the agent's actual output (the substantive analysis / work
-        # summary) over ``message``, which is a generic envelope ("OpenHands
+        # summary) over ``message``, which is a generic envelope ("agent
         # completed."). Feeding ``message`` to cognition starved the discovery
         # synthesis, the direction evaluator, and deliveries.md of real signal.
         summary = data.get("agent_output") or data.get("message") or ""
