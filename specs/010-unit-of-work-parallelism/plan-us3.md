@@ -86,9 +86,10 @@ Baseline to beat: 2075 passed, 4 skipped.
 **Target Platform**: Linux host. Layer 4 (TaskQueue gate chain + lane execution)
 and the `devclaw/loom/` substrate; layer 2 only for the dispatch decision.
 
-**Performance Goals**: the scope check adds zero subprocesses — it consumes the
-diff `_IntegrityGate` already computed. The fan-out planner is one directory
-glob plus a file read, on the dispatch path only (never on an idle tick).
+**Performance Goals**: the scope check consumes the diff `_IntegrityGate` already
+computed and adds ONE `git status` — on the contract path only, so an increment
+that declared nothing pays nothing. The fan-out planner is one directory glob
+plus a file read, on the dispatch path only (never on an idle tick).
 
 **Constraints**: zero LLM anywhere in this slice; fail closed on a violation AND
 on an unreviewable check; byte-identical for plans with no `[P]` markers.
@@ -129,11 +130,11 @@ The layer map decides this.
    second artifact to keep in step. speckit's template already puts file paths
    in the row text; this formalises the subset that is a contract.
 
-2. **The whole check is one pure function of the diff.** Both inputs — which
-   `[P]` rows this increment newly checked, and which paths it touched — are in
-   the unified diff the gate chain already computes. No git subprocess, no
-   workspace read, no store read, no token. It also cannot disagree with what
-   the gate is judging, because it IS what the gate is judging.
+2. **The verdict is a pure function of its inputs.** Both — which `[P]` rows
+   this increment newly checked, and which paths it touched — come from the
+   unified diff the gate chain already computed, so the parser itself does no
+   I/O, holds no state, and spends no token. The gate adds exactly one probe on
+   top (the completeness read below), and only once a contract applies.
 
 3. **Two ways to be bound.** A lane is bound by the scope the host PINNED at
    dispatch (increment 2); anything else is bound by its own claim on the task
@@ -160,6 +161,10 @@ The layer map decides this.
 
 8. **Fail closed when unreviewable.** The parser is total, so the branch should
    be unreachable; if the gate is consulted and still cannot decide, it fails.
+
+8b. **The judged span is the workspace's, not the agent's bookkeeping.** See
+    *Dependency* below — the gate folds in unrecorded changes so a lane cannot
+    escape its scope by declining to commit.
 
 9. **Ordering: `verify → test_integrity → scope → [review] → browser`.** Scope
    is a pure scan, so running it early puts a hermeticity violation ahead of
@@ -214,6 +219,43 @@ The layer map decides this.
     by construction outside every declared scope, so it fails the gate. Note
     this brief is built at layer 2 as Action text — it does NOT add a second
     home for worker-kind instructions (constitution II).
+
+## Dependency: FR-103's guarantee needs a COMPLETE judged span (#630 / spec 013)
+
+Raised during implementation and worth stating plainly, because it bounds what
+FR-103 promises.
+
+Two parts of devclaw compute "what did this increment change?" and they
+disagree. **Delivery computes it mechanically** — it stages everything in the
+workspace before committing, so it cannot miss a file. **The gates computed it
+by trusting the agent** — `git diff <pre-run>`, which shows only what the agent
+chose to record. Measured live on 2026-08-22 (task `78201bce`): delivery shipped
+4 files / +179 lines while the gates judged 1 file / +32. A change made entirely
+of new unrecorded files reaches the gates as an empty span and passes all of
+them trivially.
+
+For a scope gate that is the whole ball game: an increment would escape its
+declared scope by simply not committing the offending file — the #358
+route-around arriving through the back door, which would make the "always-hard"
+classification read stronger than it is.
+
+**What this slice does about it.** Rather than only document the gap, the gate
+consults the workspace directly: when — and only when — a declared scope
+applies, it folds `git status --porcelain --untracked-files=all` into the judged
+span. One extra subprocess, on the contract path only, so an increment that
+declared nothing pays nothing and the ordinary path stays byte-identical down to
+its subprocess count. A fan-out lane is therefore held to its pinned scope
+whether or not its worker records anything.
+
+**What remains.** An increment with NO pinned scope is bound only by its own
+*claim* on the task graph, and that claim is read from the recorded diff: if an
+agent records literally nothing, there is no claim, so no contract. Closing that
+needs the change materialised mechanically before any gate reads it — which is
+exactly [spec 013 / #630](../013-materialize-change/spec.md), owned separately.
+The interaction is pinned by
+`test_an_increment_that_records_nothing_at_all_claims_nothing`, written to
+document today's behaviour so that when 013 lands the test flips to asserting the
+violation IS caught, and nobody rediscovers this by accident.
 
 ## Constitution Check
 

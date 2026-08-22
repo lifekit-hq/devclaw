@@ -118,6 +118,26 @@ class Task:
     #: resolve BY this id, not by a workspace-path scan. None for the goal path
     #: (goals carry their own project_id) and for a task with no owning project.
     project_id: Optional[str] = None
+    #: fan-out lane metadata (spec 010 US3), as JSON: ``position`` (merge-queue
+    #: order), ``scopes`` (the declared file scope the settle gate holds this
+    #: increment to) and ``integrate_into`` (the shared goal workspace its work
+    #: is merged onto and delivered from). None for every ordinary task — which
+    #: is what keeps the non-fan-out path byte-identical.
+    lane_json: Optional[str] = None
+
+    def lane(self) -> Optional[dict]:
+        """The parsed lane metadata, or None when this task is not a fan-out
+        lane. Defensive: unparseable or wrongly-shaped JSON reads as "not a
+        lane" rather than crashing the settle path — a lane that loses its
+        metadata integrates nowhere and delivers from its own workspace, which
+        is the pre-fan-out behaviour."""
+        if not self.lane_json:
+            return None
+        try:
+            data = json.loads(self.lane_json)
+        except (TypeError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
 
     def to_dict(self) -> dict:
         return {
@@ -266,6 +286,7 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         base_branch=r["base_branch"] if "base_branch" in r.keys() else None,
         target_branch=r["target_branch"] if "target_branch" in r.keys() else None,
         project_id=r["project_id"] if "project_id" in r.keys() else None,
+        lane_json=r["lane_json"] if "lane_json" in r.keys() else None,
     )
 
 

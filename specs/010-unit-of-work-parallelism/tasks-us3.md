@@ -87,45 +87,45 @@ out-of-scope edit in one increment fails that increment while the other lands.
 
 ### Tests
 
-- [ ] T037 [P] [US3] `tests/test_fanout_plan.py::test_two_parallel_tasks_with_disjoint_scopes_become_two_lanes` (FR-101)
-- [ ] T038 [P] [US3] `test_a_plan_with_no_parallel_markers_produces_no_fanout` — the byte-identical requirement at the decision point
-- [ ] T039 [P] [US3] `test_a_parallel_task_without_a_declared_scope_blocks_the_whole_fanout` — FR-101 admits only `[P]` **with** scopes
-- [ ] T040 [P] [US3] `test_overlapping_declared_scopes_are_refused` — hermeticity is decided before dispatch, not discovered at merge
-- [ ] T041 [P] [US3] `test_fanout_never_exceeds_the_host_concurrency_cap` — FR-105: degree = plan ∧ host caps
-- [ ] T042 [P] [US3] `test_already_checked_tasks_are_never_dispatched_again`
-- [ ] T043 [P] [US3] `test_the_lane_brief_pins_the_task_its_scope_and_the_allocated_spec_directory` — FR-104 allocation half
-- [ ] T044 [P] [US3] `test_the_lane_brief_forbids_spawning_further_agents` — FR-105 in the instruction that reaches the worker
-- [ ] T045 [P] [US3] `test_fanout_planning_costs_zero_cognition` — pure fs + string work
-- [ ] T046 [P] [US3] `tests/test_merge_queue.py::test_lanes_integrate_strictly_in_plan_order_even_when_they_finish_out_of_order` (FR-102)
-- [ ] T047 [P] [US3] `test_only_one_lane_integrates_at_a_time`
-- [ ] T048 [P] [US3] `test_a_failed_lane_releases_its_slot_instead_of_wedging_the_queue`
-- [ ] T049 [P] [US3] `test_a_crashing_integration_still_advances_the_queue` — fail closed, never wedge
-- [ ] T050 [US3] `tests/test_fanout_integration.py::test_a_lane_commits_and_merges_into_the_shared_goal_branch` — real git, tmp repos
-- [ ] T051 [US3] `test_a_conflicting_lane_fails_loudly_and_leaves_the_shared_branch_clean`
-- [ ] T052 [US3] `test_two_disjoint_lanes_integrate_serially_onto_one_goal_branch` — FR-102 end to end
-- [ ] T053 [US3] `test_an_out_of_scope_lane_fails_while_its_sibling_lands` — **the spec's Independent Test**
-- [ ] T054 [US3] `test_fanout_is_off_unless_the_operator_opts_in` — the dial, both positions
+- [X] T037 [P] [US3] `tests/test_fanout_plan.py::test_two_parallel_tasks_with_disjoint_scopes_become_two_lanes` (FR-101)
+- [X] T038 [P] [US3] `test_a_plan_with_no_parallel_markers_produces_no_fanout` — the byte-identical requirement at the decision point
+- [X] T039 [P] [US3] `test_a_parallel_task_without_a_declared_scope_blocks_the_whole_fanout` — FR-101 admits only `[P]` **with** scopes
+- [X] T040 [P] [US3] `test_overlapping_declared_scopes_are_refused` — hermeticity is decided before dispatch, not discovered at merge
+- [X] T041 [P] [US3] `test_fanout_never_exceeds_the_host_concurrency_cap` — FR-105: degree = plan ∧ host caps
+- [X] T042 [P] [US3] `test_already_checked_tasks_are_never_dispatched_again`
+- [X] T043 [P] [US3] `test_the_lane_brief_pins_the_task_its_scope_and_the_allocated_spec_directory` — FR-104 allocation half
+- [X] T044 [P] [US3] `test_the_lane_brief_forbids_spawning_further_agents` — FR-105 in the instruction that reaches the worker
+- [X] T045 [P] [US3] `test_fanout_planning_costs_zero_cognition` — pure fs + string work
+- [X] T046 [P] [US3] `tests/test_merge_queue.py::test_lanes_integrate_strictly_in_plan_order_even_when_they_finish_out_of_order` (FR-102)
+- [X] T047 [P] [US3] `test_only_one_lane_integrates_at_a_time`
+- [X] T048 [P] [US3] `test_a_failed_lane_releases_its_slot_instead_of_wedging_the_queue`
+- [X] T049 [P] [US3] `test_a_crashing_integration_still_advances_the_queue` — fail closed, never wedge
+- [X] T050 [US3] `tests/test_fanout_integration.py::test_a_lane_commits_and_merges_into_the_shared_goal_branch` — real git, tmp repos
+- [X] T051 [US3] `test_a_conflicting_lane_fails_loudly_and_leaves_the_shared_branch_clean`
+- [X] T052 [US3] `test_two_disjoint_lanes_integrate_serially_onto_one_goal_branch` — FR-102 end to end
+- [X] T053 [US3] `test_an_out_of_scope_lane_fails_while_its_sibling_lands` — **the spec's Independent Test**
+- [X] T054 [US3] `test_fanout_is_off_unless_the_operator_opts_in` — the dial, both positions
 
 ### Implementation
 
-- [ ] T055 [US3] `devclaw/goal/fanout.py` — the plan → lanes decision, the lane brief, the dial
-- [ ] T056 [US3] `devclaw/loom/merge_queue.py` — serial admission in plan order, always advancing
-- [ ] T057 [US3] `devclaw/delivery/integrate.py` — commit a lane, merge it into the shared workspace, loud on conflict
-- [ ] T058 [US3] `PlannedTask.workspace_dir` + `PlannedTask.lane` in `devclaw/program_plan.py`; honoured in `_persist_plan`
-- [ ] T059 [US3] `tasks.lane_json` column (`state_store/core.py` + `rows.py`)
-- [ ] T060 [US3] Lane execution in `devclaw/task_queue.py`: pin the declared scope onto the gate input, then integrate at the lane's turn before delivery
-- [ ] T061 [US3] `InProcessEngine.dispatch_fanout` in `devclaw/goal/engine.py` → `start_planned_program` (zero LLM)
-- [ ] T062 [US3] The fan-out branch of the dispatch choke point in `devclaw/goal/tick_dispatch.py`
-- [ ] T063 [P] Docs: fan-out + the merge queue in `docs/architecture.md`, the dial in `docs/reference/env-vars.md`, currency tags in `docs/INDEX.md`
+- [X] T055 [US3] `devclaw/goal/fanout.py` — the plan → lanes decision, the lane brief, the dial
+- [X] T056 [US3] `devclaw/loom/merge_queue.py` — serial admission in plan order, always advancing
+- [X] T057 [US3] `devclaw/delivery/integrate.py` — commit a lane, merge it into the shared workspace, loud on conflict
+- [X] T058 [US3] `PlannedTask.workspace_dir` + `PlannedTask.lane` in `devclaw/program_plan.py`; honoured in `_persist_plan`
+- [X] T059 [US3] `tasks.lane_json` column (`state_store/core.py` + `rows.py`)
+- [X] T060 [US3] Lane execution in `devclaw/task_queue.py`: pin the declared scope onto the gate input, then integrate at the lane's turn before delivery
+- [X] T061 [US3] `InProcessEngine.dispatch_fanout` in `devclaw/goal/engine.py` → `start_planned_program` (zero LLM)
+- [X] T062 [US3] The fan-out branch of the dispatch choke point in `devclaw/goal/tick_dispatch.py`
+- [X] T063 [P] Docs: fan-out + the merge queue in `docs/architecture.md`, the dial in `docs/reference/env-vars.md`, currency tags in `docs/INDEX.md`
 
-**Checkpoint**: US3 complete — FR-101…FR-105 all shipped.
+**Checkpoint**: US3 complete — FR-101…FR-105 all shipped. Suite 2144/4, ruff clean.
 
 ---
 
 ## Phase 4: Polish & Cross-Cutting
 
-- [ ] T064 Full suite green at or above the T002 baseline (2075/4); `ruff check .` clean, both increments
-- [ ] T065 Open the stack per `.claude/rules/git-workflow.md`, naming the merge order; note the spec Status line the owner should change
+- [X] T064 Full suite green at or above the T002 baseline (2075/4); `ruff check .` clean, both increments
+- [X] T065 Open the stack per `.claude/rules/git-workflow.md`, naming the merge order; note the spec Status line the owner should change
 
 ---
 

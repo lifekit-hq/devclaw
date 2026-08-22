@@ -41,9 +41,11 @@ from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
 from .delivery import deliver_change, delivery_failed
+from .delivery.integrate import commit_lane, integrate_lane
 from .engine import Engine, EngineEvent, EngineRequest
 from .loom.limits import classify_failure, pause_seconds
 from .loom.declared_scope import scope_check, violation_summary
+from .loom.merge_queue import MergeQueue
 from .loom.test_integrity import present_test_names, scan_diff
 from .llm_call import PlannerError
 from .program_plan import PlannedTask, order_tasks
@@ -92,6 +94,7 @@ from .task_git import (  # noqa: F401
     _git_commit_exists_sync,
     _git_diff_sync,
     _git_head_sync,
+    _git_status_paths_sync,
     _git_reset_clean_sync,
     _review_repo_context_sync,
     _wip_snapshot_sync,
@@ -289,6 +292,12 @@ async def _git_diff(host_dir: str, base: str = "") -> str:
     return await asyncio.to_thread(_git_diff_sync, host_dir, base)
 
 
+async def _git_status_paths(host_dir: str) -> "list[str]":
+    """Async wrapper — the workspace's UNRECORDED changed paths (#630). Looked up
+    as a module global so tests can patch it here, like :func:`_git_diff`."""
+    return await asyncio.to_thread(_git_status_paths_sync, host_dir)
+
+
 def _diff_stats(diff: str) -> dict | None:
     """Files/insertions/deletions counted from unified-diff TEXT — the exact
     span the gates judged and delivery ships, with no extra git call. Pure so
@@ -479,6 +488,22 @@ def _browser_gate_failure(
 # from run_pipeline's short-circuit, not from applies().
 
 
+def _lane_key(lane: dict) -> str:
+    """The merge-queue ordering key for a lane — the shared branch/workspace it
+    integrates onto, so lanes of different goals never wait on each other."""
+    return str(lane.get("integrate_into") or lane.get("key") or "")
+
+
+def _lane_position(lane: dict) -> int:
+    """The lane's index in the plan. Integration order is the PLAN's, not
+    arrival's, so a re-run of the same group produces the same history. A
+    missing/garbled position sorts first rather than crashing the settle path."""
+    try:
+        return int(lane.get("position") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 @dataclass
 class _VerifyGate:
     """Always-hard (ADR 0007) verify_cmd gate: the runner's own verify sub-result.
@@ -545,6 +570,18 @@ class _ScopeGate:
         diff = await gi.diff()
         try:
             check = scope_check(diff, gi.declared_scope)
+            if check.consulted:
+                # Completeness (#630, spec 013). The diff is only what the agent
+                # CHOSE to record; delivery stages everything in the workspace,
+                # so a change made entirely of unrecorded files ships while
+                # reading as an empty span here. A gate whose whole job is
+                # bounding what an increment touched must not take the agent's
+                # bookkeeping as its input, so the unrecorded paths are folded
+                # in. One extra `git status`, and ONLY once a contract exists —
+                # an increment that declared nothing pays nothing.
+                check = scope_check(
+                    diff, gi.declared_scope, await _git_status_paths(gi.workspace_dir)
+                )
         except Exception as err:  # noqa: BLE001 — unreviewable ⇒ fail closed (#186)
             return GateVerdict.failed(
                 self.gate_id,
@@ -638,6 +675,12 @@ class TaskQueue(_NotifyMixin):
         reachability_judge: Optional[Callable[..., Awaitable[dict]]] = None,
     ) -> None:
         self._store = store
+        # Serial integration of concurrently-executed fan-out lanes (spec 010
+        # FR-102). In-memory and per-process on purpose: it orders work that is
+        # running in THIS process, and a restart re-runs the whole group from the
+        # plan via the existing recover() path rather than resuming an ordering
+        # for lanes that no longer exist.
+        self._merge_queue = MergeQueue()
         # This queue's sandbox-owner id (derived from its state-DB path): stamps
         # every launched sandbox and scopes the startup sweep, so two devclaw
         # processes sharing one docker daemon (live service + a measure/eval
@@ -1319,6 +1362,12 @@ class TaskQueue(_NotifyMixin):
         # (sandbox_image, browser_gate_mode, review_gate) resolve by this id, not
         # by a workspace-path scan. None for a task with no project.
         project_id = (row.project_id if row else None)
+        # Fan-out lane (spec 010 US3): this task is one of a planned parallel
+        # group, so it ran in its OWN checkout and its work has to be integrated
+        # onto the shared goal branch — serially, in plan order — before it can
+        # ship. None for every ordinary task, which leaves the path below
+        # byte-identical.
+        lane = row.lane() if row else None
 
         prep_failure: Optional[str] = None
         if (base_branch or target_branch) and not (row and row.pause_count > 0):
@@ -1347,8 +1396,23 @@ class TaskQueue(_NotifyMixin):
             # Paused for a quota limit — task is back to 'pending', global pause
             # holds dispatch. Don't deliver/notify/settle; the gated _pump will
             # redispatch it (fresh attempts) once the pause expires.
+            if lane:
+                # Release this lane's merge-queue slot: it is not going to
+                # integrate on this run, and the lanes behind it must not wait
+                # for a task that is back in the pending pool. On the resumed run
+                # it takes a fresh turn (the queue never rewinds, so a later
+                # position is admitted immediately).
+                await self._merge_queue.skip(_lane_key(lane), _lane_position(lane))
             self._pump()
             return
+        if lane and not (deliver and success is not None):
+            # This lane will never reach integration — the gate failed, the run
+            # errored, or it was dispatched without a delivery contract. Release
+            # its merge-queue slot rather than wedge the lanes behind it: a
+            # failing increment must fail ALONE, which is exactly the spec's
+            # Independent Test (one lane strays and fails while its sibling
+            # lands).
+            await self._merge_queue.skip(_lane_key(lane), _lane_position(lane))
         if deliver and success is not None:
             # Gate passed; the task is still 'running'. Turn the change into a
             # branch/PR, then make 'done' observable — with pr_url already on
@@ -1361,6 +1425,47 @@ class TaskQueue(_NotifyMixin):
             pr_url = None
             failure: Optional[str] = None
             delivery: dict = {}
+            # Serial integration (FR-102). A lane's work lives in its own
+            # checkout; the merge queue admits lanes onto the shared goal branch
+            # ONE at a time and strictly in plan order, so two increments that
+            # ran concurrently still land in a reproducible sequence. Delivery
+            # then runs from the SHARED workspace, so the goal branch and its
+            # single cumulative PR behave exactly as they do for a sequential
+            # increment. Integration failure fails this lane and only this lane.
+            delivery_dir = workspace_dir
+            if lane:
+                integrate_into = str(lane.get("integrate_into") or "") or workspace_dir
+                label = str(lane.get("label") or goal)[:120]
+                integration_error: Optional[str] = None
+                try:
+                    async with self._merge_queue.turn(
+                        _lane_key(lane), _lane_position(lane)
+                    ):
+                        integration_error = await commit_lane(
+                            workspace_dir, label=label, task_id=task_id
+                        )
+                        if integration_error is None and integrate_into != workspace_dir:
+                            integration_error = await integrate_lane(
+                                lane_dir=workspace_dir, into_dir=integrate_into,
+                                label=label, task_id=task_id,
+                            )
+                except Exception as err:  # noqa: BLE001 — never ship on a crash (#186)
+                    integration_error = (
+                        f"lane integration could not complete: "
+                        f"{err.__class__.__name__}: {err}"
+                    )
+                if integration_error is not None:
+                    sys.stderr.write(
+                        f"task-queue: lane integration failed task={task_id}: "
+                        f"{integration_error}\n"
+                    )
+                    self._store.mark_failed(task_id, integration_error)
+                    self._check_and_trip_breaker(workspace_dir, task_id)
+                    if program_id is None:
+                        self._fire_settle()
+                    self._pump()
+                    return
+                delivery_dir = integrate_into
             # Only-when-set on purpose (blank-safe): the unpinned call shape
             # stays byte-identical for goal/program tasks AND for every test stub
             # of deliver_change that does not accept the branch-target kwargs.
@@ -1371,7 +1476,7 @@ class TaskQueue(_NotifyMixin):
                 branch_kwargs["target_branch"] = target_branch
             try:
                 delivery = await deliver_change(
-                    workspace_dir=workspace_dir, task_id=task_id, goal=goal,
+                    workspace_dir=delivery_dir, task_id=task_id, goal=goal,
                     kind=kind, verify=verify,
                     title=(row.title if row else None),
                     advisories=advisories,
@@ -1468,7 +1573,10 @@ class TaskQueue(_NotifyMixin):
             self._store.create_task(
                 id=key_to_uuid[p.key],
                 kind=p.kind,
-                workspace_dir=workspace_dir,
+                # A fan-out lane brings its OWN checkout (spec 010 US3): two
+                # agents cannot share one working tree. Everything else runs in
+                # the program's workspace, exactly as before.
+                workspace_dir=p.workspace_dir or workspace_dir,
                 goal=p.goal,
                 notify_url=None,  # per-task notify omitted — only program-level fires
                 program_id=program_id,
@@ -1488,6 +1596,8 @@ class TaskQueue(_NotifyMixin):
                 # blocks on a dial-able gate failure; a trust program advises.
                 strictness=program_strictness,
                 project_id=program_project_id,
+                # Lane metadata (spec 010 US3) — NULL for every ordinary task.
+                lane_json=json.dumps(p.lane) if p.lane else None,
             )
 
     def start_planned_program(
@@ -1644,6 +1754,13 @@ class TaskQueue(_NotifyMixin):
         # or advises-and-ships (trust). Always-hard gates ignore it.
         strictness = row.strictness if row else "trust"
         parent_goal_id = row.parent_goal_id if row else None
+        # The declared file scope this increment was dispatched under (spec 010
+        # FR-101) — set only for a fan-out lane. Read here so the scope gate can
+        # hold the lane to its pinned contract.
+        _lane = row.lane() if row else None
+        lane_scope: "tuple[str, ...]" = tuple(
+            str(g) for g in (_lane or {}).get("scopes", ()) if str(g).strip()
+        )
 
         # Resumed-after-interruption brief. ``pause_count > 0`` means a previous
         # attempt of THIS task was cut off by a usage limit and requeued — the
@@ -1832,6 +1949,12 @@ class TaskQueue(_NotifyMixin):
                         browser_mode=self._browser_gate_mode(project_id),
                         diff_fn=lambda: _git_diff(workspace_dir, pre_run_sha),
                         project_id=project_id,
+                        # Spec 010 FR-103: a fan-out lane is bound by the file
+                        # scope the HOST pinned at dispatch, not by whether the
+                        # worker got round to checking its task row off. Empty
+                        # for every ordinary increment, whose contract (if any)
+                        # the scope gate reads from its own claim on the plan.
+                        declared_scope=lane_scope,
                     )
                     # ADR 0007 / review-gate-repositioning (spec 001): the
                     # per-increment adversarial diff review is a STRICT-ONLY gate.
