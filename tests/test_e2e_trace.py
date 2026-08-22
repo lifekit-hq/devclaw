@@ -163,7 +163,7 @@ def test_tracer_dumps_json_and_timeline(tmp_path):
 
     t = Tracer(label="format-test")
     t.append(TickEvent(goal_id="g", lifecycle="executing", phase="executing", outcome="dispatched"))
-    t.append(CognitionEvent(role="planner", model="opus", prompt_hash="abc", prompt_preview="plan it", response_preview="act", latency_ms=42))
+    t.append(CognitionEvent(role="planner", model="opus", prompt_hash="abc", prompt_preview="plan it", response_text="act", latency_ms=42))
     t.append(DispatchEvent(goal_id="g", tool="implement_feature", ref_id="t1"))
     t.append(DeliveryEvent(goal_id="g", action_label="add /health", gate_passed=True, pr_url="https://x/1"))
     t.append(NotifyEvent(level="OWNER", text="shipped"))
