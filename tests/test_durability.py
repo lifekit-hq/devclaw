@@ -112,7 +112,7 @@ def test_recover_sweeps_orphaned_sandbox_containers(store, monkeypatch, capsys):
 def test_recover_sweep_is_silent_when_nothing_leaked(store, monkeypatch, capsys):
     from devclaw import task_queue as tq
 
-    monkeypatch.setattr(tq, "sweep_orphan_sandboxes", lambda owner_id=None: 0)
+    monkeypatch.setattr(tq, "sweep_orphan_sandboxes", lambda owner_id: 0)
     q = TaskQueue(store, runner=_ok_runner([]))
     q.recover()
     assert "sandbox container" not in capsys.readouterr().err

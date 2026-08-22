@@ -867,8 +867,8 @@ class TaskQueue(_NotifyMixin):
         onto ``target_branch`` (creating it off ``base_branch`` when absent on
         origin) and delivery must land on it; ``base_branch`` is validated
         against origin before the engine runs and becomes the PR base / diff
-        range. Both None (every goal-path caller) ⇒ byte-identical legacy
-        behavior — no prep, no validation, no extra delivery kwargs.
+        range. Both None (every goal-path caller) ⇒ the unpinned path — no
+        prep, no validation, no extra delivery kwargs.
 
         ``pump=False`` (PR7 — the dispatch/pump split): create the row ONLY,
         no claim, no launch. ``_pump()`` synchronously claims PENDING work —
@@ -916,8 +916,8 @@ class TaskQueue(_NotifyMixin):
     ) -> str:
         """Submit a program the decomposer will plan into child tasks.
 
-        ``open_pr`` (default False for legacy behavior) is inherited by every
-        child task the decomposer creates — under a standing goal with
+        ``open_pr`` (default False — commit directly, open no PR) is inherited
+        by every child task the decomposer creates — under a standing goal with
         ``open_pr: true`` on the Action, each child task delivers as a
         reviewable-slice PR instead of committing directly to the workspace
         branch. ``verify_cmd`` (default None) is inherited the same way as the
@@ -1312,7 +1312,7 @@ class TaskQueue(_NotifyMixin):
         deliver = bool(row and row.deliver)
         # Branch-target wire (v1-helper-resurface P1, PR-2) — DIRECT path only:
         # goal-path and program-child rows never carry these, so for them every
-        # line below is inert (no prep subprocess, legacy deliver_change call).
+        # line below is inert (no prep subprocess, unpinned deliver_change call).
         base_branch = (row.base_branch or None) if row else None
         target_branch = (row.target_branch or None) if row else None
         # Owning project's reference key (#524 P3) — the per-project knobs
@@ -1361,9 +1361,9 @@ class TaskQueue(_NotifyMixin):
             pr_url = None
             failure: Optional[str] = None
             delivery: dict = {}
-            # Only-when-set on purpose (blank-safe): the legacy call shape stays
-            # byte-identical for goal/program tasks AND for every existing test
-            # stub of deliver_change that predates the branch-target kwargs.
+            # Only-when-set on purpose (blank-safe): the unpinned call shape
+            # stays byte-identical for goal/program tasks AND for every test stub
+            # of deliver_change that does not accept the branch-target kwargs.
             branch_kwargs: dict = {}
             if base_branch:
                 branch_kwargs["base_branch"] = base_branch
@@ -1441,18 +1441,21 @@ class TaskQueue(_NotifyMixin):
         (``review_repository``) always skip PR + gate because they write a
         read-only report, matching the standalone-task rule at engine.py."""
         program = self._store.get_program(program_id)
-        # Legacy programs (created before the 2026-07-03 column addition) load
-        # with open_pr=False / verify_cmd=None; that preserves the pre-change
-        # behavior for any in-flight program at deploy time.
-        program_open_pr = bool(program and program.open_pr)
-        program_verify_cmd = program.verify_cmd if program else None
-        # Child tasks inherit the program's strictness dial (ADR 0007), same as
-        # open_pr / verify_cmd. Legacy programs (pre-column) load "trust".
-        program_strictness = program.strictness if program else "trust"
-        # Child tasks inherit the program's owning project_id (#524 P3), so their
+        if program is None:
+            # Both callers create the row in the same synchronous call, so a
+            # miss here is lost state, not an old row. It used to fall through
+            # to open_pr=False — which silently reinstates the 2026-07-03
+            # commit-straight-to-main defect on a whole program (#616 cutoff:
+            # loud failure over silent degradation).
+            raise RuntimeError(f"program row vanished before planning: {program_id}")
+        # Child tasks inherit the program's PR + gate contract and its strictness
+        # dial (ADR 0007), plus its owning project_id (#524 P3) so their
         # per-project knobs (review_gate, sandbox_image, browser_gate_mode)
-        # resolve by id. Legacy programs (pre-column) load None → defaults.
-        program_project_id = program.project_id if program else None
+        # resolve by id rather than by a workspace-path scan.
+        program_open_pr = bool(program.open_pr)
+        program_verify_cmd = program.verify_cmd
+        program_strictness = program.strictness
+        program_project_id = program.project_id
         key_to_uuid = {p.key: str(uuid.uuid4()) for p in planned}
         for idx, p in enumerate(planned):
             dep_uuids: list[str] = []

@@ -41,7 +41,7 @@ async def test_evaluate_goal_returns_verdict_on_track(tmp_path, db):
     svc, goals_dir = _svc(tmp_path, db)
     seed_goal(goals_dir, "g")
     svc._goal_store.save_status("g", GoalStatus(phase="idle"))
-    svc._goal_store.append_delivery("g", "add /health", "shipped: PR #1; gate green")
+    svc._goal_store.append_delivery("g", "add /health", "shipped: PR #1; gate green", ref_id="t1")
 
     response = json.dumps({
         "verdict": "on_track",
@@ -64,7 +64,9 @@ async def test_evaluate_goal_appends_corrections_to_inbox(tmp_path, db):
     svc, goals_dir = _svc(tmp_path, db)
     seed_goal(goals_dir, "g")
     svc._goal_store.save_status("g", GoalStatus(phase="executing"))
-    svc._goal_store.append_delivery("g", "wrong-direction work", "shipped X; not what done_when says")
+    svc._goal_store.append_delivery(
+        "g", "wrong-direction work", "shipped X; not what done_when says", ref_id="t1"
+    )
 
     response = json.dumps({
         "verdict": "off_track",
@@ -146,7 +148,7 @@ async def test_evaluate_goal_needs_human_returns_question(tmp_path, db):
     svc, goals_dir = _svc(tmp_path, db)
     seed_goal(goals_dir, "g")
     svc._goal_store.save_status("g", GoalStatus(phase="executing"))
-    svc._goal_store.append_delivery("g", "ambiguous work", "shipped Y; unclear if right")
+    svc._goal_store.append_delivery("g", "ambiguous work", "shipped Y; unclear if right", ref_id="t1")
 
     response = json.dumps({
         "verdict": "needs_human",

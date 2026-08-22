@@ -1,7 +1,7 @@
 """Status — the single-writer / CAS choke point.
 
 :class:`GoalStatusMixin` carries every phase/lifecycle/in_flight write:
-``load_status`` and its lazy STATUS.md migration, the CAS-guarded
+``load_status``, the CAS-guarded
 :meth:`GoalStatusMixin.transition` (the choke point every production
 transition routes through), the column-only ``update_status_fields`` fast
 path, ``force_block`` (the illegal-transition escape hatch), and the STATUS.md
@@ -20,7 +20,7 @@ from dataclasses import replace
 
 import yaml
 
-from ..models import GoalStatus, InFlight
+from ..models import GoalStatus
 from ..state import GoalState
 from ..transitions import (
     Event,
@@ -30,7 +30,6 @@ from ..transitions import (
     derive_state,
 )
 from ...state_store import _now_ms
-from .base import _FRONTMATTER
 
 
 class GoalStatusMixin:
@@ -51,92 +50,18 @@ class GoalStatusMixin:
         return status.blocked_kind if status.phase == "blocked" else ""
 
     def load_status(self, goal_id: str) -> GoalStatus:
-        # Source of truth is the goal_status table (Tranche 1/PR3). Migrate any
-        # legacy STATUS.md into it lazily + idempotently, then read the row back.
-        # A brand-new goal with neither a row nor a STATUS.md yields the default
-        # status (unchanged from the file-only behavior) and writes nothing —
-        # its first save_status creates the row.
-        self._ensure_status_row(goal_id)
+        # Source of truth is the goal_status table (Tranche 1/PR3), and since
+        # #617 the ONLY source: STATUS.md is a generated view and is never
+        # parsed back. Any STATUS.md that predates that rule was ingested once
+        # by migrate_views_once at construction. A goal with no row yields the
+        # default status and writes nothing — its first save_status creates it.
         if self._goal_state.has_status(goal_id):
             return self._goal_state.read_status(goal_id)
         return GoalStatus()
 
-    def _ensure_status_row(self, goal_id: str) -> None:
-        """Lazy, idempotent migration of a legacy STATUS.md into ``goal_status``.
-
-        Row already present → no-op (the idempotency guard). No STATUS.md yet →
-        no-op (brand-new/pre-save goal; ``load_status`` returns the default and
-        the first ``save_status`` creates the row). A STATUS.md that EXISTS —
-        even truncated/corrupt — is parsed with the current frontmatter reader
-        (which degrades every field to its default, never raising: T0.4's
-        a corrupt status row raises plainly, never silently degrades) and INSERTed inside
-        a ``transaction()``, seeding ``goal_phase_history`` from its current
-        phase_history."""
-        if self._goal_state.has_status(goal_id):
-            return
-        path = self._dir(goal_id) / "STATUS.md"
-        if not path.exists():
-            return
-        parsed = self._parse_status_md(path.read_text())
-        with self._state.transaction():
-            # Re-check under the txn lock so a concurrent migrate can't
-            # double-insert the row or double-seed phase_history.
-            if self._goal_state.has_status(goal_id):
-                return
-            self._goal_state.write_status(goal_id, parsed)
-            self._goal_state.seed_phase_history(goal_id, parsed.phase_history)
-
-    @staticmethod
-    def _parse_status_md(text: str) -> GoalStatus:
-        """Parse a STATUS.md's YAML frontmatter into a GoalStatus. Used only by
-        the lazy migration now; degrades field-by-field to defaults on a
-        truncated/garbled file (``_read_frontmatter`` returns ``{}``) — never
-        raises, matching the pre-PR3 ``load_status`` behavior exactly."""
-        fm = GoalStatusMixin._read_frontmatter(text)
-        inflight = None
-        if fm.get("in_flight"):
-            f = fm["in_flight"]
-            inflight = InFlight(
-                engine=f["engine"], tool=f["tool"], id=f["id"],
-                ref_kind=f["ref_kind"], goal=f.get("goal", ""),
-                is_done_check=bool(f.get("is_done_check", False)),
-            )
-        raw_history = fm.get("phase_history") or []
-        history: tuple[dict, ...] = tuple(
-            {"phase": str(e.get("phase")), "at": str(e.get("at"))}
-            for e in raw_history
-            if isinstance(e, dict) and e.get("phase") and e.get("at")
-        )
-        return GoalStatus(
-            phase=fm.get("phase", "idle"),
-            lifecycle=fm.get("lifecycle") or None,
-            in_flight=inflight,
-            blocked_on=fm.get("blocked_on") or None,
-            blocked_kind=fm.get("blocked_kind", "") or "",
-            heal_attempts=int(fm.get("heal_attempts", 0) or 0),
-            next_heal_at=fm.get("next_heal_at") or None,
-            next=fm.get("next", "") or "",
-            last_plan_at=fm.get("last_plan_at") or None,
-            last_tick_at=fm.get("last_tick_at") or None,
-            inbox_cursor=int(fm.get("inbox_cursor", 0)),
-            actions_dispatched=int(fm.get("actions_dispatched", 0)),
-            last_eval_verdict=fm.get("last_eval_verdict") or None,
-            last_eval_at=fm.get("last_eval_at") or None,
-            last_eval_note=fm.get("last_eval_note", "") or "",
-            last_progress_at=fm.get("last_progress_at") or None,
-            no_progress_notified=bool(fm.get("no_progress_notified", False)),
-            open_unmerged_pr=fm.get("open_unmerged_pr") or None,
-            phase_history=history,
-        )
-
     def save_status(self, goal_id: str, status: GoalStatus) -> None:
         # Source of truth is the goal_status table; STATUS.md is a generated
         # full-fidelity view rewritten on every save (the rollback path).
-        #
-        # Migrate any pre-existing STATUS.md history BEFORE appending, so a
-        # first save on a goal that was never load_status()'d can't drop the
-        # on-disk phase_history (idempotent — no-op once a row exists).
-        self._ensure_status_row(goal_id)
         with self._state.transaction():
             # phase_history is append-only. The table is now authoritative, so
             # the old stale-snapshot merge hack (re-reading the disk file) is
@@ -159,8 +84,8 @@ class GoalStatusMixin:
                 blocked_kind=self._normalized_blocked_kind(status),
             )
             self._goal_state.write_status(goal_id, status)
-        # STATUS.md view — the exact frontmatter _read_frontmatter parses + the
-        # human body, written via the atomic tmp+os.replace. This is the
+        # STATUS.md view — YAML frontmatter + the human body, written via the
+        # atomic tmp+os.replace. This is the
         # rollback path: reverting PR3 makes load_status read this file again
         # and recover the current state (a crash mid-write, container restart —
         # 2026-07-09 — left a truncated file that must not orphan in-flight work).
@@ -171,8 +96,7 @@ class GoalStatusMixin:
     def _load_status_for_cas(self, goal_id: str) -> GoalStatus:
         """The current row as a GoalStatus, or bare defaults when no row
         exists yet — the read side of transition()'s / force_block()'s CAS.
-        Deliberately does NOT call :meth:`_ensure_status_row` itself (callers
-        do that first, matching save_status's ordering) and does NOT fall
+        Deliberately does NOT fall
         back to STATUS.md — a status object built here only ever needs
         `.state`/`.version`, both of which are meaningless on a file that
         predates this table."""
@@ -228,7 +152,6 @@ class GoalStatusMixin:
         # ``transition`` lived in the monolith module the test patches.
         from devclaw.goal import store as _store_pkg
 
-        self._ensure_status_row(goal_id)
         with self._state.transaction():
             fresh = self._load_status_for_cas(goal_id)
             cur_state = State(fresh.state) if fresh.state else derive_state(fresh)
@@ -301,7 +224,6 @@ class GoalStatusMixin:
                 "column-only path; phase/lifecycle/in_flight/blocked_on/next "
                 "must go through GoalStore.transition()"
             )
-        self._ensure_status_row(goal_id)
         if not self._goal_state.has_status(goal_id):
             self.save_status(goal_id, replace(GoalStatus(), **fields))
             return self.load_status(goal_id)
@@ -310,20 +232,6 @@ class GoalStatusMixin:
         fresh = self.load_status(goal_id)
         self._flush_or_defer_status_view(goal_id, fresh)
         return fresh
-
-    def heal_legacy_lifecycle(self, goal_id: str) -> bool:
-        """Flip a pre-shrink ``investigating``/``firming`` lifecycle to
-        ``executing`` — the spec 008 shrink's one-shot migration. Deliberately
-        NOT ``update_status_fields`` (lifecycle is excluded from that
-        whitelist) and NOT ``transition()`` (no Event exists for a removed
-        phase): the state-layer write is column-scoped with the old value in
-        its WHERE clause, so it cannot clobber a concurrent phase/in_flight
-        transition and is idempotent. Returns True iff a row was healed;
-        refreshes the STATUS.md view on a real heal."""
-        healed = self._goal_state.heal_legacy_lifecycle(goal_id)
-        if healed:
-            self._flush_or_defer_status_view(goal_id, self.load_status(goal_id))
-        return healed
 
     def force_block(self, goal_id: str, blocked_on: str) -> bool:
         """Unconditional block write — bypasses the LEGAL-table check on
@@ -343,7 +251,6 @@ class GoalStatusMixin:
         when the goal is already DONE/CANCELLED (terminal; nothing calls this
         on a happy path, but a belt-and-suspenders guard against blocking a
         finished goal). Returns ``True`` when it wrote."""
-        self._ensure_status_row(goal_id)
         with self._state.transaction():
             fresh = self._load_status_for_cas(goal_id)
             cur_state = State(fresh.state) if fresh.state else derive_state(fresh)
@@ -402,7 +309,6 @@ class GoalStatusMixin:
             "next": status.next,
             "last_plan_at": status.last_plan_at,
             "last_tick_at": status.last_tick_at,
-            "inbox_cursor": status.inbox_cursor,
             "actions_dispatched": status.actions_dispatched,
             "last_eval_verdict": status.last_eval_verdict,
             "last_eval_at": status.last_eval_at,
@@ -415,13 +321,6 @@ class GoalStatusMixin:
         body = self._render_status_body(goal_id, status)
         text = "---\n" + yaml.safe_dump(fm, sort_keys=False).rstrip() + "\n---\n\n" + body
         self._write_atomic(goal_id, "STATUS.md", text)
-
-    @staticmethod
-    def _read_frontmatter(text: str) -> dict:
-        m = _FRONTMATTER.match(text)
-        if not m:
-            return {}
-        return yaml.safe_load(m.group(1)) or {}
 
     @staticmethod
     def _render_status_body(goal_id: str, s: GoalStatus) -> str:

@@ -12,7 +12,7 @@ Transport:
   - DEVCLAW_TRANSPORT=stdio (default) — local dev + tests
   - DEVCLAW_TRANSPORT=http            — streamable-http on $DEVCLAW_PORT (default
                                         8000); also serves the /console SPA
-                                        (legacy /dashboard 302s to it) +
+                                        (the retired /dashboard 302s to it) +
                                         /programs/:id/events (SSE)
 
 State: SQLite at $DEVCLAW_DB (default ./devclaw.db).

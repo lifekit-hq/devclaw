@@ -6,7 +6,8 @@ Pins the four load-bearing properties:
   * round-trip fidelity (every GoalStatus field, incl. in_flight + phase_history)
   * STATUS.md stays a faithful view — the rollback path (revert PR3 → the
     current frontmatter reader recovers the exact saved state)
-  * lazy migration of a legacy STATUS.md is correct AND idempotent
+  * the one-shot view migration (#617) ingests a pre-existing STATUS.md
+    correctly, at construction, exactly once
   * phase_history accumulates in the table across saves (the merge hack is gone)
 """
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 from devclaw.goal.models import GoalStatus, InFlight
 from devclaw.goal.store import GoalStore
+from devclaw.goal.store import view_migration
 from tests.goal_fakes import Clock
 
 
@@ -30,7 +32,6 @@ def _rich_status() -> GoalStatus:
         next="verify the done gate",
         last_plan_at="2026-06-06T12:00:00+00:00",
         last_tick_at="2026-06-06T12:05:00+00:00",
-        inbox_cursor=4,
         actions_dispatched=7,
         last_eval_verdict="on_track",
         last_eval_at="2026-06-06T12:04:00+00:00",
@@ -54,7 +55,6 @@ def test_save_then_load_roundtrips_every_field(tmp_path):
     assert back.next == "verify the done gate"
     assert back.last_plan_at == "2026-06-06T12:00:00+00:00"
     assert back.last_tick_at == "2026-06-06T12:05:00+00:00"
-    assert back.inbox_cursor == 4
     assert back.actions_dispatched == 7
     assert back.last_eval_verdict == "on_track"
     assert back.last_eval_at == "2026-06-06T12:04:00+00:00"
@@ -92,13 +92,15 @@ def test_status_md_view_recovers_state_via_current_reader(tmp_path):
     store.save_status("g", _rich_status())
 
     text = (tmp_path / "g" / "STATUS.md").read_text()
-    # `_parse_status_md` IS the pre-PR3 STATUS.md reader; the DB is the truth.
-    recovered_from_file = GoalStore._parse_status_md(text)
+    # `parse_status_md` IS the pre-PR3 STATUS.md reader, now living in the
+    # one-shot migration (the only code allowed to read a view); the DB is the
+    # truth. Rollback fidelity means these two agree.
+    recovered_from_file, _cursor = view_migration.parse_status_md(text)
     truth_from_db = store.load_status("g")
     assert recovered_from_file == truth_from_db
 
     # The frontmatter shape the reader depends on is intact + reflects the save.
-    fm = GoalStore._read_frontmatter(text)
+    fm = view_migration.read_frontmatter(text)
     assert fm["phase"] == "verifying"
     assert fm["lifecycle"] == "executing"
     assert fm["in_flight"]["id"] == "t42"
@@ -113,12 +115,12 @@ def test_status_md_rewritten_on_every_save(tmp_path):
     store.save_status("g", GoalStatus(phase="idle"))
     store.save_status("g", GoalStatus(phase="in_flight",
                                       in_flight=InFlight("devclaw", "start_program", "p9", "program")))
-    fm = GoalStore._read_frontmatter((tmp_path / "g" / "STATUS.md").read_text())
+    fm = view_migration.read_frontmatter((tmp_path / "g" / "STATUS.md").read_text())
     assert fm["phase"] == "in_flight"
     assert fm["in_flight"]["id"] == "p9"
 
 
-# ---- lazy, idempotent migration of a legacy STATUS.md ----------------------
+# ---- the one-shot migration of a pre-#617 STATUS.md ------------------------
 
 
 def _seed_status_md_only(tmp_path, goal_id, status, *, clock=None) -> str:
@@ -138,7 +140,9 @@ def _seed_status_md_only(tmp_path, goal_id, status, *, clock=None) -> str:
     return dest
 
 
-def test_first_load_migrates_status_md_into_the_table(tmp_path):
+def test_construction_migrates_status_md_into_the_table(tmp_path):
+    """#617 moved this off the read path: the ingest happens ONCE, when the
+    store is constructed, not lazily on whichever read happens to be first."""
     dest = _seed_status_md_only(
         tmp_path, "g",
         GoalStatus(phase="in_flight", lifecycle="executing",
@@ -147,8 +151,8 @@ def test_first_load_migrates_status_md_into_the_table(tmp_path):
     )
     store = GoalStore(dest)
     try:
-        # Precondition: STATUS.md exists but there is no goal_status row yet.
-        assert store._goal_state.has_status("g") is False
+        # The row exists BEFORE anything reads status — construction did it.
+        assert store._goal_state.has_status("g") is True
 
         migrated = store.load_status("g")
         assert migrated.phase == "in_flight"
@@ -156,9 +160,6 @@ def test_first_load_migrates_status_md_into_the_table(tmp_path):
         assert migrated.actions_dispatched == 3
         assert migrated.in_flight is not None and migrated.in_flight.id == "p1"
         assert migrated.in_flight.ref_kind == "program"
-
-        # Postcondition: the row now exists (migration inserted it).
-        assert store._goal_state.has_status("g") is True
     finally:
         store._state.close()
 
@@ -194,39 +195,45 @@ def test_migration_carries_in_flight_and_phase_history(tmp_path):
         store._state.close()
 
 
-def test_migration_is_idempotent(tmp_path, monkeypatch):
-    """A second load_status must NOT re-parse / re-migrate — the row-exists
-    guard short-circuits before the STATUS.md is touched again."""
+def test_no_read_reparses_status_md_after_the_one_shot_migration(tmp_path, monkeypatch):
+    """The #617 cutoff. Once the migration has run, NO read path may parse a
+    STATUS.md again — not the first load, not the hundredth, not a second
+    store opened on the same database. Before this, the parse sat on
+    ``load_status`` with only a row-exists guard in front of it, which made
+    the view a permanent second input to goal state."""
     dest = _seed_status_md_only(
         tmp_path, "g", GoalStatus(phase="in_flight", lifecycle="executing"),
     )
-    store = GoalStore(dest)
+    store = GoalStore(dest)          # the one-shot migration runs HERE
     try:
         parses = {"n": 0}
-        orig = GoalStore._parse_status_md
+        orig = view_migration.parse_status_md
 
         def _spy(text):
             parses["n"] += 1
             return orig(text)
 
-        monkeypatch.setattr(GoalStore, "_parse_status_md", staticmethod(_spy))
+        monkeypatch.setattr(view_migration, "parse_status_md", _spy)
 
-        store.load_status("g")   # migrates → parses the STATUS.md once
-        assert parses["n"] == 1
-        store.load_status("g")   # row exists → no re-parse, no re-migrate
         store.load_status("g")
-        assert parses["n"] == 1
+        store.load_status("g")
+        store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+        # a second store on the SAME db: the meta marker, not a per-goal
+        # guard, is what stops the sweep re-running
+        GoalStore(dest, state=store._state).load_status("g")
+        assert parses["n"] == 0
 
-        # And the phase_history table wasn't re-seeded (still one entry).
-        hist = store._goal_state.read_phase_history("g")
-        assert len(hist) == 1
+        # And the phase_history table wasn't re-seeded: exactly the migrated
+        # entry plus the one this test's own save_status appended.
+        hist = [e["phase"] for e in store._goal_state.read_phase_history("g")]
+        assert hist == ["in_flight", "idle"]
     finally:
         store._state.close()
 
 
 def test_save_before_any_load_does_not_drop_status_md_history(tmp_path):
-    """save_status on a goal that was never load_status()'d still migrates the
-    existing STATUS.md history first, so the append doesn't clobber it."""
+    """save_status on a goal that was never load_status()'d must not clobber
+    the history the construction-time migration already ingested."""
     dest = _seed_status_md_only(
         tmp_path, "g",
         GoalStatus(phase="idle", lifecycle="executing"),
@@ -248,13 +255,14 @@ def test_save_before_any_load_does_not_drop_status_md_history(tmp_path):
 
 def test_corrupt_status_md_migrates_to_defaults_without_raising(tmp_path):
     """A truncated STATUS.md (no closing frontmatter fence) is NOT a
-    GoalDocCorrupt — status degrades to the default, exactly as pre-PR3."""
+    GoalDocCorrupt — status degrades to the default, exactly as pre-PR3. The
+    migration must never be the reason an instance fails to start."""
     (tmp_path / "g").mkdir(parents=True)
     (tmp_path / "g" / "STATUS.md").write_text("---\nphase: in_flight\n# truncated, no closing fence")
 
-    store = GoalStore(tmp_path)
+    store = GoalStore(tmp_path)          # must not raise
     try:
-        migrated = store.load_status("g")   # must not raise
+        migrated = store.load_status("g")
         assert migrated == GoalStatus()
         # stable on reload (a default row was written for the existing file)
         assert store.load_status("g") == GoalStatus()

@@ -98,13 +98,14 @@ class Task:
     #: it to decide a dial-able gate failure's consequence: "strict" blocks,
     #: "trust" advises-and-ships. Snapshotting on the row means a mid-flight
     #: dial flip applies to the NEXT dispatch, not a task already running.
-    #: Defaulted so existing rows/tests read as advisory ("trust").
+    #: Always set: the column is NOT NULL DEFAULT 'trust', so every row —
+    #: including every row written before the dial existed — carries a value.
     strictness: str = "trust"
     #: Caller-chosen PR base for a direct ``dispatch_task`` (v1-helper-resurface
     #: P1, PR-2). Validated against origin at launch; threaded into
     #: ``deliver_change(base_branch=...)`` (diff range + ``gh pr create
-    #: --base``). None (the goal path and all pre-existing rows) ⇒ legacy
-    #: remote-default behavior.
+    #: --base``). None (the goal path, which pins neither) ⇒ the remote
+    #: default branch.
     base_branch: Optional[str] = None
     #: Caller-pinned delivery branch for a direct ``dispatch_task`` (same seam):
     #: the launch step preps the workspace ONTO it, and delivery must land on
@@ -115,7 +116,7 @@ class Task:
     #: the owning project's reference key (#524 P3), stamped at dispatch. The
     #: per-project override knobs (review_gate, sandbox_image, browser_gate_mode)
     #: resolve BY this id, not by a workspace-path scan. None for the goal path
-    #: (goals carry their own project_id) and for legacy rows written before P3.
+    #: (goals carry their own project_id) and for a task with no owning project.
     project_id: Optional[str] = None
 
     def to_dict(self) -> dict:
@@ -159,16 +160,16 @@ class Program:
     completed_at: Optional[int]
     #: When True, every task the decomposer creates for this program inherits
     #: ``deliver=True`` — the standing-goal / reviewable-slice contract. When
-    #: False (legacy default), program tasks commit directly and never open a
-    #: PR (the pre-2026-07-03 behavior).
+    #: False (the default), program tasks commit directly and never open a PR.
+    #: NOT NULL DEFAULT 0 in SQL, so every row carries a value.
     open_pr: bool = False
-    #: Gate command the decomposer's tasks inherit. None → no gate (matches
-    #: legacy behavior); when set, child tasks run this after the agent
-    #: finishes and only succeed on exit 0.
+    #: Gate command the decomposer's tasks inherit. None → no gate; when set,
+    #: child tasks run this after the agent finishes and only succeed on
+    #: exit 0.
     verify_cmd: Optional[str] = None
     #: Gate strictness dial the decomposer's child tasks inherit (ADR 0007),
-    #: snapshotted from Goal.strictness at dispatch. Defaulted to advisory
-    #: ("trust") so legacy programs/tests are unaffected.
+    #: snapshotted from Goal.strictness at dispatch. NOT NULL DEFAULT 'trust'
+    #: in SQL, so every row carries a value; the default is advisory.
     strictness: str = "trust"
     #: Durable goal-owner pointer (2026-07-10), mirroring tasks.parent_goal_id.
     #: Without it a goal whose STATUS.md in_flight ref is lost (crash mid-write)
@@ -176,8 +177,8 @@ class Program:
     #: closeloop-mission-v2 dead night. Null for standalone start_program calls.
     parent_goal_id: Optional[str] = None
     #: Owning project's reference key (#524 P3); child tasks inherit it via
-    #: _persist_plan so their per-project knobs resolve by id. Null on legacy
-    #: pre-P3 programs and standalone programs with no registered project.
+    #: _persist_plan so their per-project knobs resolve by id. Null on a
+    #: standalone program with no registered project.
     project_id: Optional[str] = None
 
     def to_dict(self) -> dict:

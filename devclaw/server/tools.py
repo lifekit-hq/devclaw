@@ -142,7 +142,7 @@ async def _block_if_speckit_pending(resolved: ResolvedDispatch, tool: str) -> No
     # A None above is fail-open — it also means "gh couldn't tell". Fail CLOSED
     # when there's concrete local evidence of a pending install (an install
     # branch) AND gh is unavailable: a gh hiccup must not silently admit
-    # half-installed execution. Inert for legacy repos (no install branch) and in
+    # half-installed execution. Inert for a repo with no install branch and in
     # the stubbed suite (open_install_pr is faked, so gh is never consulted).
     if (
         await _speckit.local_install_branch_exists(resolved.workspace_dir)
@@ -204,9 +204,9 @@ async def dispatch_task(
         resolve on the workspace's origin; a base that doesn't fails the task
         up front with an actionable message.
 
-    Prefer this over the older ``implement_feature`` / ``fix_bug`` /
-    ``review_repository`` tools — those are kept as back-compat aliases and
-    forward here."""
+    The kind-specific companion verbs ``implement_feature`` / ``fix_bug`` /
+    ``review_repository`` forward here. Reach for this one when you need the
+    branch targets or an explicit ``kind``; either surface is supported."""
     if not goal:
         raise ToolError("dispatch_task requires project_id and goal")
     resolved = _resolve_project_or_reject(project_id, "dispatch_task")
@@ -247,9 +247,11 @@ async def implement_feature(
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
 ) -> str:
-    """DEPRECATED — thin forwarder to ``dispatch_task(kind="implement_feature")``.
-    Kept for back-compat with existing MCP callers; prefer ``dispatch_task``
-    for new integrations. See ``dispatch_task`` for full docs."""
+    """Dispatch feature work — the kind-specific companion verb, a thin
+    forwarder to ``dispatch_task(kind="implement_feature")``. Supported, not
+    deprecated: this is the shape the waiter agent drives the companion path
+    with. Use ``dispatch_task`` directly when you need ``base_branch`` /
+    ``target_branch``. See ``dispatch_task`` for full docs."""
     return await dispatch_task(
         kind="implement_feature",
         project_id=project_id,
@@ -268,9 +270,11 @@ async def fix_bug(
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
 ) -> str:
-    """DEPRECATED — thin forwarder to ``dispatch_task(kind="fix_bug")``.
-    Kept for back-compat with existing MCP callers; prefer ``dispatch_task``
-    for new integrations. See ``dispatch_task`` for full docs."""
+    """Dispatch a bug fix — the kind-specific companion verb, a thin forwarder
+    to ``dispatch_task(kind="fix_bug")``. Supported, not deprecated: this is the
+    shape the waiter agent drives the companion path with. Use ``dispatch_task``
+    directly when you need ``base_branch`` / ``target_branch``. See
+    ``dispatch_task`` for full docs."""
     if not description:
         raise ToolError("fix_bug requires project_id and description")
     return await dispatch_task(
@@ -287,9 +291,10 @@ async def fix_bug(
 async def review_repository(
     project_id: str, focus: str = "", notify_url: Optional[str] = None
 ) -> str:
-    """DEPRECATED — thin forwarder to ``dispatch_task(kind="review_repository")``.
-    Kept for back-compat with existing MCP callers; prefer ``dispatch_task``
-    for new integrations. See ``dispatch_task`` for full docs."""
+    """Dispatch a read-only repository review — the kind-specific companion
+    verb, a thin forwarder to ``dispatch_task(kind="review_repository")``.
+    Supported, not deprecated: this is the shape the waiter agent drives the
+    companion path with. See ``dispatch_task`` for full docs."""
     return await dispatch_task(
         kind="review_repository",
         project_id=project_id,
@@ -1183,8 +1188,9 @@ async def get_trace(
     Use this to inspect what actually happened during a cascade: which prompts
     fired with what role, how long each cognition call took, real input/output
     tokens + cost from the CLI's usage envelope (``tokens_in``/``tokens_out``/
-    ``cost_usd``; legacy rows and fallback calls carry only the ``_est`` len/4
-    estimates — labeled as estimates), the FULL response text, and the chain of
+    ``cost_usd``; a call with no usage envelope — stub cognition, an errored or
+    timed-out call, the raw-stdout degrade path — carries only the ``_est`` len/4
+    estimates, labeled as estimates), the FULL response text, and the chain of
     dispatches that followed. Goal-scoped cognition rows also carry
     ``transcript_file`` — the full prompt+response transcript under the goal
     dir's ``transcripts/``. Pair with ``get_goal`` for the high-level state +

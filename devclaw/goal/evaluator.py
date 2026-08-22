@@ -400,7 +400,7 @@ def _parse_structural(parsed: dict) -> tuple[str, list[str]]:
     """Extract ``structural_health`` + ``structural_concerns`` from the model
     response. Tolerates missing / mistyped fields — ``structural_health`` maps
     only known values through, empty otherwise, so the mechanical downgrade
-    can safely no-op on legacy / non-done-gate responses."""
+    can safely no-op on non-done-gate responses."""
     raw_h = parsed.get("structural_health")
     health = str(raw_h).strip().lower() if raw_h else ""
     if health not in _VALID_STRUCTURAL:
@@ -574,7 +574,7 @@ def validate(
         # concerns ride the close as loud follow-ups (surfaced by the
         # done-gate close path; the human PR review is the backstop) and do
         # NOT hold a met contract open. Missing structural_health is treated
-        # as unknown (no flip) — legacy responses stay observable rather than
+        # as unknown (no flip) — such responses stay observable rather than
         # silently failing; the prompt mandates the field.
         structural_fail = (
             structural_health == "poor"

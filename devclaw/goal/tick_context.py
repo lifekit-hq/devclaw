@@ -32,7 +32,7 @@ from ..loom import trace as _trace
 
 
 #: (workspace_dir, repo_url, branch) -> the branch name actually checked out.
-#: ``branch=None`` keeps the legacy behaviour (default branch); a goal-scoped
+#: ``branch=None`` means the default branch; a goal-scoped
 #: ``"goal/<id>"`` branch is passed when checklist mode wants every item to
 #: stack on the same branch instead of forking off main. Injected so tests
 #: pass a no-op.
@@ -214,10 +214,10 @@ def _classify(status: GoalStatus) -> Phase:
         if getattr(ref, "is_done_check", False):
             return Phase.POLLING_DONE_GATE
         return Phase.POLLING_ACTION
-    # No in-flight work → executing. Every lifecycle value lands here now: the
+    # No in-flight work → executing. There is one lifecycle value: the
     # investigating/firming phases were removed with the host-cognition chain
-    # (spec 008 shrink) — a legacy row still carrying one of those strings is
-    # healed loudly by the tick before dispatch.
+    # (spec 008 shrink) and the #616 cutoff migrated the last rows carrying
+    # them.
     return Phase.EXECUTING
 
 
@@ -242,15 +242,15 @@ class TickContext:
     merger: "_merge.Merger | None" = None
     #: grounded remote-checks verification at the done-gate (the 2026-07-06
     #: benchmark fix: ``achieved`` is only honored when the goal branch's REAL
-    #: CI doesn't contradict it). None → skipped (legacy behaviour);
+    #: CI doesn't contradict it). None → skipped (the test seam);
     #: goal_service binds the gh-backed checker, tests inject a fake — the
     #: same subprocess-free-tick seam as ``merger``.
     remote_checker: "_remote_checks.RemoteChecker | None" = None
     #: post-settle mergeability probe (#394): asks GitHub whether a delivered
     #: PR is CONFLICTING with its base so the settle can say "this cannot
     #: land" loudly instead of settling a conflicting delivery
-    #: indistinguishably from a landable one. None → skipped (legacy
-    #: behaviour); goal_service binds the gh-backed probe, tests inject a
+    #: indistinguishably from a landable one. None → skipped (the test
+    #: seam); goal_service binds the gh-backed probe, tests inject a
     #: fake — the same subprocess-free-tick seam as ``merger``.
     mergeability_probe: "_merge.MergeabilityProbe | None" = None
     #: ``scope_key -> holding goal_id`` for the single-writer project hold

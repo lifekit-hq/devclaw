@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
+from .goal.state import GoalState
 from .loom import trace as _trace
 from .llm_call import extract_json
 from .state_store import StateStore
@@ -284,12 +285,16 @@ class TrendDetector:
     async def run_harness_self(self) -> None:
         """Run harness-self signals once per heartbeat. Called after the
         per-goal loop completes in ``goal/tick.py``."""
+        # Pre-fetch the steering rows H4 counts, as DATA — SignalContext hands
+        # signals values, never a store handle (#617 moved H4 off its inbox.md
+        # parse; the narrow boundary is why it gets the rows this way).
         ctx = SignalContext(
             scope="harness_self",
             workspace_dir=None,
             goal_id=None,
             goals_dir=self._goals_dir,
             now_ms=self._now_ms(),
+            denys_steerings=GoalState(self._store).steering_timestamps_by_goal("denys"),
         )
         await self._run_signals(
             scope_key=_HARNESS_SELF_SCOPE_KEY,

@@ -256,30 +256,11 @@ async def _tick_goal_impl(
     phase = _classify(status)
 
     # Terminal short-circuit — skip even the watchdog: a done/cancelled goal
-    # must keep skipping at zero cost (including the legacy-lifecycle heal
-    # below — a cancelled pre-shrink row never earns a write).
+    # must keep skipping at zero cost.
     if phase is Phase.TERMINAL_DONE:
         return Outcome.SKIP_DONE
     if phase is Phase.TERMINAL_CANCELLED:
         return Outcome.SKIP_CANCELLED
-
-    # Legacy-lifecycle heal (spec 008 shrink): a pre-shrink row still carrying
-    # ``investigating``/``firming`` names a phase that no longer exists. Heal
-    # it LOUDLY to executing, once — zero cognition, one log line; the goal
-    # then rides the ordinary advance path.
-    if status.lifecycle in ("investigating", "firming"):
-        store.append_log(
-            goal_id,
-            f"legacy lifecycle {status.lifecycle!r} healed to 'executing' — the "
-            "investigation/firming phases were removed (spec 008 shrink); the "
-            "worker plans via speckit",
-        )
-        # Column-scoped + self-guarding (WHERE lifecycle IN (...)): never a
-        # whole-row write, so a concurrent steer/cancel cannot be clobbered —
-        # see GoalStore.heal_legacy_lifecycle.
-        store.heal_legacy_lifecycle(goal_id)
-        status = store.load_status(goal_id)
-        phase = _classify(status)
 
     # The goal contract is goal.yaml alone; the worker's speckit artifacts
     # live in the repo, and the store's goal docs (log/deliveries/inbox/spec)
@@ -293,7 +274,6 @@ async def _tick_goal_impl(
     # blocked steady-state into a plan + ping per cycle. One healable kind:
     # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs
     # on the persisted next_heal_at exponential backoff, not every tick. A
-    # legacy row still blocked on ``mechanical:corrupt_doc`` stays
     # human-gated: resume_goal clears it.
     # needs_answer / bug / lost_ref / dispatch_cap stay human-gated (see the
     # heal guards' docstrings). A refused heal (budget spent / window closed /

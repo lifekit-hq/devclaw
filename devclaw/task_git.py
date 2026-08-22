@@ -102,7 +102,7 @@ def _git_diff_sync(host_dir: str, base: str = "") -> str:
     2026-07-11: three bench tasks in a row got "requested changes" on a diff of
     trend-file noise while the real work sat committed on the goal branch).
     Without ``base`` — or when the ref is unresolvable — fall back to the
-    legacy uncommitted-only view.
+    uncommitted-only view.
 
     Blocking subprocess.run (with a timeout) — NOT asyncio.create_subprocess_exec,
     which hangs under pytest's per-test event loops (child-watcher pitfall) and is
@@ -154,7 +154,7 @@ def _git_commit_exists_sync(host_dir: str, sha: str) -> bool:
 def _git_head_sync(host_dir: str) -> str:
     """Current HEAD sha, or '' when unavailable — the pre-run baseline for
     :func:`_git_diff_sync`. Best-effort for the same reason: a baseline hiccup
-    must degrade to the legacy diff view, never block the run."""
+    must degrade to the uncommitted-only diff view, never block the run."""
     try:
         p = subprocess.run(
             ["git", "-C", host_dir, "rev-parse", "HEAD"],

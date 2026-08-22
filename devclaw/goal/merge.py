@@ -60,7 +60,7 @@ def resolve_automerge(
     """Should a goal owned by ``project_id`` auto-merge its gate-passed PRs? A
     project's own ``automerge`` override wins when set; otherwise this falls back
     to the devclaw-wide ``AUTOMERGE_ENABLED`` default. With no registry (e.g.
-    tests) or no owning project (self-fix goals, legacy pre-P3 goals), the global
+    tests) or no owning project (self-fix goals, pre-P3 goals), the global
     default is all there is. Keyed by the project reference key (#524 P3), not a
     workspace-path scan."""
     if registry is not None and project_id:
