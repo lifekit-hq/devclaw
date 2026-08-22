@@ -231,7 +231,11 @@ increment count with a stated basis, and that both are executed as sagas.
 - **FR-012b**: FR-012 governs **work items** — asks that pass through intake and
   grading. It does NOT govern goal-less direct dispatch, which spec 010 FR-009
   keeps as a legitimate operator-present path exempt from the project lock. This
-  spec MUST NOT be read as removing that path.
+  spec MUST NOT be read as removing that path. That path is also deliberately
+  **unschematised**: a human dispatching by hand is present and can correct a bad
+  prompt immediately, so required slots would tax the one path that already has a
+  reviewer in the loop. Schemas earn their cost on unattended work. Revisit only
+  if direct dispatch stops being operator-present.
 - **FR-012a**: The completion judgement MUST NOT be bypassed for any work item,
   however small. Mechanical verification passing is never sufficient evidence of
   completion.
@@ -314,6 +318,17 @@ increment count with a stated basis, and that both are executed as sagas.
 - The scaling story (declared parallelism, merge queue) lives in spec 010. It is
   meaningless until the single-increment path specified here is predictable, so 010
   depends on this spec landing first even though it was drafted earlier.
+- **RULED 2026-08-22: a unit of work gets a content contract, not an authoring
+  schema.** FR-007/FR-008 give the *saga* named slots and reject one that is
+  missing any, because a human authors a saga. Nobody authors a unit of work — the
+  task graph derives it — so FR-001–FR-005 specify what its prompt must CONTAIN and
+  stop there. A validation surface with no author to validate is ceremony.
+  **Rejected alternative: a unit-of-work slot schema symmetric with FR-007.**
+  Considered because the asymmetry reads odd, and rejected because the only
+  hand-authored task path is goal-less direct dispatch, which FR-012b deliberately
+  leaves unschematised (an operator is present). Revisit if either the task graph
+  starts emitting prompts a human is expected to edit, or direct dispatch stops
+  being operator-present — the second would be a spec 010 change, not this one.
 
 ## Constitution Alignment
 
