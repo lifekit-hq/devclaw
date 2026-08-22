@@ -77,8 +77,12 @@ so layers 1–4 remain domain-agnostic.
   is wrong, never the test.
 - Branch per change; squash merges; docs made stale by a diff are fixed in
   the same PR.
-- Slice novel work into independently-shippable P1/P2/P3 increments; firm and
-  size only P1, in devclaw's own units (N PRs, an end-of-week cap).
+- Slice novel work into independently-shippable P1/P2/P3 increments so each
+  lands as one reviewable PR. The increment is the unit of REVIEW, not of
+  commitment: the whole spec is the commitment, and P1 landing is not a
+  stopping point. A goal driving spec work carries a `done_when` covering the
+  WHOLE spec. Stories that are genuinely dropped are said out loud; a spec left
+  marked "SPECIFIED, NOT IMPLEMENTED" is unfinished work with no owner.
 
 ## Governance
 
@@ -90,8 +94,14 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.3.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-22
-(2.3.0 — Principle II gains the one-home rule for worker-kind instructions.
+**Version**: 2.4.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-22
+(2.4.0 — the Development Workflow slicing clause: an increment is the unit of
+REVIEW, not of commitment; the whole spec is the commitment and P1 landing is
+not a stopping point. Ruled by Denys 2026-08-22 on the evidence that specs 007,
+008, 010 and 012 each stopped after their first story with nothing tracking the
+remainder — the old clause said "firm and size only P1 … leave P2/P3
+named-unsized until P1 lands", which suspended a decision and named no
+condition that restarts it. Prior: 2.3.0 — Principle II gains the one-home rule for worker-kind instructions.
 Earned, not theoretical: three copies of the onboard prompt existed with no
 discriminator, and PR #610 edited the two production never reads while the
 canonical skill already said the same thing. Collapsed by #613. Prior: 2.2.0,
