@@ -66,7 +66,7 @@ truth throughout and PLAN.md gone.**
   STAGE 4 · IMPLEMENT, one slice per PR
     worker does the CURRENT tasks.md slice only
     slice-guard reads tasks.md checkbox flips [P3] (not PLAN.md)
-    gate chain [exists]: verify → test-integrity → review(dial) → delivery
+    gate chain [exists]: verify → test-integrity → scope → review(dial) → delivery
                                             │
                                             ▼
   STAGE 5 · DELIVER                                         [exists]

@@ -43,6 +43,7 @@ from typing import Awaitable, Callable, Optional
 from .delivery import deliver_change, delivery_failed
 from .engine import Engine, EngineEvent, EngineRequest
 from .loom.limits import classify_failure, pause_seconds
+from .loom.declared_scope import scope_check, violation_summary
 from .loom.test_integrity import present_test_names, scan_diff
 from .llm_call import PlannerError
 from .program_plan import PlannedTask, order_tasks
@@ -512,6 +513,48 @@ class _IntegrityGate:
         if failure is not None:
             return GateVerdict.failed(self.gate_id, failure)
         return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
+class _ScopeGate:
+    """Declared-file-scope gate (spec 010 FR-103) — always-hard, zero-LLM.
+
+    A `[P]` task earns the right to run concurrently by declaring the paths it
+    will touch; this is where that declaration stops being a promise. It reads
+    the SAME shared diff test-integrity just consumed and asks one question: did
+    the change stay inside what its plan declared?
+
+    Self-skipping by design. An increment that neither was dispatched with a
+    pinned scope nor claimed a scoped `[P]` task has no contract, so the gate is
+    *not consulted* — it produces no verdict to ship on and leaves every ordinary
+    increment byte-unaffected. When it IS consulted it fails CLOSED: a violation
+    blocks, and so does a check that cannot decide (a crash is not an approval,
+    #186). The parser is total precisely so that second branch stays unreachable.
+
+    Placed after integrity and before the cognition gates: it costs one string
+    scan, so running it early means a hermeticity violation short-circuits ahead
+    of every ``claude`` call.
+    """
+
+    gate_id: str = "scope"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        try:
+            check = scope_check(diff, gi.declared_scope)
+        except Exception as err:  # noqa: BLE001 — unreviewable ⇒ fail closed (#186)
+            return GateVerdict.failed(
+                self.gate_id,
+                f"declared-scope check could not produce a verdict "
+                f"({err.__class__.__name__}: {err}) — failing closed: an "
+                f"unreviewable hermeticity check is not an approval",
+            )
+        if not check.consulted or not check.violations:
+            return GateVerdict.passed(self.gate_id)
+        return GateVerdict.failed(self.gate_id, violation_summary(check))
 
 
 @dataclass
@@ -1569,7 +1612,7 @@ class TaskQueue(_NotifyMixin):
         #    them, and do not reorder the routing below — the ordering is
         #    load-bearing (2026-07-20 night-incident regression surface, #407).
         #
-        #    Axis 1 — GATE VERDICT: verify → test_integrity → review → browser,
+        #    Axis 1 — GATE VERDICT: verify → test_integrity → scope → review → browser,
         #      a STRICT SHORT-CIRCUIT chain over ONE computed diff. review runs
         #      only if integrity passed; browser only if both passed. Flattening
         #      it recomputes the diff and surfaces lower-priority findings.
@@ -1764,7 +1807,7 @@ class TaskQueue(_NotifyMixin):
                     # "done" means the verify gate passed, not that the agent said
                     # so — then the checks that READ the change. Axis 1 (the gate
                     # verdict) runs as an ORDERED, short-circuit PIPELINE over ONE
-                    # shared diff: verify → test_integrity → review → browser.
+                    # shared diff: verify → test_integrity → scope → review → browser.
                     # run_pipeline stops at the FIRST non-ok verdict, and that
                     # short-circuit IS the strict ordering the cascade always had —
                     # review runs only if integrity passed, browser only if both
@@ -1800,7 +1843,7 @@ class TaskQueue(_NotifyMixin):
                     # scope here); the gate itself never learns the dial, honoring
                     # gate_pipeline's "policy never lives in a gate". verify /
                     # test_integrity stay always-hard; browser stays dial-able.
-                    gates: list = [_VerifyGate(), _IntegrityGate()]
+                    gates: list = [_VerifyGate(), _IntegrityGate(), _ScopeGate()]
                     if strictness != "trust":
                         gates.append(_ReviewGate(self))
                     gates.append(_BrowserGate(self))

@@ -64,8 +64,9 @@ moves to its own repo, those three seams are the entire integration surface.
 
 One call site: `task_queue.py` runs the gates in the settle path, in order —
 verify gate (green tests) → `test_integrity` (nobody weakened the tests) →
-`review_gate` (adversarial review) → `browser_gate` (+ `reachability`
-escape valve). Any failure feeds back into the retry brief; the terminal
+`loom.declared_scope` (a `[P]` increment stayed inside its declared file
+scope — spec 010 FR-103) → `review_gate` (adversarial review) →
+`browser_gate` (+ `reachability` escape valve). Any failure feeds back into the retry brief; the terminal
 failure escalates to a human. Tests: `tests/test_review_gate*.py`,
 `tests/test_review_degrade_ladder.py`, `tests/test_browser_gate*.py`,
 `tests/test_quality_package.py`.
