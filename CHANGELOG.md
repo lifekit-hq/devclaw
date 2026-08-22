@@ -2,6 +2,14 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.4.1](https://github.com/lifekit-hq/devclaw/compare/v0.4.0...v0.4.1) (2026-08-22)
+
+
+### Documentation
+
+* **spec:** 012 — saga & unit-of-work prompt contract ([#602](https://github.com/lifekit-hq/devclaw/issues/602)) ([618b386](https://github.com/lifekit-hq/devclaw/commit/618b386684d9e4e59e1a86b689ef18ae94c80ec4))
+* **spec:** draft spec 010 — unit of work & planned parallelism (encodes the 2026-08-18 [#553](https://github.com/lifekit-hq/devclaw/issues/553) ruling) ([#603](https://github.com/lifekit-hq/devclaw/issues/603)) ([da795d3](https://github.com/lifekit-hq/devclaw/commit/da795d33828a9cd7fb0d63c1e7e9fcb515635bef))
+
 ## [0.4.0](https://github.com/lifekit-hq/devclaw/compare/v0.3.1...v0.4.0) (2026-08-22)
 
 
