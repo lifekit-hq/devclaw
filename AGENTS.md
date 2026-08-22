@@ -6,14 +6,15 @@
 > SQLite table. Read it before exploring the tree.
 > **Contract:** [`CLAUDE.md`](./CLAUDE.md) (working) and
 > [`docs/architecture.md`](./docs/architecture.md) (locked invariants).
-> **In-flight specs:** [`.specify/specs/`](./.specify/specs/).
+> **In-flight specs:** [`specs/`](./specs/) at the repo root. `.specify/` holds only
+> the pipeline's scripts, templates, and the constitution — never a spec.
 
 
 ## Stack
 
 - **Python** ≥3.11; package root `devclaw/`; sandbox runner at `runner/runner.py`
 - **Database**: SQLite (`devclaw.db`), single-writer/lock discipline; `StateStore` owns all mutations
-- **MCP surface**: FastMCP via `devclaw/server/http.py` + `devclaw/server/tools.py`
+- **MCP surface**: FastMCP — tools in `devclaw/server/tools.py`, HTTP routes in `devclaw/server/routes/`
 - **Tests**: pytest (fully stubbed, no docker, no claude) — ~2100 tests in ~27s (`-n auto`)
 - **Lint**: `ruff check .` — pyflakes + syntax errors only (`select = ["F", "E9"]`)
 
@@ -30,18 +31,20 @@ Always use a private TMPDIR — `/tmp/pytest-of-<user>` can be root-owned on thi
 
 | Path | Purpose |
 |------|---------|
-| `devclaw/server/http.py` | HTTP routes + MCP surface (dashboard, `/problems.json`, etc.) |
+| `devclaw/server/routes/` | HTTP routes, one module per resource (`goals`, `projects`, `tasks`, `console`, `control`, `observability`, `evals`) |
+| `devclaw/server/http.py` | No routes — imports every route module, because registration IS import (#625) |
 | `devclaw/server/tools.py` | MCP tool definitions |
-| `devclaw/state_store/` | All DB writes; `ProblemsMixin`, `GoalStore`, `StateStore` |
-| `devclaw/goal/` | Goal state machine, tick, planner, evaluator |
+| `devclaw/state_store/` | Task/event DB writes; `StateStore` + `ProblemsMixin` |
+| `devclaw/goal/store/` | Goal-state DB writes; `GoalStore`, CAS'd through `transition()` |
+| `devclaw/goal/` | Goal state machine, tick, done-gate evaluator |
 | `devclaw/engine/` | Sandbox container launcher |
 | `runner/runner.py` | In-sandbox agent harness (layer 5) |
-| `runner/skills/` | Skill markdown files (synced to `/opt/devclaw/skills/`) |
+| `runner/skills/` | Skill markdown — the ONE source, baked into the image at `/opt/devclaw/skills/` |
 | `tests/` | Pytest suite — all stubbed |
 
 ## Key conventions
 
-- `/opt/devclaw/skills/_common.md` is the installed copy of `runner/skills/_common.md` — keep them in sync when editing either.
+- `runner/skills/` is the ONE home for worker-kind instructions — baked to `/opt/devclaw/skills/` in the sandbox image, pointed at in-repo by the host engine (`DEVCLAW_SKILLS_DIR`). Never edit an installed copy and never add a second one: a fallback copy is a silent fork (#610). A missing bundle fails loud (`skills_missing`), never substitutes text (#613).
 - `store.list_problems(since_ms=...)` accepts an epoch-ms lower bound; `None` = no filter.
 - `/problems.json` defaults to a 30-day lookback; `?since_ms=0` bypasses it for all-time.
 - OAuth only — `ANTHROPIC_API_KEY` is actively stripped; never add an API-key code path.
@@ -51,5 +54,5 @@ Always use a private TMPDIR — `/tmp/pytest-of-<user>` can be root-owned on thi
 ## Gotchas
 
 - In a git worktree, verify `python -c "import devclaw; print(devclaw.__file__)"` points to the WORKTREE, not the main checkout.
-- `tests/test_runner_wrappers.py` tests the in-sandbox runner (`runner/runner.py`) by loading it directly — it runs against `/opt/devclaw/skills/`, not the source copy.
+- Runner tests load `runner/runner.py` from the SOURCE tree via `importlib` (it's a script, not a package) and exercise pure functions. `tests/test_runner_skills.py` points `_SKILLS_DIR` at in-repo `runner/skills/` — no test depends on an installed `/opt/devclaw/skills/`.
 <!-- devclaw:managed:end -->
