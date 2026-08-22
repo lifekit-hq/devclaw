@@ -6,8 +6,7 @@ Two ways in:
 
 - ``compute_scorecard(store, window_hours=168)`` — a pure function over the
   state_store's ``tasks`` and ``traces`` tables. Cheap SQL + a light Python
-  pass over cognition response text (full ``response_text`` since T0.5,
-  ``response_preview`` for legacy rows); no cognition call.
+  pass over the cognition ``response_text``; no cognition call.
 - ``devclaw scorecard`` (CLI) and the ``get_scorecard_metrics`` MCP tool
   wrap the same function.
 
@@ -38,19 +37,17 @@ _EVALUATOR_ROLE = "evaluator"
 #: into the telemetry module — telemetry stays a pure, dependency-light path.
 _EVAL_VERDICTS = ("on_track", "off_track", "achieved", "stalled", "needs_human")
 
-#: Best-effort verdict extractor. Since T0.5 the tracer stores the FULL model
-#: response as ``response_text``, so the verdict is found wherever it sits in
-#: the response; legacy rows carry only the 240-char ``response_preview`` and
-#: fall back to that. If neither yields a verdict (model returned prose, error
-#: string, or a legacy preview truncated mid-JSON), the row lands under
-#: ``unparseable`` — going forward that bucket should only contain genuinely
+#: Best-effort verdict extractor. The tracer stores the FULL model response
+#: as ``response_text``, so the verdict is found wherever it sits in the
+#: response. A row that yields none (the model returned prose, or an error
+#: string) lands under ``unparseable`` — that bucket holds only genuinely
 #: verdict-less responses.
 _VERDICT_RE = re.compile(r'"verdict"\s*:\s*"(\w+)"')
 
 #: Same shape for the structural axis. Present only at done-gate responses;
 #: absent from progress-check calls. Missing values are counted as ``"unknown"``
-#: so the dashboard can spot legacy / non-done-gate calls without them polluting
-#: the concrete grades.
+#: so the dashboard can spot non-done-gate calls without them polluting the
+#: concrete grades.
 _STRUCTURAL_RE = re.compile(r'"structural_health"\s*:\s*"(\w+)"')
 _STRUCTURAL_GRADES = ("clean", "concerns", "poor")
 
@@ -59,28 +56,27 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _extract_verdict(preview: str) -> Optional[str]:
-    """Pull the verdict string out of an evaluator response (the full
-    ``response_text`` since T0.5; the 240-char ``response_preview`` for legacy
-    rows). Returns None when the text doesn't look like an evaluator response
-    (which happens for other cognition roles too — the caller filters
-    by role first, but this stays defensive)."""
-    if not preview:
+def _extract_verdict(text: str) -> Optional[str]:
+    """Pull the verdict string out of an evaluator ``response_text``. Returns
+    None when the text doesn't look like an evaluator response (which happens
+    for other cognition roles too — the caller filters by role first, but this
+    stays defensive)."""
+    if not text:
         return None
-    m = _VERDICT_RE.search(preview)
+    m = _VERDICT_RE.search(text)
     if not m:
         return None
     v = m.group(1).strip().lower()
     return v if v in _EVAL_VERDICTS else None
 
 
-def _extract_structural(preview: str) -> Optional[str]:
+def _extract_structural(text: str) -> Optional[str]:
     """Pull the ``structural_health`` grade — the axis-B verdict added by C3.
-    Returns None when the field is absent (progress-check or legacy call);
-    only recognized values pass through."""
-    if not preview:
+    Returns None when the field is absent (a progress-check call); only
+    recognized values pass through."""
+    if not text:
         return None
-    m = _STRUCTURAL_RE.search(preview)
+    m = _STRUCTURAL_RE.search(text)
     if not m:
         return None
     g = m.group(1).strip().lower()
@@ -296,9 +292,10 @@ def sum_task_usage(result_jsons: Any) -> dict:
     """Sum the worker ``usage`` blocks out of task ``result_json`` payloads.
 
     Input is any iterable of raw ``result_json`` strings (None/torn entries
-    are skipped — usage is telemetry, absence is normal for legacy rows and
-    failed runs). Returns the flat totals plus ``tasks_with_usage`` so a
-    reader can tell "0 because free" from "0 because nothing reported".
+    are skipped — usage is telemetry, and absence is normal for a run that
+    failed before the worker reported any). Returns the flat totals plus
+    ``tasks_with_usage`` so a reader can tell "0 because free" from "0 because
+    nothing reported".
     """
     totals = {
         "tasks_with_usage": 0,
@@ -413,9 +410,7 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
         if p.get("role") != _EVALUATOR_ROLE:
             continue
         eval_calls += 1
-        # T0.5: prefer the full response text; legacy rows only have the
-        # 240-char preview (verdicts past the truncation were "unparseable").
-        text = p.get("response_text") or p.get("response_preview") or ""
+        text = p.get("response_text") or ""
         v = _extract_verdict(text)
         if v is None:
             unparseable += 1

@@ -53,26 +53,27 @@ class CognitionEvent:
     model: str = ""
     prompt_hash: str = ""
     prompt_preview: str = ""
-    response_preview: str = ""
-    #: the FULL response text (T0.5) — plans/evaluations are small, and the
-    #: 240-char preview made verdicts unreconstructable (telemetry regexed the
-    #: preview and dumped truncations into "unparseable"). The full PROMPT is
-    #: deliberately NOT stored in the row — it can exceed 128 KB; goal-scoped
-    #: tracers write it to a transcript file instead (see ``transcript_file``).
+    #: the FULL response text — the ONE field carrying what the model said.
+    #: A 240-char ``response_preview`` sat beside it until #616 and made
+    #: verdicts unreconstructable (telemetry regexed the preview and dumped
+    #: truncations into "unparseable"); readers that want a short form derive
+    #: it with :func:`_preview`. The full PROMPT is deliberately NOT stored in
+    #: the row — it can exceed 128 KB; goal-scoped tracers write it to a
+    #: transcript file instead (see ``transcript_file``).
     response_text: str = ""
     #: transcript filename under ``<goal_dir>/transcripts/`` when the bound
     #: tracer is goal-scoped (PersistentTracer with a goals_dir); "" otherwise.
     transcript_file: str = ""
     latency_ms: int = 0
     error: str = ""
-    # Rough proxy for cost: ~4 chars per token. Kept for rows where the CLI
-    # envelope was unavailable (legacy rows, raw-stdout fallback). Treat as a
-    # relative measure for comparing cascades, not for billing accuracy.
+    # Rough proxy for cost: ~4 chars per token. The fallback for calls with no
+    # usage envelope to report — stub cognition, an errored/timed-out call, the
+    # raw-stdout degrade path. Treat as a relative measure for comparing
+    # cascades, not for billing accuracy.
     tokens_in_est: int = 0
     tokens_out_est: int = 0
-    #: REAL usage from the ``claude --print --output-format json`` envelope
-    #: (T0.5). None → no envelope for this call; fall back to the ``_est``
-    #: fields above.
+    #: REAL usage from the ``claude --print --output-format json`` envelope.
+    #: None → no envelope for this call; fall back to the ``_est`` fields above.
     tokens_in: Optional[int] = None
     tokens_out: Optional[int] = None
     cache_read: Optional[int] = None
@@ -295,7 +296,7 @@ class Tracer:
                 lines.append(head)
                 lines.append(f"    - prompt: `{e.get('prompt_hash', '')}` — _{e.get('prompt_preview', '')}_")
                 if not err:
-                    lines.append(f"    - response: _{e.get('response_preview', '')}_")
+                    lines.append(f"    - response: _{_preview(e.get('response_text', ''))}_")
             elif kind == "dispatch":
                 tags = []
                 if e.get("is_done_check"):
@@ -406,8 +407,9 @@ def record_cognition(
 ) -> None:
     """Record one cognition call. ``tokens_in``/``tokens_out``/``cache_read``/
     ``cache_creation``/``cost_usd`` carry REAL usage from the CLI's json
-    envelope when the caller has it; when absent (stub cognition, raw-stdout
-    fallback) the event still carries the legacy len/4 ``_est`` fields."""
+    envelope when the caller has it; when absent (stub cognition, an errored
+    call, the raw-stdout degrade path) the event carries the len/4 ``_est``
+    estimate instead."""
     t = _current.get()
     if t is None:
         return
@@ -418,7 +420,6 @@ def record_cognition(
     t.append(CognitionEvent(
         role=role, model=model or "(default)",
         prompt_hash=_hash(prompt), prompt_preview=_preview(prompt),
-        response_preview=_preview(response),
         response_text=response or "",
         transcript_file=transcript_file,
         latency_ms=latency_ms,

@@ -40,6 +40,7 @@ from .rows import (
     _row_to_task,
     derive_failure_class,
 )
+from .trace_migration import migrate_cognition_response_text_once
 
 #: The retry loop's terminal-escalation suffix ("… (failed after N attempts)") —
 #: the one place the attempt count survives into what the store sees at settle
@@ -178,6 +179,11 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         #: exception was caught between nested levels.
         self._txn_failed = False
         self._bootstrap()
+        # One-shot, crash-safe: fold pre-T0.5 ``response_preview`` payloads
+        # into ``response_text`` so telemetry has exactly one field to read
+        # (#616). Stamps a meta marker; every later construction is a no-op
+        # lookup. See ``trace_migration`` for the cutoff.
+        migrate_cognition_response_text_once(self, now_ms=_now_ms())
 
     @property
     def db_path(self) -> str:
@@ -1230,11 +1236,11 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         """Aggregate stats over all trace events for a goal: counts per kind,
         cognition total latency, tokens, and cost. Cheap SQL — no LLM call.
 
-        Token totals prefer REAL usage (recorded from the CLI's json envelope
-        since T0.5) per row; rows without it (legacy rows, raw-stdout fallback)
-        contribute their len/4 estimate — ``cognition_rows_estimated`` says how
-        many rows in the total are estimates. The pure-estimate ``*_est`` sums
-        are kept for back-compat."""
+        Token totals prefer REAL usage (recorded from the CLI's json
+        envelope) per row; a row without one — stub cognition, an errored call,
+        the raw-stdout degrade path — contributes its len/4 estimate, and
+        ``cognition_rows_estimated`` says how many rows in the total are
+        estimates."""
         with self._lock:
             counts = dict(
                 self._db.execute(
@@ -1250,8 +1256,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         latency_ms = 0
         tokens_in = 0
         tokens_out = 0
-        tokens_in_est = 0
-        tokens_out_est = 0
         rows_with_real = 0
         rows_estimated = 0
         cost_usd = 0.0
@@ -1261,8 +1265,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
             except (TypeError, json.JSONDecodeError):
                 continue
             latency_ms += int(p.get("latency_ms") or 0)
-            tokens_in_est += int(p.get("tokens_in_est") or 0)
-            tokens_out_est += int(p.get("tokens_out_est") or 0)
             real_in, real_out = p.get("tokens_in"), p.get("tokens_out")
             if real_in is not None or real_out is not None:
                 rows_with_real += 1
@@ -1283,8 +1285,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
             "cognition_rows_with_real_usage": rows_with_real,
             "cognition_rows_estimated": rows_estimated,
             "cognition_cost_usd": round(cost_usd, 6),
-            "cognition_tokens_in_est": tokens_in_est,
-            "cognition_tokens_out_est": tokens_out_est,
         }
 
     def _prune_table_batch(self, *, table: str, older_than_ms: int, limit: int) -> int:
