@@ -130,8 +130,14 @@ def test_node_json_carries_the_same_freshness_block(http_mod, monkeypatch):
         ),
     )
     v = http_mod._node_vitals()
-    assert v["freshness"]["last_tick_at"] == http_mod._health_freshness()["last_tick_at"]
+    # Pin the VALUE, not the agreement. Comparing _node_vitals() against
+    # _health_freshness() only restates that one calls the other, so it passed
+    # for any value — including a wrong one — and could never catch the drift
+    # between the two surfaces that this test exists to prevent (#494).
+    assert v["freshness"]["last_tick_at"] == "2023-11-14T22:28:20+00:00"
     assert v["freshness"]["tick_seconds"] == 900
+    # The shared-truth property itself: both surfaces expose the same keys.
+    assert set(v["freshness"]) == set(http_mod._health_freshness())
 
 
 @pytest.mark.asyncio
