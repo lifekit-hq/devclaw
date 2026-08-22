@@ -18,7 +18,6 @@ No transport, no persistence — unit-testable with a stubbed ``claude_caller``.
 from __future__ import annotations
 
 import json
-import os
 from typing import Awaitable, Callable
 
 from .llm_call import PlannerError, claude_with_model, extract_json

@@ -40,7 +40,7 @@ from ..project_registry import (
 )
 from ..state_store import _now_ms
 from .. import speckit_setup as _speckit
-from ._state import _goal_get, goals, mcp, queue, registry, store
+from ._state import goals, mcp, queue, registry, store
 
 
 def _resolve_project_or_reject(project_id: str, tool: str) -> ResolvedDispatch:

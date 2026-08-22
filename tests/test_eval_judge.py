@@ -1,6 +1,5 @@
 """Failure-analysis judge tests — the deterministic core (cognition stubbed)."""
 
-import json
 
 import pytest
 

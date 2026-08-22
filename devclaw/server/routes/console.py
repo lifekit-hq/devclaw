@@ -20,11 +20,9 @@ from urllib.parse import quote as _quote
 from starlette.requests import Request
 from starlette.responses import (
     FileResponse,
-    HTMLResponse,
     PlainTextResponse,
     RedirectResponse,
     Response,
-    StreamingResponse,
 )
 
 from .._state import mcp, store

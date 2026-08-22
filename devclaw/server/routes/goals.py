@@ -16,9 +16,7 @@ import asyncio
 import datetime as _dt
 import json
 import os
-import time
 from pathlib import Path
-from urllib.parse import quote as _quote
 
 from starlette.requests import Request
 from starlette.responses import (
@@ -30,13 +28,11 @@ from starlette.responses import (
 from ... import telemetry as _telemetry
 from ...goal import slice_guard
 from ...goal.slice_guard import _TASKS_PATH_RE
-from .._state import _goal_get, goals, mcp, store
+from .._state import goals, mcp, store
 from ._common import _task_row
 from ._projections import (
-    _TERMINAL_PHASES,
     _TIMELINE_PHASES,
     _event_kind,
-    _goal_row,
     _phase_index,
     _phase_label,
     _project_event_row,

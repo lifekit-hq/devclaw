@@ -180,9 +180,9 @@ def retention_context(size_bytes: int) -> str:
                 f"alarm threshold (DEVCLAW_DB_SIZE_ALERT_MB): "
                 f"{threshold_mb:.0f} MB" if threshold_mb else
                 "alarm threshold (DEVCLAW_DB_SIZE_ALERT_MB): disabled",
-                f"trace retention (DEVCLAW_TRACE_RETENTION_DAYS): "
+                "trace retention (DEVCLAW_TRACE_RETENTION_DAYS): "
                 + (f"{trace_days} days" if trace_days else "DISABLED (0) — traces are not pruned"),
-                f"events retention (DEVCLAW_EVENTS_RETENTION_DAYS): "
+                "events retention (DEVCLAW_EVENTS_RETENTION_DAYS): "
                 + (f"{events_days} days" if events_days else "DISABLED (0) — events are not pruned"),
                 "note: retention + a weekly VACUUM keep the .db small; a retention "
                 "var set to 0 disables that pruning, which is the usual root cause "

@@ -27,13 +27,11 @@ rollup (the same shape the MCP tools return), so the CLI is scriptable too.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 import sys
-import time
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from typing import Optional
 
 from .goal.store import GoalStore
 from .project_registry import ProjectExists, ProjectRegistry, project_rollup

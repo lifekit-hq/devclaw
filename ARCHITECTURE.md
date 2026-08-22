@@ -105,22 +105,24 @@ Runs **inside the sandbox container** at `/opt/devclaw/runner.py`. The only laye
 
 Skills in `runner/skills/` are plain markdown — no model-specific frontmatter. Hooks in `runner/hooks/` are bash `.sh` files. Both are baked into the sandbox image; installed copies live at `/opt/devclaw/skills/` and `/opt/devclaw/hooks/`.
 
-> **Gotcha:** `runner/skills/_common.md` and `/opt/devclaw/skills/_common.md` are two copies of the same file — keep them in sync when editing either.
+> **Gotcha:** `runner/skills/` is the ONE home for these files; `/opt/devclaw/skills/` is what the image bake produces from it. Edit the source, rebuild the image. Never edit an installed copy and never add a second one — a fallback copy is a silent fork, where the edit lands in a copy production never reads (#610).
 
 ## HTTP routes: where declared, how to add one
 
-All HTTP routes live in `devclaw/server/http.py`, registered via the `@mcp.custom_route(path, methods=[...])` decorator. `mcp` is the FastMCP instance imported from `_state.py`. The file calls into layer-2 and layer-4 service objects — it never writes goal or task state directly.
+HTTP routes live in `devclaw/server/routes/`, split by resource — `goals.py`, `projects.py`, `tasks.py`, `console.py`, `control.py`, `observability.py`, `evals.py` — each registering via the `@mcp.custom_route(path, methods=[...])` decorator. `mcp` is the FastMCP instance imported from `_state.py`. Handlers call into layer-2 and layer-4 service objects — they never write goal or task state directly.
+
+`devclaw/server/http.py` holds no routes. It exists to IMPORT every route module, because registration IS import: a route module nothing imports serves nothing (#625).
 
 **Convention for adding a new route:**
 
-1. Add the handler in `http.py` with `@mcp.custom_route("/your/path", methods=["GET"])`.
+1. Add the handler to the `routes/` module that owns the resource, with `@mcp.custom_route("/your/path", methods=["GET"])`. A genuinely new resource gets a new module — and an import for it in `http.py`, or it silently serves nothing.
 2. Return a `Response` (for JSON) or `StreamingResponse` (for SSE).
 3. For JSON projections: read from `StateStore` or `GoalStore`; never mutate state from an HTTP handler — mutations go through MCP tools or the service layer.
-4. For SSE streams: follow the `asyncio.Queue` + generator pattern used by `goal_events` (line ~999).
+4. For SSE streams: follow the `asyncio.Queue` + generator pattern used by `goal_events` (`routes/goals.py`).
 5. Route naming convention: `GET /goals/{goal_id}.json` → handler `goal_json`; `GET /goals/{goal_id}/prs.json` → `goal_prs_json`.
-6. Add a test in `tests/test_dashboard.py` or a new `tests/test_<name>_endpoint.py` using the in-process FastMCP client from `conftest.py`.
+6. Add a test as `tests/test_console_<name>_endpoint.py` (the existing convention) using the in-process FastMCP client from `conftest.py`.
 
-Endpoints that require authentication call `_require_auth(request)` (defined in `lifecycle.py`, imported into `http.py`).
+Authentication is transport-wide ASGI middleware in `lifecycle.py` (bearer token, `?token=` query-string fallback for EventSource) — not a per-handler call. Unset token ⇒ auth disabled, for local dev.
 
 ## The operator console
 
@@ -128,7 +130,7 @@ The console SPA lives in `console/src/` — React + TypeScript, built with Vite.
 
 **Build:** `npm --prefix console run build` → `devclaw/server/console_dist/`. The `pyproject.toml` wheel configuration force-includes `dist/**` so built assets ship inside the Python package.
 
-**Serving:** `http.py` serves `GET /console` → `index.html`; `GET /console/{path}` → static asset or fallback to `index.html` for client-side routing. `/` redirects to `/console`.
+**Serving:** `routes/console.py` serves `GET /console` → `index.html`; `GET /console/{path}` → static asset or fallback to `index.html` for client-side routing. `/` redirects to `/console`.
 
 **How the console fetches data — `console/src/api.ts` is the single API client:**
 
@@ -254,7 +256,7 @@ All tests run under `DEVCLAW_ENGINE=stub` (the default in tests). No docker, no 
 | Gates | `test_gate_pipeline.py`, `test_test_integrity.py`, `test_browser_gate.py` |
 | Delivery | `test_delivery.py`, `test_eval_outcomes.py` |
 
-> **Note:** Runner tests import `runner/runner.py` directly (module import, not subprocess) and exercise pure functions with the SDK call stubbed. They run against `/opt/devclaw/skills/`, not the source tree.
+> **Note:** Runner tests load `runner/runner.py` from the SOURCE tree via `importlib` (it's a script, not a package) and exercise pure functions with the agent call stubbed. `test_runner_skills.py` points `_SKILLS_DIR` at in-repo `runner/skills/` — no test depends on an installed `/opt/devclaw/skills/`.
 
 ## Where to look next
 

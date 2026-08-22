@@ -11,7 +11,6 @@ import json
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from ... import telemetry as _telemetry
 from .._state import mcp, store
 from ._common import _task_row
 

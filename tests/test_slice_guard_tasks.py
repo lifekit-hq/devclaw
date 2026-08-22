@@ -16,7 +16,6 @@ from __future__ import annotations
 import os
 import subprocess
 
-from devclaw.goal import slice_guard as _slice_guard
 from devclaw.goal.slice_guard import (
     count_slice_advances,
     current_feature_dir_sync,

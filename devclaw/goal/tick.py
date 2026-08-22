@@ -43,7 +43,7 @@ from .models import Action, Goal, GoalStatus
 from .notify import Notifier
 from ..llm_call import ClaudeCaller
 from .store import GoalStore
-from .transitions import Event, IllegalTransition, TransitionConflict
+from .transitions import IllegalTransition, TransitionConflict
 from ..loom import trace as _trace
 from ..loom.limits import FailureKind, classify_failure, pause_seconds
 from ..state_store import _now_ms

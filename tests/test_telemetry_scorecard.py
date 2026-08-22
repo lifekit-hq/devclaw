@@ -134,7 +134,7 @@ def test_unparseable_response_lands_in_the_unparseable_bucket(store):
 
 def test_window_excludes_old_rows(store):
     # A completed task backdated to 8 days ago; a 1-week window should ignore it.
-    tid = f"tid-old"
+    tid = "tid-old"
     store.create_task(id=tid, kind="implement_feature", workspace_dir="/w", goal="g")
     store.mark_done(tid, json.dumps({"ok": True}), pr_url="https://gh/x/1")
     old_ms = _now_ms() - int(8 * 24 * 3600 * 1000)

@@ -22,7 +22,6 @@ module creates, behind an explicit confirm echo (deletion needs the extra
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import re
 

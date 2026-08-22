@@ -13,7 +13,6 @@ response validation, and aggregation are pure, so this is unit-testable with a s
 from __future__ import annotations
 
 import json
-import os
 from collections import Counter
 from typing import Awaitable, Callable, Optional
 

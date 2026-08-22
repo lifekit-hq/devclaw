@@ -12,7 +12,6 @@ test_goal_telemetry_integration to keep the units isolated.
 from __future__ import annotations
 
 import json
-import tempfile
 
 import pytest
 

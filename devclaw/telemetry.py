@@ -165,7 +165,7 @@ def _build_cap_pressure(limit_rows: list, *, since_ms: int) -> dict:
     ``reset_hint_s`` (from the provider's own message) when present.
     Only problems seen since ``since_ms`` are included.
     """
-    from devclaw.loom.limits import classify_failure, FailureKind
+    from devclaw.loom.limits import classify_failure
 
     groups: dict[str, dict] = {}
     for row in limit_rows:

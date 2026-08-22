@@ -63,7 +63,6 @@ async def _run_one(scenario_id: str, cognition: str, suite_dir: Path) -> dict:
     # Import inside to avoid the side effects (DEVCLAW_ENGINE env) bleeding
     # across scenarios; sandbox_e2e is designed for single-run-per-process,
     # but we run it as a subprocess to keep state hygiene strict.
-    import subprocess
     out_dir = suite_dir / scenario_id
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [

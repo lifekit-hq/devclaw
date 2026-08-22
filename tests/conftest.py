@@ -3,6 +3,7 @@
 import asyncio
 import os
 import pathlib
+import tempfile
 
 import pytest
 
@@ -19,6 +20,20 @@ import pytest
 os.environ.setdefault(
     "DEVCLAW_SKILLS_DIR",
     str(pathlib.Path(__file__).resolve().parents[1] / "runner" / "skills"),
+)
+
+# Give the suite its own devclaw.db. `devclaw.server._state` builds a real
+# StateStore/ProjectRegistry AT IMPORT TIME against DEVCLAW_DB, which defaults
+# to `devclaw.db` relative to CWD — so any test importing `devclaw.server.tools`
+# wrote a live database into the repo root. Under `-n auto` that one file is
+# shared by every worker, which is how a schema migration became a race. One
+# path per worker process (PYTEST_XDIST_WORKER is set before conftest imports;
+# empty when running -n0). Module-level, not a fixture: import-time side
+# effects need the env var already in place.
+os.environ.setdefault(
+    "DEVCLAW_DB",
+    str(pathlib.Path(tempfile.mkdtemp(prefix="devclaw-suite-"))
+        / f"devclaw-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}.db"),
 )
 
 from devclaw import task_queue

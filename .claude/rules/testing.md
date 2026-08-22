@@ -1,14 +1,23 @@
 # Testing — how to run and write tests in this repo
 
 The suite is **fully stubbed** — no docker, no `claude` binary, ~2100 tests in
-~110s. Anything needing real docker/claude is an integration concern:
-`/live-shakedown`, never pytest.
+~27s (pytest-xdist, `-n auto` in `addopts`; ~113s if you force `-n0`). Anything
+needing real docker/claude is an integration concern: `/live-shakedown`, never
+pytest.
 
 ## Running
 
 - Always run with a private tmpdir: `TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q`.
   `/tmp/pytest-of-<user>` can be root-owned on this host (a past root-run
   pytest), which crashes every `tmp_path` fixture with the default basetemp.
+- The suite runs **parallel by default** (`addopts = "-n auto"`). Add `-n0` when
+  you need `pdb`, live output, or ordered failures — xdist swallows all three.
+  A test that passes at `-n0` and fails at `-n auto` is a test with hidden
+  shared state (a fixed path, a global, a port), not an xdist problem.
+- **`ruff check .` before you open a PR** — CI gates it. The rule set is narrow
+  on purpose (`select = ["F", "E9"]` in `pyproject.toml`): pyflakes and syntax
+  errors, not style. F821 is the one that earns its keep — it catches the name
+  a refactor left dangling on a path no test executes.
 - **In a git worktree, verify the import path FIRST**:
   `.venv/bin/python -c "import devclaw; print(devclaw.__file__)"` must print the
   WORKTREE path. The shared venv's editable install is a `.pth` pointing at the
