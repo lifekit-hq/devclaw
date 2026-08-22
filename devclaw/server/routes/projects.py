@@ -7,7 +7,6 @@ per-project engine overrides (``config.json`` read / ``config`` write).
 
 from __future__ import annotations
 
-import json
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -21,8 +20,6 @@ from ._projections import (
     _active_goal_count,
     _goal_row,
     _last_activity_ms,
-    _project_event_row,
-    _safe_parse,
 )
 
 #: per-project override fields the console may edit, with their validators.

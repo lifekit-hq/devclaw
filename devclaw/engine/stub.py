@@ -15,7 +15,6 @@ failure path).
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from . import EngineEvent, EngineRequest, EngineResult

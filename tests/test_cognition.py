@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import os
 
 import pytest
 
-from devclaw import cognition
 from devclaw.cognition import (
     ClaudeCognition,
-    Cognition,
     StubCognition,
     bind,
     get_cognition,

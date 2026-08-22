@@ -7,7 +7,6 @@ optional recency window is not silently dropped by future refactors.
 from __future__ import annotations
 
 from devclaw.state_store import StateStore
-from devclaw.state_store.rows import _now_ms
 
 
 def _store(tmp_path) -> StateStore:

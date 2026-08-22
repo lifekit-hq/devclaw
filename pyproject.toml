@@ -14,7 +14,7 @@ devclaw-mcp = "devclaw.server:main"
 devclaw = "devclaw.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist>=3.6", "ruff>=0.8"]
 # OPT-IN alternative cognition backend (DEVCLAW_COGNITION=agent_sdk). NOT a
 # core/dev dependency — the stubbed suite imports devclaw.cognition WITHOUT it,
 # and the real query() is lazy-imported inside AgentSDKCognition.__call__.
@@ -48,8 +48,27 @@ artifacts = ["devclaw/server/console_dist/**"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# The suite is fully stubbed and process-independent (every test gets its own
+# tmp_path / SQLite file), so it parallelises cleanly: ~113s serial -> ~20s on
+# 16 cores. Speed is not a nicety here — a suite nobody wants to wait for is a
+# suite that gets run less often. Override with `-n0` when debugging a single
+# test (xdist swallows pdb and interleaves output).
+addopts = "-n auto"
 # The stub engine writes placeholder test_*.py into per-run sandbox workspaces
 # under evals/runs/; if pytest auto-discovers those it tries to import them
 # (and fails on bare filenames not part of the suite). Pin collection to tests/.
 testpaths = ["tests"]
 norecursedirs = ["evals/runs", ".venv", "build", "*.egg-info"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+# Deliberately narrow: pyflakes (F) + syntax/IO errors (E9), not style. The
+# load-bearing rule is F821 undefined-name — the failure mode that keeps biting
+# refactors here is a name a move left dangling, invisible until the route or
+# branch that hits it runs (the stubbed suite covers a lot, but not every
+# line). F401 pulls its weight too: the #625 http.py split left 15 dead imports
+# behind in devclaw/server/routes/. Formatting stays a human call; this gate
+# only reports things that are wrong, never things that are merely unfashionable.
+select = ["F", "E9"]

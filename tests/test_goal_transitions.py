@@ -20,7 +20,6 @@ from devclaw.goal.transitions import (
     Event,
     IllegalTransition,
     State,
-    TransitionConflict,
     derive_state,
 )
 from tests.goal_fakes import Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal

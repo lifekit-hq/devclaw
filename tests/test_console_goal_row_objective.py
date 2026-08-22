@@ -11,7 +11,7 @@ lets the list read as intent. `objective` is a goal's identity, distinct from
 from __future__ import annotations
 
 import devclaw.server._state as state_mod
-import devclaw.server.routes.goals as http_mod
+import devclaw.server.routes._projections as http_mod
 from devclaw.goal.service import GoalConfig, GoalService
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue

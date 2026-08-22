@@ -644,7 +644,7 @@ async def test_review_skipped_for_non_code_kind(store, monkeypatch):
 
     # review_repository is read-only — no diff to review.
     q = TaskQueue(store, runner=_ok_gate_runner([]), reviewer=reviewer)
-    tid = q.submit(kind="review_repository", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+    q.submit(kind="review_repository", workspace_dir="/ws", goal="g", verify_cmd="pytest")
     await q.drain()
     assert called["n"] == 0
 

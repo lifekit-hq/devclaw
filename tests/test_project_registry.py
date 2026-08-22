@@ -279,8 +279,8 @@ def test_automerge_defaults_to_none_on_create(reg):
 
 
 def test_automerge_set_on_create(reg):
-    on = reg.create(id="on", name="On", automerge=True)
-    off = reg.create(id="off", name="Off", automerge=False)
+    reg.create(id="on", name="On", automerge=True)
+    reg.create(id="off", name="Off", automerge=False)
     assert reg.get("on").automerge is True
     assert reg.get("off").automerge is False
 

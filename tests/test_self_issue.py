@@ -15,7 +15,7 @@ import asyncio
 
 from devclaw.goal import self_issue as si
 from devclaw.state_store import StateStore
-from devclaw.state_store.problems import fingerprint_for, normalize
+from devclaw.state_store.problems import fingerprint_for
 
 DAY_MS = 24 * 3600 * 1000
 
@@ -97,7 +97,7 @@ def _seed(store, *, category, kind, message, terminal=True, last_seen_ms, prior_
 
 def test_files_recurring_terminal_problem_once_then_idempotent(tmp_path):
     store = _store(tmp_path)
-    fp = _seed(
+    _seed(
         store, category="gate", kind="review_crash", message="boom on task abc",
         last_seen_ms=1500, prior_cycles=("2026-07-01", "2026-07-02"),
     )

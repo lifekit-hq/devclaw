@@ -16,7 +16,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Iterable, Optional
 
 from devclaw.goal.evaluator import build_prompt, evaluate, validate
 from devclaw.goal.models import EvalResult, Goal, GoalStatus
