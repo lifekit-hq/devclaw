@@ -522,6 +522,7 @@ async def tick_all(
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     triage_caller: "ClaudeCaller | None" = None,
     mergeability_probe: "_merge.MergeabilityProbe | None" = None,
+    project_workspaces: "Callable[[], set[str]] | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal. One goal's failure never stops the others, and a usage
     limit pauses the whole layer (0 tokens) rather than crashing per-goal.
@@ -629,6 +630,11 @@ async def tick_all(
     # (SQLite reuses freed pages but never shrinks the .db file on its own).
     # Same cheap-path slot, same zero-LLM guarantee.
     _engine_vacuum(engine)
+    # Same cheap slot, same zero-LLM guarantee: release the workspace of a
+    # goal that ended long enough ago that nobody will look at it again
+    # (#595). Bounded per tick and watermark-gated inside the engine, so a
+    # 34-directory backlog drains across ticks instead of wedging one.
+    _engine_reap_workspaces(engine, store, project_workspaces)
     # Loud-not-silent DB-size alarm: if the .db has grown past the threshold
     # despite retention+VACUUM, ping the owner ONCE (re-armed when it drops back
     # under) — a silent disk-fill wedge is the failure mode this whole tranche
@@ -706,6 +712,54 @@ def _engine_pause(engine: GoalEngine) -> tuple[int, str]:
     in-process engine does; test doubles may not → treated as no pause)."""
     fn = getattr(engine, "global_pause", None)
     return fn() if callable(fn) else (0, "")
+
+
+def _engine_reap_workspaces(
+    engine: GoalEngine,
+    store: GoalStore,
+    project_workspaces: "Callable[[], set[str]] | None",
+) -> None:
+    """Run the daily goal-workspace retention sweep via the engine, if it
+    exposes one. Best-effort — a maintenance failure must never break the
+    heartbeat, exactly like the trace prune.
+
+    ``project_workspaces`` resolves which workspaces belong to REGISTERED
+    projects; those are released by ``delete_project``, never swept because
+    their goals happen to be terminal. No resolver (or one that raises) means
+    the sweep does nothing — never that everything is fair game."""
+    fn = getattr(engine, "reap_workspaces", None)
+    if not callable(fn):
+        return
+    try:
+        owned = project_workspaces() if project_workspaces else None
+    except Exception:  # noqa: BLE001 — unknown ownership sweeps nothing
+        return
+    rows: list[dict] = []
+    for gid in store.list_goal_ids():
+        # id + workspace_dir live on the durable Goal; phase/direction/timestamps
+        # on the mutable GoalStatus. The sweep needs both, so flatten here.
+        try:
+            goal = store.load_goal(gid)
+            status = store.load_status(gid)
+        except Exception:  # noqa: BLE001 — an unreadable goal is simply not swept
+            continue
+        rows.append(
+            {
+                "id": gid,
+                "workspace_dir": goal.workspace_dir,
+                "phase": status.phase,
+                "direction": getattr(status, "direction", None),
+                "blocked_on": status.blocked_on,
+                "last_progress_at": getattr(status, "last_progress_at", None),
+                "last_tick_at": getattr(status, "last_tick_at", None),
+                "last_eval_at": getattr(status, "last_eval_at", None),
+                "last_plan_at": getattr(status, "last_plan_at", None),
+            }
+        )
+    try:
+        fn(rows, owned)
+    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
+        pass
 
 
 def _engine_prune_traces(engine: GoalEngine) -> None:

@@ -221,7 +221,7 @@ The single source of truth for **"which repos is devclaw working on, and what's 
 | `project_status(project_id)` | Full status of one project (facts + live goal status) |
 | `update_project(project_id, …)` | Update facts — pause/archive, fix repo/workspace |
 | `link_goal(project_id, goal_id, unlink?)` | Attach/detach a durable goal (by id; status joined live) |
-| `delete_project(project_id)` | Hard-delete a project record (goals untouched) |
+| `delete_project(project_id, release_resources?, dry_run?)` | Hard-delete a project record AND release the host resources it owned — its workspace checkout + toolchain volume. Refused (record kept) while a goal on that workspace is non-terminal or a task is running |
 
 Same control plane from a terminal (talks to the same stores; no server needed):
 

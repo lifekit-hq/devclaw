@@ -15,6 +15,7 @@ from fastmcp.exceptions import ToolError
 from pydantic import Field
 
 from ..delivery import deploy as _deploy
+from .. import host_resources as _host_resources
 from .. import elicitation as _elicitation
 from .. import intake as _intake
 from ..delivery import repo as _repo
@@ -1595,12 +1596,49 @@ async def link_goal(project_id: str, goal_id: str, unlink: bool = False) -> str:
 
 
 @mcp.tool
-async def delete_project(project_id: str) -> str:
-    """Permanently remove a project from the registry (HARD delete). Drops only the
-    registry record — the goals it linked are untouched (they live on disk and are
-    just unlinked from this view). To retire a project while keeping its record + a
-    paper trail, prefer update_project(status='archived'). Raises if the id is
-    unknown (so a typo doesn't silently no-op)."""
+async def delete_project(
+    project_id: str,
+    release_resources: bool = True,
+    dry_run: bool = False,
+) -> str:
+    """Permanently remove a project from the registry (HARD delete) AND release the
+    durable host resources it owned — its workspace checkout and its per-project
+    toolchain volume. The goals it linked are untouched as records (they live in
+    the goal store and are just unlinked from this view). To retire a project while
+    keeping its record + a paper trail, prefer update_project(status='archived').
+    Raises if the id is unknown (so a typo doesn't silently no-op).
+
+    Release is REFUSED — and the registry row is kept — while any goal on that
+    workspace is non-terminal or any task on it is still running; the response
+    names the blockers. Pass release_resources=False to drop the record only (the
+    pre-#595 behavior, which leaks the disk), or dry_run=True to see what would be
+    released without deleting anything.
+    """
+    project = registry.get(project_id)
+    if project is None:
+        raise ToolError(f"unknown project_id: {project_id}")
+
+    out: dict = {"project_id": project_id}
+    if release_resources:
+        release = _host_resources.release_for_project(
+            getattr(project, "workspace_dir", None),
+            goals=goals.list_goals(),
+            running_tasks=store.list_tasks(status="running", limit=500),
+            dry_run=dry_run,
+        )
+        out["resources"] = release
+        if release["blocked"]:
+            # Live state on that workspace — keep the record too. Deleting it
+            # while its resources must stay would orphan them permanently: the
+            # record is the only thing that can ever find them again.
+            out["deleted"] = False
+            return json.dumps(out, indent=2)
+
+    if dry_run:
+        out["deleted"] = False
+        return json.dumps(out, indent=2)
+
     if not registry.delete(project_id):
         raise ToolError(f"unknown project_id: {project_id}")
-    return json.dumps({"deleted": True, "project_id": project_id}, indent=2)
+    out["deleted"] = True
+    return json.dumps(out, indent=2)
