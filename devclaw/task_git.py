@@ -165,6 +165,43 @@ def _git_head_sync(host_dir: str) -> str:
     return p.stdout.strip() if p.returncode == 0 else ""
 
 
+def _git_status_paths_sync(host_dir: str) -> "list[str]":
+    """Every path the workspace has changed but NOT recorded in a commit —
+    untracked files included (``--untracked-files=all``).
+
+    The completeness half of "what did this increment change?" (#630, spec 013).
+    ``git diff <base>`` shows only what the agent chose to record; delivery, by
+    contrast, stages everything before committing, so a change made entirely of
+    new unrecorded files ships while reading as an empty span to anything that
+    judges the diff alone. A gate whose whole job is bounding what an increment
+    touched cannot rely on the agent's bookkeeping for its input.
+
+    Best-effort: ``[]`` on any hiccup (not a repo, git missing, timeout). It is
+    ADDITIVE evidence — it can only widen the set of paths a caller considers
+    touched, never shrink it — so a failed probe leaves the caller exactly where
+    the diff alone would have left it."""
+    try:
+        p = subprocess.run(
+            ["git", "-C", host_dir, "status", "--porcelain", "--untracked-files=all"],
+            capture_output=True, text=True, errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if p.returncode != 0:
+        return []
+    out: "list[str]" = []
+    for line in p.stdout.splitlines():
+        if len(line) < 4:
+            continue
+        entry = line[3:].strip()
+        # a rename/copy is reported as "old -> new"; both sides are touched
+        for part in entry.split(" -> "):
+            path = part.strip().strip('"')
+            if path:
+                out.append(path)
+    return out
+
+
 def _git_reset_clean_sync(host_dir: str, sha: str) -> bool:
     """Hard-reset the worktree to ``sha`` and drop every untracked file — the
     clean per-item base a retry attempt re-runs from (#1 retry isolation).

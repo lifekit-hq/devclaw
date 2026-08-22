@@ -159,6 +159,48 @@ def path_in_scope(path: str, globs: "tuple[str, ...] | list[str]") -> bool:
     return False
 
 
+# ---- reading a task graph directly -----------------------------------------
+
+
+@dataclass(frozen=True)
+class PlanRow:
+    """One checkbox row of a ``tasks.md``, as the fan-out planner reads it."""
+
+    task_id: str
+    label: str
+    checked: bool
+    parallel: bool
+    scopes: "tuple[str, ...]"
+
+
+def parse_plan_rows(text: str) -> "list[PlanRow]":
+    """Every identified task row of a ``tasks.md``, in file order.
+
+    The same row grammar the claim detector uses, exposed for the planner that
+    reads the graph from the WORKING TREE rather than from a diff. Rows without
+    a ``T<id>`` are skipped: they are prose or a checklist of something else, and
+    a fan-out lane must be nameable. Pure; never raises."""
+    rows: "list[PlanRow]" = []
+    for line in (text or "").splitlines():
+        m = _TASK_LINE.match(line)
+        if not m:
+            continue
+        rest = m.group("rest")
+        idm = _TASK_ID.search(rest)
+        if not idm:
+            continue
+        rows.append(
+            PlanRow(
+                task_id=idm.group(0),
+                label=rest.strip(),
+                checked=m.group("mark") in ("x", "X"),
+                parallel=bool(_PARALLEL.search(rest)),
+                scopes=parse_scopes(rest),
+            )
+        )
+    return rows
+
+
 # ---- diff parsing ----------------------------------------------------------
 
 
@@ -294,7 +336,9 @@ def _implicitly_allowed(diff: str) -> "set[str]":
 
 
 def scope_check(
-    diff: str, declared: "tuple[str, ...] | list[str] | None" = None
+    diff: str,
+    declared: "tuple[str, ...] | list[str] | None" = None,
+    extra_paths: "tuple[str, ...] | list[str] | None" = None,
 ) -> ScopeCheck:
     """Judge one increment's diff against its declared scope.
 
@@ -303,6 +347,14 @@ def scope_check(
     first-hand and does not have to infer it. Without it the contract is read
     from the increment's own claim on the task graph — which is what a
     single-lane increment that checks off a scoped `[P]` row is doing.
+
+    ``extra_paths`` widens the judged span beyond the diff. It exists because
+    the diff is only what the agent CHOSE to record, while delivery ships
+    everything in the workspace (#630, spec 013): without it, an increment
+    escapes its declared scope by simply not committing the out-of-scope files —
+    the #358 route-around arriving through the back door. The caller supplies
+    the workspace's unrecorded paths; they can only add violations, never remove
+    them.
 
     Never raises."""
     try:
@@ -314,7 +366,9 @@ def scope_check(
                 # worker got round to checking its row off — a lane that skips
                 # the bookkeeping must not thereby escape its declared I/O.
                 claims = {"(dispatched)": globs, **claims}
-        touched = changed_paths(diff)
+        touched = tuple(sorted(set(changed_paths(diff)) | {
+            _normalise(p) for p in (extra_paths or ()) if _normalise(p)
+        }))
         if not claims:
             return ScopeCheck(claims={}, violations=(), touched=touched)
         allowed = _implicitly_allowed(diff)
@@ -344,3 +398,52 @@ def violation_summary(check: ScopeCheck) -> str:
         f"execution safe; keep the change inside it, or widen the declaration in "
         f"the task graph first (planning time), never at runtime."
     )
+
+
+# ---- disjointness ----------------------------------------------------------
+
+
+def literal_prefix(pattern: str) -> str:
+    """The wildcard-free head of a declared glob — everything before the first
+    ``*`` or ``?``. ``src/widget/**`` ⇒ ``src/widget/``; ``**/x`` ⇒ ``""``."""
+    pat = _normalise(pattern)
+    cut = len(pat)
+    for i, ch in enumerate(pat):
+        if ch in "*?":
+            cut = i
+            break
+    return pat[:cut]
+
+
+def _prefix_covers(a: str, b: str) -> bool:
+    """Whether path-prefix ``a`` could contain anything under prefix ``b``."""
+    if a == "":
+        return True  # a wildcard-leading glob can reach anywhere
+    a_dir = a if a.endswith("/") else a + "/"
+    return b == a or b.startswith(a_dir) or b.startswith(a)
+
+
+def scopes_disjoint(
+    a: "tuple[str, ...] | list[str]", b: "tuple[str, ...] | list[str]"
+) -> bool:
+    """Whether two declared scopes can be run at the same time (spec 010 FR-101).
+
+    Decided SYNTACTICALLY, on the literal head of each glob, and deliberately
+    conservatively: two scopes are called disjoint only when no glob of one has a
+    literal head that could reach into the other's. The test can therefore
+    decline a fan-out that would in fact have been safe, but it can never permit
+    one that is not — and declining costs a night of sequential execution while
+    permitting costs a corrupted integration.
+
+    Empty on either side is NOT disjoint: a scope that declares nothing has
+    declared no boundary, and an undeclared boundary is exactly what FR-101
+    refuses to run concurrently."""
+    left = [literal_prefix(g) for g in a if str(g).strip()]
+    right = [literal_prefix(g) for g in b if str(g).strip()]
+    if not left or not right:
+        return False
+    for x in left:
+        for y in right:
+            if _prefix_covers(x, y) or _prefix_covers(y, x):
+                return False
+    return True

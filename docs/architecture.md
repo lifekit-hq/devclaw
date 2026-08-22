@@ -184,7 +184,26 @@ When the tick decides to *do* something (not just think):
    closed, in `trust` as well as `strict`, because a declared scope is what
    makes concurrent execution safe rather than a finding to weigh at the merge
    boundary. It is the mechanism, not a prompt, on purpose: workers route around
-   soft constraints (#358).
+   soft constraints (#358). The judged span is the WORKSPACE's, not the agent's
+   bookkeeping: the gate folds in paths the agent changed without recording
+   them, because delivery stages everything before it commits (#630 / spec 013)
+   and an increment must not escape its declared scope by declining to commit
+   the file.
+   **Planned fan-out (spec 010 US3, `DEVCLAW_FANOUT`, off by default)** is what
+   that gate makes safe. When a goal's task graph declares consecutive `[P]`
+   tasks with pairwise-disjoint declared scopes, the dispatch choke point reads
+   that group out of the plan (`goal/fanout.py`, zero LLM) and dispatches it as
+   ONE program of concurrent lanes — so the goal still carries a single
+   in-flight ref and every settle/observability surface is unchanged. Each lane
+   runs in its own checkout (two agents cannot share a working tree). They
+   INTEGRATE serially: `loom/merge_queue.py` admits one lane at a time, strictly
+   in plan order, and `delivery/integrate.py` merges it into the shared goal
+   workspace locally (no remote contention, no force-push) before the one
+   delivery to the goal branch. A lane that fails — its gates, or its merge —
+   fails alone and releases its slot. Concurrency degree is
+   `min(plan, DEVCLAW_MAX_CONCURRENT_PER_PROGRAM, DEVCLAW_MAX_CONCURRENT)`: a
+   worker never spawns a worker, and the sandbox carries no devclaw MCP surface
+   it could ask through.
 6. **Deliver, then settle** — for `deliver=True` tasks the change becomes a
    branch/PR *before* `done` is observable, so a poller never reads "done
    without a PR". A delivery that can't push/PR settles `failed`, never a silent

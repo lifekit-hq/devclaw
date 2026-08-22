@@ -506,6 +506,14 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 # it toward a meaningless 100%. Defaulted 0 so pre-existing rows
                 # read as non-idle (their `clean` value is unchanged).
                 "ALTER TABLE cycle_reports ADD COLUMN idle INTEGER NOT NULL DEFAULT 0",
+                # Fan-out lane metadata (spec 010 US3, FR-101/FR-102): the JSON
+                # {"position", "scopes", "integrate_into"} for a task dispatched
+                # as one lane of a planned parallel group — its merge-queue
+                # order, the file scope the settle gate holds it to, and the
+                # shared goal workspace its work is integrated into. NULL for
+                # every ordinary task and every pre-existing row, which is what
+                # keeps the non-fan-out path byte-identical.
+                "ALTER TABLE tasks ADD COLUMN lane_json TEXT",
             ):
                 try:
                     self._db.execute(sql)
@@ -593,6 +601,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         base_branch: Optional[str] = None,
         target_branch: Optional[str] = None,
         project_id: Optional[str] = None,
+        lane_json: Optional[str] = None,
     ) -> None:
         with self._lock:
             self._db.execute(
@@ -600,8 +609,8 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                      (id, kind, status, workspace_dir, goal, notify_url, created_at,
                       program_id, depends_on, order_idx, milestone, verify_cmd, deliver,
                       title, parent_goal_id, scaffold, plan_key, strictness,
-                      base_branch, target_branch, project_id)
-                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      base_branch, target_branch, project_id, lane_json)
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     id,
                     kind,
@@ -623,6 +632,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                     base_branch,
                     target_branch,
                     project_id,
+                    lane_json,
                 ),
             )
             self._commit()

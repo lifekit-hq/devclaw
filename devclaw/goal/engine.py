@@ -111,6 +111,58 @@ class InProcessEngine:
             return InFlight("devclaw", action.tool, task_id, "task", action.goal)
         raise GoalEngineError(f"unknown engine tool: {action.tool}")
 
+    async def dispatch_fanout(
+        self, action: Action, goal: Goal, notify_url: str, lanes: "list" 
+    ) -> InFlight:
+        """Dispatch a PLANNED PARALLEL GROUP — several increments of one plan at
+        once (spec 010 US3, FR-101).
+
+        The lanes come from the task graph, so there is nothing to decide here
+        and nothing to ask a model: this hands the queue an already-planned DAG
+        with no dependency edges, which is precisely what
+        :meth:`TaskQueue.start_planned_program` exists for (zero LLM — the
+        planner is never invoked). The queue then runs the children concurrently
+        up to its OWN caps, which is where FR-105's "the plan and the host's
+        caps, nothing else" is actually enforced.
+
+        A program, not N goal actions, on purpose: the goal keeps ONE in-flight
+        ref, so every settle, poll, and observability surface downstream is
+        unchanged. ``pump=False`` for the same reason :meth:`dispatch` uses it —
+        this runs inside the tick's atomic dispatch transaction.
+        """
+        from ..program_plan import PlannedTask
+        from . import fanout as _fanout
+
+        planned = [
+            PlannedTask(
+                key=lane.key,
+                goal=_fanout.lane_brief(lane, action.goal, lanes),
+                kind="implement_feature",
+                workspace_dir=lane.workspace_dir,
+                lane={
+                    "position": lane.position,
+                    "key": lane.key,
+                    "label": lane.label,
+                    "scopes": list(lane.scopes),
+                    "integrate_into": goal.workspace_dir,
+                },
+            )
+            for lane in lanes
+        ]
+        program_id = self._queue.start_planned_program(
+            goal=action.goal,
+            workspace_dir=goal.workspace_dir,
+            planned=planned,
+            notify_url=notify_url or None,
+            open_pr=action.open_pr,
+            verify_cmd=action.verify_cmd or goal.verify_cmd,
+            parent_goal_id=goal.id,
+            strictness=goal.strictness,
+            project_id=goal.project_id,
+            pump=False,
+        )
+        return InFlight("devclaw", "fanout", program_id, "program", action.goal)
+
     def kick(self) -> None:
         """Nudge the task queue to claim + launch any pending row NOW, rather
         than wait for its periodic pump (``TaskQueue.start_ticking``'s

@@ -35,6 +35,15 @@ class PlannedTask:
     #: program-path scaffold diff would hit the review gate and fail closed on
     #: generator output.
     scaffold: bool = False
+    #: this task's OWN checkout, when it must not share the program's (spec 010
+    #: US3: two fan-out lanes cannot write one working tree). None ⇒ the
+    #: program's workspace, which is every non-fan-out task.
+    workspace_dir: str | None = None
+    #: fan-out lane metadata — ``{"position", "scopes", "integrate_into"}``,
+    #: persisted onto the task row so the settle path knows the declared scope to
+    #: hold this increment to and the shared workspace to integrate it into.
+    #: None ⇒ an ordinary task.
+    lane: dict | None = None
 
 
 def order_tasks(tasks: list[PlannedTask]) -> list[PlannedTask]:
