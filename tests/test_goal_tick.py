@@ -3351,3 +3351,161 @@ async def test_queued_goal_still_settles_in_flight_work(tmp_path):
     assert store.is_settled("waiter", "t1")          # settled, not orphaned
     assert engine.dispatched == []                    # but nothing new dispatched
     assert out is Outcome.QUEUED
+
+
+# ---- spec 012 FR-012a: the completion judgement is never bypassed ----------
+# US3 records how BIG a work item is. The temptation that creates is exactly
+# "expected_increments == 1 and the tests are green, so we're done". FR-012a
+# forbids it: mechanical verification passing is never sufficient evidence of
+# completion, at any size. These two tests are the guard rail — one drives the
+# real tick, one closes the door structurally so a future shortcut cannot be
+# added quietly.
+
+
+@pytest.mark.asyncio
+async def test_a_single_increment_work_item_still_faces_the_completion_judgement(
+    tmp_path,
+):
+    """FR-012a / FR-012: a work item its filer sized at ONE increment, whose one
+    increment settles green with the sandbox verify gate PASSED and a PR pushed,
+    is NOT done. It proposes done, the done-gate reviews the repository against
+    ``done_when``, and only an ``achieved`` verdict closes it — an ``off_track``
+    verdict sends it back round exactly like a multi-increment saga.
+
+    Discriminates: a size-based shortcut ("one increment + green gate ⇒ close")
+    would close the goal at the settle or survive the off_track round, and both
+    assertions below would fail.
+    """
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    # the whole work item is one unit of work — the smallest thing a saga can be
+    store.save_status("g", GoalStatus(
+        phase="in_flight",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "delete the dead flag"),
+    ))
+    evaluator = FakeClaude()
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="Agent summary: flag deleted",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
+
+    settled = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+
+    # 1. green mechanical verification settles the INCREMENT, never the goal
+    assert settled is Outcome.VERIFYING
+    assert store.load_status("g").phase != "done"
+    assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
+    assert evaluator.calls == 0          # the settle itself judges nothing
+
+    # 2. the done-gate says off_track — still not done, however small the item
+    off_track = FakeClaude(json.dumps({
+        "verdict": "off_track",
+        "rationale": "the flag's call sites are still wired",
+        "corrections": ["unwire the call sites too"],
+    }))
+    reviewed = FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="call sites still reference the flag",
+    ))
+    out = await _tick(store, "g", off_track, reviewed, RecordingNotifier())
+    # not closed. (It routes to the #430 open-unmerged-PR block rather than
+    # straight back to idle, because the increment left a PR open — a different
+    # non-close, and still a non-close: what FR-012a forbids is the CLOSE.)
+    assert out is not Outcome.DONE
+    assert store.load_status("g").phase != "done"
+
+    # 3. only the grounded achieved verdict closes it
+    store.save_status("g", replace(
+        store.load_status("g"),
+        phase="verifying",
+        in_flight=InFlight("devclaw", "review_repository", "rev2", "task", "verify", is_done_check=True),
+    ))
+    achieved = FakeClaude(json.dumps({
+        "verdict": "achieved",
+        "rationale": "the flag and every call site are gone",
+        "clauses": [{"clause": "flag removed", "satisfied": True, "evidence": "src/Flags.cs deleted"}],
+    }))
+    closed = await _tick(
+        store, "g", achieved,
+        FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="nothing references the flag")),
+        RecordingNotifier(),
+    )
+    assert closed is Outcome.DONE
+    assert store.load_status("g").phase == "done"
+
+
+def test_green_mechanical_verification_alone_never_closes_a_goal():
+    """FR-012a, structurally: there is exactly ONE way for a goal to reach
+    ``done``, and it runs through the grounded completion judgement.
+
+    WHY the bypass is unreachable, in three links:
+
+    1. ``State.DONE`` appears in the ``LEGAL`` transition table only ever as the
+       target of ``Event.ACHIEVE``. No other event can land a goal on done —
+       ``ACTION_SETTLED`` (what a green verify/quality gate produces) is only
+       permitted to land on ``EXECUTING_IDLE``.
+    2. ``Event.ACHIEVE`` is emitted from exactly one production site,
+       ``goal/tick_donegate.py``, and ``GoalStore.transition`` rejects any
+       phase change that the table does not permit, so the site cannot be
+       side-stepped by writing the field directly.
+    3. That one site sits behind ``if ev.verdict == "achieved"`` — the
+       evaluator's verdict over the read-only ``review_repository`` report,
+       judged against ``done_when``.
+
+    Discriminates: adding a second ``Event.ACHIEVE`` emitter (say, a
+    "one increment and the gate is green" shortcut in the settle path), or
+    widening the table so a settle can land on DONE, or closing without the
+    verdict guard, fails one of the three assertions below.
+    """
+    import pathlib
+
+    from devclaw.goal.transitions import LEGAL, Event, State
+
+    # 1. DONE is only ever the target of ACHIEVE
+    done_edges = {
+        (frm, evt) for (frm, evt), targets in LEGAL.items() if State.DONE in targets
+    }
+    assert done_edges and {evt for _frm, evt in done_edges} == {Event.ACHIEVE}
+    # ...and a settled action can never be one of them
+    for (frm, evt), targets in LEGAL.items():
+        if evt is Event.ACTION_SETTLED:
+            assert State.DONE not in targets, f"{frm.value} settle can reach done"
+
+    # 2. exactly one production emitter
+    root = pathlib.Path(__file__).resolve().parents[1]
+    emitters = sorted(
+        path.relative_to(root).as_posix()
+        for path in list((root / "devclaw").rglob("*.py"))
+        + list((root / "runner").rglob("*.py"))
+        if "Event.ACHIEVE" in path.read_text(encoding="utf-8")
+        and path.name != "transitions.py"  # the table itself, not an emitter
+    )
+    assert emitters == ["devclaw/goal/tick_donegate.py"]
+
+    # 3. that emitter is guarded by the evaluator's verdict
+    src = (root / "devclaw/goal/tick_donegate.py").read_text(encoding="utf-8")
+    guard = 'if ev.verdict == "achieved":\n        store.transition(\n            goal_id, Event.ACHIEVE,'
+    assert guard in src, "the ACHIEVE transition is no longer gated on the verdict"
+
+    # 4. the US3-specific shortcut: nothing on the execution path may read the
+    #    work item's expected increment count. The count is intake-only — it
+    #    sizes the plan, it never feeds a completion decision (FR-012).
+    sizing_names = (
+        "expected_increments",
+        "increment_basis",
+        "parse_expected_increments",
+        "NEEDS_SIZING_LABEL",
+    )
+    execution_paths = [
+        root / "devclaw/goal",
+        root / "devclaw/engine",
+        root / "devclaw/quality",
+        root / "runner",
+    ]
+    leaks = [
+        f"{path.relative_to(root).as_posix()}:{name}"
+        for base in execution_paths
+        for path in base.rglob("*.py")
+        for name in sizing_names
+        if name in path.read_text(encoding="utf-8")
+    ]
+    assert leaks == [], f"execution path reads the expected increment count: {leaks}"

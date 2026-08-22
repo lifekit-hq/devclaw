@@ -5,7 +5,7 @@
 **Input**: Feature specification from `specs/012-saga-prompt-contract/spec.md`
 
 **Slice**: US3 ONLY — "a work item carries its expected increment count"
-(FR-010, FR-010a, FR-010b, FR-011, FR-012, FR-012a, FR-013). US1 (increment
+(FR-010, FR-010a, FR-010b, FR-011, FR-012, **FR-012a**, FR-012b, FR-013). US1 (increment
 feed-forward) is merged; US2 (saga authoring slots) is a separate arc and this
 plan touches none of its surface. Written as a separate file per the owner's
 instruction that `plan.md` / `tasks.md` / `spec.md` stay untouched while US2 is
@@ -43,6 +43,10 @@ This slice adds the missing axis, and only that axis:
    work item executes as a saga (`create_goal`) whatever its count — the
    dispatcher is told, at the one place they read the verdict, that there is no
    shape decision to make (FR-012).
+6. **The completion judgement stays unbypassable** (FR-012a). Recording a size
+   creates exactly one temptation — "one increment and the tests are green, so
+   we're done" — and this slice closes that door with a guard rail rather than
+   leaving it structurally-true-for-now. See *FR-012a* below.
 
 No new cognition call, no tick-path work, no new store, no execution-shape
 branch.
@@ -89,7 +93,7 @@ tests, 2 docs. Sized at ONE PR.
 | **II. Model-agnostic worker layer** | PASS — unaffected | Layers 1 and 3 only. No skill, no hook, no runner change; the worker never sees this data in this slice. |
 | **III. Zero-token idle** | PASS — actively guarded | Zero new LLM calls anywhere: the sizing assessment is extra *fields* on the prompt/response of the call grading already makes. Nothing is added to the heartbeat tick, and the existing `test_readiness_grade_adds_no_idle_tick_cognition` / `test_readiness_recovery_is_not_wired_into_the_idle_tick` guards stay green. A named test asserts the grade spends exactly ONE cognition call with sizing enabled. |
 | **IV. Single writer to state** | PASS | No devclaw state is written at all. The claim lives in the issue body (written once at filing, never rewritten — FR-010b *is* an append-nothing rule) and the verdicts live in labels, the same source-of-truth surface spec 006 established. The mirror comment is a generated view, never read back. |
-| **V. Verification fails closed; done is a proposal** | PASS — reinforced | FR-012a is honoured by construction: nothing in this slice can route a work item around the done-gate, because nothing in this slice selects an execution shape. Every unreviewable sizing case (no claim, model can't assess, malformed output, evaluator crash) resolves to "a human decides", never to "agreed". |
+| **V. Verification fails closed; done is a proposal** | PASS — reinforced, and now guarded | FR-012a is honoured by construction (three links, below) and that construction is now held by a mutation-proven regression test rather than by convention. Every unreviewable sizing case (no claim, model can't assess, malformed output, evaluator crash) resolves to "a human decides", never to "agreed". |
 | **VI. Loud failure over silent degradation** | PASS | Four distinct surfacing reasons, each named in the comment. An unstated claim is recorded as `unstated` in the body rather than defaulted to 1. A count supplied without a basis is rejected synchronously at the doorway. |
 | **VII. Fix the class, not the instance** | PASS | The "no claim" path is ONE path serving both the intake doorway and spec 009's universal adoption of hand-written issues — a hand-written issue has no claim by construction, and gets the identical surfacing rather than a special case. Sizing is a general axis on the work item, not a devclaw-repo or a finance-sentry fix. |
 
@@ -262,6 +266,52 @@ its expected count, and the completion judgement is never bypassed.
 `increment_basis`, `assessed_increments`, `sizing`, `sizing_reason`) instead of
 the bare label string; `regrade` merges it into its result, and `grade_backlog`
 gains a `needs_sizing` bucket listing the URLs that need a human.
+
+## FR-012a — the completion judgement is never bypassed
+
+> The completion judgement MUST NOT be bypassed for any work item, however
+> small. Mechanical verification passing is never sufficient evidence of
+> completion.
+
+**Finding: this was already structurally true before this slice.** It was not,
+however, *guarded* — nothing would have failed if a later change added the
+shortcut that recording a size invites. It is now.
+
+**Why the bypass is unreachable, in three links:**
+
+1. `State.DONE` appears in the `LEGAL` transition table
+   (`devclaw/goal/transitions.py`) **only** as the target of `Event.ACHIEVE`.
+   `Event.ACTION_SETTLED` — what a green verify/quality gate produces — is
+   permitted to land only on `EXECUTING_IDLE`.
+2. `Event.ACHIEVE` is emitted from **exactly one** production site,
+   `devclaw/goal/tick_donegate.py:396`. `GoalStore.transition`
+   (`devclaw/goal/store/status.py`) enforces the table on every phase change,
+   so the site cannot be side-stepped by writing `phase="done"` directly. (The
+   one other `phase="done"` in the tree is `dry_evaluate`'s in-memory
+   `GoalStatus` — a dry-run object that is never persisted.)
+3. That site sits behind `if ev.verdict == "achieved":` — the evaluator's
+   verdict over the read-only `review_repository` report, judged against
+   `done_when`.
+
+**And the US3-specific link:** the expected increment count is intake-only.
+Nothing under `devclaw/goal/`, `devclaw/engine/`, `devclaw/quality/` or
+`runner/` reads `expected_increments`, `increment_basis`,
+`parse_expected_increments`, or `NEEDS_SIZING_LABEL`, so no completion decision
+can be keyed on size in the first place.
+
+**The guard rail** (`tests/test_goal_tick.py`):
+
+- `test_a_single_increment_work_item_still_faces_the_completion_judgement` —
+  drives the real tick: a one-increment work item settles green (verify gate
+  PASSED, PR pushed), is NOT closed, survives an `off_track` done-gate round
+  still not closed, and closes only on `achieved`.
+- `test_green_mechanical_verification_alone_never_closes_a_goal` — asserts all
+  four links above.
+
+Both were mutation-tested: widening `LEGAL` so a settle can reach `DONE`,
+adding a second `Event.ACHIEVE` emitter, relaxing the verdict guard, leaking a
+sizing name onto the execution path, and closing at the settle instead of
+opening the done-gate each fail one of them.
 
 ## Complexity Tracking
 
