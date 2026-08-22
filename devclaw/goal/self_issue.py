@@ -487,6 +487,34 @@ def self_fix_done_when(number: int, slug: str) -> str:
     )
 
 
+#: The authored saga slots (spec 012 US2) for a self-fix goal. This creator is
+#: UNATTENDED — no operator is present to correct a sprawling prompt mid-run —
+#: so unlike the deprecated ``start_program`` alias it fills the slots for real.
+#: Each is re-sent in the framing of every increment, so each earns its tokens
+#: by changing what the worker does (FR-009).
+SELF_FIX_INVARIANTS = [
+    "the full test suite stays green — a fix that needs a test weakened or "
+    "deleted to pass is not a fix",
+    "the repository's own documented contracts (CLAUDE.md, the constitution) "
+    "survive the change",
+]
+
+
+def self_fix_out_of_scope(number: int, slug: str) -> list[str]:
+    return [
+        f"anything not required to close {slug} issue #{number} — no drive-by "
+        "refactors, no unrelated cleanups, no adjacent bugs",
+        "merging the pull request — a human reviews and merges it",
+    ]
+
+
+def self_fix_established(number: int, slug: str) -> list[str]:
+    return [
+        f"{slug} issue #{number} is accepted as filed and already triaged — fix "
+        "the reported problem, do not re-litigate whether it is one",
+    ]
+
+
 @dataclass
 class SelfFixResult:
     #: (issue_number, goal_id) claimed this cycle — new spawns AND re-claims of an
@@ -568,6 +596,9 @@ async def run_self_fix_pickup(
                 workspace_dir=self_fix_workspace(goal_id),
                 repo_url=self_repo_url(repo),
                 done_when=self_fix_done_when(number, repo),
+                out_of_scope=self_fix_out_of_scope(number, repo),
+                invariants=list(SELF_FIX_INVARIANTS),
+                established=self_fix_established(number, repo),
                 mode="one_shot",
                 open_pr=True,
             )

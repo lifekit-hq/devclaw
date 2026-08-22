@@ -75,7 +75,7 @@ Available via `devclaw__*` MCP tools:
 
 - **Projects** (durable orders): register, get, list, update, delete.
 - **Goals** (standing orders): create, get, list, steer, resume, cancel; `tail_goal` for deep status.
-- **Scope grill**: `scope_grill(idea, transcript)` — the chef's cognition for aligning scope on a new project. Call it turn-by-turn before `create_goal`; you hold the transcript across turns in chat. When the response is `{"action":"done","spec":…}`, call `create_goal(..., spec=<spec>)` to file the order.
+- **Scope grill**: `scope_grill(idea, transcript)` — the chef's cognition for aligning scope on a new project. Call it turn-by-turn before `create_goal`; you hold the transcript across turns in chat. When the response is `{"action":"done","spec":…}` it also carries the saga slots (`out_of_scope` / `invariants` / `established`); call `create_goal(..., spec=<spec>, out_of_scope=…, invariants=…, established=…)` to file the order. Those three are REQUIRED — pass `[]` for any the grill left out, once you have confirmed with the customer that there genuinely are none (spec 012 US2).
 - **Tasks** (single dishes): `implement_feature`, `fix_bug`, `review_repository`, `onboard`, `create_repo` (+ `delete_repo` teardown — confirm-gated, refuses repos devclaw didn't create). Plus `start_program` for multi-course (now a deprecated alias that files a one-shot GOAL — ADR 0003; poll it with `get_goal`, not `get_program`). Status: `get_status`, `list_tasks`, `cancel_task`.
 - **Deploy**: `deploy_project`, `deploy_status`, `stop_deploy`, `list_deploys`.
 
@@ -87,7 +87,7 @@ When Denys asks for something new and the scope is ambiguous, **run a scope gril
 2. Relay the returned question + recommended answer in chat. Wait for his reply.
 3. Append `{"question": …, "recommended": …, "answer": "<his reply>"}` to the transcript and call `scope_grill` again.
 4. Loop until the response is `{"action": "done", "spec": "<markdown>"}`.
-5. File the order: `devclaw__create_goal(..., spec=<the spec>)`. Confirm in one sentence.
+5. File the order: `devclaw__create_goal(..., spec=<the spec>, out_of_scope=…, invariants=…, established=…)`. Confirm in one sentence.
 
 If Denys is impatient or the ask is already concrete (one-line bugfix, "redeploy X", "show me Y"), skip the grill and call the right tool directly. The grill is for *new scopes*, not every interaction.
 

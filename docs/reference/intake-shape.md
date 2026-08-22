@@ -33,13 +33,49 @@ for — and returns the URL to the asker.
 | `asker` | yes | Who is asking (`denys`, `ledger`, …). **Recorded, not authenticated** — a claim devclaw stamps, not verifies. |
 | `channel` | yes | `chat` \| `telegram` \| `a2a` \| `other`. |
 | `context` | no | Evidence: where seen, repro steps, links. Rendered as `—` when omitted. |
+| `expected_increments` | no | The **filer's claim** of how many units of work the ask takes (a unit of work = one atomic, verified, PR-able change-set from one sandbox run). A whole number ≥ 1. Omitted ⇒ recorded as `unstated` and surfaced for a human — never defaulted to a number. |
+| `increment_basis` | no* | Why that count, or why none could be given. **Required (≥ 10 chars) whenever `expected_increments` is given** — a number with no stated basis cannot be argued with. |
 
 Stamped server-side, never caller-supplied: the filing timestamp (UTC ISO) and
 the `devclaw-intake` label (created idempotently on first use per repo).
 
+## Expected increments — how big, not just how ready
+
+Readiness answers *is this ask well-formed*. It says nothing about *how big* it
+is, which is why the same graded issue used to produce different execution
+shapes depending on who dispatched it (#600). The extent is a second,
+independent axis, recorded at the doorway and checked at grading.
+
+- **The filer claims it, and the claim is the record.** `expected_increments` +
+  `increment_basis` are rendered into an `## Expected increments` section of
+  the issue body at filing and are never rewritten afterwards. Grading reads
+  them back verbatim, so **re-grading an unchanged issue records the identical
+  count** — the number is not a model output and cannot drift.
+- **Grading validates, it does not correct.** The readiness call (one call, no
+  extra cognition) also reports the count *it* would assess. A mismatch is
+  recorded and surfaced; it never overwrites the claim.
+- **A `needs-sizing` label means a human decides.** It lands when the filer
+  stated no count, could not estimate, grading could not assess the extent
+  confidently, or grading disagrees with the claim. The mirror comment names
+  which. It is removed on a re-grade that reaches agreement.
+- **The axes are orthogonal.** `needs-sizing` never changes the readiness
+  verdict, and `devclaw-ready` never implies the extent is settled. An issue
+  can carry both labels.
+- **The count sizes the plan; it selects nothing.** Every work item executes as
+  a saga (`create_goal`) whatever its expected count, and the completion
+  judgement is never bypassed — a one-unit ask still faces the done-gate. The
+  ready comment states this where the dispatcher reads the verdict, so the
+  shape is not a per-ask judgement call (spec 012 FR-012).
+
+Existing issues filed before this section — and hand-written issues adopted via
+`regrade_intake` / `grade_backlog` (spec 009) — carry no claim by construction.
+They grade `needs-sizing` with "no expected increment count was stated"; amend
+the issue and re-grade to settle it.
+
 ## The receipt and its lifecycle
 
-- **Filed** → the tool returns `{issue_url, project_id, repo}`. The URL is the
+- **Filed** → the tool returns `{issue_url, project_id, repo,
+  expected_increments}`. The URL is the
   receipt; a filing failure raises with an actionable message instead — there
   is no receipt unless the issue really exists.
 - **Open** → the ask is pending. The asker follows up on its own cadence

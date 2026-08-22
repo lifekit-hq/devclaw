@@ -31,6 +31,12 @@ ADVANCE_BRIEF_MARKER = "Advance this goal by one substantive"
 STEERING_MARKER = "Steering from the owner — incorporate it:"
 FAILURE_CONTEXT_MARKER = "Previous attempt did NOT ship"
 
+#: The saga framing's objective line (spec 012 US2 moved the GENERATOR into
+#: ``goal/saga_framing.py``; the DETECTOR below and ``delivery``'s title helper
+#: stayed here). Same never-drift reason as the markers above: two modules key
+#: off this exact prefix, so it has exactly one definition.
+GOAL_LINE_PREFIX = "Goal:"
+
 #: The saga feed-forward section (spec 012 US1): what previously-settled
 #: increments of THIS goal delivered and how each was judged. Same never-drift
 #: contract — ``goal/prior_increments.render`` builds the section's opening line
@@ -62,8 +68,8 @@ def objective_from_brief(text: str) -> str:
     brief carries none."""
     for line in text.splitlines():
         s = line.strip()
-        if s.startswith("Goal:"):
-            return s[len("Goal:") :].strip()
+        if s.startswith(GOAL_LINE_PREFIX):
+            return s[len(GOAL_LINE_PREFIX) :].strip()
     return ""
 
 

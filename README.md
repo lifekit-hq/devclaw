@@ -174,8 +174,8 @@ In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts c
 
 | Tool | Does |
 |---|---|
-| `scope_grill(idea, transcript?)` | One turn of the pre-goal scope interview with the waiter: given a rough idea + the transcript so far, returns the next question (with a reasoned default) or the final agreed spec — the input `create_goal` deserves |
-| `create_goal(goal_id, objective, project_id, done_when, backlog, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick cadence) or `'one_shot'` (same advance loop, done proposed once an advance lands). `project_id` resolves the workspace + repo from the registry (#520) |
+| `scope_grill(idea, transcript?)` | One turn of the pre-goal scope interview with the waiter: given a rough idea + the transcript so far, returns the next question (with a reasoned default) or the final agreed spec plus the saga slots (`out_of_scope` / `invariants` / `established`) — the input `create_goal` deserves |
+| `create_goal(goal_id, objective, project_id, done_when, out_of_scope, invariants, established, backlog, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick cadence) or `'one_shot'` (same advance loop, done proposed once an advance lands). `project_id` resolves the workspace + repo from the registry (#520). A saga is authored from **named slots, not prose** (spec 012 US2): beyond objective/done_when, `out_of_scope`, `invariants` and `established` are required — pass `[]` to declare one explicitly empty; omitting one is rejected at creation naming the slot, rather than discovered by a worker mid-run |
 | `verify_goal(objective, project_id, …)` | Pre-flight check — same admission validations as `create_goal`, no side effects; previews reject/warn conditions |
 | `get_goal(goal_id)` | Objective, phase, what's in flight, the latest direction verdict, recent log |
 | `list_goals()` | All goals + phase + direction |

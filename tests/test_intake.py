@@ -70,6 +70,9 @@ def test_file_intake_files_labeled_issue_and_returns_url_receipt(registry):
         "issue_url": "https://github.com/lifekit-hq/finance-sentry/issues/7",
         "project_id": "finance-sentry",
         "repo": "lifekit-hq/finance-sentry",
+        # the receipt reports the recorded extent claim back (spec 012 FR-010);
+        # this ask supplied none, so it is None — never a defaulted number.
+        "expected_increments": None,
     }
     # the intake label is ensured (idempotent) then applied — no per-repo
     # template is involved anywhere (proposal §4-O4).
@@ -152,3 +155,77 @@ def test_issue_title_is_first_line_only_and_bounded():
     assert t.startswith("[intake] x")
     assert len(t) <= 240
     assert "second line" not in t
+
+
+# ---- spec 012 US3: the filer's expected-increment claim ---------------------
+# The count is the FILER's claim, recorded verbatim in the issue body — the
+# durable record grading reads back (never re-derives). An absent claim is
+# recorded as "unstated" and surfaced later; it is never defaulted to a number.
+
+def test_file_intake_records_the_filers_expected_increment_claim_and_basis(registry):
+    gh = FakeGh()
+    _file(
+        registry,
+        gh,
+        expected_increments=3,
+        increment_basis="three independent surfaces: the API handler, the store, the UI",
+    )
+    body = gh.created[0]["body"]
+    assert "## Expected increments" in body
+    assert "**Claimed by the filer:** 3" in body
+    assert "**Basis:** three independent surfaces" in body
+    # the claim reads back out of the body byte-identically — this, not a model,
+    # is where a re-grade's recorded count comes from (SC-005b).
+    count, basis, stated = intake.parse_expected_increments(body)
+    assert (count, stated) == (3, True)
+    assert basis.startswith("three independent surfaces")
+
+
+def test_file_intake_records_unstated_extent_rather_than_defaulting_to_one(registry):
+    gh = FakeGh()
+    _file(
+        registry,
+        gh,
+        increment_basis="cannot tell without reading the migration history",
+    )
+    body = gh.created[0]["body"]
+    assert f"**Claimed by the filer:** {intake.UNSTATED_INCREMENTS}" in body
+    assert "**Claimed by the filer:** 1" not in body
+    count, basis, stated = intake.parse_expected_increments(body)
+    assert count is None and stated is True
+    assert basis.startswith("cannot tell")
+
+
+def test_file_intake_rejects_an_increment_count_with_no_basis(registry):
+    gh = FakeGh()
+    with pytest.raises(intake.IntakeError, match="increment_basis"):
+        _file(registry, gh, expected_increments=4)
+    assert gh.created == []
+
+
+def test_file_intake_rejects_a_non_positive_increment_count(registry):
+    gh = FakeGh()
+    with pytest.raises(intake.IntakeError, match="at least 1"):
+        _file(
+            registry,
+            gh,
+            expected_increments=0,
+            increment_basis="a basis long enough to pass the bar",
+        )
+    assert gh.created == []
+
+
+def test_parse_expected_increments_reads_back_the_claim_and_absence():
+    # a hand-written issue (spec 009 universal adoption) has no section at all:
+    # the extent is UNRECORDED, which is a different state from "unstated".
+    assert intake.parse_expected_increments(
+        "## What\n\nsomething\n\n## Done when\n\nit works\n"
+    ) == (None, "", False)
+    # a section naming an unparseable claim still counts as answered
+    count, basis, stated = intake.parse_expected_increments(
+        "## Expected increments\n\n"
+        "- **Claimed by the filer:** a handful\n"
+        "- **Basis:** hard to say\n\n"
+        "## Provenance\n\n- x\n"
+    )
+    assert (count, basis, stated) == (None, "hard to say", True)

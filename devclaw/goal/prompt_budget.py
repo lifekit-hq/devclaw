@@ -15,10 +15,13 @@ instance). #431 brought the evaluator on board — its prompt embeds the same
 unbounded ``recent_log`` plus a ``deliveries`` tail that likewise grows over a
 long goal's life.
 
-Every cap TAIL-KEEPS: the most-recent content is what the next reasoning step
-turns on, so oversized input keeps its tail behind a truncation marker. Small or
-empty input passes through BYTE-IDENTICAL, so existing call sites and test stubs
-are unaffected (and ``""`` stays ``""`` to preserve callers' ``or "(fallback)"``).
+Growing-history caps TAIL-KEEP: the most-recent content is what the next
+reasoning step turns on, so oversized input keeps its tail behind a truncation
+marker. AUTHORED caps (``cap_saga_slot``, spec 012 US2) invert that and
+HEAD-keep: an author states the contract first and elaborates after, so the head
+is the part that must survive. Either way, small or empty input passes through
+BYTE-IDENTICAL, so existing call sites and test stubs are unaffected (and ``""``
+stays ``""`` to preserve callers' ``or "(fallback)"``).
 
 Scope note — these cap UNBOUNDED CONTEXT sections only. They are NOT a general
 prompt ceiling: you must never blind-truncate an assembled prompt (it would risk
@@ -99,3 +102,32 @@ def cap_prior_increments(section: str) -> str:
     return cap_section(
         section, keep=PRIOR_INCREMENTS_KEEP, marker=PRIOR_INCREMENTS_TRUNCATION_MARKER
     )
+
+
+#: One authored saga slot (spec 012 US2). Five slots ride the framing that
+#: FR-009a re-sends with EVERY increment, so the per-slot bound is what makes
+#: the whole framing bounded by construction (FR-009b) — see SAGA_FRAMING_MAX.
+#: 1 200 chars is several paragraphs: generous for a real slot, decisive
+#: against a pasted design doc.
+SAGA_SLOT_KEEP = 1_200
+
+SAGA_SLOT_TRUNCATION_MARKER = (
+    "[…this slot was truncated to fit the prompt budget: its opening is kept — "
+    "the full text is in the goal's spec / goal.yaml]"
+)
+
+
+def cap_saga_slot(text: str) -> str:
+    """Bound ONE authored saga slot. HEAD-kept, unlike every history cap above:
+    an author puts the contract first, so truncating the tail keeps the binding
+    part. Small or empty input passes through byte-identical."""
+    if len(text) <= SAGA_SLOT_KEEP:
+        return text
+    return "\n".join((text[:SAGA_SLOT_KEEP], SAGA_SLOT_TRUNCATION_MARKER))
+
+
+#: The derived ceiling on a whole rendered saga framing: five capped slots plus
+#: the fixed labels and truncation markers. Stated as a constant (rather than
+#: left implicit) because FR-009b's bound is on the FRAMING, not on any one
+#: slot, and a test asserts adversarial input renders under it.
+SAGA_FRAMING_MAX = 5 * (SAGA_SLOT_KEEP + len(SAGA_SLOT_TRUNCATION_MARKER)) + 2_000

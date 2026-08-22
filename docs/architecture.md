@@ -30,12 +30,31 @@ knows the paradigm already knows the contract.
 | The ask | **Work item** (Kanban) | a GitHub issue |
 | Admission to work | **Definition of Ready** | the `devclaw-ready` grade (specs 006/009) |
 | Completion judgement | **Definition of Done** | the done-gate |
-| The milestone-level objective | **Saga** / long-running process | a goal |
+| The milestone-level objective | **Saga** / long-running process | a goal — authored from five named slots, never prose (spec 012 US2: objective · done_when · out_of_scope · invariants · established) |
 | The execution atom | **Unit of Work** (Fowler) | one sandbox run → one atomic, verified, PR-able change-set |
 | The plan | **Task graph (DAG)** | `tasks.md`; `[P]` marks topological independence — parallelism is *data in the plan*, never executor control flow |
 | Parallel safety | **Hermetic action with declared I/O** (Bazel) | a fan-out increment's declared file scope, checked at settle *(spec 010 P3 — not built)* |
 | Concurrency default | **Single-writer / actor-per-project** | at most one goal actively dispatching per project |
 | Integration | **Merge queue** (Bors) | serial integration of concurrently-executed increments *(spec 010 P3 — not built)* |
+
+### A saga is authored against a schema
+
+A goal is filed from five named slots, not a paragraph: what is being achieved
+(`objective`), what completion means (`done_when`), what is deliberately
+excluded (`out_of_scope`), what must still hold afterwards (`invariants`), and
+what is already settled and must not be re-derived (`established`). Filing one
+with a slot unfilled is rejected at creation naming that slot — an EMPTY LIST
+declares a slot empty, and only silence is refused, because silence and "there
+are none" produce different prompts and only one of them is a decision.
+
+Every slot earns its place by changing what a worker does (spec 012 FR-009);
+the framing is re-sent in full with every unit of work — a fresh sandbox has no
+memory, so a pointer would be a request while a slot is a fact — which is why
+each slot is size-bounded (`goal/saga_framing.py`, `goal/prompt_budget.py`).
+
+Goals authored before this schema carry an ABSENT slot rather than an empty
+one, and their brief renders exactly as it did; devclaw does not put words in
+an author's mouth by inventing an empty declaration for them.
 
 ### Single writer per project
 

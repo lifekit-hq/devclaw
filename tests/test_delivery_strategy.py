@@ -95,6 +95,7 @@ def test_fresh_goals_of_both_modes_resolve_goal_branch_delivery(tmp_path):
                 done_when="the test command exits 0 and at least one assertion runs.",
                 backlog=["scaffold project", "first feature"],
                 mode=mode,
+                out_of_scope=[], invariants=[], established=[],
             )
             goal_store = svc._goal_store
             assert goal_store.load_status(goal_id).lifecycle == "executing"

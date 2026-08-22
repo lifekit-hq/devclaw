@@ -124,6 +124,23 @@ def _grade(**overrides):
     )
     kwargs.update(overrides)
     gh = kwargs.pop("gh")
+    return asyncio.run(intake.grade_and_label(gh=gh, **kwargs))["readiness"]
+
+
+def _grade_full(**overrides):
+    """Same call, but keeping the whole result dict (readiness + the sizing
+    axis spec 012 US3 added)."""
+    kwargs = dict(
+        repo="lifekit-hq/finance-sentry",
+        issue="https://github.com/lifekit-hq/finance-sentry/issues/7",
+        what="Fix stale balances returned by the refresh endpoint.",
+        done_when="A regression test proves refreshed balances are served.",
+        context=None,
+        workspace_dir="/ws",
+        repo_context=REPO_CTX,
+    )
+    kwargs.update(overrides)
+    gh = kwargs.pop("gh")
     return asyncio.run(intake.grade_and_label(gh=gh, **kwargs))
 
 
@@ -805,3 +822,307 @@ def test_readiness_prompt_demands_after_state_and_flags_deferred_scoping():
     assert "a stated after-state" in prompt
     assert "never compensates" in prompt
     assert "defers its own scoping" in prompt
+
+
+# ---- spec 012 US3: a work item carries its expected increment count ---------
+# Two independent axes on ONE cognition call. The count is the FILER's claim
+# read back from the issue body — never a model output — so it is identical
+# across re-grades (SC-005b). Grading validates and surfaces disagreement for a
+# human; it never overwrites the claim (FR-010b) and never selects an execution
+# shape (FR-012).
+
+def _sized_body(claimed: str, basis: str = "one atomic rename") -> str:
+    return (
+        intake.issue_body(
+            what="Rename Balance.cs to AccountBalance.cs and update its callers.",
+            done_when="The type is renamed and the build passes.",
+            context=None,
+            asker="denys",
+            channel="chat",
+            project_id="finance-sentry",
+            slug="lifekit-hq/finance-sentry",
+            filed_ms=1_755_000_000_000,
+            expected_increments=int(claimed) if claimed.isdigit() else None,
+            increment_basis=basis,
+        )
+    )
+
+
+def _sizing_json(assessed, agrees, ready=True) -> str:
+    return json.dumps(
+        {
+            "ready": ready,
+            "missing": [] if ready else ["no locatable surface named"],
+            "rationale": "r",
+            "increments": {
+                "assessed": assessed,
+                "agrees": agrees,
+                "basis": "one file, one test",
+            },
+        }
+    )
+
+
+def test_grading_records_the_filers_claim_verbatim_when_the_grader_agrees(tmp_path):
+    """Acceptance scenario 1: filer claims one increment, content is one atomic
+    change, grading agrees — the claim is recorded, no human is summoned, and
+    the item still executes as a saga subject to the completion judgement."""
+    reg = _registered(tmp_path)
+    gh = FakeGh(body=_sized_body("1"))
+    result = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(1, True)), gh=gh,
+        )
+    )
+    assert result["expected_increments"] == 1
+    assert result["increment_basis"] == "one atomic rename"
+    assert result["sizing"] == "agreed"
+    assert result["sizing_reason"] == ""
+    assert intake.NEEDS_SIZING_LABEL not in gh.added_labels()
+    # the item stays a saga whatever the count, and the dispatcher is told so
+    # at the one place they read the verdict (FR-012).
+    assert any(intake.SAGA_SHAPE_NOTE in body for _, _, body in gh.comments)
+
+
+def test_grading_preserves_the_claim_and_surfaces_the_disagreement_for_a_human(
+    tmp_path,
+):
+    """Acceptance scenario 2 / FR-010b: the filer claimed one increment, grading
+    reads several. The claim STANDS as the record — nothing rewrites it — and
+    the disagreement lands as its own label plus a stated reason."""
+    reg = _registered(tmp_path)
+    gh = FakeGh(body=_sized_body("1"))
+    result = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(5, False)), gh=gh,
+        )
+    )
+    assert result["expected_increments"] == 1  # the claim, not the assessment
+    assert result["assessed_increments"] == 5
+    assert result["sizing"] == "needs_human"
+    assert "claim of 1" in result["sizing_reason"]
+    assert "assessed 5" in result["sizing_reason"]
+    assert intake.NEEDS_SIZING_LABEL in gh.added_labels()
+    # structurally impossible to overwrite the claim: the gh adapter grading
+    # holds exposes no verb that can rewrite an issue body (FR-010b).
+    assert not [
+        m
+        for m in dir(intake.GhAdapter)
+        if not m.startswith("_") and "edit" in m or m == "update_issue"
+    ]
+    (_, _, comment) = gh.comments[-1]
+    assert "Filer's claim (the record, unchanged): 1" in comment
+
+
+def test_regrading_an_unchanged_work_item_records_an_identical_expected_count(
+    tmp_path,
+):
+    """Acceptance scenario 3 / SC-005b: the recorded count is the filer's claim,
+    so two grades of the SAME bytes record the same number even when the grader
+    assesses differently each time."""
+    reg = _registered(tmp_path)
+    body = _sized_body("3", basis="api, store and ui each need their own PR")
+    first = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(3, True)), gh=FakeGh(body=body),
+        )
+    )
+    second = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(7, False)), gh=FakeGh(body=body),
+        )
+    )
+    assert first["expected_increments"] == second["expected_increments"] == 3
+    assert first["increment_basis"] == second["increment_basis"]
+    # only the CHECK moved, never the record
+    assert (first["assessed_increments"], second["assessed_increments"]) == (3, 7)
+
+
+def test_work_item_with_no_stated_extent_is_surfaced_for_a_human(tmp_path):
+    """FR-011: a hand-written issue (spec 009 adoption) carries no claim. Its
+    extent is unrecorded, so a human decides — it is never defaulted to a
+    number and never assumed to be one increment."""
+    reg = _registered(tmp_path)
+    gh = FakeGh(body="Just delete the dead flag.", title="dead flag")
+    result = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(1, None)), gh=gh,
+        )
+    )
+    assert result["expected_increments"] is None
+    assert result["sizing"] == "needs_human"
+    assert "no expected increment count was stated" in result["sizing_reason"]
+    assert intake.NEEDS_SIZING_LABEL in gh.added_labels()
+
+
+def test_grader_that_cannot_assess_the_extent_surfaces_for_a_human_not_agreement(
+    tmp_path,
+):
+    """An unassessable extent is a human decision, never a silent agreement —
+    and the same holds when the grade crashes outright (fail-closed on BOTH
+    axes)."""
+    reg = _registered(tmp_path)
+    gh = FakeGh(body=_sized_body("2"))
+    result = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(None, None)), gh=gh,
+        )
+    )
+    assert result["sizing"] == "needs_human"
+    assert "could not assess" in result["sizing_reason"]
+
+    crashed = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=RaisingClaude(), gh=FakeGh(body=_sized_body("2")),
+        )
+    )
+    assert crashed["readiness"] == intake.NEEDS_REFINEMENT_LABEL
+    assert crashed["sizing"] == "needs_human"
+
+
+def test_sizing_disagreement_never_flips_the_readiness_verdict(tmp_path):
+    """The two axes are orthogonal: a groundable ask stays devclaw-ready even
+    when grading disputes its size, and an ungroundable ask stays
+    needs-refinement even when the size is agreed."""
+    reg = _registered(tmp_path)
+    disputed = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(9, False, ready=True)),
+            gh=FakeGh(body=_sized_body("1")),
+        )
+    )
+    assert disputed["readiness"] == intake.READY_LABEL
+    assert disputed["sizing"] == "needs_human"
+
+    agreed = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(1, True, ready=False)),
+            gh=FakeGh(body=_sized_body("1")),
+        )
+    )
+    assert agreed["readiness"] == intake.NEEDS_REFINEMENT_LABEL
+    assert agreed["sizing"] == "agreed"
+
+
+def test_needs_sizing_label_is_removed_when_a_regrade_reaches_agreement(tmp_path):
+    """The sizing label flips cleanly on re-grade, exactly like the readiness
+    pair — a resolved dispute does not leave a stale human-attention marker."""
+    reg = _registered(tmp_path)
+    gh = FakeGh(body=_sized_body("5", basis="five separate endpoints"))
+    asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(5, True)), gh=gh,
+        )
+    )
+    assert intake.NEEDS_SIZING_LABEL not in gh.added_labels()
+    assert (intake.NEEDS_SIZING_LABEL,) in [labels for _, _, labels in gh.removed]
+
+
+def test_expected_increment_count_never_selects_an_execution_shape(tmp_path):
+    """FR-012 / #600: the count sizes the plan, it never picks a shape. A
+    one-increment and a five-increment work item produce the SAME result shape
+    with no shape selector anywhere, and the prompt forbids recommending one."""
+    reg = _registered(tmp_path)
+    small = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(1, True)),
+            gh=FakeGh(body=_sized_body("1")),
+        )
+    )
+    large = asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=CannedClaude(_sizing_json(5, True)),
+            gh=FakeGh(body=_sized_body("5", basis="five separate endpoints")),
+        )
+    )
+    assert set(small) == set(large)
+    for result in (small, large):
+        assert result["readiness"] == intake.READY_LABEL
+        assert not {"shape", "execution_shape", "dispatch_as", "kind"} & set(result)
+    prompt = intake_readiness.build_prompt(
+        what="x", done_when="y", repo_context=REPO_CTX, expected_increments=2,
+        increment_basis="two files",
+    )
+    assert "Do not recommend an execution shape" in prompt
+
+
+def test_sizing_assessment_spends_no_additional_cognition_call(tmp_path):
+    """FR-013: the sizing axis rides the call grading already makes. Exactly one
+    cognition call per grade, with sizing fully exercised."""
+    reg = _registered(tmp_path)
+    caller = CannedClaude(_sizing_json(4, False))
+    asyncio.run(
+        intake.regrade(
+            reg, project_id="finance-sentry", issue=ISSUE_7,
+            claude_caller=caller, gh=FakeGh(body=_sized_body("1")),
+        )
+    )
+    assert caller.calls == 1
+
+
+def test_readiness_prompt_carries_the_filers_claim_and_the_sizing_output_field():
+    """Presence AND absence: the claim reaches the model as input, the sizing
+    output field is demanded, and with no claim the prompt SAYS there is none
+    rather than omitting the block or inventing a number."""
+    from devclaw.prompts import _read
+
+    raw = _read("intake-readiness")
+    assert "The filer claims this ask takes" not in raw  # only the block renders it
+
+    claimed = intake_readiness.build_prompt(
+        what="Fix Foo.cs", done_when="a test passes", repo_context=REPO_CTX,
+        expected_increments=3, increment_basis="three surfaces",
+    )
+    assert "The filer claims this ask takes 3 unit(s) of work." in claimed
+    assert "three surfaces" in claimed
+    assert '"assessed"' in claimed and '"agrees"' in claimed
+
+    unclaimed = intake_readiness.build_prompt(
+        what="Fix Foo.cs", done_when="a test passes", repo_context=REPO_CTX
+    )
+    assert "The filer stated NO expected increment count." in unclaimed
+    # absence is STATED, never a fabricated number and never an omitted block
+    assert "The filer claims this ask takes" not in unclaimed
+    assert "## Expected increments" in unclaimed
+
+
+def test_grade_backlog_reports_the_issues_that_need_a_human_size_decision(tmp_path):
+    """The bulk verb surfaces the sizing axis too: issues whose extent needs a
+    human are listed cross-cutting, alongside their readiness bucket."""
+    reg = _registered(tmp_path)
+    gh = BacklogGh({
+        _u(1): {"labels": (), "createdAt": "2026-01-01T00:00:00Z",
+                "body": _sized_body("1")},
+        _u(2): {"labels": (), "createdAt": "2026-01-02T00:00:00Z",
+                "body": "a hand-written ask with no claim", "title": "t"},
+    })
+
+    class PerIssueClaude:
+        """Agrees on the first issue, has nothing to compare on the second."""
+
+        def __init__(self):
+            self.calls = 0
+
+        async def __call__(self, prompt):
+            self.calls += 1
+            return _sizing_json(1, True) if self.calls == 1 else _sizing_json(2, None)
+
+    report = asyncio.run(
+        intake.grade_backlog(
+            reg, project_id="finance-sentry", gh=gh, claude_caller=PerIssueClaude()
+        )
+    )
+    assert report["needs_sizing"] == [_u(2)]
+    assert set(report["graded_ready"]) == {_u(1), _u(2)}
