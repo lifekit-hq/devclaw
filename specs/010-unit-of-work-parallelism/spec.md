@@ -4,8 +4,14 @@
 
 **Created**: 2026-08-18
 
-**Status**: P1 IN IMPLEMENTATION 2026-08-22 (plan + tasks in this directory).
-P3 (`[P]` fan-out) remains SPECIFIED, NOT IMPLEMENTED — named-unsized.
+**Status**: **IMPLEMENTED IN FULL 2026-08-23.** P1 (US1 single-writer + US2
+#553-closed-by-construction) shipped 2026-08-22 via #618; P3 (US3, the `[P]`
+fan-out — FR-101…FR-105) shipped 2026-08-23 via #637 (settle-time declared-scope
+enforcement) + #639 (the fan-out executor and serial merge queue).
+**Fan-out ships behind `DEVCLAW_FANOUT`, default OFF** — the spec calls P3 the
+earned exception, and it has no production nights yet. A plan that declares no
+`[P]` scopes behaves byte-identically with the dial in either position.
+Plans/tasks for the P3 slice are `plan-us3.md` / `tasks-us3.md`.
 
 **Amended 2026-08-22 (owner ruling, during planning)**: FR-005 and the
 project-hold entity changed from a STORED, acquired/released lock to a
@@ -101,7 +107,7 @@ project.
 
 ---
 
-### User Story 3 - Planned fan-out on one project (Priority: P3 — named-unsized, do not build until P1 lands and earns it)
+### User Story 3 - Planned fan-out on one project (Priority: P3 — IMPLEMENTED 2026-08-23, behind `DEVCLAW_FANOUT`, default off)
 
 When a plan explicitly declares independent tasks (`[P]` markers in the task
 graph, each with a declared file scope), the executor MAY run those increments
@@ -112,10 +118,15 @@ Parallelism is a property of the *plan*; a worker can never spawn workers.
 
 **Why this priority**: The earned exception. It is only safe *because* P1
 exists (fan-out happens inside one plan, under one goal, never as accidental
-concurrent plans). Sized and built only after the single-writer default has
-run in production.
+concurrent plans).
 
-**Independent Test** (when built): a plan with two `[P]` tasks with disjoint
+*Built 2026-08-23 on owner direction, before the "after P1 has run in
+production" gate this paragraph originally set. The gate's substance is kept as
+the dial rather than the schedule: the machinery ships complete but OFF
+(`DEVCLAW_FANOUT`), so turning it on is still a deliberate act after P1 earns
+it, and a plan with no `[P]` scopes is byte-identical either way.*
+
+**Independent Test**: a plan with two `[P]` tasks with disjoint
 scopes executes them concurrently, integrates serially, and a deliberately
 out-of-scope edit in one increment fails that increment while the other lands.
 
@@ -151,7 +162,7 @@ out-of-scope edit in one increment fails that increment while the other lands.
 - **FR-008**: A blocked holding goal KEEPS the project lock; queued goals wait until it is resumed or cancelled. The queued goal's waiting reason MUST name the blocked holder.
 - **FR-009**: Goal-less direct dispatches are EXEMPT from the lock; when the target project is locked, the dispatch response MUST carry a loud warning naming the holding goal, then proceed.
 
-### Functional Requirements — P3 (named, unsized; firm at their own slice)
+### Functional Requirements — P3 (IMPLEMENTED 2026-08-23 — #637, #639)
 
 - **FR-101**: Concurrent execution of increments on one project is legal ONLY for tasks the plan marks topologically independent (`[P]`) with declared file scopes.
 - **FR-102**: Concurrently-executed increments MUST integrate serially onto the goal branch in queue order.
@@ -187,7 +198,7 @@ out-of-scope edit in one increment fails that increment while the other lands.
 
 ## Out of Scope
 
-- Building any part of the `[P]` fan-out machinery (scheduler, scope enforcement, merge queue) in P1 — named here, sized later, only after the default has production nights behind it.
+- Building any part of the `[P]` fan-out machinery (scheduler, scope enforcement, merge queue) in P1 — it was named here and sized later, shipping as its own slice in #637/#639 on 2026-08-23.
 - Changing sandbox isolation, delivery, gates, or the increment's definition — the Unit of Work is unchanged.
 - Multi-instance coordination (two devclaw instances sharing one repo) — out of scope entirely; the lock is instance-local.
 - Priority preemption (a P0 goal evicting an active holder) — a queued goal waits; preemption is a possible future slice, not assumed.

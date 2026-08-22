@@ -33,9 +33,9 @@ knows the paradigm already knows the contract.
 | The milestone-level objective | **Saga** / long-running process | a goal — authored from five named slots, never prose (spec 012 US2: objective · done_when · out_of_scope · invariants · established) |
 | The execution atom | **Unit of Work** (Fowler) | one sandbox run → one atomic, verified, PR-able change-set |
 | The plan | **Task graph (DAG)** | `tasks.md`; `[P]` marks topological independence — parallelism is *data in the plan*, never executor control flow |
-| Parallel safety | **Hermetic action with declared I/O** (Bazel) | a fan-out increment's declared file scope, checked at settle *(spec 010 P3 — not built)* |
+| Parallel safety | **Hermetic action with declared I/O** (Bazel) | a fan-out increment's declared file scope, checked at settle — always-hard, zero-LLM (`loom/declared_scope.py`) |
 | Concurrency default | **Single-writer / actor-per-project** | at most one goal actively dispatching per project |
-| Integration | **Merge queue** (Bors) | serial integration of concurrently-executed increments *(spec 010 P3 — not built)* |
+| Integration | **Merge queue** (Bors) | serial integration of concurrently-executed increments, in plan order (`loom/merge_queue.py`; fan-out is behind `DEVCLAW_FANOUT`, default off) |
 
 ### A saga is authored against a schema
 

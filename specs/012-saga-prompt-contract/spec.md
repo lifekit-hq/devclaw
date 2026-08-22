@@ -4,9 +4,19 @@
 
 **Created**: 2026-08-22
 
-**Status**: US1 IMPLEMENTED 2026-08-22 (plan + tasks in this directory). US2
-(saga authoring slots) and US3 (expected increment count) remain SPECIFIED,
-NOT IMPLEMENTED — named-unsized until US1 has production nights behind it.
+**Status**: **IMPLEMENTED IN FULL 2026-08-23.** US1 (increment feed-forward)
+shipped 2026-08-22 via #609; US2 (saga authoring slots) via #635 and US3
+(expected increment count, plus FR-012a's completion-judgement guard) via #633,
+both 2026-08-23. Every FR is covered: FR-001…006 by US1, FR-007…009b by US2,
+FR-010…013 by US3; FR-014 is out of scope by its own text (spec 010 owns
+concurrency). Per-slice plans/tasks are `plan-us2.md` / `tasks-us2.md` and
+`plan-us3.md` / `tasks-us3.md`.
+
+US2 and US3 were built ahead of the "production nights behind US1" gate this
+line used to carry, on the owner's 2026-08-22 direction to implement both specs
+in full. The gate's concern — that slots nothing reads make prompts worse — was
+answered structurally instead: FR-009 was enforced at design time, and every
+slot US2 adds names the reader that acts on it.
 
 **Relationship to spec 010**: the 2026-08-18 ruling has two halves. Spec 010
 (`010-unit-of-work-parallelism`, drafted 2026-08-19, merged 2026-08-22) specifies
