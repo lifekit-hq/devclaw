@@ -128,8 +128,8 @@ async def _block_if_speckit_pending(resolved: ResolvedDispatch, tool: str) -> No
     Cheap and off the idle path: consulted only at dispatch time (never on the
     heartbeat/idle tick). Skips the network probe entirely when the repo already
     commits ``.specify/`` (speckit-ready). A repo with no ``.specify/`` and no
-    open install PR is a legacy PLAN.md repo (D4 dual-read transition) and is NOT
-    blocked — only an actually-open install PR blocks."""
+    open install PR has simply never been onboarded and is NOT blocked — only an
+    actually-open install PR blocks."""
     if await _speckit.has_committed_speckit(resolved.workspace_dir):
         return
     pr = await _speckit.open_install_pr(resolved.workspace_dir)
@@ -490,7 +490,7 @@ async def onboard(
 
     Speckit substrate (spec 008 US2): every repo devclaw works uses speckit.
     Onboard decides on the repo's COMMITTED ``.specify/`` directory —
-      - present ⇒ ADOPT (the repo already uses speckit) — writes NO ``PLAN.md``,
+      - present ⇒ ADOPT (the repo already uses speckit) — writes no plan file,
         opens no scaffolding PR, and proceeds to the comprehension-doc pass.
       - absent  ⇒ INSTALL — generates the ``.specify/`` scaffold and opens a
         REVIEWABLE PR (never a silent commit to the default branch). The repo
@@ -522,7 +522,7 @@ async def onboard(
             indent=2,
         )
 
-    # Committed .specify/ present ⇒ adopt: no PLAN.md, no scaffolding PR; run the
+    # Committed .specify/ present ⇒ adopt: no plan file, no scaffolding PR; run the
     # comprehension-doc onboarding pass as usual.
     task_id = queue.submit(
         kind="onboard",

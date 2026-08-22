@@ -5,7 +5,7 @@ decided by the **committed** ``.specify/`` directory (never the gitignored
 per-checkout ``feature.json``):
 
 - **committed ``.specify/`` present ⇒ ADOPT** — the repo already uses speckit;
-  record it and move on. Onboard writes **no** ``PLAN.md`` and opens **no**
+  record it and move on. Onboard writes **no** plan file and opens **no**
   scaffolding PR.
 - **absent ⇒ INSTALL** — generate the ``.specify/`` scaffold and open a
   **reviewable PR** through the existing delivery path (``delivery/``). **Never**
