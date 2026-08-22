@@ -156,3 +156,11 @@ export const IconPlay = (p: P) => (
     <path d="M7 5l12 7-12 7V5Z" fill="currentColor" stroke="none" />
   </Svg>
 );
+
+export const IconUsage = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="14" width="4" height="7" rx="1" />
+    <rect x="10" y="9" width="4" height="12" rx="1" />
+    <rect x="17" y="4" width="4" height="17" rx="1" />
+  </Svg>
+);

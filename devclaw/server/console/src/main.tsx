@@ -11,6 +11,7 @@ import { Goals } from "./pages/Goals";
 import { GoalDetail } from "./pages/GoalDetail";
 import { TaskDetail } from "./pages/TaskDetail";
 import { Evals } from "./pages/Evals";
+import { Usage } from "./pages/Usage";
 import { Problems } from "./pages/Problems";
 import { Settings } from "./pages/Settings";
 
@@ -28,6 +29,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="goals/:id/tasks/:taskId" element={<TaskDetail />} />
           <Route path="tasks/:taskId" element={<TaskDetail />} />
           <Route path="evals" element={<Evals />} />
+          <Route path="usage" element={<Usage />} />
           <Route path="problems" element={<Problems />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
