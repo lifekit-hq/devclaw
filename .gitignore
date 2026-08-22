@@ -62,3 +62,6 @@ node_modules/
 evals/baskets/*.json
 !evals/baskets/*.example.json
 /.devclaw/
+
+# /live-shakedown scratch repos — generated agent output, never committed
+.shakedown/
