@@ -58,7 +58,9 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • if phase==idle and no in_flight:                      │
      │  │         advance_brief.py builds the mechanical   │          │
      │  │           advance brief (steering + settle       │          │
-     │  │           detail; ZERO LLM — the worker plans    │          │
+     │  │           detail + what prior increments of      │          │
+     │  │           this goal delivered, spec 012 US1;     │          │
+     │  │           ZERO LLM — the worker plans            │          │
      │  │           in-sandbox via speckit, spec 008)      │          │
      │  │     • dispatches the next advance task           │          │
      │  │                                                  │ Pro/Max OAuth (~/.claude on host),

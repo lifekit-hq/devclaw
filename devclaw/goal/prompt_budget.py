@@ -77,3 +77,25 @@ def cap_deliveries(deliveries: str) -> str:
     return cap_section(
         deliveries, keep=DELIVERIES_KEEP, marker=DELIVERIES_TRUNCATION_MARKER
     )
+
+
+#: The saga feed-forward section of the worker's advance brief (spec 012 US1).
+#: Deliberately a QUARTER of the log/deliveries budgets: unlike those — read once
+#: per cognition call — this section is re-sent with EVERY increment (FR-009a),
+#: so its cost multiplies by the increment count over a saga's life. 6 KB holds
+#: tens of compact one-line entries, which is what FR-009b's bound is for.
+PRIOR_INCREMENTS_KEEP = 6_000
+
+PRIOR_INCREMENTS_TRUNCATION_MARKER = (
+    "[…older increments elided to fit the prompt budget: the most-recent ones "
+    "are kept — the full record is in the goal deliveries view]"
+)
+
+
+def cap_prior_increments(section: str) -> str:
+    """Bound the prior-increments feed-forward section. Tail-kept (the newest
+    increments are the ones the next session builds on); small or empty passes
+    through byte-identical."""
+    return cap_section(
+        section, keep=PRIOR_INCREMENTS_KEEP, marker=PRIOR_INCREMENTS_TRUNCATION_MARKER
+    )

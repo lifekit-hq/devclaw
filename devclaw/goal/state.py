@@ -769,6 +769,34 @@ class GoalState:
             ).fetchall()
         return [r["body"] for r in rows]
 
+    def delivery_records(self, goal_id: str) -> "list[tuple[str | None, str, str]]":
+        """``(ref_id, instruction, body)`` per delivery, oldest first — the
+        structured form of :meth:`recent_delivery_blocks`.
+
+        The saga feed-forward (spec 012 US1) needs ``ref_id`` to join each
+        delivery to its settlement status, and ``instruction`` (the #550
+        display objective) separately from the body it is rendered into."""
+        with self._store._lock:
+            rows = self._store._db.execute(
+                "SELECT ref_id, instruction, body FROM goal_deliveries "
+                "WHERE goal_id = ? ORDER BY id ASC",
+                (goal_id,),
+            ).fetchall()
+        return [(r["ref_id"], r["instruction"] or "", r["body"] or "") for r in rows]
+
+    def settlement_statuses(self, goal_id: str) -> "dict[str, str]":
+        """``ref_id -> status`` for every recorded settlement of ``goal_id``.
+
+        The authoritative terminal verdict (``done`` / ``failed``) lives here,
+        not in the delivery body — the saga feed-forward joins the two rather
+        than inferring failure from the shape of a text blob."""
+        with self._store._lock:
+            rows = self._store._db.execute(
+                "SELECT ref_id, status FROM goal_settlements WHERE goal_id = ?",
+                (goal_id,),
+            ).fetchall()
+        return {r["ref_id"]: r["status"] for r in rows if r["ref_id"] and r["status"]}
+
     # ---- goal_docs (the acceptance contract — checklist/firmed-draft, PR6) -
     #
     # One current document per (goal_id, kind), upserted atomically — the

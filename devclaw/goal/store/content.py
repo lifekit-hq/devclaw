@@ -276,6 +276,30 @@ class GoalContentMixin:
         path = self._dir(goal_id) / "executing-feature.txt"
         return path.read_text().strip() if path.exists() else ""
 
+    def increment_records(self, goal_id: str) -> "list":
+        """Every settled increment of ``goal_id`` as an
+        :class:`~devclaw.goal.prior_increments.IncrementRecord`, oldest first —
+        the saga feed-forward's input (spec 012 US1).
+
+        Joins ``goal_deliveries`` (objective + devclaw's own outcome lines) with
+        ``goal_settlements`` (the authoritative terminal status) by ``ref_id``.
+        Only devclaw-generated facts survive the parse; the worker's own
+        ``Agent summary:`` prose is dropped, because one worker's unverified
+        self-report must not become the next worker's premise (#358).
+
+        Read-only and transaction-free: safe on the tick's dispatch path, which
+        calls it only AFTER the ``should_plan`` gate (the zero-token idle
+        guard). Rows are the source of truth; ``deliveries.md`` is a generated
+        mirror and is never read back for a decision (constitution IV)."""
+        from ..prior_increments import parse_record  # local: avoids an import cycle
+
+        self._ingest_deliveries(goal_id)
+        statuses = self._goal_state.settlement_statuses(goal_id)
+        return [
+            parse_record(instruction, body, statuses.get(ref_id) if ref_id else None)
+            for ref_id, instruction, body in self._goal_state.delivery_records(goal_id)
+        ]
+
     def recent_deliveries(self, goal_id: str, chars: int = 8000) -> str:
         """The tail of the deliveries record (bounded — the evaluator's
         grounding context). Reconstructs ``header + "".join(blocks)`` from
