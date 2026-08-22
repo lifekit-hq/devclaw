@@ -276,6 +276,34 @@ def test_build_docker_args_threads_both_copies():
     )
 
 
+def test_workspace_vendor_agent_config_is_shadowed_from_the_worker():
+    """The other half of the config boundary: the TARGET REPO's own `.claude/`.
+
+    Since the worker became a real Claude-Code session (spec 011) it loads
+    whatever vendor agent config the repo checked in — hooks, permissions and
+    contributor conventions written for a human's interactive checkout. On
+    devclaw's own repo that config blocked the worker's `git commit` and sent
+    its work into a git worktree delivery never reads: task b9e3c3af
+    (2026-08-20) settled `done` having shipped nothing. An empty tmpfs over
+    `/workspace/.claude` restores the boundary for every repo at once, and
+    keeps agent scribbles there out of the repo's diff (#583).
+    """
+    args = sc._build_docker_args(
+        container_name="devclaw-test",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    assert f"{sc.CONTAINER_WORKSPACE}/.claude:rw,exec" in args
+    # It must shadow, not replace: the workspace bind still has to be there.
+    assert f"/host/ws:{sc.CONTAINER_WORKSPACE}" in args
+    # And the tmpfs must come after the bind it overlays — docker resolves
+    # nested mounts in argument order.
+    assert args.index(f"/host/ws:{sc.CONTAINER_WORKSPACE}") < args.index(
+        f"{sc.CONTAINER_WORKSPACE}/.claude:rw,exec"
+    )
+
+
 async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_path, monkeypatch):
     """The integration wiring the pure mount tests can't see: run_sandcastle
     computes the pre-trusted .claude.json copy AND the disposable .credentials.json
