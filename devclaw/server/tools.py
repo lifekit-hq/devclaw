@@ -494,6 +494,7 @@ async def onboard(
         workspace_dir=resolved.workspace_dir,
         goal=focus or "general onboarding",
         notify_url=notify_url,
+        deliver=True,
         project_id=resolved.project_id,
     )
     return json.dumps(

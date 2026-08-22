@@ -14,6 +14,7 @@ the TaskQueue wiring (a stub engine stands in for OpenHands).
 
 import importlib.util
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,16 @@ import pytest
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
+
+
+def _git(path, *args):
+    subprocess.run(["git", *args], cwd=path, check=True, capture_output=True)
+
+
+def _init_repo(path) -> None:
+    _git(path, "init", "-q")
+    _git(path, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "--allow-empty", "-q", "-m", "init")
 
 _RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
@@ -106,6 +117,18 @@ def test_onboard_agents_md_scope_is_pointer_not_narrative(runner):
     assert "No learnings, feature notes, or design narrative" in wrapped
 
 
+def test_onboard_agents_md_outbound_links_named_explicitly(runner):
+    """Named regression: the onboard prompt instructs the agent to include
+    EXPLICIT links to ARCHITECTURE.md, .agent/skills/, and specs/ in the
+    AGENTS.md body. A component map nothing points at doesn't help a worker
+    exploring the repo — the links are load-bearing navigation."""
+    wrapped = runner._wrap_goal("onboard", "")
+    assert "ARCHITECTURE.md" in wrapped
+    assert ".agent/skills/" in wrapped
+    assert "specs/" in wrapped
+    assert "EXPLICIT" in wrapped or "explicit" in wrapped
+
+
 def test_onboard_enforces_boundary_between_the_three_docs(runner):
     """Boundary discipline: each doc has one job — a project where README
     carries ADR content or ARCHITECTURE has quickstart commands is
@@ -176,19 +199,69 @@ async def test_onboard_task_settles_done_and_writes_agents_md(store, tmp_path):
     assert os.path.exists(os.path.join(ws, "AGENTS.md"))
 
 
-async def test_onboard_task_does_not_gate_or_deliver(store, tmp_path):
-    """Onboarding is comprehension, not a code change: no verify gate, no PR —
-    the human reviews the draft. The submit path leaves both off."""
-    ws = str(tmp_path / "ws2")
+async def test_onboard_has_no_verify_gate(store, tmp_path):
+    """Onboarding produces documentation, not code under test — no verify gate."""
+    ws = str(tmp_path / "ws_gate")
     os.makedirs(ws)
     q = TaskQueue(store, runner=_onboard_runner())
-    tid = q.submit(kind="onboard", workspace_dir=ws, goal="general onboarding")
+    tid = q.submit(kind="onboard", workspace_dir=ws, goal="general onboarding", deliver=True)
     await q.drain()
 
     t = store.get_task(tid)
     assert t.verify_cmd is None
-    assert t.deliver is False
+
+
+async def test_onboard_delivered_settles_done(store, tmp_path):
+    """Named regression: onboard with deliver=True in a git repo — agent writes
+    AGENTS.md, delivery runs (commits to a branch), task settles done.
+    No remote → pr_url=None but delivery is not a failure (benign no-remote)."""
+    ws = str(tmp_path / "ws_del")
+    os.makedirs(ws)
+    _init_repo(ws)
+    q = TaskQueue(store, runner=_onboard_runner())
+    tid = q.submit(kind="onboard", workspace_dir=ws, goal="general onboarding", deliver=True)
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done"
+    assert t.pr_url is None  # no remote — benign; task is still done
+
+
+async def test_onboard_nothing_to_deliver_settles_done(store, tmp_path):
+    """Named regression: a legitimately no-op onboard (agent inspects repo but
+    writes nothing) settles done without a PR — distinguishable from delivery
+    failure (which settles failed)."""
+    ws = str(tmp_path / "ws_noop")
+    os.makedirs(ws)
+    _init_repo(ws)
+
+    async def no_op_runner(req: EngineRequest):
+        return {"status": "ok", "workspaceDir": req.workspace_dir,
+                "message": "docs already up to date"}
+
+    q = TaskQueue(store, runner=no_op_runner)
+    tid = q.submit(kind="onboard", workspace_dir=ws, goal="general onboarding", deliver=True)
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done"
     assert t.pr_url is None
+
+
+async def test_onboard_delivery_failed_settles_task_failed(store, tmp_path):
+    """Named regression: an onboard run that generates artifacts but cannot
+    deliver them settles failed (not silently done). A non-git workspace is
+    the simplest trigger — delivery returns a non-benign error."""
+    ws = str(tmp_path / "ws_fail")
+    os.makedirs(ws)
+    # Not a git repo — deliver_change returns "workspace is not a git repository"
+    q = TaskQueue(store, runner=_onboard_runner())
+    tid = q.submit(kind="onboard", workspace_dir=ws, goal="general onboarding", deliver=True)
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert "delivery" in (t.error or "").lower()
 
 
 def test_onboard_kind_round_trips_through_the_store(store):
