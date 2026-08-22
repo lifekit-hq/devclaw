@@ -83,8 +83,38 @@ def validate_step(parsed: object) -> dict:
         spec = parsed.get("spec")
         if not isinstance(spec, str) or not spec.strip():
             raise PlannerError("Grill 'done' missing a spec")
-        return {"action": "done", "spec": spec.strip()}
+        step = {"action": "done", "spec": spec.strip()}
+        # The authored saga slots (spec 012 US2). The grill already elicits
+        # scope-out and hard constraints — they just landed in prose the waiter
+        # then had to re-derive by hand. Emitting them as lists hands the waiter
+        # exactly what ``create_goal`` requires. OPTIONAL on the wire: a
+        # response without them is byte-unaffected, so the contract only ever
+        # gains keys.
+        step.update(_saga_slots(parsed))
+        return step
     raise PlannerError(f"Grill action must be 'ask' or 'done', got {action!r}")
+
+
+#: The saga slots the grill may hand back alongside the spec (spec 012 US2).
+SAGA_SLOT_KEYS = ("out_of_scope", "invariants", "established")
+
+
+def _saga_slots(parsed: dict) -> dict:
+    """The saga slots present on a grill ``done`` response, normalized to lists
+    of non-blank strings. A key the model omitted stays omitted — the waiter
+    must then fill it itself, because ``create_goal`` rejects an unfilled slot
+    and a silently-invented empty one would defeat that check."""
+    out: dict = {}
+    for key in SAGA_SLOT_KEYS:
+        value = parsed.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, (list, tuple)):
+            raise PlannerError(f"Grill 'done' {key} must be a list of strings")
+        out[key] = [str(x).strip() for x in value if str(x).strip()]
+    return out
 
 
 def default_caller() -> Callable[[str], Awaitable[str]]:

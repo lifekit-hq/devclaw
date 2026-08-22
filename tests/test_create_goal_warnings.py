@@ -26,6 +26,11 @@ def _ok(svc, goal_id: str, **overrides):
         workspace_dir="/ws",
         done_when=_OK_DONE_WHEN,
         backlog=_OK_BACKLOG,
+        # The saga slots (spec 012 US2) are declared EMPTY, not omitted —
+        # omitting one is its own rejection and this file is about warnings.
+        out_of_scope=[],
+        invariants=[],
+        established=[],
     )
     kw.update(overrides)
     return svc.create_goal(goal_id, **kw)
@@ -88,7 +93,10 @@ def test_spec_param_is_persisted(svc):
     evaluator can judge done against the shared contract."""
     spec_text = "# my-app — spec\n## Goal\nA tiny CLI.\n## Scope\nin: foo\nout: bar"
     # spec alone is enough to admit (no done_when needed; spec carries it).
-    svc.create_goal("g-spec", objective="ship cli", workspace_dir="/ws", spec=spec_text)
+    svc.create_goal(
+        "g-spec", objective="ship cli", workspace_dir="/ws", spec=spec_text,
+        out_of_scope=[], invariants=[], established=[],
+    )
     persisted = svc._goal_store.read_spec("g-spec")
     assert "Goal" in persisted and "A tiny CLI." in persisted
 

@@ -3307,6 +3307,88 @@ async def test_idle_tick_performs_no_increment_record_read(tmp_path, monkeypatch
     assert evaluator.calls == 0
     assert reads == []
     assert engine.dispatched == []
+# ---- the authored saga framing (spec 012 US2) ------------------------------
+
+
+@pytest.mark.asyncio
+async def test_advance_brief_carries_the_authored_saga_slots(tmp_path):
+    """FR-007/FR-009a: the framing a worker receives is the authored schema,
+    re-sent in full — a fresh sandbox has no memory, so a pointer would be a
+    request while a slot is a fact."""
+    from devclaw.goal import saga_framing as sf
+
+    store = _store(tmp_path, Clock())
+    seed_goal(
+        tmp_path, "g",
+        out_of_scope=["the mobile client"],
+        invariants=["the existing test suite stays green"],
+        established=["Postgres is the datastore — decided, do not revisit"],
+    )
+    store.save_status("g", GoalStatus(phase="idle"))
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert sf.OUT_OF_SCOPE_LABEL in action.goal
+    assert "- the mobile client" in action.goal
+    assert "- the existing test suite stays green" in action.goal
+    assert "Postgres is the datastore" in action.goal
+
+
+@pytest.mark.asyncio
+async def test_advance_brief_for_a_goal_authored_before_the_slot_schema_is_unchanged(tmp_path):
+    """The live-goal regression: goals already running on the VPS were authored
+    as prose, and their goal.yaml has no slot keys. Their brief must not grow
+    three sections claiming nothing is excluded — that would be devclaw putting
+    words in the author's mouth."""
+    from devclaw.goal import saga_framing as sf
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")  # no slot keys — the pre-US2 goal.yaml shape
+    store.save_status("g", GoalStatus(phase="idle"))
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    # The framing is exactly what it always was...
+    assert "Goal: Drive the demo repo to done." in action.goal
+    assert "Done when: all backlog items merged" in action.goal
+    # ...and NOT one slot section more.
+    for label in (sf.OUT_OF_SCOPE_LABEL, sf.INVARIANTS_LABEL, sf.ESTABLISHED_LABEL):
+        assert label not in action.goal
+
+
+@pytest.mark.asyncio
+async def test_idle_tick_composes_no_saga_framing(tmp_path, monkeypatch):
+    """Constitution III / SC-007: US2 adds no per-tick work. Framing is
+    composed on the dispatch path only, so an idle tick spends no cognition and
+    renders nothing."""
+    from devclaw.goal import saga_framing as sf
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", cadence="1d", out_of_scope=[], invariants=[], established=[])
+    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
+
+    rendered: list[object] = []
+    real = sf.render
+    monkeypatch.setattr(
+        "devclaw.goal.tick._saga_framing.render",
+        lambda goal: (rendered.append(goal.id), real(goal))[1],
+    )
+    evaluator, engine = FakeClaude(), FakeEngine()
+
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.IDLE
+    assert evaluator.calls == 0
+    assert rendered == []
+    assert engine.dispatched == []
+
+
 # ---- the single-writer project hold (spec 010 P1) --------------------------
 
 

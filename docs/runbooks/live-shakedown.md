@@ -177,8 +177,13 @@ Append the user's answer to the last turn and call again until the response is
 python drive.py register_project \
   '{"project_id":"sc-l4","name":"L4 shakedown","workspace_dir":"/tmp/sc-l4"}'
 python drive.py create_goal \
-  '{"goal_id":"jyq","objective":"ship the cli","project_id":"sc-l4","spec":"<the finalized spec>"}'
+  '{"goal_id":"jyq","objective":"ship the cli","project_id":"sc-l4","spec":"<the finalized spec>",
+    "out_of_scope":[],"invariants":[],"established":[]}'
 ```
+
+The three saga slots are required (spec 012 US2) — `[]` declares one
+explicitly empty; omitting one comes back as an admission rejection naming it.
+Fill them from the grill's `done` response when it supplied them.
 
 The build is now a durable goal — watch it on the console / `get_goal` /
 `tail_goal`. It may run a while; that's the point.

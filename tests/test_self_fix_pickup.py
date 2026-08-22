@@ -130,6 +130,12 @@ def test_generated_self_fix_params_pass_goal_admission():
         done_when=si.self_fix_done_when(99, "lifekit-hq/devclaw"),
         repo_url=si.self_repo_url("lifekit-hq/devclaw"),
         backlog=None, verify_cmd=None, spec="",
+        # Spec 012 US2: this creator is UNATTENDED, so it must fill the saga
+        # slots for real rather than leaning on an operator to catch a
+        # sprawling prompt. Pinned against the same admission gate.
+        out_of_scope=si.self_fix_out_of_scope(99, "lifekit-hq/devclaw"),
+        invariants=list(si.SELF_FIX_INVARIANTS),
+        established=si.self_fix_established(99, "lifekit-hq/devclaw"),
     )
     assert adm.admitted
 

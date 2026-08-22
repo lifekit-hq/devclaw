@@ -43,6 +43,7 @@ def _mk(svc, goal_id, *, mode):
         done_when="the test command exits 0 and at least one assertion runs.",
         backlog=["scaffold project", "first feature"],
         mode=mode,
+        out_of_scope=[], invariants=[], established=[],
     )
 
 

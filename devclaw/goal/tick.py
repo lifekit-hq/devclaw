@@ -29,6 +29,7 @@ from typing import Callable
 
 from . import merge as _merge
 from . import prior_increments as _prior_increments
+from . import saga_framing as _saga_framing
 from . import project_hold as _project_hold
 from . import remote_checks as _remote_checks
 from . import triage as _triage
@@ -371,10 +372,11 @@ def _advance_brief(
         "Check off the completed items in tasks.md and commit the specs/NNN-*/ "
         "artifacts together with the code.",
         "",
-        f"Goal: {goal.objective}",
+        # The saga framing — five named slots, one generator, size-bounded
+        # (spec 012 US2). Re-sent in full every increment (FR-009a); a goal
+        # authored before the schema renders exactly as it did then.
+        _saga_framing.render(goal),
     ]
-    if goal.done_when.strip():
-        parts += ["", f"Done when: {goal.done_when.strip()}"]
     # The saga feed-forward (spec 012 US1): what earlier increments of THIS goal
     # delivered and how each was judged. Re-sent in full every increment
     # (FR-009a) — a fresh sandbox has no memory, so a pointer would be a request

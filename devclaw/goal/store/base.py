@@ -89,6 +89,20 @@ if TYPE_CHECKING:
     from ...state_store import StateStore
 
 
+def _slot(raw: object) -> "list[str] | None":
+    """One authored saga slot as read from goal.yaml (spec 012 US2).
+
+    ``None`` when the key is absent — the goal predates the schema and its
+    framing must render unchanged. A present value becomes a list of non-blank
+    strings, so an explicitly-empty slot survives as ``[]`` rather than
+    collapsing back into "never authored"."""
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)):
+        raw = [raw]
+    return [str(x).strip() for x in raw if str(x).strip()]
+
+
 class GoalStore(GoalStatusMixin, GoalContentMixin):
     def __init__(
         self,
@@ -301,6 +315,9 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         mode: str = "long_lived",
         strictness: str = "trust",
         project_id: str | None = None,
+        out_of_scope: list[str] | None = None,
+        invariants: list[str] | None = None,
+        established: list[str] | None = None,
     ) -> Goal:
         """Write a new goal.yaml. Raises FileExistsError if the id is taken."""
         if self.exists(goal_id):
@@ -331,6 +348,19 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
                     "verify_cmd": verify_cmd,
                     "open_pr": open_pr,
                     "done_when": done_when.strip(),
+                    # The authored saga slots (spec 012 US2). Written ONLY when
+                    # filled: an absent key is how a pre-schema goal.yaml stays
+                    # distinguishable from one whose author declared the slot
+                    # empty, and load_goal preserves that difference.
+                    **{
+                        k: [str(x).strip() for x in v if str(x).strip()]
+                        for k, v in (
+                            ("out_of_scope", out_of_scope),
+                            ("invariants", invariants),
+                            ("established", established),
+                        )
+                        if v is not None
+                    },
                     "backlog": list(backlog or []),
                     "stub_acceptable": list(stub_acceptable or []),
                     "mode": mode,
@@ -359,6 +389,13 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             done_when=str(raw.get("done_when", "")).strip(),
             backlog=[str(x).strip() for x in (raw.get("backlog") or [])],
             stub_acceptable=[str(x).strip() for x in (raw.get("stub_acceptable") or []) if str(x).strip()],
+            # Saga slots (spec 012 US2). ``_slot`` — NOT ``or []``: an ABSENT
+            # key must stay None (goal authored before the schema ⇒ its brief
+            # renders as it always did) while a PRESENT empty list stays []
+            # (the author declared the slot empty ⇒ the brief says so).
+            out_of_scope=_slot(raw.get("out_of_scope")),
+            invariants=_slot(raw.get("invariants")),
+            established=_slot(raw.get("established")),
             # Anything unrecognized (or a file with no field) reads as
             # long_lived — the conservative default: the per-tick loop.
             mode=("one_shot" if raw.get("mode") == "one_shot" else "long_lived"),

@@ -177,6 +177,9 @@ def seed_goal(
     done_when: str = "all backlog items merged",
     mode: str | None = None,
     project_id: str | None = None,
+    out_of_scope: list[str] | None = None,
+    invariants: list[str] | None = None,
+    established: list[str] | None = None,
 ) -> None:
     """Write a minimal goal.yaml under goals_dir/<goal_id>/.
 
@@ -196,6 +199,12 @@ def seed_goal(
     one QUEUE instead of dispatching. That is correct production behaviour, but
     it silently starves any test whose goals are meant to be independent — pass
     an explicit per-goal ``workspace_dir`` unless contention is the point.
+
+    The three saga slots (spec 012 US2) default to ABSENT keys — the shape of
+    every goal.yaml authored before that schema, and the shape the whole suite
+    is written against. Pass a list (``[]`` included) to seed a slot-authored
+    goal; the difference between an absent key and an empty list is exactly
+    what keeps live prose-authored goals rendering unchanged.
 
     Pass a standing-shaped ``done_when`` ("this is a standing goal") to
     exercise the standing-goal done-gate contract.
@@ -219,4 +228,11 @@ def seed_goal(
         doc["mode"] = mode
     if project_id is not None:
         doc["project_id"] = project_id
+    for key, value in (
+        ("out_of_scope", out_of_scope),
+        ("invariants", invariants),
+        ("established", established),
+    ):
+        if value is not None:
+            doc[key] = list(value)
     (d / "goal.yaml").write_text(yaml.safe_dump(doc))
