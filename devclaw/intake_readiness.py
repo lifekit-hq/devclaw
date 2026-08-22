@@ -8,6 +8,12 @@ decides ONLY groundability — a locatable surface, a concrete change, a
 verifiable intent — and never derives ``done_when`` or a checklist (that stays
 the worker's speckit specify/plan job; FR-006 non-overlap).
 
+Spec 012 US3 adds a SECOND, orthogonal axis to the same one-shot call (no new
+cognition call — FR-013): the grader reports how many units of work it would
+assess the ask to take, and whether that matches the count the *filer* claimed.
+The filer's claim is the record (FR-010b); this module never emits a number
+that replaces it, and a sizing disagreement never moves the readiness verdict.
+
 Layering (``.claude/rules/cognition-prompts.md``): this module returns parsed
 output; the intake layer (:mod:`devclaw.intake`) is what persists the verdict
 as a GitHub label and is where the FAIL-CLOSED choke point lives. On its own
@@ -52,15 +58,33 @@ class ReadinessError(Exception):
         self.raw = raw
 
 
+@dataclass(frozen=True)
+class SizingAssessment:
+    """The grader's read of the work item's extent (spec 012 FR-010a).
+
+    ``assessed`` is the number of units of work the grader would expect, or
+    ``None`` when it could not judge confidently. ``agrees`` is the grader's own
+    comparison against the filer's claim, or ``None`` when there was no claim to
+    compare against. This is EPHEMERAL: it feeds a surfacing decision and a
+    comment, and never becomes the recorded count — the filer's claim is the
+    record (FR-010b)."""
+
+    assessed: Optional[int] = None
+    agrees: Optional[bool] = None
+    basis: str = ""
+
+
 @dataclass
 class ReadinessVerdict:
     """The parsed outcome — binary ready/not-ready plus, when not-ready, the
-    concrete missing element(s) that make the reason actionable (FR-004).
-    Ephemeral input to the label decision; not a durable store."""
+    concrete missing element(s) that make the reason actionable (FR-004), plus
+    the orthogonal sizing assessment (spec 012 FR-010a). Ephemeral input to the
+    label decisions; not a durable store."""
 
     ready: bool
     missing: list[str] = field(default_factory=list)
     rationale: str = ""
+    sizing: SizingAssessment = field(default_factory=SizingAssessment)
 
 
 async def repo_context(workspace_dir: str) -> str:
@@ -92,12 +116,33 @@ def _repo_context_block(repo_context: Optional[str]) -> str:
     )
 
 
+def _increment_claim_block(
+    expected_increments: Optional[int], increment_basis: Optional[str]
+) -> str:
+    """Render the filer's expected-increment claim as prompt input (spec 012
+    FR-010). Absent ⇒ an explicit "no claim" marker, so the grader is told there
+    is nothing to compare against rather than left to invent a comparison."""
+    basis = (increment_basis or "").strip() or "(none stated)"
+    if expected_increments is None:
+        return (
+            "The filer stated NO expected increment count. Reason given: "
+            f"{basis}\nThere is nothing to agree or disagree with: report your "
+            "own assessment and set `agrees` to null."
+        )
+    return (
+        f"The filer claims this ask takes {expected_increments} unit(s) of work.\n"
+        f"Basis given by the filer: {basis}"
+    )
+
+
 def build_prompt(
     *,
     what: str,
     done_when: str,
     context: Optional[str] = None,
     repo_context: Optional[str] = None,
+    expected_increments: Optional[int] = None,
+    increment_basis: Optional[str] = None,
 ) -> str:
     from .prompts import load_prompt
 
@@ -107,6 +152,9 @@ def build_prompt(
         done_when=(done_when or "").strip() or "(none provided)",
         context=(context or "").strip() or "(none provided)",
         repo_context_block=_repo_context_block(repo_context),
+        increment_claim_block=_increment_claim_block(
+            expected_increments, increment_basis
+        ),
     )
 
 
@@ -121,6 +169,30 @@ def extract_json(text: str) -> str:
     if first >= 0 and last > first:
         return trimmed[first : last + 1]
     raise ReadinessError("no JSON object found in readiness response", text)
+
+
+def _parse_sizing(raw: object) -> SizingAssessment:
+    """Normalize the ``increments`` object. Fails toward "a human decides":
+    anything missing, wrongly typed, or out of range yields ``assessed=None``
+    (which the intake layer surfaces), never a fabricated agreement."""
+    if not isinstance(raw, dict):
+        return SizingAssessment()
+    assessed = raw.get("assessed")
+    if isinstance(assessed, bool):  # bool is an int subclass — not a count
+        assessed = None
+    elif isinstance(assessed, int):
+        assessed = assessed if assessed >= 1 else None
+    elif isinstance(assessed, str) and assessed.strip().isdigit():
+        assessed = int(assessed.strip()) or None
+    else:
+        assessed = None
+    raw_agrees = raw.get("agrees")
+    agrees = raw_agrees if isinstance(raw_agrees, bool) else None
+    return SizingAssessment(
+        assessed=assessed,
+        agrees=agrees,
+        basis=str(raw.get("basis", "")).strip(),
+    )
 
 
 def validate(parsed: object) -> ReadinessVerdict:
@@ -147,14 +219,19 @@ def validate(parsed: object) -> ReadinessVerdict:
         else []
     )
     rationale = str(parsed.get("rationale", "")).strip()
+    sizing = _parse_sizing(parsed.get("increments"))
     if ready:
-        return ReadinessVerdict(ready=True, missing=[], rationale=rationale)
+        return ReadinessVerdict(
+            ready=True, missing=[], rationale=rationale, sizing=sizing
+        )
     if not missing:
         missing = [
             rationale
             or "the ask could not be confidently grounded against the repository"
         ]
-    return ReadinessVerdict(ready=False, missing=missing, rationale=rationale)
+    return ReadinessVerdict(
+        ready=False, missing=missing, rationale=rationale, sizing=sizing
+    )
 
 
 async def evaluate(
@@ -164,12 +241,19 @@ async def evaluate(
     context: Optional[str],
     repo_context: Optional[str],
     claude_caller: ClaudeCaller,
+    expected_increments: Optional[int] = None,
+    increment_basis: Optional[str] = None,
 ) -> ReadinessVerdict:
     """Run the readiness evaluation. ``claude_caller`` is injected so tests stub
     the LLM. Raises :class:`ReadinessError` on unusable output — the intake
     orchestrator turns that into a fail-closed ``needs-refinement``."""
     prompt = build_prompt(
-        what=what, done_when=done_when, context=context, repo_context=repo_context
+        what=what,
+        done_when=done_when,
+        context=context,
+        repo_context=repo_context,
+        expected_increments=expected_increments,
+        increment_basis=increment_basis,
     )
     raw = await claude_caller(prompt)
     try:
