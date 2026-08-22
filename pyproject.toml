@@ -62,6 +62,11 @@ norecursedirs = ["evals/runs", ".venv", "build", "*.egg-info"]
 
 [tool.ruff]
 target-version = "py311"
+# `/live-shakedown` writes generated scratch repos into .shakedown/ — agent
+# output, not this codebase. It is untracked (so CI never sees it), but a
+# developer running `ruff check .` would get findings from code nobody here
+# wrote. Excluded so the local command matches what the gate actually gates.
+extend-exclude = [".shakedown"]
 
 [tool.ruff.lint]
 # Deliberately narrow: pyflakes (F) + syntax/IO errors (E9), not style. The
