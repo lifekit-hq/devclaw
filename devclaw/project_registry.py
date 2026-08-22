@@ -289,14 +289,28 @@ class ProjectRegistry:
             # on an older `projects` table. NULL by default = "inherit the global
             # env default", same as a freshly created row. SQLite type is INTEGER
             # for bool fields, TEXT for the string field.
-            cols = {row[1] for row in self._db.execute("PRAGMA table_info(projects)")}
+            #
+            # Swallow the duplicate-column error rather than introspecting first:
+            # this db file is SHARED (the CLI and the server each open their own
+            # connection, see the class docstring), so a PRAGMA-then-ALTER read
+            # is a TOCTOU race — the loser of two concurrent bootstraps crashes
+            # on a column the winner just added. Mirrors StateStore._bootstrap
+            # and GoalStore's migrator, which have always done it this way; this
+            # was the one migrator that didn't.
             for name in _OVERRIDE_BOOL_FIELDS:
-                if name not in cols:
-                    self._db.execute(f"ALTER TABLE projects ADD COLUMN {name} INTEGER")
+                self._add_column(name, "INTEGER")
             for name in _OVERRIDE_STR_FIELDS:
-                if name not in cols:
-                    self._db.execute(f"ALTER TABLE projects ADD COLUMN {name} TEXT")
+                self._add_column(name, "TEXT")
             self._db.commit()
+
+    def _add_column(self, name: str, sql_type: str) -> None:
+        """Idempotent ``ALTER TABLE projects ADD COLUMN``. SQLite has no
+        ``IF NOT EXISTS`` for columns, so "already there" arrives as an
+        OperationalError and is the success case, not a failure."""
+        try:
+            self._db.execute(f"ALTER TABLE projects ADD COLUMN {name} {sql_type}")
+        except sqlite3.OperationalError:
+            pass  # column already exists (or another writer just added it)
 
     # ---- CRUD --------------------------------------------------------------
 

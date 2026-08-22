@@ -568,3 +568,88 @@ def test_managed_repo_ledger_records_case_insensitively_and_survives_reopen(tmp_
     reopened.forget_managed_repo("Dsdevq/Scratch")
     assert not reopened.is_managed_repo("dsdevq/scratch")
     reopened.forget_managed_repo("dsdevq/scratch")  # forgetting twice is a no-op
+
+
+# ---- shared-file bootstrap: the migration must tolerate a concurrent writer ----
+
+
+def test_add_column_is_idempotent_when_another_writer_won_the_race(tmp_path):
+    """The registry db is SHARED — the CLI and the server each open their own
+    connection (see the class docstring) — so two processes can bootstrap it at
+    once. The migration used to read `PRAGMA table_info` and then ALTER only the
+    columns it saw missing, which is a TOCTOU race: if the other writer adds the
+    column in that window, the ALTER raises `duplicate column name` and the
+    loser crashes on startup. `_add_column` treats "already there" as the
+    success case, the way StateStore._bootstrap and GoalStore's migrator always
+    have — this was the one migrator that didn't.
+
+    Surfaced by running the suite with `-n auto`: sixteen workers importing
+    `devclaw.server.tools` bootstrapped one repo-root devclaw.db simultaneously.
+    """
+    reg = ProjectRegistry(str(tmp_path / "shared.db"))
+
+    # Bootstrap already added them, so these are exactly the statements the
+    # losing writer issues after its stale introspection. None may raise.
+    reg._add_column("sandbox_image", "TEXT")
+    reg._add_column("automerge", "INTEGER")
+
+    # ...and the table is intact afterwards.
+    reg.create(id="p", name="P", automerge=True)
+    assert reg.get("p").automerge is True
+
+
+def test_bootstrap_completes_on_a_partially_migrated_table(tmp_path):
+    """A db left half-migrated (one override column added, the rest not) must
+    finish migrating on the next open rather than stopping at the first column
+    that already exists."""
+    import sqlite3
+
+    db = str(tmp_path / "shared.db")
+    seed = sqlite3.connect(db)
+    # The pre-override table shape: every base column, none of the per-project
+    # override columns the migration adds.
+    seed.executescript(
+        """
+        CREATE TABLE projects (
+          id            TEXT PRIMARY KEY,
+          name          TEXT NOT NULL,
+          repo_url      TEXT,
+          workspace_dir TEXT,
+          preview_url   TEXT,
+          status        TEXT NOT NULL DEFAULT 'active',
+          goal_ids      TEXT,
+          notes         TEXT,
+          created_at    INTEGER NOT NULL,
+          updated_at    INTEGER NOT NULL
+        );
+        """
+    )
+    seed.execute("ALTER TABLE projects ADD COLUMN sandbox_image TEXT")
+    seed.commit()
+    seed.close()
+
+    reg = ProjectRegistry(db)
+
+    cols = {row[1] for row in reg._db.execute("PRAGMA table_info(projects)")}
+    for name in ("sandbox_image", "automerge", "autodeploy", "review_gate",
+                 "verify_done", "merge_strategy", "browser_gate_mode"):
+        assert name in cols, name
+
+    reg.create(id="p", name="P")
+    assert reg.get("p").name == "P"
+
+
+def test_suite_never_writes_its_database_into_the_repo():
+    """`devclaw.server._state` opens a real StateStore/ProjectRegistry at IMPORT
+    time against DEVCLAW_DB, which defaults to `devclaw.db` relative to CWD.
+    Importing a server module from a test therefore used to create a live
+    database in the repo root — one file shared by every xdist worker. conftest
+    points it at a per-worker temp path; this pins that it stays outside the
+    checkout.
+    """
+    import os
+    from pathlib import Path
+
+    db = Path(os.environ["DEVCLAW_DB"]).resolve()
+    repo = Path(__file__).resolve().parents[1]
+    assert repo not in db.parents, f"suite db {db} is inside the checkout {repo}"
