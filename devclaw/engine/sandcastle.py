@@ -486,6 +486,25 @@ def _build_docker_args(
         "--cpus", SANDBOX_CPUS,
         "-v",
         f"{host_bind_path}:{CONTAINER_WORKSPACE}",
+        # Shadow the repo's OWN vendor agent config with an empty tmpfs. Since
+        # the worker became a real Claude-Code session (spec 011) it loads
+        # whatever `.claude/` the target repo checked in — config written for a
+        # HUMAN's interactive checkout, which now binds devclaw's engineer.
+        # devclaw's own repo proved the cost: its contributor hooks blocked the
+        # worker's `git commit` (the workspace sits on the default branch, which
+        # delivery never pushes) and its "branch work happens in a worktree"
+        # rule sent the work into a tree delivery does not read — a full
+        # self-fix settled `done` having shipped nothing (task b9e3c3af,
+        # 2026-08-20). The repo's own permission allowlist buys the sandbox
+        # nothing either: acp_client auto-grants every permission request, and
+        # the container IS the security boundary. Per-repo guidance the worker
+        # SHOULD read stays the model-agnostic channel — AGENTS.md and
+        # `.agent/skills/`. tmpfs (not a filesystem edit) so the host checkout
+        # is untouched, nothing needs cleanup after a hard kill, and anything
+        # the agent writes there dies with the container instead of landing in
+        # the repo's diff (#583).
+        "--tmpfs",
+        f"{CONTAINER_WORKSPACE}/.claude:rw,exec",
         # Per-project toolchain cache (ADR 0005): mise's data dir survives
         # across this project's tasks, so only the first task per toolchain
         # version pays the SDK download.
@@ -560,9 +579,11 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
 
     # Bind DISPOSABLE per-task copies of the identity pair, read-write (see
     # _build_claude_mounts). .claude.json is additionally pre-trusted so the
-    # in-sandbox claude treats /workspace as a trusted workspace (honors its
-    # .claude/settings.json permissions instead of dead-stopping on the
-    # untrusted-workspace guard — the #1 terminal-failure class as of 2026-07).
+    # in-sandbox claude treats /workspace as a trusted workspace instead of
+    # dead-stopping on the untrusted-workspace guard — the #1 terminal-failure
+    # class as of 2026-07. (Trust no longer carries the repo's own
+    # .claude/settings.json permissions into the run: the tmpfs above shadows
+    # that config, and acp_client auto-grants every permission request anyway.)
     # Either copy None (host file unreadable from this process) → that entry
     # falls back to the raw read-only bind. Both deleted after the container
     # exits.

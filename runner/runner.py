@@ -35,6 +35,16 @@ import traceback
 # the task forever (the agent's own wall-clock guard is separate — improvement #3).
 _VERIFY_TIMEOUT_S = int(os.environ.get("DEVCLAW_VERIFY_TIMEOUT_S", "900"))
 
+#: Shell the verify gate runs under. bash with `pipefail` so a piped gate
+#: command can't mask a failing stage's exit code (see _run_verify). Resolved
+#: once, with a POSIX-sh fallback for a box without bash — there the masking
+#: risk returns, but a missing shell must not fail every gate.
+_VERIFY_SHELL = (
+    [shutil.which("bash"), "-o", "pipefail", "-c"]
+    if shutil.which("bash")
+    else ["/bin/sh", "-c"]
+)
+
 # Skill bundle baked into the sandbox image at /opt/devclaw/skills/. Layout:
 #   _common.md          → always prepended
 #   _writes-code/*.md   → for kinds that write code (implement_feature, fix_bug)
@@ -403,11 +413,17 @@ def _run_verify(cmd: str, workspace_dir: str, timeout: int = _VERIFY_TIMEOUT_S) 
     test/build command exiting 0 is what "done" means. Run via the shell so a
     full command line works ("npm run build && npm run test:ci"); combined
     stdout+stderr, tail-truncated. Never raises — a crash/timeout is a failed
-    gate, not a runner crash."""
+    gate, not a runner crash.
+
+    Run under ``bash -o pipefail``, not the default ``sh -c``: without it a
+    piped gate reports the LAST stage's status, so the extremely natural
+    ``pytest … | tail -20`` exits 0 on a red suite and the gate passes a failing
+    build. That is a fail-OPEN verification gate — the one thing the hardening
+    philosophy forbids — and it shipped live (a devclaw self-fix settled `done`
+    with a failing test in the gate's own captured output, 2026-08-20)."""
     try:
         proc = subprocess.run(
-            cmd,
-            shell=True,
+            _VERIFY_SHELL + [cmd],
             cwd=workspace_dir,
             capture_output=True,
             text=True,
