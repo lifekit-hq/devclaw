@@ -570,15 +570,13 @@ class TaskQueue(_NotifyMixin):
     @staticmethod
     def _derive_engine_kind(runner: "RunnerFn") -> str:
         """Map a runner function to a short label for the trace ("stub" /
-        "sandcastle" / "host" / "claude_sdk"). Falls back to the function's
-        qualified name so unknown custom runners are still identifiable."""
+        "sandcastle" / "host"). Falls back to the function's qualified name so
+        unknown custom runners are still identifiable."""
         qualname = getattr(runner, "__qualname__", "") or getattr(runner, "__name__", "")
         if "run_sandcastle" in qualname:
             return "sandcastle"
         if "run_host" in qualname:
             return "host"
-        if "run_claude_sdk" in qualname:
-            return "claude_sdk"
         if "stub_engine" in qualname or qualname.startswith("stub"):
             return "stub"
         return qualname or "unknown"
@@ -609,7 +607,7 @@ class TaskQueue(_NotifyMixin):
         self._planner: PlannerFn = planner or _no_host_planner
         self._runner: RunnerFn = runner or run_sandcastle
         # A short engine-kind label for trace events ("stub" / "sandcastle" /
-        # "host" / "claude_sdk") — derived from the runner's qualified name so
+        # "host") — derived from the runner's qualified name so
         # silently mis-wired sandboxes can be spotted in the timeline.
         self._engine_kind: str = self._derive_engine_kind(self._runner)
         # The pre-PR review gate's cognition (diff → verdict). Injectable so tests

@@ -28,7 +28,15 @@ def _fake_cmd(script: str) -> str:
 def _base_env(tmp_path) -> dict:
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
-    return {"PATH": os.environ.get("PATH", ""), "HOME": str(home)}
+    # Deliberately minimal (hermeticity), but the skill bundle is NOT optional:
+    # production always has one, and since #613 a runner with no skills refuses
+    # to brief the worker at all. Point at the in-repo source the image bakes.
+    skills = Path(__file__).resolve().parents[1] / "runner" / "skills"
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(home),
+        "DEVCLAW_SKILLS_DIR": str(skills),
+    }
 
 
 def _run_runner(tmp_path, script=None, req_extra=None, env_extra=None, timeout=60):

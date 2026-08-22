@@ -55,10 +55,10 @@ def test_feature_and_fix_carry_a_code_quality_bar(runner):
     # fix for "the agent only ever ships a working version"
     for kind in ("implement_feature", "fix_bug"):
         w = runner._wrap_goal(kind, "X").lower()
-        assert "production code-quality" in w
+        assert "**production** bar" in w          # production quality, not just green
         assert "no-op" in w                       # no dead/no-op code
         assert "necessary but not sufficient" in w  # green gate != good code
-        assert "senior engineer" in w             # re-read your own diff critically
+        assert "re-read your diff" in w           # judge your own work critically
 
 
 def test_quality_bar_is_only_for_code_changes(runner):
@@ -95,7 +95,7 @@ def test_return_contract_not_added_to_read_only_kinds(runner):
     # Proven absent from the raw wrapper first: the fields appear nowhere in the
     # review/onboard templates.
     for kind in ("review_repository", "onboard"):
-        assert "ACCEPTANCE:" not in runner._KIND_WRAPPERS[kind]  # not in the raw template
+        assert "ACCEPTANCE:" not in runner._load_skills(kind)     # not in the raw skill bundle
         assert "FOLLOW-UPS:" not in runner._wrap_goal(kind, "X")  # nor in the rendered brief
 
 
@@ -120,7 +120,7 @@ def test_implement_feature_asks_for_a_clean_self_authored_commit(runner):
     wrapped = runner._wrap_goal("implement_feature", "GOAL-TOKEN")
     assert "conventional-commit" in wrapped.lower()
     assert "COMMIT" in wrapped
-    assert "do not push" in wrapped.lower() and "pull request" in wrapped.lower()
+    assert "do not push or open a pr" in wrapped.lower()
 
 
 def test_wrapper_makes_agents_md_the_thin_pointer_read_first(runner):
@@ -128,26 +128,29 @@ def test_wrapper_makes_agents_md_the_thin_pointer_read_first(runner):
     # future tasks don't re-derive the same context (token efficiency).
     wrapped = runner._wrap_goal("implement_feature", "x")
     assert "AGENTS.md" in wrapped
-    assert "keep it honest" in wrapped.lower()
+    assert "kept honest" in wrapped.lower()
     assert "re-derive" in wrapped.lower()
 
 
-def test_fallback_preamble_never_authors_agents_md_in_feature_slices(runner):
+def test_agents_md_cap_never_authors_from_scratch_in_feature_slices(runner):
     """#552: the doctrine is capped to keep-honest — update AGENTS.md only when
     the shipped change makes it wrong; NEVER author it from scratch (that is
-    onboarding work). Absence is proven against the raw template first."""
-    assert "missing, create it" not in runner._CONTEXT_PREAMBLE  # old rule gone
-    assert "ACCUMULATED" not in runner._CONTEXT_PREAMBLE          # growth framing gone
-    assert "NEVER create AGENTS.md" in runner._CONTEXT_PREAMBLE
-    assert "NEVER append" in runner._CONTEXT_PREAMBLE
-    assert "THIN, BOUNDED pointer" in runner._CONTEXT_PREAMBLE
+    onboarding work). Absence is proven against the raw skill bundle first, so
+    a rule that vanished from the canonical source cannot pass on a rendering
+    artifact."""
+    raw = runner._load_skills("implement_feature")
+    assert "missing, create it" not in raw   # old rule gone
+    assert "ACCUMULATED" not in raw          # growth framing gone
+    assert "NEVER create AGENTS.md" in raw
+    assert "NEVER append" in raw
+    assert "THIN, BOUNDED pointer" in raw
     for kind in ("implement_feature", "fix_bug"):
         wrapped = runner._wrap_goal(kind, "X")
         assert "NEVER create AGENTS.md" in wrapped
         assert "NEVER append" in wrapped
         assert "only when the change you shipped makes it wrong" in wrapped
         assert "missing, create it" not in wrapped
-    # onboarding remains the authoring path — the cap never reaches its wrapper
-    onboard_raw = runner._KIND_WRAPPERS["onboard"]
+    # onboarding remains the authoring path — the cap never reaches its bundle
+    onboard_raw = runner._load_skills("onboard")
     assert "AGENTS.md" in onboard_raw
     assert "NEVER create AGENTS.md" not in onboard_raw

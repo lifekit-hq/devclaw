@@ -152,7 +152,7 @@ surfaced them. Apply this while triaging, planning, and fixing:
 devclaw/
 ├── server/          MCP surface — tools.py (@mcp.tool), http.py (routes/SSE), lifecycle.py (auth+serve)
 ├── goal/            durable goal layer — service, tick, planner, evaluator, store, engine, merge, notify
-├── engine/          execution — sandcastle.py (docker run --rm, prod), claude_sdk.py, host.py, stub.py
+├── engine/          execution — sandcastle.py (docker run --rm, prod), host.py, stub.py
 ├── delivery/        commit → branch → push → PR; deploy.py (Tailscale); repo.py (gh repo create)
 ├── quality/         gates past green tests — the self-contained fail-closed gate (own prompts/ + README), pre-PR adversarial review, eval_judge, evals
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace

@@ -312,11 +312,24 @@ def test_wrap_goal_appends_return_contract_on_skills_path(runner, skill_dir):
     assert "FOLLOW-UPS:" not in runner._wrap_goal("review_repository", "x")
 
 
-def test_wrap_goal_falls_back_when_skill_dir_missing(runner, monkeypatch, tmp_path):
+def test_wrap_goal_refuses_loudly_when_the_skill_bundle_is_missing(
+    runner, monkeypatch, tmp_path
+):
+    """Named regression (#613): no skills ⇒ raise, never substitute text.
+
+    There used to be a second copy of every instruction embedded in runner.py
+    that rendered here instead. It was not a harmless fallback: a prompt edit
+    could land in the copy production never reads while the canonical skill
+    said something else, with nothing to tell them apart (#610). Briefing a
+    worker that then runs unattended on substitute text is exactly the silent
+    degradation the hardening philosophy forbids.
+    """
     monkeypatch.setattr(runner, "_SKILLS_DIR", str(tmp_path / "nonexistent"))
-    wrapped = runner._wrap_goal("implement_feature", "GOAL-TOKEN")
-    # Legacy embedded preamble still works in degraded mode (host-side dev).
-    assert "GOAL-TOKEN" in wrapped
+    with pytest.raises(RuntimeError) as exc:
+        runner._wrap_goal("implement_feature", "GOAL-TOKEN")
+    # actionable: names the kind, the path, and which side is mis-wired
+    assert "implement_feature" in str(exc.value)
+    assert "DEVCLAW_SKILLS_DIR" in str(exc.value)
 
 
 def test_wrap_goal_threads_workspace_dir_to_per_repo_skills(runner, skill_dir, tmp_path):

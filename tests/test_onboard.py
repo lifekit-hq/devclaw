@@ -40,13 +40,13 @@ def test_onboard_writes_exactly_three_docs_no_decisions_md(runner):
     """#552 adopt-over-build: the onboard doc set is AGENTS.md + README.md +
     ARCHITECTURE.md. DECISIONS.md is retired — the speckit spec is the decision
     memory. Absence is proven against the raw wrapper template first."""
-    assert "DECISIONS.md" not in runner._KIND_WRAPPERS["onboard"]  # raw template
+    assert "DECISIONS.md" not in runner._load_skills("onboard")  # raw skill bundle
     wrapped = runner._wrap_goal("onboard", "FOCUS-TOKEN")
     # each of the three docs is named so the LLM knows the concrete filenames
     for doc in ("AGENTS.md", "README.md", "ARCHITECTURE.md"):
         assert doc in wrapped, doc
     assert "DECISIONS.md" not in wrapped
-    assert "THREE docs" in wrapped
+    assert "three documents" in wrapped.lower()
     # each doc is marked DRAFT until a human reviews it
     assert "DRAFT" in wrapped
     # the optional focus still rides along
@@ -103,7 +103,7 @@ def test_onboard_agents_md_scope_is_pointer_not_narrative(runner):
     for cue in ("what the repo is", "verify gate", "layout pointers",
                 ".agent/skills/", "specs/"):
         assert cue in wrapped.lower() or cue in wrapped, cue
-    assert "No learnings, feature notes, or design narrative" in wrapped
+    assert "Do NOT put learnings, feature notes, decision rationale" in wrapped
 
 
 def test_onboard_enforces_boundary_between_the_three_docs(runner):
