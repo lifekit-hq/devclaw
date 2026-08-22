@@ -6,10 +6,8 @@ speckit ``tasks.md`` is fine-grained (one story is many ``T00x`` rows), so
 closing five tasks of ONE story is one reviewable slice, and only advancing >1
 distinct ``(feature, story)`` slice is building ahead. ``tasks_flips_sync``
 counts distinct slices advanced between ``HEAD^`` and ``HEAD`` across
-``specs/*/tasks.md``; it NEVER reads ``PLAN.md`` when a ``tasks.md`` exists,
-falls back to the legacy ``PLAN.md`` reader only when no ``tasks.md`` exists
-anywhere (D4), and is best-effort / fail-OPEN on detection (a git hiccup / no
-parent commit ⇒ 0). The VERDICT half (advise under trust / block under strict)
+``specs/*/tasks.md``, and is best-effort / fail-OPEN on detection (a git hiccup
+/ no contract / no parent commit ⇒ 0). The VERDICT half (advise under trust / block under strict)
 is unchanged and covered in test_goal_tick.py.
 """
 
@@ -151,17 +149,12 @@ def test_count_slice_advances_fails_open_to_zero_on_empty():
     assert count_slice_advances("just prose", "still just prose") == 0
 
 
-# ---- the git wrapper: reads tasks.md, never PLAN.md ------------------------
+# ---- the git wrapper -------------------------------------------------------
 
 
-def test_tasks_flips_sync_counts_slices_from_tasks_md_not_plan(tmp_path, monkeypatch):
-    # PLAN.md is NEVER read when a tasks.md exists — prove it by making the
-    # legacy PLAN.md reader BLOW UP if consulted (assert absence).
-    def _never(_ws):  # pragma: no cover - must not be called
-        raise AssertionError("PLAN.md reader consulted while tasks.md exists")
-
-    monkeypatch.setattr(_slice_guard, "mega_dump_flips_sync", _never)
-
+def test_tasks_flips_sync_counts_tasks_md_slices_and_ignores_other_markdown(tmp_path):
+    """A repo carrying its own checkbox-bearing markdown alongside the speckit
+    contract is counted ONLY by specs/*/tasks.md — the contract is the unit."""
     repo = _repo(tmp_path)
     specs = repo / "specs" / "001-some-feature"
     specs.mkdir(parents=True)
@@ -245,8 +238,15 @@ def test_tasks_flips_sync_sums_across_multiple_feature_dirs(tmp_path):
     assert tasks_flips_sync(str(repo)) == 2
 
 
-def test_tasks_flips_sync_falls_back_to_plan_md_when_no_tasks_md(tmp_path):
-    # No specs/*/tasks.md anywhere ⇒ the LEGACY PLAN.md fallback (D4).
+def test_tasks_flips_sync_is_zero_without_a_speckit_contract(tmp_path):
+    """Named regression (#614): no specs/*/tasks.md ⇒ 0, never a second reader.
+
+    A repo with no speckit contract has no build-ahead UNIT to police, so
+    detection fails OPEN exactly as it does for a git hiccup or a first commit.
+    There used to be a fallback here that parsed a repo-root PLAN.md; nothing
+    has written that file since the spec 008 shrink, and no repo devclaw drives
+    carries the ``## Milestones`` checkbox spine it required.
+    """
     repo = _repo(tmp_path)
     (repo / "PLAN.md").write_text(_PLAN)
     _git(repo, "add", "-A")
@@ -254,7 +254,7 @@ def test_tasks_flips_sync_falls_back_to_plan_md_when_no_tasks_md(tmp_path):
     (repo / "PLAN.md").write_text(_flip(_PLAN, "scaffold the app", "add auth"))
     _git(repo, "add", "-A")
     _git(repo, "commit", "-q", "-m", "two milestones")
-    assert tasks_flips_sync(str(repo)) == 2
+    assert tasks_flips_sync(str(repo)) == 0
 
 
 def test_tasks_flips_sync_zero_when_neither_present(tmp_path):

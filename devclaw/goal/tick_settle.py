@@ -343,8 +343,8 @@ async def _resolve_polling_action(
     # story-slice, NOT the raw checkbox — closing five ``T00x [US1]`` rows is one
     # slice, not five (see :func:`slice_guard.count_slice_advances`). Detection is
     # a pure git-diff + string parse — ZERO token and best-effort/fail-OPEN: an
-    # absent or garbled tasks.md ⇒ 0 ⇒ never trips (:mod:`slice_guard`; it falls
-    # back to the legacy PLAN.md reader only when NO tasks.md exists — D4). The
+    # absent or garbled tasks.md ⇒ 0 ⇒ never trips (:mod:`slice_guard`; a repo
+    # with no speckit contract has no build-ahead unit to police). The
     # VERDICT rides the EXISTING strictness dial (:func:`gate_consequence`, a
     # dial-able "slice" gate): under ``trust`` it ADVISES (loud log, ship anyway —
     # the done-gate + human review are the backstop), under ``strict`` it BLOCKS
@@ -352,9 +352,7 @@ async def _resolve_polling_action(
     # whose topology is a goal branch — the per-action topology has no
     # accumulating plan to reason about, and this runs only on the POLLING_ACTION
     # settle path (never idle/blocked), so the ``FakeClaude.calls == 0`` guards
-    # stay green. The source moved (PLAN.md milestones → tasks.md story-slices)
-    # and the build-ahead unit with it; the fail-closed-under-strict consequence
-    # is unchanged.
+    # stay green. The fail-closed-under-strict consequence is unchanged.
     if (
         poll.status == "done"
         and _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None

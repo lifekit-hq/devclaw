@@ -129,8 +129,12 @@ guard rewire), then US2. Validate Tier A (T017), open the PR for human review
   bug → `bugfix`; hotfix/`critical-fix` → `hotfix`; chore/docs → direct-advance.
   Adopt community workflows (MartyBonacci/spec-kit-extensions) via speckit's own
   `workflow-registry.json` (FR-009) — **vendor, don't author**. Tracked: #534.
-- **US4 (P2)** — migrate existing `PLAN.md`-spine repos to speckit; remove the
-  legacy `PLAN.md` fallback (D4). Tracked: #535.
+- **US4 (P2)** — ~~migrate existing `PLAN.md`-spine repos to speckit; remove the
+  legacy `PLAN.md` fallback (D4)~~. **DONE 2026-08-22 (#614).** The fallback and
+  the whole `PLAN.md` reader are deleted. The migration half was moot: no repo
+  devclaw drives carried a `## Milestones` checkbox spine, so the D4 path could
+  never have fired — the one repo-root `PLAN.md` found anywhere (career-kit) has
+  the heading but zero checkboxes, which the reader counts as 0. Tracked: #535.
 - **Shrink (#539)** — remove the host `investigating→firming→decompose` cognition
   chain (`firming.py`, `decomposer.py`, `checklist.py`, `research.py`,
   `world_research.py`, `planner.py`, ~2,400 lines). **Gated on Tier-B (#538).

@@ -28,6 +28,8 @@ from starlette.responses import (
 
 from .. import __version__
 from .. import telemetry as _telemetry
+from ..goal import slice_guard
+from ..goal.slice_guard import _TASKS_PATH_RE
 from ..project_registry import project_rollup
 from ._state import (
     SERVER_NAME,
@@ -1332,12 +1334,40 @@ async def _git_show(workspace_dir: str, ref: str) -> str | None:
     return text if text.strip() else None
 
 
-async def _read_plan_md(workspace_dir: str, goal_id: str) -> dict:
-    """The goal's worker-owned PLAN.md, for the console's Plan view. Tries the
-    goal's LIVE delivery branch first (so an in-flight plan shows, not only a
-    merged one), then whatever's checked out, then the working-tree file. A repo
-    with no PLAN.md returns content=None (a goal that hasn't planned yet), never
-    an error."""
+async def _tasks_paths_at_ref(workspace_dir: str, ref: str) -> "list[str]":
+    """Tracked ``specs/*/tasks.md`` paths at ``ref``, newest feature last.
+
+    Ordered lexically, so the highest-numbered feature dir sorts last — the
+    working-tree mtime ordering :func:`slice_guard.current_feature_dir_sync`
+    uses is unavailable off a ref. Best-effort, never raises."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "-C", workspace_dir, "ls-tree", "-r", "--name-only", ref,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+    except (OSError, asyncio.TimeoutError):
+        return []
+    if proc.returncode != 0:
+        return []
+    names = stdout.decode("utf-8", "replace").splitlines()
+    return sorted(n.strip() for n in names if _TASKS_PATH_RE.match(n.strip()))
+
+
+async def _read_plan(workspace_dir: str, goal_id: str) -> dict:
+    """The goal's current speckit plan, for the console's Plan view.
+
+    Reads the ACTIVE feature's ``specs/NNN-*/tasks.md`` — the worker-owned
+    execution contract since spec 008. This used to read ``PLAN.md``; nothing
+    has written that file since the speckit shrink, so the console's DEFAULT
+    tab returned ``content: None`` for every goal. The tab was not broken by
+    deleting PLAN.md — it had been empty since 008, and pointing it at the file
+    the worker actually maintains is what restores it.
+
+    Tries the goal's LIVE delivery branch first (so an in-flight plan shows,
+    not only a merged one), then whatever is checked out, then the working
+    tree. A repo with no speckit contract returns ``content=None`` (a goal that
+    has not planned yet), never an error."""
     # The workspace resets to the default branch between actions, so a short,
     # bounded fetch keeps origin/goal/<id> current for an in-flight goal. Never
     # let a plan view hang on the network.
@@ -1350,20 +1380,25 @@ async def _read_plan_md(workspace_dir: str, goal_id: str) -> dict:
     except (OSError, asyncio.TimeoutError):
         pass
     for source, ref in (
-        ("branch", f"origin/goal/{goal_id}:PLAN.md"),
-        ("branch", f"goal/{goal_id}:PLAN.md"),
-        ("head", "HEAD:PLAN.md"),
+        ("branch", f"origin/goal/{goal_id}"),
+        ("branch", f"goal/{goal_id}"),
+        ("head", "HEAD"),
     ):
-        content = await _git_show(workspace_dir, ref)
+        paths = await _tasks_paths_at_ref(workspace_dir, ref)
+        if not paths:
+            continue
+        content = await _git_show(workspace_dir, f"{ref}:{paths[-1]}")
         if content:
-            return {"content": content, "source": source, "ref": ref.rsplit(":", 1)[0]}
+            return {"content": content, "source": source, "ref": ref}
     try:
-        path = os.path.join(workspace_dir, "PLAN.md")
-        if os.path.isfile(path):
-            with open(path, encoding="utf-8", errors="replace") as fh:
-                content = fh.read()
-            if content.strip():
-                return {"content": content, "source": "worktree", "ref": None}
+        rel = slice_guard.current_feature_dir_sync(workspace_dir)
+        if rel:
+            path = os.path.join(workspace_dir, rel, "tasks.md")
+            if os.path.isfile(path):
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    content = fh.read()
+                if content.strip():
+                    return {"content": content, "source": "worktree", "ref": None}
     except OSError:
         pass
     return {"content": None, "source": None, "ref": None}
@@ -1371,10 +1406,10 @@ async def _read_plan_md(workspace_dir: str, goal_id: str) -> dict:
 
 @mcp.custom_route("/goals/{goal_id}/plan.json", methods=["GET"])
 async def goal_plan_json(request: Request) -> Response:
-    """The goal's PLAN.md — the worker-owned durable plan (cognition-demolition:
-    plan-state lives in a file the worker maintains in the repo, not the control
-    plane). Surfaced read-only so the operator can read and evaluate the plan
-    itself. Human-initiated (the Plan tab), so the git read is off the tick path
+    """The goal's speckit plan — the worker-owned execution contract
+    (``specs/NNN-*/tasks.md``); plan-state lives in files the worker maintains
+    in the repo, not the control plane. Surfaced read-only so the operator can
+    read and evaluate the plan itself. Human-initiated (the Plan tab), so the git read is off the tick path
     — no zero-token concern. Never mutates goal state."""
     goal_id = request.path_params["goal_id"]
     try:
@@ -1384,7 +1419,7 @@ async def goal_plan_json(request: Request) -> Response:
     workspace_dir = g.get("workspace_dir") or ""
     if not workspace_dir or not os.path.isdir(workspace_dir):
         return JSONResponse({"content": None, "source": None, "ref": None})
-    return JSONResponse(await _read_plan_md(workspace_dir, goal_id))
+    return JSONResponse(await _read_plan(workspace_dir, goal_id))
 
 
 @mcp.custom_route("/prs/merge", methods=["POST"])
