@@ -88,11 +88,11 @@ COPY . /app
 
 # ---- console bundle (built here, not committed — it's .gitignored) ---------
 # The Vite+React SPA is served by the Python server from
-# devclaw/server/console/dist. Build it BEFORE the pip install so hatchling's
+# devclaw/server/console_dist. Build it BEFORE the pip install so hatchling's
 # force-include (pyproject `tool.hatch.build.targets.wheel.artifacts`) bakes the
 # freshly-built dist into the wheel.
-RUN npm --prefix devclaw/server/console ci \
- && npm --prefix devclaw/server/console run build
+RUN npm --prefix console ci \
+ && npm --prefix console run build
 
 # Install the devclaw Python package (FastMCP server + deps).
 # --break-system-packages: Debian trixie is PEP 668 externally-managed; no venv

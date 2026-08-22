@@ -34,7 +34,7 @@ Four files, four jobs:
 | `http.py` | Every `@mcp.custom_route` — the console SPA, SSE streams, JSON projection endpoints (~37 routes) |
 | `lifecycle.py` | `main()`, serve loops (stdio or HTTP), bearer-token auth middleware |
 
-The console SPA (`devclaw/server/console/`) is a React + TypeScript app built with Vite. Built artifacts go to `console/dist/` and are served by `http.py`'s catch-all handlers for the `/console` prefix.
+The console SPA (`console/`) is a React + TypeScript app built with Vite. Built artifacts go to `console/dist/` and are served by `http.py`'s catch-all handlers for the `/console` prefix.
 
 ### Layer 2 — GoalService + heartbeat (`devclaw/goal/`)
 
@@ -124,9 +124,9 @@ Endpoints that require authentication call `_require_auth(request)` (defined in 
 
 ## The operator console
 
-The console SPA lives in `devclaw/server/console/src/` — React + TypeScript, built with Vite.
+The console SPA lives in `console/src/` — React + TypeScript, built with Vite.
 
-**Build:** `npm --prefix devclaw/server/console run build` → `devclaw/server/console/dist/`. The `pyproject.toml` wheel configuration force-includes `dist/**` so built assets ship inside the Python package.
+**Build:** `npm --prefix console run build` → `devclaw/server/console_dist/`. The `pyproject.toml` wheel configuration force-includes `dist/**` so built assets ship inside the Python package.
 
 **Serving:** `http.py` serves `GET /console` → `index.html`; `GET /console/{path}` → static asset or fallback to `index.html` for client-side routing. `/` redirects to `/console`.
 

@@ -34,7 +34,7 @@ def json_limit(request: Request) -> "tuple[int, Response | None]":
 def _task_row(t) -> dict:
     """Wire shape for a Task row in the console — used by both ProjectDetail
     (loose tasks) and GoalDetail (dispatched tasks). Shape mirrors
-    ``devclaw/server/console/src/api.ts`` ``TaskRow``."""
+    ``console/src/api.ts`` ``TaskRow``."""
     return {
         "id": t.id,
         "kind": t.kind,

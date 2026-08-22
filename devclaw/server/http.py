@@ -204,19 +204,19 @@ async def dashboard_projects(request: Request) -> Response:
 
 
 # ---- Console (Vite + React SPA, served as a static bundle) ----------------
-# The three-screen web console lives under `devclaw/server/console/`. `npm run
+# The three-screen web console lives under `console/`. `npm run
 # build` writes `console/dist/`; the bytes on disk are what these routes serve.
 # The SPA does client-side routing under basename="/console", so any path that
 # doesn't map to a file falls through to `index.html`.
 
-_CONSOLE_DIST = Path(__file__).resolve().parent / "console" / "dist"
+_CONSOLE_DIST = Path(__file__).resolve().parent / "console_dist"
 
 
 def _serve_console_file(rel: str) -> Response:
     if not _CONSOLE_DIST.exists():
         return PlainTextResponse(
             "devclaw console bundle not built — run `npm --prefix "
-            "devclaw/server/console run build`",
+            "console run build`",
             status_code=503,
         )
     # Resolve safely inside dist. `Path.resolve()` normalizes `..`, then we

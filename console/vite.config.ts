@@ -7,7 +7,12 @@ export default defineConfig({
   plugins: [react()],
   base: "/console/",
   build: {
-    outDir: "dist",
+    // The SOURCE lives at the repo root (it is a web app, not a Python
+    // module), but the BUILT bundle must land inside the Python package:
+    // devclaw ships as a wheel (`pip install .` in deploy/Dockerfile) and
+    // anything outside `packages = ["devclaw"]` is simply not installed.
+    // Same lesson as the vendored .specify scaffold in pyproject (#588).
+    outDir: "../devclaw/server/console_dist",
     emptyOutDir: true,
     // devclaw ships as a Python package; a couple of small chunks are easier
     // to reason about than tree-shaken bundle splitting we don't yet need.

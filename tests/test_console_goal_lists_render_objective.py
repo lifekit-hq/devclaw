@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-_CONSOLE = Path(__file__).resolve().parents[1] / "devclaw" / "server" / "console" / "src"
+_CONSOLE = Path(__file__).resolve().parents[1] / "console" / "src"
 
 # (relative path, description) for each surface that renders a goal row.
 _LIST_SITES = [

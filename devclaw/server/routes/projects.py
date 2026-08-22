@@ -165,7 +165,7 @@ async def projects_json(_request: Request) -> Response:
 
     Same source of truth as the `/projects` HTML route — project_rollup — so
     the two views can't drift. Shape is documented in
-    `devclaw/server/console/src/api.ts` (ProjectRow)."""
+    `console/src/api.ts` (ProjectRow)."""
     out: list[dict] = []
     all_goals = goals.list_goals()
     for p in registry.list():
