@@ -22,7 +22,7 @@ import json
 
 from starlette.requests import Request
 
-import devclaw.server.http as http_mod
+import devclaw.server.routes.tasks as tasks_routes
 from devclaw.server.worker_events import decode_event
 from devclaw.state_store import StateStore
 
@@ -154,9 +154,9 @@ def test_decode_tolerates_corrupt_payload_json():
 def test_endpoint_returns_decoded_turn_by_turn_trace(tmp_path, monkeypatch):
     store = StateStore(str(tmp_path / "s.db"))
     _seed_task(store)
-    monkeypatch.setattr(http_mod, "store", store)
+    monkeypatch.setattr(tasks_routes, "store", store)
 
-    status, body = _get(http_mod.task_events_json, {"task_id": "t1"})
+    status, body = _get(tasks_routes.task_events_json, {"task_id": "t1"})
     assert status == 200
     assert body["count"] == 3
     kinds = [r["kind"] for r in body["events"]]
@@ -168,9 +168,9 @@ def test_endpoint_returns_decoded_turn_by_turn_trace(tmp_path, monkeypatch):
 
 def test_endpoint_empty_task_is_empty_not_404(tmp_path, monkeypatch):
     store = StateStore(str(tmp_path / "s.db"))
-    monkeypatch.setattr(http_mod, "store", store)
+    monkeypatch.setattr(tasks_routes, "store", store)
 
-    status, body = _get(http_mod.task_events_json, {"task_id": "never-ran"})
+    status, body = _get(tasks_routes.task_events_json, {"task_id": "never-ran"})
     assert status == 200
     assert body == {"events": [], "count": 0, "nextCursor": None}
 
@@ -178,14 +178,14 @@ def test_endpoint_empty_task_is_empty_not_404(tmp_path, monkeypatch):
 def test_endpoint_paginates_with_since_and_limit(tmp_path, monkeypatch):
     store = StateStore(str(tmp_path / "s.db"))
     _seed_task(store)
-    monkeypatch.setattr(http_mod, "store", store)
+    monkeypatch.setattr(tasks_routes, "store", store)
 
-    status, body = _get(http_mod.task_events_json, {"task_id": "t1"}, query=b"limit=2")
+    status, body = _get(tasks_routes.task_events_json, {"task_id": "t1"}, query=b"limit=2")
     assert status == 200
     assert body["count"] == 2
     assert body["nextCursor"] is not None                    # more remain → cursor set
     status2, body2 = _get(
-        http_mod.task_events_json, {"task_id": "t1"},
+        tasks_routes.task_events_json, {"task_id": "t1"},
         query=f"since={body['nextCursor']}".encode(),
     )
     assert body2["count"] == 1
@@ -194,9 +194,9 @@ def test_endpoint_paginates_with_since_and_limit(tmp_path, monkeypatch):
 
 def test_endpoint_rejects_malformed_task_id(tmp_path, monkeypatch):
     store = StateStore(str(tmp_path / "s.db"))
-    monkeypatch.setattr(http_mod, "store", store)
+    monkeypatch.setattr(tasks_routes, "store", store)
 
-    status, body = _get(http_mod.task_events_json, {"task_id": "../etc/passwd"})
+    status, body = _get(tasks_routes.task_events_json, {"task_id": "../etc/passwd"})
     assert status == 400
     assert body["error"] == "bad_task_id"
 

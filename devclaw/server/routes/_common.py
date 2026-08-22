@@ -29,3 +29,27 @@ def json_limit(request: Request) -> "tuple[int, Response | None]":
     if limit <= 0:
         return 0, JSONResponse({"error": "bad_limit"}, status_code=400)
     return min(limit, JSON_MAX_LIMIT), None
+
+
+def _task_row(t) -> dict:
+    """Wire shape for a Task row in the console — used by both ProjectDetail
+    (loose tasks) and GoalDetail (dispatched tasks). Shape mirrors
+    ``devclaw/server/console/src/api.ts`` ``TaskRow``."""
+    return {
+        "id": t.id,
+        "kind": t.kind,
+        "status": t.status,
+        "goal": t.goal,
+        "workspaceDir": t.workspace_dir,
+        "parentGoalId": t.parent_goal_id,
+        "createdAt": t.created_at,
+        "completedAt": t.completed_at,
+        "prUrl": t.pr_url,
+        # ADR 0008 P1: the milestone tier is a *view* — tasks grouped by their
+        # existing plan_key (the PlannedTask key a program-child was persisted
+        # from). ``milestone`` is the spec-milestone label when plan-from-spec
+        # set one. Both are surfaced here so the console can group without a new
+        # table; either is None for standalone tasks / pre-column rows.
+        "planKey": t.plan_key,
+        "milestone": t.milestone,
+    }
