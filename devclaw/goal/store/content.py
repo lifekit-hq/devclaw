@@ -2,10 +2,18 @@
 
 :class:`GoalContentMixin` carries the log, settlements, deliveries, spec, and
 inbox/steering surfaces — each row-first (SQLite is the source of truth since
-Tranche 1/PR5–PR7) with the ``.md`` files as generated / hand-append mirrors,
-plus the lazy one-shot migrations that seed those rows from legacy on-disk
-files. (The checklist/firmed-draft/discovery contract docs died with the
-host-cognition chain, spec 008 shrink.)
+Tranche 1/PR5–PR7) with the ``.md`` files as generated mirrors. (The
+checklist/firmed-draft/discovery contract docs died with the host-cognition
+chain, spec 008 shrink.)
+
+**Nothing here reads a view back (#617).** Every ``.md`` this module writes is
+a write-only projection; the rows are the only input to a decision. The
+markdown that existed before that rule was enforced is ingested exactly once,
+by :func:`~devclaw.goal.store.view_migration.migrate_views_once` at store
+construction. Re-adding a read of ``log.md`` / ``deliveries.md`` /
+``inbox.md`` / ``STATUS.md`` re-opens a second writer to goal state that
+``GoalStore.transition()``'s CAS choke point does not cover — see
+``tests/test_views_never_read_back.py``.
 
 Split out of ``GoalStore`` as a mixin on the SAME instance — every method here
 runs against the ``self._state`` / ``self._goal_state`` / ``self._now`` /
@@ -16,36 +24,13 @@ to the pre-split monolith.
 
 from __future__ import annotations
 
-import re
-
-from ..models import GoalStatus
 from ...state_store import _now_ms
-from .base import _SETTLE_ARROW_RE
 
 
 class GoalContentMixin:
     # ---- log (events) — PR6: goal_log rows are the source of truth --------
     #
-    # log.md is a pure OUTPUT view — nothing hand-appends to it (unlike
-    # inbox.md) — so migration is a true one-shot: :meth:`_ingest_log` runs
-    # its check on every call but only ever DOES anything once per goal
-    # (guarded by ``has_log_rows``).
-
-    def _ingest_log(self, goal_id: str) -> None:
-        """Lazy, one-shot migration of a legacy log.md into ``goal_log``
-        rows. Zero rows AND log.md exists → every line starting with
-        ``- [`` (the same filter the pre-PR6 ``recent_log`` used) is
-        inserted verbatim, in file order. No cursor needed: once ANY row
-        exists for the goal this is a no-op forever (``has_log_rows``)."""
-        if self._goal_state.has_log_rows(goal_id):
-            return
-        path = self._dir(goal_id) / "log.md"
-        if not path.exists():
-            return
-        lines = [ln for ln in path.read_text().splitlines() if ln.startswith("- [")]
-        if not lines:
-            return
-        self._goal_state.append_log_rows(goal_id, lines, _now_ms())
+    # log.md is a generated OUTPUT view: written on every append, never read.
 
     def append_log(self, goal_id: str, message: str, *, mirror: bool = True) -> None:
         """Append one log line. Row-first, then the log.md mirror — the
@@ -53,7 +38,7 @@ class GoalContentMixin:
         deliberately so: inbox.md is a hand-append INPUT that self-heals via
         re-ingestion on the next read, so PR5 protected against losing a
         steering line by writing the file first. log.md is a pure OUTPUT
-        view with no re-ingestion once a goal has rows — a mirror line
+        view — a mirror line
         without a row would be silently invisible to every DECISION reader
         (``recent_log``) forever, while a row without a
         mirror line is merely a cosmetically stale (but harmless) log.md
@@ -67,7 +52,6 @@ class GoalContentMixin:
         possible rollback. The caller flushes via ``render_mirrors()`` after
         its transaction commits, or drops via ``discard_pending_mirrors()``
         on the exception path."""
-        self._ingest_log(goal_id)
         line = f"- [{self._now().isoformat(timespec='seconds')}] {message}"
         self._goal_state.append_log_row(goal_id, line, _now_ms())
         if not mirror:
@@ -83,18 +67,15 @@ class GoalContentMixin:
 
     def recent_log(self, goal_id: str, n: int = 20) -> str:
         """The last ``n`` log lines, newline-joined, oldest-of-the-tail
-        first — byte-identical to the pre-PR6 file-tail read for both fresh
-        and migrated goals."""
-        self._ingest_log(goal_id)
+        first — read from ``goal_log`` rows; ``log.md`` is never consulted."""
         return "\n".join(self._goal_state.recent_log_rows(goal_id, n))
 
     # ---- settlements (settled-and-recorded truth — PR7) --------------------
     #
     # goal_settlements has no corresponding .md view — these are plain row
     # writes/reads. record_settlement joins whichever transaction() (if any)
-    # is open; is_settled lazy-seeds from historical goal_log rows first so
-    # a goal that settled work before PR7 ever existed answers identically
-    # to the old ``log_contains(f" {id} → ")`` guard.
+    # is open. Goals that settled work before PR7 existed were seeded from
+    # their historical goal_log rows by the one-shot view migration.
 
     def record_settlement(
         self, goal_id: str, *, ref_id: str, ref_kind: "str | None", status: "str | None",
@@ -108,90 +89,13 @@ class GoalContentMixin:
     def is_settled(self, goal_id: str, ref_id: str) -> bool:
         """Whether ``ref_id`` has a recorded settlement for ``goal_id`` — the
         orphan sweep's "settled and recorded" vs. "lost mid-flight" guard.
-        Lazy-seeds from historical log rows first (see
-        :meth:`_seed_settlements`) so legacy goals answer identically to the
-        pre-PR7 ``log_contains(f" {id} → ")`` check."""
-        self._seed_settlements(goal_id)
+        Rows only: goals that settled work before ``goal_settlements`` existed
+        were seeded from their historical log rows by the one-shot view
+        migration, so this answers identically without re-scanning anything."""
         return self._goal_state.has_settlement(goal_id, ref_id)
-
-    def _seed_settlements(self, goal_id: str) -> None:
-        """One-shot lazy seed of ``goal_settlements`` from historical
-        ``goal_log`` rows — the migration path for a goal that settled work
-        before ``goal_settlements`` was ever read. Guarded on ZERO existing
-        settlement rows for the goal (real or seeded) — never re-seeds once
-        anything has been recorded.
-
-        Intentionally over-captures: :data:`_SETTLE_ARROW_RE` matches ANY
-        ``... <token> → <status>`` substring on a log line and seeds a
-        settlement for ``<token>``, exactly matching what
-        ``log_contains(f" {id} → ")`` used to answer True for — so
-        readopt/sweep decisions are IDENTICAL on legacy goals either way. A
-        fresh goal (no log content at all) seeds nothing; the guard stays
-        open until its first REAL settlement row."""
-        if self._goal_state.has_any_settlements(goal_id):
-            return
-        self._ingest_log(goal_id)  # legacy log.md → rows first, so the scan is complete
-        rows = self._goal_state.all_log_rows(goal_id)
-        if not rows:
-            return
-        now = _now_ms()
-        for line in rows:
-            m = _SETTLE_ARROW_RE.search(line)
-            if not m:
-                continue
-            ref_id, status = m.group(1), m.group(2)
-            self._goal_state.record_settlement(goal_id, ref_id, None, status, now)
 
     # ---- deliveries (grounded evidence for the evaluator) — PR6: rows are
     # the source of truth, deliveries.md the mirror. Same shape as log.
-
-    def _ingest_deliveries(self, goal_id: str) -> None:
-        """Lazy, one-shot migration of a legacy deliveries.md into
-        ``goal_deliveries`` rows. Zero rows AND the file exists → split the
-        body (everything from the first ``## [`` section header onward —
-        the fixed ``# … — deliveries`` header line is discarded, since
-        ``recent_deliveries`` reconstructs it from the known constant
-        format) into sections, one row per section: ``ref_id`` NULL (legacy
-        sections predate the idempotency key and have nothing to dedupe
-        against), ``instruction`` parsed off the section's head line,
-        ``body`` the section's FULL text verbatim including its trailing
-        blank-line separation — so ``"".join(blocks)`` reconstructs the
-        original byte-for-byte. Guarded like ``_ingest_log``."""
-        if self._goal_state.has_delivery_rows(goal_id):
-            return
-        path = self._dir(goal_id) / "deliveries.md"
-        if not path.exists():
-            return
-        sections = self._split_delivery_sections(path.read_text())
-        if not sections:
-            return
-        ts_ms = _now_ms()
-        with self._state.transaction():
-            for instruction, block in sections:
-                self._goal_state.append_delivery_row(
-                    goal_id, None, block, ts_ms, instruction=instruction,
-                )
-
-    _DELIVERY_HEAD = re.compile(r"^## \[", re.MULTILINE)
-    _DELIVERY_HEAD_LINE = re.compile(r"^## \[[^\]]*\]\s*(.*)$")
-
-    @classmethod
-    def _split_delivery_sections(cls, text: str) -> "list[tuple[str, str]]":
-        """Split a deliveries.md body into ``(instruction, block)`` pairs on
-        lines starting ``## [`` — the exact boundary ``append_delivery``
-        writes. Text before the first match (the header) is dropped on
-        purpose; each returned ``block`` runs from its ``## [`` line up to
-        (not including) the next one, or end of text for the last section."""
-        starts = [m.start() for m in cls._DELIVERY_HEAD.finditer(text)]
-        sections: list[tuple[str, str]] = []
-        for i, start in enumerate(starts):
-            end = starts[i + 1] if i + 1 < len(starts) else len(text)
-            block = text[start:end]
-            head_line = block.splitlines()[0] if block else ""
-            m = cls._DELIVERY_HEAD_LINE.match(head_line)
-            instruction = m.group(1) if m else ""
-            sections.append((instruction, block))
-        return sections
 
     def append_delivery(
         self, goal_id: str, instruction: str, body: str, *,
@@ -216,7 +120,6 @@ class GoalContentMixin:
         and remember the rendered section in ``self._pending_mirrors`` —
         same deferral contract as :meth:`append_log`, for callers writing
         inside an open ``transaction()``."""
-        self._ingest_deliveries(goal_id)
         ts = self._now().isoformat(timespec="seconds")
         block = f"## [{ts}] {instruction}\n\n{body.strip()}\n\n"
         inserted = self._goal_state.append_delivery_row(
@@ -293,7 +196,6 @@ class GoalContentMixin:
         mirror and is never read back for a decision (constitution IV)."""
         from ..prior_increments import parse_record  # local: avoids an import cycle
 
-        self._ingest_deliveries(goal_id)
         statuses = self._goal_state.settlement_statuses(goal_id)
         return [
             parse_record(instruction, body, statuses.get(ref_id) if ref_id else None)
@@ -312,7 +214,6 @@ class GoalContentMixin:
         ``deliveries.md`` file-tail read, since the header format
         (``# {goal_id} — deliveries (what each action shipped)\\n\\n``) is
         the one constant :meth:`append_delivery` has ever written."""
-        self._ingest_deliveries(goal_id)
         blocks = self._goal_state.recent_delivery_blocks(goal_id)
         if not blocks:
             return ""
@@ -321,98 +222,35 @@ class GoalContentMixin:
 
     # ---- inbox (steering) — PR5: goal_steering rows are the source of truth
     #
-    # ``inbox.md`` stays BOTH the human-readable mirror (every machine append
-    # writes a row AND a matching line) AND a hand-append INPUT (a line typed
-    # straight into the file is lazily ingested into a row the next time
-    # anything reads steering — see ``_ingest_inbox``). Consumption ("the
-    # planner acted on this") is by row id, via ``GoalStore.transition``'s
-    # ``consume_steering=``, never by counting lines — that count-based model
-    # is exactly what let a steer landing during the planner's cognition
-    # await get silently swallowed (steer-during-planner-await lost).
-
-    def _inbox_lines(self, goal_id: str) -> list[str]:
-        path = self._dir(goal_id) / "inbox.md"
-        if not path.exists():
-            return []
-        out = []
-        for ln in path.read_text().splitlines():
-            s = ln.strip()
-            if s and not s.startswith("#"):
-                out.append(s)
-        return out
-
-    def _ingest_inbox(self, goal_id: str) -> None:
-        """Lazily convert ``inbox.md`` lines the store doesn't have
-        ``goal_steering`` rows for yet into rows. Called before every
-        steering read (``unread_steering_rows`` / ``unread_steering``) so a
-        line typed straight into the file — or mirrored there by
-        ``append_steering`` — becomes (or stays) visible without ever being
-        double-counted.
-
-        ``goal_status.inbox_ingest_cursor`` is this method's OWN boundary —
-        "how many inbox.md lines have already been turned into rows" — a
-        DIFFERENT thing from "how many are consumed". Only lines PAST the
-        cursor are new; already-ingested lines (including everything
-        ``append_steering`` just mirrored, which advances the cursor itself)
-        are never re-ingested. A no-op — no write, no version bump — when
-        there is nothing new AND no migration is due, so a normal tick that
-        finds no hand-typed content pays zero SQL writes for this call.
-
-        Lazy migration (first ingest for a goal that pre-dates PR5): before
-        this PR, the stored cursor WAS the consume cursor — lines below it
-        are already-acted-on history, not fresh steering. The FIRST ingest
-        for a goal with ZERO existing ``goal_steering`` rows treats
-        ``lines[:cursor]`` as already-CONSUMED (preserved for the record,
-        never fed to the planner) and only ``lines[cursor:]`` as new.
-        Idempotent by construction: once ANY row exists for the goal, this
-        branch can never fire again.
-
-        Tolerates ``cursor > len(lines)`` (an operator clearing/truncating
-        ``inbox.md`` by hand, or a crash between a row+cursor commit and the
-        file catching up to it): ``lines[cursor:]`` is then simply empty —
-        nothing is ingested, nothing goes negative, and the cursor is left
-        alone until the file has genuinely new content past it."""
-        self._ensure_status_row(goal_id)
-        if not self._goal_state.has_status(goal_id):
-            # Brand-new goal — no STATUS.md to migrate (_ensure_status_row is
-            # a no-op for one) and no row yet either. Give
-            # set_inbox_ingest_cursor somewhere to write.
-            self.save_status(goal_id, GoalStatus())
-        with self._state.transaction():
-            lines = self._inbox_lines(goal_id)
-            cursor = self._goal_state.read_status(goal_id).inbox_cursor
-            new_lines = lines[cursor:]
-            first_ingest = not self._goal_state.has_steering_rows(goal_id)
-            migrate_history = first_ingest and cursor > 0 and lines[:cursor]
-            if migrate_history:
-                now = _now_ms()
-                self._goal_state.append_steering_rows(
-                    goal_id, lines[:cursor], source="manual",
-                    created_at_ms=now, consumed=True,
-                )
-            if new_lines:
-                self._goal_state.append_steering_rows(goal_id, new_lines, source="manual")
-            if new_lines or migrate_history:
-                self._goal_state.set_inbox_ingest_cursor(goal_id, len(lines))
+    # ``inbox.md`` is a generated MIRROR and nothing more (#617). Before that
+    # ruling it was also a hand-append INPUT: a line typed straight into the
+    # file was lazily ingested into a row on the next steering read, which
+    # made whoever last touched the file a second writer to goal state — one
+    # ``GoalStore.transition()``'s CAS choke point does not cover. Steering
+    # now enters through exactly one door, the ``steer_goal`` verb, which is
+    # the same rule recovery already follows: recovery is a verb, not a fake
+    # steer. Historical hand-typed lines were ingested once by the one-shot
+    # view migration; consumption is still by exact row id, never by counting
+    # lines — that count-based model is what let a steer landing during the
+    # planner's cognition await get silently swallowed.
 
     def unread_steering_rows(self, goal_id: str) -> "list[tuple[int, str]]":
         """Unread steering — the exact-id source of truth PR5 introduced.
-        Ingests any new hand-typed ``inbox.md`` lines into rows FIRST (lazy,
-        idempotent — see ``_ingest_inbox``), then returns ``[(id, line), ...]``
-        for every row with ``consumed_at IS NULL``, oldest first. Callers that
+        Returns ``[(id, line), ...]`` for every ``goal_steering`` row with
+        ``consumed_at IS NULL``, oldest first; ``inbox.md`` is not consulted
+        (#617). Callers that
         need to consume EXACTLY what they read (the tick's post-plan
         transition) thread the ids into ``GoalStore.transition(...,
         consume_steering=[...])`` — that call, not this read, is what marks
         them consumed."""
-        self._ingest_inbox(goal_id)
         rows = self._goal_state.unread_steering_rows(goal_id)
         return [(r["id"], r["line"]) for r in rows]
 
     def unread_steering(self, goal_id: str) -> str:
-        """Unread steering as one newline-joined string — kept for display /
-        back-compat callers that don't consume by exact id. Re-implemented on
-        top of :meth:`unread_steering_rows` (the row-backed source of truth
-        PR5 introduced). Consumption is by exact row id via
+        """Unread steering as one newline-joined string — the display read,
+        for callers that render steering rather than consuming it. Built on
+        :meth:`unread_steering_rows` (the row-backed source of truth PR5
+        introduced). Consumption is by exact row id via
         ``GoalStore.transition(consume_steering=...)``, never by a cursor —
         this read-only helper has nothing to do with that; it never took a
         ``status`` argument to consume from (PR8 dropped the long-dead
@@ -423,54 +261,47 @@ class GoalContentMixin:
         """Append steering lines. Writes UNCONSUMED ``goal_steering`` rows
         (the source of truth the planner reads) AND mirrors the same lines
         into ``inbox.md`` in the historical ``- [{source} {ts}] {line}``
-        format — kept EXACTLY, so ``devclaw.trend_signals``' H4 signal, which
-        parses that prefix straight off the file, keeps working unchanged.
+        format, so the human-readable and rollback views keep their shape.
 
         The row stores the SAME formatted line as the file, not the bare
         text: the row's ``line`` is what ``unread_steering`` feeds into the
         worker's advance brief, and evaluator corrections stay "marked
-        [auto-eval]" — that marker must survive the move to row-backed
-        steering, byte-identical to what the pre-PR5 file read produced. It also keeps machine rows
-        and hand-ingested rows consistent (both hold the inbox.md line
-        verbatim); the structured ``source`` column exists separately for
-        queries.
+        [auto-eval]" — that marker must survive as part of the line itself.
+        The structured ``source`` column exists separately for queries.
 
-        Runs ``_ingest_inbox`` FIRST so any pre-existing hand-typed
-        ``inbox.md`` lines get their own rows (and the ingest cursor catches
-        up to them) BEFORE this call's own cursor math — otherwise a
-        hand-typed line sitting between the old cursor and the file's end
-        would be silently skipped once this call moves the cursor past it.
+        Ordering — ROW first, then the file mirror, the same way
+        :meth:`append_log` orders its two writes and the reverse of what this
+        method did before #617. The old file-first order existed to protect a
+        hand-typed line from being stranded below an advanced ingest cursor:
+        with the ingest gone there is no cursor and no re-ingestion, so a
+        crash between the two writes must never be able to leave a line in
+        ``inbox.md`` that no row backs — that line would be invisible to
+        every decision reader while looking, to a human reading the file,
+        exactly like real steering. A row without its mirror line is merely a
+        cosmetically stale view. Rows are truth, so the row write is the one
+        that must not be left dangling.
 
-        Ordering — deliberately FILE-append first, THEN the rows+cursor
-        commit: a crash in between leaves ``inbox.md`` with a line the rows
-        don't know about yet, which the next ``_ingest_inbox`` call picks up
-        as an ordinary hand-typed ``manual``-sourced row — the source label
-        is wrong but nothing is LOST. The reverse order (rows first) risks
-        the opposite: a crash after the row+cursor commit but before the
-        file write leaves the cursor ahead of the file, and if the retried
-        file write never lands with the exact same content, that text can
-        end up permanently below the (already-advanced) cursor — a genuine
-        loss. Losing steering is worse than a rare re-sourced duplicate, so
-        file-first wins.
-
-        The cursor is set to the CURRENT total ``inbox.md`` line count (read
-        fresh, after our own append) rather than computed as "old cursor +
-        len(clean)" — self-correcting regardless of exactly what
-        ``_ingest_inbox`` left it at."""
+        The row write also bumps ``goal_status.version`` (see
+        :meth:`GoalState.bump_status_version`) so a tick already mid-flight
+        past its steering read CAS-fails rather than dispatching without this
+        line."""
         clean = [ln.strip() for ln in lines if ln.strip()]
         if not clean:
             return
-        self._ingest_inbox(goal_id)
+        ts = self._now().isoformat(timespec="seconds")
+        formatted = [f"- [{source} {ts}] {ln}" for ln in clean]
+        with self._state.transaction():
+            self._goal_state.append_steering_rows(goal_id, formatted, source=source)
+            # New steering invalidates any tick snapshot taken before it — see
+            # GoalState.bump_status_version. In the SAME transaction as the
+            # rows, so a reader can never see the bump without the steering it
+            # is warning about.
+            self._goal_state.bump_status_version(goal_id)
         d = self._dir(goal_id)
         d.mkdir(parents=True, exist_ok=True)
         path = d / "inbox.md"
         if not path.exists():
             path.write_text(f"# {goal_id} — inbox (steering)\n\n")
-        ts = self._now().isoformat(timespec="seconds")
-        formatted = [f"- [{source} {ts}] {ln}" for ln in clean]
         with path.open("a") as fh:
             for ln in formatted:
                 fh.write(f"{ln}\n")
-        with self._state.transaction():
-            self._goal_state.append_steering_rows(goal_id, formatted, source=source)
-            self._goal_state.set_inbox_ingest_cursor(goal_id, len(self._inbox_lines(goal_id)))

@@ -16,9 +16,11 @@ Boundary rules (carried from the thesis — do not violate inside ``check``):
   * NEVER call any goal-store write method (no ``append_steering``,
     etc.). The detector observes; humans encode.
   * NEVER create tasks, alter ``done_when``, or edit ``AGENTS.md``.
-  * Substrate reads only — git plumbing, ``GoalStore._inbox_lines`` (read), the
-    sqlite ``tasks`` / ``traces`` tables (read). If a future signal looks like
-    it needs a write, that's a design-bug — escalate, don't smuggle it in.
+  * Substrate reads only — git plumbing and the sqlite tables (read). NEVER a
+    generated view: ``STATUS.md`` / ``log.md`` / ``inbox.md`` / ``deliveries.md``
+    are write-only projections (#617), so a signal that wants what one shows
+    reads the rows behind it. If a future signal looks like it needs a write,
+    that's a design-bug — escalate, don't smuggle it in.
 """
 
 from __future__ import annotations
@@ -26,15 +28,13 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
 
 Category = Literal["recurrence", "drift", "harness_self", "goal_direction"]
 Scope = Literal["per_project", "harness_self"]
 
-# ---- module-level helpers (test-seamable: patch _run_git for git signals;
-# `_parse_inbox_denys_lines` is a pure function on file content) -------------
+# ---- module-level helpers (test-seamable: patch _run_git for git signals) --
 
 _GIT_TIMEOUT_SECONDS = 10
 
@@ -44,11 +44,6 @@ _GIT_TIMEOUT_SECONDS = 10
 _FIX_GREP_PATTERN = r"\b(fix|bug|regression|hotfix)\b"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-
-#: Matches a `denys`-sourced inbox steering line produced by
-#: ``GoalStore.append_steering(... source='denys')`` — one line per steering,
-#: prefix is ``- [denys <iso-ts>] `` (see ``goal/store.py:381``).
-_INBOX_DENYS_LINE = re.compile(r"^-\s*\[denys\s+([0-9T\-:+.Z]+)\]\s+(.*)$")
 
 
 def _run_git(args: list[str], cwd: str) -> str:
@@ -98,33 +93,6 @@ def _parse_git_log_name_only(out: str) -> list[tuple[str, list[str]]]:
     return entries
 
 
-def _parse_inbox_denys_lines(path: Path) -> list[tuple[int, str]]:
-    """Read an inbox.md and return ``[(ts_ms, text), ...]`` for lines whose
-    source is ``denys``. ``auto-eval`` and other-source lines are skipped on
-    purpose — H4 measures human-correction frequency, not total steering."""
-    if not path.exists():
-        return []
-    try:
-        content = path.read_text()
-    except OSError:
-        return []
-    out: list[tuple[int, str]] = []
-    for line in content.splitlines():
-        m = _INBOX_DENYS_LINE.match(line)
-        if not m:
-            continue
-        ts_raw, text = m.group(1), m.group(2)
-        ts_clean = ts_raw.replace("Z", "+00:00")
-        try:
-            ts = datetime.fromisoformat(ts_clean)
-        except ValueError:
-            continue
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=timezone.utc)
-        out.append((int(ts.timestamp() * 1000), text))
-    return out
-
-
 @dataclass
 class SignalContext:
     """The narrow handle each ``Signal.check`` receives. Intentionally minimal
@@ -147,6 +115,13 @@ class SignalContext:
     #: signals (D1, D2, D3) read this; non-bookmark signals (R2, D4, H4) ignore
     #: it. ``None`` only when not applicable (harness-self scope, or git failed).
     bookmark: Optional[str] = None
+    #: ``goal_id -> [created_at_ms, ...]`` for every ``denys``-sourced steering
+    #: row, fleet-wide. Pre-fetched by the orchestrator from ``goal_steering``
+    #: and handed in as DATA rather than a store handle, so the boundary above
+    #: ("a signal cannot reach anything not in here") survives H4 moving off
+    #: its old ``inbox.md`` parse (#617). ``None`` for scopes that don't need
+    #: it; H4 treats that as "no steering".
+    denys_steerings: Optional[dict] = None
 
 
 @dataclass
@@ -445,10 +420,11 @@ class H4SteeringFrequency(Signal):
     """Active goals receiving ≥3 ``denys``-sourced steerings grew vs the prior
     period.
 
-    Reads each goal's ``inbox.md`` via the same parsed-prefix shape
-    ``GoalStore._inbox_lines`` uses (lines of the form
-    ``- [denys 2026-…] correction text``), filters to ``source='denys'``, and
-    counts per goal in two windows of equal width (current vs prior). Fires
+    Counts ``goal_steering`` rows with ``source='denys'`` per goal in two
+    windows of equal width (current vs prior), from the timestamps the
+    orchestrator pre-fetches into ``ctx.denys_steerings``. ``auto-eval`` and
+    other sources are excluded on purpose — H4 measures human-correction
+    frequency, not total steering. Fires
     when the count of "actively-steered" goals (≥3 denys lines in window) is
     strictly greater in the current window than the prior window.
 
@@ -504,10 +480,11 @@ class H4SteeringFrequency(Signal):
         current_cutoff = now_ms - window_ms
         prior_cutoff = now_ms - 2 * window_ms
 
+        steerings = ctx.denys_steerings or {}
         current_counts: dict[str, int] = {}
         prior_counts: dict[str, int] = {}
         for d in goal_dirs:
-            for ts_ms, _text in _parse_inbox_denys_lines(d / "inbox.md"):
+            for ts_ms in steerings.get(d.name, ()):
                 if ts_ms >= current_cutoff:
                     current_counts[d.name] = current_counts.get(d.name, 0) + 1
                 elif ts_ms >= prior_cutoff:

@@ -78,13 +78,13 @@ def test_duplicate_delivery_is_impossible(tmp_path):
 
 
 def test_log_byte_parity_on_migration(tmp_path):
-    """A legacy log.md (pre-PR6, no goal_log rows) reads back byte-identical
-    through the row-backed recent_log — computed against a reference derived
-    straight from the file content, the same filter the pre-PR6 file-tail
-    read used (lines starting '- ['). The stray non-'- [' line proves the
-    filter still applies post-migration. A second call must not duplicate
-    rows — the migration is a true one-shot."""
-    store = GoalStore(tmp_path, now=Clock())
+    """A pre-#617 log.md (no goal_log rows) reads back byte-identical through
+    the row-backed recent_log — computed against a reference derived straight
+    from the file content, the same filter the pre-PR6 file-tail read used
+    (lines starting '- ['). The stray non-'- [' line proves the filter still
+    applies post-migration. The file must be in place BEFORE the store is
+    constructed: since #617 the ingest happens once, at construction, and no
+    read ever touches log.md again."""
     seed_goal(tmp_path, "g")
     d = tmp_path / "g"
     d.mkdir(exist_ok=True)
@@ -97,6 +97,8 @@ def test_log_byte_parity_on_migration(tmp_path):
         "- [2026-01-01T00:00:04+00:00] fifth",
     ]
     (d / "log.md").write_text("# g — log\n\n" + "\n".join(lines) + "\n")
+
+    store = GoalStore(tmp_path, now=Clock())   # the one-shot migration runs HERE
 
     # Reference computed directly from the file — exactly the pre-PR6 read.
     ref_lines = [ln for ln in lines if ln.startswith("- [")]
@@ -112,9 +114,10 @@ def test_log_byte_parity_on_migration(tmp_path):
 
     assert _peek_log_row_count(store, "g") == 5  # the 5 real log lines, not the stray one
 
-    # Second call must not re-ingest / duplicate rows.
-    store.recent_log("g", n=3)
-    store.recent_log("g", n=10)
+    # No read re-ingests: appending to log.md by hand changes nothing.
+    with (d / "log.md").open("a") as fh:
+        fh.write("- [2026-01-01T00:00:05+00:00] hand-typed sixth\n")
+    assert "hand-typed sixth" not in store.recent_log("g", n=10)
     assert _peek_log_row_count(store, "g") == 5
 
 
@@ -122,11 +125,10 @@ def test_log_byte_parity_on_migration(tmp_path):
 
 
 def test_deliveries_byte_parity_on_migration(tmp_path):
-    """A legacy deliveries.md (pre-PR6, no goal_deliveries rows) reads back
+    """A pre-#617 deliveries.md (no goal_deliveries rows) reads back
     byte-identical through recent_deliveries — including a SMALL chars bound
     that slices mid-text, matching the pre-PR6 ``text[-chars:]`` behavior
-    exactly."""
-    store = GoalStore(tmp_path, now=Clock())
+    exactly. Written before construction: the ingest is one-shot (#617)."""
     seed_goal(tmp_path, "g")
     d = tmp_path / "g"
     d.mkdir(exist_ok=True)
@@ -135,6 +137,8 @@ def test_deliveries_byte_parity_on_migration(tmp_path):
     section2 = "## [2026-01-01T00:00:01+00:00] add logging\n\nPR: #8\n\n"
     legacy_text = header + section1 + section2
     (d / "deliveries.md").write_text(legacy_text)
+
+    store = GoalStore(tmp_path, now=Clock())   # the one-shot migration runs HERE
 
     assert store.recent_deliveries("g") == legacy_text  # under the default 8000-char bound
 

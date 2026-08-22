@@ -190,16 +190,6 @@ class GoalStatus:
     last_plan_at: Optional[str] = None
     #: ISO ts of the last tick (cheap or not)
     last_tick_at: Optional[str] = None
-    #: the INGEST boundary, not a consume cursor: number of inbox.md lines
-    #: already turned into goal_steering rows (Tranche 1/PR5 repurposed this
-    #: field — pre-PR5 it WAS the consume cursor; since PR5, consumption of
-    #: STEERING is by exact row id via
-    #: GoalStore.transition(consume_steering=...), never by counting lines —
-    #: see GoalStore._ingest_inbox). Load-bearing, not a deprecated leftover:
-    #: PR8 confirmed it stays (it predates PR5 on the roadmap as "delete
-    #: this", but PR5 gave it this new, still-in-use job). Also carried on
-    #: STATUS.md frontmatter for rendering / rollback fidelity.
-    inbox_cursor: int = 0
     #: total engine actions dispatched for this goal — a runaway backstop
     actions_dispatched: int = 0
     #: the last direction-eval verdict + when, surfaced via get_goal (observe surface)

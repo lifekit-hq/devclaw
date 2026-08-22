@@ -198,9 +198,23 @@ goal cancel+refile on purpose). The familiar files — `STATUS.md`, `log.md`, `i
 **never read back for decisions**. Only `goal.yaml` and `spec.md` stay plain
 files.
 
+Until #617 that last sentence was aspiration, not fact: the store parsed those
+views back into rows on eight read paths, framed as lazy migrations but with no
+cutoff — so a hand-edited `inbox.md` became steering and a corrupt
+`deliveries.md` became delivery history, outside the CAS choke point that makes
+single-writer true. The markdown that predates the rule is now ingested exactly
+once, by `devclaw/goal/store/view_migration.py` at store construction; after
+that the views are write-only. Steering enters through the `steer_goal` verb
+alone. `tests/test_views_never_read_back.py` holds the line, structurally: a
+production module outside the migration may not even NAME a view file unless it
+is a listed writer.
+
 **Single writer.** Only the `TaskQueue` mutates task rows; `StateStore` is an
 append-only event log and its views are projections. Goal state is owned by
-`GoalStore` and mutated only through the CAS'd `transition()`.
+`GoalStore` and mutated only through the CAS'd `transition()` — which is
+exactly why the views above may not be read back: re-ingesting one makes
+whoever last touched a markdown file a second writer that the CAS does not
+cover.
 
 **Continuous-eval — the `eval_outcomes` projection (ADR 0006).** Every task
 settle is an evaluation sample for free: `StateStore.mark_done` /

@@ -351,21 +351,25 @@ async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
 
 @pytest.mark.asyncio
 async def test_settlement_seeding_from_legacy_log(tmp_path):
-    """A legacy goal with a pre-PR7 log line and zero settlement rows must
-    answer is_settled(...) True from the seed alone (no re-adoption
-    needed) — matching exactly what the old log_contains(f" {id} → ")
-    guard used to answer True for. A DIFFERENT, unlogged ref on the SAME
-    goal is still re-adopted normally."""
-    store = GoalStore(tmp_path, now=Clock())
+    """A pre-PR7 goal with a settle line only in its log and zero settlement
+    rows must answer is_settled(...) True from the one-shot migration's seed
+    alone (no re-adoption needed) — matching exactly what the old
+    log_contains(f" {id} → ") guard used to answer True for. A DIFFERENT,
+    unlogged ref on the SAME goal is still re-adopted normally.
+
+    The log.md is planted BEFORE the store is constructed: #617 moved the
+    seed out of ``is_settled`` and into the construction-time migration, so
+    that is the only moment it can be read."""
     seed_goal(tmp_path, "g", cadence="1d")
     d = tmp_path / "g"
     d.mkdir(parents=True, exist_ok=True)
     (d / "log.md").write_text(
         "# g — log\n\n- [2026-07-01T00:00:00] start_program p-1 → done\n"
     )
+    store = GoalStore(tmp_path, now=Clock())   # the one-shot migration runs HERE
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    assert store.is_settled("g", "p-1") is True  # seeded from the legacy line
+    assert store.is_settled("g", "p-1") is True  # seeded by the migration
 
     swept = await sweep_orphaned_refs(store, _ProgramFinderEngine(program=("p-1", "some program")))
     assert swept == {}  # already settled — sweep leaves it alone

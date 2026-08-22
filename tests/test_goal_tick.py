@@ -17,7 +17,7 @@ import pytest
 
 from devclaw.goal.engine import GoalEngineError
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
-from devclaw.goal.store import GoalStore
+from devclaw.goal.store import GoalStore, view_migration
 from devclaw.goal.tick import Outcome, sweep_orphaned_refs, tick_all, tick_goal
 from devclaw.goal.tick_donegate import DONEGATE_ROUND_CAP
 from tests.goal_fakes import (
@@ -239,7 +239,8 @@ async def test_steering_triggers_advance_even_when_cadence_not_due(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", cadence="1d")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    (tmp_path / "g" / "inbox.md").write_text("pause features, fix the failing CI first\n")
+    # Steering enters through the verb, never by hand-editing inbox.md (#617).
+    store.append_steering("g", ["pause features, fix the failing CI first"], source="denys")
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
     out = await _tick(store, "g", evaluator, engine, notifier)
@@ -247,7 +248,7 @@ async def test_steering_triggers_advance_even_when_cadence_not_due(tmp_path):
     assert out is Outcome.DISPATCHED
     action, _, _ = engine.dispatched[0]
     assert "failing CI" in action.goal     # steering rode into the advance brief
-    assert store.load_status("g").inbox_cursor == 1
+    assert store.unread_steering_rows("g") == []   # consumed with the dispatch
 
 
 # ---- blocked ---------------------------------------------------------------
@@ -2160,12 +2161,17 @@ async def test_orphaned_failed_program_readopted_and_settled(tmp_path):
 
 @pytest.mark.asyncio
 async def test_settled_program_is_not_readopted(tmp_path):
-    """A program whose result already reached log.md must NOT be re-adopted —
-    the sweep only rescues lost refs, it never replays settled work."""
-    store = _store(tmp_path, Clock())
+    """A program whose result already reached the durable record must NOT be
+    re-adopted — the sweep only rescues lost refs, it never replays settled
+    work. The settle line is planted in log.md BEFORE construction, so this
+    also pins that the one-shot view migration's settlement seed (#617) still
+    protects a goal whose only evidence of settling is its pre-migration log."""
     seed_goal(tmp_path, "g", cadence="1d")
+    (tmp_path / "g" / "log.md").write_text(
+        "# g — log\n\n- [2026-07-01T00:00:00] start_program p_seen → failed\n"
+    )
+    store = _store(tmp_path, Clock())
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    store.append_log("g", "start_program p_seen → failed")
     evaluator, notifier = FakeClaude(), RecordingNotifier()
     engine = OrphanAwareEngine(program=("p_seen", "Program: reporting"))
 
@@ -2378,7 +2384,7 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path):
     assert s.phase == "blocked" and s.blocked_kind == "mechanical:prep"
     # the STATUS.md view surfaces the kind next to blocked_on (frontmatter + body)
     text = (tmp_path / "gc" / "STATUS.md").read_text()
-    assert GoalStore._read_frontmatter(text)["blocked_kind"] == "mechanical:prep"
+    assert view_migration.read_frontmatter(text)["blocked_kind"] == "mechanical:prep"
     assert "blocked [mechanical:prep] —" in text
 
     # mechanical:dispatch_cap — the runaway backstop (backlog 2 → cap 4)

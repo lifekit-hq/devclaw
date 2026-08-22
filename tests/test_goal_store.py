@@ -168,7 +168,6 @@ def test_status_roundtrip_with_eval_and_done_check(tmp_path):
         in_flight=InFlight("devclaw", "review_repository", "t9", "task", "verify", is_done_check=True),
         next="verifying done",
         last_plan_at="2026-06-06T12:00:00+00:00",
-        inbox_cursor=2,
         last_eval_verdict="on_track",
         last_eval_note="progressing",
     )
@@ -178,7 +177,6 @@ def test_status_roundtrip_with_eval_and_done_check(tmp_path):
     assert back.in_flight is not None
     assert back.in_flight.id == "t9"
     assert back.in_flight.is_done_check is True
-    assert back.inbox_cursor == 2
     assert back.last_eval_verdict == "on_track"
 
 
@@ -206,7 +204,7 @@ def test_deliveries_roundtrip(tmp_path):
     assert "add /health" in d and "#7" in d and "add logging" in d
 
 
-def test_inbox_cursor_and_steering_sources(tmp_path):
+def test_steering_sources_and_consumption(tmp_path):
     """PR5: steering is consumed by exact goal_steering row id (the mechanism
     GoalStore.transition(consume_steering=...) uses), not the retired
     file-line cursor — mechanically adapted from the pre-PR5 cursor-slicing

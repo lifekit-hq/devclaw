@@ -8,10 +8,12 @@ Folded in from goalclaw. Layout per goal, under ``<goals_dir>/<goal_id>/``:
                                  frontmatter + body) so reverting PR3 recovers the state
   log.md              EVENTS   — a generated VIEW (since Tranche 1/PR6) mirroring the
                                  ``goal_log`` table, append-only, newest at bottom
-  inbox.md            STEERING — append-only direction (from Denys OR the evaluator); human-readable
-                                 mirror + hand-append input. The ``goal_steering`` SQLite table
-                                 (since Tranche 1/PR5) is the source of truth for what's unread —
-                                 consumed by exact row id, never by counting lines
+  inbox.md            STEERING — append-only direction (from Denys OR the evaluator); a generated
+                                 VIEW of the ``goal_steering`` SQLite table (since Tranche 1/PR5),
+                                 which is the source of truth for what's unread — consumed by exact
+                                 row id, never by counting lines. Since #617 it is write-only:
+                                 steering enters through the ``steer_goal`` verb, never by hand-
+                                 editing this file
   deliveries.md       EVIDENCE — a generated VIEW (since Tranche 1/PR6) mirroring the
                                  ``goal_deliveries`` table, append-only, grounded record of what
                                  each action actually shipped, read by the evaluator
@@ -26,7 +28,10 @@ Folded in from goalclaw. Layout per goal, under ``<goals_dir>/<goal_id>/``:
 Status, steering, log, deliveries, and the checklist/firmed-draft docs are all
 SQLite-backed via :class:`GoalState` (Tranche 1/PR3, PR5, PR6); ``spec.md`` /
 ``discovery.md`` are still plain files (display/prompt inputs, not
-consumed-state). A clock is injected (``now``) so ticks are deterministic
+consumed-state). **Every ``.md`` above is a write-only projection (#617)** —
+the markdown written before that rule was enforced is parsed exactly once, by
+:func:`~devclaw.goal.store.view_migration.migrate_views_once` at construction,
+and never again. A clock is injected (``now``) so ticks are deterministic
 under test.
 
 The class was split into a package for legibility (behavior-preserving):
@@ -36,6 +41,8 @@ The class was split into a package for legibility (behavior-preserving):
   the transaction/mirror discipline, goal facts, clock helpers).
 - :mod:`.status` — :class:`GoalStatusMixin`, the single-writer/CAS choke point
   (``load_status`` / ``transition`` / ``force_block`` / the STATUS.md view).
+- :mod:`.view_migration` — the one-shot, one-cutoff ingest of the pre-#617
+  views, and the only code in the package allowed to read one.
 - :mod:`.content` — :class:`GoalContentMixin`, the
   log / settlements / deliveries / checklist / firmed-draft / inbox surfaces.
 
@@ -56,17 +63,11 @@ import yaml
 
 from ..models import Goal, GoalStatus
 from ..state import GoalState
+from ...state_store import _now_ms
+from .view_migration import migrate_views_once
 
-_FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 _DURATION = re.compile(r"^\s*(\d+)\s*([smhd])\s*$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-#: settle-line arrow scan for the lazy settlement seed (PR7) — the token
-#: immediately before " → " on a "- [ts] ... <token> → <status>" log line.
-#: Deliberately loose (matches ANY " x → y" substring) so it over-captures
-#: exactly what ``log_contains(f" {id} → ")`` used to answer True for —
-#: readopt/sweep decisions must be IDENTICAL on legacy goals either way.
-_SETTLE_ARROW_RE = re.compile(r" (\S+) → (\S+)")
-
 
 def parse_duration(s: str) -> int:
     """'6h' / '1d' / '30m' / '90s' → seconds. Raises ValueError on garbage."""
@@ -80,9 +81,8 @@ def _default_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# Mixin imports come AFTER the module constants above so ``status.py`` /
-# ``content.py`` can ``from .base import _FRONTMATTER`` / ``_SETTLE_ARROW_RE``
-# without hitting a not-yet-defined name during this module's import.
+# Mixin imports come AFTER the module constants above so the mixins can import
+# from this module without hitting a not-yet-defined name during its import.
 from .content import GoalContentMixin  # noqa: E402
 from .status import GoalStatusMixin  # noqa: E402
 
@@ -113,6 +113,13 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             state = StateStore(str(self._root / ".goal-state.db"))
         self._state = state
         self._goal_state = GoalState(self._state)
+        # One migration, one cutoff (#617). Every generated view still on disk
+        # is parsed into rows HERE, once per database, before any read path can
+        # observe the tables — and never again. This is the only place in the
+        # package that reads a view; deleting it without replacement would
+        # strand the pre-#617 markdown, and re-adding a lazy read anywhere else
+        # re-opens the second-writer hole it closes.
+        migrate_views_once(self._state, self._goal_state, self._root, _now_ms())
         #: PR7 mirror discipline — file mirrors deferred by a mirror=False /
         #: render_view=False write (or a transition()/save_status() call
         #: that finds itself nested inside a caller-opened transaction())
