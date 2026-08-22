@@ -357,7 +357,7 @@ def test_compute_instance_usage_makes_no_llm_calls(store, registry):
     cognition call. Verified by counting fake claude invocations = 0."""
     # We don't have a FakeClaude here because compute_instance_usage doesn't
     # go near the claude binary. Verify structurally: the function is synchronous
-    # and imports only stdlib/db — no claude_sdk, no llm_call, no cognition caller.
+    # and imports only stdlib/db — no engine module, no llm_call, no cognition caller.
     import devclaw.telemetry as _tel
     import inspect
     src = inspect.getsource(_tel.compute_instance_usage)

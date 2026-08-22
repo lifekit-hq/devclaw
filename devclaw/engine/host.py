@@ -23,14 +23,29 @@ from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
 from ..git_identity import git_identity_env
 
-_REPO = Path(__file__).resolve().parents[1]
+#: The REPOSITORY ROOT — ``runner/`` and its skill bundle are siblings of the
+#: ``devclaw/`` package, not children of it. This was ``parents[1]`` (the
+#: package dir), so every path derived from it pointed one level short and
+#: silently missed: ``RUNNER_PY`` resolved to ``devclaw/runner/runner.py``,
+#: which has never existed, so host mode only ever ran with an explicit
+#: ``DEVCLAW_RUNNER_PY``. Nothing caught it because nothing asserted the
+#: default resolves — see ``tests/test_host_engine_paths.py``.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 # the in-sandbox runner, run here on the host
-RUNNER_PY = os.environ.get("DEVCLAW_RUNNER_PY", str(_REPO / "runner" / "runner.py"))
-# the runner is stdlib-only (spec 011); the legacy runner venv
-# is still preferred if present, else this interpreter
-_OH_VENV = _REPO / "runner" / ".venv" / "bin" / "python"
+RUNNER_PY = os.environ.get("DEVCLAW_RUNNER_PY", str(_REPO_ROOT / "runner" / "runner.py"))
+#: The ONE home for worker-kind instructions (#613). The sandbox bakes
+#: ``runner/skills/`` to /opt/devclaw/skills; on the host nothing mounts it, so
+#: point the runner at the in-repo source it was baked from. Without this the
+#: host engine finds no skills at all and ``_wrap_goal`` raises — which is the
+#: correct loud failure, but the wiring is the fix, not the fallback text that
+#: used to paper over it.
+SKILLS_DIR = os.environ.get("DEVCLAW_SKILLS_DIR", str(_REPO_ROOT / "runner" / "skills"))
+HOOKS_DIR = os.environ.get("DEVCLAW_HOOKS_DIR", str(_REPO_ROOT / "runner" / "hooks"))
+# the runner is stdlib-only (spec 011); a runner venv is still preferred if
+# present, else this interpreter
+_RUNNER_VENV = _REPO_ROOT / "runner" / ".venv" / "bin" / "python"
 RUNNER_PYTHON = os.environ.get("DEVCLAW_RUNNER_PYTHON") or (
-    str(_OH_VENV) if _OH_VENV.exists() else sys.executable
+    str(_RUNNER_VENV) if _RUNNER_VENV.exists() else sys.executable
 )
 
 
@@ -45,7 +60,12 @@ def _runner_env() -> dict[str, str]:
     """The host runner's process env: the host env minus API keys (OAuth-only
     invariant), plus devclaw's pinned git identity so the agent's commits are
     authored by devclaw on this engine exactly as in the sandbox."""
-    return {**_strip_api_keys(dict(os.environ)), **git_identity_env()}
+    return {
+        **_strip_api_keys(dict(os.environ)),
+        **git_identity_env(),
+        "DEVCLAW_SKILLS_DIR": SKILLS_DIR,
+        "DEVCLAW_HOOKS_DIR": HOOKS_DIR,
+    }
 
 
 async def run_host(req: EngineRequest) -> EngineResult:

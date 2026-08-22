@@ -2,18 +2,24 @@
 
 import asyncio
 import os
+import pathlib
 
 import pytest
 
-# Prevent the runner tests from picking up the baked /opt/devclaw/skills/
-# installation, whose content changes independently of this branch. Tests that
-# need real skill content point _SKILLS_DIR at the in-repo source via
-# monkeypatch (test_runner_skills.py, test_plan_md_skill.py, …). Tests that
-# check the embedded _KIND_WRAPPERS fallback (test_runner_wrappers.py,
-# test_onboard.py) need the skills dir absent so the fallback fires. This must
-# be set at module-level (not in a fixture) so it is in effect when the
-# module-scoped `runner` fixture executes exec_module and reads the env var.
-os.environ.setdefault("DEVCLAW_SKILLS_DIR", "/nonexistent-test-default")
+# Point the runner at the IN-REPO skill bundle, never the baked
+# /opt/devclaw/skills/ installation (whose content changes independently of this
+# branch). runner/skills/ is the one home for worker-kind instructions (#613) and
+# is exactly what the sandbox image bakes, so a prompt assertion here is an
+# assertion about what production actually sends. It used to default to a
+# nonexistent path so the embedded _KIND_WRAPPERS fallback would fire — which
+# meant the prompt tests pinned a copy production never read, and a prompt edit
+# could land in the wrong one with every test still green (#610). Set at
+# module-level (not in a fixture) so it is in effect when the module-scoped
+# `runner` fixture executes exec_module and reads the env var.
+os.environ.setdefault(
+    "DEVCLAW_SKILLS_DIR",
+    str(pathlib.Path(__file__).resolve().parents[1] / "runner" / "skills"),
+)
 
 from devclaw import task_queue
 from devclaw.delivery import deploy as _deploy_mod

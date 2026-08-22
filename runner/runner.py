@@ -63,6 +63,11 @@ _VERIFY_SHELL = (
 _SKILLS_DIR = os.environ.get("DEVCLAW_SKILLS_DIR", "/opt/devclaw/skills")
 _HOOKS_DIR = os.environ.get("DEVCLAW_HOOKS_DIR", "/opt/devclaw/hooks")
 _WRITES_CODE_KINDS = {"implement_feature", "fix_bug"}
+#: Kinds with a skill bundle under ``runner/skills/``. Anything else is
+#: briefed as implement_feature. Kept as an explicit set rather than
+#: inferred from the directory listing so an image that bakes a partial
+#: bundle raises in _wrap_goal instead of silently downgrading the kind.
+_KNOWN_KINDS = {"implement_feature", "fix_bug", "review_repository", "onboard"}
 _HOOK_TIMEOUT_S = 30
 
 
@@ -170,85 +175,6 @@ def _run_hook(name: str, *args: str) -> list[str]:
     return warnings
 
 
-# (Legacy embedded preambles — kept only as the in-process fallback when the
-# baked skill dir is missing. The sandbox image's /opt/devclaw/skills/ is the
-# canonical source; these strings exist so devclaw still runs in degraded mode
-# without it.)
-_CONTEXT_PREAMBLE = (
-    "You are working in the repository in your current working directory. Before "
-    "changing anything, get your bearings: read the project's own guide if present "
-    "(AGENTS.md, CLAUDE.md, or README.md in the repo root) and the existing code "
-    "around what you're touching, so your change matches the project's conventions "
-    "and structure. Do NOT assume the existing code is good — assess what you touch: "
-    "if it's poorly structured, buggy, or has weak/missing tests, that is part of "
-    "the job, not a pattern to copy. Follow the project's stated conventions and "
-    "sound engineering over blindly mimicking bad surrounding code, and note in your "
-    "summary anything pre-existing you had to work around or that needs follow-up. "
-    "AGENTS.md in the repo root is a THIN, BOUNDED pointer file (~1 page: what the "
-    "repo is, exact build/run/test/verify commands, layout pointers, links to "
-    "deeper docs) — read it FIRST so you don't re-derive what it already records. "
-    "KEEP IT HONEST: update it only when the change you shipped makes it wrong. "
-    "NEVER append to it — no learnings, no feature notes, no session history. "
-    "NEVER create AGENTS.md if the repo doesn't have one — authoring it is "
-    "onboarding work, not part of this task."
-)
-# The engineer writes its OWN commit, the way a developer does — so the delivered
-# PR's title/branch/body describe WHAT CHANGED, not the ticket instruction. devclaw
-# derives the branch + PR from this commit, so a clean conventional-commit message
-# here is what makes the history readable. (Don't push or open a PR — devclaw does.)
-_COMMIT_CODA = (
-    "Finally, COMMIT your change yourself with a clean conventional-commit message — "
-    "it becomes the PR a human reviews, so write it like a senior engineer would:\n"
-    "  - Subject: `type(scope): what changed` (type = feat / fix / refactor / test / "
-    "docs / chore; imperative, <= ~70 chars; the CHANGE, not the task).\n"
-    "  - Blank line, then the body as bullets: 2-4 bullets on WHAT changed and why, "
-    "then the checks you ran and their results. devclaw renders these as the PR's "
-    "`## Summary` and `## Testing` sections, so write them PR-ready (do NOT add those "
-    "headers yourself).\n"
-    "  - Resolving a tracked issue? Add a `Fixes #<n>` line so the PR links and "
-    "closes it.\n"
-    "Make ONE commit for the whole change (stage everything, including new files). "
-    "Do NOT push and do NOT open a pull request — devclaw delivers your commit as a "
-    "branch + PR."
-)
-# The code-quality bar. Without it the agent optimizes for the ONE thing it's
-# told to satisfy — a green test suite — and ships "a working version": logic
-# inlined wherever instead of where it belongs, happy-path-only tests, and even
-# dead/no-op code that passes because nothing exercises it (live-observed: a
-# `Directory.Enumerate(...).Take(0).Count()` accessibility check that enumerates
-# nothing and never throws — green, but meaningless). The gate proves "didn't
-# break + happy path works," not "good code." This brief carries the quality
-# expectation devclaw (the PM) owes the engineer; repo-specific conventions still
-# come from the repo's own AGENTS.md (read via the preamble).
-_QUALITY_BAR = (
-    "You are a senior software engineer working on this codebase. Code quality is "
-    "part of your output — not just whether tests pass. Hold yourself to a production "
-    "code-quality bar: code you would approve in a thorough code review.\n\n"
-    "Before editing a file, read it and the surrounding folder. Form an opinion as a "
-    "senior engineer would: is this a coherent unit or a god object mixing many "
-    "concerns? Are responsibilities split where they belong, or piled into one? If "
-    "you see code smells — god objects, mixed concerns, repeated patterns, catch-all "
-    "spec files, missing abstractions — refactor first, then add. Sound engineering "
-    "beats matching the existing pattern when the existing pattern is bad; match the "
-    "standard of a well-maintained open-source library, not the local habit if the "
-    "local habit is rotten.\n\n"
-    "Producing the change: put new code where it BELONGS — sometimes that's the "
-    "existing location, sometimes a better location you create and migrate to (note "
-    "structural moves in your summary). Follow existing style and naming when sound, "
-    "propose better when not. Write NO dead, placeholder, or no-op code — every line "
-    "must do real work; a disabled button + expect(visible) is not implementation, "
-    "it's a stub in disguise. Handle real edge and error cases. Tests must genuinely "
-    "exercise behaviour, never weakened or deleted to go green.\n\n"
-    "Before finishing, re-read your own diff with the senior engineer eye. Two "
-    "questions: (1) does it work? tests pass, behaviour correct, edges handled. "
-    "(2) is the codebase healthier than before this change, or worse? A passing test "
-    "suite is necessary but NOT sufficient. If either answer is no, fix it."
-)
-# The structured hand-back the engineer owes devclaw at the END of a code task.
-# Replaces the old bare "say DONE": the goal layer (and the direction evaluator
-# that reads deliveries.md next tick) needs a legible, parseable account of what
-# actually shipped — what changed, what was verified, which acceptance criteria
-# are met, what's still open — not a one-word signal. Rendered LAST so it's the
 # final thing the engineer reads before finishing. It reports the OUTCOME of the
 # work and never prescribes HOW to do it, so it does not fight _QUALITY_BAR's
 # "form your own opinion as a senior engineer." Vendor-neutral plain markdown —
@@ -273,131 +199,37 @@ _RETURN_CONTRACT = (
     "Report only checks you truly ran, not ones you intended to. If you write "
     "BLOCKED, still fill CHANGED / VERIFIED / ACCEPTANCE with how far you got."
 )
-_VERIFY_CODA = (
-    "Keep the change focused. Refactoring WHAT YOU TOUCH is part of the change — if "
-    "you edit a god object to add a feature, splitting it is the work, not unrelated. "
-    "The line is between refactors that SUPPORT the change (in scope) and refactors "
-    "of code you didn't otherwise need to touch (out of scope). When done, VERIFY "
-    "your work with the project's OWN tools, and iterate until they pass: run the "
-    "test/build command AND the linter, formatter, and type-checker if the repo has "
-    "any (look in package.json scripts, pyproject.toml / setup.cfg, Makefile, "
-    ".pre-commit-config.yaml, or configs like .eslintrc / ruff / mypy / tsconfig) — "
-    "fix everything they flag, not only failing tests. Finish with a short summary "
-    "of what you changed and the checks you ran (tests + lint + types) to verify it."
-)
-
-_KIND_WRAPPERS = {
-    "implement_feature": (
-        f"{_CONTEXT_PREAMBLE}\n\n{_QUALITY_BAR}\n\n{_VERIFY_CODA}\n\n{_COMMIT_CODA}\n\n"
-        f"Feature to implement:\n{{goal}}"
-    ),
-    "fix_bug": (
-        f"{_CONTEXT_PREAMBLE} Make the smallest change that fixes the bug.\n\n"
-        f"{_QUALITY_BAR}\n\n{_VERIFY_CODA}\n\n{_COMMIT_CODA}\n\nBug description:\n{{goal}}"
-    ),
-    "review_repository": (
-        "You are reviewing this repository — READ ONLY. Do NOT modify, create, "
-        "or delete any files in the workspace. Your only allowed actions are "
-        "reading files and running read-only inspection commands "
-        "(ls, cat, grep, git log, git diff, etc.). At the end, write a clear "
-        "review report to STDOUT in your final message covering: codebase "
-        "summary, concerns or bugs you noticed, suggested improvements. If a "
-        "specific focus area was provided, address that first.\n\n"
-        "Review focus (if any):\n{goal}"
-    ),
-    # Onboarding: analyse the repo and produce the DRAFT doc set so future
-    # tasks start informed (1b already reads AGENTS.md/CLAUDE.md/README if
-    # present — this generates them for repos that lack them). AGENTS.md is a
-    # thin, bounded pointer written inside devclaw's marker pair so a
-    # re-onboard replaces within the markers and preserves everything outside;
-    # narrative lives in ARCHITECTURE.md; decision rationale lives in the
-    # speckit spec, never a parallel ADR log. Read-only EXCEPT the onboarding
-    # artifacts. Human-in-the-loop: drafts are surfaced for review (git working
-    # tree + the summary) and are NOT authoritative until reviewed — an
-    # existing substantive doc is validated against the real repo, never
-    # blindly clobbered.
-    "onboard": (
-        "You are ONBOARDING this repository: produce the standardized artifacts "
-        "so a future engineer (and an automated agent) can start work already "
-        "informed AND in the project's real environment. Inspect the repo READ "
-        "ONLY — read files and run read-only inspection commands (ls, cat, grep, "
-        "git log, find, reading config/manifest/lockfiles, etc.). Do NOT modify, "
-        "create, or delete ANY file EXCEPT the onboarding artifacts described "
-        "below — the three documentation files, plus .devcontainer/Dockerfile "
-        "when the repo has none; in particular do not change any source, build, "
-        "or config file.\n\n"
-        "Produce THREE docs in the repo root — each has one job, do not blur "
-        "them:\n"
-        "  1. AGENTS.md — a THIN, BOUNDED pointer (~1 page): what the repo is "
-        "(one line), exact build/run/test commands (call out the verify gate), "
-        "layout pointers, links out to ARCHITECTURE.md, .agent/skills/, and "
-        "specs/ when present. No learnings, feature notes, or design narrative "
-        "here. Write the content you own between <!-- devclaw:managed:start --> "
-        "and <!-- devclaw:managed:end --> markers: a re-onboard REPLACES what is "
-        "between the markers and preserves everything outside them.\n"
-        "  2. README.md — human-facing intro: one-paragraph purpose, minimum "
-        "quickstart commands, high-level pointer at the layout (link AGENTS.md "
-        "for detail), one-line status.\n"
-        "  3. ARCHITECTURE.md — component map, data flow, cross-cutting "
-        "concerns, notable design decisions (cross-link the feature's specs/ "
-        "artifacts for full rationale — do NOT create a separate ADR log). "
-        "Diagrams welcome (ASCII / mermaid); if you can't draw one, leave "
-        "`<!-- diagram: ... -->` prose describing what should go there.\n\n"
-        "Rules across all three:\n"
-        "  - Each doc you CREATE gets a one-line DRAFT marker at the top for "
-        "human review.\n"
-        "  - If a doc ALREADY exists and is substantive, do NOT clobber — "
-        "validate each part against the repo, keep what's accurate, only "
-        "correct / fill missing bits.\n"
-        "  - Boundary discipline: don't put ADR reasoning in README, don't put "
-        "quickstart in ARCHITECTURE, don't put design narrative or decision "
-        "rationale in AGENTS.md. Cross-link instead.\n"
-        "  - Read-only for everything else in the repo.\n\n"
-        "Then establish the project's dev-environment boilerplate — "
-        ".devcontainer/Dockerfile — the ONE environment a human dev and the "
-        "agent share:\n"
-        "  - Create it ONLY when the repo has none; if a .devcontainer/Dockerfile "
-        "already exists, leave it unchanged (it is the source of truth, same "
-        "non-clobber rule as the docs).\n"
-        "  - It is a DEV image, NOT a deploy image: base it on the official SDK "
-        "image for the stack (e.g. mcr.microsoft.com/dotnet/sdk:<major.minor>, "
-        "node:<major>, golang:<major.minor>, rust:<major>) — never a slim "
-        "multi-stage production image that strips the SDK and cannot build/test.\n"
-        "  - Cover EVERY toolchain the build/test commands need (a .NET backend + "
-        "a Node frontend → install both, so the full verify gate runs in one "
-        "container). Use a debian/ubuntu base (the official SDK images are) so "
-        "devclaw's harness composes on top.\n"
-        "  - Toolchain ONLY: do NOT COPY the app in (the workspace is mounted at "
-        "run time) and do NOT install agent tooling (claude/the runner) — devclaw "
-        "adds that layer itself. One-line DRAFT comment at the top.\n\n"
-        "End with a short summary to STDOUT: for each of the three docs, whether "
-        "you CREATED / UPDATED / LEFT UNCHANGED it, plus two or three "
-        "load-bearing facts you captured per doc; then one line for "
-        ".devcontainer/Dockerfile (CREATED with base image + toolchains, or LEFT "
-        "UNCHANGED). Optional extra focus for this onboarding (if any):\n{goal}"
-    ),
-}
 
 
 def _wrap_goal(kind: str, goal: str, workspace_dir: str | None = None) -> str:
     """Skills prepended, then the goal under a clear marker.
 
-    Loads universal skills from /opt/devclaw/skills/ plus per-repo skills from
-    ``<workspace>/.agent/skills/`` when ``workspace_dir`` is provided. Falls
-    back to the legacy embedded ``_KIND_WRAPPERS`` only when no skill files at
-    all are found (host-side dev, fresh image without skills/ baked in, AND
-    the repo also has no .agent/skills). Once the sandbox image ships skills,
-    that fallback is dead path.
+    ``runner/skills/`` is the ONE home for worker-kind instructions — baked to
+    ``/opt/devclaw/skills/`` in the sandbox image, pointed at in-repo by the
+    host engine. Per-repo skills from ``<workspace>/.agent/skills/`` are
+    appended when a workspace is provided.
+
+    Raises when no skill file resolves. There used to be a second copy of every
+    instruction embedded here as a fallback, and it was not harmless: a prompt
+    edit could land in the copy production never reads while the canonical skill
+    said something else, with nothing to tell the two apart (#610). Substituting
+    different text for a worker that then runs unattended is the silent
+    degradation the hardening philosophy forbids — a missing bundle is a broken
+    image or a mis-wired engine, and it fails LOUD.
     """
-    # Unknown kinds fall back to implement_feature for BOTH skill loading and
-    # the legacy template fallback — keeps the unknown-kind == implement_feature
-    # equivalence whether the skill dir is present or absent.
-    effective_kind = kind if kind in _KIND_WRAPPERS else "implement_feature"
+    # Unknown kinds are briefed as implement_feature — the widest contract, and
+    # the historical equivalence.
+    effective_kind = kind if kind in _KNOWN_KINDS else "implement_feature"
     skills = _load_skills(effective_kind, workspace_dir=workspace_dir)
-    if skills:
-        brief = f"{skills}\n\n---\n\n## Goal\n\n{goal}"
-    else:
-        brief = _KIND_WRAPPERS[effective_kind].format(goal=goal)
+    if not skills:
+        raise RuntimeError(
+            f"no skill files found for kind {effective_kind!r} under "
+            f"{_SKILLS_DIR!r} (DEVCLAW_SKILLS_DIR). The worker will not run on "
+            f"an unbriefed prompt. In the sandbox this means the image did not "
+            f"bake runner/skills/; on the host it means DEVCLAW_SKILLS_DIR is "
+            f"unset or wrong."
+        )
+    brief = f"{skills}\n\n---\n\n## Goal\n\n{goal}"
     # Structured return contract — code-writing kinds only. review_repository and
     # onboard already carry their own report contract (a written review / doc
     # set), so appending the code hand-back would fight it. Rendered LAST so the
@@ -1212,7 +1044,7 @@ def main() -> None:
         )
         sys.exit(2)
 
-    if kind not in ("implement_feature", "fix_bug", "review_repository", "onboard"):
+    if kind not in _KNOWN_KINDS:
         _emit_result({"status": "error", "error": f"unknown kind: {kind}"})
         sys.exit(2)
 
@@ -1221,7 +1053,14 @@ def main() -> None:
     # so prepending instructions here is the cheapest way to bias behavior
     # without a custom system prompt. Skills now live in /opt/devclaw/skills/
     # and are loaded per-kind by _wrap_goal.
-    wrapped_goal = _wrap_goal(kind, goal, workspace_dir=workspace_dir)
+    try:
+        wrapped_goal = _wrap_goal(kind, goal, workspace_dir=workspace_dir)
+    except RuntimeError as exc:
+        # Loud, but still legible: the host parses `result:` lines, and a bare
+        # traceback settles the task as an opaque crash instead of naming the
+        # broken image / mis-wired engine. Same shape as the toolchain gate below.
+        _emit_result({"status": "error", "error": f"skills_missing: {exc}"})
+        sys.exit(2)
 
     os.makedirs(workspace_dir, exist_ok=True)
 

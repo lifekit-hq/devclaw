@@ -11,7 +11,6 @@ EngineRequest → the docker argv both docker engines build.
 from __future__ import annotations
 
 from devclaw.engine import EngineRequest
-import devclaw.engine.claude_sdk as csdk
 import devclaw.engine.sandcastle as sc
 from devclaw.project_registry import ProjectRegistry
 
@@ -103,21 +102,6 @@ def test_sandcastle_argv_honors_the_override_and_defaults_without_it():
     # image stays in the terminal position, right before the payload
     assert pinned[-2] == "devclaw-sandbox-dotnet:local"
     assert pinned[-1] == "{}"
-
-
-def test_claude_sdk_argv_honors_the_override_too():
-    base = dict(
-        container_name="c",
-        host_bind_path="/host/ws",
-        claude_dir="/home/me/.claude",
-        prompt="p",
-        verify_cmd=None,
-    )
-    pinned = csdk._build_docker_args(**base, sandbox_image="custom:img")
-    assert "custom:img" in pinned
-    default = csdk._build_docker_args(**base)
-    assert "custom:img" not in default
-    assert csdk.SANDBOX_IMAGE in default
 
 
 # ---- dispatch wiring: registry pin reaches the EngineRequest ----

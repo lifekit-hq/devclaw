@@ -103,7 +103,7 @@ class DispatchEvent:
     goal_id: str = ""
     tool: str = ""
     ref_id: str = ""
-    engine: str = ""           # stub | sandcastle | host | claude_sdk
+    engine: str = ""           # stub | sandcastle | host
     is_done_check: bool = False
 
     def to_dict(self) -> dict:
