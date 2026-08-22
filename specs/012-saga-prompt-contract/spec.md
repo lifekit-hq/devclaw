@@ -1,19 +1,21 @@
-# Feature Specification: Unit of Work & Planned Parallelism
+# Feature Specification: Saga & Unit-of-Work Prompt Contract
 
-**Feature Branch**: `spec/012-unit-of-work-parallelism`
+**Feature Branch**: `spec/012-saga-prompt-contract`
 
 **Created**: 2026-08-22
 
 **Status**: Draft
 
-**Also known as**: "spec 010" in the 2026-08-18 ruling and in the vault note
-`direction-2026-08-18-unit-of-work-planned-parallelism`. Number 010 was never
-allocated — spec 011 (ACP runner swap) took the next slot on 2026-08-19 and the
-allocator assigns `highest + 1`, so this is 012. The alias is recorded here so
-the ruling's reference does not dangle.
+**Relationship to spec 010**: the 2026-08-18 ruling has two halves. Spec 010
+(`010-unit-of-work-parallelism`, drafted 2026-08-19, not yet merged) specifies the
+**concurrency** half — single-writer per project, #553 closed by construction, and
+the `[P]` fan-out machinery. This spec specifies the **input** half — the prompt
+contract for a saga and for a unit of work. They share the terminology table and
+nothing else; 010 is the normative source for everything about concurrency.
 
-**Input**: Formalise the goal/task separation, the standard prompt shape for each
-level, and how work is sized at intake — per the terminology ruled on 2026-08-18.
+**Input**: Give a saga and a unit of work each a distinct, structured prompt, feed
+delivery outcomes forward between increments, and record a work item's expected
+extent — per the terminology ruled on 2026-08-18.
 
 ## Context: this formalises a settled decision
 
@@ -34,14 +36,11 @@ never homegrown vocabulary implicitly re-derived.
 | Concurrency default | **Single-writer / actor-per-project** | at most one goal actively dispatching per project |
 | Integration | **Merge queue** (Bors) | parallel execution, serial integration in queue order |
 
-Two consequences of the ruling that this spec inherits rather than decides:
-
-- **Parallelism is data in the plan, never executor control-flow.** No worker ever
-  spawns workers. The subagent pattern is explicitly rejected because it destroys
-  hermeticity and accountability.
-- **Spec directories are allocated at planning time by the task graph**, never
-  claimed at runtime. This resolves the `specs/NNN` collision in #553 by
-  construction, and #553's timestamp-prefix recommendation is withdrawn.
+The last three rows — hermetic declared I/O, single-writer per project, and the
+merge queue — are **specified by spec 010, not here**. They appear in this table
+only so the vocabulary reads whole. Two consequences this spec inherits and does
+not decide: parallelism is data in the plan and no worker ever spawns workers; and
+spec directories are allocated at planning time, which closes #553 by construction.
 
 ## The problem
 
@@ -168,24 +167,6 @@ increment count with a stated basis, and that both are executed as sagas.
 
 ---
 
-### User Story 4 - Declared parallelism executes safely (Priority: P3, unsized)
-
-A planning session marks topologically independent increments in the task graph and
-declares each one's file scope. Those increments execute concurrently, each
-confined to its declared scope, and integrate serially in queue order. An increment
-that writes outside its declared scope fails loudly.
-
-**Why this priority**: This is the scaling story and the reason the vocabulary was
-ruled in the first place, but it is meaningless until the single-increment path is
-predictable. **Deliberately named and not sized** until US1 lands, per the
-slice-don't-estimate rule.
-
-**Independent Test**: Plan a saga with two independent increments and confirm they
-execute concurrently, integrate one after the other, and that an increment touching
-a file outside its declared scope is rejected.
-
----
-
 ### Edge Cases
 
 - A saga's first increment has no predecessor — the absence must be stated
@@ -249,15 +230,9 @@ a file outside its declared scope is rejected.
   completion.
 - **FR-013**: Any assessment requiring reasoning MUST occur at grading time. No new
   reasoning call may be added to the recurring background cycle.
-- **FR-014**: Concurrency MUST default to at most one saga actively dispatching per
-  project.
-- **FR-015**: Parallelism MUST be expressed as data in the plan. No worker may
-  spawn another worker.
-- **FR-016**: Concurrently executing units of work MUST declare their file scope,
-  and writing outside it MUST fail loudly.
-- **FR-017**: Concurrent units of work MUST integrate serially in queue order.
-- **FR-018**: Spec directories MUST be allocated at planning time, never claimed
-  during execution.
+- **FR-014**: Concurrency, declared file scopes and serial integration are
+  specified by spec 010 and are OUT OF SCOPE here. This spec must not restate or
+  contradict them.
 
 ### Key Entities
 
@@ -296,8 +271,6 @@ a file outside its declared scope is rejected.
   whole saga, not a single prompt.
 - **SC-007**: The idle cost of the system is unchanged: a system with nothing to do
   still consumes no reasoning calls.
-- **SC-008**: Concurrent increments never produce conflicting or interleaved
-  integrations.
 
 ## Assumptions
 
@@ -331,8 +304,9 @@ a file outside its declared scope is rejected.
   the item.
 - Size and decomposability are related but distinct axes. Something can be large
   and cleanly sliceable, or small and still require a completion judgement.
-- US4 is deliberately named and unsized. It is the scaling story, and it is
-  meaningless until the single-increment path is predictable.
+- The scaling story (declared parallelism, merge queue) lives in spec 010. It is
+  meaningless until the single-increment path specified here is predictable, so 010
+  depends on this spec landing first even though it was drafted earlier.
 
 ## Constitution Alignment
 

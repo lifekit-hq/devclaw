@@ -1,4 +1,4 @@
-# Specification Quality Checklist: Unit of Work & Planned Parallelism
+# Specification Quality Checklist: Saga & Unit-of-Work Prompt Contract
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-08-22
