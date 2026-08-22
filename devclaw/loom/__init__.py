@@ -4,7 +4,7 @@ This package is the **extraction seam**: the engine-agnostic substrate devclaw i
 built on, grouped under a neutral name so it can eventually become a standalone,
 reusable library (an orchestrator weaving many threads — goals, tasks, agents —
 into delivered work). devclaw remains the concrete product (the MCP server, the
-OpenHands engine, the GitHub delivery); loom is the part with no opinion about
+sandbox engine, the GitHub delivery); loom is the part with no opinion about
 *which* engine or product uses it.
 
 What lives here (physically, all of it pure stdlib): :mod:`~devclaw.loom.limits`

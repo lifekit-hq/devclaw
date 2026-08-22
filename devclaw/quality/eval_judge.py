@@ -1,6 +1,6 @@
 """Eval failure-analysis judge — turn "what went wrong?" into a tagged verdict.
 
-After a build run, this reads the spec, the task DAG, a digest of the OpenHands
+After a build run, this reads the spec, the task DAG, a digest of the worker
 events, and the acceptance result, then asks ``claude`` to diagnose what happened
 and bucket it into a controlled vocabulary of failure modes. Categorizing (not
 just free-text) is what lets you aggregate across N runs — "5/10 failed on

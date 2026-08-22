@@ -4,7 +4,7 @@ Step 1 of the "make green mean trustworthy" dogfood: run a basket of
 deliberately HARDER tasks than the small machine-verifiable backend tickets
 proven so far — ambiguous spec, multi-file change, a pure-UI/judgment component
 whose change the backend gate does NOT cover — through the REAL engine
-(run_sandcastle -> docker sandbox -> OpenHands -> claude), gate each with the
+(run_sandcastle -> docker sandbox -> worker runner -> claude), gate each with the
 backend pytest suite, deliver each as a PR (open_pr; standalone tasks do NOT
 auto-merge), then read every diff adversarially.
 

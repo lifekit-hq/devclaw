@@ -1,7 +1,7 @@
 """The worker-execution trace surface — the mirror of the #455 cognition
 transcript reader, one layer down at the worker.
 
-  * ``devclaw.server.worker_events.decode_event`` — turns a raw OpenHands SDK
+  * ``devclaw.server.worker_events.decode_event`` — turns a raw worker
     event (as stored in the events table) into a readable
     {kind, title, summary, detail, raw} row.
   * ``GET /tasks/{task_id}/events.json`` — reads a settled task's full turn log

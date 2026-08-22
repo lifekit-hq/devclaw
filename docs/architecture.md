@@ -4,7 +4,7 @@
 > thread. Part II is the **locked contract** (layer boundaries, invariants,
 > testability): changes that violate it are architectural changes, not feature
 > changes. The code is the territory — when this doc and the code disagree,
-> trust the code, then fix this doc. Historical rationale (why OpenHands, why
+> trust the code, then fix this doc. Historical rationale (why this engine, why
 > Pro OAuth) lives in [`decisions/`](./decisions/), not here.
 
 ## The one paragraph
@@ -583,6 +583,6 @@ runner/runner.py    layer 5 — the in-sandbox harness
 - **How one task flows end to end** → [`flows/task-execution.md`](./flows/task-execution.md).
 - **How a dispatch becomes a PR** → [`flows/delivery.md`](./flows/delivery.md).
 - **Every env var** → [`reference/env-vars.md`](./reference/env-vars.md).
-- **Why OpenHands / why this shape** → [`decisions/0001-openhands-engine.md`](./decisions/0001-openhands-engine.md).
+- **Why this engine shape** → [`decisions/0001-openhands-engine.md`](./decisions/0001-openhands-engine.md) (frozen: the in-sandbox agent it names was replaced by the ACP runner in spec 011; the orthogonality reasoning stands).
 - **Every doc, with a currency tag** → [`INDEX.md`](./INDEX.md) — read it before
   trusting any other doc.

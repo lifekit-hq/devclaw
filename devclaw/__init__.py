@@ -1,9 +1,9 @@
-"""DevClaw — a thin orchestration layer in front of OpenHands.
+"""DevClaw — a thin orchestration layer in front of a coding agent.
 
-TypeScript is gone; this is the all-Python host runtime. The MCP server,
-planner, SQLite state store, task queue, and docker-sandbox runner all live
-here. The only other code is ``runner/runner.py``, which runs the
-OpenHands SDK *inside* the per-task sandbox container.
+This is the all-Python host runtime. The MCP server, SQLite state store, task
+queue, and docker-sandbox launcher all live here. The only other code is
+``runner/runner.py``, the worker harness that runs *inside* the per-task
+sandbox container and drives the agent over ACP (spec 011).
 """
 
 __all__ = ["__version__"]

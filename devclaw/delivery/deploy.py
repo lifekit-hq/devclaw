@@ -213,7 +213,6 @@ def _build_run_args(*, name: str, host_path: str, port: int) -> list[str]:
         "--restart", "unless-stopped",
         "-p", f"127.0.0.1:{port}:{CONTAINER_PORT}",
         "-v", f"{host_path}:/app",
-        "-e", "OPENHANDS_SUPPRESS_BANNER=1",
         "--entrypoint", "bash",
         DEPLOY_IMAGE,
         "-c", _LAUNCHER,

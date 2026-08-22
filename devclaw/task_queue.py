@@ -265,7 +265,7 @@ MAX_PAUSE_REQUEUES = 5
 _PAUSED = object()
 
 PlannerFn = Callable[[str, str], Awaitable[list[PlannedTask]]]
-#: the execution engine — orchestration depends on this seam, not on OpenHands
+#: the execution engine — orchestration depends on this seam, not on the agent
 RunnerFn = Engine
 
 

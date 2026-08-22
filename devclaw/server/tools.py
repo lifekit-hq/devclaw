@@ -166,7 +166,7 @@ async def dispatch_task(
     base_branch: Optional[str] = None,
     target_branch: Optional[str] = None,
 ) -> str:
-    """One-shot dispatch of a code task to OpenHands in a REGISTERED project's
+    """One-shot dispatch of a code task to the worker in a REGISTERED project's
     workspace. ``project_id`` names a project (see ``list_projects`` /
     ``register_project``); devclaw resolves its workspace + repo from the
     registry row — you never pass a raw path. An unknown project, or one whose
@@ -456,7 +456,7 @@ async def onboard(
 ) -> str:
     """Onboard a repository: analyze it and write a DRAFT documentation set
     (plus the project's dev-container boilerplate) so future tasks + humans
-    start informed and in the project's real environment. OpenHands inspects the
+    start informed and in the project's real environment. The worker inspects the
     workspace READ-ONLY (it modifies no file except the four named onboarding
     artifacts below) — three scoped docs plus one build artifact:
 
@@ -646,7 +646,7 @@ async def get_events(
     since_id: Optional[int] = None,
     limit: Annotated[int, Field(ge=1, le=5000)] = 500,
 ) -> str:
-    """Return events emitted by the OpenHands runner for one program or one
+    """Return events emitted by the worker runner for one program or one
     task, in emission order. Each event has an id (monotonic cursor), type,
     source, payload_json (the raw SDK Event), and ts. Pass since_id to resume —
     same semantics as the /programs/:id/events SSE Last-Event-Id."""

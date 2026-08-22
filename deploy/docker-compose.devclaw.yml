@@ -63,7 +63,6 @@ services:
       FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
-      OPENHANDS_SUPPRESS_BANNER: "1"
       # The per-task sandbox image, pulled from ghcr by tag (built from the same
       # source as this MCP image — no md5-verify crutch; both are this commit).
       DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}

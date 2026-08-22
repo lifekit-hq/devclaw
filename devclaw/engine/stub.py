@@ -1,7 +1,7 @@
 """Stub engine + cognition — deterministic, offline, for HARNESS VALIDATION.
 
-When ``DEVCLAW_ENGINE=stub`` the server wires these in place of OpenHands (the
-engine) AND claude (the planner). The whole pipeline then runs with no docker
+When ``DEVCLAW_ENGINE=stub`` the server wires these in place of the sandbox
+engine AND claude (cognition). The whole pipeline then runs with no docker
 and no claude, so harness tests can exercise everything *around* the agent — the
 MCP tools, scheduling, execution wiring, event recording — and prove the plumbing
 is sound. A live run then tests only the one thing this can't fake: real agent
