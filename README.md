@@ -151,7 +151,7 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 | `implement_feature(project_id, goal, …)` | Deprecated alias — forwards to `dispatch_task(kind="implement_feature")` |
 | `fix_bug(project_id, description, …)` | Deprecated alias — forwards to `dispatch_task(kind="fix_bug")` |
 | `review_repository(project_id, …)` | Deprecated alias — forwards to `dispatch_task(kind="review_repository")` (read-only) |
-| `onboard(project_id, …)` | Analyze a repo and write the draft onboarding doc set — a thin `AGENTS.md` pointer (marker-delimited), `README.md`, `ARCHITECTURE.md`, plus `.devcontainer/Dockerfile` when absent |
+| `onboard(project_id, …)` | Analyze a repo and deliver the draft onboarding doc set as a reviewable PR — a thin `AGENTS.md` pointer (marker-delimited), `README.md`, `ARCHITECTURE.md`, plus `.devcontainer/Dockerfile` when absent |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
 | `start_program(project_id, goal, …)` | DEPRECATED sugar for `create_goal(mode='one_shot')` — files a one-shot goal that rides the same speckit advance loop with a plan-once cadence |
