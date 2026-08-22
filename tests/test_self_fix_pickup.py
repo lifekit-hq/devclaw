@@ -26,11 +26,13 @@ from devclaw.goal import self_issue as si
 class FakeGh:
     """Records the two Stage-2 calls; returns a canned issue list."""
 
-    def __init__(self, issues=None, by_labels=None):
+    def __init__(self, issues=None, by_labels=None, prs_by_issue=None):
         self._issues = issues or []
         self._by_labels = by_labels  # optional {tuple(labels): [issues]} per-query map
+        self._prs_by_issue = prs_by_issue or {}  # {issue_number: [pr_numbers]}
         self.listed: list = []
         self.marked: list = []
+        self.pr_checks: list = []  # (repo, number) pairs queried
 
     async def list_issues(self, repo, *, labels, state="open"):
         self.listed.append((repo, tuple(labels), state))
@@ -41,6 +43,10 @@ class FakeGh:
     async def mark_fixing(self, repo, number, *, label, comment):
         self.marked.append((number, label))
         return True
+
+    async def open_prs_for_issue(self, repo, number):
+        self.pr_checks.append((repo, number))
+        return list(self._prs_by_issue.get(number, []))
 
 
 class SpyCreate:
@@ -217,3 +223,66 @@ def test_pickup_concurrency_shared_across_intakes():
     assert res.picked == []
     assert spy.calls == []
     assert gh.marked == []
+
+
+# ---- #576: in-review issues (open linked PR) --------------------------------
+
+def test_grade_backlog_marks_in_review_when_open_pr():
+    """grade_backlog stamps in_review=True on any issue with an open linked PR."""
+    issues = [_issue(1), _issue(2), _issue(3)]
+    graded = si.grade_backlog(issues, open_prs_by_number={2: [101]})
+    assert graded[0]["in_review"] is False   # #1 — no open PR
+    assert graded[1]["in_review"] is True    # #2 — PR #101 open
+    assert graded[2]["in_review"] is False   # #3 — not in lookup → ready
+
+
+def test_grade_backlog_does_not_mutate_input():
+    """grade_backlog returns new dicts; the input issues are not modified."""
+    issues = [_issue(5)]
+    si.grade_backlog(issues, open_prs_by_number={5: [200]})
+    assert "in_review" not in issues[0]
+
+
+def test_select_for_pickup_skips_in_review_issues():
+    """select_for_pickup skips issues with in_review=True regardless of the
+    concurrency budget — an open PR is the active work item."""
+    ready = {**_issue(1), "in_review": False}
+    in_review = {**_issue(2), "in_review": True}
+    fresh = {**_issue(3), "in_review": False}
+    picked = si.select_for_pickup([ready, in_review, fresh], concurrency=3)
+    assert [i["number"] for i in picked] == [1, 3]
+
+
+def test_pickup_skips_issue_with_open_linked_pr(monkeypatch):
+    """run_self_fix_pickup does not dispatch a goal for an issue that already has an
+    open linked PR — the grader marks it in_review and select_for_pickup skips it.
+    Closes #576."""
+    gh = FakeGh(
+        [_issue(10, title="a bug"), _issue(11, title="another bug")],
+        prs_by_issue={10: [55]},   # issue #10 has open PR #55 — in review
+    )
+    spy = SpyCreate()
+    res = asyncio.run(si.run_self_fix_pickup(spy, repo="lifekit-hq/devclaw", gh=gh))
+
+    # Only issue #11 is dispatched — #10 is in review.
+    assert [n for n, _ in res.picked] == [11]
+    assert len(spy.calls) == 1
+    assert spy.calls[0][0] == "self-fix-issue-11"
+    assert gh.marked == [(11, si.FIXING_LABEL)]
+    # The grader queried open PRs for all issues.
+    assert set(n for _, n in gh.pr_checks) == {10, 11}
+
+
+def test_pickup_open_prs_infra_failure_degrades_to_ready(monkeypatch):
+    """When open_prs_for_issue raises (gh infra down), the issue is treated as
+    having no open PRs and is picked up normally — fail-open on infra uncertainty."""
+    class BoomPrGh(FakeGh):
+        async def open_prs_for_issue(self, repo, number):
+            raise RuntimeError("gh timed out")
+
+    gh = BoomPrGh([_issue(20, title="boom pr check")])
+    spy = SpyCreate()
+    res = asyncio.run(si.run_self_fix_pickup(spy, repo="lifekit-hq/devclaw", gh=gh))
+
+    # Infra hiccup → no open PRs assumed → issue picked up.
+    assert [n for n, _ in res.picked] == [20]

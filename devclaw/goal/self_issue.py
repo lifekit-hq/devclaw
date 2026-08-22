@@ -154,6 +154,7 @@ class GhAdapter(Protocol):
     # Stage 2 (P2 — FIX pickup):
     async def list_issues(self, repo: str, *, labels: list[str], state: str = "open") -> list[dict]: ...
     async def mark_fixing(self, repo: str, number: int, *, label: str, comment: str) -> bool: ...
+    async def open_prs_for_issue(self, repo: str, number: int) -> list[int]: ...
 
 
 async def _run(*args: str) -> tuple[int, str]:
@@ -238,6 +239,23 @@ class GhCli:
             return False
         await _run("gh", "issue", "comment", str(number), "--repo", repo, "--body", comment)
         return True
+
+    async def open_prs_for_issue(self, repo: str, number: int) -> list[int]:
+        """Open PRs cross-referencing this issue, via the GitHub timeline API.
+        Best-effort: on any gh error returns [] (fail-open on infra uncertainty)."""
+        rc, out = await _run(
+            "gh", "api", f"repos/{repo}/issues/{number}/timeline",
+            "--jq",
+            "[.[] | select(.event == \"cross-referenced\") | .source.issue"
+            " | select(.state == \"open\" and .pull_request != null) | .number]",
+        )
+        if rc != 0:
+            return []
+        try:
+            data = json.loads(out or "[]")
+            return [int(n) for n in (data if isinstance(data, list) else []) if isinstance(n, (int, float))]
+        except (ValueError, TypeError):
+            return []
 
 
 def _parse_issue_number(gh_output: str) -> Optional[int]:
@@ -388,6 +406,27 @@ def _label_names(issue: dict) -> list[str]:
     return out
 
 
+def grade_backlog(
+    issues: list[dict],
+    *,
+    open_prs_by_number: dict,
+) -> list[dict]:
+    """Grade the pickup backlog: stamp ``in_review=True`` on any issue that has at
+    least one open linked PR. Pure — no I/O.
+
+    ``open_prs_by_number`` maps ``{issue_number: [pr_number, ...]}``, assembled by
+    the caller from :meth:`GhAdapter.open_prs_for_issue` queries. An unlisted
+    issue number is treated as having no open PRs (ready for dispatch).
+    The returned list preserves input order; each dict is a shallow copy with the
+    new ``in_review`` key added so the original dicts are never mutated."""
+    out = []
+    for issue in issues:
+        number = issue.get("number")
+        has_open_pr = bool(number is not None and open_prs_by_number.get(number))
+        out.append({**issue, "in_review": has_open_pr})
+    return out
+
+
 def select_for_pickup(
     issues: list[dict],
     *,
@@ -395,10 +434,15 @@ def select_for_pickup(
     concurrency: int = SELF_FIX_CONCURRENCY,
 ) -> list[dict]:
     """Which accepted issues to spawn a self-fix goal for THIS cycle. Issues already
-    carrying ``fixing_label`` are counted as in-flight; the remaining concurrency
-    budget is filled from the fresh ones in list order. Pure — no DB, no network."""
+    carrying ``fixing_label`` are counted as in-flight; issues with ``in_review=True``
+    (an open linked PR already exists) are skipped — their work is under review.
+    The remaining concurrency budget is filled from fresh, not-in-review issues in
+    list order. Pure — no DB, no network."""
     in_flight = sum(1 for i in issues if fixing_label in _label_names(i))
-    fresh = [i for i in issues if fixing_label not in _label_names(i)]
+    fresh = [
+        i for i in issues
+        if fixing_label not in _label_names(i) and not i.get("in_review")
+    ]
     budget = max(0, concurrency - in_flight)
     return fresh[:budget]
 
@@ -496,7 +540,23 @@ async def run_self_fix_pickup(
         sys.stderr.write(f"self-fix: list issues failed on {repo}: {exc}\n")
         return result
 
-    for issue in select_for_pickup(issues, concurrency=concurrency):
+    # Grade the backlog: check each issue for an open linked PR. An issue already
+    # under review (open PR exists) must not spawn a second self-fix goal — the PR
+    # is the active work item; picking the issue again would duplicate effort and
+    # confuse the owner. Best-effort per issue: a gh hiccup degrades to [] (no
+    # open PRs assumed), so an infra failure never wedges the pickup edge.
+    open_prs_by_number: dict[int, list[int]] = {}
+    for issue in issues:
+        n = issue.get("number")
+        if not isinstance(n, int):
+            continue
+        try:
+            open_prs_by_number[n] = await gh.open_prs_for_issue(repo, n)
+        except Exception:  # noqa: BLE001 — infra hiccup → treat as no open PRs
+            open_prs_by_number[n] = []
+    graded = grade_backlog(issues, open_prs_by_number=open_prs_by_number)
+
+    for issue in select_for_pickup(graded, concurrency=concurrency):
         number = issue.get("number")
         if not isinstance(number, int):
             continue
