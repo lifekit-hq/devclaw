@@ -41,8 +41,13 @@ def test_advance_brief_instructs_the_speckit_flow_and_names_tasks_md():
     assert "speckit" in low or "specify" in low
     assert "tasks.md" in low
     assert "specs/" in low  # the per-feature artifact set location
-    # Still advances one slice, not the whole plan.
-    assert "one" in low and ("slice" in low or "story" in low or "increment" in low)
+    # Still advances one slice, not the whole plan. Assert the PHRASE, not the
+    # bare word "one": "one" is a substring of "done" and "none", both of which
+    # the brief always contains, so `"one" in low` cannot fail — it passed
+    # whether or not the brief said anything about scoping to a single slice.
+    assert "one substantive" in low
+    assert "one coherent slice" in low
+    assert "do not build ahead" in low
 
 
 def test_advance_brief_carries_no_plan_md_directive():

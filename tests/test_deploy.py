@@ -17,8 +17,14 @@ def test_deploy_name_slugifies():
 
 
 def test_deploy_port_is_deterministic_and_in_range():
-    # Same slug → same port across calls (stable handoff URL across redeploys).
-    assert deploy.deploy_port("closeloop") == deploy.deploy_port("closeloop")
+    # The property that matters is stability ACROSS PROCESSES — the handoff URL
+    # must survive a redeploy. Pin the literal ports: comparing deploy_port(x)
+    # to deploy_port(x) in one process proves nothing, because Python's salted
+    # hash() is stable within a process too, so that assertion would pass on
+    # exactly the regression the function's docstring warns about. A literal
+    # fails the moment the derivation changes to anything per-process.
+    assert deploy.deploy_port("closeloop") == 8372
+    assert deploy.deploy_port("todo-fullstack") == 8378
     p = deploy.deploy_port("closeloop")
     assert deploy.DEPLOY_PORT_BASE <= p < deploy.DEPLOY_PORT_BASE + deploy.DEPLOY_PORT_SPAN
     # Different slugs generally land on different ports.

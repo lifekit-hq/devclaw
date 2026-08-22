@@ -46,17 +46,28 @@ def test_single_task_no_deps():
     assert len(out) == 1 and out[0].key == "t1"
 
 
+# The keys below are chosen so ALPHABETICAL order is the REVERSE of the
+# required topological order. With a/b/c/d — the original fixture — a naive
+# `sorted()` produces the expected answer, so these tests passed whether or not
+# dependencies were consulted at all.
+
+
 def test_linear_chain_orders_topologically():
-    out = order_tasks([_t("c", ["b"]), _t("b", ["a"]), _t("a")])
-    assert [t.key for t in out] == ["a", "b", "c"]
+    # zebra → mango → apple; alphabetically that is exactly backwards.
+    out = order_tasks([_t("apple", ["mango"]), _t("mango", ["zebra"]), _t("zebra")])
+    assert [t.key for t in out] == ["zebra", "mango", "apple"]
 
 
 def test_diamond_dag_ordered():
-    out = order_tasks([_t("d", ["b", "c"]), _t("b", ["a"]), _t("c", ["a"]), _t("a")])
+    # zulu is the root and alpha the sink — again the opposite of sorted order.
+    out = order_tasks([
+        _t("alpha", ["yankee", "xray"]), _t("yankee", ["zulu"]),
+        _t("xray", ["zulu"]), _t("zulu"),
+    ])
     order = [t.key for t in out]
-    assert order[0] == "a" and order[-1] == "d"
-    assert order.index("b") < order.index("d")
-    assert order.index("c") < order.index("d")
+    assert order[0] == "zulu" and order[-1] == "alpha"
+    assert order.index("yankee") < order.index("alpha")
+    assert order.index("xray") < order.index("alpha")
 
 
 def test_cycle_rejected():
