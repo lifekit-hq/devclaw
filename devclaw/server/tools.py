@@ -306,6 +306,8 @@ async def file_intake(
     asker: str,
     channel: Literal["chat", "telegram", "a2a", "other"],
     context: Optional[str] = None,
+    expected_increments: Optional[int] = None,
+    increment_basis: Optional[str] = None,
 ) -> str:
     """Stage 1 of the single intake doorway: record an ask as a durable,
     labeled GitHub issue on the target registered project's repo, and return
@@ -322,9 +324,20 @@ async def file_intake(
     - ``asker`` / ``channel`` — provenance, recorded (not authenticated) and
       stamped server-side along with the filing timestamp.
     - ``context`` — optional evidence: where seen, repro, links.
+    - ``expected_increments`` — the filer's claim of how many units of work
+      (one atomic, verified, PR-able change-set each) the ask takes. Recorded
+      verbatim and never re-derived; grading validates it and never overwrites
+      it. Omit ONLY when you genuinely cannot estimate — omission is recorded
+      as ``unstated`` and surfaced for a human, never defaulted to a number.
+      The count sizes the plan; it never selects an execution shape (every work
+      item runs as a saga).
+    - ``increment_basis`` — why that count, or why no count could be given.
+      REQUIRED whenever ``expected_increments`` is given: a number with no
+      stated basis cannot be argued with.
 
-    Returns ``{issue_url, project_id, repo}``. A filing failure raises with an
-    actionable message — there is no receipt unless the issue really exists."""
+    Returns ``{issue_url, project_id, repo, expected_increments}``. A filing
+    failure raises with an actionable message — there is no receipt unless the
+    issue really exists."""
     try:
         result = await _intake.file_intake(
             registry,
@@ -334,6 +347,8 @@ async def file_intake(
             asker=asker,
             channel=channel,
             context=context,
+            expected_increments=expected_increments,
+            increment_basis=increment_basis,
             now_ms=_now_ms(),
         )
     except _intake.IntakeError as exc:
@@ -400,9 +415,18 @@ async def regrade_intake(project_id: str, issue_url: str) -> str:
     - ``project_id`` — the registered project the issue lives on.
     - ``issue_url`` — the issue's URL (must be open; closed issues reject).
 
-    Returns ``{issue_url, project_id, repo, readiness}``. The grade fails
-    CLOSED: any failure to reach a confident ready verdict lands
-    ``needs-refinement``, never ``devclaw-ready``."""
+    Grading also validates the filer's expected-increment claim on a SECOND,
+    independent axis: the claim is read back from the issue body and never
+    rewritten, and ``needs-sizing`` lands when a human must decide the extent
+    (no claim, an unestimable claim, an unassessable ask, or a disagreement).
+    A sizing dispute never moves the readiness verdict, and the count never
+    selects an execution shape — every work item runs as a saga.
+
+    Returns ``{issue_url, project_id, repo, readiness, expected_increments,
+    increment_basis, assessed_increments, sizing, sizing_reason}``. The grade
+    fails CLOSED: any failure to reach a confident ready verdict lands
+    ``needs-refinement``, never ``devclaw-ready``; any failure to reach a
+    confident agreement lands ``needs-sizing``."""
     try:
         result = await _intake.regrade(
             registry, project_id=project_id, issue=issue_url
@@ -426,8 +450,10 @@ async def grade_backlog(project_id: str) -> str:
 
     Returns the per-issue report: ``graded_ready`` / ``graded_needs_refinement``
     / ``failed`` (with reasons) / ``skipped_already_graded`` / ``not_yet_graded``,
-    plus ``cap`` and the ``listing_limit`` page bound. A listing failure raises
-    loudly — an explicit call never silently degrades to an empty sweep."""
+    plus the cross-cutting ``needs_sizing`` list (issues whose extent needs a
+    human decision — they also appear in their readiness bucket), ``cap`` and
+    the ``listing_limit`` page bound. A listing failure raises loudly — an
+    explicit call never silently degrades to an empty sweep."""
     try:
         result = await _intake.grade_backlog(registry, project_id=project_id)
     except _intake.IntakeError as exc:

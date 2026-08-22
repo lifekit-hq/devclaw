@@ -38,6 +38,13 @@ READY_LABEL = "devclaw-ready"
 NEEDS_REFINEMENT_LABEL = "needs-refinement"
 _READINESS_LABELS = (READY_LABEL, NEEDS_REFINEMENT_LABEL)
 
+#: spec 012 US3 (FR-011): the SECOND, orthogonal axis. Present when a human must
+#: decide the work item's extent — the filer stated no count, the filer could not
+#: estimate, grading could not assess, or grading disagrees with the claim. It
+#: never blocks readiness and readiness never implies it; the two labels answer
+#: two different questions.
+NEEDS_SIZING_LABEL = "needs-sizing"
+
 #: recorded intake channels. ``other`` is the explicit escape hatch so a new
 #: surface never has to lie about its channel to get through validation.
 CHANNELS = ("chat", "telegram", "a2a", "other")
@@ -46,6 +53,15 @@ CHANNELS = ("chat", "telegram", "a2a", "other")
 #: gate: an unverifiable one-worder is rejected at the doorway, not discovered
 #: at dispatch.
 MIN_DONE_WHEN_CHARS = 20
+
+#: spec 012 FR-010: a count is only useful if it can be argued with, so a claimed
+#: count must arrive with a basis. Same shape as the ``done_when`` bar — enforced
+#: at the doorway, not discovered at grading.
+MIN_INCREMENT_BASIS_CHARS = 10
+
+#: rendered in the issue body when the filer stated no count. NEVER a number:
+#: an unknown extent is surfaced for a human, never defaulted (FR-011).
+UNSTATED_INCREMENTS = "unstated"
 
 #: spec 009: one bulk-grade invocation spends at most this many cognition calls
 #: (clarify ruling 2026-08-18 — quota spend stays in operator-triggered chunks;
@@ -78,10 +94,22 @@ def repo_slug(repo_url: Optional[str]) -> Optional[str]:
 
 
 def validate_shape(
-    *, what: str, done_when: str, asker: str, channel: str
+    *,
+    what: str,
+    done_when: str,
+    asker: str,
+    channel: str,
+    expected_increments: Optional[int] = None,
+    increment_basis: Optional[str] = None,
 ) -> None:
     """Synchronous shape validation (proposal §5). Raises ``IntakeError`` with
-    every problem named at once — the asker fixes one round trip, not N."""
+    every problem named at once — the asker fixes one round trip, not N.
+
+    The expected-increment claim (spec 012 FR-010) is deliberately OPTIONAL: an
+    extent the filer cannot estimate must be surfaced, not rejected, and spec
+    009's universal adoption of hand-written issues has no claim by
+    construction. What is NOT optional is arguability — a count without a basis
+    is a number nobody can dispute, so it is rejected here."""
     problems: list[str] = []
     if not (what or "").strip():
         problems.append("'what' is required: one paragraph describing the ask")
@@ -94,6 +122,24 @@ def validate_shape(
         problems.append("'asker' is required: who is asking (e.g. denys, ledger)")
     if channel not in CHANNELS:
         problems.append(f"'channel' must be one of {'/'.join(CHANNELS)}")
+    if expected_increments is not None:
+        if isinstance(expected_increments, bool) or not isinstance(
+            expected_increments, int
+        ):
+            problems.append(
+                "'expected_increments' must be a whole number of units of work"
+            )
+        elif expected_increments < 1:
+            problems.append(
+                "'expected_increments' must be at least 1 — an ask that takes no "
+                "unit of work is not an ask"
+            )
+        if len((increment_basis or "").strip()) < MIN_INCREMENT_BASIS_CHARS:
+            problems.append(
+                "'increment_basis' is required whenever 'expected_increments' is "
+                f"given (≥ {MIN_INCREMENT_BASIS_CHARS} chars): a count with no "
+                "stated basis cannot be argued with"
+            )
     if problems:
         raise IntakeError("intake rejected: " + "; ".join(problems))
 
@@ -102,6 +148,26 @@ def issue_title(what: str) -> str:
     """First line of the ask, marked as intake."""
     head = (what or "").strip().splitlines()[0].strip()
     return f"[intake] {head}"[:_TITLE_MAX]
+
+
+def increments_section(
+    expected_increments: Optional[int], increment_basis: Optional[str]
+) -> str:
+    """The filer's expected-increment claim as it is written into the issue body
+    — the DURABLE record (spec 012 FR-010). Written once at filing and never
+    rewritten by grading (FR-010b); grading reads it back verbatim, which is why
+    two grades of an unchanged work item record the same count (SC-005b).
+
+    No count ⇒ ``unstated``, never a defaulted number (FR-011)."""
+    basis = (increment_basis or "").strip() or "—"
+    claimed = (
+        UNSTATED_INCREMENTS if expected_increments is None else str(expected_increments)
+    )
+    return (
+        "## Expected increments\n\n"
+        f"- **Claimed by the filer:** {claimed}\n"
+        f"- **Basis:** {basis}\n"
+    )
 
 
 def issue_body(
@@ -114,6 +180,8 @@ def issue_body(
     project_id: str,
     slug: str,
     filed_ms: int,
+    expected_increments: Optional[int] = None,
+    increment_basis: Optional[str] = None,
 ) -> str:
     """The rendered intake record — the ONE place the shape becomes an issue
     (no per-repo templates by design, §4-O4). Provenance is stamped here,
@@ -129,7 +197,9 @@ def issue_body(
         f"## What\n\n{what.strip()}\n\n"
         f"## Done when\n\n{done_when.strip()}\n\n"
         f"## Context\n\n{ctx}\n\n"
-        "## Provenance\n\n"
+        + increments_section(expected_increments, increment_basis)
+        + "\n"
+        + "## Provenance\n\n"
         f"- **Asker (recorded, not authenticated):** {asker.strip()}\n"
         f"- **Channel:** {channel}\n"
         f"- **Filed at:** {filed_at}\n"
@@ -275,14 +345,28 @@ async def file_intake(
     asker: str,
     channel: str,
     context: Optional[str] = None,
+    expected_increments: Optional[int] = None,
+    increment_basis: Optional[str] = None,
     now_ms: int,
     gh: Optional[GhAdapter] = None,
 ) -> dict:
     """Validate → resolve the registered project → stamp provenance → file the
-    labeled issue → return ``{issue_url, project_id, repo}``. Raises
-    ``IntakeError`` (actionable, synchronous) on any rejection or filing
-    failure — never a fake receipt."""
-    validate_shape(what=what, done_when=done_when, asker=asker, channel=channel)
+    labeled issue → return ``{issue_url, project_id, repo, expected_increments}``.
+    Raises ``IntakeError`` (actionable, synchronous) on any rejection or filing
+    failure — never a fake receipt.
+
+    ``expected_increments``/``increment_basis`` are the filer's claim about the
+    work item's extent (spec 012 FR-010). They are recorded verbatim in the body
+    and never re-derived; an absent claim is recorded as ``unstated`` and
+    surfaced by grading, never defaulted."""
+    validate_shape(
+        what=what,
+        done_when=done_when,
+        asker=asker,
+        channel=channel,
+        expected_increments=expected_increments,
+        increment_basis=increment_basis,
+    )
 
     project = registry.get((project_id or "").strip())
     if project is None:
@@ -305,6 +389,8 @@ async def file_intake(
         body=issue_body(
             what=what, done_when=done_when, context=context, asker=asker,
             channel=channel, project_id=project.id, slug=slug, filed_ms=now_ms,
+            expected_increments=expected_increments,
+            increment_basis=increment_basis,
         ),
         labels=[INTAKE_LABEL],
     )
@@ -314,7 +400,12 @@ async def file_intake(
             "(is gh authenticated on the server, and the repo reachable?) — "
             "no receipt was produced; retry after fixing"
         )
-    return {"issue_url": url, "project_id": project.id, "repo": slug}
+    return {
+        "issue_url": url,
+        "project_id": project.id,
+        "repo": slug,
+        "expected_increments": expected_increments,
+    }
 
 
 # ---- the readiness gate (spec 006) ------------------------------------------
@@ -324,14 +415,86 @@ async def file_intake(
 # cognition caller (``intake_readiness``) only returns a parsed verdict.
 
 
-def _readiness_comment(label: str, verdict) -> str:
-    """The human-readable mirror of the durable label — never read back for
-    decisions (the label is source of truth)."""
+#: the fixed-shape statement (spec 012 FR-012). Stated where the dispatcher reads
+#: the verdict, because #600's complaint was that the shape was a per-ask
+#: judgement call: the expected count SIZES the plan, it never selects a shape.
+SAGA_SHAPE_NOTE = (
+    "Execution shape is fixed: this work item runs as a saga (`create_goal`) "
+    "whatever its expected increment count, and the completion judgement is "
+    "never bypassed. The count sizes the plan; it selects nothing."
+)
+
+
+def sizing_outcome(
+    *, claimed: Optional[int], stated: bool, sizing
+) -> tuple[bool, str]:
+    """Decide whether the work item's extent needs a HUMAN (spec 012 FR-011).
+
+    Pure and mechanical — no clock, no network, no model trust. Agreement is
+    computed from the numbers (``assessed != claimed`` is a disagreement
+    whatever the model says about itself); the model's own ``agrees`` boolean is
+    consulted only as an ADDITIONAL dissent signal, so a model cannot talk its
+    way into agreement. Returns ``(needs_human, reason)``; ``reason`` is ``""``
+    only when the claim and the assessment agree."""
+    assessed = getattr(sizing, "assessed", None)
+    agrees = getattr(sizing, "agrees", None)
+    if not stated:
+        return True, (
+            "no expected increment count was stated by the filer — the extent of "
+            "this work item is unrecorded"
+        )
+    if claimed is None:
+        return True, (
+            "the filer could not estimate the extent of this work item"
+        )
+    if assessed is None:
+        return True, (
+            "grading could not assess the extent of this work item confidently"
+        )
+    if assessed != claimed or agrees is False:
+        return True, (
+            f"grading assessed {assessed} unit(s) of work against the filer's "
+            f"claim of {claimed} — the claim stands as the record; a human decides"
+        )
+    return False, ""
+
+
+def _sizing_paragraph(
+    *, claimed: Optional[int], stated: bool, sizing, reason: str
+) -> str:
+    """The sizing half of the mirror comment. Reports the recorded claim (never
+    a rewrite of it), the grader's assessment, and the reason a human is needed."""
+    claimed_text = (
+        str(claimed) if claimed is not None else UNSTATED_INCREMENTS
+    ) if stated else "not recorded"
+    assessed = getattr(sizing, "assessed", None)
+    assessed_text = "could not assess" if assessed is None else str(assessed)
+    basis = (getattr(sizing, "basis", "") or "").strip()
+    lines = [
+        "**Expected increments** (the second, independent axis — it does not "
+        "affect the readiness verdict above):",
+        "",
+        f"- Filer's claim (the record, unchanged): {claimed_text}",
+        f"- Grading assessed: {assessed_text}" + (f" — {basis}" if basis else ""),
+    ]
+    if reason:
+        lines.append(f"- `{NEEDS_SIZING_LABEL}`: {reason}")
+    else:
+        lines.append("- Grading agrees with the claim.")
+    return "\n".join(lines)
+
+
+def _readiness_comment(label: str, verdict, sizing_note: str = "") -> str:
+    """The human-readable mirror of the durable labels — never read back for
+    decisions (the labels are source of truth)."""
+    tail = ("\n\n" + sizing_note) if sizing_note else ""
     if label == READY_LABEL:
         return (
             "> DevClaw readiness gate: **devclaw-ready**.\n\n"
             "This ask is scoped enough for autonomous execution. It is now eligible for "
-            "a human to dispatch (readiness is not auto-dispatch)."
+            "a human to dispatch (readiness is not auto-dispatch). "
+            + SAGA_SHAPE_NOTE
+            + tail
         )
     missing = verdict.missing or ["the ask could not be grounded against the repo"]
     lines = "\n".join(f"- {m}" for m in missing)
@@ -341,10 +504,29 @@ def _readiness_comment(label: str, verdict) -> str:
         f"missing element(s):\n\n{lines}\n\n"
         "Amend the ask (edit this issue) and re-run the grade "
         "(`regrade_intake`) — no need to re-file."
+        + tail
     )
 
 
-async def _apply_readiness_label(gh, repo: str, issue: str, label: str, verdict) -> None:
+async def _apply_sizing_label(gh, repo: str, issue: str, needs_human: bool) -> None:
+    """Persist the sizing axis as its own label (spec 012 FR-011). Added when a
+    human must decide the extent, REMOVED when a re-grade reaches agreement, so
+    the label flips cleanly exactly like the readiness pair. Best-effort and
+    never-raising — a gh hiccup on this axis must not lose the readiness label
+    that already landed."""
+    try:
+        if needs_human:
+            await gh.ensure_label(repo, NEEDS_SIZING_LABEL)
+            await gh.add_labels(repo, issue, [NEEDS_SIZING_LABEL])
+        else:
+            await gh.remove_labels(repo, issue, [NEEDS_SIZING_LABEL])
+    except Exception as exc:  # noqa: BLE001 — best-effort second axis
+        sys.stderr.write(f"sizing: label write failed on {repo}#{issue}: {exc}\n")
+
+
+async def _apply_readiness_label(
+    gh, repo: str, issue: str, label: str, verdict, sizing_note: str = ""
+) -> None:
     """Persist the readiness verdict as the source-of-truth label, swapping out
     the opposite readiness label (so a re-grade flips cleanly). Best-effort on
     the mirror comment + the opposite-label removal — the label add is the one
@@ -361,7 +543,7 @@ async def _apply_readiness_label(gh, repo: str, issue: str, label: str, verdict)
     except Exception:  # noqa: BLE001 — the opposite label may simply be absent
         pass
     try:
-        await gh.comment(repo, issue, _readiness_comment(label, verdict))
+        await gh.comment(repo, issue, _readiness_comment(label, verdict, sizing_note))
     except Exception:  # noqa: BLE001 — the comment is a mirror, not the truth
         pass
 
@@ -377,14 +559,26 @@ async def grade_and_label(
     claude_caller,
     gh: Optional[GhAdapter] = None,
     repo_context: Optional[str] = None,
-) -> str:
-    """Grade one ask for readiness and record the outcome as a durable label.
+    expected_increments: Optional[int] = None,
+    increment_basis: Optional[str] = None,
+    increments_stated: bool = False,
+) -> dict:
+    """Grade one ask on both axes and record the outcome as durable labels.
 
     The FAIL-CLOSED choke point (FR-005): any condition that prevents a
     confident READY verdict — an empty repo snapshot, an evaluator error, a
     usage-limit pause raised by the caller, unusable/malformed output — lands
     ``needs-refinement``. It NEVER lands ``devclaw-ready`` on a failure path;
-    a crash is not an approval. Never raises. Returns the applied label.
+    a crash is not an approval. Never raises.
+
+    The SIZING axis (spec 012 US3) is orthogonal and fails the same way: any
+    condition that prevents a confident agreement — no claim, an unestimable
+    claim, an unassessable ask, a disagreement, a crashed evaluator — lands
+    ``needs-sizing`` for a human. The filer's claim is passed through and
+    returned unchanged; grading never overwrites it (FR-010b).
+
+    Returns ``{readiness, expected_increments, increment_basis,
+    assessed_increments, sizing, sizing_reason}``.
 
     Runs AFTER the intake receipt (FR-011) — filing is never blocked on this.
     """
@@ -416,6 +610,8 @@ async def grade_and_label(
                 context=context,
                 repo_context=repo_context,
                 claude_caller=claude_caller,
+                expected_increments=expected_increments,
+                increment_basis=increment_basis,
             )
         except Exception as exc:  # noqa: BLE001 — fail CLOSED, never ready-by-crash
             verdict = intake_readiness.ReadinessVerdict(
@@ -428,8 +624,26 @@ async def grade_and_label(
             )
 
     label = READY_LABEL if verdict.ready else NEEDS_REFINEMENT_LABEL
-    await _apply_readiness_label(gh, repo, issue, label, verdict)
-    return label
+    sizing = getattr(verdict, "sizing", None) or intake_readiness.SizingAssessment()
+    needs_human, reason = sizing_outcome(
+        claimed=expected_increments, stated=increments_stated, sizing=sizing
+    )
+    note = _sizing_paragraph(
+        claimed=expected_increments,
+        stated=increments_stated,
+        sizing=sizing,
+        reason=reason,
+    )
+    await _apply_readiness_label(gh, repo, issue, label, verdict, note)
+    await _apply_sizing_label(gh, repo, issue, needs_human)
+    return {
+        "readiness": label,
+        "expected_increments": expected_increments if increments_stated else None,
+        "increment_basis": (increment_basis or "") if increments_stated else "",
+        "assessed_increments": sizing.assessed,
+        "sizing": "needs_human" if needs_human else "agreed",
+        "sizing_reason": reason,
+    }
 
 
 # ---- manual re-grade (FR-010) -----------------------------------------------
@@ -453,6 +667,40 @@ def parse_issue_fields(body: str) -> tuple[str, str, str]:
     if context == "—":  # the rendered "omitted context" placeholder
         context = ""
     return what, done_when, context
+
+
+def parse_expected_increments(body: str) -> tuple[Optional[int], str, bool]:
+    """Read the filer's expected-increment claim back out of an issue body
+    (spec 012 FR-010) as ``(count, basis, stated)``.
+
+    This — not a model — is where the recorded count comes from, which is why
+    re-grading an unchanged work item yields an identical count (SC-005b). A
+    body with no ``Expected increments`` section (a hand-written issue adopted
+    under spec 009, or an issue filed before this section existed) yields
+    ``(None, "", False)``: extent unrecorded, which grading surfaces for a
+    human rather than defaulting (FR-011)."""
+    m = re.search(
+        r"^##\s+Expected increments\s*\n(.*?)(?=^##\s|\Z)",
+        body or "",
+        re.DOTALL | re.MULTILINE,
+    )
+    if not m:
+        return None, "", False
+    section = m.group(1)
+    claim_m = re.search(
+        r"\*\*Claimed by the filer:\*\*\s*(.+?)\s*$", section, re.MULTILINE
+    )
+    basis_m = re.search(r"\*\*Basis:\*\*\s*(.+?)\s*$", section, re.MULTILINE)
+    basis = (basis_m.group(1).strip() if basis_m else "")
+    if basis == "—":
+        basis = ""
+    raw = (claim_m.group(1).strip() if claim_m else "")
+    if raw.isdigit() and int(raw) >= 1:
+        return int(raw), basis, True
+    # the section exists but names no usable number — the filer said "unstated"
+    # (or wrote something unparseable). Either way the extent is unknown, and
+    # the section's presence means the filer was asked and answered.
+    return None, basis, True
 
 
 async def regrade(
@@ -501,6 +749,7 @@ async def regrade(
         )
     body = view.get("body") or ""
     what, done_when, context = parse_issue_fields(body)
+    claimed, claim_basis, claim_stated = parse_expected_increments(body)
     if not what.strip():
         # No intake sections — a hand-written issue. The issue as it stands IS
         # the ask (009 FR-001): title + body, no done_when (the grade judges
@@ -515,7 +764,7 @@ async def regrade(
             )
 
     caller = claude_caller or intake_readiness.default_caller()
-    label = await grade_and_label(
+    graded = await grade_and_label(
         repo=slug,
         issue=issue,
         what=what,
@@ -524,12 +773,15 @@ async def regrade(
         workspace_dir=project.workspace_dir,
         claude_caller=caller,
         gh=gh,
+        expected_increments=claimed,
+        increment_basis=claim_basis,
+        increments_stated=claim_stated,
     )
     return {
         "issue_url": issue,
         "project_id": project.id,
         "repo": slug,
-        "readiness": label,
+        **graded,
     }
 
 
@@ -609,7 +861,9 @@ async def grade_backlog(
     one bucket: ``graded_ready`` / ``graded_needs_refinement`` / ``failed``
     (with reasons) / ``skipped_already_graded`` / ``not_yet_graded`` (beyond
     the cap — run again to continue), plus the ``cap`` and the stated
-    ``listing_limit`` page bound."""
+    ``listing_limit`` page bound. ``needs_sizing`` is a CROSS-CUTTING list, not
+    a bucket: it names the graded issues whose extent needs a human decision
+    (spec 012 FR-011), and those URLs also appear in their readiness bucket."""
     project = registry.get((project_id or "").strip())
     if project is None:
         raise IntakeError(
@@ -653,6 +907,7 @@ async def grade_backlog(
         "failed": [],
         "skipped_already_graded": skipped,
         "not_yet_graded": remainder,
+        "needs_sizing": [],
         "cap": BULK_GRADE_CAP,
         "listing_limit": LISTING_LIMIT,
     }
@@ -671,4 +926,6 @@ async def grade_backlog(
             else "graded_needs_refinement"
         )
         report[bucket].append(url)
+        if result.get("sizing") == "needs_human":
+            report["needs_sizing"].append(url)
     return report
