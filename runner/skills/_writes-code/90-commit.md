@@ -1,6 +1,6 @@
 # Commit hygiene
 
-COMMIT your change yourself with a clean conventional-commit message — it becomes the PR a human reviews:
+Commit your change with a clean conventional-commit message — it becomes the PR a human reviews:
 
 - **Subject:** `type(scope): what changed` (`feat`/`fix`/`refactor`/`test`/`docs`/`chore`; imperative, ≤ ~70 chars; the CHANGE, not the task).
 - Blank line, then a 2–4 line body: WHY and how you verified.
@@ -18,4 +18,6 @@ kept the offset param for back-compat.
 Fixes #42
 ```
 
-ONE commit, staging everything. Do NOT push or open a PR — devclaw delivers it as a branch + PR.
+Prefer one commit. Do NOT push or open a PR — devclaw delivers it as a branch + PR.
+
+This is about the MESSAGE, not about completeness: devclaw captures everything in the workspace either way, so anything you leave unstaged is reviewed and shipped regardless. What a good commit buys is a reviewer who can see what you decided and why.

@@ -204,10 +204,30 @@ When the tick decides to *do* something (not just think):
    makes concurrent execution safe rather than a finding to weigh at the merge
    boundary. It is the mechanism, not a prompt, on purpose: workers route around
    soft constraints (#358). The judged span is the WORKSPACE's, not the agent's
-   bookkeeping: the gate folds in paths the agent changed without recording
-   them, because delivery stages everything before it commits (#630 / spec 013)
-   and an increment must not escape its declared scope by declining to commit
-   the file.
+   bookkeeping — but the gate does not arrange that itself: materialization
+   (below) hands it a span that is already complete, so an increment cannot
+   escape its declared scope by declining to commit a file (#630 / spec 013).
+   **Materialization (spec 013)** is the step that makes every gate above read
+   the same thing. The moment the agent's run ends, the host stages everything
+   left in the workspace and writes it into a commit; the change is then the
+   range between the task's pinned `pre_run_sha` and that post-run sha, and
+   *every* consumer — each gate, the change-size projection, the advisory
+   checks, and delivery — reads that one object. Before it, two components
+   computed the change independently: delivery staged everything (so it could
+   not miss a file) while the gates diffed only what the agent had chosen to
+   record, and what made the agent record was a sentence in a worker skill. On
+   2026-08-22 delivery shipped 4 files / +179 lines that the gates had judged as
+   1 file / +32; a change made entirely of new unrecorded files reached every
+   gate as an EMPTY span and passed them all trivially. A `materialize` gate
+   sits between `verify` and every consumer and is **always-hard**: a span that
+   cannot be determined fails closed, because an empty span no longer means
+   "nothing changed" (#186). A worker that recorded all of its own work is
+   byte-unaffected — a clean tree writes no commit. An empty span is an explicit
+   no-change outcome: the task settles done, publishes nothing, and the goal
+   layer counts it as no progress rather than as a delivered increment. And
+   because the base is pinned and every attempt is judged in full against it, a
+   retry now KEEPS the workspace and iterates on its own output instead of being
+   rewound to a clean base.
    **Planned fan-out (spec 010 US3, `DEVCLAW_FANOUT`, off by default)** is what
    that gate makes safe. When a goal's task graph declares consecutive `[P]`
    tasks with pairwise-disjoint declared scopes, the dispatch choke point reads

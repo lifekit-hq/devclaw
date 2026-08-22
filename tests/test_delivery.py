@@ -539,7 +539,8 @@ async def test_done_is_not_observable_before_delivery(store, tmp_path, monkeypat
     seen = {}
     pr = "https://github.com/lifekit-hq/lifekit-dashboard/pull/99"
 
-    async def fake_deliver(*, workspace_dir, task_id, goal, kind=None, verify=None, title=None, advisories=None):
+    async def fake_deliver(*, workspace_dir, task_id, goal, kind=None, verify=None,
+                     title=None, advisories=None, **kw):
         # While delivery runs, the task must still be 'running' (not yet 'done').
         seen["status_during_delivery"] = store.get_task(task_id).status
         seen["pr_url_during_delivery"] = store.get_task(task_id).pr_url
@@ -595,7 +596,8 @@ async def test_broken_delivery_settles_failed_not_done(store, tmp_path, monkeypa
     os.makedirs(repo)
     _init_repo(repo)
 
-    async def broken_deliver(*, workspace_dir, task_id, goal, kind=None, verify=None, title=None, advisories=None):
+    async def broken_deliver(*, workspace_dir, task_id, goal, kind=None, verify=None,
+                     title=None, advisories=None, **kw):
         return {"delivered": True, "branch": "devclaw/x", "committed": True,
                 "pushed": False, "pr_url": None,
                 "error": "push failed (check repo push auth): remote rejected"}
@@ -619,7 +621,8 @@ async def test_delivery_exception_settles_failed_not_done(store, tmp_path, monke
     os.makedirs(repo)
     _init_repo(repo)
 
-    async def raising_deliver(*, workspace_dir, task_id, goal, kind=None, verify=None, title=None, advisories=None):
+    async def raising_deliver(*, workspace_dir, task_id, goal, kind=None, verify=None,
+                     title=None, advisories=None, **kw):
         raise RuntimeError("gh exploded")
 
     monkeypatch.setattr("devclaw.task_queue.deliver_change", raising_deliver)
@@ -634,10 +637,13 @@ async def test_delivery_exception_settles_failed_not_done(store, tmp_path, monke
 
 
 async def test_no_changes_delivery_still_settles_done(store, tmp_path):
-    """Benign no-PR outcome: the gate passed but the workspace has no changes
+    """Benign no-PR outcome: the gate passed but the agent changed nothing
     (e.g. the requirement already held). Nothing was shipped because nothing
-    existed to ship — that is a 'done' without a PR, not a failure. (The
-    no-remote sibling case is covered by test_open_pr_task_triggers_delivery.)"""
+    existed to ship — that is a 'done' without a PR, not a failure. Since spec
+    013 the emptiness is decided by the MATERIALIZED span before delivery is
+    ever called, so the task carries an explicit ``no_change`` flag instead of a
+    delivery verdict. (The no-remote sibling case is covered by
+    test_open_pr_task_triggers_delivery.)"""
     repo = str(tmp_path / "ws6")
     os.makedirs(repo)
     _init_repo(repo)
@@ -654,9 +660,12 @@ async def test_no_changes_delivery_still_settles_done(store, tmp_path):
 
     t = store.get_task(tid)
     assert t.status == "done" and t.pr_url is None
-    # the delivery verdict rides along in the persisted result as evidence
+    # the explicit no-change outcome rides along in the persisted result
     import json as _json
-    assert "no changes to deliver" in _json.loads(t.result_json)["delivery"]["error"]
+    persisted = _json.loads(t.result_json)
+    assert persisted["no_change"] is True
+    assert persisted["change"]["status"] == "no_change"
+    assert "delivery" not in persisted  # delivery was never attempted
 
 
 # ---- branch-target delivery seam (v1-helper-resurface P1) -------------------
@@ -1013,9 +1022,15 @@ async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_
         prep_calls.append(branch)
         return branch
 
-    # Deliberately the OLD signature: extra kwargs would raise TypeError here.
+    # The BRANCH-TARGET kwargs must stay absent for a task that pinned neither
+    # (v1-helper PR-2's blank-safe wire). ``judged_head``/``agent_authored`` are
+    # not branch params — they ride EVERY materialized delivery (spec 013) — so
+    # they are captured and asserted separately below.
+    seen_kwargs: dict = {}
+
     async def legacy_deliver(*, workspace_dir, task_id, goal, kind=None,
-                             verify=None, title=None, advisories=None):
+                             verify=None, title=None, advisories=None, **kw):
+        seen_kwargs.update(kw)
         return {"delivered": True, "branch": "devclaw/x", "committed": True,
                 "pushed": True, "pr_url": "https://github.com/acme/w/pull/3",
                 "error": None}
@@ -1034,6 +1049,7 @@ async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_
     assert t.status == "done"
     assert t.pr_url == "https://github.com/acme/w/pull/3"
     assert prep_calls == []  # no branch params → the wire is fully inert
+    assert "base_branch" not in seen_kwargs and "target_branch" not in seen_kwargs
 
 
 async def test_target_branch_on_base_or_default_is_rejected_before_any_push(

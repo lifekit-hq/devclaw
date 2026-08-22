@@ -38,12 +38,19 @@ from enum import Enum
 ALWAYS_HARD: frozenset[str] = frozenset(
     {
         "verify",  # the verify_cmd gate — green tests are table stakes
+        "materialize",  # the agent's change could not be determined at all
         "test_integrity",  # tests silently deleted/neutered
         "scope",  # a [P] increment writing outside its declared file scope
         "delivery_trust",  # red CI merged (remote_checks / CI gate)
         "done_gate",  # closing a goal on the model's own say-so
     }
 )
+# ``materialize`` (spec 013 FR-007) is hard in BOTH modes because it is the
+# precondition of every other read-the-change gate: if the span cannot be
+# determined, no gate below it has an input, and an empty span is no longer
+# safely equivalent to "nothing changed". Shipping on it would be shipping on
+# silence — the #186 case exactly.
+
 # ``scope`` (spec 010 FR-103) is hard in BOTH modes on purpose: a declared file
 # scope is what makes two increments safe to run at once, so an increment that
 # writes outside it has invalidated the premise of its own concurrency, not

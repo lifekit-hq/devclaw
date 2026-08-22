@@ -342,7 +342,7 @@ def store(tmp_path):
 def _enable_gate_and_fake_diff(monkeypatch):
     monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", True)
 
-    async def fake_diff(_host_dir, _base=""):
+    async def fake_diff(_host_dir, _base="", _head=""):
         return _DIFF
 
     monkeypatch.setattr(task_queue, "_git_diff", fake_diff)

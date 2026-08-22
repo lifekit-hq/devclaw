@@ -119,8 +119,23 @@ def test_implement_feature_asks_for_a_clean_self_authored_commit(runner):
     # describes the change, not the instruction), and does NOT push/PR itself.
     wrapped = runner._wrap_goal("implement_feature", "GOAL-TOKEN")
     assert "conventional-commit" in wrapped.lower()
-    assert "COMMIT" in wrapped
+    assert "commit your change" in wrapped.lower()
     assert "do not push or open a pr" in wrapped.lower()
+
+
+def test_the_commit_skill_no_longer_claims_to_make_verification_correct(runner):
+    """Spec 013 US3 AS#3. "ONE commit, **staging everything**" was a correctness
+    invariant enforced by asking a language model: the gates diffed only what
+    the agent had recorded, so a change of unrecorded files reached them empty
+    (#630). The host materializes the span now, so the coda is guidance on
+    writing a good MESSAGE — and it must say so, or the next reader restores the
+    load-bearing reading."""
+    wrapped = runner._wrap_goal("implement_feature", "GOAL-TOKEN").lower()
+    assert "staging everything" not in wrapped
+    assert "devclaw captures everything in the workspace" in wrapped
+    # the parts that are still real: message shape, judgment calls, no push
+    assert "judgment calls" in wrapped
+    assert "do not push or open a pr" in wrapped
 
 
 def test_wrapper_makes_agents_md_the_thin_pointer_read_first(runner):

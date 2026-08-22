@@ -248,7 +248,7 @@ def _frontend_settle(monkeypatch, tmp_path):
     monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
     ws = _with_pw_config(tmp_path)
 
-    async def fake_diff(_host, _base=""):
+    async def fake_diff(_host, _base="", _head=""):
         return _FRONTEND_DIFF
     monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
     return ws

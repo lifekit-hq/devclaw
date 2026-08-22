@@ -21,9 +21,9 @@ if [ "$kind" = "implement_feature" ] || [ "$kind" = "fix_bug" ] || [ "$kind" = "
   fi
 fi
 
-# Snapshot the HEAD ref so post-run can tell what the agent changed.
-if [ -d "$workspace_dir/.git" ]; then
-  git -C "$workspace_dir" rev-parse HEAD 2>/dev/null > "$workspace_dir/.devclaw-pre-head" || true
-fi
+# No HEAD snapshot is written here. The pre-run reference is the host's
+# (`tasks.pre_run_sha`), and since spec 013 the host also materializes the
+# post-run reference, so the worker layer no longer needs — or is allowed — its
+# own copy of where the change starts. One definition of the change, one owner.
 
 exit 0

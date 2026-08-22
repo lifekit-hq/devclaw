@@ -9,6 +9,11 @@ missing, timeout) degrades gracefully instead of blocking a run.
 The thin ``async`` wrappers that offload these to a thread live in
 :mod:`devclaw.task_queue` (``_git_diff`` / ``_git_head`` / ``_wip_snapshot``) so
 their module-global lookup of these names stays patchable there.
+
+One deliberate exception to the best-effort contract: :func:`_git_diff_sync`
+returns ``None``, not ``""``, when git cannot answer. Since spec 013 an empty
+diff means "the agent changed nothing", so a hiccup must stay distinguishable
+from a genuine no-op instead of quietly becoming one.
 """
 
 from __future__ import annotations
@@ -92,45 +97,37 @@ def _review_repo_context_sync(host_dir: str) -> str:
     return "\n".join(facts)
 
 
-def _git_diff_sync(host_dir: str, base: str = "") -> str:
-    """The agent's change as a unified diff. With ``base`` (the pre-run HEAD),
-    diff the working tree against that ref — which captures work the agent
-    already COMMITTED as well as staged/unstaged edits. The commit coda asks
-    the agent to commit, and in goal-branch mode those commits land directly on
-    ``goal/<id>``: judging only the uncommitted tree made a fully-committed
-    change look like a no-op to the integrity + review gates (live-found
-    2026-07-11: three bench tasks in a row got "requested changes" on a diff of
-    trend-file noise while the real work sat committed on the goal branch).
-    Without ``base`` — or when the ref is unresolvable — fall back to the
-    uncommitted-only view.
+def _git_diff_sync(host_dir: str, base: str, head: str) -> "str | None":
+    """The judged span as a unified diff: ONE two-point range, ``git diff
+    <base> <head>``.
+
+    Both ends are known by the time this runs — ``base`` is the task's pinned
+    pre-run reference and ``head`` the post-run reference
+    :func:`devclaw.task_change.materialize_worktree_sync` just produced — so
+    there is nothing left to guess. The old three-way ladder (``diff <base>`` →
+    ``diff`` → ``diff --cached``) existed only because the function had to guess
+    what state the agent left the tree in; materialization removed the question,
+    and the ladder went with it (spec 013 US3).
+
+    Returns the diff text, or ``None`` when git could not answer. ``None`` is
+    NOT an empty diff: the caller turns it into a loud "cannot determine the
+    change" outcome, because since spec 013 an empty result means "the agent
+    changed nothing" and must be distinguishable from a hiccup (FR-007).
 
     Blocking subprocess.run (with a timeout) — NOT asyncio.create_subprocess_exec,
     which hangs under pytest's per-test event loops (child-watcher pitfall) and is
-    overkill for a sub-second git call. Best-effort: '' on any failure (not a repo,
-    git missing, timeout) so a hiccup never blocks a legitimately-good task."""
-    if base:
-        try:
-            p = subprocess.run(
-                ["git", "-C", host_dir, "diff", base],
-                capture_output=True, text=True, timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return ""
-        if p.returncode == 0:
-            return p.stdout
-        # unresolvable ref — fall through to the uncommitted-only view
-    out = ""
-    for args in (["diff"], ["diff", "--cached"]):
-        try:
-            p = subprocess.run(
-                ["git", "-C", host_dir, *args],
-                capture_output=True, text=True, timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return ""
-        if p.returncode == 0:
-            out += p.stdout
-    return out
+    overkill for a sub-second git call.
+    """
+    if not base or not head:
+        return None
+    try:
+        p = subprocess.run(
+            ["git", "-C", host_dir, "diff", base, head],
+            capture_output=True, text=True, errors="replace", timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout if p.returncode == 0 else None
 
 
 def _git_commit_exists_sync(host_dir: str, sha: str) -> bool:
@@ -163,69 +160,6 @@ def _git_head_sync(host_dir: str) -> str:
     except (OSError, subprocess.SubprocessError):
         return ""
     return p.stdout.strip() if p.returncode == 0 else ""
-
-
-def _git_status_paths_sync(host_dir: str) -> "list[str]":
-    """Every path the workspace has changed but NOT recorded in a commit —
-    untracked files included (``--untracked-files=all``).
-
-    The completeness half of "what did this increment change?" (#630, spec 013).
-    ``git diff <base>`` shows only what the agent chose to record; delivery, by
-    contrast, stages everything before committing, so a change made entirely of
-    new unrecorded files ships while reading as an empty span to anything that
-    judges the diff alone. A gate whose whole job is bounding what an increment
-    touched cannot rely on the agent's bookkeeping for its input.
-
-    Best-effort: ``[]`` on any hiccup (not a repo, git missing, timeout). It is
-    ADDITIVE evidence — it can only widen the set of paths a caller considers
-    touched, never shrink it — so a failed probe leaves the caller exactly where
-    the diff alone would have left it."""
-    try:
-        p = subprocess.run(
-            ["git", "-C", host_dir, "status", "--porcelain", "--untracked-files=all"],
-            capture_output=True, text=True, errors="replace", timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if p.returncode != 0:
-        return []
-    out: "list[str]" = []
-    for line in p.stdout.splitlines():
-        if len(line) < 4:
-            continue
-        entry = line[3:].strip()
-        # a rename/copy is reported as "old -> new"; both sides are touched
-        for part in entry.split(" -> "):
-            path = part.strip().strip('"')
-            if path:
-                out.append(path)
-    return out
-
-
-def _git_reset_clean_sync(host_dir: str, sha: str) -> bool:
-    """Hard-reset the worktree to ``sha`` and drop every untracked file — the
-    clean per-item base a retry attempt re-runs from (#1 retry isolation).
-    Best-effort like the other helpers here: returns True only when BOTH the
-    reset and the clean succeed, False on any hiccup (empty ``sha``, an
-    OSError, a non-zero git) so the caller can proceed on the drifted tree
-    with a logged miss rather than wedging the retry. Local-only by
-    construction — the queue pushes a goal branch only AFTER the attempt loop
-    and only on a gate pass, so rewinding local commits here never touches
-    origin."""
-    if not sha:
-        return False
-    try:
-        reset = subprocess.run(
-            ["git", "-C", host_dir, "reset", "--hard", sha],
-            capture_output=True, text=True, timeout=30,
-        )
-        clean = subprocess.run(
-            ["git", "-C", host_dir, "clean", "-fdx"],
-            capture_output=True, text=True, timeout=30,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return reset.returncode == 0 and clean.returncode == 0
 
 
 def _ls_remote_ok_sync(repo_url: str) -> bool:

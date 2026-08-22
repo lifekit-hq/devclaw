@@ -164,8 +164,16 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • if no result line → "sandbox exited 1 without a       │                      │
      │  │       result line" (the misleading error string)            │                      │
      │  │                                                             │                      │
+     │  │  Step H2 — materialize the change (task_change.py):         │                      │
+     │  │     • git add -A + commit whatever the agent left           │                      │
+     │  │       behind (a clean tree writes NO commit)                │                      │
+     │  │     • the span is now pre_run_sha..post_run_sha and every   │                      │
+     │  │       consumer below reads THAT object (spec 013, #630)     │                      │
+     │  │     • undeterminable ⇒ the always-hard `materialize` gate   │                      │
+     │  │       fails CLOSED; empty ⇒ explicit no-change, no publish  │                      │
+     │  │                                                             │                      │
      │  │  Step I — review gate (quality/review_gate):                │                      │
-     │  │     • git diff main..HEAD of the workspace                  │                      │
+     │  │     • the MATERIALIZED span, not a fresh working-tree diff  │                      │
      │  │     • feed diff to `claude --print` for adversarial check   │                      │
      │  │     • + workspace snapshot as REPOSITORY CONTEXT (#227)     │                      │
      │  │     • single adversarial reviewer over the diff,            │                      │
@@ -175,6 +183,8 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • either: ok / needs revision (kicked back to engineer) │                      │
      │  │                                                             │                      │
      │  │  Step J — delivery (delivery.deliver_change):               │                      │
+     │  │     • publishes the JUDGED head — no discovery of its own;  │                      │
+     │  │       a drifted workspace fails loud (spec 013 FR-005)      │                      │
      │  │     • git push to branch goal/<slug>                        │                      │
      │  │     • gh pr create  (conventional commit + diffstat body)   │                      │
      │  │     • record PR URL                                         │                      │
