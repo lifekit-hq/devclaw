@@ -41,7 +41,9 @@ docker image ls devclaw-sandbox:latest   # confirm it exists
 ```
 
 The image bakes a pinned `claude` CLI + `claude-agent-acp`; the host mounts your
-`~/.claude` read-only into it at runtime, so auth flows without an API key.
+`~/.claude/.credentials.json` (writable copy) and `.claude.json` (read-only) into
+it at runtime, so auth flows without an API key and token refreshes persist back to
+the host after each task (#581).
 
 ---
 

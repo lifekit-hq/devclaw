@@ -34,6 +34,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -139,6 +140,69 @@ def _strip_api_keys(env: dict[str, str]) -> dict[str, str]:
     clean.pop("ANTHROPIC_API_KEY", None)
     clean.pop("ANTHROPIC_AUTH_TOKEN", None)
     return clean
+
+
+def _copy_credentials(src: str) -> str | None:
+    """Copy the host ``.credentials.json`` to a temp file for writable sandbox
+    mounting. Returns the temp file path, or None if the source can't be read.
+
+    The sandbox mounts this copy ``:rw`` so OAuth token refreshes inside the
+    container write to the copy instead of hitting EROFS against the read-only
+    host bind. After the container exits, :func:`_sync_credentials` atomically
+    copies the (possibly refreshed) temp file back to the host so the next task
+    starts with a valid token. ``None`` degrades gracefully to the pre-fix
+    read-only mount — the token still works until it expires, just as before.
+
+    Mode 0o600: credentials are sensitive; the container must write (not just
+    read), so we rely on docker mapping the container user to the host user or
+    running as root — both of which bypass the mode check for writable files
+    (same assumption the existing read path already makes)."""
+    try:
+        with open(src, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    try:
+        fd, path = tempfile.mkstemp(prefix="devclaw-creds-", suffix=".json")
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+        except OSError:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return None
+        os.chmod(path, 0o600)
+    except OSError:
+        return None
+    return path
+
+
+def _sync_credentials(temp_path: str, host_path: str) -> None:
+    """Atomically copy the sandbox credentials temp file back to the host.
+
+    Best-effort — never raises. Called from ``run_sandcastle``'s outer
+    ``finally`` AFTER the container has exited so the temp file holds its
+    final (possibly refreshed) state. An atomic temp+replace write leaves the
+    host file intact on a crash midway through — the original survives a
+    partial sync."""
+    try:
+        with open(temp_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return
+    tmp = host_path + ".devclaw-creds-tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, host_path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 async def _teardown(proc: "asyncio.subprocess.Process", container_name: str) -> None:
@@ -337,24 +401,35 @@ def _build_claude_mounts(
     claude_dir: str,
     allowlist: tuple[str, ...],
     claude_json_src: str | None = None,
+    cred_src: str | None = None,
 ) -> list[str]:
     """``-v`` args binding ONLY the allowlisted entries under the host ~/.claude
-    into the sandbox config dir, each read-only. The curated boundary: auth in,
-    the rest of the host's personal Claude setup out. See ``SANDBOX_CLAUDE_ALLOWLIST``
-    for the rationale.
+    into the sandbox config dir. The curated boundary: auth in, the rest of the
+    host's personal Claude setup out. See ``SANDBOX_CLAUDE_ALLOWLIST`` for the
+    rationale.
 
-    ``claude_json_src`` overrides the host source for the ``.claude.json`` entry
-    only: a pre-trusted copy (host identity + ``projects["/workspace"]`` marked
-    trusted) so the in-sandbox ``claude`` honors the workspace's permissions
-    instead of dead-stopping on the untrusted-workspace guard. None → bind the
-    raw host file (the pre-trust behavior, e.g. when the host config is
-    unreadable)."""
+    ``claude_json_src`` overrides the host source for the ``.claude.json`` entry:
+    a pre-trusted copy so the in-sandbox ``claude`` honors the workspace's
+    permissions instead of dead-stopping on the untrusted-workspace guard.
+
+    ``cred_src`` overrides the ``.credentials.json`` entry with a WRITABLE temp
+    copy (mounted ``:rw``). OAuth token refreshes inside the container write to
+    this copy; :func:`_sync_credentials` syncs it back to the host after exit.
+    Without ``cred_src``, credentials fall back to the read-only host bind."""
     base = claude_dir.rstrip("/")
     args: list[str] = []
     for rel in allowlist:
         rel = rel.strip("/")
-        src = claude_json_src if (rel == ".claude.json" and claude_json_src) else f"{base}/{rel}"
-        args += ["-v", f"{src}:{CONTAINER_CLAUDE_DIR}/{rel}:ro"]
+        if rel == ".credentials.json" and cred_src:
+            src = cred_src
+            mode = "rw"  # writable so OAuth refreshes survive inside the container
+        elif rel == ".claude.json" and claude_json_src:
+            src = claude_json_src
+            mode = "ro"
+        else:
+            src = f"{base}/{rel}"
+            mode = "ro"
+        args += ["-v", f"{src}:{CONTAINER_CLAUDE_DIR}/{rel}:{mode}"]
     return args
 
 
@@ -368,6 +443,7 @@ def _build_docker_args(
     sandbox_image: str | None = None,
     owner_id: str | None = None,
     claude_json_src: str | None = None,
+    cred_src: str | None = None,
 ) -> list[str]:
     """Assemble the full ``docker run`` argv for one task. Pure (no I/O) so the
     mount posture — curated claude allowlist, writable scratch tmpfs, no API-key
@@ -375,7 +451,9 @@ def _build_docker_args(
 
     ``sandbox_image`` is the per-task override (the owning project's
     ``sandbox_image`` registry field, riding the EngineRequest — ADR 0005's
-    escape hatch/migration bridge); None → the DEVCLAW_SANDBOX_IMAGE default."""
+    escape hatch/migration bridge); None → the DEVCLAW_SANDBOX_IMAGE default.
+    ``cred_src`` is the writable credentials temp path from
+    :func:`_copy_credentials`; None falls back to the read-only host bind."""
     return [
         "run",
         "--rm",
@@ -400,11 +478,12 @@ def _build_docker_args(
         # version pays the SDK download.
         "-v",
         f"{_toolchain_volume_name(host_bind_path)}:{CONTAINER_MISE_DATA}",
-        # Curated claude config: only the allowlisted auth, read-only (NOT the whole
-        # host ~/.claude — see SANDBOX_CLAUDE_ALLOWLIST). `.claude.json` binds a
-        # pre-trusted copy so /workspace is a trusted Claude workspace (see
-        # claude_trust.write_trusted_copy).
-        *_build_claude_mounts(claude_dir, allowlist, claude_json_src),
+        # Curated claude config: only the allowlisted auth (NOT the whole host
+        # ~/.claude — see SANDBOX_CLAUDE_ALLOWLIST). `.claude.json` binds a
+        # pre-trusted copy so /workspace is a trusted Claude workspace; see
+        # claude_trust.write_trusted_copy. `.credentials.json` binds a writable
+        # copy so OAuth refreshes inside the container survive (see _copy_credentials).
+        *_build_claude_mounts(claude_dir, allowlist, claude_json_src, cred_src=cred_src),
         # The config dir is non-writable (RO binds), but the claude CLI must write
         # per-session scratch *under* it — `session-env/<uuid>` (a working dir per
         # shell session) + `shell-snapshots/`. On the RO mount those mkdirs hit
@@ -477,6 +556,16 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
         os.path.join(claude_dir.rstrip("/"), ".claude.json"), CONTAINER_WORKSPACE
     )
 
+    # Create a writable copy of .credentials.json so OAuth token refreshes
+    # inside the container land on the copy (mounted :rw) instead of hitting
+    # EROFS against the read-only host bind. After the container exits,
+    # _sync_credentials writes the (possibly refreshed) copy back to the host
+    # so the next task starts with a valid token — fixing the overnight 401s
+    # (#581). None when the credentials file is unreadable → falls back to the
+    # read-only host bind (same as before the fix).
+    host_cred_path = os.path.join(claude_dir.rstrip("/"), ".credentials.json")
+    cred_src = _copy_credentials(host_cred_path)
+
     docker_args = _build_docker_args(
         container_name=container_name,
         host_bind_path=host_bind_path,
@@ -485,6 +574,7 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
         sandbox_image=req.sandbox_image,
         owner_id=req.owner_id,
         claude_json_src=trusted_claude_json,
+        cred_src=cred_src,
     )
 
     try:
@@ -518,6 +608,17 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
             if proc.returncode is None:
                 await _teardown(proc, container_name)
     finally:
+        # Sync refreshed OAuth credentials back to the host BEFORE cleaning up
+        # the temp copy — the container has now exited, so the temp file holds
+        # its final state. Best-effort: a failed sync loses the refresh but
+        # never fails the task (the next task may then get a 401, but that's
+        # exactly the pre-fix behavior, not a regression).
+        if cred_src:
+            _sync_credentials(cred_src, host_cred_path)
+            try:
+                os.unlink(cred_src)
+            except OSError:
+                pass
         # The trusted-copy temp file is only needed while docker binds it (at
         # container start); safe to remove once the container has exited.
         if trusted_claude_json:

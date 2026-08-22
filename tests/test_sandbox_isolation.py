@@ -267,6 +267,8 @@ async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_p
         return str(fake_copy)
 
     monkeypatch.setattr(sc, "write_trusted_copy", fake_write_trusted_copy)
+    monkeypatch.setattr(sc, "_copy_credentials", lambda src: None)
+    monkeypatch.setattr(sc, "_sync_credentials", lambda tmp, host: None)
 
     class _FakeProc:
         returncode = 0  # non-None → teardown is correctly skipped on clean exit
@@ -292,3 +294,159 @@ async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_p
     assert f"{fake_copy}:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:ro" in seen["docker_args"]
     # ...and cleaned up the temp copy once the container exited.
     assert not fake_copy.exists()
+
+
+# ---- OAuth token refresh persistence (fix for overnight 401s, #581) ----
+# The sandbox previously mounted .credentials.json read-only, so OAuth token
+# refreshes inside the container hit EROFS and were lost. The fix creates a
+# writable temp copy, mounts it :rw, and syncs it back to the host after the
+# container exits — so the next task starts with a fresh token.
+
+
+def test_credentials_mounted_writable_when_copy_provided():
+    mounts = sc._build_claude_mounts(
+        CLAUDE_DIR,
+        (".credentials.json",),
+        cred_src="/tmp/devclaw-creds-XYZ.json",
+    )
+    assert mounts == [
+        "-v",
+        f"/tmp/devclaw-creds-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw",
+    ]
+
+
+def test_credentials_falls_back_to_readonly_without_copy():
+    mounts = sc._build_claude_mounts(
+        CLAUDE_DIR,
+        (".credentials.json",),
+        cred_src=None,
+    )
+    assert mounts == [
+        "-v",
+        f"{CLAUDE_DIR}/.credentials.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:ro",
+    ]
+
+
+def test_build_docker_args_threads_the_writable_cred_copy():
+    args = sc._build_docker_args(
+        container_name="devclaw-test",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+        cred_src="/tmp/devclaw-creds-XYZ.json",
+    )
+    assert (
+        f"/tmp/devclaw-creds-XYZ.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw"
+        in args
+    )
+
+
+def test_copy_credentials_creates_temp_file_with_same_content(tmp_path):
+    src = tmp_path / ".credentials.json"
+    src.write_bytes(b'{"token": "abc123"}')
+    result = sc._copy_credentials(str(src))
+    assert result is not None
+    try:
+        with open(result, "rb") as fh:
+            assert fh.read() == b'{"token": "abc123"}'
+    finally:
+        import os as _os
+        try:
+            _os.unlink(result)
+        except OSError:
+            pass
+
+
+def test_copy_credentials_returns_none_on_missing_source(tmp_path):
+    result = sc._copy_credentials(str(tmp_path / "does-not-exist.json"))
+    assert result is None
+
+
+def test_sync_credentials_writes_refreshed_content_back(tmp_path):
+    temp = tmp_path / "creds-temp.json"
+    temp.write_bytes(b'{"token": "new"}')
+    host = tmp_path / ".credentials.json"
+    host.write_bytes(b'{"token": "old"}')
+
+    sc._sync_credentials(str(temp), str(host))
+
+    assert host.read_bytes() == b'{"token": "new"}'
+
+
+def test_sync_credentials_is_best_effort_on_missing_temp(tmp_path):
+    host = tmp_path / ".credentials.json"
+    host.write_bytes(b'{"token": "original"}')
+
+    sc._sync_credentials(str(tmp_path / "does-not-exist"), str(host))
+
+    assert host.read_bytes() == b'{"token": "original"}', "host file unchanged after failed sync"
+
+
+def test_sync_credentials_is_best_effort_when_host_unwritable(tmp_path):
+    import os
+    temp = tmp_path / "creds-temp.json"
+    temp.write_bytes(b'{"token": "new"}')
+    # Make the host directory read-only so the write fails
+    host_dir = tmp_path / "subdir"
+    host_dir.mkdir()
+    host = host_dir / ".credentials.json"
+    host.write_bytes(b'{"token": "old"}')
+    os.chmod(str(host_dir), 0o555)  # read-only directory
+    try:
+        sc._sync_credentials(str(temp), str(host))  # must not raise
+    finally:
+        os.chmod(str(host_dir), 0o755)  # restore so cleanup works
+
+
+async def test_run_sandcastle_mounts_writable_credentials_and_syncs_back(
+    no_prefix, tmp_path, monkeypatch
+):
+    """Integration wiring for #581: run_sandcastle creates a writable creds copy,
+    mounts it :rw, syncs it back to the host after exit, and cleans it up.
+    Analogous to test_run_sandcastle_binds_trusted_copy_and_unlinks_it."""
+    (tmp_path / "f").write_text("x")
+
+    cred_copy = tmp_path / "devclaw-creds-fake.json"
+    cred_copy.write_bytes(b'{"token": "old"}')
+
+    seen: dict = {}
+
+    def fake_copy_credentials(src):
+        seen["cred_copy_src"] = src
+        return str(cred_copy)
+
+    def fake_sync_credentials(temp_path, host_path):
+        seen["sync_args"] = (temp_path, host_path)
+
+    monkeypatch.setattr(sc, "_copy_credentials", fake_copy_credentials)
+    monkeypatch.setattr(sc, "_sync_credentials", fake_sync_credentials)
+    monkeypatch.setattr(sc, "write_trusted_copy", lambda src, ws: None)
+
+    class _FakeProc:
+        returncode = 0
+
+    async def fake_exec(_bin, *args, **kwargs):
+        seen["docker_args"] = args
+        return _FakeProc()
+
+    monkeypatch.setattr(sc.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def fake_consume(proc, on_event, label):
+        return {"status": "ok"}
+
+    monkeypatch.setattr(sc, "consume_runner_output", fake_consume)
+
+    req = EngineRequest(kind="implement_feature", workspace_dir=str(tmp_path), goal="g")
+    result = await sc.run_sandcastle(req)
+
+    assert result == {"status": "ok"}
+    # Credentials mounted :rw (not :ro) via the writable copy
+    assert (
+        f"{cred_copy}:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:rw"
+        in seen["docker_args"]
+    )
+    # Sync was called after the run with the right temp path
+    assert "sync_args" in seen
+    assert seen["sync_args"][0] == str(cred_copy)
+    # Temp copy cleaned up after sync
+    assert not cred_copy.exists()

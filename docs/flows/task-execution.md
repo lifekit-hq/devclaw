@@ -69,7 +69,7 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │         -v <host_bind>:/workspace                │   │                             │ docker run fails here
      │  │         -v devclaw-toolchains-<proj>:            │   │                             │ if Node 2 lacks GID 990
      │  │            /home/agent/.local/share/mise         │   │  per-project toolchain      │
-     │  │         -v ~/.claude/.credentials.json:RO        │   │  cache (ADR 0005)           │
+     │  │         -v <writable creds copy>:RW               │   │  cache (ADR 0005)           │
      │  │         -v <pre-trusted .claude.json>:RO         │   │
      │  │         --tmpfs /home/agent/.claude/session-env  │   │
      │  │         --network host                           │   │
