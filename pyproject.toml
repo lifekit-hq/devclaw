@@ -32,6 +32,20 @@ packages = ["devclaw"]
 # ships without a console (server 503s). Glob matches the vite output tree.
 artifacts = ["devclaw/server/console/dist/**"]
 
+# The vendored speckit scaffold lives at the REPO ROOT as `.specify/`, OUTSIDE
+# `packages = ["devclaw"]`, so the wheel never carried it: every installed
+# devclaw raised "cannot install speckit: vendored source ... is missing" while
+# a source checkout kept working, because there the scaffold happens to sit
+# beside the package dir (#588). Force-include it INSIDE the package so an
+# installed devclaw ships its own scaffold. Only the reusable, repo-agnostic
+# parts travel — per-checkout state and devclaw's own manifests stay out,
+# mirroring _SCAFFOLD_DIRS / _SCAFFOLD_FILES in devclaw/speckit_setup.py.
+[tool.hatch.build.targets.wheel.force-include]
+".specify/templates" = "devclaw/_specify/templates"
+".specify/scripts" = "devclaw/_specify/scripts"
+".specify/workflows" = "devclaw/_specify/workflows"
+".specify/.gitignore" = "devclaw/_specify/.gitignore"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 # The stub engine writes placeholder test_*.py into per-run sandbox workspaces

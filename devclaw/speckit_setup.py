@@ -41,8 +41,32 @@ _SCAFFOLD_FILES = (".gitignore",)
 
 
 def _speckit_source() -> Path:
-    """devclaw's own vendored ``.specify/`` — the scaffold source of truth."""
-    return Path(__file__).resolve().parent.parent / ".specify"
+    """devclaw's own vendored speckit scaffold — the source of truth to copy.
+
+    Two layouts must BOTH resolve, and only one of them used to (#588):
+
+    - **installed** (wheel / the deployed container) — the scaffold ships
+      *inside* the package as ``devclaw/_specify`` via the pyproject
+      ``force-include``. It has to: ``.specify/`` sits at the repo root,
+      outside ``packages = ["devclaw"]``, so nothing at that path ever reached
+      the wheel and every installed devclaw failed to onboard.
+    - **source checkout** (dev / CI) — ``.specify/`` at the repo root, a
+      sibling of the package directory.
+
+    The packaged copy wins when present. In a checkout it does not exist, so
+    the root copy is used and stays the single editable source of truth.
+    """
+    return _resolve_speckit_source(Path(__file__).resolve().parent)
+
+
+def _resolve_speckit_source(package_dir: Path) -> Path:
+    """Pure resolver behind :func:`_speckit_source`, split out so both layouts
+    are testable without a real install. ``package_dir`` is the directory the
+    ``devclaw`` package lives in."""
+    packaged = package_dir / "_specify"
+    if packaged.is_dir():
+        return packaged
+    return package_dir.parent / ".specify"
 
 
 async def _run(*args: str, cwd: str) -> tuple[int, str]:
