@@ -534,8 +534,8 @@ async def deliver_change(
     ``gh pr create --base``; ``target_branch`` pins the delivery branch — when
     the workspace is already ON it, delivery stays there and reuses its single
     PR (the same machinery goal branches use, no new reuse logic). Both default
-    to None ⇒ byte-identical legacy behavior (fresh derived branch → the
-    remote's default base)."""
+    to None ⇒ the per-task-branch shape (fresh derived branch → the remote's
+    default base)."""
     result: dict = {"delivered": False, "branch": None, "committed": False,
                     "pushed": False, "pr_url": None, "error": None}
 
@@ -569,8 +569,8 @@ async def deliver_change(
     # (``goal/<id>``) or a caller-pinned ``target_branch`` (the v1-helper
     # delivery seam). In that case all commits the agent made are already on
     # that branch — we push it as-is (no new branch), and its single PR is
-    # reused across deliveries. Legacy mode (workspace on the default branch,
-    # off-goal, and unpinned) creates a per-task branch the way it always has.
+    # reused across deliveries. Per-task-branch mode (workspace on the default
+    # branch, off-goal, and unpinned) creates a fresh branch per delivery.
     current = await _current_branch(workspace_dir)
     goal_mode = bool(current) and (
         current.startswith("goal/") or (target_branch is not None and current == target_branch)
@@ -630,7 +630,7 @@ async def deliver_change(
         # swept-in lockfile). Amending an unpushed commit is safe; a pushed commit
         # (a prior goal-branch increment) must NEVER be amended — that needs a
         # force-push — so fall back to devclaw's own goal-titled commit there and
-        # in the no-worker-commit (ahead == 0) legacy case.
+        # in the no-worker-commit (ahead == 0) case.
         if ahead > 0 and not await _head_is_pushed(workspace_dir):
             rc, out = await _run(
                 "git", "commit", "--amend", "--no-edit", cwd=workspace_dir,

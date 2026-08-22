@@ -118,8 +118,8 @@ async def local_install_branch_exists(workspace_dir: str) -> bool:
     """True iff the deterministic install branch exists LOCALLY — concrete
     evidence :func:`install_speckit_pr` scaffolded a speckit install in THIS
     checkout. Cheap (a local ``git branch --list``, no network); the goal-path
-    hold and the fail-closed gh-uncertainty branch key off it so an ordinary
-    legacy/plain repo is never probed over the network. Never raises."""
+    hold and the fail-closed gh-uncertainty branch key off it so a repo with
+    no speckit install is never probed over the network. Never raises."""
     rc, out = await _run("git", "branch", "--list", INSTALL_BRANCH, cwd=workspace_dir)
     return rc == 0 and out.strip() != ""
 
@@ -139,8 +139,8 @@ async def feature_block_reason(workspace_dir: str) -> "str | None":
     :func:`devclaw.server.tools._block_if_speckit_pending`.
 
     Cheap and inert for ordinary repos: probes ONLY when a LOCAL install branch
-    exists (concrete evidence onboard scaffolded here), so a plain/legacy repo
-    returns ``None`` after a single ``git branch`` and a stubbed-suite goal tick
+    exists (concrete evidence onboard scaffolded here), so a repo with no
+    speckit install returns ``None`` after a single ``git branch`` and a stubbed-suite goal tick
     pays nothing. Fail-CLOSED on gh-uncertainty (unlike the detection guards) —
     running feature work half-installed is exactly the failure this prevents."""
     if not await local_install_branch_exists(workspace_dir):

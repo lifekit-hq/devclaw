@@ -234,3 +234,39 @@ async def test_program_poll_carries_per_child_breakdown(store):
     assert poll.terminal and poll.tasks is not None
     assert poll.tasks[0]["plan_key"] == "a"
     assert poll.tasks[0]["status"] == "done"
+
+
+def test_persist_plan_fails_loud_when_the_program_row_is_missing(store):
+    """#616 cutoff: ``_persist_plan`` used to read the program row through
+    ``bool(program and program.open_pr)`` / ``program.x if program else <dflt>``,
+    documented as loading defaults for "legacy programs created before the
+    2026-07-03 column addition". Those columns are ``NOT NULL DEFAULT``, so no
+    row has ever been missing them — the branch only fired when the row itself
+    was GONE, and its silent default (``open_pr=False``) reinstates the exact
+    2026-07-03 defect of committing straight to main for a whole program.
+    Lost state now blocks legibly (constitution VI)."""
+    q = TaskQueue(store, runner=_ok_runner([]))
+    with pytest.raises(RuntimeError, match="program row vanished"):
+        q._persist_plan(
+            "no-such-program", "/ws",
+            [PlannedTask(key="a", goal="g", kind="implement_feature", depends_on_keys=[])],
+        )
+    # nothing half-written: the loud failure precedes every child insert
+    assert store.list_program_tasks("no-such-program") == []
+
+
+def test_persist_plan_inherits_the_program_contract_without_a_defaulting_branch(store):
+    """The other side of the same cutoff: with the row present, every inherited
+    value comes straight off it — no ``if program else`` fallback left to mask a
+    lost row as a permissive default."""
+    q = TaskQueue(store, runner=_ok_runner([]))
+    pid = q.start_planned_program(
+        goal="g", workspace_dir="/ws",
+        planned=[PlannedTask(key="a", goal="g1", kind="implement_feature", depends_on_keys=[])],
+        open_pr=True, verify_cmd="pytest -q", strictness="strict",
+        project_id="proj-1", pump=False,
+    )
+    (child,) = store.list_program_tasks(pid)
+    assert (child.deliver, child.verify_cmd, child.strictness, child.project_id) == (
+        True, "pytest -q", "strict", "proj-1",
+    )

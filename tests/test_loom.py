@@ -1,7 +1,9 @@
 """loom — the reusable orchestration core (the neutral-named extraction seam).
-Pins the curated public surface and proves the back-compat shims at the old
-``devclaw.*`` import paths still resolve to the moved implementations."""
+Pins the curated public surface and, since the #616 cutoff, that the old
+``devclaw.*`` import paths are GONE rather than aliased."""
 from __future__ import annotations
+
+import pytest
 
 import devclaw.loom as loom
 
@@ -30,12 +32,16 @@ def test_goal_domain_is_not_on_the_loom_surface():
     assert parse_duration("6h") == 21600
 
 
-def test_shims_resolve_to_the_same_objects():
-    # old paths must keep working AND be the very same objects (not copies)
-    from devclaw.limits import classify_failure as shim_classify
-    from devclaw.test_integrity import scan_diff as shim_scan
-    assert shim_classify is loom.classify_failure
-    assert shim_scan is loom.scan_diff
+def test_pre_loom_import_paths_are_deleted_not_aliased():
+    """#616 cutoff: ``devclaw.limits`` / ``devclaw.test_integrity`` were
+    re-export shims kept "so existing imports keep working" — and no production
+    module imported them; only tests did. A second import path for one
+    implementation is a second history, so the shims are deleted, not kept."""
+    import importlib
+
+    for dead in ("devclaw.limits", "devclaw.test_integrity"):
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(dead)
 
 
 def test_physically_owned_modules_live_under_loom():

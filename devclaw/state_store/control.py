@@ -110,8 +110,8 @@ class ControlPlaneMixin:
         return self.get_meta("pause_notified") is not None
 
     def pause_notified_kind(self) -> str:
-        """The classified kind recorded with the pause ping ("" for legacy or
-        kind-less pings)."""
+        """The classified kind recorded with the pause ping ("" for a
+        kind-less ping, which stores the bare "1" sentinel)."""
         raw = self.get_meta("pause_notified")
         return "" if raw in (None, "1") else raw
 
