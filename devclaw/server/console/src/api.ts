@@ -799,6 +799,54 @@ export async function fetchCycleReports(limit?: number): Promise<CycleReport[]> 
   return r.json();
 }
 
+// ---- instance usage aggregate (GET /usage.json) ---------------------------
+
+/** Usage figures for one bucket (instance totals, one project, or unattributed).
+ *  `cognition_rows_real` / `cognition_rows_estimated` distinguish real CLI-parsed
+ *  usage from the len/4 fallback so readers know which figures are measured vs
+ *  estimated. `cost_estimate_usd` is labelled as an estimate — never a bill. */
+export interface UsageBucket {
+  cognition_tokens_in: number;
+  cognition_tokens_out: number;
+  cognition_rows_real: number;
+  cognition_rows_estimated: number;
+  cognition_cost_usd: number;
+  worker_input_tokens: number;
+  worker_output_tokens: number;
+  worker_cache_read_tokens: number;
+  worker_tasks_with_usage: number;
+  worker_cost_usd: number;
+  cost_estimate_usd: number;
+}
+
+export interface ProjectUsageBucket extends UsageBucket {
+  project_id: string;
+  project_name: string;
+}
+
+/** One cap-pressure entry: the most-recent occurrence of this limit class in the
+ *  window, plus a stated reset hint when the provider said one explicitly. */
+export interface CapPressureEntry {
+  last_seen_ms: number;
+  reset_hint_s?: number; // present only when stated by the provider
+}
+
+export interface InstanceUsage {
+  computed_at_ms: number;
+  totals: UsageBucket & { cost_is_estimate: true };
+  by_project: ProjectUsageBucket[];
+  unattributed: UsageBucket;
+  /** Limit events by classification (rate_limit / quota / auth), windowed to the
+   *  last 30 days. Only kinds that have events in the window are present. */
+  cap_pressure: Record<string, CapPressureEntry>;
+}
+
+export async function fetchUsage(): Promise<InstanceUsage> {
+  const r = await fetch(`/usage.json${tokenQS()}`);
+  if (!r.ok) throw new Error(`usage.json ${r.status}`);
+  return r.json();
+}
+
 export async function answerGoal(
   id: string,
   answers: Record<string, string>,
