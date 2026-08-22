@@ -117,6 +117,11 @@ is worth less than US1 until increments stop repeating each other, and it is the
 change most likely to make prompts *worse* if slots are added that no reader acts
 on. It should be designed against evidence from US1.
 
+**Interlock with FR-009a**: because the saga framing is re-sent with every
+increment, its size is multiplied by the increment count. That is affordable only
+once this story replaces today's prose with compact slots. Today's behaviour is
+already "re-send in full" — what is missing is the bound, not the mechanism.
+
 **Independent Test**: Have two people author the same objective and compare the
 resulting sagas slot by slot. Separately, attempt to create a saga with a required
 slot missing and confirm it is rejected at creation with a specific message.
@@ -132,29 +137,34 @@ slot missing and confirm it is rejected at creation with a specific message.
 
 ---
 
-### User Story 3 - A work item's size selects its shape (Priority: P3)
+### User Story 3 - A work item carries its expected increment count (Priority: P3)
 
-When a work item is graded ready, its size is recorded along with the basis for
-that call. Size then determines whether it becomes a saga or a single unit of work,
-mechanically, rather than by the dispatcher's judgement. A work item whose size
-cannot be determined confidently is surfaced to a human rather than silently
-defaulting.
+When a work item is graded ready, it records how many units of work it is expected
+to take, along with the basis for that estimate. **Every work item becomes a saga
+regardless of that number** (ruled 2026-08-22) — the count sizes the plan, it does
+not select a different execution shape. A work item whose extent cannot be
+estimated confidently is surfaced to a human rather than silently defaulted.
 
-**Why this priority**: It removes the last judgement call in the pipeline, but the
-correct resolution depends on evidence from US1 and US2 — and there is a real
-argument, recorded in Assumptions, that everything should remain a saga regardless
-of size.
+**Why this priority**: It stops a one-line fix being planned as a five-slice saga,
+and a multi-increment body of work being planned as one. It is last because the
+plan it sizes only becomes predictable once US1 and US2 land.
 
 **Independent Test**: Grade one obviously multi-increment work item and one
-obviously single-increment work item, and confirm each records a size with a stated
-basis, and that the same size always produces the same shape.
+obviously single-increment work item, and confirm each records an expected
+increment count with a stated basis, and that both are executed as sagas.
 
 **Acceptance Scenarios**:
 
-1. **Given** a work item describing a single atomic change, **When** it is graded,
-   **Then** its recorded size reflects one unit of work and the basis is stated.
-2. **Given** a work item whose size is genuinely ambiguous, **When** it is graded,
-   **Then** it is surfaced for a human decision rather than defaulted.
+1. **Given** a work item whose filer claimed one increment and whose content is a
+   single atomic change, **When** it is graded, **Then** grading records agreement,
+   **And** it is still executed as a saga subject to the completion judgement.
+2. **Given** a work item whose filer claimed one increment but whose content spans
+   several, **When** it is graded, **Then** the claim is preserved, the
+   disagreement is recorded, and it is surfaced for a human rather than corrected
+   silently.
+3. **Given** an unchanged work item graded twice, **When** both grades complete,
+   **Then** the recorded expected count is identical, because it is the filer's
+   claim rather than a re-judged estimate.
 
 ---
 
@@ -213,12 +223,30 @@ a file outside its declared scope is rejected.
   naming the missing slot.
 - **FR-009**: Every slot in either prompt MUST be justified by the behaviour it
   changes. A slot that does not change what a worker does MUST NOT be added.
-- **FR-010**: A graded work item MUST record its size and the basis for that
-  assessment.
-- **FR-011**: A work item whose size cannot be determined confidently MUST be
-  surfaced for a human decision rather than defaulted to either shape.
-- **FR-012**: Work items of the same recorded size MUST produce the same execution
-  shape regardless of who dispatches them.
+- **FR-009a**: The saga framing MUST be re-sent in full with every unit of work.
+  A prompt MUST NOT depend on the worker choosing to fetch framing from elsewhere
+  (ruled 2026-08-22): each unit of work runs in a fresh sandbox with no memory of
+  previous runs, so a pointer is a request while a slot is a fact.
+- **FR-009b**: The saga framing MUST be bounded in size, so that "self-contained"
+  cannot become "unbounded". Re-sending is affordable only because US2 makes the
+  framing compact; re-sending unstructured prose on every increment is the failure
+  mode this requirement exists to prevent.
+- **FR-010**: A work item MUST carry an expected increment count supplied by its
+  filer, together with the basis for that claim.
+- **FR-010a**: Grading MUST validate the filer's claim against the work item's
+  content and record whether it agrees.
+- **FR-010b**: Grading MUST NOT silently overwrite the filer's claim. The claim
+  stands as the record; a disagreement is recorded and surfaced for a human
+  (ruled 2026-08-22).
+- **FR-011**: A work item whose extent cannot be estimated confidently, or whose
+  claimed count grading disagrees with, MUST be surfaced for a human decision
+  rather than silently defaulted or silently corrected.
+- **FR-012**: Every work item MUST execute as a saga regardless of its expected
+  increment count. The expected count sizes the plan; it MUST NOT select a
+  different execution shape.
+- **FR-012a**: The completion judgement MUST NOT be bypassed for any work item,
+  however small. Mechanical verification passing is never sufficient evidence of
+  completion.
 - **FR-013**: Any assessment requiring reasoning MUST occur at grading time. No new
   reasoning call may be added to the recurring background cycle.
 - **FR-014**: Concurrency MUST default to at most one saga actively dispatching per
@@ -257,10 +285,15 @@ a file outside its declared scope is rejected.
 - **SC-004**: A malformed saga is rejected at the moment of creation, not
   discovered partway through an execution.
 - **SC-005**: The same work item produces the same execution shape regardless of
-  who dispatches it or when.
+  who dispatches it or when — and that shape is always a saga.
+- **SC-005a**: A work item that is materially incomplete is never reported as done
+  on the strength of its mechanical verification alone, at any size.
+- **SC-005b**: Grading an unchanged work item twice yields the same expected
+  increment count both times.
 - **SC-006**: Total prompt size does not grow to the point of increasing execution
   failures — the standardisation must not cost more than the rediscovery it
-  prevents.
+  prevents. Because framing is re-sent per increment, this is measured across a
+  whole saga, not a single prompt.
 - **SC-007**: The idle cost of the system is unchanged: a system with nothing to do
   still consumes no reasoning calls.
 - **SC-008**: Concurrent increments never produce conflicting or interleaved
@@ -276,12 +309,26 @@ a file outside its declared scope is rejected.
   *outcomes*, which are recorded but never read back.
 - Delivery outcomes are already captured per delivery, so US1 requires no new
   storage and no new reasoning — only feeding existing data forward.
-- **Everything remaining a saga is a legitimate outcome of US3.** Evidence from
-  2026-08-22: a single-unit work item passed its mechanical verification while
-  being materially incomplete, and only the saga-level completion judgement caught
-  it. Any resolution that routes single-unit work around that judgement would trade
-  correctness for tidiness. In that case what a work item needs to record is
-  expected increment count, not a saga-or-task verdict.
+- **RULED 2026-08-22: everything remains a saga, whatever its size.** A work item
+  records an *expected increment count*, never a saga-or-task verdict, and the
+  completion judgement is never bypassed. Evidence: a single-unit work item passed
+  its mechanical verification while being materially incomplete — the feature was
+  unwired but nothing was deleted, justified by a gate that did not exist — and
+  only the saga-level judgement caught it. Routing small work around that judgement
+  would trade correctness for vocabulary tidiness, against the standing principle
+  that "done" is a proposal.
+- **RULED 2026-08-22: the saga framing is re-sent with every increment**, never
+  referenced. A fresh sandbox has no memory, so referencing would depend on the
+  worker following a pointer — and the stated goal is that input be *expected*,
+  not hopeful. The size objection is an argument for making the framing compact
+  (US2), not for making it fetchable.
+- **RULED 2026-08-22: the filer claims the expected increment count; grading
+  validates it and never silently overwrites it.** A grader-judged number is a
+  reasoning output and would drift between identical re-grades, which is the
+  opposite of predictable input; a filer-only number has no check at all. The
+  claim is the stable record, disagreement is an explicit signal, and a human
+  resolves it. No additional reasoning call is introduced — grading already reads
+  the item.
 - Size and decomposability are related but distinct axes. Something can be large
   and cleanly sliceable, or small and still require a completion judgement.
 - US4 is deliberately named and unsized. It is the scaling story, and it is
@@ -304,14 +351,8 @@ a file outside its declared scope is rejected.
 
 ## Outstanding Clarifications
 
-- [NEEDS CLARIFICATION: Should single-unit work items route around the saga
-  completion judgement, or should everything remain a saga with size recorded only
-  as expected increment count? See Assumptions — evidence points to the latter.]
-- [NEEDS CLARIFICATION: Is the saga-level framing re-sent with every unit of work,
-  or established once and referenced? This trades prompt size against
-  self-containment on the least reliable call class in the system.]
-- [NEEDS CLARIFICATION: Is a work item's size supplied by the filer, judged at
-  grading, or claimed by the filer and validated at grading?]
+None — all three resolved with the owner on 2026-08-22; each ruling is recorded in
+Assumptions with its evidence.
 
 ## Corollaries
 
