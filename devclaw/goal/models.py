@@ -27,11 +27,10 @@ Engine = Literal["devclaw"]
 GoalTool = Literal["start_program", "implement_feature", "fix_bug", "review_repository"]
 Phase = Literal["idle", "in_flight", "verifying", "blocked", "done", "cancelled"]
 #: The goal lifecycle — ``executing`` only since the host-cognition chain was
-#: removed (spec 008 shrink: the worker plans via speckit in-sandbox). ``None``
-#: on a stored status means a legacy goal created before the lifecycle existed
-#: — treated as ``executing`` everywhere except delivery-strategy resolution;
-#: a pre-shrink row still carrying "investigating"/"firming" is healed loudly
-#: by the tick on first touch.
+#: removed (spec 008 shrink: the worker plans via speckit in-sandbox). NOT
+#: optional: the #616 cutoff migrated every NULL and every pre-shrink
+#: "investigating"/"firming" row to this one value, so there is no second
+#: shape left to coerce at read time.
 Lifecycle = Literal["executing"]
 EvalVerdict = Literal["on_track", "off_track", "achieved", "stalled", "needs_human"]
 #: The execution dial (ADR 0003): both modes ride ONE execution path (the
@@ -91,7 +90,7 @@ class Goal:
     #: the owning project's reference key (#524 P3). The per-project override
     #: knobs (automerge, verify_done, autodeploy, merge_strategy) resolve BY this
     #: id, not by a workspace-path scan. None for self-fix goals with no
-    #: registered project, and for legacy goal.yaml written before P3 (until the
+    #: registered project, and for a goal.yaml written before P3 (until the
     #: one-shot backfill stamps it) — both fall to the devclaw-wide defaults.
     project_id: Optional[str] = None
 
@@ -143,8 +142,8 @@ class GoalStatus:
     """Mutable per-tick state — STATUS.md frontmatter. Overwritten, never appended."""
 
     phase: Phase = "idle"
-    #: the outcome lifecycle stage (None = legacy goal → behaves as "executing")
-    lifecycle: Optional[Lifecycle] = None
+    #: the outcome lifecycle stage — one value, always set (see Lifecycle)
+    lifecycle: Lifecycle = "executing"
     in_flight: Optional[InFlight] = None
     blocked_on: Optional[str] = None
     #: structured classification of the CURRENT block — the machine-readable
@@ -204,7 +203,7 @@ class GoalStatus:
     #: cleared on the next delivery so a later stall fires again (ping once per stall).
     no_progress_notified: bool = False
     #: URL of a per-action green PR devclaw shipped but did NOT land (auto-merge
-    #: off or failed, legacy per-action mode). Set at settle, cleared when it
+    #: off or failed — per-action delivery only). Set at settle, cleared when it
     #: merges or when the done-gate blocks on it. The done-gate reads it to break
     #: the #430 wrong-ref re-work loop: reviewing the default branch while the fix
     #: sits on an unmerged PR → re-finding the closed gap → re-dispatching forever.
@@ -216,7 +215,7 @@ class GoalStatus:
     #: entries per goal at most).
     phase_history: tuple[dict, ...] = ()
     #: the stored State value (see devclaw.goal.transitions) — None on a
-    #: legacy row / a status object never round-tripped through the store.
+    #: a status object never round-tripped through the store.
     #: compare=False: two GoalStatus objects with identical business fields
     #: still compare equal regardless of this projection (existing tests
     #: build expected GoalStatus(...) objects without ever setting it — see

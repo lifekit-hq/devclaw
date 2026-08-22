@@ -233,20 +233,6 @@ class GoalStatusMixin:
         self._flush_or_defer_status_view(goal_id, fresh)
         return fresh
 
-    def heal_legacy_lifecycle(self, goal_id: str) -> bool:
-        """Flip a pre-shrink ``investigating``/``firming`` lifecycle to
-        ``executing`` — the spec 008 shrink's one-shot migration. Deliberately
-        NOT ``update_status_fields`` (lifecycle is excluded from that
-        whitelist) and NOT ``transition()`` (no Event exists for a removed
-        phase): the state-layer write is column-scoped with the old value in
-        its WHERE clause, so it cannot clobber a concurrent phase/in_flight
-        transition and is idempotent. Returns True iff a row was healed;
-        refreshes the STATUS.md view on a real heal."""
-        healed = self._goal_state.heal_legacy_lifecycle(goal_id)
-        if healed:
-            self._flush_or_defer_status_view(goal_id, self.load_status(goal_id))
-        return healed
-
     def force_block(self, goal_id: str, blocked_on: str) -> bool:
         """Unconditional block write — bypasses the LEGAL-table check on
         purpose. This is the ESCAPE HATCH used ONLY by tick_goal's

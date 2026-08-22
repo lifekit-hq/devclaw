@@ -23,8 +23,12 @@ GOAL_STATE_TABLES = {
     "goal_log",
     "goal_deliveries",
     "goal_settlements",
-    "goal_docs",
 }
+
+#: Dropped by the #616 cutoff — every kind it held (checklist / firmed_draft /
+#: repo_analysis / block_options) died with the host-cognition chain in the
+#: spec 008 shrink, and nothing read the table after that.
+RETIRED_TABLES = {"goal_docs"}
 
 
 @pytest.fixture()
@@ -185,6 +189,7 @@ def test_goal_state_bootstrap_is_idempotent(store):
         ).fetchall()
     }
     assert GOAL_STATE_TABLES <= names
+    assert RETIRED_TABLES.isdisjoint(names)
 
 
 # ---- GoalStore seam -------------------------------------------------------

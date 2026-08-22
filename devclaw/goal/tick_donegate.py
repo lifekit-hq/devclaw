@@ -327,7 +327,7 @@ async def _resolve_done_gate(
         return Outcome.ERROR
     if ev.verdict == "achieved" and remote_checker is not None and goal.repo_url:
         # Only goal-branch goals accumulate work on a shared branch whose
-        # check surface is meaningful at close time; legacy per-action PRs
+        # check surface is meaningful at close time; per-action PRs
         # were already merged (or reviewed) one by one.
         branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
         if branch is not None:

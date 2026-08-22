@@ -198,8 +198,10 @@ def test_log_append_and_recent(tmp_path):
 
 def test_deliveries_roundtrip(tmp_path):
     store = GoalStore(tmp_path, now=Clock())
-    store.append_delivery("g1", "add /health", "PR: #7\nAgent summary: added endpoint\nVerify: PASSED")
-    store.append_delivery("g1", "add logging", "PR: #8")
+    store.append_delivery(
+        "g1", "add /health", "PR: #7\nAgent summary: added endpoint\nVerify: PASSED", ref_id="t1",
+    )
+    store.append_delivery("g1", "add logging", "PR: #8", ref_id="t2")
     d = store.recent_deliveries("g1")
     assert "add /health" in d and "#7" in d and "add logging" in d
 

@@ -1,9 +1,7 @@
 """Delivery strategy — how a goal's task work maps onto git branches + PRs.
 
-An executing goal accumulates every increment's commits on a shared
-``goal/<id>`` branch (one cumulative PR per goal); a legacy goal with no
-recorded lifecycle delivers each action as its own branch + PR off the
-default branch.
+Every goal accumulates its increments' commits on a shared ``goal/<id>``
+branch — one cumulative PR per goal.
 
 It is the seam a second topology (per-task PRs to main) plugs into later,
 instead of threading a new conditional through every call site. TODAY it owns
@@ -55,7 +53,9 @@ class GoalBranchStrategy:
 
 class PerActionStrategy:
     """Each action delivers its own branch + PR off the default branch; no
-    shared goal branch. Legacy goals (no recorded lifecycle) only."""
+    shared goal branch — the second topology this seam exists for.
+
+    **Not currently selected by anything.** See :func:`resolve_strategy`."""
 
     name = "per-action"
 
@@ -69,25 +69,36 @@ PER_ACTION: "DeliveryStrategy" = PerActionStrategy()
 
 
 def resolve_strategy(store: "GoalStore", goal_id: str) -> "DeliveryStrategy":
-    """The delivery strategy for a goal:
+    """The delivery strategy for a goal: ``goal-branch``, for every goal.
 
-    * ``goal-branch`` for any goal in the **explicit** ``executing`` lifecycle
-      — both modes stamp it at creation now (spec 008 shrink: one execution
-      path). The 2026-08-08 amnesia fix is the reason accumulation is the
-      default: a per-action strategy resets the workspace to ``origin/main``
-      before every task, and because the goal's single PR isn't merged that
-      wipes the prior increment's work and forces a from-scratch rebuild —
-      ``goal/<id>`` accumulation preserves compounding progress.
-    * ``per-action`` only for legacy goals with no lifecycle recorded
-      (``lifecycle is None``/pre-shrink strings read as executing elsewhere,
-      but delivery stays per-action for them, unchanged — the tick's heal
-      re-stamps a pre-shrink row on first touch, after which it accumulates).
+    The 2026-08-08 amnesia fix is why accumulation is the rule. A per-action
+    strategy resets the workspace to ``origin/main`` before every task, and
+    because the goal's single PR isn't merged, that wipes the prior
+    increment's work and forces a from-scratch rebuild; ``goal/<id>``
+    accumulation preserves compounding progress.
 
-    (The old ``read_checklist is not None`` gate died with the checklist —
-    the checklist WAS the goal-branch signal; the explicit lifecycle string
-    is the signal now.) A pure read of goal state; no LLM call, no writer.
+    **What #616 changed, and the live question it exposes.** This used to
+    return :data:`PER_ACTION` for a goal whose ``lifecycle`` was NULL — i.e.
+    one created before the column existed. Both modes have stamped
+    ``executing`` at creation since the spec 008 shrink, so in production that
+    branch stopped being reachable then; the cutoff migrated the last rows
+    that could take it, and the selection rule is gone.
+
+    The consequence is worth stating plainly rather than leaving to be
+    rediscovered: **auto-merge has therefore been unreachable in production
+    since the 008 shrink.** ``tick_settle`` skips merging for any goal-branch
+    delivery (the cumulative PR must stay open for the done-gate, #486), and
+    every goal is now goal-branch. The tests that appeared to cover
+    auto-merging were reaching it by seeding a goal with no lifecycle — a
+    shape production had already stopped producing. They now select
+    :data:`PER_ACTION` explicitly instead, so they still exercise the merge
+    machinery without implying the loop can get there on its own.
+
+    The machinery is deliberately KEPT, not deleted: whether devclaw should
+    regain a per-action topology (and with it auto-merge) is a design
+    decision, not demolition, and #611 explicitly puts behavior change out of
+    scope. This stays a function of the store rather than a constant because
+    it is the seam that decision plugs into. A pure read of goal state; no LLM
+    call, no writer.
     """
-    status = store.load_status(goal_id)
-    if status.lifecycle == "executing":
-        return GOAL_BRANCH
-    return PER_ACTION
+    return GOAL_BRANCH

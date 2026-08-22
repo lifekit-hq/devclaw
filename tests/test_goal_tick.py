@@ -15,6 +15,7 @@ from dataclasses import replace
 
 import pytest
 
+from devclaw.goal import delivery_strategy as _delivery
 from devclaw.goal.engine import GoalEngineError
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore, view_migration
@@ -203,7 +204,8 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
     assert out is Outcome.DISPATCHED
     # seed_goal now sets a fake repo_url so the investigating phase takes the
     # repo-research path (vs world-research, which fires for from-scratch only).
-    assert calls == [("/repos/demo", "https://example.com/demo.git", None)]  # legacy mode, no goal branch
+    # every goal is goal-branch (#616 retired the per-action selection rule)
+    assert calls == [("/repos/demo", "https://example.com/demo.git", "goal/g")]
     assert len(engine.dispatched) == 1
 
 
@@ -668,13 +670,14 @@ async def test_done_gate_review_off_track_steers_and_continues(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_done_gate_blocks_when_delivered_pr_is_open_and_unmerged(tmp_path):
+async def test_done_gate_blocks_when_delivered_pr_is_open_and_unmerged(tmp_path, monkeypatch):
     """#430: a per-action goal whose green fix sits on an open, unmerged PR must
     BLOCK for a merge — not re-dispatch. The done-gate reviews the default
     branch, which lacks the PR's commits, so it re-finds the gaps that PR already
     closed and 'keep going' re-dispatches the same fix forever (closeloop's
     wasted night). The detection is mechanical (zero LLM beyond the eval that had
     to run) and the marker is cleared on the block."""
+    _force_per_action(monkeypatch)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
@@ -726,6 +729,7 @@ async def test_settle_marks_open_unmerged_pr_when_auto_merge_off(tmp_path):
 async def test_settle_clears_open_unmerged_pr_when_pr_merges(tmp_path, monkeypatch):
     """#430 clear-side: a green delivery that DID merge clears the marker, so a
     later done-gate isn't misled into blocking on an already-landed PR."""
+    _force_per_action(monkeypatch)
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -974,16 +978,33 @@ async def test_idle_tick_never_invokes_summarizer(tmp_path, monkeypatch):
 
 
 def _delivery_status():
-    # A legacy PER-ACTION delivery: lifecycle=None reads-as-executing for the
-    # phase classifier but resolves to the per-action topology (each action its
-    # own branch + PR off main). #486/Part C keyed the auto-merge SKIP on the
-    # delivery TOPOLOGY, so the per-action auto-merge
-    # machinery these tests exercise needs a genuinely per-action goal — a
-    # long_lived *executing* goal now accumulates on a goal branch and its
-    # cumulative PR is left OPEN for the done-gate instead of auto-merging.
     return GoalStatus(
-        phase="in_flight", lifecycle=None,
+        phase="in_flight",
         in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
+    )
+
+
+def _force_per_action(monkeypatch):
+    """Select the PER-ACTION delivery topology for the tick under test.
+
+    #486/Part C keyed the auto-merge SKIP on the delivery TOPOLOGY: a
+    goal-branch delivery's cumulative PR stays OPEN for the done-gate, and
+    only a per-action delivery auto-merges. So the auto-merge machinery can
+    only be exercised under per-action.
+
+    These tests used to reach it by seeding ``lifecycle=None`` — a goal shape
+    production stopped writing at the spec 008 shrink, and one the #616 cutoff
+    migrated away entirely. Faking a legacy row to reach live machinery is
+    coverage theater (#359): it hid the fact that **auto-merge has been
+    unreachable in production since that shrink**, because every real goal is
+    goal-branch. Selecting the topology explicitly keeps the machinery under
+    test and stops the test asserting a route the loop cannot take. See
+    ``resolve_strategy``'s docstring and
+    ``test_production_goals_never_auto_merge_because_they_are_all_goal_branch``.
+    """
+    monkeypatch.setattr(
+        "devclaw.goal.delivery_strategy.resolve_strategy",
+        lambda store, goal_id: _delivery.PER_ACTION,
     )
 
 
@@ -993,6 +1014,7 @@ async def test_green_delivery_auto_merges_when_enabled(tmp_path, monkeypatch):
     TASK-altitude ping is emitted — when the automerge default is on.
     The ping is TASK-altitude (not OWNER) so per-PR merges don't spam the owner
     on a goal that lands many PRs; drop the floor so this test can observe it."""
+    _force_per_action(monkeypatch)
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     monkeypatch.setenv("DEVCLAW_NOTIFY_ALTITUDE", "task")
     store = _store(tmp_path, Clock())
@@ -1017,6 +1039,7 @@ async def test_failed_auto_merge_pings_owner_loudly(tmp_path, monkeypatch):
     ping the OWNER, not silently leave the PR and later page to 'please merge PR
     X' as if nothing tried — the finance-sentry 'automerge never fired'
     confusion (2026-07-17). Loud failure over silent degradation."""
+    _force_per_action(monkeypatch)
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -1047,6 +1070,7 @@ async def test_merge_fires_on_a_passed_merger_even_with_global_flag_off(tmp_path
     the tick honors WHATEVER merger it's given and does not independently
     re-check the raw global flag, which would silently override a project's
     explicit 'on' with the fleet default."""
+    _force_per_action(monkeypatch)
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", False)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -1130,28 +1154,41 @@ async def test_program_settle_without_merger_leaves_stack_alone(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_legacy_per_action_dispatch_still_auto_merges(tmp_path, monkeypatch):
-    """Backwards-compat: a legacy PER-ACTION goal (lifecycle=None resolves to
-    the per-action topology) keeps the existing per-action auto-merge
-    behaviour. Only the goal-branch topology skips the merge, leaving the
-    cumulative PR for the done-gate (#486/Part C)."""
+async def test_production_goals_never_auto_merge_because_they_are_all_goal_branch(
+    tmp_path, monkeypatch,
+):
+    """#616 made this legible rather than accidental, and it is worth stating
+    plainly: **no goal devclaw creates today can reach auto-merge.**
+
+    Auto-merge fires only for a per-action delivery (#486/Part C: a
+    goal-branch delivery's cumulative PR must stay OPEN for the done-gate).
+    Since the spec 008 shrink both modes stamp ``lifecycle="executing"`` at
+    creation, so every goal is goal-branch — and the #616 cutoff migrated the
+    last rows that could have resolved otherwise.
+
+    This test replaces one that asserted the opposite conclusion by seeding a
+    goal with ``lifecycle=None``: a shape production had already stopped
+    writing. It passed, and in passing it hid this. The merger must be handed
+    in and still never called, and the skip must be logged with its reason —
+    silence here is what forced an owner to infer "it didn't engage" from an
+    open PR and an empty log (#394 totality)."""
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle=None,  # ← legacy per-action topology
-        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
-    ))
-    evaluator = FakeClaude()
+    svc_status = _delivery_status()
+    assert svc_status.lifecycle == "executing"   # the only value there is
+    store.save_status("g", svc_status)
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="ok",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
     ))
     notifier, merger = RecordingNotifier(), RecordingMerger()
 
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
+    await _tick(store, "g", FakeClaude(), engine, notifier, merger=merger)
 
-    assert merger.merged == ["https://github.com/o/r/pull/9"]
+    assert merger.merged == []      # handed a merger, never called it
+    log = store.recent_log("g")
+    assert "auto-merge skipped (goal-branch: cumulative PR stays open" in log
 
 
 # ---- SDLC pipeline P2: milestone-keyed mega-dump guardrail ------------------
@@ -1242,15 +1279,16 @@ async def test_slice_guardrail_fails_open_when_detection_finds_no_megadump(tmp_p
 @pytest.mark.asyncio
 async def test_slice_guardrail_never_runs_on_per_action_topology(tmp_path, monkeypatch):
     """The guardrail is scoped to the goal-branch topology (accumulating
-    tasks.md). A legacy per-action delivery has no such plan — detection must not
+    tasks.md). A per-action delivery has no such plan — detection must not
     even be consulted, so a build-ahead stub can't block it."""
+    _force_per_action(monkeypatch)
     def _boom(ws):  # pragma: no cover - must not be called
         raise AssertionError("detection ran on a per-action delivery")
 
     monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", _boom)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())  # legacy per-action topology
+    store.save_status("g", _delivery_status())
     engine = FakeEngine(poll_result=PollResult(
         terminal=True, status="done", detail="ok",
         pr_url="https://github.com/o/r/pull/9", gate_passed=True,
@@ -1292,11 +1330,12 @@ async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_automerge_off_green_pr_skip_is_logged_legibly(tmp_path):
+async def test_automerge_off_green_pr_skip_is_logged_legibly(tmp_path, monkeypatch):
     """#394 totality: when no merger is resolved (automerge off globally, or a
     project's own ``automerge: false`` override — indistinguishable by the
     tick, both arrive as merger=None), a gate-green delivery's PR still
     resolves legibly as skipped instead of falling through in silence."""
+    _force_per_action(monkeypatch)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", _delivery_status())
@@ -1378,6 +1417,7 @@ async def test_failed_merge_of_conflicting_pr_pages_owner_once(tmp_path, monkeyp
     probe then confirms the PR is CONFLICTING, the owner hears the (earlier,
     actionable) 'auto-merge failed — merge it by hand' ping only — the
     conflict fact rides the log, not a second page."""
+    _force_per_action(monkeypatch)
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -1402,6 +1442,7 @@ async def test_failed_merge_of_conflicting_pr_pages_owner_once(tmp_path, monkeyp
 async def test_merged_pr_is_not_probed_for_conflicts(tmp_path, monkeypatch):
     """A PR the tick just auto-merged is definitionally landable — the probe
     must not burn a gh call (or worse, ping) on it."""
+    _force_per_action(monkeypatch)
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -1474,6 +1515,7 @@ async def test_tick_all_resolves_merger_per_goal(tmp_path, monkeypatch):
     per-project lookup; see devclaw.goal.merge.resolve_automerge). Prove
     tick_all actually calls the resolver fresh per goal_id rather than
     resolving a single merger once for the whole fleet."""
+    _force_per_action(monkeypatch)
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", False)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "on", workspace_dir="/repos/on")
@@ -1577,42 +1619,52 @@ async def test_auto_deploy_disabled_returns_empty_without_deploying(tmp_path):
     assert out == ""
 
 
-# ---- legacy lifecycles (pre-shrink rows) heal to "executing" ----------------
+# ---- the lifecycle heal moved off the tick and into the cutoff (#616) -------
 
 
 @pytest.mark.asyncio
-async def test_legacy_lifecycle_heals_loudly_to_executing_on_first_tick(tmp_path):
-    """A pre-shrink row stored with lifecycle="investigating" (or "firming") is
-    healed to "executing" at the top of its first tick, with a legible log line
-    — and the heal itself is mechanism, not cognition: when no work/cadence is
-    due the tick stays at zero cognition calls. A TERMINAL goal is
-    short-circuited before the heal ever looks at it: a cancelled goal keeps
-    its legacy lifecycle and gets no log write."""
-    store = _store(tmp_path, Clock())
+async def test_the_tick_no_longer_heals_a_lifecycle_because_none_can_be_stale(tmp_path):
+    """The spec 008 shrink left pre-shrink ``investigating``/``firming`` rows
+    in the DB, and the tick healed them loudly on first touch — a migration
+    living on the hot path of every goal, forever, with no cutoff.
+
+    #616 moved it where a migration belongs: the cutoff runs once, at store
+    construction, and the tick branch is gone. This pins the second half of
+    that — the tick performs NO heal write and logs nothing about a
+    lifecycle, so the zero-token, zero-churn idle tick really is zero-work."""
     seed_goal(tmp_path, "g", cadence="1d")
-    # idle + plan cadence not due → nothing to do this tick beyond the heal
-    store.save_status("g", GoalStatus(
-        phase="idle", lifecycle="investigating", last_plan_at=store.now_iso(),
-    ))
+    store = _store(tmp_path, Clock())
+    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
     out = await _tick(store, "g", evaluator, engine, notifier)
 
     assert out is Outcome.IDLE
-    saved = store.load_status("g")
-    assert saved.lifecycle == "executing"                    # healed, durably
-    assert "healed to 'executing'" in store.recent_log("g")  # loud, not silent
-    assert evaluator.calls == 0                              # zero-token guard holds
+    # the heal was the only thing an idle tick would ever log
+    assert store.recent_log("g") == ""
+    assert store.load_status("g").lifecycle == "executing"
+    assert evaluator.calls == 0
     assert engine.dispatched == []
 
-    # terminal short-circuit: a CANCELLED goal is never healed
-    seed_goal(tmp_path, "c", cadence="1d")
-    store.save_status("c", GoalStatus(phase="cancelled", lifecycle="firming"))
-    out = await _tick(store, "c", evaluator, engine, notifier)
-    assert out is Outcome.SKIP_CANCELLED
-    assert store.load_status("c").lifecycle == "firming"     # untouched
-    assert "healed" not in store.recent_log("c")             # no log write
-    assert evaluator.calls == 0
+
+def test_the_cutoff_heals_a_pre_shrink_lifecycle_at_construction(tmp_path):
+    """The first half: a row planted with a pre-shrink lifecycle is
+    ``executing`` by the time anything can read it, without the tick being
+    involved at all."""
+    seed_goal(tmp_path, "g", cadence="1d")
+    store = _store(tmp_path, Clock())
+    with store._state._lock:
+        store._state._db.execute(
+            "INSERT INTO goal_status (goal_id, lifecycle) VALUES ('legacy', 'investigating')"
+        )
+        store._state._db.execute(
+            "DELETE FROM meta WHERE key = 'goal_legacy_cutoff_done_at_ms'"
+        )
+        store._state._commit()
+
+    reopened = _store(tmp_path, Clock())   # construction runs the cutoff
+
+    assert reopened.load_status("legacy").lifecycle == "executing"
 
 
 @pytest.mark.asyncio
@@ -1767,6 +1819,7 @@ async def test_blocked_on_prep_failure_does_not_respam(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ship_notification_is_concise_not_the_full_prompt(tmp_path, monkeypatch):
+    _force_per_action(monkeypatch)  # the shipped+merged ping only fires on a merge
     monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     # shipped+merged is TASK-altitude (per-PR chatter, not owner-altitude) — drop
     # the floor so this test can observe it.
@@ -2016,9 +2069,10 @@ async def test_checker_exception_fails_open(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_legacy_per_action_goal_skips_the_checker(tmp_path):
-    # No lifecycle recorded → per-action topology → no shared goal branch →
-    # nothing meaningful to check; behaviour unchanged.
+async def test_per_action_goal_skips_the_checker(tmp_path, monkeypatch):
+    # Per-action topology → no shared goal branch → no branch CI to consult,
+    # so the remote checker is never called.
+    _force_per_action(monkeypatch)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
@@ -2290,7 +2344,7 @@ async def test_lost_discovery_ref_blocks_and_notifies_owner(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="investigating",
+        phase="in_flight",
         in_flight=InFlight("devclaw", "review_repository", "t_disc", "task", "analyze"),
     ))
     evaluator, notifier = FakeClaude(), RecordingNotifier()
@@ -2302,9 +2356,11 @@ async def test_lost_discovery_ref_blocks_and_notifies_owner(tmp_path):
     st = store.load_status("g")
     assert st.phase == "blocked" and st.in_flight is None
     assert "task t_disc" in (st.blocked_on or "")
-    # lifecycle pinned to executing: were it left "investigating", _classify
-    # would route the NEXT tick back into INVESTIGATING and silently dispatch a
-    # fresh review — contradicting the "paused; steer me" ping just sent.
+    # (This used to seed lifecycle="investigating" and assert the block pinned
+    # it back to "executing", so _classify couldn't route the next tick into a
+    # fresh review that contradicted the "paused; steer me" ping. That phase
+    # was removed by the spec 008 shrink and the #616 cutoff migrated the last
+    # rows carrying it, so there is one lifecycle value and nothing to pin.)
     assert st.lifecycle == "executing"
     assert evaluator.calls == 0
     assert len(notifier.sent) == 1 and "t_disc" in notifier.sent[0]
@@ -2365,7 +2421,7 @@ async def test_goal_yaml_alone_is_the_whole_contract(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_blocked_kind_stamped_per_block_site(tmp_path):
+async def test_blocked_kind_stamped_per_block_site(tmp_path, monkeypatch):
     """Each block class stamps its machine-readable kind next to the prose:
     a workspace-prep failure → mechanical:prep, the dispatch-cap backstop
     → mechanical:dispatch_cap, the done-gate blocking for a human decision
@@ -2406,7 +2462,16 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path):
         "corrections": ["merge the delivered PR"],
     }))
     eng_q = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="main lacks the fix"))
-    assert await _tick(store, "gq", ask_eval, eng_q, notifier) is Outcome.BLOCKED
+    # #430's wrong-ref block is per-action only (a goal-branch goal reviews its
+    # own branch, so the trap cannot exist there) — and per-action is no longer
+    # selected by anything, so the topology is chosen explicitly rather than by
+    # seeding a legacy goal shape. See _force_per_action.
+    with monkeypatch.context() as mp:
+        mp.setattr(
+            "devclaw.goal.delivery_strategy.resolve_strategy",
+            lambda store, goal_id: _delivery.PER_ACTION,
+        )
+        assert await _tick(store, "gq", ask_eval, eng_q, notifier) is Outcome.BLOCKED
     sq = store.load_status("gq")
     assert "pull/9" in (sq.blocked_on or "") and sq.blocked_kind == "needs_answer"
 

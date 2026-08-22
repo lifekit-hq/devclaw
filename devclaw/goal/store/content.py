@@ -99,7 +99,7 @@ class GoalContentMixin:
 
     def append_delivery(
         self, goal_id: str, instruction: str, body: str, *,
-        ref_id: "str | None" = None, mirror: bool = True,
+        ref_id: str, mirror: bool = True,
     ) -> None:
         """Append a grounded record of what one action actually shipped — the
         agent's own summary + the gate verdict + the PR url, captured in-process
@@ -110,9 +110,10 @@ class GoalContentMixin:
         settle call site so a duplicate settle of the SAME ref (e.g. a
         ``TransitionConflict`` retry landing after the first settle already
         recorded the delivery) is a no-op: no second row, no second section
-        in deliveries.md. ``None`` (the default — callers that never settle
-        against a ref, e.g. tests) always inserts, matching pre-PR6
-        behavior exactly. Row-first, then the file mirror, ONLY when a row
+        in deliveries.md. REQUIRED since the #616 cutoff — it used to default
+        to ``None``, which took an unconditional-insert path and quietly
+        turned the idempotency guarantee off for every caller that forgot it.
+        Row-first, then the file mirror, ONLY when a row
         was actually inserted — a duplicate ref_id must never produce a
         duplicate section in the view (see ``GoalState.append_delivery_row``).
 
