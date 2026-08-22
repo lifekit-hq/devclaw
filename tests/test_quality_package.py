@@ -19,8 +19,7 @@ def test_quality_imports_without_queue_goal_or_state_store():
     # Fresh interpreter: the gate must not pull the heavy modules at import.
     code = (
         "import sys; import devclaw.quality; "
-        "import devclaw.quality.browser_gate, devclaw.quality.reachability, "
-        "devclaw.quality.eval_judge, devclaw.quality.evals; "
+        "import devclaw.quality.browser_gate, devclaw.quality.reachability; "
         "heavy = [m for m in ('devclaw.task_queue', "
         "'devclaw.goal', 'devclaw.state_store', 'devclaw.task_git') "
         "if m in sys.modules]; "
@@ -35,7 +34,7 @@ def test_quality_imports_without_queue_goal_or_state_store():
 
 def test_gate_prompts_live_inside_the_package():
     pkg = _REPO / "devclaw" / "quality" / "prompts"
-    for slug in ("review-gate", "eval-judge", "browser-reachability"):
+    for slug in ("review-gate", "browser-reachability"):
         assert (pkg / f"{slug}.md").is_file(), f"{slug}.md missing from the package"
         # and they are GONE from the devclaw-wide prompt dir — one home only
         assert not (_REPO / "devclaw" / "prompts" / f"{slug}.md").exists(), (
@@ -51,8 +50,7 @@ def test_package_loader_renders_the_gate_prompts():
     # clause and the JSON-verdict contract ({{ }} unescaped to { })
     assert "REPOSITORY CONTEXT" in review or "Repository context" in review
     assert "{" in review
-    for slug in ("eval-judge", "browser-reachability"):
-        assert load_prompt(slug).strip()
+    assert load_prompt("browser-reachability").strip()
 
 
 def test_package_loader_matches_devclaw_loader_semantics():

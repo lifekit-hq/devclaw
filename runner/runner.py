@@ -487,27 +487,6 @@ def _agent_last_words(final_message: str, transcript: str, keep: int = 20_000) -
     return transcript[-keep:]
 
 
-def _agent_message_text(payload: dict) -> str:
-    """Pull the plain text out of a MessageEvent payload (``model_dump`` shape).
-
-    The agent's ``MessageEvent`` carries ``llm_message.content`` — a list of
-    typed content parts; we concatenate the ``text`` parts. Defensive by design
-    (best-effort, never raises): a schema drift degrades to ``""`` rather than
-    crashing the event callback."""
-    if not isinstance(payload, dict):
-        return ""
-    msg = payload.get("llm_message")
-    if not isinstance(msg, dict):
-        return ""
-    parts: list[str] = []
-    for item in msg.get("content") or []:
-        if isinstance(item, dict) and item.get("type") == "text":
-            text = item.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-    return "".join(parts)
-
-
 # `sys.__stdout__` is the original stdout the process was started with.
 # The prefixed protocol lines (`event:` / `result:`) go straight to it so a
 # stray library print into a swapped `sys.stdout` can never swallow them.

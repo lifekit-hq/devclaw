@@ -18,7 +18,7 @@ _HOOKS_SRC = _REPO_ROOT / "runner" / "hooks"
 
 @pytest.fixture(scope="module")
 def runner():
-    spec = importlib.util.spec_from_file_location("oh_runner_skills_under_test", _RUNNER_PATH)
+    spec = importlib.util.spec_from_file_location("devclaw_runner_skills_under_test", _RUNNER_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

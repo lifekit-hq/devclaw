@@ -6,7 +6,7 @@ fixtures with the REAL writer (``PersistentTracer.write_transcript``) rather tha
 hand-rolled markdown — if the on-disk format changes, this test breaks with it.
 
 The load-bearing guarantee is the last assertion of the first test: a 100 KB
-decomposer prompt (exactly the size class that OOMs / times out cognition) must
+summary prompt (exactly the size class that OOMs / times out cognition) must
 round-trip through the reader BYTE-FOR-BYTE. A reader that truncated the prompt
 would defeat its own purpose — you'd be blind to the thing you opened it to see.
 """
@@ -42,14 +42,14 @@ def _write(goals_dir: Path, goal_id: str, role: str, prompt: str, response: str,
 
 
 def _seed_run(goals_dir: Path, goal_id: str = "g1") -> str:
-    """A realistic 3-call run: a small planner call, a HUGE decomposer call, and
+    """A realistic 3-call run: a small triage call, a HUGE summary call, and
     an evaluator call that errored. Returns the sentinel buried at the tail of
     the huge prompt so a test can prove it survived."""
-    sentinel = "DECOMPOSE_TAIL_SENTINEL"
+    sentinel = "HUGE_PROMPT_TAIL_SENTINEL"
     huge_prompt = ("goal history line\n" * 6000) + sentinel  # ~110 KB, sentinel last
-    _write(goals_dir, goal_id, "goal_planner", "pick the next action", "{next: 'x'}",
+    _write(goals_dir, goal_id, "triage", "pick the next action", "{next: 'x'}",
            tokens_in=10, tokens_out=5, cost_usd=0.001)
-    _write(goals_dir, goal_id, "goal_decomposer", huge_prompt, "- [ ] step one",
+    _write(goals_dir, goal_id, "summary", huge_prompt, "- [ ] step one",
            tokens_in=27000, tokens_out=8)
     _write(goals_dir, goal_id, "evaluator", "is it done?", "",
            error="claude --print exited -9")
@@ -60,22 +60,22 @@ def test_trace_view_indexes_run_and_dumps_full_huge_prompt(tmp_path: Path) -> No
     sentinel = _seed_run(tmp_path)
 
     calls = trace_view.load_dir(tmp_path, goal="g1")
-    assert [c.role for c in calls] == ["goal_planner", "goal_decomposer", "evaluator"]
+    assert [c.role for c in calls] == ["triage", "summary", "evaluator"]
 
-    decomposer = calls[1]
-    assert decomposer.prompt_chars > 100_000  # the OOM/timeout size class
-    assert decomposer.tokens_in == "27000"
-    assert decomposer.model == "claude-sonnet-4-6"
+    summary_call = calls[1]
+    assert summary_call.prompt_chars > 100_000  # the OOM/timeout size class
+    assert summary_call.tokens_in == "27000"
+    assert summary_call.model == "claude-sonnet-4-6"
 
     # The whole point: the full prompt survives, tail and all — no truncation.
-    assert decomposer.prompt.endswith(sentinel)
-    dump = trace_view.format_show(decomposer, seq=2)
+    assert summary_call.prompt.endswith(sentinel)
+    dump = trace_view.format_show(summary_call, seq=2)
     assert sentinel in dump
-    assert "goal_decomposer" in dump
+    assert "summary" in dump
 
     # The index is scannable and honest about size + errors.
     index = trace_view.format_index(calls)
-    assert "goal_decomposer" in index
+    assert "summary" in index
     assert "110" in index or "k" in index  # human-sized prompt column
     assert "ERR" in index                   # the errored evaluator call is flagged
     assert "1 with errors" in index
@@ -89,13 +89,13 @@ def test_trace_view_filters_by_error_and_role(tmp_path: Path) -> None:
     assert [c.role for c in errored] == ["evaluator"]
     assert errored[0].error == "claude --print exited -9"
 
-    only_decomp = trace_view._apply_filters(calls, role="goal_decomposer",
+    only_summary = trace_view._apply_filters(calls, role="summary",
                                             errors_only=False, grep=None)
-    assert len(only_decomp) == 1
+    assert len(only_summary) == 1
 
     grepped = trace_view._apply_filters(calls, role=None, errors_only=False,
-                                        grep="DECOMPOSE_TAIL_SENTINEL")
-    assert [c.role for c in grepped] == ["goal_decomposer"]
+                                        grep="HUGE_PROMPT_TAIL_SENTINEL")
+    assert [c.role for c in grepped] == ["summary"]
 
 
 def test_trace_view_resolves_transcripts_goal_and_goaldir_paths(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_trace_view_cli_show_and_out_of_range(tmp_path: Path, capsys) -> None:
     tdir = str(tmp_path / "g1" / "transcripts")
 
     assert trace_view.main([tdir, "--show", "2"]) == 0
-    assert "DECOMPOSE_TAIL_SENTINEL" in capsys.readouterr().out
+    assert "HUGE_PROMPT_TAIL_SENTINEL" in capsys.readouterr().out
 
     # --show past the end fails loud with a nonzero code, never an index error.
     assert trace_view.main([tdir, "--show", "99"]) == 2

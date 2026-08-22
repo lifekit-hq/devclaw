@@ -235,26 +235,6 @@ class ControlPlaneMixin:
     def clear_workspace_break(self, workspace_dir: str) -> None:
         self.delete_meta(f"workspace_break:{workspace_dir}")
 
-    def list_workspace_breaks(self) -> list[tuple[str, int, str]]:
-        """All currently-recorded workspace breaks (may include expired ones —
-        the caller filters). Read surface for observability + ops-agent."""
-        prefix = "workspace_break:"
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT key, value FROM meta WHERE key LIKE ?", (f"{prefix}%",)
-            ).fetchall()
-        out: list[tuple[str, int, str]] = []
-        for r in rows:
-            ws = r["key"][len(prefix):]
-            try:
-                data = json.loads(r["value"])
-                out.append((ws, int(data.get("until_ms") or 0), str(data.get("reason") or "")))
-            except (ValueError, TypeError):
-                continue
-        return out
-
-    # ---- trend-detector cooldowns (typed wrappers over set_meta/get_meta) -
-
     def set_trend_cooldown(self, scope: str, signal_id: str, until_ms_str: str) -> None:
         """Persist the cooldown for one (scope, signal) pair. ``until_ms_str``
         is epoch milliseconds as a string — same shape as ``pause_until_ms``,

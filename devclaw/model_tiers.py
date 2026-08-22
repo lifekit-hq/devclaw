@@ -33,7 +33,6 @@ _ROLE_TIER: dict[str, str | None] = {
     "review": MODEL_STANDARD,       # pre-PR adversarial review gate
     "reachability": MODEL_STANDARD, # browser-gate reachability escape-valve judge
     "trend": MODEL_STANDARD,        # trend-signal summarize/classify
-    "judge": MODEL_LIGHT,           # failure-analysis judge
     "summary": MODEL_LIGHT,         # per-delivery plain-prose summary
 }
 

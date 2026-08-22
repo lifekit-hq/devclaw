@@ -38,7 +38,9 @@ def test_quality_modules_import_llm_call_not_heavy_modules():
     # Static source pin: the gate's modules take the LLM primitive from the
     # leaf, never from a heavy module (task_queue/goal drag state_store +
     # task_git and would re-close the old quality → planner-shaped cycle).
-    for mod in ("__init__.py", "eval_judge.py", "reachability.py"):
+    # Only the LLM-calling modules are listed — browser_gate.py is pure
+    # parsing and imports no caller at all.
+    for mod in ("__init__.py", "reachability.py"):
         src = (_REPO / "devclaw" / "quality" / mod).read_text()
         assert "from ..llm_call import" in src, mod
         for heavy in ("from ..task_queue import", "from ..goal import",

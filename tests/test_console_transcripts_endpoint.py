@@ -72,13 +72,13 @@ def _get(fn, path_params: dict):
 
 
 def _seed_run(goals_dir: Path, goal_id: str = "g1") -> str:
-    """A small planner call, a HUGE decomposer call, and an errored evaluator
+    """A small triage call, a HUGE summary call, and an errored evaluator
     call. Returns the sentinel buried at the tail of the huge prompt."""
     sentinel = "DECOMPOSE_TAIL_SENTINEL"
     huge_prompt = ("goal history line\n" * 6000) + sentinel  # ~110 KB, sentinel last
-    _write(goals_dir, goal_id, "goal_planner", "pick the next action", "{next: 'x'}",
+    _write(goals_dir, goal_id, "triage", "pick the next action", "{next: 'x'}",
            tokens_in=10, tokens_out=5, cost_usd=0.001)
-    _write(goals_dir, goal_id, "goal_decomposer", huge_prompt, "- [ ] step one",
+    _write(goals_dir, goal_id, "summary", huge_prompt, "- [ ] step one",
            tokens_in=27000, tokens_out=8)
     _write(goals_dir, goal_id, "evaluator", "is it done?", "",
            error="claude --print exited -9")
@@ -98,12 +98,12 @@ def test_transcripts_index_lists_every_call_with_metadata(tmp_path, monkeypatch)
     assert body["count"] == 3 and len(rows) == 3
     # Oldest first, seq 1..N, roles in write order.
     assert [r["seq"] for r in rows] == [1, 2, 3]
-    assert [r["role"] for r in rows] == ["goal_planner", "goal_decomposer", "evaluator"]
-    decomposer = rows[1]
-    assert decomposer["promptChars"] > 100_000       # the OOM/timeout size class
-    assert decomposer["tokensIn"] == "27000"
-    assert decomposer["model"] == "claude-sonnet-4-6"
-    assert decomposer["filename"].endswith("-goal_decomposer.md")
+    assert [r["role"] for r in rows] == ["triage", "summary", "evaluator"]
+    summary_call = rows[1]
+    assert summary_call["promptChars"] > 100_000       # the OOM/timeout size class
+    assert summary_call["tokensIn"] == "27000"
+    assert summary_call["model"] == "claude-sonnet-4-6"
+    assert summary_call["filename"].endswith("-summary.md")
     # The errored evaluator call is flagged, not hidden.
     assert rows[2]["error"] == "claude --print exited -9"
 
@@ -143,13 +143,13 @@ def test_transcript_full_roundtrips_huge_prompt_untruncated(tmp_path, monkeypatc
     sentinel = _seed_run(goals_dir)
     _point_goals_at(monkeypatch, goals_dir)
 
-    # Discover the decomposer's filename via the index, then pull it in full.
+    # Discover the summary call's filename via the index, then pull it in full.
     _, index = _get(http_mod.goal_transcripts_json, {"goal_id": "g1"})
-    fname = next(r["filename"] for r in index["transcripts"] if r["role"] == "goal_decomposer")
+    fname = next(r["filename"] for r in index["transcripts"] if r["role"] == "summary")
 
     status, body = _get(http_mod.goal_transcript_full, {"goal_id": "g1", "filename": fname})
     assert status == 200
-    assert body["role"] == "goal_decomposer"
+    assert body["role"] == "summary"
     assert body["promptChars"] > 100_000
     # The whole point: the full prompt survives, tail and all — no truncation.
     assert body["prompt"].endswith(sentinel)

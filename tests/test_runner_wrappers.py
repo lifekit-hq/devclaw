@@ -17,7 +17,7 @@ _RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
 @pytest.fixture(scope="module")
 def runner():
-    spec = importlib.util.spec_from_file_location("oh_runner_under_test", _RUNNER_PATH)
+    spec = importlib.util.spec_from_file_location("devclaw_runner_under_test", _RUNNER_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # executes top-level only; main() is not __main__
     return mod

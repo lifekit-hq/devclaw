@@ -23,7 +23,7 @@ _RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 
 @pytest.fixture(scope="module")
 def runner():
-    spec = importlib.util.spec_from_file_location("oh_runner_blocked", _RUNNER_PATH)
+    spec = importlib.util.spec_from_file_location("devclaw_runner_blocked", _RUNNER_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # top-level import; the runner is stdlib-only (spec 011)
     return mod
@@ -92,26 +92,6 @@ def test_empty_and_none_are_not_blocked(runner):
 
 
 # ---- agent-message extraction from a MessageEvent payload -------------------
-
-
-def test_agent_message_text_concatenates_text_parts(runner):
-    payload = {
-        "llm_message": {
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "first "},
-                {"type": "image", "image_url": "..."},
-                {"type": "text", "text": "second"},
-            ],
-        }
-    }
-    assert runner._agent_message_text(payload) == "first second"
-
-
-def test_agent_message_text_degrades_to_empty_on_bad_shape(runner):
-    assert runner._agent_message_text({}) == ""
-    assert runner._agent_message_text({"llm_message": None}) == ""
-    assert runner._agent_message_text("not a dict") == ""
 
 
 # ---- emission: the terminal `result:` line ----------------------------------

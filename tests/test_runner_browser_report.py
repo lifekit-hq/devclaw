@@ -19,7 +19,7 @@ _RUNNER_PATH = _REPO_ROOT / "runner" / "runner.py"
 
 @pytest.fixture(scope="module")
 def runner():
-    spec = importlib.util.spec_from_file_location("oh_runner_browser_report", _RUNNER_PATH)
+    spec = importlib.util.spec_from_file_location("devclaw_runner_browser_report", _RUNNER_PATH)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
