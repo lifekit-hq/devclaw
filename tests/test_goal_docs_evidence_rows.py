@@ -302,6 +302,56 @@ def test_the_cutoff_heals_every_non_executing_lifecycle_including_unknown_ones(t
     store.close()
 
 
+def test_the_cutoff_completes_even_when_drop_column_is_unavailable(tmp_path):
+    """``ALTER TABLE ... DROP COLUMN`` needs SQLite 3.35+. On an older engine
+    the dead ``inbox_ingest_cursor`` column simply stays — unread and
+    unwritten — and everything load-bearing about the sweep still applies.
+
+    The failure this rules out is the one that matters: a cosmetic step
+    raising and taking the lifecycle heal, the ref_id backfill and the marker
+    down with it, so every boot re-runs a migration that can never finish."""
+    import sqlite3
+
+    from devclaw.goal.store.legacy_cutoff import CUTOFF_META_KEY, apply_legacy_cutoff
+
+    class _NoDropColumn:
+        """A connection that rejects DROP COLUMN, like SQLite < 3.35."""
+
+        def __init__(self, real):
+            self._real = real
+
+        def execute(self, sql, *a, **k):
+            if "DROP COLUMN" in sql:
+                raise sqlite3.OperationalError('near "DROP": syntax error')
+            return self._real.execute(sql, *a, **k)
+
+        def __getattr__(self, name):
+            return getattr(self._real, name)
+
+    store = StateStore(str(tmp_path / "devclaw.db"))
+    gs = GoalState(store)
+    with store._lock:
+        store._db.execute(
+            "ALTER TABLE goal_status ADD COLUMN inbox_ingest_cursor INTEGER NOT NULL DEFAULT 0"
+        )
+        store._db.execute(
+            "INSERT INTO goal_status (goal_id, lifecycle) VALUES ('g', 'firming')"
+        )
+        store._commit()
+    store._db = _NoDropColumn(store._db)
+
+    counts = apply_legacy_cutoff(store, gs, now_ms=1)
+
+    assert counts["lifecycle_healed"] == 1                      # the real work landed
+    assert store.get_meta(CUTOFF_META_KEY) == "1"               # and it is not re-run
+    # the column survives, which is the whole tolerated consequence
+    assert any(
+        r["name"] == "inbox_ingest_cursor"
+        for r in store._db.execute("PRAGMA table_info(goal_status)")
+    )
+    store.close()
+
+
 def test_the_cutoff_drops_the_goal_docs_table(tmp_path):
     """``goal_docs`` held checklist / firmed_draft / repo_analysis /
     block_options — every kind died with the host-cognition chain in the spec
