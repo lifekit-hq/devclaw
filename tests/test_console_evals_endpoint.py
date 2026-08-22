@@ -45,7 +45,7 @@ def _get(fn, query: str = ""):
 # ── /evals/outcomes.json ────────────────────────────────────────────────────
 
 def test_evals_outcomes_endpoint_returns_projection_rows(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import evals as evals_routes
     store = _store(tmp_path)
     store.record_basket_outcome(
         report_ref="passrate-1.json", ticket="T-1", status="done",
@@ -55,8 +55,8 @@ def test_evals_outcomes_endpoint_returns_projection_rows(tmp_path, monkeypatch):
         report_ref="passrate-1.json", ticket="T-2", status="failed",
         kind="implement_feature", error="review rejected the change",
     )
-    monkeypatch.setattr(http_mod, "store", store)
-    status, body = _get(http_mod.evals_outcomes_json)
+    monkeypatch.setattr(evals_routes, "store", store)
+    status, body = _get(evals_routes.evals_outcomes_json)
     assert status == 200
     assert isinstance(body, list) and len(body) == 2
     tickets = {r["ticket"] for r in body}
@@ -67,45 +67,45 @@ def test_evals_outcomes_endpoint_returns_projection_rows(tmp_path, monkeypatch):
 
 
 def test_evals_outcomes_endpoint_honours_source_filter(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import evals as evals_routes
     store = _store(tmp_path)
     store.record_basket_outcome(report_ref="r.json", ticket="T-1", status="done")
-    monkeypatch.setattr(http_mod, "store", store)
+    monkeypatch.setattr(evals_routes, "store", store)
     # basket rows exist; source=basket returns them, source=live returns none.
-    _, basket = _get(http_mod.evals_outcomes_json, "source=basket")
-    _, live = _get(http_mod.evals_outcomes_json, "source=live")
+    _, basket = _get(evals_routes.evals_outcomes_json, "source=basket")
+    _, live = _get(evals_routes.evals_outcomes_json, "source=live")
     assert len(basket) == 1 and basket[0]["ticket"] == "T-1"
     assert live == []
 
 
 def test_evals_outcomes_endpoint_rejects_bad_source(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "store", _store(tmp_path))
-    status, body = _get(http_mod.evals_outcomes_json, "source=bogus")
+    from devclaw.server.routes import evals as evals_routes
+    monkeypatch.setattr(evals_routes, "store", _store(tmp_path))
+    status, body = _get(evals_routes.evals_outcomes_json, "source=bogus")
     assert status == 400 and body["error"] == "bad_source"
 
 
 def test_evals_outcomes_endpoint_rejects_bad_limit(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "store", _store(tmp_path))
-    status, body = _get(http_mod.evals_outcomes_json, "limit=nope")
+    from devclaw.server.routes import evals as evals_routes
+    monkeypatch.setattr(evals_routes, "store", _store(tmp_path))
+    status, body = _get(evals_routes.evals_outcomes_json, "limit=nope")
     assert status == 400 and body["error"] == "bad_limit"
 
 
 # ── /evals/cycles.json ──────────────────────────────────────────────────────
 
 def test_evals_cycles_endpoint_empty_when_no_reports(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import evals as evals_routes
     # cycle_reports is bootstrapped by StateStore (PR2) but empty until a
     # window closes; the endpoint returns [] rather than 500ing.
     store = _store(tmp_path)
-    monkeypatch.setattr(http_mod, "store", store)
-    status, body = _get(http_mod.evals_cycles_json)
+    monkeypatch.setattr(evals_routes, "store", store)
+    status, body = _get(evals_routes.evals_cycles_json)
     assert status == 200 and body == []
 
 
 def test_evals_cycles_endpoint_returns_rows_when_table_present(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import evals as evals_routes
     store = _store(tmp_path)
     # Record a cycle via PR2's single-writer API (not a hand-rolled CREATE —
     # StateStore already owns the DDL).
@@ -114,8 +114,8 @@ def test_evals_cycles_endpoint_returns_rows_when_table_present(tmp_path, monkeyp
         clean=True, wedges_json="[]", pauses_json="[]", summary="clean cycle",
         sent_at=3,
     )
-    monkeypatch.setattr(http_mod, "store", store)
-    status, body = _get(http_mod.evals_cycles_json)
+    monkeypatch.setattr(evals_routes, "store", store)
+    status, body = _get(evals_routes.evals_cycles_json)
     assert status == 200 and len(body) == 1
     assert body[0]["cycle_key"] == "2026-07-21" and body[0]["clean"] == 1
 

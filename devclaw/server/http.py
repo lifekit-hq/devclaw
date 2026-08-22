@@ -40,6 +40,11 @@ from ._state import (
     store,
 )
 
+# Route modules. These imports are NOT unused: `@mcp.custom_route` registers at
+# import time, so a module nothing imports serves nothing. See routes/__init__.
+from .routes import evals as _routes_evals  # noqa: F401,E402
+from .routes._common import json_limit  # noqa: E402
+
 
 def _safe_parse(s: str) -> object:
     try:
@@ -599,51 +604,6 @@ def _env_var_catalog() -> list[dict]:
     return rows
 
 
-# ---- Evals projection (ADR 0006) ------------------------------------------
-# Read-only JSON over the eval_outcomes projection + the cycle_reports table.
-# Un-prefixed `.json` data-endpoint convention (like /config/env.json,
-# /projects.json, /control.json) — NOT the contract's illustrative
-# `/api/evals/...`. The console Evals tab reads these.
-
-_EVALS_JSON_DEFAULT_LIMIT = 100
-_EVALS_JSON_MAX_LIMIT = 1000
-
-
-def _evals_limit(request: Request) -> tuple[int, Response | None]:
-    try:
-        limit = int(request.query_params.get("limit", _EVALS_JSON_DEFAULT_LIMIT))
-    except (TypeError, ValueError):
-        return 0, JSONResponse({"error": "bad_limit"}, status_code=400)
-    if limit <= 0:
-        return 0, JSONResponse({"error": "bad_limit"}, status_code=400)
-    return min(limit, _EVALS_JSON_MAX_LIMIT), None
-
-
-@mcp.custom_route("/evals/outcomes.json", methods=["GET"])
-async def evals_outcomes_json(request: Request) -> Response:
-    """Recent ``eval_outcomes`` projection rows (ADR 0006), newest settle first.
-    Params: ``limit`` (default 100, max 1000), ``source`` (``live``|``basket``).
-    Read-only; delegates the SELECT to the store (PR1's read method)."""
-    limit, err = _evals_limit(request)
-    if err is not None:
-        return err
-    source = request.query_params.get("source") or None
-    if source not in (None, "live", "basket"):
-        return JSONResponse({"error": "bad_source"}, status_code=400)
-    return JSONResponse(store.list_eval_outcomes(source=source, limit=limit))
-
-
-@mcp.custom_route("/evals/cycles.json", methods=["GET"])
-async def evals_cycles_json(request: Request) -> Response:
-    """Recent ``cycle_reports`` rows (ADR 0006), newest window first. Param:
-    ``limit`` (default 100, max 1000). The table is bootstrapped by StateStore,
-    so an empty table returns [] (never a 500); a real DB fault surfaces loudly."""
-    limit, err = _evals_limit(request)
-    if err is not None:
-        return err
-    return JSONResponse(store.list_cycle_reports(limit=limit))
-
-
 # Lifecycle derivation lives in state_store.problems (the single home shared with
 # the MCP `list_problems` tool, N1/#371); re-exported here under the original name
 # so this route + its test keep importing it from this module.
@@ -669,7 +629,7 @@ async def problems_json(request: Request) -> Response:
     row; never wakes the goal loop."""
     from ..goal.self_issue import self_repo, self_fix_goal_id
 
-    limit, err = _evals_limit(request)
+    limit, err = json_limit(request)
     if err is not None:
         return err
     _THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
