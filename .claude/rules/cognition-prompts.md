@@ -1,8 +1,14 @@
 # Cognition callers & prompt files — conventions
 
-Applies to `devclaw/prompts/*.md` + the gate's own `devclaw/quality/prompts/*.md` and the layer-3 caller modules
-(`goal/{evaluator,decomposer,research,world_research}.py`,
-`goal/phases/firming.py`, `devclaw/planner.py`, `devclaw/quality/`).
+Applies to `devclaw/prompts/*.md` + the gate's own `devclaw/quality/prompts/*.md`
+and the layer-3 caller modules — every module that calls `load_prompt`:
+`devclaw/goal/evaluator.py`, `devclaw/goal/summary.py`, `devclaw/goal/triage.py`,
+`devclaw/elicitation.py`, `devclaw/intake_readiness.py`, `devclaw/quality/`.
+
+Write module references as full repo-relative paths. `tests/test_harness_docs_map.py`
+asserts every path named here resolves, so a brace-expanded or abbreviated form is
+invisible to the guard and rots silently — which is exactly what happened to the
+five modules the 008 shrink deleted.
 
 ## Prompt templates (`devclaw/prompts/*.md`, `devclaw/quality/prompts/*.md`)
 

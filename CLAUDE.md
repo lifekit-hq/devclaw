@@ -27,7 +27,7 @@ Only layer 5 is an agent harness in the technical sense.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`executing` only since the 008 shrink), the ~15-min tick |
-| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/elicitation.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, scope-grill, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink) |
+| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/elicitation.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, scope-grill, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink) |
 | 4 | **TaskQueue + engine** | `devclaw/task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
 
@@ -74,7 +74,7 @@ spawn containers itself — it goes through the engine).
 - **`done_when` is repository behavior, never delivery ceremony.** How the work ships,
   how many PRs it takes, which branch it lands on, whether/who merges it, and which
   issues or PRs get closed are NOT completion criteria — the evaluator drops them at
-  decomposition (`prompts/goal-evaluator.md` step 1a) and names the drop in its
+  decomposition (`devclaw/prompts/goal-evaluator.md` step 1a) and names the drop in its
   rationale. Writing ceremony into a contract is how a goal ends up unclosable: under
   `goal-branch` the cumulative PR deliberately stays open for the done-gate, and the
   sandbox carries no GitHub credential, so no run can ever satisfy such a clause. Hold
@@ -196,7 +196,7 @@ This repo carries a Claude-Code project harness for developing devclaw itself
 auto-loaded, the operational detail this file deliberately doesn't carry;
 speckit-workflow is the anti-drift pipeline since 2026-08-13: every
 behavior-changing change starts `/speckit-specify` → `/speckit-clarify` →
-plan → tasks → implement in `.specify/`, no implementation before clarify,
+plan → tasks → implement, specs landing in `specs/` and the machinery in `.specify/`, no implementation before clarify,
 with the constitution (`.specify/memory/constitution.md`) as the invariant
 statement specs are checked against; `docs/proposals/` + `docs/decisions/`
 are frozen history), `commands/ship` (the pre-PR ritual as `/ship`),
