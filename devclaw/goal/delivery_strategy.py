@@ -97,7 +97,8 @@ def resolve_strategy(store: "GoalStore", goal_id: str) -> "DeliveryStrategy":
     The machinery is deliberately KEPT, not deleted: whether devclaw should
     regain a per-action topology (and with it auto-merge) is a design
     decision, not demolition, and #611 explicitly puts behavior change out of
-    scope. This stays a function of the store rather than a constant because
+    scope. That decision is tracked in **#641** — dead-but-kept is the state
+    #611 exists to end, so this is a holding position, not a resting one. This stays a function of the store rather than a constant because
     it is the seam that decision plugs into. A pure read of goal state; no LLM
     call, no writer.
     """
