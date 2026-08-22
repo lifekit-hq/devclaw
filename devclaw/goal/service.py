@@ -152,6 +152,27 @@ class GoalService:
 
     # ---- cognition callers (bound on first real use) -----------------------
 
+    def _registered_workspaces(self) -> "set[str]":
+        """Normalized workspace paths owned by a REGISTERED project.
+
+        The retention sweep must never release these: a project owns its
+        checkout for as long as it is registered, however many of its goals have
+        finished, and ``delete_project`` is the verb that releases it. Without a
+        registry this returns an empty set — meaning "no workspace is
+        project-owned", which is only safe because the sweep additionally
+        requires every goal on a workspace to be terminal.
+        """
+        from ..project_registry import _normalize_workspace
+
+        if self._project_registry is None:
+            return set()
+        out: "set[str]" = set()
+        for project in self._project_registry.list():
+            norm = _normalize_workspace(getattr(project, "workspace_dir", None))
+            if norm:
+                out.add(norm)
+        return out
+
     def _evaluator(self) -> ClaudeCaller:
         if self._evaluator_caller is None:
             self._evaluator_caller = goal_evaluator.default_caller()
@@ -448,6 +469,7 @@ class GoalService:
             remote_checker=self._remote_checker(),
             triage_caller=self._triage(),
             mergeability_probe=goal_merge.pr_conflicting,
+            project_workspaces=self._registered_workspaces,
         )
         # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
         # crashing tick leaves this stale, which is exactly the signal an

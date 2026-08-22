@@ -376,3 +376,276 @@ async def test_delete_project_still_rejects_an_unknown_id(tool_env):
 
     with pytest.raises(ToolError):
         await tool_env.tools.delete_project(project_id="nope")
+
+
+# --- the retention sweep --------------------------------------------------
+#
+# The timer half of #595: a goal-scoped workspace whose goal ended long enough
+# ago that nobody will look at it again. Windows ruled by Denys 2026-08-22 —
+# 14 days for a goal that ended badly (the checkout IS the forensics), 3 days
+# for one that finished cleanly (the work is on a branch).
+
+DAY_MS = 24 * 3600 * 1000
+
+
+def _ago(now_ms: int, days: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(
+        (now_ms - int(days * DAY_MS)) / 1000, tz=timezone.utc
+    ).isoformat()
+
+
+def _row(ws, *, phase="done", days_ago=30.0, now, direction=None, blocked_on=None,
+         gid="g1"):
+    return {
+        "id": gid,
+        "workspace_dir": ws,
+        "phase": phase,
+        "direction": direction,
+        "blocked_on": blocked_on,
+        "last_progress_at": _ago(now, days_ago),
+        "last_tick_at": None,
+        "last_eval_at": None,
+        "last_plan_at": None,
+    }
+
+
+NOW = 1_800_000_000_000
+
+
+def test_sweep_releases_a_cleanly_finished_goals_workspace_past_the_short_window(
+    ws, docker_ok
+):
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=5, now=NOW, direction="achieved")],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert [r["kind"] for r in out["released"]] == ["workspace", "toolchain_volume"]
+
+
+def test_sweep_keeps_a_cleanly_finished_workspace_inside_the_short_window(
+    ws, docker_ok
+):
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=1, now=NOW, direction="achieved")],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert out["released"] == [] and out["considered"] == 0
+    import pathlib
+
+    assert pathlib.Path(ws).exists()
+
+
+def test_a_badly_ended_goals_workspace_survives_the_short_window(ws, docker_ok):
+    """5 days old and off_track: past the 3-day clean window but well inside the
+    14-day forensic one. This is the case the two windows exist for."""
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=5, now=NOW, direction="off_track")],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert out["released"] == []
+    import pathlib
+
+    assert pathlib.Path(ws).exists()
+
+
+def test_a_badly_ended_goals_workspace_is_released_past_the_long_window(
+    ws, docker_ok
+):
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=20, now=NOW, direction="off_track")],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert [r["kind"] for r in out["released"]] == ["workspace", "toolchain_volume"]
+    assert out["released"][0]["bad"] is True
+
+
+def test_an_uncleared_block_at_a_terminal_phase_counts_as_ended_badly(ws, docker_ok):
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[
+            _row(ws, days_ago=5, now=NOW, phase="cancelled", blocked_on="circuit breaker")
+        ],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert out["released"] == []  # held for the long window, not the short one
+
+
+def test_the_sweep_never_touches_a_registered_projects_workspace(ws, docker_ok):
+    """The correctness trap. All four finance-sentry goals can be terminal while
+    the project is alive and about to get new work — sweeping its checkout would
+    delete a live project's clone and force a re-clone. A project's workspace is
+    released by delete_project, never by goal terminality."""
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=999, now=NOW, direction="achieved")],
+        project_workspaces={ws},
+        now_ms=NOW,
+    )
+    assert out["released"] == [] and out["considered"] == 0
+    import pathlib
+
+    assert pathlib.Path(ws).exists()
+
+
+def test_the_sweep_does_nothing_when_project_ownership_is_unknown(ws, docker_ok):
+    """No registry -> no way to know which workspaces a project owns. Absence of
+    information is never permission to delete."""
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=999, now=NOW)],
+        project_workspaces=None,
+        now_ms=NOW,
+    )
+    assert out["released"] == []
+    assert out["drained"] is True
+    import pathlib
+
+    assert pathlib.Path(ws).exists()
+
+
+def test_a_goal_with_no_timestamps_is_never_swept(ws, docker_ok):
+    """An unknown age is never old enough."""
+    row = _row(ws, now=NOW)
+    row["last_progress_at"] = None
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[row], project_workspaces=set(), now_ms=NOW
+    )
+    assert out["considered"] == 0 and out["released"] == []
+
+
+def test_the_sweep_requires_every_goal_on_a_shared_workspace_to_be_terminal(
+    ws, docker_ok
+):
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[
+            _row(ws, days_ago=99, now=NOW, gid="old"),
+            _row(ws, days_ago=1, now=NOW, phase="executing", gid="live"),
+        ],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert out["considered"] == 0 and out["released"] == []
+
+
+def test_the_sweep_is_bounded_per_batch_and_says_when_it_is_not_drained(
+    tmp_path, docker_ok
+):
+    """A 34-directory backlog must drain across ticks, never wedge one."""
+    rows = []
+    for i in range(8):
+        d = tmp_path / "workspaces" / f"ws{i}"
+        d.mkdir(parents=True)
+        rows.append(_row(str(d), days_ago=99, now=NOW, gid=f"g{i}"))
+
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=rows, project_workspaces=set(), now_ms=NOW, batch_limit=5
+    )
+
+    assert out["considered"] == 8
+    assert len([r for r in out["released"] if r["kind"] == "workspace"]) == 5
+    assert out["drained"] is False  # more remain -> watermark must NOT advance
+
+
+def test_a_short_batch_reports_drained_so_the_watermark_can_advance(ws, docker_ok):
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=99, now=NOW)],
+        project_workspaces=set(),
+        now_ms=NOW,
+        batch_limit=5,
+    )
+    assert out["drained"] is True
+
+
+def test_retention_disabled_by_env_sweeps_nothing(ws, docker_ok, monkeypatch):
+    monkeypatch.setenv("DEVCLAW_WORKSPACE_RETENTION_DAYS", "0")
+    monkeypatch.setenv("DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED", "0")
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=999, now=NOW)],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert out["released"] == []
+
+
+def test_retention_windows_are_configurable_like_the_trace_retention(monkeypatch):
+    monkeypatch.setenv("DEVCLAW_WORKSPACE_RETENTION_DAYS", "9")
+    monkeypatch.setenv("DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED", "99")
+    assert hr.workspace_retention_days() == 9
+    assert hr.failed_workspace_retention_days() == 99
+
+
+def test_a_running_task_still_blocks_a_workspace_the_sweep_selected(ws, docker_ok):
+    """Age says release; an in-flight task says no. The task wins."""
+    out = hr.sweep_terminal_goal_workspaces(
+        goals=[_row(ws, days_ago=999, now=NOW)],
+        running_tasks=[_Task("t1", ws)],
+        project_workspaces=set(),
+        now_ms=NOW,
+    )
+    assert out["released"] == []
+    assert out["failed"] and "still running" in out["failed"][0]["reason"]
+    import pathlib
+
+    assert pathlib.Path(ws).exists()
+
+
+# --- the heartbeat seam ---------------------------------------------------
+
+
+def test_the_tick_seam_is_a_no_op_on_an_engine_without_the_sweep():
+    """Test doubles don't implement reap_workspaces; that must mean 'no sweep',
+    never an exception on the heartbeat."""
+    from devclaw.goal import tick as _tick
+
+    _tick._engine_reap_workspaces(object(), object(), lambda: set())  # no raise
+
+
+def test_the_tick_seam_sweeps_nothing_when_the_registry_resolver_raises():
+    """Unknown ownership must sweep nothing rather than treat everything as
+    fair game."""
+    from devclaw.goal import tick as _tick
+
+    called = []
+
+    class _Engine:
+        def reap_workspaces(self, goals, owned):
+            called.append(owned)
+            return {}
+
+    def boom():
+        raise RuntimeError("registry down")
+
+    _tick._engine_reap_workspaces(_Engine(), object(), boom)
+
+    assert called == []  # never reached the engine
+
+
+def test_the_tick_seam_swallows_a_sweep_failure_rather_than_wedging_the_heartbeat():
+    from devclaw.goal import tick as _tick
+
+    class _Engine:
+        def reap_workspaces(self, goals, owned):
+            raise RuntimeError("docker exploded")
+
+    class _Store:
+        def list_goal_ids(self):
+            return []
+
+    _tick._engine_reap_workspaces(_Engine(), _Store(), lambda: set())  # no raise
+
+
+def test_the_sweep_costs_zero_claude_calls():
+    """Constitutional (Principle III): the sweep rides the heartbeat's cheap
+    maintenance slot. It is pure filesystem + docker CLI work and must never
+    reach cognition."""
+    from tests.goal_fakes import FakeClaude
+
+    fake = FakeClaude()
+    hr.sweep_terminal_goal_workspaces(
+        goals=[], project_workspaces=set(), now_ms=NOW
+    )
+    assert fake.calls == 0

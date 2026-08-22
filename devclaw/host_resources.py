@@ -32,6 +32,7 @@ between what is recorded and what is present — is a separate, read-only job
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -248,3 +249,238 @@ def release_for_project(
     out = release_project_resources(workspace_dir, dry_run=dry_run)
     out["blocked"] = []
     return out
+
+
+# --- retention sweep: workspaces of goals that ended ----------------------
+#
+# ``delete_project`` above releases what a PROJECT owns, on an explicit human
+# verb. This sweep is the timer half: a goal-scoped workspace whose goal ended
+# long enough ago that nobody is going to look at it again.
+#
+# It follows the trace/events retention pattern exactly (``StateStore.
+# _maybe_prune_table``): a cycle gated by a persisted watermark, a bounded batch
+# per tick, and the watermark advanced only when a batch comes back short, so a
+# 34-directory backlog drains across ticks instead of wedging one. Zero LLM
+# calls on every path — it rides the heartbeat's cheap maintenance slot, after
+# the phase gates.
+
+#: Days to keep a cleanly-finished goal's workspace. Short: a goal that reached
+#: its done-gate has its work on a branch, and nobody inspects the checkout.
+WORKSPACE_RETENTION_DAYS_DEFAULT = 3
+
+#: Days to keep the workspace of a goal that ended BADLY. Long: this is the case
+#: where the checkout is the evidence — what the worker actually left behind
+#: when it went off track — and it is the only forensics that exists.
+WORKSPACE_RETENTION_DAYS_FAILED_DEFAULT = 14
+
+#: One sweep cycle per day, like the trace prune.
+_SWEEP_INTERVAL_MS = 24 * 3600 * 1000
+
+#: Directories removed per tick. Deliberately small — each is an irreversible
+#: rmtree of up to a few hundred MB, and there is never a hurry.
+SWEEP_BATCH = 5
+
+#: Directions that mean the goal ended badly. ``blocked_on`` set at a terminal
+#: phase means the same thing.
+_BAD_DIRECTIONS = frozenset({"off_track", "stalled"})
+
+
+def _parse_days(raw: "str | None", default: int) -> int:
+    """Retention in days from a raw env value, ``<= 0`` disables — the same
+    contract (and the same shape) as ``state_store.core._parse_retention_days``.
+    The env NAME stays a literal at the call site so the doc-parity scanner in
+    ``tests/test_env_vars_doc_sync.py`` can see the read."""
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def workspace_retention_days() -> int:
+    """Clean-terminal workspace retention from ``DEVCLAW_WORKSPACE_RETENTION_DAYS``."""
+    return _parse_days(
+        os.environ.get("DEVCLAW_WORKSPACE_RETENTION_DAYS"),
+        WORKSPACE_RETENTION_DAYS_DEFAULT,
+    )
+
+
+def failed_workspace_retention_days() -> int:
+    """Forensic retention from ``DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED``."""
+    return _parse_days(
+        os.environ.get("DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED"),
+        WORKSPACE_RETENTION_DAYS_FAILED_DEFAULT,
+    )
+
+
+def goal_ended_badly(goal: Any) -> bool:
+    """Whether a terminal goal is one an operator might still want to inspect.
+
+    devclaw has no ``failed`` phase — a goal ends ``done`` or ``cancelled``. The
+    distinction the retention windows care about is not the phase but whether it
+    ended in a state worth looking at: an off-track/stalled direction, or a
+    block that was never cleared.
+    """
+    if (_attr(goal, "direction") or "") in _BAD_DIRECTIONS:
+        return True
+    return bool((_attr(goal, "blocked_on") or "").strip())
+
+
+def _goal_quiet_since_ms(goal: Any) -> "int | None":
+    """When this goal last did anything, in epoch ms, or ``None`` if unknown.
+
+    ``None`` means the age is unknown, and an unknown age is never old enough —
+    a goal with no timestamps is left alone rather than swept on a guess.
+    """
+    from datetime import datetime
+
+    best: "int | None" = None
+    for field in ("last_progress_at", "last_tick_at", "last_eval_at", "last_plan_at"):
+        raw = _attr(goal, field)
+        if not raw:
+            continue
+        try:
+            stamp = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            continue
+        ms = int(stamp.timestamp() * 1000)
+        best = ms if best is None else max(best, ms)
+    return best
+
+
+def sweep_candidates(
+    *,
+    goals: Iterable[Any],
+    project_workspaces: "set[str]",
+    now_ms: int,
+    retention_days: "int | None" = None,
+    failed_retention_days: "int | None" = None,
+) -> list[dict]:
+    """Goal-scoped workspaces old enough to release, newest exclusions first.
+
+    A workspace is a candidate only when ALL of these hold:
+
+    * every goal on it is terminal (live state is never swept — enforced again
+      at release time by :func:`release_blockers`);
+    * it is NOT the workspace of a registered project. A project owns its
+      checkout and releases it through ``delete_project``; sweeping it because
+      its goals happen to be terminal would delete a live project's clone and
+      force a re-clone on its next goal.
+    * the newest goal on it went quiet longer ago than its retention window.
+
+    Returns dicts of ``{workspace_dir, goal_ids, bad, age_days}``.
+    """
+    keep = retention_days if retention_days is not None else workspace_retention_days()
+    keep_bad = (
+        failed_retention_days
+        if failed_retention_days is not None
+        else failed_workspace_retention_days()
+    )
+    if keep <= 0 and keep_bad <= 0:
+        return []
+
+    by_ws: dict[str, list[Any]] = {}
+    for goal in goals:
+        ws = _normalize_workspace(_attr(goal, "workspace_dir"))
+        if ws is None:
+            continue
+        by_ws.setdefault(ws, []).append(goal)
+
+    out: list[dict] = []
+    for ws, ws_goals in by_ws.items():
+        if ws in project_workspaces:
+            continue  # a registered project owns this — delete_project's job
+        if any(_attr(g, "phase") not in TERMINAL_PHASES for g in ws_goals):
+            continue
+        quiet = [_goal_quiet_since_ms(g) for g in ws_goals]
+        if any(q is None for q in quiet):
+            continue  # unknown age is never old enough
+        newest = max(q for q in quiet if q is not None)
+        bad = any(goal_ended_badly(g) for g in ws_goals)
+        window_days = keep_bad if bad else keep
+        if window_days <= 0:
+            continue
+        age_ms = now_ms - newest
+        if age_ms < window_days * 24 * 3600 * 1000:
+            continue
+        out.append(
+            {
+                "workspace_dir": _attr(ws_goals[0], "workspace_dir"),
+                "goal_ids": sorted(str(_attr(g, "id")) for g in ws_goals),
+                "bad": bad,
+                "age_days": round(age_ms / (24 * 3600 * 1000), 1),
+            }
+        )
+    # Oldest first — drain the longest-dead directories before recent ones.
+    out.sort(key=lambda c: -c["age_days"])
+    return out
+
+
+def sweep_terminal_goal_workspaces(
+    *,
+    goals: Iterable[Any],
+    running_tasks: Iterable[Any] = (),
+    project_workspaces: "set[str] | None" = None,
+    now_ms: int,
+    batch_limit: int = SWEEP_BATCH,
+    retention_days: "int | None" = None,
+    failed_retention_days: "int | None" = None,
+    dry_run: bool = False,
+) -> dict:
+    """One bounded batch of the workspace retention sweep.
+
+    ``project_workspaces=None`` means the caller could not determine which
+    workspaces belong to registered projects, and the sweep does NOTHING rather
+    than risk deleting a live project's checkout. Absence of information is
+    never treated as permission.
+
+    Returns ``{"released": [...], "failed": [...], "considered": n,
+    "drained": bool}``; ``drained`` is True when this batch came back short,
+    which is the caller's signal to stamp the daily watermark.
+    """
+    if project_workspaces is None:
+        return {"released": [], "failed": [], "considered": 0, "drained": True}
+
+    candidates = sweep_candidates(
+        goals=goals,
+        project_workspaces=project_workspaces,
+        now_ms=now_ms,
+        retention_days=retention_days,
+        failed_retention_days=failed_retention_days,
+    )
+    released: list[dict] = []
+    failed: list[dict] = []
+    acted = 0
+    goals_list = list(goals)
+    tasks_list = list(running_tasks)
+
+    for cand in candidates:
+        if acted >= batch_limit:
+            break
+        acted += 1
+        out = release_for_project(
+            cand["workspace_dir"],
+            goals=goals_list,
+            running_tasks=tasks_list,
+            dry_run=dry_run,
+        )
+        if out["blocked"]:
+            failed.append(
+                {
+                    "kind": "workspace",
+                    "id": cand["workspace_dir"],
+                    "reason": "; ".join(out["blocked"]),
+                }
+            )
+            continue
+        for entry in out["released"]:
+            released.append({**entry, "age_days": cand["age_days"], "bad": cand["bad"]})
+        failed.extend(out["failed"])
+
+    return {
+        "released": released,
+        "failed": failed,
+        "considered": len(candidates),
+        "drained": acted < batch_limit,
+    }

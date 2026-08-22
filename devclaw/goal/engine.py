@@ -23,6 +23,10 @@ from typing import Optional, Protocol
 
 from .models import Action, Goal, InFlight, PollResult
 from ..state_store import StateStore, TaskKind
+from ..state_store.core import _now_ms
+
+#: Watermark for the daily goal-workspace retention sweep (#595).
+_WORKSPACE_SWEEP_META_KEY = "workspace_sweep_last_ms"
 from ..task_queue import TaskQueue
 
 _TASK_TERMINAL = {"done", "failed", "cancelled"}
@@ -176,6 +180,42 @@ class InProcessEngine:
         return operator_block(
             self._store.operator_hold(), self._store.get_run_schedule(), now_ms
         )
+
+    def reap_workspaces(
+        self, goals: "list", project_workspaces: "set[str] | None"
+    ) -> dict:
+        """One bounded batch of the goal-workspace retention sweep (#595).
+
+        Same seam shape as :meth:`prune_traces`: the engine owns the daily
+        watermark and the running-task query (both StateStore-side), while
+        ``host_resources`` owns the decision and the removal. Zero LLM calls.
+
+        ``project_workspaces=None`` (caller has no registry) sweeps nothing —
+        absence of information is never permission to delete.
+        """
+        from .. import host_resources as _hr
+
+        now = _now_ms()
+        raw = self._store.get_meta(_WORKSPACE_SWEEP_META_KEY)
+        try:
+            last = int(raw) if raw else 0
+        except ValueError:
+            last = 0
+        if last and (now - last) < _hr._SWEEP_INTERVAL_MS:
+            return {"released": [], "failed": [], "considered": 0, "drained": True}
+        out = _hr.sweep_terminal_goal_workspaces(
+            goals=goals,
+            running_tasks=self._store.list_tasks(status="running", limit=500),
+            project_workspaces=project_workspaces,
+            now_ms=now,
+        )
+        if out["drained"]:
+            # Backlog empty for this cycle — wait a day. A FULL batch leaves the
+            # watermark alone so the next tick continues the drain (the trace
+            # prune's rule, for the same reason: a 34-directory backlog must not
+            # wedge one tick).
+            self._store.set_meta(_WORKSPACE_SWEEP_META_KEY, str(now))
+        return out
 
     def prune_traces(self) -> int:
         """Daily trace-retention prune (volume hygiene, 2026-07-15). Delegates
