@@ -29,6 +29,7 @@ from typing import Callable
 
 from . import merge as _merge
 from . import prior_increments as _prior_increments
+from . import project_hold as _project_hold
 from . import remote_checks as _remote_checks
 from . import triage as _triage
 # _deploy stays at tick.py level even though only tick_donegate._auto_deploy calls
@@ -117,6 +118,7 @@ async def tick_goal(
     trend_detector: "object | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_merge.MergeabilityProbe | None" = None,
+    holders: "dict[str, str] | None" = None,
 ) -> Outcome:
     """Run one heartbeat and record a single ``tick`` trace event with the
     incoming (lifecycle, phase) and outgoing outcome — the only place the trace
@@ -149,6 +151,7 @@ async def tick_goal(
                 summary_caller=summary_caller, merger=merger,
                 remote_checker=remote_checker,
                 mergeability_probe=mergeability_probe,
+                holders=holders,
             )
         except IllegalTransition as exc:
             # A handler proposed an (event, target) the LEGAL table doesn't permit
@@ -223,6 +226,7 @@ async def _tick_goal_impl(
     merger: "_merge.Merger | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_merge.MergeabilityProbe | None" = None,
+    holders: "dict[str, str] | None" = None,
 ) -> Outcome:
     """Run one heartbeat. Reads the goal's status, classifies it into a
     :class:`Phase`, dispatches to the matching handler.
@@ -245,6 +249,7 @@ async def _tick_goal_impl(
         summary_caller=summary_caller, merger=merger,
         remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
+        holders=holders,
     )
 
     status = store.load_status(goal_id)
@@ -465,6 +470,31 @@ async def _handle_long_lived_advance(
             autodeploy=ctx.autodeploy,
         )
 
+    # Single-writer project hold (spec 010 P1). THE dispatch choke point: a
+    # goal that is not its project's holder dispatches nothing, so two
+    # independent plans can never run against one repository (the #553 class,
+    # closed by construction rather than mitigated).
+    #
+    # Placed here on purpose — after the settled-ok done-gate branch above, so a
+    # goal that still has in-flight work finishes settling it and nothing is
+    # orphaned (the spec's upgrade edge case), and BEFORE the steering read
+    # below, which lazily ingests inbox lines and therefore WRITES. A queued
+    # tick must cost zero cognition AND zero writes: the hold is derived, so
+    # there is nothing here to acquire, stamp, or release.
+    #
+    # ``ctx.holders`` is the sweep-wide map when tick_all threaded one in;
+    # a direct tick_goal call (tick_one, tests) derives it here instead.
+    holders = ctx.holders if ctx.holders is not None else _project_hold.holder_map(store)
+    scope = _project_hold.scope_key(goal)
+    holder = holders.get(scope) if scope else None
+    if holder is not None and holder != goal_id:
+        # No log line and no status write: this fires every heartbeat for as
+        # long as the holder runs, and a per-tick append would bury the goal's
+        # real history under queue noise. The wait is legible where an operator
+        # actually looks — get_goal derives it from this same function (FR-002,
+        # SC-006).
+        return Outcome.QUEUED
+
     # Steering + should_plan gate — mirrors the planner path's gate exactly so
     # the zero-token idle guard is preserved: a blocked goal unblocks only on
     # work, an idle goal plans only on work or a due cadence.
@@ -664,6 +694,12 @@ async def tick_all(
     # exists to prevent. Zero LLM (raw owner ping, no summarizer).
     await _maybe_alert_db_size(engine, notifier, triage_caller=triage_caller)
 
+    # Single-writer project hold (spec 010 P1): derive who holds each project
+    # ONCE for the whole sweep. The derivation reads every goal, so deriving it
+    # per goal would make one sweep an N² scan. Cheap and zero-LLM — it belongs
+    # in this same pre-loop slot as the other mechanical housekeeping above.
+    holders = _project_hold.holder_map(store)
+
     for goal_id in store.list_goal_ids():
         # Per-goal run-window: a goal can carry its OWN night/off-hours schedule
         # on top of the engine-wide gate above (e.g. a token-heavy standing loop
@@ -702,6 +738,7 @@ async def tick_all(
                     trend_detector=trend_detector,
                     remote_checker=remote_checker,
                     mergeability_probe=mergeability_probe,
+                    holders=holders,
                 )
         except Exception as exc:  # noqa: BLE001 — isolate per-goal blast radius
             # the goal's OWN cognition (claude --print) hitting a limit pauses the

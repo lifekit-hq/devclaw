@@ -299,6 +299,11 @@ class GoalContentMixin:
             parse_record(instruction, body, statuses.get(ref_id) if ref_id else None)
             for ref_id, instruction, body in self._goal_state.delivery_records(goal_id)
         ]
+    def goal_created_at_map(self) -> "dict[str, int]":
+        """``goal_id -> creation timestamp (ms)`` for the whole fleet — the age
+        source the derived project hold orders by (spec 010 FR-005, amended).
+        Read-only, one grouped query, safe on the tick path."""
+        return self._goal_state.goal_created_at_ms_map()
 
     def recent_deliveries(self, goal_id: str, chars: int = 8000) -> str:
         """The tail of the deliveries record (bounded — the evaluator's

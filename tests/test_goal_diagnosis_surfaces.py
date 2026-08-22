@@ -102,3 +102,41 @@ def test_get_goal_next_shows_objective_never_advance_brief(svc):
 
     assert svc.get_goal("ledger")["next"] == "ship it"
     assert svc.tail_goal("ledger")["next"] == "ship it"
+
+
+def test_get_goal_surfaces_the_queued_wait_with_its_holder(svc):
+    """Spec 010 FR-002 / SC-006: a goal waiting on another goal's project can be
+    identified as queued — and told WHICH goal it waits on — from its own status
+    surface, with no log-diving.
+
+    Derived on read, never stored: the hold itself is derived (FR-005 as
+    amended), and a persisted copy of a derived fact can drift out of step with
+    it. It also keeps a queued tick free of per-heartbeat writes."""
+    _mk(svc, "holder", mode="long_lived")     # both on /ws → one project
+    _mk(svc, "waiter", mode="long_lived")
+
+    holder = svc.get_goal("holder")
+    waiter = svc.get_goal("waiter")
+
+    # The holder is working; it waits on nobody.
+    assert holder["queued_behind"] is None
+    assert holder["queued_reason"] is None
+    # The waiter names its holder, and says it resumes without operator action.
+    assert waiter["queued_behind"] == "holder"
+    assert "holder" in waiter["queued_reason"]
+    assert "automatically" in waiter["queued_reason"]
+    # Queued is NOT blocked: nothing is wrong and nothing is asked of the owner.
+    assert waiter["blocked_on"] is None
+    assert waiter["blocked_kind"] in (None, "")
+
+
+def test_get_goal_shows_no_queue_once_the_holder_is_terminal(svc):
+    """FR-003: the handover needs no operator action and no release step — once
+    the holder goes terminal the derivation simply names the next goal."""
+    _mk(svc, "holder", mode="long_lived")
+    _mk(svc, "waiter", mode="long_lived")
+    assert svc.get_goal("waiter")["queued_behind"] == "holder"
+
+    svc.cancel_goal("holder")
+
+    assert svc.get_goal("waiter")["queued_behind"] is None

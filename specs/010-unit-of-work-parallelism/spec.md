@@ -4,7 +4,13 @@
 
 **Created**: 2026-08-18
 
-**Status**: SPECIFIED, NOT IMPLEMENTED — merged 2026-08-22; no plan or tasks yet
+**Status**: P1 IN IMPLEMENTATION 2026-08-22 (plan + tasks in this directory).
+P3 (`[P]` fan-out) remains SPECIFIED, NOT IMPLEMENTED — named-unsized.
+
+**Amended 2026-08-22 (owner ruling, during planning)**: FR-005 and the
+project-hold entity changed from a STORED, acquired/released lock to a
+**DERIVED** holder. Rationale and the rejected original are recorded in
+Rejected Alternatives; no other requirement changed.
 
 **Implementation order**: depends on spec 012's US1 (increment feed-forward)
 landing first — the single-increment path must be predictable before the
@@ -125,9 +131,9 @@ out-of-scope edit in one increment fails that increment while the other lands.
 
 - **The holding goal blocks (needs_human / mechanical block)**: it KEEPS the lock (clarify ruling). The operator unblocks the project by resuming or cancelling the holder; a queued goal's waiting reason names the blocked holder so the choice is legible.
 - **Direct companion dispatches** (`dispatch_task` / `fix_bug` / `implement_feature` without a goal) on a locked project: EXEMPT (clarify ruling) — operator-present tasks proceed, with a loud warning in the dispatch response that a goal holds the project.
-- **The holding goal is cancelled**: the lock releases immediately; the oldest queued goal starts on the next tick.
-- **Two goals created in the same instant on one project**: exactly one acquires the project; ordering follows the existing backlog convention (priority, then oldest). Acquisition must be race-safe under concurrent writers (the existing CAS'd transition discipline).
-- **Pre-existing state at upgrade**: if an instance already has two active goals on one project when this ships, both keep running (no retroactive interruption); the lock applies from the next dispatch decision onward, and the situation is surfaced loudly to the operator.
+- **The holding goal is cancelled**: it becomes terminal, so it is no longer the computed holder; the next queued goal starts on the next tick. Nothing is "released" — the derivation simply returns a different answer.
+- **Two goals created in the same instant on one project**: ordering follows the existing backlog convention (priority, then oldest), and ties break on a stable key (goal id) so the holder is deterministic rather than arrival-dependent. Under the derived hold there is no acquisition to race: both writers compute the same holder from the same rows.
+- **Pre-existing state at upgrade**: if an instance already has two active goals on one project when this ships, neither is interrupted — the non-holder finishes settling whatever it already has in flight and simply dispatches nothing further, and the situation is surfaced loudly to the operator.
 - **A queued goal is cancelled before ever starting**: it leaves the queue; no lock interaction.
 - **One-shot vs long-lived**: both modes are goals and both respect the lock; mode changes cadence, never concurrency rights (ADR 0003's one-primitive rule).
 
@@ -139,7 +145,7 @@ out-of-scope edit in one increment fails that increment while the other lands.
 - **FR-002**: A goal created on a project whose lock is held MUST be accepted and queued, never rejected; its waiting state MUST be legible to the operator (which goal holds the project).
 - **FR-003**: When the holding goal reaches a terminal state, the next queued goal (priority band, then oldest) MUST begin automatically on a subsequent heartbeat — no operator action, no cognition spent on the handover decision.
 - **FR-004**: The lock check MUST be a cheap local read performed before any cognition or dispatch work; a tick where every same-project goal is queued MUST cost zero cognition (zero-token idle guard extended).
-- **FR-005**: Lock acquisition and release MUST be race-safe under concurrent writers (heartbeat and MCP tool paths), consistent with the existing CAS'd single-writer state discipline; a lost race is abandoned loudly, never silently double-acquired.
+- **FR-005** *(amended 2026-08-22 — see Rejected Alternatives)*: The hold MUST be **derived**, not stored: the holder of a project is a pure function of existing goal rows — the first non-terminal goal on that project by priority band, then age. There is no acquire step, no release step, and no persisted holder field. Race-safety is therefore structural rather than enforced: concurrent readers (heartbeat and MCP tool paths) evaluating the same rows reach the same holder, so there is no race to lose and no stale hold to heal. Any future move to a stored hold MUST first say how a holder that dies mid-hold is detected and cleared.
 - **FR-006**: No runtime spec-directory numbering mitigation is introduced; #553 MUST be closed referencing this spec once the default ships.
 - **FR-007**: The canonical terminology (work item / saga / task graph / increment-as-Unit-of-Work) MUST be adopted in the repo's architecture documentation in the same arc, so the vocabulary is the documented contract, not conversation lore.
 - **FR-008**: A blocked holding goal KEEPS the project lock; queued goals wait until it is resumed or cancelled. The queued goal's waiting reason MUST name the blocked holder.
@@ -155,8 +161,8 @@ out-of-scope edit in one increment fails that increment while the other lands.
 
 ### Key Entities
 
-- **Project lock**: the single-writer hold on a registered project — holder goal id + acquisition time; CAS'd; released on terminal state.
-- **Queued goal**: an accepted goal waiting for its project's lock; carries a legible waiting reason; ordered by priority band, then age.
+- **Project hold** *(amended 2026-08-22)*: the single-writer hold on a registered project. **Derived, not stored** — the holder is computed on demand as the first non-terminal goal on the project by priority band, then age. It has no row, no acquisition timestamp, and no lifecycle: a goal holds its project exactly while it is non-terminal, and stops holding it the moment it goes terminal, because that is what the computation says. ("Lock" is retained loosely elsewhere in this spec as the everyday word for the same thing; the entity is the derivation.)
+- **Queued goal**: an accepted goal that is not its project's holder; carries a legible waiting reason; ordered by priority band, then age. Queued gates DISPATCH only — a queued goal still settles work it already has in flight, so nothing is orphaned.
 - **Increment (Unit of Work)**: unchanged — one sandbox run → one atomic, verified, PR-able change-set. This spec adds no new execution entity.
 - **Declared scope** *(P3)*: the file-path set a `[P]` task claims; the contract the settle check enforces.
 
@@ -193,10 +199,11 @@ out-of-scope edit in one increment fails that increment while the other lands.
 - **Worker-spawned subagents for parallelism**: control-flow parallelism decided by the executor at runtime destroys hermeticity and per-unit accountability (no independent verification/delivery per fork). Parallelism must be plan data. This is build-system doctrine adopted deliberately.
 - **Increment-scoped locking** (serialize sandboxes but let two goals interleave on one project): still allows two mutually-unaware plans on one repo — branch isolation means the second planner cannot see the first's unmerged spec directories; the #553 class survives. Goal-scoped locking is the only shape that kills it.
 - **Rejecting the second goal at creation**: bounces durable intent back to the operator and loses arrival order; queueing preserves both and matches the existing backlog conventions.
+- **A STORED project lock** (holder goal id + acquisition time, CAS'd on acquire, released on terminal state) — this spec's original shape, **rejected 2026-08-22 during planning**, FR-005 amended. It buys nothing the derived holder lacks and brings a failure class with it: a holder that dies, is force-cancelled, or is lost to a crash leaves a lock nobody releases, which then needs a timeout, a heal budget, or an operator unwedge verb — machinery for a state the derived form cannot enter. The holder is already fully determined by rows devclaw owns and CASes today (goal status + priority + age); persisting a second copy of a derived fact invites the two to disagree, and the disagreement is exactly the wedge. Deriving keeps the invariant enforceable in one pure function, satisfies FR-008 for free (a blocked goal is non-terminal, so it still holds), and adds no state to a layer whose single-writer discipline is already the thing under test. Consistent with the standing "good design is light" rule: heaviness in the design is the signal to reconsider, not to grind.
 
 ## Constitution Alignment
 
 - **III (zero-token idle)**: the lock check is a cheap local read before any cognition; queued-goal ticks cost zero cognition (FR-004, SC-004).
-- **IV (single writer to state)**: lock acquisition rides the existing CAS'd transition discipline (FR-005) — this spec *extends* the single-writer principle from state rows to project execution.
+- **IV (single writer to state)**: this spec *extends* the single-writer principle from state rows to project execution, and does so **without adding a writer**: the hold is derived from rows the CAS'd transition discipline already governs (FR-005, amended), so there is no second source of truth to keep in step.
 - **V/VI (fail closed, loud over silent)**: P3's scope check fails increments loudly (FR-103); a queued goal's wait is legible (FR-002); upgrade edge cases surface loudly.
 - **VII (fix the class)**: #553's numbering race is closed by removing its precondition, not by hardening the symptom.

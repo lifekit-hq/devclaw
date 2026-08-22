@@ -62,6 +62,32 @@ def _resolve_project_or_reject(project_id: str, tool: str) -> ResolvedDispatch:
         raise ToolError(str(exc))
 
 
+def _project_hold_warning(project_id: "str | None", workspace_dir: str) -> "str | None":
+    """The FR-009 loud warning: name the goal currently working this project, or
+    ``None`` when nothing holds it.
+
+    Direct dispatches are deliberately EXEMPT from the single-writer hold (the
+    clarify ruling: an operator-present task is the human judgement call, and
+    the hold exists to stop unattended concurrent planners) — so this only
+    warns, never blocks. Best-effort: a lookup hiccup must not fail a dispatch
+    the operator explicitly asked for."""
+    try:
+        from ..goal import project_hold as _project_hold
+
+        holders = _project_hold.holder_map(goals._goal_store)
+        holder = holders.get((project_id or "").strip() or (workspace_dir or "").strip().rstrip("/"))
+        if not holder:
+            return None
+        return (
+            f"goal {holder} is actively working this project. This dispatch is "
+            "exempt from the one-goal-per-project rule because you are driving "
+            "it, but the two of you are now writing to the same repository — "
+            "expect to reconcile."
+        )
+    except Exception:  # noqa: BLE001 — advisory only; never fail an explicit dispatch
+        return None
+
+
 async def _preflight_or_prep(resolved: ResolvedDispatch, project_id: str) -> None:
     """Direct-path dispatch preflight + auto-prep (spec 003 US2/US4, #520 P2).
 
@@ -201,7 +227,16 @@ async def dispatch_task(
         target_branch=target_branch,
         project_id=resolved.project_id,
     )
-    return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
+    out = {"task_id": task_id, "status": "pending"}
+    # Spec 010 FR-009: a goal-less direct dispatch is EXEMPT from the
+    # single-writer project hold — an operator-present task IS the human
+    # judgement call, and the hold exists to stop UNATTENDED concurrent
+    # planners. Exempt, but never silent: say loudly that a goal is working
+    # this project, then proceed (constitution VI).
+    warning = _project_hold_warning(resolved.project_id, resolved.workspace_dir)
+    if warning:
+        out["warning"] = warning
+    return json.dumps(out, indent=2)
 
 
 @mcp.tool

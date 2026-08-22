@@ -2364,11 +2364,15 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path):
     a workspace-prep failure → mechanical:prep, the dispatch-cap backstop
     → mechanical:dispatch_cap, the done-gate blocking for a human decision
     → needs_answer, and force_block (the illegal-transition escape hatch) → bug."""
+    # Each sub-scenario is an INDEPENDENT goal, so each gets its own workspace:
+    # goals sharing one project now serialize under the single-writer hold
+    # (spec 010 P1), which would queue every goal after the first and starve the
+    # scenarios below of the very block sites they exist to exercise.
     store = _store(tmp_path, Clock())
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
     # mechanical:prep — the workspace couldn't be prepared (clone 404)
-    seed_goal(tmp_path, "gc")
+    seed_goal(tmp_path, "gc", workspace_dir="/repos/gc")
     assert await _tick_prep(store, "gc", engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
     s = store.load_status("gc")
     assert s.phase == "blocked" and s.blocked_kind == "mechanical:prep"
@@ -2378,14 +2382,14 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path):
     assert "blocked [mechanical:prep] —" in text
 
     # mechanical:dispatch_cap — the runaway backstop (backlog 2 → cap 4)
-    seed_goal(tmp_path, "gd")
+    seed_goal(tmp_path, "gd", workspace_dir="/repos/gd")
     store.save_status("gd", GoalStatus(phase="idle", actions_dispatched=4))
     assert await _tick(store, "gd", evaluator, engine, notifier) is Outcome.BLOCKED
     assert store.load_status("gd").blocked_kind == "mechanical:dispatch_cap"
 
     # needs_answer — the done-gate blocked for a human decision (#430: the
     # delivered fix sits on an open, unmerged PR only the owner can land)
-    seed_goal(tmp_path, "gq")
+    seed_goal(tmp_path, "gq", workspace_dir="/repos/gq")
     store.save_status("gq", GoalStatus(
         phase="verifying",
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
@@ -2401,7 +2405,7 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path):
     assert "pull/9" in (sq.blocked_on or "") and sq.blocked_kind == "needs_answer"
 
     # bug — the force_block illegal-transition escape hatch
-    seed_goal(tmp_path, "gb")
+    seed_goal(tmp_path, "gb", workspace_dir="/repos/gb")
     assert store.force_block("gb", "illegal state transition: EXEC_IDLE --ACHIEVE-> …") is True
     sb = store.load_status("gb")
     assert sb.phase == "blocked" and sb.blocked_kind == "bug"
@@ -2484,11 +2488,14 @@ async def test_autoheal_never_fires_on_human_gated_blocks(tmp_path):
     legacy mechanical:corrupt_doc block (its contract files died with the
     host-cognition chain — spec 008 shrink — so there is nothing mechanical
     left to recheck; resume_goal is the way out). Auto-heal is prep-only."""
+    # Independent goals ⇒ independent workspaces (see the note in
+    # test_blocked_kind_stamped_per_block_site): same-project goals now queue
+    # behind one another under the spec 010 single-writer hold.
     store = _store(tmp_path, Clock())
     evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
 
     # legacy mechanical:corrupt_doc — a pre-shrink row still parked on it
-    seed_goal(tmp_path, "gl")
+    seed_goal(tmp_path, "gl", workspace_dir="/repos/gl")
     store.save_status("gl", GoalStatus(
         phase="blocked", blocked_on="checklist.yaml is corrupted",
         blocked_kind="mechanical:corrupt_doc",
@@ -2500,7 +2507,7 @@ async def test_autoheal_never_fires_on_human_gated_blocks(tmp_path):
 
     # needs_answer — the owner has a question to answer (kind-stamping from a
     # real block site is covered by test_blocked_kind_stamped_per_block_site).
-    seed_goal(tmp_path, "gq")
+    seed_goal(tmp_path, "gq", workspace_dir="/repos/gq")
     store.save_status("gq", GoalStatus(
         phase="blocked", blocked_on="which auth provider?", blocked_kind="needs_answer",
     ))
@@ -2511,7 +2518,7 @@ async def test_autoheal_never_fires_on_human_gated_blocks(tmp_path):
     assert sq.heal_attempts == 0                          # never even attempted
 
     # bug — the force_block illegal-transition escape hatch.
-    seed_goal(tmp_path, "gb")
+    seed_goal(tmp_path, "gb", workspace_dir="/repos/gb")
     assert store.force_block("gb", "illegal state transition: …") is True
     assert await _tick(store, "gb", evaluator, engine, notifier) is Outcome.IDLE
     sb = store.load_status("gb")
@@ -3262,3 +3269,118 @@ async def test_idle_tick_performs_no_increment_record_read(tmp_path, monkeypatch
     assert evaluator.calls == 0
     assert reads == []
     assert engine.dispatched == []
+# ---- the single-writer project hold (spec 010 P1) --------------------------
+
+
+def _seed_dated(store, tmp_path, goal_id, *, workspace="/repos/demo", created_at_ms, phase="idle"):
+    """Seed a goal with an EXPLICIT creation timestamp — the age the project
+    hold orders by. `append_log` stamps wall-clock, so two seeds in one test can
+    share a millisecond and reduce an age-ordered assertion to the id tie-break."""
+    seed_goal(tmp_path, goal_id, workspace_dir=workspace)
+    store.save_status(goal_id, GoalStatus(phase=phase, lifecycle="executing"))
+    store._goal_state.append_log_row(goal_id, "- [t] goal created", created_at_ms)
+
+
+@pytest.mark.asyncio
+async def test_second_goal_on_one_project_is_queued_and_dispatches_nothing(tmp_path):
+    """Acceptance 1 (FR-001/FR-002): two goals, one project — only the holder
+    dispatches. This is the #553 class closed by construction: the second goal
+    never reaches planning while the first holds the repo."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "holder", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "waiter", created_at_ms=2_000)
+    engine = FakeEngine()
+
+    held = await _tick(store, "holder", FakeClaude(), engine, RecordingNotifier())
+    queued = await _tick(store, "waiter", FakeClaude(), engine, RecordingNotifier())
+
+    assert held is Outcome.DISPATCHED
+    assert queued is Outcome.QUEUED
+    assert [a.goal for a, _g, _u in engine.dispatched] and len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_goal_on_another_project_dispatches_while_one_project_is_held(tmp_path):
+    """Acceptance 2 / SC-005: the hold is per-project, never global — N goals on
+    N distinct projects dispatch exactly as before this spec."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "alpha", workspace="/repos/alpha", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "alpha2", workspace="/repos/alpha", created_at_ms=2_000)
+    _seed_dated(store, tmp_path, "beta", workspace="/repos/beta", created_at_ms=3_000)
+    engine = FakeEngine()
+
+    assert await _tick(store, "alpha", FakeClaude(), engine, RecordingNotifier()) is Outcome.DISPATCHED
+    assert await _tick(store, "alpha2", FakeClaude(), engine, RecordingNotifier()) is Outcome.QUEUED
+    assert await _tick(store, "beta", FakeClaude(), engine, RecordingNotifier()) is Outcome.DISPATCHED
+
+
+@pytest.mark.asyncio
+async def test_queued_goal_starts_automatically_after_the_holder_goes_terminal(tmp_path):
+    """Acceptance 3 / SC-003: no operator action, no cognition spent on the
+    handover — the derivation simply names a different goal once the holder is
+    terminal. Nothing is 'released', because nothing was ever acquired."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "holder", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "waiter", created_at_ms=2_000)
+    engine = FakeEngine()
+
+    assert await _tick(store, "waiter", FakeClaude(), engine, RecordingNotifier()) is Outcome.QUEUED
+
+    store.save_status("holder", GoalStatus(phase="done", lifecycle="executing"))
+
+    assert await _tick(store, "waiter", FakeClaude(), engine, RecordingNotifier()) is Outcome.DISPATCHED
+
+
+@pytest.mark.asyncio
+async def test_queued_goal_tick_spends_zero_cognition_and_does_not_churn_state(tmp_path):
+    """FR-004 / SC-004: the hold check is a cheap local read placed BEFORE any
+    cognition and before the steering read (which lazily ingests, and therefore
+    writes).
+
+    Zero cognition is the requirement. The stronger property worth pinning
+    alongside it is that a queued goal does not CHURN: this path runs every
+    heartbeat for as long as the holder works, so a per-tick state write or log
+    append would bury the goal's real history under queue noise. The first tick
+    of any goal seeds the no-progress watchdog (column-only telemetry, unrelated
+    to the hold), so churn is measured from the second tick on."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "holder", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "waiter", created_at_ms=2_000)
+    evaluator, engine = FakeClaude(), FakeEngine()
+
+    first = await _tick(store, "waiter", evaluator, engine, RecordingNotifier())
+    settled_version = store.load_status("waiter").version
+    settled_log = store.recent_log("waiter", n=50)
+
+    second = await _tick(store, "waiter", evaluator, engine, RecordingNotifier())
+    third = await _tick(store, "waiter", evaluator, engine, RecordingNotifier())
+
+    assert first is second is third is Outcome.QUEUED
+    assert evaluator.calls == 0
+    assert engine.dispatched == []
+    assert store.load_status("waiter").version == settled_version
+    assert store.recent_log("waiter", n=50) == settled_log
+    assert store.load_status("waiter").phase == "idle"  # queued is not blocked
+
+
+@pytest.mark.asyncio
+async def test_queued_goal_still_settles_in_flight_work(tmp_path):
+    """The upgrade edge case: a goal that already had work in flight when the
+    hold shipped must finish settling it — nothing orphaned — and then dispatch
+    nothing further. The gate sits BELOW the settle path for exactly this."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "holder", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "waiter", created_at_ms=2_000)
+    store.save_status("waiter", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance the goal"),
+    ))
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed", detail="agent died",
+    ))
+
+    out = await _tick(store, "waiter", FakeClaude(), engine, RecordingNotifier())
+
+    assert store.is_settled("waiter", "t1")          # settled, not orphaned
+    assert engine.dispatched == []                    # but nothing new dispatched
+    assert out is Outcome.QUEUED

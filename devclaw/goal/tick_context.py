@@ -73,6 +73,11 @@ class Outcome(str, Enum):
     SKIP_CANCELLED = "skip_cancelled"
     ERROR = "error"
     RATE_LIMITED = "rate_limited"  # paused on a usage/quota limit — 0 tokens, auto-resumes
+    # Another goal holds this goal's project (spec 010 P1, the single-writer
+    # default). Costs 0 tokens AND 0 writes: the hold is derived, so a queued
+    # tick reads a little and returns — there is nothing to acquire, mark, or
+    # release. Clears by itself when the holder goes terminal.
+    QUEUED = "queued"
     CONFLICT = "conflict"  # steer/cancel landed mid-tick; the tick's write was abandoned; next tick reads fresh
 
 
@@ -248,6 +253,12 @@ class TickContext:
     #: behaviour); goal_service binds the gh-backed probe, tests inject a
     #: fake — the same subprocess-free-tick seam as ``merger``.
     mergeability_probe: "_merge.MergeabilityProbe | None" = None
+    #: ``scope_key -> holding goal_id`` for the single-writer project hold
+    #: (spec 010 P1). Computed ONCE per ``tick_all`` sweep and threaded down —
+    #: the derivation reads every goal, so re-deriving it per goal would turn
+    #: one sweep into an N² scan. None → this tick was invoked directly (tests,
+    #: ``tick_one``) and the handler derives it lazily for this goal alone.
+    holders: "dict[str, str] | None" = None
 
 
 # ---- per-goal tick serialization (Tranche 1/PR8) ---------------------------

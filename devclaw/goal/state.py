@@ -757,6 +757,25 @@ class GoalState:
             self._store._commit()
         return inserted
 
+    def goal_created_at_ms_map(self) -> "dict[str, int]":
+        """``goal_id -> creation timestamp (ms)`` for every goal with log rows.
+
+        The age source for the derived project hold (spec 010 FR-005, amended):
+        goals carry no ``created_at`` column, but ``GoalService.create_goal``
+        writes a "goal created" log row as its first act, so the earliest
+        ``goal_log`` timestamp IS the creation moment. One grouped query for
+        the whole fleet — the holder map is computed once per heartbeat sweep,
+        so this must not become a per-goal round trip.
+
+        A goal with no log rows (only reachable for a hand-seeded fixture) is
+        simply absent; callers fall back to a stable ordering key so the holder
+        stays deterministic rather than arrival-dependent."""
+        with self._store._lock:
+            rows = self._store._db.execute(
+                "SELECT goal_id, MIN(ts) AS created_at FROM goal_log GROUP BY goal_id"
+            ).fetchall()
+        return {r["goal_id"]: r["created_at"] for r in rows if r["created_at"] is not None}
+
     def recent_delivery_blocks(self, goal_id: str) -> "list[str]":
         """Every delivery ``body`` for ``goal_id``, oldest first.
         :meth:`GoalStore.recent_deliveries` char-tails the joined text, so it
