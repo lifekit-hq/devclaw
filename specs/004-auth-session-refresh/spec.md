@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-14
 
-**Status**: Draft
+**Status**: SHIPPED — `AUTH_PAUSE_S` + auth classification in `devclaw/loom/limits.py`
 
 **Input**: User description: "devclaw should refresh its own claude OAuth access token instead of pausing the whole instance and paging the operator to SSH in — plus a way to re-login over MCP for the rare dead-session case. OAuth-only."
 

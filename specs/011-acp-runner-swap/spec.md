@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-19
 
-**Status**: Implemented 2026-08-19 (PR 1 — the swap; PR 2 rename pending)
+**Status**: SHIPPED — merged as #575
 
 **Issue**: [#542 — Worker executor swap: replace runner with headless claude in the sandbox](https://github.com/lifekit-hq/devclaw/issues/542)
 

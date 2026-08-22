@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-15
 
-**Status**: Draft (scoped; not yet sized — P1 [006] and P2 [007] land first)
+**Status**: SHIPPED — in-sandbox speckit execution; Tier-B proven live (#538)
 
 **Input**: User description: "P3 of the arc — devclaw executes every dispatched issue through speckit, universally. No PLAN.md. Speckit is always the discipline: adopt it if present, install it via a reviewable PR if absent, migrate PLAN.md repos to it. Feature issues run the full specify→plan→tasks→implement cycle; bug/chore/docs go direct. The slice-guard reads speckit's tasks.md checkboxes."
 

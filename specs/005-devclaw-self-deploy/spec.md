@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-14
 
-**Status**: Draft
+**Status**: SHIPPED — `deploy/deploy-devclaw.sh`, `deploy/docker-compose.devclaw.yml`
 
 **Input**: User description: decouple the devclaw runtime deployment from the lifekit-stack monolith so devclaw builds and ships its own deployable image(s) from its own source, with its own CI and deploy path, deployed independently of the OpenClaw/lifekit side.
 
