@@ -2,7 +2,7 @@
 FROM python:3.12
 
 # Node.js 20 LTS — required for the console SPA build:
-#   npm --prefix devclaw/server/console run build
+#   npm --prefix console run build
 # docker.io — required for DEVCLAW_ENGINE=<unset> (production sandboxes) and dev runs
 # git — required for workspace operations throughout the stack
 RUN apt-get update \

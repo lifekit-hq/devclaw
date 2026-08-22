@@ -10,7 +10,7 @@ from pathlib import Path
 
 _OVERVIEW_SRC = (
     Path(__file__).resolve().parents[1]
-    / "devclaw" / "server" / "console" / "src" / "pages" / "Overview.tsx"
+    / "console" / "src" / "pages" / "Overview.tsx"
 )
 
 

@@ -54,7 +54,9 @@ evals/runs/
 # Console build output — the Vite+React SPA is built at image-build time
 # (compose/devclaw-mcp/Dockerfile), not vendored. hatchling force-includes it
 # into the wheel via `tool.hatch.build.targets.wheel.artifacts` in pyproject.
-devclaw/server/console/dist/
+devclaw/server/console_dist/
+# console source is a top-level web app; its deps are never committed
+node_modules/
 
 # Real proof baskets may reference private-product internals — keep only the template
 evals/baskets/*.json

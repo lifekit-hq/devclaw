@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 
-import devclaw.server.http as http_mod
+import devclaw.server.routes.goals as http_mod
 
 _TASKS = """# Tasks: widget
 

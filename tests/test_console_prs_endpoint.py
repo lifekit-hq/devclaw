@@ -39,7 +39,7 @@ def store(tmp_path):
     ],
 )
 def test_parse_pr_url_accepts_canonical_github_urls(url, expected):
-    from devclaw.server.http import _parse_pr_url
+    from devclaw.server.routes.goals import _parse_pr_url
 
     assert _parse_pr_url(url) == expected
 
@@ -59,7 +59,7 @@ def test_parse_pr_url_accepts_canonical_github_urls(url, expected):
     ],
 )
 def test_parse_pr_url_rejects_non_github_or_malformed(url):
-    from devclaw.server.http import _parse_pr_url
+    from devclaw.server.routes.goals import _parse_pr_url
 
     # The endpoint may pass the URL as-is off the wire; the parser must swallow
     # anything that isn't a canonical PR URL — the merge endpoint shells `gh`
@@ -90,14 +90,14 @@ def _seed_delivery(store, *, goal_id, trace_id, pr_url, action_label, ts=None):
 
 
 def test_collect_pr_rows_returns_empty_when_no_deliveries(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import goals as http_mod
     monkeypatch.setattr(http_mod, "store", store)
 
     assert http_mod._collect_goal_pr_rows("g1") == []
 
 
 def test_collect_pr_rows_skips_delivery_without_pr_url(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import goals as http_mod
     monkeypatch.setattr(http_mod, "store", store)
 
     # A gate-failed delivery has no pr_url — must not create a phantom row.
@@ -109,7 +109,7 @@ def test_collect_pr_rows_skips_delivery_without_pr_url(store, monkeypatch):
 
 
 def test_collect_pr_rows_skips_non_github_urls(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import goals as http_mod
     monkeypatch.setattr(http_mod, "store", store)
 
     # A hostile trace payload should not surface a row we'd then try to merge.
@@ -122,7 +122,7 @@ def test_collect_pr_rows_skips_non_github_urls(store, monkeypatch):
 
 
 def test_collect_pr_rows_dedupes_by_url_keeping_newest_ts(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import goals as http_mod
     monkeypatch.setattr(http_mod, "store", store)
 
     _seed_delivery(
@@ -141,7 +141,7 @@ def test_collect_pr_rows_dedupes_by_url_keeping_newest_ts(store, monkeypatch):
 
 
 def test_collect_pr_rows_sorts_newest_first_across_prs(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import goals as http_mod
     monkeypatch.setattr(http_mod, "store", store)
 
     _seed_delivery(
@@ -160,7 +160,7 @@ def test_collect_pr_rows_sorts_newest_first_across_prs(store, monkeypatch):
 
 
 def test_collect_pr_rows_isolates_by_goal(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import goals as http_mod
     monkeypatch.setattr(http_mod, "store", store)
 
     _seed_delivery(

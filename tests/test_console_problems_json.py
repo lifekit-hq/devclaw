@@ -14,7 +14,7 @@ import json
 import pytest
 
 from devclaw.state_store import StateStore
-from devclaw.server.http import _problem_lifecycle
+from devclaw.server.routes.observability import _problem_lifecycle
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ class _FakeGoals:
 
 @pytest.fixture
 def http_mod(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import observability as http_mod
 
     # Three problems: one never filed, one filed+open, one filed+closed.
     store.record_problem(category="task_fail", kind="never", message="a", recovered=False)

@@ -43,7 +43,7 @@ def _goal(phase="idle", *, blocked_on=None, stalled=False, direction=None):
 
 @pytest.fixture
 def http_mod(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
 
     monkeypatch.setattr(http_mod, "store", store)
     return http_mod

@@ -250,13 +250,13 @@ filters; default 200 rows, max 1000, newest-first) and the goal-scoped
 
 ### The operator console (`/console`)
 
-The human surface for supervising the fleet — a React SPA (Vite + TypeScript, `devclaw/server/console/`) served by the same HTTP server; `/` redirects to it. Three levels, mirroring the screenshots above:
+The human surface for supervising the fleet — a React SPA (Vite + TypeScript, `console/`) served by the same HTTP server; `/` redirects to it. Three levels, mirroring the screenshots above:
 
 - **Overview** — portfolio at a glance: projects / running / **needs-you** counts, the blocked-goals feed, recent activity, and the dispatch/off-hours state in the corner.
 - **Projects** — every repository devclaw is driving, with live goal rollups (status joined live from the goal store, never cached).
 - **Goal detail** — objective, phase pills, lifecycle timeline (`executing → verifying → done`), tabs for tasks / pull requests / activity / schedule, and the block banner with one-tap verbs: **Resume** (blocker cleared, same contract), **Steer** (change direction), **Cancel**.
 
-The console reads generated views and JSON projections — it never mutates state outside the same MCP-tool verbs the waiter uses. Rebuild with `npm --prefix devclaw/server/console run build`.
+The console reads generated views and JSON projections — it never mutates state outside the same MCP-tool verbs the waiter uses. Rebuild with `npm --prefix console run build`.
 
 ### Deploy hosting (experimental — not yet in production)
 

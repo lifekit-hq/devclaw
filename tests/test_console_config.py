@@ -44,7 +44,7 @@ def _registry(tmp_path):
 # ── A: env catalog ─────────────────────────────────────────────────────────
 
 def test_env_catalog_parses_doc_and_finds_known_vars():
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     rows = http_mod._env_var_catalog()
     keys = {r["key"] for r in rows}
     assert "DEVCLAW_GOAL_BROWSER_GATE" in keys
@@ -54,7 +54,7 @@ def test_env_catalog_parses_doc_and_finds_known_vars():
 
 
 def test_env_catalog_masks_secret_values(monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     monkeypatch.setenv("DEVCLAW_TOKEN", "supersecret-bearer")
     tok = next(r for r in http_mod._env_var_catalog() if r["key"] == "DEVCLAW_TOKEN")
     assert tok["secret"] is True and tok["isSet"] is True
@@ -66,7 +66,7 @@ def test_resolve_env_doc_finds_cwd_copy_under_noneditable_install(monkeypatch, t
     # docs/, but the server runs with cwd at the repo root that has the doc. The
     # resolver must fall through to the cwd candidate rather than return a dead
     # module-relative path (the live bug: catalog came back empty in prod).
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     doc = tmp_path / "docs" / "reference" / "env-vars.md"
     doc.parent.mkdir(parents=True)
     doc.write_text("## G\n| `DEVCLAW_X` | `1` | test |\n")
@@ -77,13 +77,13 @@ def test_resolve_env_doc_finds_cwd_copy_under_noneditable_install(monkeypatch, t
 
 
 def test_env_catalog_degrades_to_empty_when_doc_missing(monkeypatch, tmp_path):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     monkeypatch.setattr(http_mod, "_ENV_DOC", tmp_path / "nope.md")
     assert http_mod._env_var_catalog() == []
 
 
 def test_config_env_route_returns_vars():
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     status, body = _call(http_mod.config_env_json, _req({}))
     assert status == 200 and isinstance(body["vars"], list) and body["vars"]
 
@@ -91,29 +91,29 @@ def test_config_env_route_returns_vars():
 # ── B: per-project overrides ───────────────────────────────────────────────
 
 def test_project_config_get_returns_overrides(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import projects as projects_routes
     reg = _registry(tmp_path)
     reg.update("p", automerge=True)
-    monkeypatch.setattr(http_mod, "registry", reg)
-    status, body = _call(http_mod.project_config_get, _req({"project_id": "p"}))
+    monkeypatch.setattr(projects_routes, "registry", reg)
+    status, body = _call(projects_routes.project_config_get, _req({"project_id": "p"}))
     assert status == 200
     assert body["overrides"]["automerge"] is True
     assert body["overrides"]["merge_strategy"] is None  # unset = inherit
 
 
 def test_project_config_get_404_unknown(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "registry", _registry(tmp_path))
-    status, _ = _call(http_mod.project_config_get, _req({"project_id": "nope"}))
+    from devclaw.server.routes import projects as projects_routes
+    monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
+    status, _ = _call(projects_routes.project_config_get, _req({"project_id": "nope"}))
     assert status == 404
 
 
 def test_project_config_set_persists_and_clears(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import projects as projects_routes
     reg = _registry(tmp_path)
-    monkeypatch.setattr(http_mod, "registry", reg)
+    monkeypatch.setattr(projects_routes, "registry", reg)
     status, body = _call(
-        http_mod.project_config_set,
+        projects_routes.project_config_set,
         _req({"project_id": "p"}, {"automerge": True, "merge_strategy": "rebase"}),
     )
     assert status == 200
@@ -121,41 +121,41 @@ def test_project_config_set_persists_and_clears(tmp_path, monkeypatch):
     assert body["overrides"]["merge_strategy"] == "rebase"
     assert reg.get("p").automerge is True and reg.get("p").merge_strategy == "rebase"
     # null clears back to inherit
-    status, body = _call(http_mod.project_config_set, _req({"project_id": "p"}, {"automerge": None}))
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"automerge": None}))
     assert status == 200 and body["overrides"]["automerge"] is None
     assert reg.get("p").automerge is None
 
 
 def test_project_config_set_rejects_unknown_field(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "registry", _registry(tmp_path))
-    status, body = _call(http_mod.project_config_set, _req({"project_id": "p"}, {"anthropic_api_key": "sk-x"}))
+    from devclaw.server.routes import projects as projects_routes
+    monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"anthropic_api_key": "sk-x"}))
     assert status == 400 and body["error"] == "unknown_field"
 
 
 def test_project_config_set_rejects_bad_enum(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "registry", _registry(tmp_path))
-    status, body = _call(http_mod.project_config_set, _req({"project_id": "p"}, {"merge_strategy": "octopus"}))
+    from devclaw.server.routes import projects as projects_routes
+    monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"merge_strategy": "octopus"}))
     assert status == 400 and body["error"] == "bad_value"
 
 
 def test_project_config_set_rejects_wrong_type(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "registry", _registry(tmp_path))
-    status, body = _call(http_mod.project_config_set, _req({"project_id": "p"}, {"automerge": "yes"}))
+    from devclaw.server.routes import projects as projects_routes
+    monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"automerge": "yes"}))
     assert status == 400 and body["error"] == "bad_value"
 
 
 def test_project_config_set_empty_patch_is_400(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "registry", _registry(tmp_path))
-    status, body = _call(http_mod.project_config_set, _req({"project_id": "p"}, {}))
+    from devclaw.server.routes import projects as projects_routes
+    monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {}))
     assert status == 400 and body["error"] == "empty_patch"
 
 
 def test_project_config_set_404_unknown(tmp_path, monkeypatch):
-    from devclaw.server import http as http_mod
-    monkeypatch.setattr(http_mod, "registry", _registry(tmp_path))
-    status, _ = _call(http_mod.project_config_set, _req({"project_id": "nope"}, {"automerge": True}))
+    from devclaw.server.routes import projects as projects_routes
+    monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
+    status, _ = _call(projects_routes.project_config_set, _req({"project_id": "nope"}, {"automerge": True}))
     assert status == 404

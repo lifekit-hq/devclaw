@@ -21,7 +21,7 @@ def store(tmp_path):
 
 
 def test_task_row_surfaces_plan_key_and_milestone_for_grouping(store):
-    from devclaw.server.http import _task_row
+    from devclaw.server.routes.goals import _task_row
 
     store.create_task(
         id="t-grouped",
@@ -39,7 +39,7 @@ def test_task_row_surfaces_plan_key_and_milestone_for_grouping(store):
 
 
 def test_task_row_plan_key_and_milestone_null_for_standalone_task(store):
-    from devclaw.server.http import _task_row
+    from devclaw.server.routes.goals import _task_row
 
     store.create_task(
         id="t-loose",

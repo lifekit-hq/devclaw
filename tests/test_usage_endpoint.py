@@ -377,14 +377,19 @@ def test_compute_instance_usage_makes_no_llm_calls(store, registry):
 def test_usage_json_route_registered_in_http():
     """The /usage.json route must be present in the HTTP server module."""
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1] / "devclaw" / "server" / "http.py").read_text()
-    assert "/usage.json" in src, "GET /usage.json route must be registered in server/http.py"
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "devclaw" / "server" / "routes" / "observability.py"
+    ).read_text()
+    assert "/usage.json" in src, (
+        "GET /usage.json must be registered in server/routes/observability.py"
+    )
 
 
 def test_usage_console_page_exists():
     """The Usage.tsx console page must exist and import fetchUsage."""
     from pathlib import Path
-    p = Path(__file__).resolve().parents[1] / "devclaw" / "server" / "console" / "src" / "pages" / "Usage.tsx"
+    p = Path(__file__).resolve().parents[1] / "console" / "src" / "pages" / "Usage.tsx"
     assert p.exists(), "Usage.tsx page must exist"
     src = p.read_text()
     assert "fetchUsage" in src
@@ -394,6 +399,6 @@ def test_usage_console_page_exists():
 def test_usage_route_wired_in_main_tsx():
     """main.tsx must register the /usage route."""
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1] / "devclaw" / "server" / "console" / "src" / "main.tsx").read_text()
+    src = (Path(__file__).resolve().parents[1] / "console" / "src" / "main.tsx").read_text()
     assert "usage" in src.lower()
     assert "Usage" in src

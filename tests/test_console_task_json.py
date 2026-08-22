@@ -23,14 +23,14 @@ import json
 import pytest
 from starlette.requests import Request
 
-import devclaw.server.http as http_mod
+import devclaw.server.routes.tasks as tasks_routes
 from devclaw.state_store import StateStore
 
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
     s = StateStore(str(tmp_path / "devclaw.db"))
-    monkeypatch.setattr(http_mod, "store", s)
+    monkeypatch.setattr(tasks_routes, "store", s)
     return s
 
 
@@ -78,7 +78,7 @@ def _seed(store: StateStore, *, result_json: str | None = json.dumps(_RESULT)) -
 def test_task_json_carries_contract_and_decomposed_verdicts(store):
     _seed(store)
 
-    code, body = _get(http_mod.task_json, {"task_id": _TASK_ID})
+    code, body = _get(tasks_routes.task_json, {"task_id": _TASK_ID})
 
     assert code == 200
     t = body["task"]
@@ -98,7 +98,7 @@ def test_task_json_carries_contract_and_decomposed_verdicts(store):
 def test_task_json_unsettled_task_has_null_verdicts(store):
     _seed(store, result_json=None)  # created + running, never settled
 
-    code, body = _get(http_mod.task_json, {"task_id": _TASK_ID})
+    code, body = _get(tasks_routes.task_json, {"task_id": _TASK_ID})
 
     assert code == 200
     assert body["task"]["status"] == "running"
@@ -109,7 +109,7 @@ def test_task_json_unsettled_task_has_null_verdicts(store):
 def test_task_json_corrupt_result_degrades_visibly_not_500(store):
     _seed(store, result_json="{not json at all")
 
-    code, body = _get(http_mod.task_json, {"task_id": _TASK_ID})
+    code, body = _get(tasks_routes.task_json, {"task_id": _TASK_ID})
 
     assert code == 200                      # loud is the 404 path; corrupt result
     assert body["task"]["goal"]             # still renders the contract
@@ -118,9 +118,9 @@ def test_task_json_corrupt_result_degrades_visibly_not_500(store):
 
 
 def test_task_json_unknown_id_is_404_and_bad_shape_400(store):
-    code, _ = _get(http_mod.task_json, {"task_id": "a/../b"})
+    code, _ = _get(tasks_routes.task_json, {"task_id": "a/../b"})
     assert code == 400                      # path-shaped ids are rejected outright
 
     _seed(store)
-    code, _ = _get(http_mod.task_json, {"task_id": "12d1acd3-32f2-400e-b221-000000000000"})
+    code, _ = _get(tasks_routes.task_json, {"task_id": "12d1acd3-32f2-400e-b221-000000000000"})
     assert code == 404                      # a typo is not an empty task

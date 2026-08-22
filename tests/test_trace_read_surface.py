@@ -298,7 +298,7 @@ def _get(path_qs: str) -> Request:
 
 @pytest.fixture
 def http_store(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import observability as http_mod
 
     _seed_representative_rows(store)
     monkeypatch.setattr(http_mod, "store", store)
