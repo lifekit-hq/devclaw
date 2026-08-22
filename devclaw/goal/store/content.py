@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from ..models import Goal, GoalStatus
+from ..models import GoalStatus
 from ...state_store import _now_ms
 from .base import _SETTLE_ARROW_RE
 

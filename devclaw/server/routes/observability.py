@@ -14,7 +14,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ... import telemetry as _telemetry
-from ...project_registry import project_rollup
 from ...state_store.problems import problem_lifecycle as _problem_lifecycle
 from .._state import goals, mcp, registry, store
 from ._common import json_limit

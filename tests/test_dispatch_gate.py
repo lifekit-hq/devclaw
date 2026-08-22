@@ -193,7 +193,6 @@ def test_engine_goal_operator_block_reflects_store(store):
     """The per-goal gate is schedule-only and independent of the global gate:
     a goal outside its own window blocks even with no global hold/window set."""
     from devclaw.goal.engine import InProcessEngine
-    from devclaw.goal.tick import _engine_goal_operator_block
     from devclaw.task_queue import TaskQueue
 
     eng = InProcessEngine(TaskQueue(store), store)

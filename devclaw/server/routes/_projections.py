@@ -14,9 +14,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-import time
 
-from .._state import _goal_get, goals, store
+from .._state import _goal_get
 
 def _safe_parse(s: str) -> object:
     try:

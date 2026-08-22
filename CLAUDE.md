@@ -174,7 +174,8 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~2100 tests, all stubbed — no docker, no claude
+pytest        # ~2100 tests, all stubbed — no docker, no claude; ~27s (-n auto)
+ruff check .  # pyflakes + syntax errors only; CI gates it
 ```
 
 Engine modes (`DEVCLAW_ENGINE`): **unset** = the worker runner in a per-task docker
@@ -189,6 +190,8 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 - **Every behavior-change PR adds a named regression test** — the T0 fixes each
   shipped with one (`test_integrity_gate.py`, `test_delivery.py`, `test_goal_tick.py`, …).
 - **Branch per change**; open a PR, don't push to `main`.
+- **`ruff check .` clean before the PR** — a narrow correctness gate (`F` + `E9`),
+  not a style one. CI runs it alongside the suite.
 - **Keep `docs/` honest.** If a change makes a doc wrong, fix the doc in the same PR
   and update its currency tag in [`docs/INDEX.md`](./docs/INDEX.md). A stale doc that
   looks current is worse than no doc.

@@ -8,7 +8,6 @@ when the goal heartbeat fires; null for standalone ``dispatch_task`` calls.
 
 from __future__ import annotations
 
-import json
 
 import pytest
 

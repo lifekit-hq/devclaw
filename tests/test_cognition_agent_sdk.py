@@ -14,7 +14,6 @@ import time
 
 import pytest
 
-from devclaw import cognition
 from devclaw.cognition import AgentSDKCognition, ClaudeCognition, get_cognition, set_cognition
 from devclaw.loom.limits import FailureKind, classify_failure
 from devclaw.llm_call import PlannerError

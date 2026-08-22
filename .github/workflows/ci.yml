@@ -26,10 +26,19 @@ jobs:
           "$RUNNER_TEMP/venv/bin/python" -m pytest -q
 
   lint:
-    name: Lint (markdown + secrets)
+    name: Lint (ruff + secrets + yaml)
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+
+      # ruff: pyflakes + syntax errors only (config in pyproject.toml). This is
+      # a correctness gate, not a style one — F821 catches the name a refactor
+      # left dangling on a path the stubbed suite doesn't execute.
+      - name: ruff
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ruff-venv"
+          "$RUNNER_TEMP/ruff-venv/bin/pip" install --quiet ruff
+          "$RUNNER_TEMP/ruff-venv/bin/ruff" check --output-format=github .
 
       # gitleaks via pinned binary (arm64) — exit code is the gate; scans the
       # working tree for secrets. Avoids the gitleaks-action's license + the

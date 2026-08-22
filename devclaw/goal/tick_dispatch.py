@@ -18,7 +18,6 @@ from ..task_git import _default_branch_sync
 from .tick_context import (
     NotifyLevel,
     Outcome,
-    TickContext,
     WorkspacePrep,
     _action_label,
     _engine_kick,

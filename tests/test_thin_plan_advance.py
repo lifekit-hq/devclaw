@@ -170,7 +170,7 @@ async def test_thin_failed_settle_does_not_propose_done(tmp_path):
     ))
     notifier = RecordingNotifier()
 
-    out = await _thin_tick(store, "g", evaluator, engine, notifier)
+    await _thin_tick(store, "g", evaluator, engine, notifier)
 
     # No done-gate proposed off a failure; and still zero cognition.
     assert evaluator.calls == 0

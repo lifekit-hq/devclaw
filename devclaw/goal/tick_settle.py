@@ -30,7 +30,7 @@ from . import reconcile as _reconcile
 from . import repo_brief as _repo_brief
 from . import slice_guard as _slice_guard
 from .engine import GoalEngine, GoalEngineError
-from .models import Goal, GoalStatus, InFlight, PollResult
+from .models import Goal, GoalStatus, InFlight
 from .store import GoalStore
 from .transitions import Event
 from ..loom import trace as _trace

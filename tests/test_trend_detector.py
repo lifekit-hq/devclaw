@@ -10,7 +10,6 @@ Mirrors the test_goal_tick.py FakeClaude/RecordingNotifier pattern."""
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -18,7 +17,7 @@ import pytest
 
 from devclaw import trend_detector as _td_mod
 from devclaw.state_store import StateStore
-from devclaw.trend_detector import TrendDetector, _TrendParseError
+from devclaw.trend_detector import TrendDetector
 from devclaw.trend_signals import Signal, SignalContext, SignalResult
 
 

@@ -41,7 +41,6 @@ from ..dispatch_gate import next_window_open_ms, operator_block, schedule_blocks
 from ..loom import trace as _trace
 from ..state_store import StateStore, _now_ms
 from ..task_queue import TaskQueue
-from ..engine.workspace import prepare_workspace
 from .. import trend_detector as _trend_detector_mod
 
 
@@ -611,7 +610,7 @@ class GoalService:
         if not admission.admitted:
             raise GoalAdmissionRejected(admission)
 
-        goal = self._goal_store.create_goal(
+        self._goal_store.create_goal(
             goal_id, objective=objective, workspace_dir=workspace_dir, cadence=cadence,
             repo_url=repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
             done_when=done_when, backlog=backlog, mode=mode, strictness=strictness,

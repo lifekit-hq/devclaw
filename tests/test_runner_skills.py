@@ -6,7 +6,6 @@ loader is exercised against the same files that get baked.
 """
 
 import importlib.util
-import os
 from pathlib import Path
 
 import pytest
