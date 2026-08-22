@@ -2,6 +2,20 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.4.0](https://github.com/lifekit-hq/devclaw/compare/v0.3.1...v0.4.0) (2026-08-22)
+
+
+### Features
+
+* Build the instance usage surface described in issue… ([#589](https://github.com/lifekit-hq/devclaw/issues/589)) ([875aa4d](https://github.com/lifekit-hq/devclaw/commit/875aa4d0e5c226a7151e0562316a9554215db0b5))
+
+
+### Bug Fixes
+
+* **sandbox:** the repo's own .claude/ never reaches the worker; verify gate can't be masked by a pipe ([#585](https://github.com/lifekit-hq/devclaw/issues/585)) ([1fe6f85](https://github.com/lifekit-hq/devclaw/commit/1fe6f8509f6dbe4cf4f82c8ce48a48da8adb1e5b))
+* **self-issue:** grade_backlog — skip issues with open linked PRs ([#576](https://github.com/lifekit-hq/devclaw/issues/576)) ([#586](https://github.com/lifekit-hq/devclaw/issues/586)) ([6bf407a](https://github.com/lifekit-hq/devclaw/commit/6bf407a9ef990771e5f4a0a65a8c1223687d972f))
+* **speckit:** ship the vendored scaffold in the wheel — onboard was broken in every install ([#590](https://github.com/lifekit-hq/devclaw/issues/590)) ([cd2969c](https://github.com/lifekit-hq/devclaw/commit/cd2969ced8d1b523b3fa51f8b67cc6627ab55bba)), closes [#588](https://github.com/lifekit-hq/devclaw/issues/588)
+
 ## [0.3.1](https://github.com/lifekit-hq/devclaw/compare/v0.3.0...v0.3.1) (2026-08-21)
 
 
