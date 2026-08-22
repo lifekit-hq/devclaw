@@ -2817,26 +2817,37 @@ async def test_tick_all_runs_trace_prune_on_cheap_path_with_zero_tokens(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_trace_prune_failure_never_breaks_the_heartbeat(tmp_path):
-    """A prune crash (db locked, whatever) is swallowed — maintenance must not
-    take down the sweep; goals still tick."""
+@pytest.mark.parametrize(
+    ("method", "boom"),
+    [
+        ("prune_traces", "database is locked"),
+        ("prune_events", "database is locked"),
+        ("vacuum", "disk full"),
+    ],
+)
+async def test_maintenance_crash_never_breaks_the_heartbeat(tmp_path, method, boom):
+    """Any cheap-path maintenance crash (trace prune, events prune, VACUUM) is
+    swallowed — housekeeping must never take down the sweep; goals still tick.
+
+    One parametrized test replaces three byte-for-byte-parallel ones that
+    differed only in which FakeEngine method raised: same fixture, same single
+    assertion, three copies to keep in step."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
 
-    class ExplodingPruneEngine(FakeEngine):
-        def prune_traces(self) -> int:
-            raise RuntimeError("database is locked")
+    def _explode(self):
+        raise RuntimeError(boom)
 
+    engine_cls = type("ExplodingMaintenanceEngine", (FakeEngine,), {method: _explode})
     evaluator, notifier = FakeClaude(), RecordingNotifier()
 
     out = await tick_all(
-        store=store, engine=ExplodingPruneEngine(), evaluator_caller=evaluator, notifier=notifier,
+        store=store, engine=engine_cls(), evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
 
-    assert out["g"] is Outcome.IDLE    # the sweep survived the prune crash
-
+    assert out["g"] is Outcome.IDLE    # the sweep survived the crash
 
 @pytest.mark.asyncio
 async def test_tick_all_runs_events_prune_on_cheap_path_with_zero_tokens(tmp_path):
@@ -2861,28 +2872,6 @@ async def test_tick_all_runs_events_prune_on_cheap_path_with_zero_tokens(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_events_prune_failure_never_breaks_the_heartbeat(tmp_path):
-    """An events-prune crash is swallowed just like the trace prune —
-    maintenance must not take down the sweep; goals still tick."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-
-    class ExplodingEventsPruneEngine(FakeEngine):
-        def prune_events(self) -> int:
-            raise RuntimeError("database is locked")
-
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-
-    out = await tick_all(
-        store=store, engine=ExplodingEventsPruneEngine(), evaluator_caller=evaluator, notifier=notifier,
-        notify_url="http://relay", prepare_ws=fake_prepare,
-    )
-
-    assert out["g"] is Outcome.IDLE    # the sweep survived the events-prune crash
-
-
-@pytest.mark.asyncio
 async def test_tick_all_runs_vacuum_on_cheap_path_with_zero_tokens(tmp_path):
     """tick_all invokes the engine's weekly VACUUM once per sweep, AFTER the
     cheap gates, beside the prunes — and it costs zero LLM calls."""
@@ -2901,28 +2890,6 @@ async def test_tick_all_runs_vacuum_on_cheap_path_with_zero_tokens(tmp_path):
     assert engine.vacuums == 1
     assert out["g"] is Outcome.IDLE
     assert evaluator.calls == 0
-
-
-@pytest.mark.asyncio
-async def test_vacuum_failure_never_breaks_the_heartbeat(tmp_path):
-    """A VACUUM crash is swallowed like the prunes — maintenance must not take
-    down the sweep; goals still tick."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-
-    class ExplodingVacuumEngine(FakeEngine):
-        def vacuum(self) -> bool:
-            raise RuntimeError("disk full")
-
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-
-    out = await tick_all(
-        store=store, engine=ExplodingVacuumEngine(), evaluator_caller=evaluator, notifier=notifier,
-        notify_url="http://relay", prepare_ws=fake_prepare,
-    )
-
-    assert out["g"] is Outcome.IDLE    # the sweep survived the vacuum crash
 
 
 @pytest.mark.asyncio
