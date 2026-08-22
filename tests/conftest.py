@@ -5,6 +5,16 @@ import os
 
 import pytest
 
+# Prevent the runner tests from picking up the baked /opt/devclaw/skills/
+# installation, whose content changes independently of this branch. Tests that
+# need real skill content point _SKILLS_DIR at the in-repo source via
+# monkeypatch (test_runner_skills.py, test_plan_md_skill.py, …). Tests that
+# check the embedded _KIND_WRAPPERS fallback (test_runner_wrappers.py,
+# test_onboard.py) need the skills dir absent so the fallback fires. This must
+# be set at module-level (not in a fixture) so it is in effect when the
+# module-scoped `runner` fixture executes exec_module and reads the env var.
+os.environ.setdefault("DEVCLAW_SKILLS_DIR", "/nonexistent-test-default")
+
 from devclaw import task_queue
 from devclaw.delivery import deploy as _deploy_mod
 from devclaw.engine import sandcastle as _sandcastle_mod

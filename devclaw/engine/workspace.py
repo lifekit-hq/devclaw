@@ -166,7 +166,10 @@ async def _reseed_merged_branch(
     if rc != 0:
         return False
     rc, _ = await _run(
-        "git", "rebase", "--onto", f"origin/{default_branch}", merged_head, branch,
+        "git",
+        "-c", "user.email=devclaw@localhost",
+        "-c", "user.name=devclaw",
+        "rebase", "--onto", f"origin/{default_branch}", merged_head, branch,
         cwd=workspace_dir,
     )
     if rc != 0:
