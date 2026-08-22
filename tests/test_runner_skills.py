@@ -368,10 +368,16 @@ def test_pre_run_hook_executes(runner, hook_dir, tmp_path):
     assert all("fatal" not in w.lower() for w in warnings)
 
 
-def test_post_run_hook_warns_on_e2e_without_playwright_in_verify(runner, hook_dir, tmp_path):
-    # Simulate: pre-run snapshotted a HEAD, agent added an e2e spec, verify_cmd
-    # is pytest-only. Post-run should warn with the [post-run] tag.
+def test_the_post_run_hook_no_longer_computes_its_own_view_of_the_change(runner, hook_dir, tmp_path):
+    """Spec 013 / #630. The hook used to answer "what did the agent change?"
+    itself, from a `.devclaw-pre-head` sidecar, and had the same blind spot as
+    the gates: it once reported "AGENTS.md exists but was not updated this run"
+    on a run that had just CREATED AGENTS.md. Its three checks were RELOCATED to
+    the host (``devclaw/quality/change_advisories.py``), which reads the one
+    materialized span — not copied, because a second component doing the same
+    trick is how the views drift apart again."""
     import subprocess as sp
+
     ws = tmp_path / "ws"
     ws.mkdir()
     sp.run(["git", "init", "-q", str(ws)], check=True)
@@ -380,23 +386,28 @@ def test_post_run_hook_warns_on_e2e_without_playwright_in_verify(runner, hook_di
     (ws / "README.md").write_text("x")
     sp.run(["git", "-C", str(ws), "add", "."], check=True)
     sp.run(["git", "-C", str(ws), "commit", "-q", "-m", "init"], check=True)
-    pre_head = sp.run(
-        ["git", "-C", str(ws), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    (ws / ".devclaw-pre-head").write_text(pre_head)
-    # Agent shipped a spec file
     (ws / "e2e").mkdir()
     (ws / "e2e" / "smoke.spec.ts").write_text("test('x', () => {});")
-    sp.run(["git", "-C", str(ws), "add", "."], check=True)
-    sp.run(["git", "-C", str(ws), "commit", "-q", "-m", "add e2e"], check=True)
 
     warnings = runner._run_hook(
         "post-run", str(ws), "implement_feature", "task-id", "pytest -q"
     )
-    assert any("[post-run]" in w for w in warnings)
-    joined = "\n".join(warnings)
-    assert "browser tests added but verify_cmd" in joined
-    assert "smoke.spec.ts" in joined
+    assert warnings == []
+    # and it leaves no base-reference sidecar of its own behind
+    assert not (ws / ".devclaw-pre-head").exists()
+
+
+def test_the_pre_run_hook_writes_no_base_reference_sidecar(runner, hook_dir, tmp_path):
+    """One definition of the change means one owner of where it starts: the
+    host's ``tasks.pre_run_sha``. The worker layer kept its own copy so the
+    post-run hook could diff against it; both are gone (spec 013)."""
+    import subprocess as sp
+
+    ws = tmp_path / "ws2"
+    ws.mkdir()
+    sp.run(["git", "init", "-q", str(ws)], check=True)
+    runner._run_hook("pre-run", str(ws), "implement_feature", "task-id")
+    assert not (ws / ".devclaw-pre-head").exists()
 
 
 def test_per_repo_hook_runs_alongside_universal(runner, hook_dir, tmp_path):

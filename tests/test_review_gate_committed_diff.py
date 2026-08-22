@@ -55,18 +55,24 @@ def test_diff_with_base_includes_committed_work(tmp_path):
     (ws / "feature.py").write_text("print('shipped')\n")
     _git(ws, "add", "-A")
     _git(ws, "commit", "-q", "-m", "feat: shipped")
+    head = _git_head_sync(str(ws))
 
-    legacy = _git_diff_sync(str(ws))
-    based = _git_diff_sync(str(ws), base)
-    assert "feature.py" not in legacy  # the old view is blind to the commit
+    based = _git_diff_sync(str(ws), base, head)
     assert "feature.py" in based and "shipped" in based
 
 
-def test_diff_with_bad_base_falls_back_to_uncommitted_view(tmp_path):
+def test_an_unresolvable_ref_reports_that_it_could_not_answer(tmp_path):
+    """Spec 013 US3: the three-way fallback ladder is gone. It existed so the
+    function could guess what state the agent had left the tree in; both ends of
+    the range are known now, so a ref that does not resolve is a FAILURE TO
+    DETERMINE the change (``None``) — never an empty diff, and never a silent
+    substitution of some other view."""
     ws = _init_repo(tmp_path / "ws")
+    head = _git_head_sync(str(ws))
     (ws / "README.md").write_text("# edited\n")
-    out = _git_diff_sync(str(ws), "not-a-ref")
-    assert "README.md" in out  # legacy view still delivered
+    assert _git_diff_sync(str(ws), "not-a-ref", head) is None
+    assert _git_diff_sync(str(ws), head, "also-not-a-ref") is None
+    assert _git_diff_sync(str(ws), "", head) is None
 
 
 # --------------------- integration: settle path ---------------------

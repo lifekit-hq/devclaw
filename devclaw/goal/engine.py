@@ -335,6 +335,7 @@ class InProcessEngine:
             gate_passed=_gate_passed(t.result_json),
             diff_stats=_diff_stats(t.result_json),
             repo_notes=_repo_notes(t.result_json) if terminal else None,
+            no_change=_no_change(t.result_json) if terminal else False,
         )
 
     def _poll_program(self, program_id: str) -> PollResult:
@@ -409,6 +410,17 @@ def _repo_notes(result_json: Optional[str]) -> Optional[str]:
     if isinstance(notes, str) and notes.strip():
         return notes.strip()
     return None
+
+
+def _no_change(result_json: Optional[str]) -> bool:
+    """Did this task finish having changed nothing? (spec 013 FR-014.)
+
+    The queue stamps ``no_change`` only for code-writing kinds, where an empty
+    materialized span means the agent accomplished nothing. Defensive: anything
+    other than a literal True reads as False, so an engine that predates the
+    flag keeps today's behaviour."""
+    data = _parse_result(result_json)
+    return bool(data.get("no_change")) if isinstance(data, dict) else False
 
 
 def _diff_stats(result_json: Optional[str]) -> Optional[dict]:

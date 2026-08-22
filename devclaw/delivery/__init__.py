@@ -1,9 +1,12 @@
 """Deliver a completed task's change as a reviewable branch + PR.
 
-After a task settles ``done`` (the verify gate passed), the agent's change is
-sitting **uncommitted** in the workspace. Delivery turns that into something you
-*review* instead of *produce*: a branch, a commit, a push, and — if the remote
-is GitHub and ``gh`` is authed — a pull request whose URL is recorded on the task.
+After a task passes its gate chain, the agent's change has already been
+MATERIALIZED as a commit (spec 013 — `devclaw/task_change.py`), and that commit
+is the object the gates judged. Delivery turns it into something you *review*
+instead of *produce*: a branch, a push, and — if the remote is GitHub and ``gh``
+is authed — a pull request whose URL is recorded on the task. It publishes the
+judged object; it does not work out what changed. (The legacy self-discovering
+path is still here for callers that pass no ``judged_head``.)
 
 Design:
   * **Best-effort + non-fatal.** A delivery failure never un-does a ``done`` task;
@@ -383,6 +386,21 @@ def _goal_pr_body(
     return "\n".join(parts)
 
 
+def devclaw_commit_title(
+    *, planner_title: str | None, goal: str, kind: str | None, task_id: str
+) -> str:
+    """The PR/commit title devclaw uses when the WORKER wrote no commit of its
+    own — the same resolution delivery has always applied at its commit site,
+    exposed so materialization (spec 013) can author that commit *before* the
+    gates run without the title changing. Keeping one resolver is the point:
+    two would be a second definition of what the change is called."""
+    title, _branch, _changes = _resolve_title(
+        planner_title=planner_title, agent_msg=None,
+        goal=goal, kind=kind, task_id=task_id,
+    )
+    return title
+
+
 async def _run(
     prog: str, *args: str, cwd: str, env_extra: dict[str, str] | None = None
 ) -> tuple[int, str]:
@@ -518,6 +536,8 @@ async def deliver_change(
     advisories: list | None = None,
     base_branch: str | None = None,
     target_branch: str | None = None,
+    judged_head: str | None = None,
+    agent_authored: bool | None = None,
 ) -> dict:
     """Commit the workspace's change to a branch and (best-effort) push + open a PR.
     Returns a verdict dict; never raises. ``kind`` shapes the conventional-commit
@@ -534,8 +554,18 @@ async def deliver_change(
     ``gh pr create --base``; ``target_branch`` pins the delivery branch — when
     the workspace is already ON it, delivery stays there and reuses its single
     PR (the same machinery goal branches use, no new reuse logic). Both default
-    to None ⇒ the per-task-branch shape (fresh derived branch → the remote's
-    default base)."""
+    to None ⇒ the per-task-branch shape (fresh derived branch → the
+    remote's default base).
+
+    ``judged_head`` is the post-run reference the gates judged (spec 013): the
+    sha of the materialized change. When supplied, delivery **publishes that
+    object and performs no discovery of its own** — no reading of the working
+    tree for a change, no ``git add -A``, no commit. It verifies that HEAD still
+    IS that object and fails LOUD otherwise, because a drifted workspace means
+    what would ship is not what was judged. ``agent_authored`` says whether the
+    commit at ``judged_head`` was written by the WORKER (so its subject describes
+    the change and should title the PR) or by devclaw's materialization step.
+    Both default to None ⇒ the self-discovering path, unchanged."""
     result: dict = {"delivered": False, "branch": None, "committed": False,
                     "pushed": False, "pr_url": None, "error": None}
 
@@ -546,6 +576,24 @@ async def deliver_change(
 
     rc, status = await _run("git", "status", "--porcelain", cwd=workspace_dir)
     dirty = rc == 0 and bool(status.strip())
+
+    if judged_head:
+        # Spec 013 FR-005: publish the artifact that was judged, and only it.
+        # This is a VERIFICATION, not a discovery — the answer to "what changed"
+        # arrived with the call. A mismatch means the workspace moved between the
+        # gate chain and here, so what would ship is not what passed: fail loud
+        # rather than quietly shipping the newer thing.
+        rc_h, head = await _run("git", "rev-parse", "HEAD", cwd=workspace_dir)
+        head = head.strip()
+        if rc_h != 0 or head != judged_head or dirty:
+            result["error"] = (
+                f"workspace drifted from the judged span: expected HEAD "
+                f"{judged_head[:12]}, found {(head or '(unreadable)')[:12]}"
+                + (" with uncommitted changes" if dirty else "")
+                + " — the change that would ship is not the change the gates "
+                "judged, so nothing is published"
+            )
+            return result
 
     # The agent may have committed its change to its own branch, leaving a CLEAN
     # working tree — that is still a delivery. Detect commits ahead of the base
@@ -560,7 +608,13 @@ async def deliver_change(
         if rc_a == 0 and cnt.strip().isdigit():
             ahead = int(cnt.strip())
 
-    if not dirty and ahead == 0:
+    if not judged_head and not dirty and ahead == 0:
+        # Legacy self-discovering path only. With a judged head the caller
+        # already knows there IS a change — it settles a no-change task without
+        # calling here at all (spec 013 FR-014) — so re-deciding the question
+        # from an ahead-count would be exactly the second computation this
+        # change removes. (A local-only repo has no base ref to count against,
+        # so the count is 0 even when the change is real.)
         result["error"] = "no changes to deliver"
         return result
 
@@ -589,7 +643,13 @@ async def deliver_change(
     # the goal-derived title and dump the generic advance-brief (the two-commit
     # `devclaw/…advance-this-goal` PR bug). The stray remainder is still committed
     # below; the title comes from the worker's subject.
-    agent_msg = await _agent_commit_msg(workspace_dir, base) if ahead > 0 else None
+    # Did the WORKER write the commit subject? With a materialized span the
+    # answer arrives with the call; without one, fall back to the historical
+    # ``ahead > 0`` proxy. The proxy over-reports in goal-branch mode (prior
+    # increments this worker never touched also sit ahead of base) — the same
+    # class of guessing spec 013 removes elsewhere.
+    read_agent_msg = bool(agent_authored) if judged_head else ahead > 0
+    agent_msg = await _agent_commit_msg(workspace_dir, base) if read_agent_msg else None
     title_slot, derived_branch, changes = _resolve_title(
         planner_title=title, agent_msg=agent_msg, goal=goal, kind=kind, task_id=task_id,
     )
@@ -606,7 +666,11 @@ async def deliver_change(
         branch = derived_branch
         result["branch"] = branch
         # Put the change on its branch. `checkout -b` carries HEAD — including
-        # any commits the agent already made — onto the new branch. A feature
+        # the materialized commit, and any commits the agent made — onto the new
+        # branch. The branch we were on is left pointing at the same commit
+        # locally; that is harmless because ``prepare_workspace`` hard-resets the
+        # default branch to ``origin/<default>`` before every dispatch, and only
+        # the new branch is ever pushed. A feature
         # slug can repeat across tasks, so on collision disambiguate with a
         # short task suffix.
         rc, out = await _run("git", "checkout", "-b", branch, cwd=workspace_dir)
@@ -618,7 +682,13 @@ async def deliver_change(
                 return result
             result["branch"] = branch
 
-    if dirty:
+    if judged_head:
+        # The commit already exists — materialization wrote it, the gates judged
+        # it, and the drift check above proved HEAD still is it. Nothing to
+        # stage, nothing to author: this is where the second computation of
+        # "what changed" used to live (#630).
+        result["committed"] = True
+    elif dirty:
         await _run("git", "add", "-A", cwd=workspace_dir)
         # Fold leftover files into the worker's OWN commit when it made one this
         # run (ahead of base) and that commit is still local. A leftover is almost

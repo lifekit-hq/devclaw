@@ -13,10 +13,12 @@ gate's place in the settle cascade:
     declared scope — which is how FR-104 is enforced rather than requested;
   * the worker has no surface from which to spawn a worker (FR-105);
   * the judged span is the WORKSPACE's, not the agent's bookkeeping — an
-    out-of-scope file the agent never committed is still a violation (#630).
+    out-of-scope file the agent never committed is still a violation (#630),
+    and the gate gets that for free from the materialized span (spec 013)
+    rather than probing for it itself.
 
-Unit tests — no docker, no claude; one test shells out to real git to pin the
-completeness probe.
+Unit tests — no docker, no claude; the completeness tests shell out to real git
+because materialization is a real git operation.
 """
 
 from __future__ import annotations
@@ -196,88 +198,99 @@ def test_sandbox_mcp_config_gives_the_worker_no_worker_spawn_surface():
 # ---- completeness of the judged span (#630, spec 013) ----------------------
 
 
+def _real_repo(tmp_path):
+    """A real git workspace whose worker recorded SOME of its work."""
+    import subprocess
+
+    d = tmp_path / "ws"
+    (d / "specs" / "010-feat").mkdir(parents=True)
+    (d / "specs" / "010-feat" / "tasks.md").write_text(
+        "- [ ] T012 [P] [US1] Renderer (scope: src/widget/**)\n"
+    )
+    for args in (["init", "-q", "-b", "main"],
+                 ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(d), *args], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(d), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(d), "commit", "-q", "-m", "base"],
+                   check=True, capture_output=True)
+    base = subprocess.run(["git", "-C", str(d), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    return d, base
+
+
+def _materialized_input(workspace, base, *, declared=()) -> GateInput:
+    return GateInput(
+        kind="implement_feature",
+        goal="g",
+        workspace_dir=str(workspace),
+        verify={"ran": True, "passed": True},
+        scaffold=False,
+        browser_mode="flexible",
+        change_fn=lambda: tq._capture_change(
+            str(workspace), base, task_id="t1", message="chore: capture",
+        ),
+        declared_scope=declared,
+    )
+
+
 @pytest.mark.asyncio
-async def test_an_unrecorded_out_of_scope_file_still_fails_the_gate(monkeypatch):
-    """The #358 route-around through the back door: `git diff <base>` shows only
-    what the agent CHOSE to record, while delivery stages everything in the
-    workspace (#630). Without folding the unrecorded paths in, an increment
-    escapes its declared scope by simply not committing the offending file. The
-    gate consults the workspace, so it does not."""
+async def test_an_unrecorded_out_of_scope_file_still_fails_the_gate(tmp_path):
+    """The #358 route-around through the back door: `git diff <base>` used to
+    show only what the agent CHOSE to record, while delivery staged everything
+    in the workspace (#630). An increment escaped its declared scope by simply
+    not committing the offending file. The span the gate reads is materialized
+    now (spec 013), so the file is in it — and the gate needs no probe of its
+    own to see it."""
+    ws, base = _real_repo(tmp_path)
+    (ws / "src" / "widget").mkdir(parents=True)
+    (ws / "src" / "widget" / "a.py").write_text("W = 1\n")
+    (ws / "src" / "core").mkdir(parents=True)
+    (ws / "src" / "core" / "db.py").write_text("D = 1\n")  # never recorded
+    (ws / "notes.txt").write_text("scratch\n")             # never recorded
 
-    async def _unrecorded(_dir):
-        return ["src/core/db.py", "notes.txt"]
-
-    monkeypatch.setattr(tq, "_git_status_paths", _unrecorded)
-    # the diff itself is spotless — everything recorded is inside the scope
-    gi = _gate_input(_file_diff("src/widget/a.py"), declared=("src/widget/**",))
-    verdict = await tq._ScopeGate().check(gi)
+    verdict = await tq._ScopeGate().check(
+        _materialized_input(ws, base, declared=("src/widget/**",))
+    )
     assert verdict.ok is False
     assert "src/core/db.py" in (verdict.reason or "")
     assert "notes.txt" in (verdict.reason or "")
 
 
 @pytest.mark.asyncio
-async def test_the_completeness_probe_is_skipped_when_no_scope_was_declared(monkeypatch):
-    """It costs one `git status`, and only once a contract exists: an increment
-    that declared nothing pays nothing, so the ordinary path stays byte-identical
-    down to its subprocess count."""
+async def test_the_scope_gate_makes_no_probe_of_its_own(monkeypatch):
+    """SC-004: exactly ONE place answers "what did the agent change?". The gate
+    briefly carried its own `git status --untracked-files=all` to patch the
+    completeness gap; the gap is closed upstream now, so a second computation
+    here would be a third component owning the definition of the change."""
     calls: list = []
 
-    async def _probe(d):
-        calls.append(d)
-        return []
+    async def _forbidden(*a, **kw):  # pragma: no cover — must never run
+        calls.append(a)
+        return ""
 
-    monkeypatch.setattr(tq, "_git_status_paths", _probe)
-    verdict = await tq._ScopeGate().check(_gate_input(_file_diff("anything.py")))
+    monkeypatch.setattr(tq, "_git_diff", _forbidden)
+    gi = _gate_input(CLAIM_DIFF + _file_diff("src/widget/a.py"))
+    verdict = await tq._ScopeGate().check(gi)
     assert verdict.ok is True
     assert calls == []
 
 
 @pytest.mark.asyncio
-async def test_an_increment_that_records_nothing_at_all_claims_nothing(monkeypatch):
-    """The residual half of #630, written down so nobody rediscovers it.
-
-    A LANE is bound by the scope the host pinned, so unrecorded files are caught
-    (above). An increment with no pinned scope is bound only by its own CLAIM on
-    the task graph — and that claim is read from the recorded diff. If the agent
-    records literally nothing, there is no claim, so no contract, so nothing to
-    enforce. Spec 013 / #630 closes this by materialising the change
-    mechanically before any gate reads it; when it lands, this test should
-    become an assertion that the violation IS caught."""
-
-    async def _unrecorded(_dir):
-        return ["src/core/db.py"]
-
-    monkeypatch.setattr(tq, "_git_status_paths", _unrecorded)
-    verdict = await tq._ScopeGate().check(_gate_input(""))  # nothing recorded
-    assert verdict.ok is True  # documents today's behaviour, not the desired one
-
-
-def test_the_completeness_probe_reads_untracked_files_from_a_real_workspace(tmp_path):
-    """The probe itself, against real git: an untracked file is part of what the
-    increment changed, because it is part of what delivery will ship."""
-    import subprocess
-
-    from devclaw.task_git import _git_status_paths_sync
-
-    d = str(tmp_path)
-    for args in (
-        ["init", "-q", "-b", "main"],
-        ["config", "user.email", "t@example.com"],
-        ["config", "user.name", "T"],
-    ):
-        subprocess.run(["git", "-C", d, *args], check=True, capture_output=True)
-    (tmp_path / "kept.py").write_text("K = 1\n")
-    subprocess.run(["git", "-C", d, "add", "-A"], check=True, capture_output=True)
-    subprocess.run(
-        ["git", "-C", d, "commit", "-q", "-m", "base"], check=True, capture_output=True
+async def test_an_increment_that_records_nothing_at_all_is_still_judged_in_full(tmp_path):
+    """The residual half of #630, now closed. An increment with no PINNED scope
+    is bound by its own claim on the task graph — and that claim used to be read
+    from the recorded diff, so an agent that recorded literally nothing made no
+    claim, had no contract, and was enforced against nothing. Materialization
+    captures the whole workspace before any gate reads it, so the claim and the
+    violation both surface even though the agent committed neither."""
+    ws, base = _real_repo(tmp_path)
+    # the worker checks its own row off and writes out of scope — recording NOTHING
+    (ws / "specs" / "010-feat" / "tasks.md").write_text(
+        "- [x] T012 [P] [US1] Renderer (scope: src/widget/**)\n"
     )
-    (tmp_path / "sub").mkdir()
-    (tmp_path / "sub" / "never_committed.py").write_text("N = 1\n")
-    (tmp_path / "kept.py").write_text("K = 2\n")
+    (ws / "src" / "core").mkdir(parents=True)
+    (ws / "src" / "core" / "db.py").write_text("D = 1\n")
 
-    paths = set(_git_status_paths_sync(d))
-    assert "sub/never_committed.py" in paths
-    assert "kept.py" in paths
-    # best-effort: a non-repo is no evidence, never a crash
-    assert _git_status_paths_sync(str(tmp_path / "nope")) == []
+    verdict = await tq._ScopeGate().check(_materialized_input(ws, base))
+    assert verdict.ok is False
+    assert "src/core/db.py" in (verdict.reason or "")

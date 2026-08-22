@@ -1,10 +1,10 @@
 # Feature Specification: One definition of the change
 
-**Feature Branch**: `docs/spec-013-materialize-change`
+**Feature Branch**: `feat/013-materialize-change`
 
 **Created**: 2026-08-22
 
-**Status**: Draft
+**Status**: Implemented (2026-08-23) — plan.md / tasks.md; all FRs shipped in one PR
 
 **Input**: Issue [#630](https://github.com/lifekit-hq/devclaw/issues/630). Materialize the agent's change once, mechanically, as a git object, and have every consumer read that same object instead of recomputing its own view.
 

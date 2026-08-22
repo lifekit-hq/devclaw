@@ -31,28 +31,47 @@ The split of responsibilities is deliberate and load-bearing:
   queue, with its load-bearing ordering intact. This module is only Axis 1 (the
   gate verdict); it does not touch the pause axis.
 
-Single shared diff: the diff is computed at most once per settle and only when
-it is actually needed. :class:`GateInput` memoises it behind an async accessor —
-the verify gate never asks for it (so a verify failure short-circuits before any
-``git diff`` runs, exactly as before), and integrity/review/browser share the
-one computed value.
+Single shared change (spec 013): the agent's change is MATERIALIZED at most once
+per settle — mechanically staged and committed, so it cannot miss a file — and
+only when it is actually needed. :class:`GateInput` memoises the resulting
+:class:`~devclaw.task_change.ChangeSet` behind an async accessor; the verify gate
+never asks for it (so a verify failure short-circuits before any git runs,
+exactly as before), and every later gate reads THAT object rather than deriving
+its own view. Two consumers naming the same post-run sha cannot disagree.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Optional, Protocol, Sequence, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Awaitable,
+    Callable,
+    Optional,
+    Protocol,
+    Sequence,
+    runtime_checkable,
+)
+
+if TYPE_CHECKING:  # pragma: no cover — typing only
+    from ..task_change import ChangeSet
 
 
 @dataclass
 class GateInput:
     """Read-only run artifacts handed to every gate in one settle.
 
-    The diff is the load-bearing shared resource: it is computed AT MOST ONCE
-    (lazily, via :meth:`diff`) and only when a gate that reads it actually runs.
-    The verify gate does not touch it, so a verify failure short-circuits the
-    pipeline before any ``git diff`` subprocess fires — preserving the cascade's
-    "compute the diff once, and only after verify passed" behaviour byte-for-byte.
+    The **change** is the load-bearing shared resource: the materialized
+    :class:`~devclaw.task_change.ChangeSet` — one mechanically-captured answer to
+    "what did the agent change?", produced AT MOST ONCE (lazily, via
+    :meth:`change`) and only when a gate that reads it actually runs. The verify
+    gate does not touch it, so a verify failure short-circuits the pipeline
+    before any git subprocess fires — preserving the cascade's "compute the span
+    once, and only after verify passed" behaviour.
+
+    :meth:`diff` is the projection every diff-reading gate consumes. It reads
+    the change; it does not compute one. That is the whole of spec 013: two
+    consumers reading the same object cannot disagree about what the change is.
     """
 
     kind: str
@@ -64,9 +83,14 @@ class GateInput:
     scaffold: bool
     #: browser-gate stance (``flexible`` | ``strict``) resolved for this workspace
     browser_mode: str
-    #: async producer of the post-run diff vs. the pre-run base. Called at most
-    #: once; the result is cached on :attr:`_diff_value`.
-    diff_fn: Callable[[], Awaitable[str]]
+    #: async producer of the post-run diff vs. the pre-run base. The legacy
+    #: seam, kept for direct constructions (tests, callers with a span already in
+    #: hand); production passes :attr:`change_fn` instead. Called at most once.
+    diff_fn: Optional[Callable[[], Awaitable[str]]] = None
+    #: async producer of the materialized :class:`ChangeSet` — the ONE definition
+    #: of the change (spec 013). When set it wins over :attr:`diff_fn`, and
+    #: :meth:`diff` becomes a projection of it. Called at most once.
+    change_fn: Optional[Callable[[], Awaitable["ChangeSet"]]] = None
     #: owning project's reference key (#524 P3) — the review gate resolves its
     #: ``review_gate`` enable/disable knob by this id, not a workspace-path scan.
     #: None for a task with no owning project (a self-fix, say).
@@ -78,13 +102,41 @@ class GateInput:
     declared_scope: "tuple[str, ...]" = ()
     _diff_computed: bool = field(default=False, repr=False)
     _diff_value: str = field(default="", repr=False)
+    _change_computed: bool = field(default=False, repr=False)
+    _change_value: object = field(default=None, repr=False)
+
+    async def change(self) -> "ChangeSet":
+        """The materialized change, captured once and memoised.
+
+        Raises :class:`RuntimeError` when the input was built without a
+        ``change_fn`` — a gate that needs the artifact must never silently
+        receive a fabricated empty one (FR-007)."""
+        if self.change_fn is None:
+            raise RuntimeError(
+                "this GateInput carries no change_fn — the materialized change "
+                "is unavailable (spec 013)"
+            )
+        if not self._change_computed:
+            self._change_value = await self.change_fn()
+            self._change_computed = True
+        return self._change_value  # type: ignore[return-value]
 
     async def diff(self) -> str:
-        """The shared post-run diff, computed once and memoised. An empty diff is
-        a valid value, so a boolean flag (not the string's truthiness) guards the
+        """The shared post-run diff, computed once and memoised.
+
+        A projection of :meth:`change` when a ``change_fn`` was supplied (the
+        production path), else the legacy ``diff_fn``. An empty diff is a valid
+        value, so a boolean flag (not the string's truthiness) guards the
         one-time computation."""
         if not self._diff_computed:
-            self._diff_value = await self.diff_fn()
+            if self.change_fn is not None:
+                self._diff_value = (await self.change()).diff
+            elif self.diff_fn is not None:
+                self._diff_value = await self.diff_fn()
+            else:
+                raise RuntimeError(
+                    "this GateInput carries neither change_fn nor diff_fn"
+                )
             self._diff_computed = True
         return self._diff_value
 

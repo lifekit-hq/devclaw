@@ -334,7 +334,7 @@ def _enable_gate_and_fake_diff(monkeypatch):
     # the review path is reached (the test workspaces aren't real repos).
     monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", True)
 
-    async def fake_diff(_host_dir, _base=""):
+    async def fake_diff(_host_dir, _base="", _head=""):
         return "diff --git a/f.py b/f.py\n+code"
     monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
 
@@ -620,7 +620,7 @@ async def test_diff_uses_workspace_path_verbatim_not_host_translation(store, mon
     monkeypatch.setenv("DEVCLAW_HOST_PATH_PREFIX", "/srv/devclaw/workspaces")
     seen: dict = {}
 
-    async def capture_diff(path, _base=""):
+    async def capture_diff(path, _base="", _head=""):
         seen["path"] = path
         return ""  # empty → guards pass; we only assert WHICH path git was given
 
@@ -775,7 +775,7 @@ async def test_scaffold_task_still_runs_test_integrity(store, monkeypatch):
         return {"verdict": "approve", "summary": "", "issues": [], "blocking": []}
 
     # Override the autouse benign diff with one that removes a test declaration.
-    async def gutting_diff(_host_dir, _base=""):
+    async def gutting_diff(_host_dir, _base="", _head=""):
         return (
             "diff --git a/tests/test_foo.py b/tests/test_foo.py\n"
             "--- a/tests/test_foo.py\n"

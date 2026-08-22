@@ -360,7 +360,7 @@ async def test_resumed_task_gate_baseline_is_original_base_not_wip_snapshot(
 
     diff_bases: list = []
 
-    async def recording_diff(host_dir, base=""):
+    async def recording_diff(host_dir, base="", head=""):
         diff_bases.append(base)
         return ""
 

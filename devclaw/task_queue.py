@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Awaitable, Callable, Optional
 
-from .delivery import deliver_change, delivery_failed
+from .delivery import deliver_change, delivery_failed, devclaw_commit_title
 from .delivery.integrate import commit_lane, integrate_lane
 from .engine import Engine, EngineEvent, EngineRequest
 from .loom.limits import classify_failure, pause_seconds
@@ -94,12 +94,20 @@ from .task_git import (  # noqa: F401
     _git_commit_exists_sync,
     _git_diff_sync,
     _git_head_sync,
-    _git_status_paths_sync,
-    _git_reset_clean_sync,
     _review_repo_context_sync,
     _wip_snapshot_sync,
     branch_staleness_sync as _branch_staleness_sync,
 )
+from .task_change import (
+    ERROR as _CHANGE_ERROR,
+    NO_CHANGE as _CHANGE_NONE,
+    NO_REPO as _CHANGE_NO_REPO,
+    CHANGE as _CHANGE_SOME,
+    ChangeSet,
+    materialization_message,
+    materialize_worktree_sync,
+)
+from .quality.change_advisories import change_advisories
 from .task_notify import _NotifyMixin
 
 NOTIFY_BACKOFF_MS = (1000, 2000, 4000)
@@ -285,35 +293,123 @@ def _verify_failure_summary(verify: dict) -> str:
     return f"{head}\n{out[-1500:]}" if out else head
 
 
-async def _git_diff(host_dir: str, base: str = "") -> str:
+async def _git_diff(host_dir: str, base: str = "", head: str = "") -> "str | None":
     """Async wrapper — runs the blocking git diff in a thread so it never blocks
     the event loop or trips the asyncio-subprocess child-watcher hang. Looks up
-    :func:`_git_diff_sync` as a module global so tests can patch it here."""
-    return await asyncio.to_thread(_git_diff_sync, host_dir, base)
+    :func:`_git_diff_sync` as a module global so tests can patch it here.
+
+    ``None`` means git could not answer — NOT an empty change (spec 013)."""
+    return await asyncio.to_thread(_git_diff_sync, host_dir, base, head)
 
 
-async def _git_status_paths(host_dir: str) -> "list[str]":
-    """Async wrapper — the workspace's UNRECORDED changed paths (#630). Looked up
-    as a module global so tests can patch it here, like :func:`_git_diff`."""
-    return await asyncio.to_thread(_git_status_paths_sync, host_dir)
+async def _materialize_worktree(
+    host_dir: str, base: str, *, task_id: str, message: str
+) -> dict:
+    """Async wrapper around :func:`~devclaw.task_change.materialize_worktree_sync`
+    — same thread-offload rationale as :func:`_git_diff`, and a module global so
+    tests can patch it here."""
+    return await asyncio.to_thread(
+        materialize_worktree_sync, host_dir, base, task_id=task_id, message=message
+    )
+
+
+async def _capture_change(
+    workspace_dir: str, base: str, *, task_id: str, message: str
+) -> ChangeSet:
+    """**The** answer to "what did the agent change?" (spec 013, #630).
+
+    Materialize once — stage everything the agent left and write it into a
+    commit — then render the ``base..head`` range as a unified diff. Every
+    consumer (each gate, the change-size projection, the advisory checks,
+    delivery) reads THIS object. There is no second computation to disagree
+    with, which is the whole mechanism: the property "the exact span the gates
+    judged and delivery ships" used to be a sentence in a docstring backed by a
+    request to a language model in a worker skill.
+
+    Never raises — a crash becomes a :data:`~devclaw.task_change.ERROR`
+    ChangeSet, which the materialize gate fails CLOSED on (#186). An empty
+    result is never quietly reported as "no change".
+    """
+    try:
+        mat = await _materialize_worktree(
+            workspace_dir, base, task_id=task_id, message=message
+        )
+    except Exception as err:  # noqa: BLE001 — undeterminable ⇒ loud, not silent
+        return ChangeSet(
+            status=_CHANGE_ERROR, base_sha=base,
+            reason=f"{err.__class__.__name__}: {err}",
+        )
+    if mat["status"] == _CHANGE_ERROR:
+        return ChangeSet(status=_CHANGE_ERROR, base_sha=base, reason=mat["reason"])
+
+    head = mat["head"]
+    common = {
+        "base_sha": base, "head_sha": head,
+        "agent_authored": bool(mat["agent_authored"]),
+        "materialized": bool(mat["materialized"]),
+    }
+    try:
+        diff = await _git_diff(workspace_dir, base, head)
+    except Exception as err:  # noqa: BLE001
+        diff = None
+        mat["reason"] = mat["reason"] or f"{err.__class__.__name__}: {err}"
+    if diff is None:
+        if mat["status"] == _CHANGE_NO_REPO:
+            # Not a repository: nothing can be published from here either
+            # (delivery fails loudly on the same condition), so there is no
+            # judged-vs-shipped divergence to close. Reported, never silent.
+            return ChangeSet(
+                status=_CHANGE_NO_REPO, base_sha=base,
+                reason=mat["reason"] or f"{workspace_dir} is not a git repository",
+            )
+        return ChangeSet(
+            status=_CHANGE_ERROR,
+            reason=(
+                f"git could not diff {base[:8] or '(no base)'}..{head[:8] or '(no head)'} "
+                f"in {workspace_dir}"
+            ),
+            **common,
+        )
+    if mat["status"] == _CHANGE_NO_REPO:
+        # A patched/stubbed diff seam answered for a non-repo workspace (the
+        # stubbed-engine test shape). Honour the answer, keep the outcome
+        # labelled so nothing upstream reads it as a real delivered increment.
+        return ChangeSet(
+            status=_CHANGE_NO_REPO, base_sha=base, diff=diff,
+            reason=mat["reason"] or f"{workspace_dir} is not a git repository",
+        )
+    status = _CHANGE_SOME if diff.strip() else _CHANGE_NONE
+    return ChangeSet(status=status, diff=diff, **common)
 
 
 def _diff_stats(diff: str) -> dict | None:
     """Files/insertions/deletions counted from unified-diff TEXT — the exact
-    span the gates judged and delivery ships, with no extra git call. Pure so
-    it's unit-testable; ``None`` on an empty/blank diff (nothing to count).
-    Feeds the settle-time DeliveryEvent → the per-goal run summary."""
+    span the gates judged and delivery ships, with no extra git call. Since
+    spec 013 that sentence is a mechanism rather than an aspiration: the text is
+    the materialized ``base..head`` range, the same object delivery publishes.
+    Pure so it's unit-testable; ``None`` on an empty/blank diff (nothing to
+    count). Feeds the settle-time DeliveryEvent → the per-goal run summary.
+
+    Binary files are counted separately and reported under ``binary``. A binary
+    file contributes no ``+``/``-`` lines to a unified diff, so a span carrying
+    one is a BOUNDED view of its own size — and a bounded view must say so
+    (FR-009) instead of silently under-reporting."""
     if not diff or not diff.strip():
         return None
-    files = insertions = deletions = 0
+    files = insertions = deletions = binary = 0
     for line in diff.splitlines():
         if line.startswith("diff --git "):
             files += 1
+        elif line.startswith("Binary files ") or line.startswith("GIT binary patch"):
+            binary += 1
         elif line.startswith("+") and not line.startswith("+++"):
             insertions += 1
         elif line.startswith("-") and not line.startswith("---"):
             deletions += 1
-    return {"files": files, "insertions": insertions, "deletions": deletions}
+    stats = {"files": files, "insertions": insertions, "deletions": deletions}
+    if binary:
+        stats["binary"] = binary
+    return stats
 
 
 def _attach_diff_stats(result: dict, diff: str) -> None:
@@ -326,6 +422,59 @@ def _attach_diff_stats(result: dict, diff: str) -> None:
             result["diff_stats"] = stats
     except Exception as err:  # noqa: BLE001 — observability, not correctness
         sys.stderr.write(f"task-queue: diff-stats capture failed: {err}\n")
+
+
+#: Task kinds that exist to WRITE code. An empty span from one of these is a
+#: real "the agent accomplished nothing" signal (FR-014). A read-only kind
+#: legitimately changes nothing — its deliverable is a report — so it keeps
+#: counting as a delivery (FR-011).
+_CODE_WRITING_KINDS = frozenset({"implement_feature", "fix_bug", "onboard"})
+
+
+def _attach_change(
+    result: dict, change: ChangeSet, *, kind: str, workspace_dir: str,
+    verify_cmd: Optional[str],
+) -> None:
+    """Stamp the ONE judged span onto the task result (spec 013): its two
+    references, its size, its no-change flag, and the mechanical advisories that
+    read it. Best-effort, never-raises — a bookkeeping hiccup must not fail a
+    task that already passed every gate."""
+    try:
+        result["change"] = {
+            "status": change.status,
+            "base_sha": change.base_sha,
+            "head_sha": change.head_sha,
+            "agent_authored": change.agent_authored,
+            "materialized": change.materialized,
+        }
+        if change.reason:
+            result["change"]["reason"] = change.reason
+        if change.is_no_change and kind in _CODE_WRITING_KINDS:
+            # Explicit, distinguishable outcome: the task settles successfully,
+            # publishes nothing, and is reported upstream as NO PROGRESS rather
+            # than as a delivered increment (FR-006/FR-014). Plain success is
+            # the false-green being closed — an upstream poller cannot otherwise
+            # tell "nothing needed doing" from "the agent accomplished nothing".
+            result["no_change"] = True
+        if change.status == _CHANGE_NO_REPO:
+            sys.stderr.write(
+                f"task-queue: no git repository at {workspace_dir} — the agent's "
+                f"change could not be materialized ({change.reason}); nothing can "
+                f"be published from this workspace\n"
+            )
+    except Exception as err:  # noqa: BLE001 — observability, not correctness
+        sys.stderr.write(f"task-queue: change capture failed: {err}\n")
+    _attach_diff_stats(result, change.diff)
+    try:
+        notes = change_advisories(
+            change.diff, workspace_dir=workspace_dir, verify_cmd=verify_cmd or "",
+        )
+        if notes:
+            result.setdefault("hook_warnings", []).extend(
+                f"[change-advisory] {n}" for n in notes
+            )
+    except Exception as err:  # noqa: BLE001 — advisory, never a task failure
+        sys.stderr.write(f"task-queue: change advisories failed: {err}\n")
 
 
 def _attach_gate_advisory(result: dict, gate_id: str, reason: str) -> None:
@@ -347,11 +496,6 @@ async def _git_head(host_dir: str) -> str:
 async def _git_commit_exists(host_dir: str, sha: str) -> bool:
     """Async wrapper — same thread-offload rationale as :func:`_git_diff`."""
     return await asyncio.to_thread(_git_commit_exists_sync, host_dir, sha)
-
-
-async def _git_reset_clean(host_dir: str, sha: str) -> bool:
-    """Async wrapper — same thread-offload rationale as :func:`_git_diff`."""
-    return await asyncio.to_thread(_git_reset_clean_sync, host_dir, sha)
 
 
 async def _base_branch_error(host_dir: str, base_branch: str) -> Optional[str]:
@@ -541,6 +685,46 @@ class _IntegrityGate:
 
 
 @dataclass
+class _MaterializeGate:
+    """The span itself — always-hard, zero-LLM (spec 013 FR-007).
+
+    Not a judgement of the change: the precondition of every judgement below it.
+    It asks :meth:`GateInput.change` for the materialized artifact and fails
+    CLOSED when the change could not be determined at all. Before spec 013 that
+    case degraded to ``""`` and every diff-reading gate below passed on it
+    trivially — a gate shipping on its own silence, which #186 forbids.
+
+    Placed immediately after ``verify`` and before every consumer of the span:
+    a verify failure still short-circuits ahead of any git call, and no gate can
+    ever see a pre-materialization view.
+    """
+
+    gate_id: str = "materialize"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        try:
+            change = await gi.change()
+        except Exception as err:  # noqa: BLE001 — undeterminable ⇒ fail closed
+            return GateVerdict.failed(
+                self.gate_id,
+                f"the agent's change could not be determined "
+                f"({err.__class__.__name__}: {err}) — failing closed: an "
+                f"undeterminable span is not an empty one",
+            )
+        if change.is_error:
+            return GateVerdict.failed(
+                self.gate_id,
+                f"the agent's change could not be determined: {change.reason} — "
+                f"failing closed. Nothing may be judged or shipped on a span "
+                f"that could not be captured.",
+            )
+        return GateVerdict.passed(self.gate_id)
+
+
+@dataclass
 class _ScopeGate:
     """Declared-file-scope gate (spec 010 FR-103) — always-hard, zero-LLM.
 
@@ -567,21 +751,15 @@ class _ScopeGate:
         return True
 
     async def check(self, gi: GateInput) -> GateVerdict:
+        # The shared span is MATERIALIZED (spec 013), so it already contains the
+        # files the agent chose not to record. This gate held its own
+        # `git status --untracked-files=all` probe for exactly that gap; the gap
+        # is closed upstream now, for scoped and unscoped increments alike, so
+        # the probe is gone. A gate that recomputed the change would be the
+        # third component owning its definition — the defect, not a fix.
         diff = await gi.diff()
         try:
             check = scope_check(diff, gi.declared_scope)
-            if check.consulted:
-                # Completeness (#630, spec 013). The diff is only what the agent
-                # CHOSE to record; delivery stages everything in the workspace,
-                # so a change made entirely of unrecorded files ships while
-                # reading as an empty span here. A gate whose whole job is
-                # bounding what an increment touched must not take the agent's
-                # bookkeeping as its input, so the unrecorded paths are folded
-                # in. One extra `git status`, and ONLY once a contract exists —
-                # an increment that declared nothing pays nothing.
-                check = scope_check(
-                    diff, gi.declared_scope, await _git_status_paths(gi.workspace_dir)
-                )
         except Exception as err:  # noqa: BLE001 — unreviewable ⇒ fail closed (#186)
             return GateVerdict.failed(
                 self.gate_id,
@@ -1413,7 +1591,20 @@ class TaskQueue(_NotifyMixin):
             # Independent Test (one lane strays and fails while its sibling
             # lands).
             await self._merge_queue.skip(_lane_key(lane), _lane_position(lane))
-        if deliver and success is not None:
+        no_change = bool(isinstance(success, dict) and success.get("no_change"))
+        if deliver and success is not None and no_change:
+            # Spec 013 FR-014: the agent produced an empty span. That is a
+            # first-class outcome, not a delivery — the task settles done,
+            # publishes nothing, and the goal layer counts it as no progress
+            # (feeding the no-progress watchdog) instead of as a shipped
+            # increment. Failing it would punish a run that was correct to do
+            # nothing; plain success is the false-green being closed.
+            sys.stderr.write(
+                f"task-queue: task {task_id} produced no change — settling done "
+                f"with nothing to publish\n"
+            )
+            self._store.mark_done(task_id, json.dumps(success))
+        elif deliver and success is not None:
             # Gate passed; the task is still 'running'. Turn the change into a
             # branch/PR, then make 'done' observable — with pr_url already on
             # the row. Pass the kind (→ conventional-commit title) + the gate
@@ -1474,6 +1665,17 @@ class TaskQueue(_NotifyMixin):
                 branch_kwargs["base_branch"] = base_branch
             if target_branch:
                 branch_kwargs["target_branch"] = target_branch
+            # Spec 013 FR-005: hand delivery the artifact the gates judged, so it
+            # publishes that object instead of recomputing its own view of the
+            # change. Only for a real materialized span — a workspace that is not
+            # a repository has nothing to publish and takes the legacy path,
+            # where delivery fails loudly on the same condition.
+            change_record = success.get("change") if isinstance(success, dict) else None
+            if isinstance(change_record, dict) and change_record.get("head_sha") and (
+                change_record.get("status") == _CHANGE_SOME
+            ):
+                branch_kwargs["judged_head"] = change_record["head_sha"]
+                branch_kwargs["agent_authored"] = bool(change_record.get("agent_authored"))
             try:
                 delivery = await deliver_change(
                     workspace_dir=delivery_dir, task_id=task_id, goal=goal,
@@ -1775,10 +1977,9 @@ class TaskQueue(_NotifyMixin):
         pause_count = row.pause_count if row else 0
         resume_brief = "" if pause_count <= 0 else (
             f"[Resuming after a usage-limit interruption (pause {pause_count})] "
-            "A previous attempt was cut off mid-work. The workspace may still "
-            "contain its partial progress — possibly as a "
-            "'wip(devclaw): interrupted…' commit — but a failed retry may have "
-            "reset the workspace to the clean base since, wiping it. Inspect "
+            "A previous attempt was cut off mid-work. The workspace still "
+            "contains its partial progress — possibly as a "
+            "'wip(devclaw): interrupted…' commit. Inspect "
             "`git status` and `git log` first and CONTINUE from whatever state "
             "is actually there; do not redo work that is already present.\n\n"
         )
@@ -1788,12 +1989,13 @@ class TaskQueue(_NotifyMixin):
         # with just the event. Same three captured vars as the old closure.
         on_event = functools.partial(self._append_task_event, task_id, program_id)
 
-        # Baseline for the post-gate diff. The agent is asked to COMMIT its work
-        # (goal-branch mode lands commits directly on goal/<id>), so the tree can
-        # be clean by settle time — the gates must diff against the pre-run HEAD
-        # to see the change at all. Captured ONCE before the attempt loop, not
-        # per attempt: delivery ships everything ahead of this ref, so a retry's
-        # gates must judge the same cumulative span it will ship.
+        # The pinned base of the judged span (spec 013). Materialization writes
+        # the post-run counterpart when the run ends; the change is the range
+        # between the two. Captured ONCE before the attempt loop, not per
+        # attempt: delivery ships everything ahead of this ref, so every retry's
+        # gates must judge the same cumulative span it will ship (FR-012/FR-013 —
+        # promoting a rejected attempt to the new base would let gate-REJECTED
+        # content reach a PR without ever being re-judged).
         #
         # And once per TASK, not per run: a usage-limit pause commits the dirty
         # tree as a wip snapshot and requeues, so by the resumed run HEAD *is*
@@ -1805,6 +2007,19 @@ class TaskQueue(_NotifyMixin):
         # (pause-resume, crash-recovery requeue) re-uses it, degrading to a
         # fresh capture when the persisted sha no longer resolves (e.g. the
         # workspace was re-cloned meanwhile).
+        # The message devclaw writes IF it has to author the commit (the worker
+        # recorded nothing). Resolved through delivery's own title resolver, so a
+        # worker that never commits gets the identical title, branch slug and
+        # message it gets today — materialization changes WHEN the commit is
+        # written, not what it says (FR-008).
+        materialize_msg = materialization_message(
+            devclaw_commit_title(
+                planner_title=(row.title if row else None),
+                goal=goal, kind=kind, task_id=task_id,
+            ),
+            task_id,
+        )
+
         pre_run_sha = ""
         stored_base = row.pre_run_sha if row else None
         if stored_base and await _git_commit_exists(workspace_dir, stored_base):
@@ -1835,28 +2050,19 @@ class TaskQueue(_NotifyMixin):
         # FINAL attempt at exhaustion, where under `trust` it advises-and-ships.
         dialable_finding: Optional[tuple[str, str]] = None
         last_gate_result: Optional[dict] = None
-        last_gate_diff: str = ""
+        last_gate_change: Optional[ChangeSet] = None
+        # A retry KEEPS the workspace (spec 013 FR-012, ruled 2026-08-22). The
+        # loop used to rewind to ``pre_run_sha`` and ``clean -fdx`` between
+        # attempts, so the gates would diff a clean base — a compensation for
+        # the gates guessing what state the agent had left the tree in. They no
+        # longer guess: every attempt is materialized and judged IN FULL against
+        # the pinned ``pre_run_sha`` (FR-013), so no content can reach
+        # publication having been judged only as a delta against a rejected
+        # attempt. What the rewind actually cost was the work the agent got
+        # mostly right — it turned "fix your own output" into "rewrite from
+        # scratch" on every retry.
         for attempt in range(attempts):
             dialable_finding = None
-            if attempt > 0 and pre_run_sha:
-                # Retry isolation (#1): rewind the workspace to the clean
-                # per-item base captured above before re-running. Without this
-                # the inner loop never re-preps between attempts, so attempt
-                # N+1 inherits attempt N's mutated tree — and any local commits
-                # it landed on the goal branch — and a failed attempt's drift
-                # compounds across retries instead of each one starting from
-                # the same clean base the gates diff against (`pre_run_sha`).
-                # This is the intra-dispatch half of the closeloop-bench
-                # 2026-07-18 "each retry inherits more drift than the last"
-                # pattern. Best-effort: a reset hiccup logs and proceeds on the
-                # drifted tree rather than wedging the retry. Local-only —
-                # delivery pushes only AFTER this loop and only on a gate pass,
-                # so rewinding here never touches origin.
-                if not await _git_reset_clean(workspace_dir, pre_run_sha):
-                    sys.stderr.write(
-                        f"task-queue: retry reset to {pre_run_sha[:8]} failed "
-                        f"task={task_id}; proceeding on drifted tree\n"
-                    )
             if attempt == 0:
                 attempt_goal = f"{resume_brief}{goal}"
             else:
@@ -1924,14 +2130,15 @@ class TaskQueue(_NotifyMixin):
                     # "done" means the verify gate passed, not that the agent said
                     # so — then the checks that READ the change. Axis 1 (the gate
                     # verdict) runs as an ORDERED, short-circuit PIPELINE over ONE
-                    # shared diff: verify → test_integrity → scope → review → browser.
+                    # shared, MATERIALIZED span (spec 013):
+                    # verify → materialize → test_integrity → scope → review → browser.
                     # run_pipeline stops at the FIRST non-ok verdict, and that
                     # short-circuit IS the strict ordering the cascade always had —
                     # review runs only if integrity passed, browser only if both
-                    # passed. The diff is computed lazily inside GateInput and
-                    # memoised, so it is computed AT MOST ONCE and only when a
-                    # diff-reading gate runs — the verify gate never asks for it, so
-                    # a verify failure still short-circuits before any git diff runs.
+                    # passed. The span is materialized lazily inside GateInput and
+                    # memoised, so it is captured AT MOST ONCE and only when a
+                    # span-reading gate runs — the verify gate never asks for it, so
+                    # a verify failure still short-circuits before any git runs.
                     #
                     # NB: git runs in THIS (host/server) process, so the diff needs
                     # the workspace path as we see it — NOT the docker-bind host path
@@ -1947,7 +2154,10 @@ class TaskQueue(_NotifyMixin):
                         verify=result.get("verify"),
                         scaffold=scaffold,
                         browser_mode=self._browser_gate_mode(project_id),
-                        diff_fn=lambda: _git_diff(workspace_dir, pre_run_sha),
+                        change_fn=lambda: _capture_change(
+                            workspace_dir, pre_run_sha,
+                            task_id=task_id, message=materialize_msg,
+                        ),
                         project_id=project_id,
                         # Spec 010 FR-103: a fan-out lane is bound by the file
                         # scope the HOST pinned at dispatch, not by whether the
@@ -1966,7 +2176,10 @@ class TaskQueue(_NotifyMixin):
                     # scope here); the gate itself never learns the dial, honoring
                     # gate_pipeline's "policy never lives in a gate". verify /
                     # test_integrity stay always-hard; browser stays dial-able.
-                    gates: list = [_VerifyGate(), _IntegrityGate(), _ScopeGate()]
+                    gates: list = [
+                        _VerifyGate(), _MaterializeGate(), _IntegrityGate(),
+                        _ScopeGate(),
+                    ]
                     if strictness != "trust":
                         gates.append(_ReviewGate(self))
                     gates.append(_BrowserGate(self))
@@ -1985,14 +2198,20 @@ class TaskQueue(_NotifyMixin):
                         if verdict.dialable:
                             dialable_finding = (verdict.gate_id, verdict.reason)
                             last_gate_result = result
-                            last_gate_diff = await gate_input.diff()
+                            last_gate_change = await gate_input.change()
                     elif defer_done:
                         # every gate passed — caller delivers, then settles 'done'
                         # WITH pr_url atomically (see _execute).
-                        _attach_diff_stats(result, await gate_input.diff())
+                        _attach_change(
+                            result, await gate_input.change(), kind=kind,
+                            workspace_dir=workspace_dir, verify_cmd=verify_cmd,
+                        )
                         return result
                     else:
-                        _attach_diff_stats(result, await gate_input.diff())
+                        _attach_change(
+                            result, await gate_input.change(), kind=kind,
+                            workspace_dir=workspace_dir, verify_cmd=verify_cmd,
+                        )
                         self._store.mark_done(task_id, json.dumps(result))
                         return None
             # Worker honest-block: the engineer self-reported it cannot finish
@@ -2134,7 +2353,11 @@ class TaskQueue(_NotifyMixin):
             gate_id, reason = dialable_finding
             self._record_gate_advisory(parent_goal_id, task_id, gate_id, reason)
             _attach_gate_advisory(last_gate_result, gate_id, reason)
-            _attach_diff_stats(last_gate_result, last_gate_diff)
+            if last_gate_change is not None:
+                _attach_change(
+                    last_gate_result, last_gate_change, kind=kind,
+                    workspace_dir=workspace_dir, verify_cmd=verify_cmd,
+                )
             if defer_done:
                 # caller (_execute) delivers, then settles 'done' with pr_url.
                 return last_gate_result

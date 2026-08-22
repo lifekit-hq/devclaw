@@ -110,67 +110,106 @@ async def test_success_first_try_runs_once(store, monkeypatch):
     assert len(calls) == 1  # no needless retry on success
 
 
-def _reset_recorder(monkeypatch, base_sha: str = "basesha0"):
-    """Fake a captured pre-run base + record every retry-reset call.
-
-    Real ``/ws`` isn't a git repo, so without this the base capture returns ''
-    and the reset is (correctly) skipped — these fakes let us assert the reset
-    behavior directly."""
-    resets: list = []
-
-    async def fake_head(host_dir):
-        return base_sha
-
-    async def fake_reset(host_dir, sha):
-        resets.append((host_dir, sha))
-        return True
-
-    monkeypatch.setattr(task_queue, "_git_head", fake_head)
-    monkeypatch.setattr(task_queue, "_git_reset_clean", fake_reset)
-    return resets
+# ---- a retry keeps the workspace (spec 013 FR-012/FR-013) ------------------
+#
+# The loop used to rewind to ``pre_run_sha`` and ``clean -fdx`` before each
+# retry, so the gates would diff a clean base. That was a compensation for the
+# gates guessing what state the agent had left the tree in; they no longer
+# guess. What the rewind cost was the work the agent got mostly right — it
+# turned "fix your own output" into "rewrite from scratch" on every attempt.
 
 
-async def test_retry_resets_workspace_to_clean_per_item_base(store, monkeypatch):
-    # #1 retry isolation: each retry rewinds the workspace to the pre-run base
-    # BEFORE re-running, so a failed attempt's drift can't compound into the
-    # next (the closeloop-bench 2026-07-18 "each retry inherits more drift"
-    # pattern). The reset fires on the retry and ONLY the retry.
+def _repo(tmp_path):
+    import subprocess
+
+    d = tmp_path / "ws"
+    d.mkdir()
+    for args in (["init", "-q", "-b", "main"],
+                 ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(d), *args], check=True, capture_output=True)
+    (d / "README.md").write_text("# base\n")
+    subprocess.run(["git", "-C", str(d), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(d), "commit", "-q", "-m", "base"],
+                   check=True, capture_output=True)
+    return d
+
+
+async def test_a_retry_keeps_the_workspace_and_rejudges_the_whole_span_against_the_pinned_base(
+    store, monkeypatch, tmp_path
+):
+    """FR-012 + FR-013 together. Attempt 1 leaves a partial file and fails its
+    gate; attempt 2 must still SEE that file (the tree is not rewound) and add
+    to it. The span every gate judged on attempt 2 is the FULL change measured
+    against the ORIGINAL pre-run base — not a delta against the rejected
+    attempt, which is how gate-rejected content would otherwise reach a PR
+    unjudged."""
     monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
-    resets = _reset_recorder(monkeypatch)
-    calls: list = []
-    q = TaskQueue(store, runner=_flaky_runner(fail_times=1, calls=calls))
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
+    ws = _repo(tmp_path)
+    saw: list = []
+    judged: list = []
+
+    async def runner(req: EngineRequest):
+        first = (ws / "first.py").exists()
+        saw.append(first)
+        if not first:
+            (ws / "first.py").write_text("A = 1\n")
+            return {"status": "ok", "workspaceDir": req.workspace_dir,
+                    "verify": _gate(False, "boom")}
+        (ws / "second.py").write_text("B = 2\n")
+        return {"status": "ok", "workspaceDir": req.workspace_dir,
+                "verify": _gate(True)}
+
+    real_capture = task_queue._capture_change
+
+    async def spy(workspace_dir, base, **kw):
+        change = await real_capture(workspace_dir, base, **kw)
+        judged.append(change)
+        return change
+
+    monkeypatch.setattr(task_queue, "_capture_change", spy)
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="do X",
+                   verify_cmd="pytest")
     await q.drain()
+
     assert store.get_task(tid).status == "done"
-    assert len(calls) == 2  # failed once, retried, passed
-    assert resets == [("/ws", "basesha0")]  # reset to the captured base, once
+    assert saw == [False, True]  # attempt 2 inherited attempt 1's output
+    # the verify gate short-circuits attempt 1 before the span is captured, so
+    # exactly one span exists — and it is the WHOLE change against the pinned base
+    final = judged[-1]
+    assert "first.py" in final.diff and "second.py" in final.diff
+    assert final.base_sha == store.get_task(tid).pre_run_sha
 
 
-async def test_first_attempt_never_resets(store, monkeypatch):
-    # A clean first-try success must not rewind anything — no needless reset.
+async def test_the_pre_run_reference_stays_pinned_across_retries(store, monkeypatch, tmp_path):
+    """FR-012's second half: promoting a rejected attempt to the new base would
+    let gate-REJECTED content reach a PR without ever being re-judged —
+    reintroducing this spec's own bug class."""
     monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
-    resets = _reset_recorder(monkeypatch)
-    calls: list = []
-    q = TaskQueue(store, runner=_flaky_runner(fail_times=0, calls=calls))
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
-    await q.drain()
-    assert store.get_task(tid).status == "done"
-    assert resets == []
+    ws = _repo(tmp_path)
+    import subprocess
 
-
-async def test_retry_reset_skipped_when_base_capture_missed(store, monkeypatch):
-    # Best-effort: if the pre-run base capture returned '' (a git hiccup),
-    # the retry still runs but attempts no reset (nothing to rewind to) —
-    # degrade on the drifted tree, never wedge the retry.
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
-    resets = _reset_recorder(monkeypatch, base_sha="")
+    base_before = subprocess.run(
+        ["git", "-C", str(ws), "rev-parse", "HEAD"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
     calls: list = []
-    q = TaskQueue(store, runner=_flaky_runner(fail_times=1, calls=calls))
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
+
+    async def runner(req: EngineRequest):
+        calls.append(req.goal)
+        (ws / f"f{len(calls)}.py").write_text("X = 1\n")
+        return {"status": "ok", "workspaceDir": req.workspace_dir,
+                "verify": _gate(passed=len(calls) > 1)}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="g",
+                   verify_cmd="pytest")
     await q.drain()
+
     assert store.get_task(tid).status == "done"
-    assert len(calls) == 2  # retry still happened
-    assert resets == []  # but no reset attempted with an empty base
+    assert store.get_task(tid).pre_run_sha == base_before
+
 
 
 async def test_worker_blocked_status_is_not_retried_and_surfaces_reason(store, monkeypatch):

@@ -235,7 +235,12 @@ async def _resolve_polling_action(
     ev_str = (" — " + ", ".join(evidence)) if evidence else ""
     settle_line = f"{ref.tool} {ref.id} → {poll.status}{ev_str}"
 
-    delivered = 1 if poll.status == "done" else 0
+    # An empty span is NOT a delivery (spec 013 FR-014). A code-writing action
+    # that finished having changed nothing published nothing, so it must not
+    # reset the no-progress watchdog — otherwise a goal whose worker keeps
+    # accomplishing nothing looks, to every timestamp upstream, exactly like a
+    # goal that keeps shipping.
+    delivered = 1 if (poll.status == "done" and not poll.no_change) else 0
     # Any SUCCESSFUL settle hands back its dispatch-cap budget: the cap exists
     # to stop a planner that spins without producing, not to ration healthy
     # throughput. That includes gateless settles (reviews, programs) — a

@@ -338,7 +338,6 @@ def _implicitly_allowed(diff: str) -> "set[str]":
 def scope_check(
     diff: str,
     declared: "tuple[str, ...] | list[str] | None" = None,
-    extra_paths: "tuple[str, ...] | list[str] | None" = None,
 ) -> ScopeCheck:
     """Judge one increment's diff against its declared scope.
 
@@ -348,13 +347,14 @@ def scope_check(
     from the increment's own claim on the task graph — which is what a
     single-lane increment that checks off a scoped `[P]` row is doing.
 
-    ``extra_paths`` widens the judged span beyond the diff. It exists because
-    the diff is only what the agent CHOSE to record, while delivery ships
-    everything in the workspace (#630, spec 013): without it, an increment
-    escapes its declared scope by simply not committing the out-of-scope files —
-    the #358 route-around arriving through the back door. The caller supplies
-    the workspace's unrecorded paths; they can only add violations, never remove
-    them.
+    ``diff`` is the MATERIALIZED span (spec 013): everything the agent changed,
+    including what it chose not to record. This function briefly took an
+    ``extra_paths`` argument so the caller could fold the workspace's unrecorded
+    paths in itself — the #358 route-around ("escape the declared scope by not
+    committing the file") arriving through the back door. That hole is now closed
+    upstream, for scoped and unscoped increments alike, so the argument is gone:
+    a gate that recomputed the change would be a second component owning its
+    definition, which is the defect this all exists to remove.
 
     Never raises."""
     try:
@@ -366,9 +366,7 @@ def scope_check(
                 # worker got round to checking its row off — a lane that skips
                 # the bookkeeping must not thereby escape its declared I/O.
                 claims = {"(dispatched)": globs, **claims}
-        touched = tuple(sorted(set(changed_paths(diff)) | {
-            _normalise(p) for p in (extra_paths or ()) if _normalise(p)
-        }))
+        touched = changed_paths(diff)
         if not claims:
             return ScopeCheck(claims={}, violations=(), touched=touched)
         allowed = _implicitly_allowed(diff)

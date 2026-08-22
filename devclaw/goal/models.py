@@ -341,6 +341,12 @@ class PollResult:
     #: tasks on the same repo (MC borrow item 3). None when the worker
     #: reported none; for program refs, the children's notes joined.
     repo_notes: Optional[str] = None
+    #: the code-writing task finished successfully having changed NOTHING
+    #: (spec 013 FR-014). A settle carrying this is not a delivered increment:
+    #: it publishes nothing and must read upstream as no progress, so a run that
+    #: accomplished nothing cannot masquerade as work. False for read-only kinds
+    #: (a review legitimately changes nothing) and for engines that predate it.
+    no_change: bool = False
 
     @property
     def running(self) -> bool:

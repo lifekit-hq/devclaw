@@ -66,7 +66,7 @@ def test_diff_stats_ignores_header_lines():
 
 
 async def test_done_result_carries_diff_stats(store, monkeypatch):
-    async def fake_diff(host_dir, base=""):
+    async def fake_diff(host_dir, base="", head=""):
         return _DIFF
 
     monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
@@ -88,7 +88,7 @@ async def test_done_result_carries_diff_stats(store, monkeypatch):
 async def test_done_result_omits_diff_stats_on_empty_diff(store, monkeypatch):
     # degrade-to-absent: an empty diff (or a git hiccup upstream returning "")
     # yields NO diff_stats key — never a crash, never a fake zero row
-    async def fake_diff(host_dir, base=""):
+    async def fake_diff(host_dir, base="", head=""):
         return ""
 
     monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
@@ -144,3 +144,61 @@ def test_delivery_event_records_diff_stats():
     assert (with_stats.diff_files, with_stats.diff_insertions, with_stats.diff_deletions) == (2, 3, 1)
     # absent stats stay None — no fake zeros in the record
     assert (without.diff_files, without.diff_insertions, without.diff_deletions) == (None, None, None)
+
+
+# ---- the projection reports the span that ships (spec 013 FR-009) -----------
+
+
+def test_a_binary_file_is_counted_and_named_instead_of_under_reported():
+    """FR-009: a binary file contributes no +/- lines to a unified diff, so a
+    span carrying one is a BOUNDED view of its own size. A bounded view says so
+    — silently reporting "+0" for a 4MB asset is the under-reporting the spec
+    forbids."""
+    diff = (
+        "diff --git a/logo.png b/logo.png\n"
+        "new file mode 100644\n"
+        "Binary files /dev/null and b/logo.png differ\n"
+        "diff --git a/app.py b/app.py\n"
+        "--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-a\n+b\n"
+    )
+    assert _diff_stats(diff) == {
+        "files": 2, "insertions": 1, "deletions": 1, "binary": 1,
+    }
+
+
+def test_a_text_only_span_carries_no_binary_key():
+    assert "binary" not in _diff_stats(_DIFF)
+
+
+async def test_the_projection_counts_files_the_agent_never_recorded(store, tmp_path):
+    """SC-002 through the projection: the reported size is the size of what
+    ships, because both read the same materialized object. The 2026-08-22 run
+    reported 1 file / +32 while shipping 4 files / +179."""
+    import subprocess
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    for args in (["init", "-q", "-b", "main"],
+                 ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(ws), *args], check=True, capture_output=True)
+    (ws / "README.md").write_text("# base\n")
+    subprocess.run(["git", "-C", str(ws), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(ws), "commit", "-q", "-m", "base"],
+                   check=True, capture_output=True)
+
+    async def runner(req: EngineRequest):
+        (ws / "README.md").write_text("# base\nedited\n")
+        for name, n in (("AGENTS.md", 41), ("ARCHITECTURE.md", 94)):
+            (ws / name).write_text("x\n" * n)
+        gate = {"ran": True, "cmd": "pytest", "passed": True,
+                "exit_code": 0, "timed_out": False, "output": ""}
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "verify": gate}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="g",
+                   verify_cmd="pytest")
+    await q.drain()
+
+    stats = json.loads(store.get_task(tid).result_json)["diff_stats"]
+    assert stats["files"] == 3
+    assert stats["insertions"] == 41 + 94 + 1

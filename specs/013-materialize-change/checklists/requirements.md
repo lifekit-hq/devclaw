@@ -37,3 +37,13 @@
   - **Empty change for code-writing kinds** → done, flagged no-change, counted as no progress (FR-014).
 - Naming note for review: the spec deliberately avoids function and module names in requirements, keeping them in the Problem statement and Assumptions, so the requirements stay checkable against behaviour rather than against a particular implementation.
 - The Rejected Alternatives section is load-bearing, not decoration. The one-line workaround is the obvious reading of the symptom and will be re-proposed by anyone who skips the problem statement; #630 records the same rejection.
+
+## Implementation notes (2026-08-23)
+
+`/speckit-clarify` was skipped by owner direction (the two questions it would
+have asked were already resolved with Denys on 2026-08-22 and are encoded
+above). The assumptions the plan took in its place are recorded in
+[`plan.md`](../plan.md) § Assumptions — the load-bearing one being that a
+workspace which is not a git repository is a distinct, still-loud outcome
+(`no_repo`) rather than the fail-closed `error` of FR-007, because the
+judged-vs-shipped divergence this spec closes cannot occur without a repository.

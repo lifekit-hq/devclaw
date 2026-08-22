@@ -71,7 +71,11 @@ def _write_and_commit(ws: str, rel: str, body: str, message: str) -> None:
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(body)
     _git("add", "-A", cwd=ws)
-    _git("commit", "-q", "-m", message, cwd=ws)
+    # ``--allow-empty``: since spec 013 a retry keeps the workspace (FR-012), so
+    # a fake runner re-writing the same content on attempt 2 has nothing new to
+    # record. That is the production shape too — the agent iterates on its own
+    # output — and it must not blow up the fixture.
+    _git("commit", "-q", "--allow-empty", "-m", message, cwd=ws)
 
 
 # ---- the git mechanics -----------------------------------------------------

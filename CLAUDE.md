@@ -60,6 +60,17 @@ spawn containers itself — it goes through the engine).
   real work. Ordered on purpose in `devclaw/goal/tick.py` (the cheap SQLite/timestamp
   checks run *before* any LLM call). Adding a tick-path LLM call that fires on idle
   breaks the quota guarantee (the test asserts `FakeClaude.calls == 0` on idle paths).
+- **One definition of the change.** "What did the agent change?" is answered
+  ONCE, mechanically, by `devclaw/task_change.py`: when the run ends the host
+  stages everything left in the workspace and commits it, and every consumer —
+  each gate, the change-size projection, the advisory checks, and delivery —
+  reads that `pre_run_sha..post_run_sha` range. Never re-derive it. Two
+  components used to compute it independently and silently disagreed: delivery
+  shipped 4 files / +179 while the gates judged 1 / +32, because the gates saw
+  only what the agent chose to record and what made it record was a sentence in
+  a worker skill (#630). A span that cannot be determined fails the always-hard
+  `materialize` gate CLOSED; an empty span is an explicit no-change outcome, not
+  a silently-passing gate.
 - **Single writer to state.** Only the **TaskQueue** mutates task rows; `StateStore` is
   an append-only event log, views are projections. Goal state is owned by `GoalStore`
   and (as of Tranche 1) lives in SQLite in the same `devclaw.db` — `goal_status`,
@@ -169,6 +180,7 @@ devclaw/
 ├── quality/         gates past green tests — the self-contained fail-closed gate (own prompts/ + README), pre-PR adversarial review, browser_gate, reachability
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
+├── task_change.py   ONE mechanical answer to "what did the agent change?" (spec 013)
 ├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
 runner/runner.py   the in-sandbox worker harness — drives the ACP agent via acp_client.py; line-delimited JSON on stdout
 .sandcastle/Dockerfile       per-task sandbox image
