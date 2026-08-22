@@ -268,10 +268,3 @@ def browser_run_verdict(
         return BrowserGateResult("ran_failed", f"{unexpected} browser test(s) failed ({summary})")
     return BrowserGateResult("ran_passed", f"{executed} browser test(s) passed ({summary})")
 
-
-def config_present_in(workspace_files: list[str]) -> bool:
-    """Whether any ``playwright.config.*`` sits at the root of a file listing.
-    Split out so the settle path (host-side ``os.listdir``) and tests share one
-    definition of "the project has a browser suite"."""
-    base = {f.rsplit("/", 1)[-1] for f in workspace_files}
-    return any(name in base for name in PLAYWRIGHT_CONFIG_NAMES)

@@ -36,8 +36,8 @@ the cognitive half is the movable part).
 - Cost: 1 Claude call, rare (zero-token on all other paths). A guardrail compensating for another guardrail's bluntness. Strictly safe to drop (can only relax a block).
 - A/B: always on — the strictly-safe (relax-only) valve was inlined from `DEVCLAW_GOAL_BROWSER_REACHABILITY` to `BROWSER_REACHABILITY_ENABLED=True` (#410); flip the constant to A/B it. Moot when A2 off.
 
-### A4. eval_judge — out of scope (this IS the instrument)
-- `devclaw/quality/eval_judge.py` (~155 LOC). Offline scoring, not a runtime guardrail. ADR step 3 upgrades it. List, don't shed.
+### A4. eval_judge — REMOVED (2026-08-22)
+- `devclaw/quality/eval_judge.py` (~155 LOC) was deleted: the `evals/run.py --judge` harness that called it no longer exists, so nothing but its own tests imported it. Recover from git history if ADR 0004 step 3 is picked up.
 
 ### A5. Test-integrity scan — **S (locked never-shed)**
 - `devclaw/loom/test_integrity.py` (~208 LOC); wired `task_queue._integrity_failure`. Pure diff scan for deleted tests / added skips. Zero LLM.

@@ -159,7 +159,7 @@ devclaw/
 ├── goal/            durable goal layer — the facade, the heartbeat tick, the done-gate evaluator, the store, dispatch, merge, notify
 ├── engine/          execution — sandcastle.py (docker run --rm, prod), host.py, stub.py
 ├── delivery/        commit → branch → push → PR; deploy.py (Tailscale); repo.py (gh repo create)
-├── quality/         gates past green tests — the self-contained fail-closed gate (own prompts/ + README), pre-PR adversarial review, eval_judge, evals
+├── quality/         gates past green tests — the self-contained fail-closed gate (own prompts/ + README), pre-PR adversarial review, browser_gate, reachability
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
 ├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …

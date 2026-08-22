@@ -189,10 +189,3 @@ async def test_manual_clear_reopens_dispatch(store):
     assert store.get_task(ta).status == "done"
     assert ran_ok == ["unpause"]
 
-
-async def test_list_workspace_breaks_returns_active_entries(store):
-    store.set_workspace_break("/ws-x", _now_ms() + 60_000, "test")
-    store.set_workspace_break("/ws-y", _now_ms() + 60_000, "test-y")
-    entries = {ws: (until, reason) for ws, until, reason in store.list_workspace_breaks()}
-    assert set(entries.keys()) == {"/ws-x", "/ws-y"}
-    assert entries["/ws-y"][1] == "test-y"

@@ -15,7 +15,6 @@ from devclaw.quality.browser_gate import (
     BrowserGateResult,
     browser_run_verdict,
     changed_paths,
-    config_present_in,
     diff_touches_frontend,
 )
 
@@ -126,13 +125,6 @@ def test_blocks_delivery_matrix():
     assert BrowserGateResult("never_ran").blocks_delivery("flexible") is True
     assert BrowserGateResult("absent").blocks_delivery("flexible") is False
     assert BrowserGateResult("absent").blocks_delivery("strict") is True
-
-
-# ---- config detection ---------------------------------------------------------
-
-def test_config_present_detects_root_playwright_config():
-    assert config_present_in(["frontend/playwright.config.ts", "frontend/angular.json"]) is True
-    assert config_present_in(["frontend/angular.json", "backend/Program.cs"]) is False
 
 
 # ---- library-only trigger scoping (the cmn-tab-group wedge, 2026-07-18) -------

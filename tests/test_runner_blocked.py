@@ -94,26 +94,6 @@ def test_empty_and_none_are_not_blocked(runner):
 # ---- agent-message extraction from a MessageEvent payload -------------------
 
 
-def test_agent_message_text_concatenates_text_parts(runner):
-    payload = {
-        "llm_message": {
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "first "},
-                {"type": "image", "image_url": "..."},
-                {"type": "text", "text": "second"},
-            ],
-        }
-    }
-    assert runner._agent_message_text(payload) == "first second"
-
-
-def test_agent_message_text_degrades_to_empty_on_bad_shape(runner):
-    assert runner._agent_message_text({}) == ""
-    assert runner._agent_message_text({"llm_message": None}) == ""
-    assert runner._agent_message_text("not a dict") == ""
-
-
 # ---- emission: the terminal `result:` line ----------------------------------
 
 

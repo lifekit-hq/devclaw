@@ -121,8 +121,8 @@ devclaw/
 │   └── repo.py         #   gh repo creation + teardown (create_repo / delete_repo)
 ├── quality/            # gates that judge the work past the green test gate:
 │   ├── __init__.py     #   pre-PR adversarial diff review (claude)
-│   ├── eval_judge.py   #   failure-mode classifier across eval runs
-│   └── evals.py        #   eval scoring (pure, used by harnesses)
+│   ├── browser_gate.py #   browser-E2E verification (pure parsing)
+│   └── reachability.py #   the gate's grounded escape valve (claude)
 ├── prompts/            # every system prompt as a .md file (load_prompt(slug))
 ├── loom/               # reusable orchestration core (engine-agnostic substrate):
 │   ├── limits.py       #   usage-/rate-limit failure classifier (pure)

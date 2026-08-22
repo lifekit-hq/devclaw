@@ -21,8 +21,6 @@ failure modes are all closed.
 | `__init__.py` | The adversarial diff-review gate: `review_diff` (the single reviewer), `review_gate` (the wired entry — `review_diff` wrapped in the degradation ladder), `format_feedback` (verdict → retry brief). Includes the cognition-timeout **degradation ladder**: an oversized diff is split per file and the verdicts unioned, still fail-closed end to end (#281). |
 | `browser_gate.py` | Browser-E2E verification: a change touching web-UI paths must carry a passing **real-browser** Playwright run in the verify output, or it fails closed. Pure parsing — no LLM. |
 | `reachability.py` | The gate's grounded escape valve: an independent judge may clear a browser-gate block **only** on an affirmatively proven "this UI isn't rendered in the running app". Uncertain / crash / reachable → the block stands. |
-| `eval_judge.py` | Failure-analysis judge for eval runs — turns "what went wrong?" into a tagged verdict. |
-| `evals.py` | Pure scoring functions for grading a build-from-scratch run. No LLM. |
 | `prompts/` | The gate's own prompt templates + loader — inside the boundary, so the package renders its verdicts without devclaw's prompt dir. |
 
 Related, one directory over: `devclaw/loom/` — the pure-stdlib substrate the
@@ -70,4 +68,4 @@ verify gate (green tests) → `test_integrity` (nobody weakened the tests) →
 escape valve). Any failure feeds back into the retry brief; the terminal
 failure escalates to a human. Tests: `tests/test_review_gate*.py`,
 `tests/test_review_degrade_ladder.py`, `tests/test_browser_gate*.py`,
-`tests/test_eval_judge.py`, `tests/test_quality_package.py`.
+`tests/test_quality_package.py`.
