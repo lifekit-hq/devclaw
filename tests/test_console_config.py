@@ -44,7 +44,7 @@ def _registry(tmp_path):
 # ── A: env catalog ─────────────────────────────────────────────────────────
 
 def test_env_catalog_parses_doc_and_finds_known_vars():
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     rows = http_mod._env_var_catalog()
     keys = {r["key"] for r in rows}
     assert "DEVCLAW_GOAL_BROWSER_GATE" in keys
@@ -54,7 +54,7 @@ def test_env_catalog_parses_doc_and_finds_known_vars():
 
 
 def test_env_catalog_masks_secret_values(monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     monkeypatch.setenv("DEVCLAW_TOKEN", "supersecret-bearer")
     tok = next(r for r in http_mod._env_var_catalog() if r["key"] == "DEVCLAW_TOKEN")
     assert tok["secret"] is True and tok["isSet"] is True
@@ -66,7 +66,7 @@ def test_resolve_env_doc_finds_cwd_copy_under_noneditable_install(monkeypatch, t
     # docs/, but the server runs with cwd at the repo root that has the doc. The
     # resolver must fall through to the cwd candidate rather than return a dead
     # module-relative path (the live bug: catalog came back empty in prod).
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     doc = tmp_path / "docs" / "reference" / "env-vars.md"
     doc.parent.mkdir(parents=True)
     doc.write_text("## G\n| `DEVCLAW_X` | `1` | test |\n")
@@ -77,13 +77,13 @@ def test_resolve_env_doc_finds_cwd_copy_under_noneditable_install(monkeypatch, t
 
 
 def test_env_catalog_degrades_to_empty_when_doc_missing(monkeypatch, tmp_path):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     monkeypatch.setattr(http_mod, "_ENV_DOC", tmp_path / "nope.md")
     assert http_mod._env_var_catalog() == []
 
 
 def test_config_env_route_returns_vars():
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import control as http_mod
     status, body = _call(http_mod.config_env_json, _req({}))
     assert status == 200 and isinstance(body["vars"], list) and body["vars"]
 
