@@ -1,5 +1,14 @@
 # AGENTS.md — devclaw engineering harness
 
+<!-- devclaw:managed:start -->
+> **Map:** [`ARCHITECTURE.md`](./ARCHITECTURE.md) — where each component lives, how a
+> route is added, how a task flows from dispatch to gate, and which writer owns each
+> SQLite table. Read it before exploring the tree.
+> **Contract:** [`CLAUDE.md`](./CLAUDE.md) (working) and
+> [`docs/architecture.md`](./docs/architecture.md) (locked invariants).
+> **In-flight specs:** [`.specify/specs/`](./.specify/specs/).
+
+
 ## Stack
 
 - **Python** ≥3.11; package root `devclaw/`; sandbox runner at `runner/runner.py`
@@ -42,3 +51,4 @@ Always use a private TMPDIR — `/tmp/pytest-of-<user>` can be root-owned on thi
 
 - In a git worktree, verify `python -c "import devclaw; print(devclaw.__file__)"` points to the WORKTREE, not the main checkout.
 - `tests/test_runner_wrappers.py` tests the in-sandbox runner (`runner/runner.py`) by loading it directly — it runs against `/opt/devclaw/skills/`, not the source copy.
+<!-- devclaw:managed:end -->
