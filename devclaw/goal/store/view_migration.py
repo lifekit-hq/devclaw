@@ -260,11 +260,16 @@ def _migrate_deliveries(goal_state: "GoalState", d: Path, goal_id: str, now_ms: 
     text = _read(d / "deliveries.md")
     if text is None:
         return
-    for instruction, block in split_delivery_sections(text):
-        # ref_id NULL: these sections predate the idempotency key and have
-        # nothing to dedupe against. #616 backfills them and makes the column
-        # NOT NULL; until then they are the reason it is nullable.
-        goal_state.append_delivery_row(goal_id, None, block, now_ms, instruction=instruction)
+    for n, (instruction, block) in enumerate(split_delivery_sections(text)):
+        # These sections predate the idempotency key and have nothing real to
+        # dedupe against, so they get a deterministic synthetic one: stable
+        # across a resumed sweep, and namespaced so it can never collide with
+        # a task/program ref. (#616 makes the column NOT NULL — a nullable
+        # ref_id silently disabled the UNIQUE constraint, since SQLite treats
+        # every NULL as distinct.)
+        goal_state.append_delivery_row(
+            goal_id, f"pre-cutoff:{goal_id}:{n}", block, now_ms, instruction=instruction,
+        )
 
 
 def _migrate_inbox(

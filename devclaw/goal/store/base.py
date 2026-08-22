@@ -17,16 +17,11 @@ Folded in from goalclaw. Layout per goal, under ``<goals_dir>/<goal_id>/``:
   deliveries.md       EVIDENCE — a generated VIEW (since Tranche 1/PR6) mirroring the
                                  ``goal_deliveries`` table, append-only, grounded record of what
                                  each action actually shipped, read by the evaluator
-  checklist.yaml       PLAN     — a generated VIEW (since Tranche 1/PR6) mirroring the
-                                 ``goal_docs`` table (kind ``checklist``): the decomposer's
-                                 structured plan, the source of truth the per-tick planner picks
-                                 actions from
-  firmed-draft.yaml    CONTRACT — a generated VIEW (since Tranche 1/PR6) mirroring the
-                                 ``goal_docs`` table (kind ``firmed_draft``): the firming phase's
-                                 done_when / stub_acceptable / verify_cmd acceptance contract
 
-Status, steering, log, deliveries, and the checklist/firmed-draft docs are all
-SQLite-backed via :class:`GoalState` (Tranche 1/PR3, PR5, PR6); ``spec.md`` /
+Status, steering, log and deliveries are all SQLite-backed via
+:class:`GoalState` (Tranche 1/PR3, PR5, PR6). (The checklist / firmed-draft
+docs and the ``goal_docs`` table behind them died with the host-cognition
+chain in the spec 008 shrink; the #616 cutoff dropped the table.) ``spec.md`` /
 ``discovery.md`` are still plain files (display/prompt inputs, not
 consumed-state). **Every ``.md`` above is a write-only projection (#617)** —
 the markdown written before that rule was enforced is parsed exactly once, by
@@ -43,8 +38,11 @@ The class was split into a package for legibility (behavior-preserving):
   (``load_status`` / ``transition`` / ``force_block`` / the STATUS.md view).
 - :mod:`.view_migration` — the one-shot, one-cutoff ingest of the pre-#617
   views, and the only code in the package allowed to read one.
+- :mod:`.legacy_cutoff` — the other half of that cutoff (#616): the one-shot
+  migration of every pre-cutoff ROW SHAPE, after which the branches that
+  read them are deleted rather than kept.
 - :mod:`.content` — :class:`GoalContentMixin`, the
-  log / settlements / deliveries / checklist / firmed-draft / inbox surfaces.
+  log / settlements / deliveries / inbox surfaces.
 
 The mixins run on the same ``self._state`` / ``self._goal_state`` /
 ``self._pending_mirrors`` instance, so the transaction, single-writer, and
@@ -64,6 +62,7 @@ import yaml
 from ..models import Goal, GoalStatus
 from ..state import GoalState
 from ...state_store import _now_ms
+from .legacy_cutoff import apply_legacy_cutoff
 from .view_migration import migrate_views_once
 
 _DURATION = re.compile(r"^\s*(\d+)\s*([smhd])\s*$")
@@ -119,7 +118,12 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         # package that reads a view; deleting it without replacement would
         # strand the pre-#617 markdown, and re-adding a lazy read anywhere else
         # re-opens the second-writer hole it closes.
-        migrate_views_once(self._state, self._goal_state, self._root, _now_ms())
+        _now = _now_ms()
+        migrate_views_once(self._state, self._goal_state, self._root, _now)
+        # ...and the other half of the same cutoff (#616): the pre-cutoff row
+        # SHAPES those views were ingested into. Strictly after the ingest —
+        # it is what gives the migrated delivery rows their ref_id.
+        apply_legacy_cutoff(self._state, self._goal_state, _now)
         #: PR7 mirror discipline — file mirrors deferred by a mirror=False /
         #: render_view=False write (or a transition()/save_status() call
         #: that finds itself nested inside a caller-opened transaction())
@@ -340,7 +344,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
 
     def load_goal(self, goal_id: str) -> Goal:
         # NOTE: unknown keys in goal.yaml are ignored by construction — every
-        # field is read explicitly below. Legacy files written before a field
+        # field is read explicitly below. A goal.yaml written before a field
         # was removed (e.g. the retired ``skills_required``) must keep loading.
         raw = yaml.safe_load((self._dir(goal_id) / "goal.yaml").read_text()) or {}
         return Goal(
@@ -355,13 +359,13 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             done_when=str(raw.get("done_when", "")).strip(),
             backlog=[str(x).strip() for x in (raw.get("backlog") or [])],
             stub_acceptable=[str(x).strip() for x in (raw.get("stub_acceptable") or []) if str(x).strip()],
-            # Anything unrecognized (or a legacy file with no field) reads as
+            # Anything unrecognized (or a file with no field) reads as
             # long_lived — the conservative default: the per-tick loop.
             mode=("one_shot" if raw.get("mode") == "one_shot" else "long_lived"),
-            # Legacy / unrecognized reads as "trust" (advisory) — the default
+            # Unrecognized reads as "trust" (advisory) — the default
             # dial: dial-able gates log-and-ship rather than wedge (ADR 0007).
             strictness=("strict" if raw.get("strictness") == "strict" else "trust"),
-            # Legacy goal.yaml (pre-P3) has no project_id → None until the
+            # A goal.yaml written before P3 has no project_id → None until the
             # one-shot backfill stamps it (knobs fall to defaults meanwhile).
             project_id=(str(raw["project_id"]) if raw.get("project_id") else None),
         )

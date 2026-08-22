@@ -1,7 +1,7 @@
 """Repo-scoped worker memory brief (mission-control borrow item 3).
 
 Every new goal on the same repo used to relearn build quirks and test
-gotchas from zero: ``goal_docs`` die with their goal, and the sandbox
+gotchas from zero: a goal's own state dies with it, and the sandbox
 workspace is ``git clean -fdx``-wiped per dispatch, so nothing a worker
 left in-repo survived either. This module is the pure glue around the
 host-side fix — a ``project_docs`` row keyed by normalized workspace path:
