@@ -39,10 +39,18 @@ ALWAYS_HARD: frozenset[str] = frozenset(
     {
         "verify",  # the verify_cmd gate — green tests are table stakes
         "test_integrity",  # tests silently deleted/neutered
+        "scope",  # a [P] increment writing outside its declared file scope
         "delivery_trust",  # red CI merged (remote_checks / CI gate)
         "done_gate",  # closing a goal on the model's own say-so
     }
 )
+# ``scope`` (spec 010 FR-103) is hard in BOTH modes on purpose: a declared file
+# scope is what makes two increments safe to run at once, so an increment that
+# writes outside it has invalidated the premise of its own concurrency, not
+# merely produced a finding a human could weigh at the merge boundary. It is
+# also the #358 class — a worker routing around a constraint — which is exactly
+# what the dial must never loosen. FR-103 states fail-closed with no mode
+# qualifier.
 
 #: The dial-able gates, named for clarity and tests. NOT load-bearing —
 #: :func:`gate_consequence` keys off ``ALWAYS_HARD`` membership, so a gate is
