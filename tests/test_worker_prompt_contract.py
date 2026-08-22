@@ -44,7 +44,7 @@ _SCOPE_MARKER = "unreviewable diff"
 @pytest.fixture(scope="module")
 def runner():
     spec = importlib.util.spec_from_file_location(
-        "oh_runner_prompt_contract_under_test", _RUNNER_PATH
+        "devclaw_runner_prompt_contract_under_test", _RUNNER_PATH
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
