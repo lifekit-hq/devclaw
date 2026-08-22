@@ -34,7 +34,7 @@ _PATH_IN_BACKTICKS = re.compile(
 
 
 def _docs() -> list[Path]:
-    docs = [_ROOT / "CLAUDE.md"]
+    docs = [_ROOT / "CLAUDE.md", _ROOT / "README.md"]
     if _RULES_DIR.is_dir():
         docs += sorted(_RULES_DIR.glob("*.md"))
     return [d for d in docs if d.is_file()]
@@ -104,6 +104,41 @@ def test_harness_docs_spell_paths_out_so_the_guard_can_see_them():
     assert not braced, (
         "write these as full repo-relative paths, one per module:\n  " + "\n  ".join(braced)
     )
+
+
+#: Module filenames named inside a fenced layout tree. These are NOT backticked
+#: paths, so the checks above cannot see them — and that blind spot let README's
+#: layout tree keep listing ``claude_sdk.py`` after #613 deleted it. Matching on
+#: BASENAME (rather than reconstructing tree indentation) keeps this cheap and
+#: robust: the question worth asking is "does this module still exist at all".
+_PY_BASENAME = re.compile(r"\b([a-z][a-z0-9_]*\.py)\b")
+
+
+def _fenced_blocks(doc: Path) -> list[str]:
+    parts = doc.read_text().split("```")
+    return parts[1::2]  # odd indices are inside fences
+
+
+def _module_basenames() -> set[str]:
+    roots = [_ROOT / "devclaw", _ROOT / "runner"]
+    return {p.name for r in roots if r.is_dir() for p in r.rglob("*.py")}
+
+
+def test_layout_trees_do_not_list_modules_that_were_deleted():
+    """Named regression: a fenced layout tree must not name a dead module.
+
+    README.md's tree and CLAUDE.md's are the first thing a reader — human or
+    worker — uses to find their way around. Listing a file that no longer
+    exists sends them looking for it.
+    """
+    have = _module_basenames()
+    dead: list[str] = []
+    for doc in _docs():
+        for block in _fenced_blocks(doc):
+            for name in sorted(set(_PY_BASENAME.findall(block))):
+                if name not in have:
+                    dead.append(f"{doc.relative_to(_ROOT)} layout names {name!r}")
+    assert not dead, "layout trees name modules that do not exist:\n  " + "\n  ".join(dead)
 
 
 @pytest.mark.skipif(

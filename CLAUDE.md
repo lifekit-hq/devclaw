@@ -49,7 +49,12 @@ spawn containers itself — it goes through the engine).
   `claude-code` is swapped for another ACP-speaking agent, only the runner's
   agent-drive seam changes — the agent command (`acp_command` payload /
   `DEVCLAW_ACP_COMMAND`) its zero-dep ACP client spawns (spec 011; the
-  fake-agent regression tests enforce this).
+  fake-agent regression tests enforce this). Worker-kind instructions have
+  exactly ONE home — `runner/skills/`, baked to `/opt/devclaw/skills/` in the
+  image and pointed at in-repo by the host engine. A second copy is not a
+  fallback, it is a silent fork: an edit lands in the copy production never
+  reads while the canonical skill says something else (#610). A missing bundle
+  fails LOUD (`skills_missing`), never substitutes text (#613).
 - **Zero-token idle guard.** An idle goal and an in-flight-still-running goal cost
   **~0 `claude` calls** — the heartbeat is mechanism; cognition runs only when there's
   real work. Ordered on purpose in `devclaw/goal/tick.py` (the cheap SQLite/timestamp
@@ -151,7 +156,7 @@ surfaced them. Apply this while triaging, planning, and fixing:
 ```
 devclaw/
 ├── server/          MCP surface — tools.py (@mcp.tool), http.py (routes/SSE), lifecycle.py (auth+serve)
-├── goal/            durable goal layer — service, tick, planner, evaluator, store, engine, merge, notify
+├── goal/            durable goal layer — the facade, the heartbeat tick, the done-gate evaluator, the store, dispatch, merge, notify
 ├── engine/          execution — sandcastle.py (docker run --rm, prod), host.py, stub.py
 ├── delivery/        commit → branch → push → PR; deploy.py (Tailscale); repo.py (gh repo create)
 ├── quality/         gates past green tests — the self-contained fail-closed gate (own prompts/ + README), pre-PR adversarial review, eval_judge, evals
@@ -169,7 +174,7 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~1870 tests, all stubbed — no docker, no claude
+pytest        # ~2100 tests, all stubbed — no docker, no claude
 ```
 
 Engine modes (`DEVCLAW_ENGINE`): **unset** = the worker runner in a per-task docker

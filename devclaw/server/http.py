@@ -1389,7 +1389,8 @@ async def _read_plan(workspace_dir: str, goal_id: str) -> dict:
             continue
         content = await _git_show(workspace_dir, f"{ref}:{paths[-1]}")
         if content:
-            return {"content": content, "source": source, "ref": ref}
+            return {"content": content, "source": source, "ref": ref,
+                    "path": paths[-1]}
     try:
         rel = slice_guard.current_feature_dir_sync(workspace_dir)
         if rel:
@@ -1398,10 +1399,11 @@ async def _read_plan(workspace_dir: str, goal_id: str) -> dict:
                 with open(path, encoding="utf-8", errors="replace") as fh:
                     content = fh.read()
                 if content.strip():
-                    return {"content": content, "source": "worktree", "ref": None}
+                    return {"content": content, "source": "worktree", "ref": None,
+                            "path": f"{rel}/tasks.md"}
     except OSError:
         pass
-    return {"content": None, "source": None, "ref": None}
+    return {"content": None, "source": None, "ref": None, "path": None}
 
 
 @mcp.custom_route("/goals/{goal_id}/plan.json", methods=["GET"])

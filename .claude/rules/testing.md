@@ -1,7 +1,7 @@
 # Testing — how to run and write tests in this repo
 
-The suite is **fully stubbed** — no docker, no `claude` binary, ~1226 tests in
-~55s. Anything needing real docker/claude is an integration concern:
+The suite is **fully stubbed** — no docker, no `claude` binary, ~2100 tests in
+~110s. Anything needing real docker/claude is an integration concern:
 `/live-shakedown`, never pytest.
 
 ## Running

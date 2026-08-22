@@ -58,6 +58,17 @@ def test_committed_tasks_md_is_read(tmp_path):
     assert doc["source"] in ("branch", "head")
 
 
+def test_the_plan_names_which_feature_it_came_from(tmp_path):
+    """The tab can show any of a goal's features over its life, so the payload
+    carries the path — otherwise the operator reads a task list with no idea
+    which feature it belongs to."""
+    _git(tmp_path, "init", "-q")
+    _feature(tmp_path, "012-saga-prompt-contract")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-q", "-m", "seed")
+    assert _read(tmp_path)["path"] == "specs/012-saga-prompt-contract/tasks.md"
+
+
 def test_the_active_feature_wins_when_several_exist(tmp_path):
     """Named regression (#614): the Plan tab shows the feature being worked.
 
@@ -89,7 +100,7 @@ def test_no_speckit_contract_returns_none_not_error(tmp_path):
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-q", "-m", "seed")
     doc = _read(tmp_path)
-    assert doc == {"content": None, "source": None, "ref": None}
+    assert doc == {"content": None, "source": None, "ref": None, "path": None}
 
 
 def test_a_repo_root_plan_md_is_no_longer_a_source(tmp_path):
@@ -100,14 +111,14 @@ def test_a_repo_root_plan_md_is_no_longer_a_source(tmp_path):
     _git(tmp_path, "add", "-A")
     _git(tmp_path, "commit", "-q", "-m", "legacy plan only")
     doc = _read(tmp_path)
-    assert doc == {"content": None, "source": None, "ref": None}
+    assert doc == {"content": None, "source": None, "ref": None, "path": None}
 
 
 def test_non_repo_dir_degrades_to_none(tmp_path):
     # A dir that isn't a git repo and has no specs/ — every read path misses,
     # nothing raises.
     doc = _read(tmp_path)
-    assert doc == {"content": None, "source": None, "ref": None}
+    assert doc == {"content": None, "source": None, "ref": None, "path": None}
 
 
 def test_empty_tasks_md_is_treated_as_absent(tmp_path):

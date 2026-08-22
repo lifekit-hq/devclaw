@@ -209,9 +209,10 @@ export async function fetchGoal(id: string): Promise<GoalDetail> {
 }
 
 export interface PlanDoc {
-  content: string | null;          // the PLAN.md text, or null if the goal has none yet
+  content: string | null;          // the active feature's tasks.md, or null if the goal hasn't planned yet
   source: "branch" | "head" | "worktree" | null;
   ref: string | null;             // the git ref it was read from (e.g. origin/goal/<id>)
+  path: string | null;            // which feature it came from (e.g. specs/012-saga/tasks.md)
 }
 
 export async function fetchGoalPlan(id: string): Promise<PlanDoc> {
