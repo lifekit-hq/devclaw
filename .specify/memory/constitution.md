@@ -22,6 +22,12 @@ payload/env-selectable agent command (`acp_command` / `DEVCLAW_ACP_COMMAND`)
 its ACP client spawns — and the seam stays continuously test-enforced (the
 fake-agent regressions, spec 011).
 
+Worker-kind instructions have exactly ONE home: `runner/skills/`. A second
+copy is not a fallback, it is a silent fork — an edit lands in the copy
+production never reads while the canonical skill says something else, and no
+test can tell them apart. A missing bundle fails loud; it never substitutes
+text for a worker that then runs unattended (spec-less demolition, #613).
+
 ### III. Zero-token idle
 An idle goal and an in-flight-still-running goal cost ~0 `claude` calls.
 Cheap SQLite/timestamp checks run before any LLM call. A spec that adds
@@ -84,9 +90,12 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.2.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-19
-(2.2.0 — Principle II: the swap seam is named abstractly (the runner's
-agent-drive seam / agent command) instead of the deleted OpenHands `ACPAgent`
-symbol; the invariant's spirit is unchanged and now test-enforced. Spec
-`011-acp-runner-swap`. Prior: 2.1.0, 2026-08-14 — Principle V strictness-dial
-consultation semantics, spec `001-review-gate-repositioning`.)
+**Version**: 2.3.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-22
+(2.3.0 — Principle II gains the one-home rule for worker-kind instructions.
+Earned, not theoretical: three copies of the onboard prompt existed with no
+discriminator, and PR #610 edited the two production never reads while the
+canonical skill already said the same thing. Collapsed by #613. Prior: 2.2.0,
+2026-08-19 — Principle II's swap seam named abstractly instead of the deleted
+OpenHands `ACPAgent` symbol, spec `011-acp-runner-swap`. Prior: 2.1.0,
+2026-08-14 — Principle V strictness-dial consultation semantics, spec
+`001-review-gate-repositioning`.)

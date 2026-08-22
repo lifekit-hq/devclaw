@@ -31,7 +31,7 @@ DevClaw (the chef — this repo, FastMCP)
   ├── goal/    durable goals → heartbeat tick → advance-dispatch + evaluate
   ├── server/  FastMCP stdio + streamable-HTTP, the /console SPA + SSE, auth
   ├── loom/    reusable orchestration core (failure classification, test integrity)
-  ├── advance_brief.py · review_gate.py · delivery.py · deploy.py · …
+  ├── advance_brief.py · quality/ · delivery/ · task_queue.py · …
   └── sandcastle_runner — `docker run --rm` per task; RO ~/.claude mount; destroyed on exit
         │
         ▼
@@ -111,7 +111,6 @@ devclaw/
 ├── engine/             # everything that EXECUTES the work:
 │   ├── __init__.py     #   the Engine protocol (one async callable)
 │   ├── sandcastle.py   #   docker run --rm per task; events stream from the runner (production)
-│   ├── claude_sdk.py   #   spike backend: claude --print inside the same sandbox
 │   ├── host.py         #   host-side runner (no sandbox; testing only)
 │   ├── stub.py         #   deterministic engine for tests + offline harness
 │   ├── runner_io.py    #   shared stdout/event-stream parser
