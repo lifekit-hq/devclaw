@@ -377,8 +377,13 @@ def test_compute_instance_usage_makes_no_llm_calls(store, registry):
 def test_usage_json_route_registered_in_http():
     """The /usage.json route must be present in the HTTP server module."""
     from pathlib import Path
-    src = (Path(__file__).resolve().parents[1] / "devclaw" / "server" / "http.py").read_text()
-    assert "/usage.json" in src, "GET /usage.json route must be registered in server/http.py"
+    src = (
+        Path(__file__).resolve().parents[1]
+        / "devclaw" / "server" / "routes" / "observability.py"
+    ).read_text()
+    assert "/usage.json" in src, (
+        "GET /usage.json must be registered in server/routes/observability.py"
+    )
 
 
 def test_usage_console_page_exists():

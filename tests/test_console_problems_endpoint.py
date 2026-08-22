@@ -26,7 +26,7 @@ class _FakeGoals:
 
 @pytest.fixture
 def http_mod(store, monkeypatch):
-    from devclaw.server import http as http_mod
+    from devclaw.server.routes import observability as http_mod
 
     monkeypatch.setattr(http_mod, "store", store)
     monkeypatch.setattr(http_mod, "goals", _FakeGoals())
