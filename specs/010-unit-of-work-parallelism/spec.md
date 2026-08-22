@@ -6,6 +6,11 @@
 
 **Status**: SPECIFIED, NOT IMPLEMENTED — merged 2026-08-22; no plan or tasks yet
 
+**Implementation order**: depends on spec 012's US1 (increment feed-forward)
+landing first — the single-increment path must be predictable before the
+concurrency machinery matters (ruled 2026-08-22, recorded in spec 012's
+Assumptions). #553 closes referencing THIS spec (FR-006), not 012.
+
 **Input**: User description: "Encode the 2026-08-18 design ruling (posted on issue #553) into devclaw's dispatch layer: canonical unit-of-work terminology; DEFAULT single-writer per project (actor-per-project, zero-LLM invariant at the dispatch write-site); PLANNED parallelism as the earned exception (tasks.md [P] markers with declared file scopes, serial merge-queue integration, settle-time diff-scope enforcement); spec directory names allocated at planning time; closes #553; worker-spawned subagents explicitly rejected. P1 = the single-writer invariant + #553 closure; the [P] fan-out machinery = named-unsized P2/P3."
 
 ## Context & Motivation *(informative)*

@@ -7,8 +7,8 @@
 **Status**: SPECIFIED, NOT IMPLEMENTED — merged 2026-08-22; no plan or tasks yet
 
 **Relationship to spec 010**: the 2026-08-18 ruling has two halves. Spec 010
-(`010-unit-of-work-parallelism`, drafted 2026-08-19, not yet merged) specifies the
-**concurrency** half — single-writer per project, #553 closed by construction, and
+(`010-unit-of-work-parallelism`, drafted 2026-08-19, merged 2026-08-22) specifies
+the **concurrency** half — single-writer per project, #553 closed by construction, and
 the `[P]` fan-out machinery. This spec specifies the **input** half — the prompt
 contract for a saga and for a unit of work. They share the terminology table and
 nothing else; 010 is the normative source for everything about concurrency.
@@ -320,13 +320,15 @@ increment count with a stated basis, and that both are executed as sagas.
 - **III. Zero-token idle** — FR-013 confines any new reasoning to grading time. The
   recurring background cycle gains no reasoning call, and SC-007 states the
   observable guarantee.
-- **IV. Single writer to state** — FR-014's one-saga-per-project default preserves
-  it under concurrency; FR-016 and FR-017 preserve it under declared fan-out.
+- **IV. Single writer to state** — this spec adds no new writer and no new
+  concurrency: the single-writer-per-project default and the declared fan-out
+  machinery are spec 010's territory (FR-014 keeps them out of scope here).
 - **V. Verification fails closed; "done" is a proposal** — untouched. The
   Assumptions record why the completion judgement must not be bypassed for small
   work items.
-- **VI. Loud failure over silent degradation** — FR-008, FR-011 and FR-016 all fail
-  loudly rather than defaulting silently.
+- **VI. Loud failure over silent degradation** — FR-008 and FR-011 fail loudly
+  rather than defaulting silently; FR-004 and FR-005 state absences and failures
+  explicitly rather than omitting them.
 - **VII. Fix the class, not the instance** — this spec exists because three
   separately-filed issues turned out to be one missing definition.
 
@@ -338,6 +340,8 @@ Assumptions with its evidence.
 ## Corollaries
 
 Resolved by this spec rather than as separate arcs: **#600** (work items graded for
-readiness but not size), **#601** (saga and unit-of-work prompt schema), and
-**#553** (spec directory numbering collisions, resolved by construction through
-planning-time allocation and the one-saga-per-project default).
+readiness but not size) and **#601** (saga and unit-of-work prompt schema).
+**#553** (spec directory numbering collisions) is NOT closed by this spec — the
+mechanisms that close it by construction (planning-time spec-directory allocation
+and the single-writer-per-project default) are spec 010's, and 010 FR-006 owns the
+closure.
