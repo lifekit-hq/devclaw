@@ -211,20 +211,33 @@ async def test_onboard_has_no_verify_gate(store, tmp_path):
     assert t.verify_cmd is None
 
 
-async def test_onboard_delivered_settles_done(store, tmp_path):
-    """Named regression: onboard with deliver=True in a git repo — agent writes
-    AGENTS.md, delivery runs (commits to a branch), task settles done.
-    No remote → pr_url=None but delivery is not a failure (benign no-remote)."""
+async def test_onboard_delivered_settles_done(store, tmp_path, monkeypatch):
+    """Named regression: onboard with deliver=True — agent writes AGENTS.md,
+    delivery runs (commit→push→PR open), task settles done with pr_url recorded.
+    deliver_change is mocked to return a real URL; the assertion proves the
+    full commit+push+PR-open path is wired for onboard-kind tasks, i.e. that
+    tools.py submits onboard tasks with deliver=True so pr_url is never silently
+    null when a real remote is present."""
     ws = str(tmp_path / "ws_del")
     os.makedirs(ws)
     _init_repo(ws)
+
+    EXPECTED_PR = "https://github.com/o/r/pull/1"
+
+    async def fake_deliver(*, workspace_dir, task_id, goal, kind=None, verify=None,
+                           title=None, advisories=None, **kwargs):
+        return {"delivered": True, "pr_url": EXPECTED_PR,
+                "branch": "docs/onboarding", "pushed": True, "committed": True}
+
+    monkeypatch.setattr("devclaw.task_queue.deliver_change", fake_deliver)
+
     q = TaskQueue(store, runner=_onboard_runner())
     tid = q.submit(kind="onboard", workspace_dir=ws, goal="general onboarding", deliver=True)
     await q.drain()
 
     t = store.get_task(tid)
     assert t.status == "done"
-    assert t.pr_url is None  # no remote — benign; task is still done
+    assert t.pr_url == EXPECTED_PR  # delivery opened a PR; URL recorded atomically
 
 
 async def test_onboard_nothing_to_deliver_settles_done(store, tmp_path):
