@@ -82,7 +82,8 @@ SANDBOX_LABEL = "devclaw.sandbox=1"
 # container is orphaned at MY startup" is false across processes: an unscoped
 # sweep is friendly fire (a service restart mid-eval SIGKILLed the eval's
 # in-flight sandboxes — exit 137, 2026-07-21). Each launch therefore also stamps
-# `devclaw.owner=<id>` and the sweep only reaps its own id (+ legacy unlabeled).
+# `devclaw.owner=<id>` and the sweep only reaps its own id (+ unstamped ones,
+# which no live instance claims).
 SANDBOX_OWNER_LABEL_KEY = "devclaw.owner"
 
 
@@ -198,7 +199,7 @@ def _docker_run_sync(args: list[str]) -> "subprocess.CompletedProcess[str]":
     )
 
 
-def sweep_orphan_sandboxes(owner_id: str | None = None) -> int:
+def sweep_orphan_sandboxes(owner_id: str) -> int:
     """Reap task-sandbox containers leaked by a previous run of THIS instance.
 
     ``--rm`` only fires when its own ``docker run`` client exits, so a devclaw
@@ -208,34 +209,34 @@ def sweep_orphan_sandboxes(owner_id: str | None = None) -> int:
     ``devclaw.sandbox=1`` label (the name is never persisted). Deploy containers
     (``devclaw.deploy=1``) are out of scope.
 
-    ``owner_id`` scopes the sweep to this instance: only containers stamped with
-    the matching ``devclaw.owner`` label — plus legacy ones with no owner label
-    (pre-scoping leftovers, orphaned by definition) — are removed. Sandboxes
-    owned by a DIFFERENT devclaw process sharing the daemon (live service vs a
-    measure/eval run) are left alone: "every labeled container is orphaned at my
-    startup" only holds per-instance, and the unscoped sweep was live friendly
-    fire (a service restart mid-eval SIGKILLed the eval's in-flight sandboxes —
-    exit 137, 2026-07-21). ``None`` keeps the legacy reap-everything behavior.
+    ``owner_id`` is REQUIRED and scopes the sweep to this instance: only
+    containers stamped with the matching ``devclaw.owner`` label — plus ones
+    carrying no owner stamp at all, which no live instance claims — are removed.
+    Sandboxes owned by a DIFFERENT devclaw process sharing the daemon (live
+    service vs a measure/eval run) are left alone: "every labeled container is
+    orphaned at my startup" only holds per-instance, and the unscoped sweep was
+    live friendly fire (a service restart mid-eval SIGKILLed the eval's
+    in-flight sandboxes — exit 137, 2026-07-21). The unscoped
+    ``owner_id=None`` reap-everything mode is GONE (#616 cutoff): no caller ever
+    used it, and it was the friendly-fire posture the owner label exists to
+    prevent, kept alive only as a default argument.
 
     Synchronous (call before serving), best-effort: returns the number of
     containers removed, 0 when docker is unavailable (host/stub engine
     environments, CI) — never raises.
     """
     try:
-        if owner_id is None:
-            ps = _docker_run_sync(["ps", "-q", "--filter", f"label={SANDBOX_LABEL}"])
-        else:
-            # One query for ids AND owner labels; "label absent" can't be
-            # expressed as a docker filter, so the legacy check happens below.
-            ps = _docker_run_sync(
-                [
-                    "ps",
-                    "--filter",
-                    f"label={SANDBOX_LABEL}",
-                    "--format",
-                    f'{{{{.ID}}}} {{{{.Label "{SANDBOX_OWNER_LABEL_KEY}"}}}}',
-                ]
-            )
+        # One query for ids AND owner labels; "label absent" can't be expressed
+        # as a docker filter, so the unstamped case is handled below.
+        ps = _docker_run_sync(
+            [
+                "ps",
+                "--filter",
+                f"label={SANDBOX_LABEL}",
+                "--format",
+                f'{{{{.ID}}}} {{{{.Label "{SANDBOX_OWNER_LABEL_KEY}"}}}}',
+            ]
+        )
     except (OSError, subprocess.SubprocessError):
         return 0  # docker missing/unreachable/slow — nothing to sweep here
     if ps.returncode != 0:
@@ -245,7 +246,7 @@ def sweep_orphan_sandboxes(owner_id: str | None = None) -> int:
         if not line:
             continue
         cid, _, container_owner = line.partition(" ")
-        if owner_id is not None and container_owner and container_owner != owner_id:
+        if container_owner and container_owner != owner_id:
             continue  # another live devclaw's sandbox — not ours to kill
         try:
             rm = _docker_run_sync(["rm", "-f", cid])

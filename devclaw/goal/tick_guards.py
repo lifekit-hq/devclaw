@@ -31,7 +31,7 @@ def _progress_window_active(status: GoalStatus) -> bool:
     actively executing — not waiting on the owner (the `blocked` phase, which
     already pinged), not done/cancelled (returned earlier). 'verifying' counts
     (the done-gate review is still work in flight)."""
-    return (status.lifecycle or "executing") == "executing" and status.phase in (
+    return status.lifecycle == "executing" and status.phase in (
         "idle", "in_flight", "verifying",
     )
 
@@ -51,7 +51,7 @@ async def _check_no_progress(
     if window_s <= 0 or not _progress_window_active(status):
         return status
     if status.last_progress_at is None:
-        # start the clock — the goal just began executing (covers legacy goals and
+        # start the clock — the goal just began executing (covers goals created
         # any path into executing, without touching every transition site).
         # Telemetry-only field → update_status_fields, never a full-row rewrite
         # (a full save_status here would be the exact stale-snapshot clobber
@@ -87,16 +87,16 @@ async def _block_on_prep_failure(
     owner, who then can't tell a wedged goal from one with nothing to do.
 
     Instead: block with the *real* git error as ``blocked_on`` and tell the owner
-    at OWNER altitude. ``lifecycle`` is pinned to ``executing`` so subsequent
-    ticks route through the blocked-guard in :func:`tick_goal` (cadence does not
-    re-poke a blocked goal — only steering does), making this a single, legible
-    notification rather than a per-tick loop. When the owner answers/steers (e.g.
+    at OWNER altitude. Subsequent ticks route through the blocked-guard in
+    :func:`tick_goal` (cadence does not re-poke a blocked goal — only steering
+    does), making this a single, legible notification rather than a per-tick
+    loop. When the owner answers/steers (e.g.
     fixes the repo_url), the goal unblocks and prep is retried with the fix."""
     msg = str(exc)
     store.append_log(goal_id, f"workspace prep failed — blocking for the owner: {msg}")
     store.transition(
         goal_id, Event.BLOCK,
-        replace(status, lifecycle="executing", phase="blocked", blocked_on=msg,
+        replace(status, phase="blocked", blocked_on=msg,
                 blocked_kind="mechanical:prep", in_flight=None, next=""),
         expect=status,
     )
@@ -123,14 +123,14 @@ async def _block_on_lost_ref(
     and tell the owner ONCE at OWNER altitude. Blocked goals are not re-poked
     by cadence (see :func:`_handle_long_lived_advance`) — only steering unblocks them —
     so this is one legible failure, and the owner decides how to proceed
-    (typically steer_goal to re-plan). ``lifecycle`` is pinned to ``executing``
-    for the same reason :func:`_block_on_prep_failure` pins it: a lost
-    DISCOVERY ref would otherwise leave ``lifecycle="investigating"``, which
-    :func:`_classify` routes straight back into INVESTIGATING on the next tick
-    — a fresh dispatch that silently contradicts the "paused; steer me" ping
-    the owner just received. Catches :class:`GoalEngineError` ONLY — a real
-    bug must still surface through the catch-all, not be absorbed as a lost
-    ref.
+    (typically steer_goal to re-plan). (Both this and
+    :func:`_block_on_prep_failure` used to pin ``lifecycle="executing"`` here,
+    to stop a lost DISCOVERY ref leaving the goal in ``investigating`` and
+    being routed straight back into a fresh dispatch that contradicted the
+    "paused; steer me" ping. That phase was removed by the spec 008 shrink and
+    the #616 cutoff migrated the last rows carrying it, so the pin has nothing
+    left to correct.) Catches :class:`GoalEngineError` ONLY — a real bug must
+    still surface through the catch-all, not be absorbed as a lost ref.
 
     DELIBERATELY HUMAN-GATED — never auto-healed. Unlike a prep failure
     (the remote can come back), this
@@ -146,7 +146,7 @@ async def _block_on_lost_ref(
     ctx.store.transition(
         goal_id, Event.BLOCK,
         replace(
-            status, lifecycle="executing", in_flight=None,
+            status, in_flight=None,
             phase="blocked", blocked_on=msg, blocked_kind="mechanical:lost_ref", next="",
         ),
         expect=status,

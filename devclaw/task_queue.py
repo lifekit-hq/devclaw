@@ -43,6 +43,7 @@ from typing import Awaitable, Callable, Optional
 from .delivery import deliver_change, delivery_failed
 from .engine import Engine, EngineEvent, EngineRequest
 from .loom.limits import classify_failure, pause_seconds
+from .loom.declared_scope import scope_check, violation_summary
 from .loom.test_integrity import present_test_names, scan_diff
 from .llm_call import PlannerError
 from .program_plan import PlannedTask, order_tasks
@@ -515,6 +516,48 @@ class _IntegrityGate:
 
 
 @dataclass
+class _ScopeGate:
+    """Declared-file-scope gate (spec 010 FR-103) — always-hard, zero-LLM.
+
+    A `[P]` task earns the right to run concurrently by declaring the paths it
+    will touch; this is where that declaration stops being a promise. It reads
+    the SAME shared diff test-integrity just consumed and asks one question: did
+    the change stay inside what its plan declared?
+
+    Self-skipping by design. An increment that neither was dispatched with a
+    pinned scope nor claimed a scoped `[P]` task has no contract, so the gate is
+    *not consulted* — it produces no verdict to ship on and leaves every ordinary
+    increment byte-unaffected. When it IS consulted it fails CLOSED: a violation
+    blocks, and so does a check that cannot decide (a crash is not an approval,
+    #186). The parser is total precisely so that second branch stays unreachable.
+
+    Placed after integrity and before the cognition gates: it costs one string
+    scan, so running it early means a hermeticity violation short-circuits ahead
+    of every ``claude`` call.
+    """
+
+    gate_id: str = "scope"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        diff = await gi.diff()
+        try:
+            check = scope_check(diff, gi.declared_scope)
+        except Exception as err:  # noqa: BLE001 — unreviewable ⇒ fail closed (#186)
+            return GateVerdict.failed(
+                self.gate_id,
+                f"declared-scope check could not produce a verdict "
+                f"({err.__class__.__name__}: {err}) — failing closed: an "
+                f"unreviewable hermeticity check is not an approval",
+            )
+        if not check.consulted or not check.violations:
+            return GateVerdict.passed(self.gate_id)
+        return GateVerdict.failed(self.gate_id, violation_summary(check))
+
+
+@dataclass
 class _ReviewGate:
     """Adversarial pre-PR review over the shared diff (runs only after integrity
     passed, via the short-circuit). Dial-able (ADR 0007): a surviving finding can
@@ -824,8 +867,8 @@ class TaskQueue(_NotifyMixin):
         onto ``target_branch`` (creating it off ``base_branch`` when absent on
         origin) and delivery must land on it; ``base_branch`` is validated
         against origin before the engine runs and becomes the PR base / diff
-        range. Both None (every goal-path caller) ⇒ byte-identical legacy
-        behavior — no prep, no validation, no extra delivery kwargs.
+        range. Both None (every goal-path caller) ⇒ the unpinned path — no
+        prep, no validation, no extra delivery kwargs.
 
         ``pump=False`` (PR7 — the dispatch/pump split): create the row ONLY,
         no claim, no launch. ``_pump()`` synchronously claims PENDING work —
@@ -873,8 +916,8 @@ class TaskQueue(_NotifyMixin):
     ) -> str:
         """Submit a program the decomposer will plan into child tasks.
 
-        ``open_pr`` (default False for legacy behavior) is inherited by every
-        child task the decomposer creates — under a standing goal with
+        ``open_pr`` (default False — commit directly, open no PR) is inherited
+        by every child task the decomposer creates — under a standing goal with
         ``open_pr: true`` on the Action, each child task delivers as a
         reviewable-slice PR instead of committing directly to the workspace
         branch. ``verify_cmd`` (default None) is inherited the same way as the
@@ -1269,7 +1312,7 @@ class TaskQueue(_NotifyMixin):
         deliver = bool(row and row.deliver)
         # Branch-target wire (v1-helper-resurface P1, PR-2) — DIRECT path only:
         # goal-path and program-child rows never carry these, so for them every
-        # line below is inert (no prep subprocess, legacy deliver_change call).
+        # line below is inert (no prep subprocess, unpinned deliver_change call).
         base_branch = (row.base_branch or None) if row else None
         target_branch = (row.target_branch or None) if row else None
         # Owning project's reference key (#524 P3) — the per-project knobs
@@ -1318,9 +1361,9 @@ class TaskQueue(_NotifyMixin):
             pr_url = None
             failure: Optional[str] = None
             delivery: dict = {}
-            # Only-when-set on purpose (blank-safe): the legacy call shape stays
-            # byte-identical for goal/program tasks AND for every existing test
-            # stub of deliver_change that predates the branch-target kwargs.
+            # Only-when-set on purpose (blank-safe): the unpinned call shape
+            # stays byte-identical for goal/program tasks AND for every test stub
+            # of deliver_change that does not accept the branch-target kwargs.
             branch_kwargs: dict = {}
             if base_branch:
                 branch_kwargs["base_branch"] = base_branch
@@ -1398,18 +1441,21 @@ class TaskQueue(_NotifyMixin):
         (``review_repository``) always skip PR + gate because they write a
         read-only report, matching the standalone-task rule at engine.py."""
         program = self._store.get_program(program_id)
-        # Legacy programs (created before the 2026-07-03 column addition) load
-        # with open_pr=False / verify_cmd=None; that preserves the pre-change
-        # behavior for any in-flight program at deploy time.
-        program_open_pr = bool(program and program.open_pr)
-        program_verify_cmd = program.verify_cmd if program else None
-        # Child tasks inherit the program's strictness dial (ADR 0007), same as
-        # open_pr / verify_cmd. Legacy programs (pre-column) load "trust".
-        program_strictness = program.strictness if program else "trust"
-        # Child tasks inherit the program's owning project_id (#524 P3), so their
+        if program is None:
+            # Both callers create the row in the same synchronous call, so a
+            # miss here is lost state, not an old row. It used to fall through
+            # to open_pr=False — which silently reinstates the 2026-07-03
+            # commit-straight-to-main defect on a whole program (#616 cutoff:
+            # loud failure over silent degradation).
+            raise RuntimeError(f"program row vanished before planning: {program_id}")
+        # Child tasks inherit the program's PR + gate contract and its strictness
+        # dial (ADR 0007), plus its owning project_id (#524 P3) so their
         # per-project knobs (review_gate, sandbox_image, browser_gate_mode)
-        # resolve by id. Legacy programs (pre-column) load None → defaults.
-        program_project_id = program.project_id if program else None
+        # resolve by id rather than by a workspace-path scan.
+        program_open_pr = bool(program.open_pr)
+        program_verify_cmd = program.verify_cmd
+        program_strictness = program.strictness
+        program_project_id = program.project_id
         key_to_uuid = {p.key: str(uuid.uuid4()) for p in planned}
         for idx, p in enumerate(planned):
             dep_uuids: list[str] = []
@@ -1566,7 +1612,7 @@ class TaskQueue(_NotifyMixin):
         #    them, and do not reorder the routing below — the ordering is
         #    load-bearing (2026-07-20 night-incident regression surface, #407).
         #
-        #    Axis 1 — GATE VERDICT: verify → test_integrity → review → browser,
+        #    Axis 1 — GATE VERDICT: verify → test_integrity → scope → review → browser,
         #      a STRICT SHORT-CIRCUIT chain over ONE computed diff. review runs
         #      only if integrity passed; browser only if both passed. Flattening
         #      it recomputes the diff and surfaces lower-priority findings.
@@ -1761,7 +1807,7 @@ class TaskQueue(_NotifyMixin):
                     # "done" means the verify gate passed, not that the agent said
                     # so — then the checks that READ the change. Axis 1 (the gate
                     # verdict) runs as an ORDERED, short-circuit PIPELINE over ONE
-                    # shared diff: verify → test_integrity → review → browser.
+                    # shared diff: verify → test_integrity → scope → review → browser.
                     # run_pipeline stops at the FIRST non-ok verdict, and that
                     # short-circuit IS the strict ordering the cascade always had —
                     # review runs only if integrity passed, browser only if both
@@ -1797,7 +1843,7 @@ class TaskQueue(_NotifyMixin):
                     # scope here); the gate itself never learns the dial, honoring
                     # gate_pipeline's "policy never lives in a gate". verify /
                     # test_integrity stay always-hard; browser stays dial-able.
-                    gates: list = [_VerifyGate(), _IntegrityGate()]
+                    gates: list = [_VerifyGate(), _IntegrityGate(), _ScopeGate()]
                     if strictness != "trust":
                         gates.append(_ReviewGate(self))
                     gates.append(_BrowserGate(self))

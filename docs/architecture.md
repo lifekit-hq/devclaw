@@ -163,8 +163,8 @@ When the tick decides to *do* something (not just think):
    that survives every retry (including a browser suite that *ran and failed*)
    **advises-and-ships** — recorded loud in the log + problems catalog and
    surfaced in the PR body, with the human merge as the backstop — rather than
-   wedging. The verify gate, test-integrity gate, and the done-gate stay
-   **always-hard** in both modes — for the done-gate that means its
+   wedging. The verify gate, test-integrity gate, the declared-scope gate
+   (below), and the done-gate stay **always-hard** in both modes — for the done-gate that means its
    `done_when` clause grading: an unmet clause holds the goal open under
    either dial. The done-gate's *structural* axis (the review's code-shape
    concerns) rides the dial like the review-shaped gates: under `trust`
@@ -173,6 +173,18 @@ When the tick decides to *do* something (not just think):
    goal 3 rounds in a row parks it for the owner (`donegate_churn`) instead
    of re-advancing forever. Every *unreviewable* case (a gate crash,
    quota, worker-block) still fails closed regardless of the dial (#186 holds).
+   **The declared-scope gate (spec 010 FR-103)** is the hermetic-I/O half of
+   planned parallelism: a task graph may mark tasks topologically independent
+   (`[P]`) and declare the file paths each will touch, and this gate verifies at
+   settle that the increment's diff stayed inside its declaration. Pure
+   mechanism — a string scan of the diff the other read-the-change gates already
+   share, zero LLM, no git call of its own (`devclaw/loom/declared_scope.py`).
+   An increment whose plan declared nothing is *not consulted*, so nothing about
+   an ordinary increment changes; one that declared a scope and left it fails
+   closed, in `trust` as well as `strict`, because a declared scope is what
+   makes concurrent execution safe rather than a finding to weigh at the merge
+   boundary. It is the mechanism, not a prompt, on purpose: workers route around
+   soft constraints (#358).
 6. **Deliver, then settle** — for `deliver=True` tasks the change becomes a
    branch/PR *before* `done` is observable, so a poller never reads "done
    without a PR". A delivery that can't push/PR settles `failed`, never a silent
@@ -198,9 +210,23 @@ goal cancel+refile on purpose). The familiar files — `STATUS.md`, `log.md`, `i
 **never read back for decisions**. Only `goal.yaml` and `spec.md` stay plain
 files.
 
+Until #617 that last sentence was aspiration, not fact: the store parsed those
+views back into rows on eight read paths, framed as lazy migrations but with no
+cutoff — so a hand-edited `inbox.md` became steering and a corrupt
+`deliveries.md` became delivery history, outside the CAS choke point that makes
+single-writer true. The markdown that predates the rule is now ingested exactly
+once, by `devclaw/goal/store/view_migration.py` at store construction; after
+that the views are write-only. Steering enters through the `steer_goal` verb
+alone. `tests/test_views_never_read_back.py` holds the line, structurally: a
+production module outside the migration may not even NAME a view file unless it
+is a listed writer.
+
 **Single writer.** Only the `TaskQueue` mutates task rows; `StateStore` is an
 append-only event log and its views are projections. Goal state is owned by
-`GoalStore` and mutated only through the CAS'd `transition()`.
+`GoalStore` and mutated only through the CAS'd `transition()` — which is
+exactly why the views above may not be read back: re-ingesting one makes
+whoever last touched a markdown file a second writer that the CAS does not
+cover.
 
 **Continuous-eval — the `eval_outcomes` projection (ADR 0006).** Every task
 settle is an evaluation sample for free: `StateStore.mark_done` /

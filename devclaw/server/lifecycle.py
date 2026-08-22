@@ -121,11 +121,12 @@ def main() -> None:
     # dead process so the heartbeat resumes them. Sync — runs before the loop.
     reaped = queue.recover()
 
-    # #524 P3 one-time migration: stamp project_id onto goals written before the
-    # field, so a long-lived goal in flight at deploy keeps its owning project's
-    # pinned knobs (automerge/verify_done/autodeploy) instead of falling to the
-    # devclaw-wide defaults. Idempotent + zero-token; resolves each goal's owner
-    # by the legacy workspace match one last time.
+    # #524 P3 migration, ONCE per database (#616): stamp project_id onto goals
+    # written before the field, so a long-lived goal in flight at deploy keeps
+    # its owning project's pinned knobs (automerge/verify_done/autodeploy)
+    # instead of falling to the devclaw-wide defaults. Marker-guarded and
+    # zero-token — it resolves each goal's owner by the workspace-path match
+    # exactly once and never scans again (devclaw/goal/project_id_cutoff.py).
     backfilled = goals.backfill_project_ids()
     if backfilled:
         sys.stderr.write(f"{SERVER_NAME}: backfilled project_id on {backfilled} goal(s)\n")

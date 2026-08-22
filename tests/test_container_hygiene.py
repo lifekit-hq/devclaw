@@ -6,9 +6,9 @@ Two leaks these pin closed (T0.5):
    its own ``docker run`` client exits, so a process death mid-task leaves the
    container running forever while crash recovery re-runs the task in a SECOND
    container. Every sandbox now carries the ``devclaw.sandbox=1`` label and
-   ``sweep_orphan_sandboxes()`` reaps everything matching it at startup —
-   and ONLY that label: deploy containers (``devclaw.deploy=1``) are out of
-   scope.
+   ``sweep_orphan_sandboxes(owner_id)`` reaps this instance's leftovers among
+   them at startup — and ONLY that label: deploy containers
+   (``devclaw.deploy=1``) are out of scope.
 2. **``_teardown`` could hang forever.** Its ``docker rm -f`` wait was
    unbounded, so a wedged docker daemon defeated the task wall-clock timeout
    that teardown exists to enforce. The wait is now bounded by
@@ -21,6 +21,8 @@ All docker interaction goes through patched seams (``_docker_run_sync`` /
 
 import asyncio
 import subprocess
+
+import pytest
 
 from devclaw.engine import sandcastle as sc
 
@@ -40,14 +42,14 @@ def test_sweep_reaps_each_labeled_container(monkeypatch):
     def fake_run(args):
         calls.append(args)
         if args[0] == "ps":
-            return _completed(args, stdout="aaa111\nbbb222\n")
+            return _completed(args, stdout="aaa111 abc123\nbbb222 abc123\n")
         return _completed(args)
 
     monkeypatch.setattr(sc, "_docker_run_sync", fake_run)
-    assert sc.sweep_orphan_sandboxes() == 2
+    assert sc.sweep_orphan_sandboxes("abc123") == 2
     # ps filters on the sandbox label ALONE — the name is never persisted, and
     # a name-based sweep would miss every leaked container anyway
-    assert calls[0] == ["ps", "-q", "--filter", f"label={sc.SANDBOX_LABEL}"]
+    assert calls[0][:3] == ["ps", "--filter", f"label={sc.SANDBOX_LABEL}"]
     # one rm -f per returned id
     assert calls[1:] == [["rm", "-f", "aaa111"], ["rm", "-f", "bbb222"]]
 
@@ -63,7 +65,7 @@ def test_sweep_filter_is_the_sandbox_label_only(monkeypatch):
         return _completed(args, stdout="")
 
     monkeypatch.setattr(sc, "_docker_run_sync", fake_run)
-    sc.sweep_orphan_sandboxes()
+    sc.sweep_orphan_sandboxes("abc123")
     assert seen["ps"].count("--filter") == 1
     assert "label=devclaw.sandbox=1" in seen["ps"]
     assert "devclaw.deploy" not in " ".join(seen["ps"])
@@ -75,14 +77,14 @@ def test_sweep_returns_zero_when_docker_missing(monkeypatch):
         raise FileNotFoundError("No such file or directory: 'docker'")
 
     monkeypatch.setattr(sc, "_docker_run_sync", fake_run)
-    assert sc.sweep_orphan_sandboxes() == 0
+    assert sc.sweep_orphan_sandboxes("abc123") == 0
 
 
 def test_sweep_returns_zero_when_ps_fails(monkeypatch):
     monkeypatch.setattr(
         sc, "_docker_run_sync", lambda args: _completed(args, rc=1)
     )
-    assert sc.sweep_orphan_sandboxes() == 0
+    assert sc.sweep_orphan_sandboxes("abc123") == 0
 
 
 def test_sweep_never_raises_on_timeout(monkeypatch):
@@ -92,20 +94,20 @@ def test_sweep_never_raises_on_timeout(monkeypatch):
         raise subprocess.TimeoutExpired(cmd=["docker", *args], timeout=10)
 
     monkeypatch.setattr(sc, "_docker_run_sync", fake_run)
-    assert sc.sweep_orphan_sandboxes() == 0
+    assert sc.sweep_orphan_sandboxes("abc123") == 0
 
 
 def test_sweep_survives_one_failed_rm(monkeypatch):
     # A single unremovable container doesn't abort the sweep or inflate the count.
     def fake_run(args):
         if args[0] == "ps":
-            return _completed(args, stdout="dead1\ndead2\ndead3\n")
+            return _completed(args, stdout="dead1 abc123\ndead2 abc123\ndead3 abc123\n")
         if args[-1] == "dead2":
             raise subprocess.TimeoutExpired(cmd=["docker", *args], timeout=10)
         return _completed(args)
 
     monkeypatch.setattr(sc, "_docker_run_sync", fake_run)
-    assert sc.sweep_orphan_sandboxes() == 2
+    assert sc.sweep_orphan_sandboxes("abc123") == 2
 
 
 # ---- owner-scoped sweep (multi-process seam) ----
@@ -123,15 +125,31 @@ def test_sweep_scoped_to_owner_spares_other_instances_sandboxes(monkeypatch):
     def fake_run(args):
         calls.append(args)
         if args[0] == "ps":
-            # own, a concurrent instance's, and a legacy pre-scoping container
-            return _completed(args, stdout="own1 abc123\nforeign1 def456\nlegacy1 \n")
+            # own, a concurrent instance's, and an unstamped container
+            return _completed(args, stdout="own1 abc123\nforeign1 def456\nunstamped1 \n")
         return _completed(args)
 
     monkeypatch.setattr(sc, "_docker_run_sync", fake_run)
     assert sc.sweep_orphan_sandboxes("abc123") == 2
     rms = [a for a in calls if a[0] == "rm"]
-    # own id reaped, legacy (no owner label) reaped, the OTHER instance's spared
-    assert rms == [["rm", "-f", "own1"], ["rm", "-f", "legacy1"]]
+    # own id reaped, unstamped (no owner label) reaped, the OTHER instance's spared
+    assert rms == [["rm", "-f", "own1"], ["rm", "-f", "unstamped1"]]
+
+
+def test_sweep_requires_an_owner_id_no_unscoped_reap_everything_mode(monkeypatch):
+    """#616 cutoff: ``sweep_orphan_sandboxes()`` used to default to
+    ``owner_id=None`` — "reap every sandbox-labeled container on the daemon",
+    the exact friendly fire the owner label was added to stop (exit 137,
+    2026-07-21). No caller ever passed None; the mode survived only as a
+    default argument. It is now a required parameter."""
+    import inspect
+
+    sig = inspect.signature(sc.sweep_orphan_sandboxes)
+    param = sig.parameters["owner_id"]
+    assert param.default is inspect.Parameter.empty
+    monkeypatch.setattr(sc, "_docker_run_sync", lambda args: _completed(args))
+    with pytest.raises(TypeError):
+        sc.sweep_orphan_sandboxes()
 
 
 def test_sweep_owner_query_keeps_the_sandbox_label_filter(monkeypatch):
@@ -165,8 +183,8 @@ def test_sandbox_launch_stamps_owner_label():
 
 
 def test_sandbox_launch_without_owner_omits_owner_label():
-    # None (tests / direct callers) → argv byte-identical to the pre-scoping
-    # posture: no dangling --label, no empty owner value.
+    # None (tests / direct callers) → no dangling --label, no empty owner
+    # value. The startup sweep treats such a container as unclaimed.
     args = sc._build_docker_args(
         container_name="devclaw-deadbeef",
         host_bind_path="/host/ws",

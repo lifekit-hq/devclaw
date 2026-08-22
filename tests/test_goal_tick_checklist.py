@@ -4,14 +4,19 @@ reset) and the branch-staleness probe (issue-393 wire-up) that guards it.
 
 Historically this file exercised the checklist-mode wiring; the checklist (and
 the whole host-cognition chain) died with spec 008 shrink, and
-``delivery_strategy.resolve_strategy`` now keys on the explicit
-``lifecycle="executing"`` stamp instead of ``read_checklist``. The surviving
-tests reach goal-branch mode through that stamp."""
+``delivery_strategy.resolve_strategy`` keyed on the explicit
+``lifecycle="executing"`` stamp instead of ``read_checklist`` — and since the
+#616 cutoff it does not branch at all: every goal is goal-branch. The two
+tests that exercised the per-action path now SELECT that topology explicitly
+rather than seeding a legacy ``lifecycle=None`` row, which is a goal shape
+production stopped writing at the 008 shrink and the cutoff has since
+migrated away."""
 
 from __future__ import annotations
 
 import pytest
 
+from devclaw.goal import delivery_strategy as _delivery
 from devclaw.goal.models import Action, GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import Outcome, _dispatch_action, tick_goal
@@ -22,18 +27,32 @@ def _store(tmp_path):
     return GoalStore(tmp_path, now=Clock())
 
 
+def _force_per_action(monkeypatch):
+    """Select the per-action delivery topology for the tick under test.
+
+    Nothing selects it on its own any more (#616 retired the legacy-lifecycle
+    rule; see ``resolve_strategy``). Choosing it explicitly keeps the
+    default-branch-reset path under test without a test asserting a route the
+    loop cannot take by itself."""
+    monkeypatch.setattr(
+        "devclaw.goal.delivery_strategy.resolve_strategy",
+        lambda store, goal_id: _delivery.PER_ACTION,
+    )
+
+
 # ---- which branch a dispatch checks out -------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_dispatch_uses_default_branch_for_legacy_goal(tmp_path):
-    """Legacy (pre-lifecycle) goals still get the default-branch reset on every
-    dispatch. ``lifecycle=None`` reads-as-executing for the tick but stays
-    per-action for delivery — the long_lived goal-branch accumulation (the
-    2026-08-08 amnesia fix) requires an EXPLICIT ``executing`` lifecycle."""
+async def test_dispatch_uses_the_default_branch_under_per_action_delivery(tmp_path, monkeypatch):
+    """A per-action delivery gets the default-branch reset on every dispatch
+    (``branch_for_dispatch`` is None). Goal-branch accumulation — the
+    2026-08-08 amnesia fix — is the other side of this, and is what every real
+    goal now gets."""
+    _force_per_action(monkeypatch)
     store = _store(tmp_path)
     seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle", lifecycle=None))
+    store.save_status("g", GoalStatus(phase="idle"))
 
     calls: list = []
 
@@ -292,11 +311,13 @@ async def test_dispatch_proceeds_when_staleness_probe_returns_none(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypatch):
-    """Legacy (pre-lifecycle) goals (per-action delivery) never hit the
-    staleness probe — ``branch_for_dispatch`` is None for that path. (An
-    *executing* goal accumulates on ``goal/<id>`` and DOES probe — covered by
+    """A per-action delivery never hits the staleness probe —
+    ``branch_for_dispatch`` is None for that path. (A goal-branch goal
+    accumulates on ``goal/<id>`` and DOES probe — covered by
     test_long_lived_goal_accumulates_on_goal_branch.)"""
     from devclaw.goal import tick_dispatch
+
+    _force_per_action(monkeypatch)
 
     probe_calls: list = []
 
@@ -307,8 +328,8 @@ async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypat
     monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_recording)
 
     store = _store(tmp_path)
-    seed_goal(tmp_path, "g")  # legacy lifecycle -> per-action mode
-    store.save_status("g", GoalStatus(phase="idle", lifecycle=None))
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(phase="idle"))
 
     engine = FakeEngine()
 

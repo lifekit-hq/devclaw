@@ -1,4 +1,4 @@
-"""The console web app: static serving + the legacy dashboard redirects.
+"""The console web app: static serving + the retired-dashboard redirects.
 
 The SPA source is the top-level ``console/`` product; Vite builds it into
 ``devclaw/server/console_dist`` so the wheel ships it (see pyproject). These
@@ -28,7 +28,7 @@ from starlette.responses import (
 from .._state import mcp, store
 from ._projections import _safe_parse
 
-# ---- Legacy dashboard → console redirects (#549, one operator surface) ----
+# ---- Retired dashboard → console redirects (#549, one operator surface) ----
 # The server-rendered dashboard pages are retired behind 302s onto their
 # console equivalents (their renderers are deleted). Deep links map where a
 # mapping exists, else fall back to the console goals list; the incoming
@@ -50,7 +50,7 @@ async def dashboard_index(request: Request) -> Response:
 async def dashboard_program(request: Request) -> Response:
     """A program's operator view is the goal that dispatched it — GoalDetail
     carries the live event tail and per-task drill-ins the old program page
-    showed. A parent-less legacy program falls back to the goals list; the
+    showed. A parent-less program falls back to the goals list; the
     raw SSE feed at /programs/{id}/events is unchanged for scripts."""
     program = store.get_program(request.path_params["program_id"])
     parent = getattr(program, "parent_goal_id", None) if program else None
@@ -178,8 +178,8 @@ async def console_asset(request: Request) -> Response:
 
 @mcp.custom_route("/goals/{goal_id}", methods=["GET"])
 async def dashboard_goal(request: Request) -> Response:
-    """Legacy HTML goal detail → the console's GoalDetail (same data, richer:
-    plan, PRs, transcripts, task drill-ins). The JSON feed stays at
+    """The retired HTML goal detail → the console's GoalDetail (same data,
+    richer: plan, PRs, transcripts, task drill-ins). The JSON feed stays at
     /goals/{goal_id}.json."""
     goal_id = request.path_params["goal_id"]
     return _console_redirect(request, f"/console/goals/{_quote(goal_id)}")

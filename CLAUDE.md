@@ -63,11 +63,18 @@ spawn containers itself — it goes through the engine).
 - **Single writer to state.** Only the **TaskQueue** mutates task rows; `StateStore` is
   an append-only event log, views are projections. Goal state is owned by `GoalStore`
   and (as of Tranche 1) lives in SQLite in the same `devclaw.db` — `goal_status`,
-  `goal_steering`, `goal_log`, `goal_deliveries`, `goal_docs`, `goal_phase_history`,
-  plus goal-transcending `project_docs` (the repo brief, keyed by workspace path).
+  `goal_steering`, `goal_log`, `goal_deliveries`, `goal_phase_history`, plus
+  goal-transcending `project_docs` (the repo brief, keyed by workspace path).
+  (`goal_docs` was dropped by the #616 cutoff: every kind it held died with the
+  host-cognition chain in the 008 shrink.)
   `STATUS.md`/`log.md`/`inbox.md`/`deliveries.md`/`RUN_SUMMARY.md`
   are generated **views** — human- and rollback-readable, never read back for
-  decisions. Mutation is NOT heartbeat-exclusive: `steer_goal`/`resume_goal`/`cancel_goal` write from
+  decisions. That last clause was aspiration until #617: the store parsed those
+  views back into rows on eight read paths, which made whoever last touched a
+  markdown file a second writer the CAS below does not cover. The pre-#617
+  markdown is now ingested exactly once, at store construction
+  (`goal/store/view_migration.py`), and `tests/test_views_never_read_back.py`
+  holds the line structurally. Mutation is NOT heartbeat-exclusive: `steer_goal`/`resume_goal`/`cancel_goal` write from
   the MCP-tool call path too, concurrently with the heartbeat — `GoalStore.transition()`
   is the CAS'd choke point (`devclaw/goal/transitions.py`'s `LEGAL` table) that makes
   that safe: a stale-snapshot write raises `TransitionConflict` and is abandoned rather

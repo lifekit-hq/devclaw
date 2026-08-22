@@ -144,8 +144,7 @@ _TIMELINE_PHASES = ["executing", "verifying", "done"]
 
 def _phase_index(current: str | None) -> int:
     """Where along the timeline the goal is right now. Non-timeline phases
-    (idle, in_flight, blocked, cancelled, error — and legacy pre-shrink
-    investigating/firming stamps) collapse to 'executing'."""
+    (idle, in_flight, blocked, cancelled, error) collapse to 'executing'."""
     if current is None:
         return 0
     if current in _TIMELINE_PHASES:
