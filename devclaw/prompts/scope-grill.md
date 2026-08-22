@@ -38,3 +38,9 @@ A spec is Markdown with these sections:
 ## Acceptance      — checkable criteria per milestone
 ## Constraints     — perf, deps, hosting, non-negotiables
 ## Open risks      — known unknowns carried into execution
+
+Alongside the spec, emit three lists a saga is authored from. Each is a list of
+short standalone statements; use an empty list when there genuinely are none:
+- out_of_scope  — what this project deliberately does NOT include
+- invariants    — what must still hold after every increment
+- established   — decisions already settled, which must not be re-derived

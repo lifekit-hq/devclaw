@@ -40,6 +40,12 @@ def svc(tmp_path):
     store.close()
 
 
+#: The saga slots every well-formed goal must FILL (spec 012 US2). Declared
+#: empty here so these admission tests stay about the condition each one is
+#: named for; the slot checks themselves have their own tests at the bottom.
+_SLOTS = {"out_of_scope": [], "invariants": [], "established": []}
+
+
 def _codes(result: AdmissionResult) -> set[str]:
     return {c.code for c in result.conditions}
 
@@ -130,6 +136,7 @@ def test_from_scratch_with_backlog_only_is_admitted():
         done_when="GET /health returns HTTP 200.",
         repo_url=None,
         backlog=["scaffold the API", "add /health endpoint"],
+        **_SLOTS,
     )
     assert r.admitted
     assert "no_scope_anchor_for_from_scratch" not in _reject_codes(r)
@@ -141,6 +148,7 @@ def test_from_scratch_with_spec_only_is_admitted():
         done_when="GET /health returns HTTP 200.",
         repo_url=None,
         spec="# spec\n## Scope\nin: /health endpoint",
+        **_SLOTS,
     )
     assert r.admitted
     assert "no_scope_anchor_for_from_scratch" not in _reject_codes(r)
@@ -153,6 +161,7 @@ def test_existing_repo_needs_no_scope_anchor():
         objective="add /health endpoint", workspace_dir="/ws",
         done_when="GET /health returns HTTP 200.",
         repo_url="https://example.com/r.git",
+        **_SLOTS,
     )
     assert r.admitted
     assert "no_scope_anchor_for_from_scratch" not in _reject_codes(r)
@@ -164,6 +173,7 @@ def test_bare_verify_cmd_is_warning_not_rejection():
         done_when="GET /health returns HTTP 200.",
         repo_url="https://example.com/r.git",
         verify_cmd="pytest",
+        **_SLOTS,
     )
     assert r.admitted  # warnings don't block
     assert "bare_verify_cmd" not in _reject_codes(r)
@@ -193,6 +203,7 @@ def test_clean_goal_is_admitted():
         done_when="GET /health returns HTTP 200 with status:ok in the body.",
         repo_url="https://example.com/r.git",
         verify_cmd="cd backend && dotnet test",
+        **_SLOTS,
     )
     assert r.admitted
     assert r.conditions == []
@@ -218,6 +229,7 @@ def test_create_goal_admits_valid_goal(svc):
         workspace_dir="/ws",
         done_when="GET /health returns HTTP 200 with status:ok in the body.",
         backlog=["add /health controller", "add test"],
+        **_SLOTS,
     )
     # admitted → goal was created, get_goal returns its state
     assert result["id"] == "g-ok"
@@ -232,6 +244,7 @@ def test_create_goal_admits_with_warning(svc):
         done_when="GET /health returns HTTP 200 with status:ok in the body.",
         backlog=["add /health controller", "add test"],
         verify_cmd="pytest",
+        **_SLOTS,
     )
     # admitted, but the bare-tool warning is surfaced
     assert result["id"] == "g-warn"
@@ -253,6 +266,7 @@ def test_both_modes_start_executing(svc):
         done_when="GET /health returns HTTP 200 with status:ok in the body.",
         backlog=["add /health controller", "add test"],
         mode="long_lived",
+        **_SLOTS,
     )
     assert svc._goal_store.load_status("g-ll").lifecycle == "executing"
 
@@ -263,6 +277,7 @@ def test_both_modes_start_executing(svc):
         done_when="GET /health returns HTTP 200 with status:ok in the body.",
         backlog=["add /health controller", "add test"],
         mode="one_shot",
+        **_SLOTS,
     )
     assert svc._goal_store.load_status("g-os").lifecycle == "executing"
 
@@ -305,6 +320,7 @@ def test_standing_done_when_warns_but_admits():
             "Judge each delivery; fail any axis → off_track."
         ),
         backlog=["notifications engine"],
+        **_SLOTS,
     )
     assert r.admitted
     assert "standing_done_when" in _codes(r)
@@ -316,6 +332,114 @@ def test_bounded_done_when_has_no_standing_warning():
         objective="ship /health", workspace_dir="/ws",
         done_when="/health returns 200 and is covered by a passing test",
         backlog=["add /health"],
+        **_SLOTS,
     )
     assert r.admitted
     assert "standing_done_when" not in _codes(r)
+
+
+# ---- the authored saga slots (spec 012 US2, FR-007/FR-008) -------------------
+
+
+def test_verify_goal_rejects_every_unfilled_saga_slot_naming_it():
+    """FR-008 / SC-004: a saga missing a required slot is rejected at creation,
+    naming the slot — not accepted and discovered by a worker mid-run. All
+    three surface in ONE pass so the author fixes the schema in one re-file."""
+    r = verify_goal(
+        objective="add /health endpoint", workspace_dir="/ws",
+        done_when="GET /health returns HTTP 200 with status:ok in the body.",
+        repo_url="https://example.com/r.git",
+        # every saga slot omitted
+    )
+    assert not r.admitted
+    assert {
+        "missing_out_of_scope", "missing_invariants", "missing_established",
+    } <= _reject_codes(r)
+    # The condition names the slot in BOTH the routable field and the prose the
+    # owner reads — a rejection that says only "malformed" is not actionable.
+    by_code = {c.code: c for c in r.rejections}
+    assert by_code["missing_out_of_scope"].field == "out_of_scope"
+    assert "'out_of_scope'" in by_code["missing_out_of_scope"].message
+    assert by_code["missing_invariants"].field == "invariants"
+    assert by_code["missing_established"].field == "established"
+
+
+def test_verify_goal_admits_a_saga_whose_slots_are_explicitly_empty():
+    """An EMPTY list is a FILLED slot: the author looked and declared there are
+    none. Only silence is rejected."""
+    r = verify_goal(
+        objective="add /health endpoint", workspace_dir="/ws",
+        done_when="GET /health returns HTTP 200 with status:ok in the body.",
+        repo_url="https://example.com/r.git",
+        out_of_scope=[], invariants=[], established=[],
+    )
+    assert r.admitted
+    assert r.conditions == []
+
+
+def test_create_goal_rejects_an_unfilled_saga_slot_before_anything_is_persisted(svc):
+    """The rejection happens at the authoring boundary, so no half-authored
+    saga reaches the heartbeat."""
+    with pytest.raises(GoalAdmissionRejected) as ei:
+        svc.create_goal(
+            "g-noslots",
+            objective="add /health endpoint",
+            workspace_dir="/ws",
+            done_when="GET /health returns HTTP 200 with status:ok in the body.",
+            backlog=["add /health controller"],
+            out_of_scope=["the mobile client"],
+            invariants=["the suite stays green"],
+            # `established` omitted
+        )
+    codes = {c.code for c in ei.value.result.rejections}
+    assert codes == {"missing_established"}
+    assert not svc.has_goal("g-noslots")
+
+
+def test_create_goal_persists_the_authored_saga_slots(svc):
+    """The slots are goal FACTS: written once at creation, readable back, and
+    surfaced on the observe surface — a slot an operator cannot see cannot be
+    verified. (Goals stay durable: the verb for a changed contract is cancel +
+    recreate, never an update_goal.)"""
+    svc.create_goal(
+        "g-slots",
+        objective="add /health endpoint",
+        workspace_dir="/ws",
+        done_when="GET /health returns HTTP 200 with status:ok in the body.",
+        backlog=["add /health controller"],
+        out_of_scope=["the mobile client"],
+        invariants=["the suite stays green"],
+        established=[],
+    )
+    goal = svc._goal_store.load_goal("g-slots")
+    assert goal.out_of_scope == ["the mobile client"]
+    assert goal.invariants == ["the suite stays green"]
+    assert goal.established == []  # declared empty, NOT "never authored"
+
+    surfaced = svc.get_goal("g-slots")
+    assert surfaced["out_of_scope"] == ["the mobile client"]
+    assert surfaced["established"] == []
+
+
+def test_a_goal_yaml_without_slot_keys_loads_them_as_none_not_empty(svc, tmp_path):
+    """The backward-compatibility hinge: a goal.yaml authored before the schema
+    has no slot keys, and must load as None — the value the framing renderer
+    treats as 'omit the section', keeping a live prose-authored goal's brief
+    exactly as it was. Coercing an absent key to [] would silently tell every
+    such worker 'nothing is excluded'."""
+    import yaml
+
+    d = tmp_path / "goals" / "g-legacy"
+    d.mkdir(parents=True)
+    (d / "goal.yaml").write_text(yaml.safe_dump({
+        "objective": "keep the dashboard healthy",
+        "cadence": "1d",
+        "engine": "devclaw",
+        "workspace_dir": "/ws",
+        "done_when": "the dashboard renders without errors on every route.",
+    }))
+    goal = svc._goal_store.load_goal("g-legacy")
+
+    assert goal.out_of_scope is None
+    assert goal.invariants is None
+    assert goal.established is None

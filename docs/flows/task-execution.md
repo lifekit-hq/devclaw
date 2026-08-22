@@ -45,8 +45,13 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │  long-lived; runs as `node`; needs docker.sock + GID 990    │  ◄── perm-denied if .env
      │  │                                                             │      LIFEKIT_DOCKER_GID
      │  │  Step A — @mcp.tool create_goal runs:                       │      missing (2026-06-25 bug)
+     │  │     • admission: reject a saga with an unfilled slot,       │
+     │  │       naming it (out_of_scope/invariants/established,       │
+     │  │       spec 012 US2 — [] declares one empty, omitting        │
+     │  │       one is a rejection, never a silent default)           │
      │  │     • write /var/lib/devclaw/goals/<id>/goal.yaml (facts,   │
-     │  │       plain file) + the first goal_status SQLite row        │
+     │  │       incl. the authored saga slots) + the first            │
+     │  │       goal_status SQLite row                                │
      │  │       (STATUS.md is rendered alongside as a generated view) │
      │  │     • lifecycle="executing", phase="idle"                   │
      │  │     • return {goal_id, ...} to the waiter                   │
@@ -57,9 +62,12 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       the generated views of the same rows, since T1)       │
      │  │     • if phase==idle and no in_flight:                      │
      │  │         advance_brief.py builds the mechanical   │          │
-     │  │           advance brief (steering + settle       │          │
-     │  │           detail + what prior increments of      │          │
-     │  │           this goal delivered, spec 012 US1;     │          │
+     │  │           advance brief (the saga framing's      │          │
+     │  │           five named slots, spec 012 US2 —       │          │
+     │  │           re-sent in full and size-bounded —     │          │
+     │  │           + steering + settle detail + what      │          │
+     │  │           prior increments of this goal          │          │
+     │  │           delivered, spec 012 US1;               │          │
      │  │           ZERO LLM — the worker plans            │          │
      │  │           in-sandbox via speckit, spec 008)      │          │
      │  │     • dispatches the next advance task           │          │

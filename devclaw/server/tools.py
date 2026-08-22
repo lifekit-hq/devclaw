@@ -587,6 +587,13 @@ async def start_program(
             goal_id, objective=goal, workspace_dir=resolved.workspace_dir,
             repo_url=resolved.repo_url, spec=goal, mode="one_shot",
             project_id=resolved.project_id,
+            # The saga slots are declared EMPTY on this deprecated alias, not
+            # demanded from it. It is the FR-012b class: an operator is present
+            # at the call and can correct a bad prompt immediately, so a
+            # required-slot tax buys nothing on the one path that already has a
+            # reviewer in the loop. Schemas earn their cost on unattended work —
+            # which is why the self-fix pickup DOES fill them for real.
+            out_of_scope=[], invariants=[], established=[],
         )
     except GoalAdmissionRejected as exc:
         raise ToolError(json.dumps(exc.result.to_dict(), indent=2))
@@ -947,6 +954,9 @@ async def create_goal(
     spec: str = "",
     mode: str = "long_lived",
     strictness: str = "trust",
+    out_of_scope: Optional[list[str]] = None,
+    invariants: Optional[list[str]] = None,
+    established: Optional[list[str]] = None,
 ) -> str:
     """Register a goal that DevClaw drives: on each heartbeat it plans, dispatches
     to the engine, records what shipped, and only closes when a grounded review
@@ -967,7 +977,18 @@ async def create_goal(
     project is rejected synchronously. verify_cmd: the gate (e.g. 'dotnet test').
     spec: optional pre-aligned scope contract — when the OpenClaw waiter has
     grilled the customer (via scope_grill) before filing the order, pass the
-    finalized spec.md here and the evaluator judges done against it."""
+    finalized spec.md here and the evaluator judges done against it.
+
+    THE SAGA SLOTS (spec 012 US2) — ``out_of_scope``, ``invariants`` and
+    ``established`` are REQUIRED alongside objective/done_when. A saga is
+    authored from named slots, not prose, so that two people describing the
+    same work file the same saga. Pass a list of short statements, or an EMPTY
+    LIST to declare explicitly that there are none — omitting a slot is
+    rejected here, naming it, rather than discovered by a worker mid-run.
+    out_of_scope: what this goal deliberately does NOT include (the worker will
+    not build into it). invariants: what must still hold after every increment
+    (a change that breaks one is not shippable). established: settled decisions
+    the worker must build on instead of re-deriving."""
     if not goal_id:
         raise ToolError("create_goal requires goal_id")
     if mode not in ("long_lived", "one_shot"):
@@ -990,7 +1011,8 @@ async def create_goal(
                 done_when=done_when, backlog=backlog, cadence=cadence,
                 repo_url=resolved.repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
                 spec=spec, mode=mode, strictness=strictness,
-                project_id=resolved.project_id,
+                project_id=resolved.project_id, out_of_scope=out_of_scope,
+                invariants=invariants, established=established,
             ),
             indent=2,
         )
@@ -1010,6 +1032,9 @@ async def verify_goal(
     backlog: Optional[list[str]] = None,
     verify_cmd: Optional[str] = None,
     spec: str = "",
+    out_of_scope: Optional[list[str]] = None,
+    invariants: Optional[list[str]] = None,
+    established: Optional[list[str]] = None,
 ) -> str:
     """Pre-flight check for a goal BEFORE you call create_goal. Runs the same
     structural validations the chef applies at goal-creation time and returns
@@ -1033,7 +1058,8 @@ async def verify_goal(
         goals.verify_goal(
             objective=objective, workspace_dir=resolved.workspace_dir,
             done_when=done_when, backlog=backlog, repo_url=resolved.repo_url,
-            verify_cmd=verify_cmd, spec=spec,
+            verify_cmd=verify_cmd, spec=spec, out_of_scope=out_of_scope,
+            invariants=invariants, established=established,
         ),
         indent=2,
     )

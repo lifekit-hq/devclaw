@@ -591,7 +591,20 @@ class GoalService:
         mode: str = "long_lived",
         strictness: str = "trust",
         project_id: Optional[str] = None,
+        out_of_scope: Optional[list[str]] = None,
+        invariants: Optional[list[str]] = None,
+        established: Optional[list[str]] = None,
     ) -> dict:
+        """File a durable goal. Beyond ``objective`` and ``done_when``, a saga
+        is authored from three further NAMED SLOTS (spec 012 US2, FR-007):
+        ``out_of_scope``, ``invariants`` and ``established``. Each must be
+        FILLED — pass an empty list to declare explicitly that there are none;
+        omitting one is a structured admission rejection naming the slot
+        (FR-008), because silence and "there are none" render different prompts
+        and only one of them is a decision.
+
+        Goals stay durable: there is deliberately no ``update_goal``. The verb
+        for a changed contract is cancel + recreate."""
         # Chef admission ("verified on all sides"). Goals that fail structural
         # checks are REJECTED with a structured condition list — the caller
         # (waiter or upstream chain) must fix and re-file. Warnings still flow
@@ -606,6 +619,7 @@ class GoalService:
         admission = _verify(
             objective=objective, workspace_dir=workspace_dir, done_when=done_when,
             backlog=backlog, repo_url=repo_url, verify_cmd=verify_cmd, spec=spec,
+            out_of_scope=out_of_scope, invariants=invariants, established=established,
         )
         if not admission.admitted:
             raise GoalAdmissionRejected(admission)
@@ -614,7 +628,8 @@ class GoalService:
             goal_id, objective=objective, workspace_dir=workspace_dir, cadence=cadence,
             repo_url=repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
             done_when=done_when, backlog=backlog, mode=mode, strictness=strictness,
-            project_id=project_id,
+            project_id=project_id, out_of_scope=out_of_scope, invariants=invariants,
+            established=established,
         )
         # The waiter may have grilled scope before filing the order — persist the
         # spec it landed on so the evaluator judges done against the shared contract.
@@ -645,6 +660,9 @@ class GoalService:
         repo_url: Optional[str] = None, verify_cmd: Optional[str] = None,
         done_when: str = "", backlog: Optional[list[str]] = None,
         spec: str = "",
+        out_of_scope: Optional[list[str]] = None,
+        invariants: Optional[list[str]] = None,
+        established: Optional[list[str]] = None,
     ) -> dict:
         """Pre-flight check the waiter calls before ``create_goal`` so the
         customer sees fixable conditions BEFORE thinking the order was filed.
@@ -655,6 +673,7 @@ class GoalService:
         return _verify(
             objective=objective, workspace_dir=workspace_dir, done_when=done_when,
             backlog=backlog, repo_url=repo_url, verify_cmd=verify_cmd, spec=spec,
+            out_of_scope=out_of_scope, invariants=invariants, established=established,
         ).to_dict()
 
     def _dispatch_hold(self, goal_id: Optional[str] = None) -> Optional[dict]:
@@ -743,6 +762,13 @@ class GoalService:
             "id": g.id,
             "objective": g.objective,
             "done_when": g.done_when,
+            # The authored saga slots (spec 012 US2). RAW, like `lifecycle`
+            # above: null means the goal predates the schema, [] means the
+            # author declared the slot empty, and coalescing the two would hide
+            # exactly what an operator checks this surface to see.
+            "out_of_scope": g.out_of_scope,
+            "invariants": g.invariants,
+            "established": g.established,
             "cadence": g.cadence,
             "workspace_dir": g.workspace_dir,
             "backlog": g.backlog,

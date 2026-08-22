@@ -88,6 +88,29 @@ class Goal:
     #: the gate strictness dial (see :data:`Strictness`, ADR 0007). Defaulted to
     #: "trust" so existing goal.yaml (predates the field) loads advisory.
     strictness: Strictness = "trust"
+    #: ---- the authored saga slots (spec 012 US2, FR-007) -------------------
+    #: Three named slots the author fills at creation, alongside ``objective``
+    #: ("what is being achieved") and ``done_when`` ("what completion means").
+    #: They are re-sent in the framing of EVERY increment (FR-009a), so each one
+    #: has to earn its tokens with a reader that acts on it — here, the worker
+    #: (FR-009). ``devclaw/goal/saga_framing.py`` is that reader's generator.
+    #:
+    #: ``None`` vs ``[]`` is LOAD-BEARING and must not be collapsed:
+    #:   * ``None``  — the key is absent from goal.yaml, i.e. the goal was
+    #:     authored BEFORE the slot schema. The framing omits the section
+    #:     entirely, so a live prose-authored goal keeps its exact brief.
+    #:   * ``[]``    — the author looked and declared the slot empty. The
+    #:     framing states that absence explicitly (same doctrine as FR-004),
+    #:     which is what makes two independently-authored sagas structurally
+    #:     identical (SC-003).
+    #: Admission rejects ``None`` on a NEW goal, naming the slot (FR-008).
+    #: what this saga deliberately does NOT include
+    out_of_scope: Optional[list[str]] = None
+    #: properties that must still hold after every increment
+    invariants: Optional[list[str]] = None
+    #: settled decisions the worker must use rather than re-derive
+    established: Optional[list[str]] = None
+
     #: the owning project's reference key (#524 P3). The per-project override
     #: knobs (automerge, verify_done, autodeploy, merge_strategy) resolve BY this
     #: id, not by a workspace-path scan. None for self-fix goals with no

@@ -57,3 +57,35 @@ async def test_next_step_asks_then_finalizes():
 
     step = await next_step("a CLI tool", [{"question": "q", "recommended": "r", "answer": "a"}], done_stub)
     assert step["action"] == "done" and "ship it" in step["spec"]
+
+
+# ---- the authored saga slots (spec 012 US2) ---------------------------------
+
+
+def test_grill_done_step_passes_through_the_saga_slots_when_present():
+    """The grill is the authoring instrument: it already elicits scope-out and
+    hard constraints, so it hands them back as the LISTS create_goal requires
+    instead of prose the waiter must re-derive."""
+    s = validate_step({
+        "action": "done",
+        "spec": "# spec\n## Goal\nx",
+        "out_of_scope": ["the mobile client", "  "],
+        "invariants": "the suite stays green",
+        "established": [],
+    })
+    assert s["out_of_scope"] == ["the mobile client"]  # blanks dropped
+    assert s["invariants"] == ["the suite stays green"]  # a bare string is one item
+    assert s["established"] == []  # an explicit empty declaration survives
+
+
+def test_grill_done_step_without_slots_omits_them_rather_than_inventing_empties():
+    """Absence must not be normalized into "there are none": create_goal
+    rejects an unfilled slot, and a silently-invented empty one would defeat
+    exactly that check. An older caller is also byte-unaffected."""
+    s = validate_step({"action": "done", "spec": "# spec\n## Goal\nx"})
+    assert s == {"action": "done", "spec": "# spec\n## Goal\nx"}
+
+
+def test_grill_done_step_rejects_a_non_list_saga_slot():
+    with pytest.raises(PlannerError):
+        validate_step({"action": "done", "spec": "x", "invariants": {"a": 1}})

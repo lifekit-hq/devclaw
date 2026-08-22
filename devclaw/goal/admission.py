@@ -22,6 +22,12 @@ v1 scope (deliberately tight):
 - `missing_domain_research_*` is deferred until the domain-research module
   exists (no point rejecting on something that can't be produced).
 
+Spec 012 US2 widened the standards from "is this goal well-shaped?" to "was
+this saga AUTHORED?": three named slots (``out_of_scope`` / ``invariants`` /
+``established``) join objective and done_when, and an unfilled one is rejected
+here, naming it, rather than surfacing to a worker mid-run (FR-008). Still hard
+mechanical checks only — presence, not quality.
+
 See ~/memory/projects/devclaw/chain-map-2026-06-30.md row 18 for the design
 context and the gaps this closes.
 """
@@ -197,6 +203,46 @@ def _check_scope_anchor_for_from_scratch(
     )
 
 
+#: The saga slots admission requires an author to FILL (spec 012 US2, FR-007).
+#: ``objective`` and ``done_when`` — the other two slots FR-007 names — already
+#: have their own checks above; these three are new fields, so they get their
+#: own. Tuple of ``(field, code, what-the-slot-is)``.
+_SAGA_SLOTS: tuple[tuple[str, str, str], ...] = (
+    ("out_of_scope", "missing_out_of_scope",
+     "what this goal deliberately does NOT include"),
+    ("invariants", "missing_invariants",
+     "what must still hold after every increment"),
+    ("established", "missing_established",
+     "what is already settled and must not be re-derived"),
+)
+
+
+def _check_saga_slot(
+    field_name: str, code: str, what: str, value: "list[str] | None",
+) -> Optional[AdmissionCondition]:
+    """Reject a saga slot the author never filled, naming it (FR-008).
+
+    An EMPTY list is a filled slot: the author looked and declared it empty, and
+    the brief states that absence out loud. ``None`` — the parameter simply not
+    passed — is the failure this check exists to catch, because silence and
+    "there is nothing" produce different prompts and only one of them is a
+    decision. Discovering the gap here beats discovering it mid-run (SC-004)."""
+    if value is not None:
+        return None
+    return AdmissionCondition(
+        code=code,
+        message=(
+            f"the saga slot {field_name!r} ({what}) was not filled. Every saga "
+            "is authored from named slots, not prose — pass a list of short "
+            "statements, or an EMPTY list to declare explicitly that there are "
+            "none. Omitting it is not the same as declaring it empty, which is "
+            "why it is rejected here instead of surfacing mid-run."
+        ),
+        severity="reject",
+        field=field_name,
+    )
+
+
 def _check_standing_done_when(done_when: str) -> Optional[AdmissionCondition]:
     """Warn (not reject) when done_when disclaims boundedness. Standing goals
     are a legitimate shape (the closeloop missions are exactly this), but the
@@ -251,6 +297,9 @@ def verify_goal(
     repo_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     spec: str = "",
+    out_of_scope: Optional[list[str]] = None,
+    invariants: Optional[list[str]] = None,
+    established: Optional[list[str]] = None,
 ) -> AdmissionResult:
     """Run all admission checks against a candidate goal's parameters. Pure
     function — does NOT touch the store, does NOT raise. Returns the full
@@ -286,6 +335,19 @@ def verify_goal(
         v = _check_vague_done_when(done_when)
         if v is not None:
             conditions.append(v)
+
+    # 2b. the authored saga slots — one rejection per unfilled slot, naming it
+    #     (spec 012 US2, FR-008). All three surface in ONE pass so an author
+    #     fixes the whole schema in one re-file rather than one slot per round.
+    slot_values = {
+        "out_of_scope": out_of_scope,
+        "invariants": invariants,
+        "established": established,
+    }
+    for field_name, code, what in _SAGA_SLOTS:
+        c = _check_saga_slot(field_name, code, what, slot_values[field_name])
+        if c is not None:
+            conditions.append(c)
 
     # 3. cross-cutting shape — from-scratch needs SOME anchor.
     anchor = _check_scope_anchor_for_from_scratch(
