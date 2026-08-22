@@ -1668,7 +1668,7 @@ class TaskQueue(_NotifyMixin):
             # Spec 013 FR-005: hand delivery the artifact the gates judged, so it
             # publishes that object instead of recomputing its own view of the
             # change. Only for a real materialized span — a workspace that is not
-            # a repository has nothing to publish and takes the legacy path,
+            # a repository has nothing to publish and takes the self-discovering path,
             # where delivery fails loudly on the same condition.
             change_record = success.get("change") if isinstance(success, dict) else None
             if isinstance(change_record, dict) and change_record.get("head_sha") and (

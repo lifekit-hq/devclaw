@@ -5,8 +5,8 @@ MATERIALIZED as a commit (spec 013 — `devclaw/task_change.py`), and that commi
 is the object the gates judged. Delivery turns it into something you *review*
 instead of *produce*: a branch, a push, and — if the remote is GitHub and ``gh``
 is authed — a pull request whose URL is recorded on the task. It publishes the
-judged object; it does not work out what changed. (The legacy self-discovering
-path is still here for callers that pass no ``judged_head``.)
+judged object; it does not work out what changed. (The self-discovering path
+is still here for callers that pass no ``judged_head``.)
 
 Design:
   * **Best-effort + non-fatal.** A delivery failure never un-does a ``done`` task;
@@ -609,7 +609,7 @@ async def deliver_change(
             ahead = int(cnt.strip())
 
     if not judged_head and not dirty and ahead == 0:
-        # Legacy self-discovering path only. With a judged head the caller
+        # Self-discovering path only. With a judged head the caller
         # already knows there IS a change — it settles a no-change task without
         # calling here at all (spec 013 FR-014) — so re-deciding the question
         # from an ahead-count would be exactly the second computation this

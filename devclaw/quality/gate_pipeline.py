@@ -83,7 +83,7 @@ class GateInput:
     scaffold: bool
     #: browser-gate stance (``flexible`` | ``strict``) resolved for this workspace
     browser_mode: str
-    #: async producer of the post-run diff vs. the pre-run base. The legacy
+    #: async producer of the post-run diff vs. the pre-run base. The older
     #: seam, kept for direct constructions (tests, callers with a span already in
     #: hand); production passes :attr:`change_fn` instead. Called at most once.
     diff_fn: Optional[Callable[[], Awaitable[str]]] = None
@@ -125,7 +125,7 @@ class GateInput:
         """The shared post-run diff, computed once and memoised.
 
         A projection of :meth:`change` when a ``change_fn`` was supplied (the
-        production path), else the legacy ``diff_fn``. An empty diff is a valid
+        production path), else the older ``diff_fn``. An empty diff is a valid
         value, so a boolean flag (not the string's truthiness) guards the
         one-time computation."""
         if not self._diff_computed:
