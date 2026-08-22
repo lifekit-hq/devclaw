@@ -2,6 +2,36 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.5.0](https://github.com/lifekit-hq/devclaw/compare/v0.4.1...v0.5.0) (2026-08-22)
+
+
+### Features
+
+* **goal:** an increment knows what its siblings delivered (spec 012 US1) ([#609](https://github.com/lifekit-hq/devclaw/issues/609)) ([0af2660](https://github.com/lifekit-hq/devclaw/commit/0af2660ce22a6a6d77c4941b12685dabf55a9e22))
+* **goal:** one goal per project — the single-writer default (spec 010 P1) ([#618](https://github.com/lifekit-hq/devclaw/issues/618)) ([203706e](https://github.com/lifekit-hq/devclaw/commit/203706e3448543524d52f74be3cd9022e2fd5511))
+* **resources:** devclaw releases the durable host resources it creates ([#595](https://github.com/lifekit-hq/devclaw/issues/595)) ([#606](https://github.com/lifekit-hq/devclaw/issues/606)) ([a4f4142](https://github.com/lifekit-hq/devclaw/commit/a4f41428223edc08ea6183c6a7637bb51e078d67))
+
+
+### Bug Fixes
+
+* **console:** the Plan tab shows the speckit contract, not a file nobody writes ([#624](https://github.com/lifekit-hq/devclaw/issues/624)) ([237b8b0](https://github.com/lifekit-hq/devclaw/commit/237b8b097f24895c24006de27bbc337703d2a9b7))
+
+
+### Refactoring
+
+* **goal:** delete PLAN.md — a dead concept with live code ([#622](https://github.com/lifekit-hq/devclaw/issues/622)) ([398c898](https://github.com/lifekit-hq/devclaw/commit/398c898f3923ecf9194594d3b22a072d3de75c18))
+* **runner:** one home for worker-kind instructions ([#621](https://github.com/lifekit-hq/devclaw/issues/621)) ([7a2f519](https://github.com/lifekit-hq/devclaw/commit/7a2f519160b056bc0fef55c143b441d0677e2fa8))
+* **server:** split http.py into route modules; console becomes a top-level product ([#625](https://github.com/lifekit-hq/devclaw/issues/625)) ([806363e](https://github.com/lifekit-hq/devclaw/commit/806363eceb68c513ba211198d419f46151cf3fc5))
+
+
+### Documentation
+
+* retire the OpenHands vocabulary — the dependency went, the words stayed ([#623](https://github.com/lifekit-hq/devclaw/issues/623)) ([678e7f6](https://github.com/lifekit-hq/devclaw/commit/678e7f6af042f3816ba87344809f54a9208baff0))
+* **rules:** the auto-loaded harness map must point at code that exists ([#620](https://github.com/lifekit-hq/devclaw/issues/620)) ([9bd7dff](https://github.com/lifekit-hq/devclaw/commit/9bd7dff7bfb16859f496fbf76d12ed4cd9b66add))
+* **spec:** 012 — record WHY a unit of work has no authoring schema ([#608](https://github.com/lifekit-hq/devclaw/issues/608)) ([02e14f1](https://github.com/lifekit-hq/devclaw/commit/02e14f11050e540273e5d612ee9be7af40e8ceb0))
+* **specs:** fix 010/012 boundary defects found in pre-implementation review ([#607](https://github.com/lifekit-hq/devclaw/issues/607)) ([3d3b963](https://github.com/lifekit-hq/devclaw/commit/3d3b9636ba9b6a524f548888795b1aba2014179c))
+* **specs:** status audit — shipped specs looked unbuilt to the worker brief ([#604](https://github.com/lifekit-hq/devclaw/issues/604)) ([a2bca97](https://github.com/lifekit-hq/devclaw/commit/a2bca9707e173b668cd83759ca6f4792421021d1))
+
 ## [0.4.1](https://github.com/lifekit-hq/devclaw/compare/v0.4.0...v0.4.1) (2026-08-22)
 
 
