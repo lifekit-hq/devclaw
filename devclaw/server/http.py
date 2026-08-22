@@ -681,6 +681,15 @@ async def problems_json(request: Request) -> Response:
     return JSONResponse({"problems": rows, "count": len(rows), "selfRepo": self_repo()})
 
 
+@mcp.custom_route("/usage.json", methods=["GET"])
+async def usage_json(_request: Request) -> Response:
+    """Instance-wide usage aggregate (cognition + worker tokens, per-project
+    breakdown, cap-pressure history). Read-only over SQLite — no LLM call,
+    no write, cheap enough to poll from the console's Usage page."""
+    all_goals = goals.list_goals()
+    return JSONResponse(_telemetry.compute_instance_usage(store, registry, all_goals))
+
+
 @mcp.custom_route("/config/env.json", methods=["GET"])
 async def config_env_json(_request: Request) -> Response:
     """Read-only catalog of every runtime env var + its current value (secrets

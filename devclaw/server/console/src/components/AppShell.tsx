@@ -11,6 +11,7 @@ import {
   IconProjects,
   IconSettings,
   IconSun,
+  IconUsage,
 } from "../icons";
 import { useTheme } from "../theme";
 import { StatusDot } from "../ui";
@@ -21,6 +22,7 @@ const NAV = [
   { to: "/projects", label: "Projects", Icon: IconProjects, end: false },
   { to: "/goals", label: "Goals", Icon: IconGoals, end: false },
   { to: "/evals", label: "Evals", Icon: IconEvals, end: false },
+  { to: "/usage", label: "Usage", Icon: IconUsage, end: false },
   { to: "/problems", label: "Problems", Icon: IconAlert, end: false },
   { to: "/settings", label: "Settings", Icon: IconSettings, end: false },
 ];

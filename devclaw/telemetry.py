@@ -87,6 +87,211 @@ def _extract_structural(preview: str) -> Optional[str]:
     return g if g in _STRUCTURAL_GRADES else None
 
 
+def _ws_norm(path: Optional[str]) -> Optional[str]:
+    """Workspace path normalisation matching project_registry._normalize_workspace.
+    No filesystem access — pure string ops."""
+    if not path:
+        return None
+    p = str(path).strip()
+    if not p:
+        return None
+    if p.startswith("~"):
+        from pathlib import Path as _Path
+        p = str(_Path(p).expanduser())
+    while "//" in p:
+        p = p.replace("//", "/")
+    if len(p) > 1 and p.endswith("/"):
+        p = p.rstrip("/")
+    return p
+
+
+def _empty_usage_bucket() -> dict:
+    return {
+        "cognition_tokens_in": 0,
+        "cognition_tokens_out": 0,
+        "cognition_rows_real": 0,
+        "cognition_rows_estimated": 0,
+        "cognition_cost_usd": 0.0,
+        "worker_input_tokens": 0,
+        "worker_output_tokens": 0,
+        "worker_cache_read_tokens": 0,
+        "worker_tasks_with_usage": 0,
+        "worker_cost_usd": 0.0,
+    }
+
+
+def _accum_cognition(bucket: dict, p: dict) -> None:
+    real_in = p.get("tokens_in")
+    real_out = p.get("tokens_out")
+    if real_in is not None or real_out is not None:
+        bucket["cognition_rows_real"] += 1
+        bucket["cognition_tokens_in"] += int(real_in or 0)
+        bucket["cognition_tokens_out"] += int(real_out or 0)
+    else:
+        bucket["cognition_rows_estimated"] += 1
+        bucket["cognition_tokens_in"] += int(p.get("tokens_in_est") or 0)
+        bucket["cognition_tokens_out"] += int(p.get("tokens_out_est") or 0)
+    c = p.get("cost_usd")
+    if isinstance(c, (int, float)) and not isinstance(c, bool):
+        bucket["cognition_cost_usd"] += float(c)
+
+
+def _accum_worker(bucket: dict, usage: dict) -> None:
+    bucket["worker_tasks_with_usage"] += 1
+    for key in ("input_tokens", "output_tokens", "cache_read_tokens"):
+        v = usage.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            bucket[f"worker_{key}"] += int(v)
+    c = usage.get("cost_usd")
+    if isinstance(c, (int, float)) and not isinstance(c, bool):
+        bucket["worker_cost_usd"] += float(c)
+
+
+def _finalize_bucket(bucket: dict) -> dict:
+    out = dict(bucket)
+    out["cognition_cost_usd"] = round(out["cognition_cost_usd"], 6)
+    out["worker_cost_usd"] = round(out["worker_cost_usd"], 6)
+    out["cost_estimate_usd"] = round(out["cognition_cost_usd"] + out["worker_cost_usd"], 6)
+    return out
+
+
+_CAP_WINDOW_MS = 30 * 24 * 60 * 60 * 1000  # 30 days
+
+
+def _build_cap_pressure(limit_rows: list, *, since_ms: int) -> dict:
+    """Summarise limit-category problems into rate_limit / quota / auth groups.
+
+    Each group carries the most-recent ``last_seen_ms`` and the stated
+    ``reset_hint_s`` (from the provider's own message) when present.
+    Only problems seen since ``since_ms`` are included.
+    """
+    from devclaw.loom.limits import classify_failure, FailureKind
+
+    groups: dict[str, dict] = {}
+    for row in limit_rows:
+        lsm = row.get("last_seen_ms") or 0
+        if lsm < since_ms:
+            continue
+        text = row.get("sample_message") or row.get("kind") or ""
+        try:
+            c = classify_failure(text)
+        except Exception:
+            continue
+        kind_str = c.kind.value
+        if kind_str not in ("rate_limit", "quota", "auth"):
+            continue
+        existing = groups.get(kind_str)
+        if existing is None or lsm > existing["last_seen_ms"]:
+            groups[kind_str] = {
+                "last_seen_ms": int(lsm),
+                "_hint": int(c.retry_after_s) if (c.stated and c.retry_after_s) else None,
+            }
+
+    result = {}
+    for kind_str, entry in groups.items():
+        e: dict = {"last_seen_ms": entry["last_seen_ms"]}
+        if entry["_hint"] is not None:
+            e["reset_hint_s"] = entry["_hint"]
+        result[kind_str] = e
+    return result
+
+
+def compute_instance_usage(store: Any, registry: Any, all_goals: list) -> dict:
+    """Instance-wide usage aggregate for the read-only GET /usage.json endpoint.
+
+    Pure SQLite read — no LLM call, no subprocess, cheap enough to poll.
+
+    Attribution:
+      - Cognition traces via ``traces.goal_id`` → goal ``workspace_dir`` → project.
+      - Worker tasks via ``tasks.workspace_dir`` → project directly.
+      - Usage matching no registered project lands in ``unattributed``.
+
+    ``registry`` is a :class:`~devclaw.project_registry.ProjectRegistry`;
+    ``all_goals`` is the list returned by ``goal_service.list_goals()``.
+    Both are typed ``Any`` to keep this module import-light (same pattern as
+    ``compute_scorecard``).
+    """
+    # goal_id → normalised workspace_dir (covers every goal, incl. done/cancelled)
+    goal_ws: dict[str, Optional[str]] = {}
+    for g in all_goals:
+        gid = g.get("id")
+        if gid:
+            goal_ws[gid] = _ws_norm(g.get("workspace_dir"))
+
+    # normalised workspace_dir → (project_id, project_name)
+    projects = list(registry.list())
+    proj_ws: dict[str, tuple] = {}
+    for p in projects:
+        ws = _ws_norm(p.workspace_dir)
+        if ws:
+            proj_ws[ws] = (p.id, p.name)
+
+    # Fetch all data in one lock acquisition.
+    cap_since_ms = _now_ms() - _CAP_WINDOW_MS
+    with store._lock:  # noqa: SLF001 — telemetry co-designs with state_store
+        cog_rows = store._db.execute(
+            "SELECT goal_id, payload_json FROM traces WHERE kind = 'cognition'"
+        ).fetchall()
+        task_rows = store._db.execute(
+            "SELECT workspace_dir, result_json FROM tasks WHERE result_json IS NOT NULL"
+        ).fetchall()
+        limit_rows = store._db.execute(
+            "SELECT kind, sample_message, last_seen_ms FROM problems WHERE category = 'limit'"
+        ).fetchall()
+
+    # Buckets: one per registered project + instance totals + unattributed.
+    proj_buckets: dict[str, dict] = {p.id: _empty_usage_bucket() for p in projects}
+    totals = _empty_usage_bucket()
+    unattributed = _empty_usage_bucket()
+
+    for row in cog_rows:
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            continue
+        _accum_cognition(totals, payload)
+        gid = row["goal_id"]
+        ws = goal_ws.get(gid) if gid else None
+        info = proj_ws.get(ws) if ws else None
+        bucket = proj_buckets.get(info[0]) if info else None
+        _accum_cognition(bucket if bucket is not None else unattributed, payload)
+
+    for row in task_rows:
+        try:
+            usage = json.loads(row["result_json"]).get("usage")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(usage, dict):
+            continue
+        _accum_worker(totals, usage)
+        ws = _ws_norm(row["workspace_dir"])
+        info = proj_ws.get(ws) if ws else None
+        bucket = proj_buckets.get(info[0]) if info else None
+        _accum_worker(bucket if bucket is not None else unattributed, usage)
+
+    by_project = []
+    for p in projects:
+        b = _finalize_bucket(proj_buckets[p.id])
+        b["project_id"] = p.id
+        b["project_name"] = p.name
+        by_project.append(b)
+
+    fin_totals = _finalize_bucket(totals)
+    fin_totals["cost_is_estimate"] = True
+
+    limit_list = [
+        {"kind": r["kind"], "sample_message": r["sample_message"], "last_seen_ms": r["last_seen_ms"]}
+        for r in limit_rows
+    ]
+    return {
+        "computed_at_ms": _now_ms(),
+        "totals": fin_totals,
+        "by_project": by_project,
+        "unattributed": _finalize_bucket(unattributed),
+        "cap_pressure": _build_cap_pressure(limit_list, since_ms=cap_since_ms),
+    }
+
+
 def sum_task_usage(result_jsons: Any) -> dict:
     """Sum the worker ``usage`` blocks out of task ``result_json`` payloads.
 
