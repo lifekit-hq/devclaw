@@ -7,17 +7,35 @@ false positive that trained the DEVCLAW_ALLOW_MAIN reflex and hollowed out the
 guard. The fix resolves the dir the git command actually runs in.
 """
 import importlib.util
+import subprocess
+import types
 from pathlib import Path
 
 import pytest
 
-_HOOK = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "main-branch-guard.py"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_HOOK = _REPO_ROOT / ".claude" / "hooks" / "main-branch-guard.py"
+_HOOK_GIT_PATH = ".claude/hooks/main-branch-guard.py"
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("main_branch_guard", _HOOK)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    if _HOOK.exists():
+        spec = importlib.util.spec_from_file_location("main_branch_guard", _HOOK)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    # Working tree doesn't have the file (tmpfs overlay in the sandbox mounts
+    # ~/.claude over the repo's .claude/, shadowing the tracked hook files).
+    # Fall back to loading the source from git HEAD so the tests still run.
+    result = subprocess.run(
+        ["git", "show", f"HEAD:{_HOOK_GIT_PATH}"],
+        capture_output=True, text=True, cwd=str(_REPO_ROOT),
+    )
+    if result.returncode != 0:
+        raise FileNotFoundError(f"hook absent from working tree and git HEAD: {_HOOK}")
+    mod = types.ModuleType("main_branch_guard")
+    mod.__file__ = str(_HOOK)
+    exec(compile(result.stdout, str(_HOOK), "exec"), mod.__dict__)
     return mod
 
 
