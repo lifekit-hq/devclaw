@@ -26,6 +26,7 @@ from ..advance_brief import display_goal as _display_goal
 from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
 from . import merge as goal_merge
+from . import project_hold as _project_hold
 from . import remote_checks as goal_remote_checks
 from . import summary as goal_summary
 from . import triage as goal_triage
@@ -723,6 +724,22 @@ class GoalService:
             raise KeyError(goal_id)
         g = self._goal_store.load_goal(goal_id)
         s = self._goal_store.load_status(goal_id)
+        # Single-writer project hold (spec 010 P1): whether this goal is waiting
+        # on another goal's project, DERIVED here rather than stored. The hold
+        # itself is derived (FR-005 as amended), and a persisted copy of a
+        # derived fact can disagree with it — so the operator-facing wait is
+        # computed on read, which also keeps a queued tick at zero writes.
+        # Best-effort: a hiccup degrades to "not queued", never a failed read.
+        queued_behind = None
+        try:
+            if s.phase not in ("done", "cancelled"):
+                scope = _project_hold.scope_key(g)
+                if scope:
+                    holder = _project_hold.holder_map(self._goal_store).get(scope)
+                    if holder is not None and holder != goal_id:
+                        queued_behind = holder
+        except Exception:  # noqa: BLE001 — a display extra must never fail get_goal
+            queued_behind = None
         return {
             "id": g.id,
             "objective": g.objective,
@@ -745,6 +762,14 @@ class GoalService:
             "next": _display_goal(s.next),
             "blocked_on": s.blocked_on,
             "blocked_kind": s.blocked_kind,
+            # Spec 010 P1 — queued behind another goal on the same project.
+            # None when this goal holds its project (or has none), so existing
+            # consumers see no change. NOT a block: nothing is wrong, and no
+            # operator action is required — it starts by itself.
+            "queued_behind": queued_behind,
+            "queued_reason": (
+                _project_hold.waiting_reason(queued_behind) if queued_behind else None
+            ),
             "in_flight": (
                 {"tool": s.in_flight.tool, "id": s.in_flight.id,
                  "is_done_check": s.in_flight.is_done_check}

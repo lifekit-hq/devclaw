@@ -134,8 +134,11 @@ async def test_different_goals_do_not_serialize(tmp_path):
     concurrently must both reach their advance dispatch in parallel; one
     goal's tick must never wait behind another goal's in-flight dispatch."""
     store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g1")
-    seed_goal(tmp_path, "g2")
+    # Distinct workspaces: this test isolates the per-goal TICK LOCK, and two
+    # goals on ONE project are now serialized by the single-writer project hold
+    # (spec 010 P1) — a different mechanism, which would mask what this asserts.
+    seed_goal(tmp_path, "g1", workspace_dir="/repos/g1")
+    seed_goal(tmp_path, "g2", workspace_dir="/repos/g2")
     store.save_status("g1", GoalStatus(phase="idle", lifecycle="executing"))
     store.save_status("g2", GoalStatus(phase="idle", lifecycle="executing"))
 

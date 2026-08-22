@@ -191,6 +191,12 @@ def seed_goal(
     needs distinct goals to resolve to distinct projects (e.g. per-project
     automerge — see test_goal_tick.py's tick_all merger_resolver tests).
 
+    **Seeding two goals with the default workspace puts them on the SAME
+    project**, so the single-writer project hold (spec 010 P1) makes the second
+    one QUEUE instead of dispatching. That is correct production behaviour, but
+    it silently starves any test whose goals are meant to be independent — pass
+    an explicit per-goal ``workspace_dir`` unless contention is the point.
+
     Pass a standing-shaped ``done_when`` ("this is a standing goal") to
     exercise the standing-goal done-gate contract.
     """

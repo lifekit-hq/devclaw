@@ -18,6 +18,45 @@ it never optimises into the void. It sits **behind MCP** and is driven by an
 talks to the user directly**. Cognition is always `claude` over a Pro/Max
 **OAuth** session — **no API key, no metered billing, ever**.
 
+## The vocabulary (canonical names, not homegrown ones)
+
+Ruled 2026-08-18; this table is the **normative** statement of the terms
+(spec 010 FR-007). Established software-engineering paradigms are used by their
+canonical names rather than re-derived under local vocabulary, so a reader who
+knows the paradigm already knows the contract.
+
+| Concept | Canonical name | In devclaw |
+|---|---|---|
+| The ask | **Work item** (Kanban) | a GitHub issue |
+| Admission to work | **Definition of Ready** | the `devclaw-ready` grade (specs 006/009) |
+| Completion judgement | **Definition of Done** | the done-gate |
+| The milestone-level objective | **Saga** / long-running process | a goal |
+| The execution atom | **Unit of Work** (Fowler) | one sandbox run → one atomic, verified, PR-able change-set |
+| The plan | **Task graph (DAG)** | `tasks.md`; `[P]` marks topological independence — parallelism is *data in the plan*, never executor control flow |
+| Parallel safety | **Hermetic action with declared I/O** (Bazel) | a fan-out increment's declared file scope, checked at settle *(spec 010 P3 — not built)* |
+| Concurrency default | **Single-writer / actor-per-project** | at most one goal actively dispatching per project |
+| Integration | **Merge queue** (Bors) | serial integration of concurrently-executed increments *(spec 010 P3 — not built)* |
+
+### Single writer per project
+
+At most one goal dispatches increments into a given project at a time; the rest
+queue and start automatically. Two independent plans on one repository cannot be
+reconciled — sandbox and worktree isolation stop *mechanical* collisions, but
+nothing stops two planners that don't know about each other from drifting, and
+the drift only surfaces at integration (#553 was one symptom: two goals
+allocating the same `specs/009-…` directory).
+
+The hold is **derived, not stored** (spec 010 FR-005, amended 2026-08-22): the
+holder of a project is the first non-terminal goal on it by age, tie-broken on
+goal id — a pure function of rows the CAS'd transition discipline already
+governs (`devclaw/goal/project_hold.py`). There is no lock row, no acquire and
+no release, so a holder that dies cannot leave a lock nobody clears, and no heal
+machinery is needed for a state that cannot occur. A blocked goal is
+non-terminal and therefore still holds its project — the operator frees it by
+resuming or cancelling it. Goal-less direct dispatches
+(`dispatch_task`/`fix_bug`/`implement_feature`) are exempt because they are
+operator-present, and say loudly that a goal holds the project.
+
 ---
 
 # Part I — the mental model
