@@ -1,7 +1,7 @@
 """test_integrity.scan_diff — catches an agent weakening tests to fake a green gate."""
 from __future__ import annotations
 
-from devclaw.test_integrity import scan_diff
+from devclaw.loom.test_integrity import scan_diff
 
 
 def _diff(path: str, removed: list[str] = (), added: list[str] = ()) -> str:

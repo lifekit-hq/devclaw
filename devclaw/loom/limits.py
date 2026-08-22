@@ -72,7 +72,7 @@ def pause_seconds(
     """The backoff to use for a pausing failure. Centralizes the policy so task +
     goal layers agree. ``stated=True`` means ``retry_after_s`` came from the
     provider's own text (see :class:`Classification`), so it's trusted up to the
-    generous STATED cap; unstated hints keep the legacy default/cap. AUTH ignores
+    generous STATED cap; unstated hints keep the module default/cap. AUTH ignores
     hints entirely — there is no stated reset for a broken login, only the fixed
     :data:`AUTH_PAUSE_S` re-probe cadence."""
     if kind is FailureKind.AUTH:

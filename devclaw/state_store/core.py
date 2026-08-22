@@ -480,18 +480,19 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 # PR-2): the caller-chosen PR base and the pinned delivery
                 # branch a direct ``dispatch_task`` carries through to
                 # ``prepare_workspace`` + ``deliver_change``. NULL on goal-path
-                # rows and pre-existing rows — byte-identical legacy behavior.
+                # rows, which pin neither → the remote default branch.
                 "ALTER TABLE tasks ADD COLUMN base_branch TEXT",
                 "ALTER TABLE tasks ADD COLUMN target_branch TEXT",
                 # The owning project's reference key (#524 P3), stamped at
                 # dispatch. Per-project override knobs resolve BY this id, not by
                 # a normalized-workspace-path scan. NULL on goal-path rows (goals
-                # carry their own project_id) and legacy pre-P3 rows → knobs fall
-                # to the devclaw-wide defaults.
+                # carry their own project_id) and on a task with no owning
+                # project → knobs fall to the devclaw-wide defaults.
                 "ALTER TABLE tasks ADD COLUMN project_id TEXT",
                 # Same reference key on the program row (#524 P3) — child tasks
                 # inherit it via _persist_plan, so a program's slices resolve
-                # their knobs by id too. NULL on legacy pre-P3 programs.
+                # their knobs by id too. NULL on a standalone program with no
+                # registered project.
                 "ALTER TABLE programs ADD COLUMN project_id TEXT",
                 # Idle cycle flag (2026-08-07) — 1 iff the loop did no work in
                 # the window (off/held/all-cancelled): excluded from the

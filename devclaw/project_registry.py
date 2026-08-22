@@ -18,8 +18,8 @@ missions cancelled but the v2 mission wasn't relinked → Projects Home read
 0 active goals for a project that had a live one). Workspace-dir is already
 the identity axis for verify / sandbox / PRs, so making it the project↔goal
 join key is coherent with the rest of the architecture. ``Project.goal_ids``
-is retained as advisory only (CLI ``link_goal`` still works for legacy
-compat) but is NOT consulted by the rollup.
+is retained as advisory only (CLI ``link_goal`` still writes it) but is NOT
+consulted by the rollup.
 
 Deliberately small and decoupled: its own ``projects`` table on the shared SQLite
 file (registry writes are rare + human-driven), no dependency on the goal layer —
@@ -560,8 +560,8 @@ class ProjectRegistry:
         Keyed by the project reference key (#524 P3), NOT by a normalized
         workspace-path scan: a project's ``workspace_dir`` can now be renamed
         without silently unbinding its knobs, and two projects can't collide on a
-        shared path. ``project_id`` may be None (self-fix goals with no owning
-        project, or a legacy row dispatched before P3) → falls to ``default``.
+        shared path. ``project_id`` may be None (a self-fix goal with no
+        owning project) → falls to ``default``.
 
         ``field`` must be one of :data:`_OVERRIDE_FIELDS`; anything else is a
         programming error and raises, rather than silently returning the

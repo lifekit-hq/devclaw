@@ -246,7 +246,7 @@ async def prepare_workspace(
     default_branch = await _default_branch(workspace_dir)
 
     if branch is None or branch == default_branch:
-        # Legacy / discovery / done-gate path — just reset to the default branch.
+        # Unpinned / discovery / done-gate path — just reset to the default branch.
         for cmd in (
             ("git", "checkout", "-f", default_branch),
             ("git", "reset", "--hard", f"origin/{default_branch}"),

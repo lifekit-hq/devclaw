@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from devclaw.limits import (
+from devclaw.loom.limits import (
     AUTH_PAUSE_S,
     RATE_LIMIT_MAX_PAUSE_S,
     RATE_LIMIT_PAUSE_S,

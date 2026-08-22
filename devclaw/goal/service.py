@@ -27,6 +27,7 @@ from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
 from . import merge as goal_merge
 from . import project_hold as _project_hold
+from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
 from . import summary as goal_summary
 from . import triage as goal_triage
@@ -266,40 +267,15 @@ class GoalService:
         return self._autodeploy
 
     def backfill_project_ids(self) -> int:
-        """One-time migration (#524 P3): stamp ``project_id`` onto goals written
-        before the field existed, resolving each goal's owning project by
-        workspace path (``find_by_workspace_dir`` — this is its sole surviving
-        caller; the runtime joins are all id-keyed now). Without this,
-        a long-lived goal in flight at deploy time would lose its owning
-        project's pinned knobs (automerge/verify_done/autodeploy) — e.g. the live
-        ledger goal's ``automerge`` — and fall to the devclaw-wide defaults.
+        """Run the #524 P3 ``project_id`` backfill ONCE per database.
 
-        Idempotent and zero-token: a goal that already has ``project_id``, or
-        whose workspace matches no registered project, is skipped. A corrupt
-        goal.yaml is skipped, never blocks startup. Returns the count stamped.
-        Called once at startup (see server lifecycle).
-
-        NOTE (#616): this is the same class the cutoff addresses — a migration
-        with no cutoff, re-run on every boot and kept honest only by its own
-        idempotency. It should ride a ``meta`` marker like
-        :mod:`devclaw.goal.store.legacy_cutoff` does; it needs the project
-        registry, which the store does not hold, so it is left for the queue
-        half of #616 rather than bent into the store's sweep here."""
-        if self._project_registry is None:
-            return 0
-        stamped = 0
-        for gid in self._goal_store.list_goal_ids():
-            try:
-                g = self._goal_store.load_goal(gid)
-            except Exception:
-                continue  # a half-written / corrupt goal.yaml never blocks startup
-            if g.project_id:
-                continue
-            project = self._project_registry.find_by_workspace_dir(g.workspace_dir)
-            if project is not None:
-                self._goal_store.set_project_id(gid, project.id)
-                stamped += 1
-        return stamped
+        Thin delegation to :func:`devclaw.goal.project_id_cutoff
+        .backfill_project_ids_once`, which owns the marker, the cutoff date, and
+        the reason this used to re-run on every boot. Returns the count stamped.
+        """
+        return _project_id_cutoff.backfill_project_ids_once(
+            self._store, self._goal_store, self._project_registry, _now_ms()
+        )
 
     def _trend_detector(self) -> "Optional[_trend_detector_mod.TrendDetector]":
         """The cross-session trend detector. ``None`` when disabled via

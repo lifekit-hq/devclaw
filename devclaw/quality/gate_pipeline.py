@@ -69,7 +69,7 @@ class GateInput:
     diff_fn: Callable[[], Awaitable[str]]
     #: owning project's reference key (#524 P3) — the review gate resolves its
     #: ``review_gate`` enable/disable knob by this id, not a workspace-path scan.
-    #: None for a task with no owning project (self-fix, legacy pre-P3 rows).
+    #: None for a task with no owning project (a self-fix, say).
     project_id: Optional[str] = None
     _diff_computed: bool = field(default=False, repr=False)
     _diff_value: str = field(default="", repr=False)
