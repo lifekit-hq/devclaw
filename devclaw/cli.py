@@ -65,7 +65,8 @@ def _list_goals(goal_store: GoalStore) -> list[dict]:
             "workspace_dir": g.workspace_dir,
             "project_id": g.project_id,
             "phase": s.phase,
-            # RAW stored lifecycle (#496) — null for legacy rows, never coalesced.
+            # RAW stored lifecycle (#496) — always set since the #616 cutoff
+            # made the column non-optional; still never coalesced here.
             "lifecycle": s.lifecycle,
             "blocked_on": s.blocked_on,
             "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},

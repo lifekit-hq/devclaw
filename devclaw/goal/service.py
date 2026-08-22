@@ -27,6 +27,7 @@ from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
 from . import merge as goal_merge
 from . import project_hold as _project_hold
+from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
 from . import summary as goal_summary
 from . import triage as goal_triage
@@ -266,33 +267,15 @@ class GoalService:
         return self._autodeploy
 
     def backfill_project_ids(self) -> int:
-        """One-time migration (#524 P3): stamp ``project_id`` onto goals written
-        before the field existed, resolving each goal's owning project by the
-        LEGACY workspace-path match (``find_by_workspace_dir`` — its sole
-        surviving caller, the runtime joins are all id-keyed now). Without this,
-        a long-lived goal in flight at deploy time would lose its owning
-        project's pinned knobs (automerge/verify_done/autodeploy) — e.g. the live
-        ledger goal's ``automerge`` — and fall to the devclaw-wide defaults.
+        """Run the #524 P3 ``project_id`` backfill ONCE per database.
 
-        Idempotent and zero-token: a goal that already has ``project_id``, or
-        whose workspace matches no registered project, is skipped. A corrupt
-        goal.yaml is skipped, never blocks startup. Returns the count stamped.
-        Called once at startup (see server lifecycle)."""
-        if self._project_registry is None:
-            return 0
-        stamped = 0
-        for gid in self._goal_store.list_goal_ids():
-            try:
-                g = self._goal_store.load_goal(gid)
-            except Exception:
-                continue  # a half-written / corrupt goal.yaml never blocks startup
-            if g.project_id:
-                continue
-            project = self._project_registry.find_by_workspace_dir(g.workspace_dir)
-            if project is not None:
-                self._goal_store.set_project_id(gid, project.id)
-                stamped += 1
-        return stamped
+        Thin delegation to :func:`devclaw.goal.project_id_cutoff
+        .backfill_project_ids_once`, which owns the marker, the cutoff date, and
+        the reason this used to re-run on every boot. Returns the count stamped.
+        """
+        return _project_id_cutoff.backfill_project_ids_once(
+            self._store, self._goal_store, self._project_registry, _now_ms()
+        )
 
     def _trend_detector(self) -> "Optional[_trend_detector_mod.TrendDetector]":
         """The cross-session trend detector. ``None`` when disabled via
@@ -775,10 +758,10 @@ class GoalService:
             "mode": g.mode,
             "strictness": g.strictness,
             "phase": s.phase,
-            # RAW stored lifecycle (#496): a legacy row's NULL renders as null,
-            # never coalesced to "executing" — resolve_strategy branches on the
-            # raw value, and a display that coalesces actively misleads
-            # diagnosis (the #493 bug lived exactly in that gap).
+            # RAW stored lifecycle (#496): report what is stored, never a
+            # coalesced guess. The #493 bug lived exactly in that gap — a
+            # display that said "executing" while delivery resolved otherwise.
+            # The #616 cutoff removed the second shape rather than the rule.
             "lifecycle": s.lifecycle,
             **self._delivery_view(goal_id),
             # Display guard (#550): rows written before the dispatch-side fix
@@ -853,7 +836,7 @@ class GoalService:
             # RAW stored lifecycle (#496) — see get_goal; null is honest.
             "lifecycle": s.lifecycle,
             **self._delivery_view(goal_id),
-            # Display guard (#550) — see get_goal: legacy rows may store the brief.
+            # Display guard (#550) — see get_goal: older rows may store the brief.
             "next": _display_goal(s.next),
             "blocked_on": s.blocked_on,
             "actions_dispatched": s.actions_dispatched,

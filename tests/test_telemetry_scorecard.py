@@ -35,7 +35,7 @@ def _land_task(store: StateStore, *, workspace: str, status: str, pr_url: str = 
 
 def _emit_evaluator_verdict(store: StateStore, goal_id: str, verdict: str) -> None:
     """Simulate a cognition trace row the evaluator would emit — enough of the
-    real shape (role + response_preview) for compute_scorecard to classify it."""
+    real shape (role + response_text) for compute_scorecard to classify it."""
     store.append_trace_event(
         trace_id=f"trace-{time.time_ns()}",
         goal_id=goal_id,
@@ -44,7 +44,7 @@ def _emit_evaluator_verdict(store: StateStore, goal_id: str, verdict: str) -> No
             "kind": "cognition",
             "role": "evaluator",
             "model": "sonnet",
-            "response_preview": json.dumps({"verdict": verdict, "rationale": "test"})[:240],
+            "response_text": json.dumps({"verdict": verdict, "rationale": "test"}),
         },
     )
 
@@ -105,12 +105,12 @@ def test_non_evaluator_cognition_is_ignored(store):
     store.append_trace_event(
         trace_id="t1", goal_id="g", kind="cognition",
         payload={"kind": "cognition", "role": "planner",
-                 "response_preview": json.dumps({"decision": "act"})[:240]},
+                 "response_text": json.dumps({"decision": "act"})},
     )
     store.append_trace_event(
         trace_id="t2", goal_id="g", kind="cognition",
         payload={"kind": "cognition", "role": "grill",
-                 "response_preview": "some prose"},
+                 "response_text": "some prose"},
     )
     _emit_evaluator_verdict(store, "g", "achieved")
 
@@ -123,7 +123,7 @@ def test_unparseable_response_lands_in_the_unparseable_bucket(store):
     store.append_trace_event(
         trace_id="t1", goal_id="g", kind="cognition",
         payload={"kind": "cognition", "role": "evaluator",
-                 "response_preview": "the model just returned prose without JSON"},
+                 "response_text": "the model just returned prose without JSON"},
     )
     sc = compute_scorecard(store, window_hours=24)
     assert sc["evaluator"]["total_calls"] == 1
@@ -179,8 +179,7 @@ def test_format_scorecard_smoke(store):
 
 def _emit_evaluator_with_structural(store: StateStore, goal_id: str, verdict: str, grade: str) -> None:
     """Simulate a done-gate evaluator response that carries both verdict AND
-    the new C3 structural_health grade. Preview is capped at 240 chars — real
-    tracer's cap — so the extractor's regex must hit within that."""
+    the C3 structural_health grade, in the one field the tracer writes."""
     store.append_trace_event(
         trace_id=f"trace-{time.time_ns()}",
         goal_id=goal_id,
@@ -189,9 +188,9 @@ def _emit_evaluator_with_structural(store: StateStore, goal_id: str, verdict: st
             "kind": "cognition",
             "role": "evaluator",
             "model": "sonnet",
-            "response_preview": json.dumps(
+            "response_text": json.dumps(
                 {"verdict": verdict, "structural_health": grade, "rationale": "test"}
-            )[:240],
+            ),
         },
     )
 
@@ -215,54 +214,54 @@ def test_structural_grades_counted_per_done_gate_response(store):
 
 
 def test_verdict_extracted_from_full_response_text_past_preview_horizon(store):
-    """T0.5: the verdict sits AFTER 240 chars of rationale — the legacy preview
-    truncates it away, but the full ``response_text`` now carried in the
-    payload classifies it. This is exactly the row shape the tracer writes
-    since T0.5 (both fields present)."""
+    """The verdict sits AFTER 240 chars of rationale — the horizon the deleted
+    240-char preview truncated at. ``response_text`` carries the whole
+    response, so it classifies."""
     full = json.dumps({"rationale": "r" * 400, "verdict": "achieved"})
-    assert '"verdict"' not in full[:240]  # premise: preview alone can't see it
+    assert '"verdict"' not in full[:240]  # premise: a 240-char cut can't see it
     store.append_trace_event(
         trace_id="t", goal_id="g", kind="cognition",
-        payload={"kind": "cognition", "role": "evaluator",
-                 "response_preview": full[:240], "response_text": full},
+        payload={"kind": "cognition", "role": "evaluator", "response_text": full},
     )
     sc = compute_scorecard(store, window_hours=24)
     assert sc["evaluator"]["verdicts"]["achieved"] == 1
     assert sc["evaluator"]["unparseable_responses"] == 0
 
 
-def test_legacy_preview_only_rows_still_classify(store):
-    """Rows written before T0.5 carry only response_preview — they must keep
-    classifying (fallback path), alongside new full-text rows."""
-    # legacy row: preview only
+def test_response_preview_is_not_a_second_read_path(store):
+    """#616 deletion guard: ``response_text`` is the ONLY field the scorecard
+    reads. A row carrying a verdict solely in the deleted ``response_preview``
+    key is unparseable, not a fallback — and a row whose preview disagrees
+    with its text is classified by the text."""
     store.append_trace_event(
         trace_id="t1", goal_id="g", kind="cognition",
         payload={"kind": "cognition", "role": "evaluator",
-                 "response_preview": json.dumps({"verdict": "on_track"})[:240]},
+                 "response_preview": json.dumps({"verdict": "on_track"})},
     )
-    # new row: full text (preview truncated mid-JSON)
-    full = json.dumps({"rationale": "x" * 300, "verdict": "off_track"})
     store.append_trace_event(
         trace_id="t2", goal_id="g", kind="cognition",
         payload={"kind": "cognition", "role": "evaluator",
-                 "response_preview": full[:240], "response_text": full},
+                 "response_preview": json.dumps({"verdict": "stalled"}),
+                 "response_text": json.dumps({"verdict": "off_track"})},
     )
     sc = compute_scorecard(store, window_hours=24)
-    assert sc["evaluator"]["verdicts"]["on_track"] == 1
+    assert sc["evaluator"]["total_calls"] == 2
+    assert sc["evaluator"]["verdicts"]["on_track"] == 0
+    assert sc["evaluator"]["verdicts"]["stalled"] == 0
     assert sc["evaluator"]["verdicts"]["off_track"] == 1
-    assert sc["evaluator"]["unparseable_responses"] == 0
+    assert sc["evaluator"]["unparseable_responses"] == 1
 
 
 def test_structural_grade_extracted_from_full_response_text(store):
-    """The axis-B structural_health grade also benefits from the full text —
-    a done-gate response whose grade sits past the preview horizon."""
+    """The axis-B structural_health grade also rides the full text — a
+    done-gate response whose grade sits past the old 240-char horizon."""
     full = json.dumps(
         {"rationale": "y" * 300, "verdict": "achieved", "structural_health": "clean"}
     )
     store.append_trace_event(
         trace_id="t", goal_id="g", kind="cognition",
         payload={"kind": "cognition", "role": "evaluator",
-                 "response_preview": full[:240], "response_text": full},
+                 "response_text": full},
     )
     sc = compute_scorecard(store, window_hours=24)
     assert sc["evaluator"]["structural_grades"]["clean"] == 1
@@ -330,7 +329,7 @@ def test_scorecard_cost_per_merged_pr_when_real_cost_recorded(store):
         trace_id="c1", goal_id="g", kind="cognition",
         payload={"kind": "cognition", "role": "evaluator",
                  "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.10,
-                 "response_preview": json.dumps({"verdict": "achieved"})[:240]},
+                 "response_text": json.dumps({"verdict": "achieved"})},
     )
     sc = compute_scorecard(store, window_hours=24)
     u = sc["usage"]

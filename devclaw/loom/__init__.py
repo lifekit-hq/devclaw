@@ -10,8 +10,9 @@ sandbox engine, the GitHub delivery); loom is the part with no opinion about
 What lives here (physically, all of it pure stdlib): :mod:`~devclaw.loom.limits`
 (the usage-limit/rate-limit failure classifier), :mod:`~devclaw.loom.test_integrity`
 (the gate's deleted/weakened-test guard), and :mod:`~devclaw.loom.trace` (the
-run-trace capture). Old import paths (``devclaw.limits`` etc.) keep working via
-thin shims, so this extraction is reversible and non-breaking.
+run-trace capture). These are the ONLY import paths: the re-export shims the
+extraction left at ``devclaw.limits`` / ``devclaw.test_integrity`` were deleted
+by the #616 cutoff — no production module ever imported them.
 
 loom is a LEAF by contract (pinned by ``tests/test_llm_call_leaf.py``): it
 imports nothing from the rest of devclaw. The goal domain types + store used to

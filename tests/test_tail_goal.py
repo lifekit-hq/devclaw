@@ -34,7 +34,9 @@ def test_tail_goal_returns_artifacts_and_deliveries(tmp_path, db):
     svc, goals_dir = _svc(tmp_path, db)
     seed_goal(goals_dir, "g")
     svc._goal_store.save_status("g", GoalStatus(phase="idle"))
-    svc._goal_store.append_delivery("g", "add /health endpoint", "shipped it; gate green; PR #3")
+    svc._goal_store.append_delivery(
+        "g", "add /health endpoint", "shipped it; gate green; PR #3", ref_id="t1"
+    )
     svc._goal_store.write_spec("g", "build a tiny FastAPI service")
 
     out = svc.tail_goal("g")

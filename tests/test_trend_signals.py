@@ -27,7 +27,6 @@ from devclaw.trend_signals import (
     _count_added_dep_lines,
     _new_top_level_dirs,
     _parse_git_log_name_only,
-    _parse_inbox_denys_lines,
     _parse_shortstat,
     _path_or_parent_in_text,
     all_signals,
@@ -44,13 +43,16 @@ def _ctx_per_project(workspace: Path, goals_dir: Path = Path("/tmp/no-such-dir")
     )
 
 
-def _ctx_harness_self(goals_dir: Path, *, now_ms: int | None = None) -> SignalContext:
+def _ctx_harness_self(
+    goals_dir: Path, *, now_ms: int | None = None, denys_steerings: dict | None = None,
+) -> SignalContext:
     return SignalContext(
         scope="harness_self",
         workspace_dir=None,
         goal_id=None,
         goals_dir=goals_dir,
         now_ms=now_ms if now_ms is not None else int(time.time() * 1000),
+        denys_steerings=denys_steerings,
     )
 
 
@@ -76,25 +78,25 @@ def test_parse_git_log_name_only_handles_empty_output():
     assert _parse_git_log_name_only("") == []
 
 
-def test_parse_inbox_denys_lines_filters_by_source(tmp_path):
-    inbox = tmp_path / "inbox.md"
-    inbox.write_text(
-        "# g — inbox\n\n"
-        "- [denys 2026-06-29T10:00:00+00:00] add tests\n"
-        "- [auto-eval 2026-06-29T11:00:00+00:00] not denys-sourced, skip\n"
-        "- [denys 2026-06-29T12:00:00+00:00] another correction\n"
-        "- malformed line with no prefix\n"
-    )
-    entries = _parse_inbox_denys_lines(inbox)
-    assert len(entries) == 2
-    assert any("add tests" in e[1] for e in entries)
-    assert any("another correction" in e[1] for e in entries)
-    # ts_ms should be ascending in source order
-    assert entries[0][0] < entries[1][0]
+def test_steering_timestamps_by_goal_filters_by_source(tmp_path):
+    """H4's input moved off an inbox.md parse and onto the ``source`` column
+    (#617: a generated view is never read back). The filter must still be by
+    source — ``auto-eval`` corrections are devclaw correcting itself, not the
+    human-correction frequency H4 measures."""
+    from devclaw.goal.models import GoalStatus
+    from devclaw.goal.store import GoalStore
 
+    store = GoalStore(tmp_path)
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    store.append_steering("g", ["add tests"], source="denys")
+    store.append_steering("g", ["not denys-sourced, skip"], source="auto-eval")
+    store.append_steering("g", ["another correction"], source="denys")
 
-def test_parse_inbox_denys_lines_missing_file_returns_empty(tmp_path):
-    assert _parse_inbox_denys_lines(tmp_path / "no-such.md") == []
+    by_goal = store._goal_state.steering_timestamps_by_goal("denys")
+    assert list(by_goal) == ["g"]
+    assert len(by_goal["g"]) == 2
+    assert by_goal["g"] == sorted(by_goal["g"])  # ascending, in source order
+    assert store._goal_state.steering_timestamps_by_goal("nobody") == {}
 
 
 # ---- R2: fix-class hotspot -------------------------------------------------
@@ -332,7 +334,6 @@ def _seed_goal_dir(
     goals_dir: Path,
     goal_id: str,
     *,
-    inbox_lines: list[str] | None = None,
     yaml_mtime: datetime | None = None,
 ) -> None:
     d = goals_dir / goal_id
@@ -343,10 +344,6 @@ def _seed_goal_dir(
         ts = yaml_mtime.timestamp()
         import os
         os.utime(yaml_path, (ts, ts))
-    if inbox_lines:
-        (d / "inbox.md").write_text(
-            f"# {goal_id} — inbox\n\n" + "\n".join(inbox_lines) + "\n"
-        )
 
 
 def test_h4_no_fire_when_goals_dir_missing(tmp_path):
@@ -392,30 +389,23 @@ def test_h4_fires_when_current_window_has_more_actively_steered_goals(tmp_path):
     goals_dir = tmp_path / "goals"
     old = datetime.now(timezone.utc) - timedelta(days=30)
 
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    nine_days_ago = (datetime.now(timezone.utc) - timedelta(days=9)).isoformat(timespec="seconds")
+    now_ms = int(time.time() * 1000)
+    nine_days_ago_ms = now_ms - 9 * 86400 * 1000
 
+    steerings: dict[str, list[int]] = {}
     # g0, g1, g2 each have 3+ denys steerings IN CURRENT WINDOW (last 7d).
     for i in range(3):
-        _seed_goal_dir(
-            goals_dir, f"g{i}",
-            yaml_mtime=old,
-            inbox_lines=[
-                f"- [denys {now_iso}] correction {i}-1",
-                f"- [denys {now_iso}] correction {i}-2",
-                f"- [denys {now_iso}] correction {i}-3",
-            ],
-        )
+        _seed_goal_dir(goals_dir, f"g{i}", yaml_mtime=old)
+        steerings[f"g{i}"] = [now_ms, now_ms, now_ms]
     # g3, g4 each have 1 denys steering — below per-goal threshold, doesn't count
     # as actively-steered. Prior window has 0 actively-steered goals.
     for i in range(3, 5):
-        _seed_goal_dir(
-            goals_dir, f"g{i}",
-            yaml_mtime=old,
-            inbox_lines=[f"- [denys {nine_days_ago}] single correction"],
-        )
+        _seed_goal_dir(goals_dir, f"g{i}", yaml_mtime=old)
+        steerings[f"g{i}"] = [nine_days_ago_ms]
 
-    result = H4SteeringFrequency().check(_ctx_harness_self(goals_dir))
+    result = H4SteeringFrequency().check(
+        _ctx_harness_self(goals_dir, now_ms=now_ms, denys_steerings=steerings)
+    )
     assert result.fired is True
     assert result.actual_value == 3.0
     assert result.evidence["goals_with_3plus_denys_steerings_now"] == 3

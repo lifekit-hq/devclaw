@@ -31,16 +31,23 @@ truth throughout and PLAN.md gone.**
                  ▼
   STAGE 0 · THE DOOR · file_intake                         [exists]
     structural gate: what + done_when≥20 + provenance
+    + the filer's expected_increments claim & its basis
+      (optional; a count with no basis rejects) [spec 012 US3]
     → GitHub issue created = receipt
                  │
                  ▼
   STAGE 1 · READINESS GRADE                                [P1]  (async)
     also enters here: any EXISTING open issue, any format,
     via regrade_intake / grade_backlog (spec 009)  [exists]
-    ground the ask vs the repo: locatable surface +
-    concrete change + verifiable intent?  fail-closed →
+    ONE cognition call, TWO independent axes:
+    (a) ground the ask vs the repo: locatable surface +
+        concrete change + verifiable intent?  fail-closed →
         ├── devclaw-ready ─────────────────┐
         └── needs-refinement (+reason) → human refines → re-trigger
+    (b) validate the filer's increment claim (never overwrite it) →
+        └── needs-sizing when no claim / unestimable / unassessable /
+            disputed — a human decides. Never moves axis (a), and
+            never selects a shape: every work item runs as a saga.
                                             │
                                             ▼
   STAGE 2 · DISPATCH                                        [P2]
@@ -66,7 +73,7 @@ truth throughout and PLAN.md gone.**
   STAGE 4 · IMPLEMENT, one slice per PR
     worker does the CURRENT tasks.md slice only
     slice-guard reads tasks.md checkbox flips [P3] (not PLAN.md)
-    gate chain [exists]: verify → test-integrity → review(dial) → delivery
+    gate chain [exists]: verify → test-integrity → scope → review(dial) → delivery
                                             │
                                             ▼
   STAGE 5 · DELIVER                                         [exists]
@@ -120,6 +127,10 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
 - **Ungroundable ask** ("make finance-sentry better") → Stage 1 → **`needs-refinement`**
   with "no locatable surface / no concrete change." Never looks dispatchable. You
   sharpen it and re-trigger the grade. *[P1]*
+- **Disputed or unrecorded extent** → Stage 1 axis (b) → **`needs-sizing`** naming the
+  reason. Orthogonal to readiness: a `devclaw-ready` + `needs-sizing` issue is
+  dispatchable, it just has an extent a human should settle first. The count sizes
+  the plan; it never selects an execution shape. *[spec 012 US3]*
 - **Self-filed ask** (devclaw's own self-issue-filing) → graded ready, but at Stage 2 the
   **provenance wall** holds it until *you* promote it. No self-dealing. *[P2]*
 - **A bug** (`fix: forecast off-by-one`) → Stage 3 routes it **direct-advance, no spec** —

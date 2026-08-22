@@ -27,7 +27,7 @@ from .models import GoalStatus
 
 class State(str, Enum):
     """The goal's coarse machine state, derived from ``GoalStatus`` — never
-    hand-constructed outside :func:`derive_state` / a legacy-row rehydrate."""
+    hand-constructed outside :func:`derive_state`."""
 
     EXECUTING_IDLE = "executing_idle"
     ACTION_IN_FLIGHT = "action_in_flight"
@@ -62,8 +62,8 @@ def derive_state(status: GoalStatus) -> State:
     lost-ref block handlers deliberately keep it so the ref settles normally
     once the block clears) and blocked-ness must win for the STATE even
     though ``_classify`` itself still polls the ref first for its own
-    (unrelated) dispatch purposes. Never raises — every field combination,
-    including a legacy ``lifecycle=None`` row, maps to exactly one State."""
+    (unrelated) dispatch purposes. Never raises — every field combination maps
+    to exactly one State."""
     if status.phase == "done":
         return State.DONE
     if status.phase == "cancelled":
@@ -75,11 +75,9 @@ def derive_state(status: GoalStatus) -> State:
         if getattr(ref, "is_done_check", False):
             return State.VERIFYING
         return State.ACTION_IN_FLIGHT
-    # Any lifecycle string — "executing", a legacy NULL, or a pre-shrink
-    # "investigating"/"firming" row surviving in the DB — is executing now:
-    # the states those values used to map to were removed with the
-    # host-cognition chain (spec 008 shrink), and the tick heals the stored
-    # value loudly on first touch. Total: never raises.
+    # No in-flight work and not terminal/blocked ⇒ executing. There is one
+    # lifecycle value (spec 008 shrink removed the rest; the #616 cutoff
+    # migrated the last rows carrying them), so this is total by construction.
     return State.EXECUTING_IDLE
 
 

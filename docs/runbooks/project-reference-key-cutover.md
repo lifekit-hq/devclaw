@@ -1,6 +1,6 @@
 # Runbook — deploying the `project_id` dispatch cutover (#520)
 
-**Currency:** accurate as of 2026-08-14 (P1 #522 · P2 #525 · P3 #528 shipped; cutover deployed + verified live).
+**Currency:** accurate as of 2026-08-22 (P1 #522 · P2 #525 · P3 #528 shipped; cutover deployed + verified live. #616 gave the P3 backfill a one-shot marker — step 4 updated).
 
 Spec `003-project-reference-key` made the registry the single source of truth for
 dispatch, as a **hard cutover** (P1, clarify decision 2): `main` rejects a raw
@@ -52,13 +52,22 @@ and a record of how the first cutover deploy actually went.
    Manual fallback (only if CI didn't fire): rebuild + recreate from
    `/srv/lifekit-stack/compose` (`docker compose build --no-cache devclaw-mcp &&
    docker compose up -d devclaw-mcp`; the Dockerfile has a `CACHEBUST` arg).
-4. **The P3 backfill runs automatically at startup** (`lifecycle.py` after
-   `recover()`), stamping `project_id` onto goals whose workspace matches a
-   registered project. It logs `backfilled project_id on N goal(s)` only when
-   `N>0`. Verify the code + backfill:
+4. **The P3 backfill runs automatically at startup, ONCE** (`lifecycle.py`
+   after `recover()`), stamping `project_id` onto goals whose workspace matches
+   a registered project. It logs `backfilled project_id on N goal(s)` only when
+   `N>0`. Since #616 it is marker-guarded in the `meta` table
+   (`goal_project_id_backfill_done_at_ms`, see
+   `devclaw/goal/project_id_cutoff.py`): the first boot after that deploy runs
+   the scan, stamps the marker, and no later boot rescans. A goal created after
+   that point gets its `project_id` at creation, not from a backfill. Verify the
+   code + the marker:
    ```bash
    ssh lifekit-vps 'docker exec compose-devclaw-mcp-1 \
      grep -c "def backfill_project_ids" /app/devclaw/goal/service.py'   # → 1
+   ssh lifekit-vps 'docker exec compose-devclaw-mcp-1 sqlite3 \
+     /var/lib/devclaw/devclaw.db \
+     "select value from meta where key='"'"'goal_project_id_backfill_done_at_ms'"'"'"'
+   # → an epoch-ms stamp once the first post-#616 boot has completed
    ```
 
 ## Post-deploy (verify)

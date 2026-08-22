@@ -78,8 +78,10 @@ def test_trace_totals_aggregates_cognition_cost(store):
     totals = store.trace_totals(goal_id="g")
     assert totals["events_by_kind"] == {"cognition": 2, "dispatch": 1}
     assert totals["cognition_total_latency_ms"] == 350
-    assert totals["cognition_tokens_in_est"] == 1500
-    assert totals["cognition_tokens_out_est"] == 150
+    # No envelope on either row → both fall back to their len/4 estimate.
+    assert totals["cognition_tokens_in"] == 1500
+    assert totals["cognition_tokens_out"] == 150
+    assert totals["cognition_rows_estimated"] == 2
 
 
 def test_trace_totals_handles_no_data(store):
@@ -200,9 +202,9 @@ def test_record_cognition_carries_real_usage_and_full_response(store):
         )
     (row,) = store.read_traces(goal_id="g")
     p = row["payload"]
-    # full response persisted (past the 240-char preview horizon)
+    # full response persisted (past the deleted 240-char preview horizon)
     assert p["response_text"] == long_response
-    assert len(p["response_preview"]) <= 240
+    assert "response_preview" not in p
     # real usage fields
     assert p["tokens_in"] == 1234
     assert p["tokens_out"] == 56
@@ -336,7 +338,7 @@ def test_goal_service_make_tracer_binds_goals_dir(store, tmp_path, monkeypatch):
 
 
 def test_trace_totals_prefers_real_tokens_and_sums_cost(store):
-    # one row with real usage (post-T0.5), one legacy row with only estimates
+    # one row with a usage envelope, one (stub/errored/raw-stdout) with none
     store.append_trace_event(
         trace_id="t", goal_id="g", kind="cognition",
         payload={"latency_ms": 100, "tokens_in_est": 999, "tokens_out_est": 999,
@@ -347,15 +349,15 @@ def test_trace_totals_prefers_real_tokens_and_sums_cost(store):
         payload={"latency_ms": 50, "tokens_in_est": 200, "tokens_out_est": 30},
     )
     totals = store.trace_totals(goal_id="g")
-    # real row contributes its real numbers; legacy row falls back to its est
+    # real row contributes its real numbers; the other falls back to its est
     assert totals["cognition_tokens_in"] == 10 + 200
     assert totals["cognition_tokens_out"] == 38 + 30
     assert totals["cognition_rows_with_real_usage"] == 1
     assert totals["cognition_rows_estimated"] == 1
     assert totals["cognition_cost_usd"] == pytest.approx(0.018899, abs=1e-6)
-    # legacy pure-estimate sums kept for back-compat
-    assert totals["cognition_tokens_in_est"] == 999 + 200
-    assert totals["cognition_tokens_out_est"] == 999 + 30
+    # #616: the pure-estimate back-compat sums are gone — nothing read them.
+    assert "cognition_tokens_in_est" not in totals
+    assert "cognition_tokens_out_est" not in totals
 
 
 # ---- trace retention prune (harden/trace-retention, 2026-07-15) --------------

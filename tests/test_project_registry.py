@@ -516,15 +516,15 @@ def test_resolve_override_survives_a_workspace_rename(reg):
 
 
 def test_resolve_override_none_project_id_returns_default(reg):
-    """A goal/task with no owning project (self-fix, legacy pre-P3 row) falls to
-    the default — never raises, never scans."""
+    """A goal/task with no owning project (a self-fix, say) falls to the
+    default — never raises, never scans."""
     assert reg.resolve_override(None, "automerge", "DFLT") == "DFLT"
 
 
-def test_backfill_stamps_project_id_from_legacy_workspace(tmp_path):
+def test_backfill_stamps_project_id_from_the_workspace_match(tmp_path):
     """#524 P3 migration: a goal written before the field is stamped with its
-    owning project's id (resolved by the legacy workspace match) so its knobs
-    keep resolving across the cutover. Idempotent."""
+    owning project's id (resolved by the workspace-path match) so its knobs keep
+    resolving across the cutover."""
     from devclaw.goal.service import GoalConfig, GoalService
     from devclaw.state_store import StateStore
     from devclaw.task_queue import TaskQueue
@@ -537,13 +537,67 @@ def test_backfill_stamps_project_id_from_legacy_workspace(tmp_path):
     cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900,
                      verify_done=False)
     svc = GoalService(TaskQueue(db), db, config=cfg, project_registry=reg)
-    seed_goal(goals_dir, "legacy-g")  # workspace_dir=/repos/demo, NO project_id
-    assert svc._goal_store.load_goal("legacy-g").project_id is None
+    seed_goal(goals_dir, "pre-cutoff-g")  # workspace_dir=/repos/demo, NO project_id
+    assert svc._goal_store.load_goal("pre-cutoff-g").project_id is None
 
     assert svc.backfill_project_ids() == 1
-    assert svc._goal_store.load_goal("legacy-g").project_id == "proj"
-    # idempotent — a second run stamps nothing (already set)
+    assert svc._goal_store.load_goal("pre-cutoff-g").project_id == "proj"
+    db.close()
+
+
+def test_backfill_project_ids_runs_once_per_database_and_never_rescans(tmp_path):
+    """#616 cutoff: the #524 P3 backfill was a migration with NO cutoff — it
+    re-scanned every goal on disk at EVERY boot, kept honest only by its own
+    idempotency, and it is the sole surviving caller of the workspace-path match
+    the id-keyed join replaced. It is now marker-guarded in ``meta``: it runs
+    once, and a goal seeded afterwards is NOT retro-stamped by a later boot
+    (goals created after the cutoff get their project_id at creation)."""
+    from devclaw.goal.project_id_cutoff import CUTOFF_META_KEY
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+    from tests.goal_fakes import seed_goal
+
+    goals_dir = tmp_path / "goals"
+    db = StateStore(str(tmp_path / "t.db"))
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    reg.create(id="proj", name="P", workspace_dir="/repos/demo")
+    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900,
+                     verify_done=False)
+    svc = GoalService(TaskQueue(db), db, config=cfg, project_registry=reg)
+
+    seed_goal(goals_dir, "g1")
+    assert db.get_meta(CUTOFF_META_KEY) is None
+    assert svc.backfill_project_ids() == 1
+    assert db.get_meta(CUTOFF_META_KEY) is not None
+
+    # a SECOND boot does not scan again, even with fresh un-stamped goals
+    seed_goal(goals_dir, "g2")
     assert svc.backfill_project_ids() == 0
+    assert svc._goal_store.load_goal("g2").project_id is None
+    db.close()
+
+
+def test_backfill_project_ids_without_a_registry_does_not_burn_the_marker(tmp_path):
+    """"Could not run" is not "ran and found nothing": with no ProjectRegistry
+    there is nothing to resolve against, so the sweep must NOT stamp its marker
+    — otherwise a boot that happens to be registry-less would permanently
+    consume the one-shot migration."""
+    from devclaw.goal.project_id_cutoff import CUTOFF_META_KEY
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+    from tests.goal_fakes import seed_goal
+
+    goals_dir = tmp_path / "goals"
+    db = StateStore(str(tmp_path / "t.db"))
+    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900,
+                     verify_done=False)
+    svc = GoalService(TaskQueue(db), db, config=cfg, project_registry=None)
+    seed_goal(goals_dir, "g1")
+
+    assert svc.backfill_project_ids() == 0
+    assert db.get_meta(CUTOFF_META_KEY) is None
     db.close()
 
 

@@ -1,10 +1,15 @@
 """Unit tests for the delivery-strategy seam — branch selection only.
 
-Spec 008 shrink: the checklist (the old goal-branch signal) is gone; the
-explicit ``lifecycle == "executing"`` string on the status row is the signal
-now. Both modes stamp it at creation, so every fresh goal accumulates on
-``goal/<id>``; only legacy rows (``None`` or a pre-shrink
-"investigating"/"firming" string) stay per-action until the tick heals them.
+Every goal accumulates its increments on ``goal/<id>``. The seam used to have
+a second answer, ``per-action``, selected by a goal whose ``lifecycle`` was
+NULL — i.e. one created before the column existed. Both modes have stamped
+``executing`` at creation since the spec 008 shrink, so that branch stopped
+being reachable then; the #616 cutoff migrated the last rows that could take
+it and deleted the selection rule.
+
+``PER_ACTION`` itself is deliberately KEPT as the named second topology —
+whether devclaw should regain it (and with it auto-merge, which only fires
+for a per-action delivery) is a design decision, not demolition.
 """
 
 from dataclasses import dataclass
@@ -38,24 +43,25 @@ def test_executing_lifecycle_resolves_goal_branch():
     assert strat.goal_branch("g1") == "goal/g1"
 
 
-def test_legacy_null_lifecycle_stays_per_action():
-    # A legacy goal: no recorded lifecycle (``None``). It reads-as-executing
-    # elsewhere, but delivery stays PER_ACTION — goal-branch requires the
-    # EXPLICIT ``executing`` string.
-    store = _FakeStore(lifecycle=None)
-    strat = ds.resolve_strategy(store, "g1")
-    assert strat is ds.PER_ACTION
-    assert strat.goal_branch("g1") is None
+def test_no_stored_lifecycle_value_can_select_per_action_delivery():
+    """#616 regression. A NULL lifecycle used to resolve to PER_ACTION, and a
+    pre-shrink "investigating"/"firming" string did too. Those rows are gone
+    (the cutoff migrated them) and so is the rule — but the rule is the part
+    that matters: resurrecting per-action must be a deliberate change to this
+    function, never an accident of a row shape nobody expected.
+
+    Every value, including one from a history nobody documented, resolves to
+    goal-branch."""
+    for lc in (None, "investigating", "firming", "executing", "some-forgotten-phase"):
+        assert ds.resolve_strategy(_FakeStore(lifecycle=lc), "g1") is ds.GOAL_BRANCH
 
 
-def test_pre_shrink_lifecycle_strings_stay_per_action_until_healed():
-    # Pre-shrink "investigating"/"firming" rows surviving in the DB derive
-    # into the executing state family elsewhere, but delivery stays PER_ACTION
-    # until the tick heals (re-stamps) the stored string — the heal happens in
-    # the tick, never here.
-    for lc in ("investigating", "firming"):
-        store = _FakeStore(lifecycle=lc)
-        assert ds.resolve_strategy(store, "g1") is ds.PER_ACTION
+def test_per_action_remains_available_as_the_second_topology():
+    """It is unselected, not deleted: auto-merge keys off ``goal_branch(...)
+    is None``, so removing the class would silently delete that subsystem's
+    only reachable trigger along with it."""
+    assert ds.PER_ACTION.goal_branch("g1") is None
+    assert ds.PER_ACTION.name == "per-action"
 
 
 def test_fresh_goals_of_both_modes_resolve_goal_branch_delivery(tmp_path):

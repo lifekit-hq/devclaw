@@ -40,6 +40,7 @@ from .rows import (
     _row_to_task,
     derive_failure_class,
 )
+from .trace_migration import migrate_cognition_response_text_once
 
 #: The retry loop's terminal-escalation suffix ("… (failed after N attempts)") —
 #: the one place the attempt count survives into what the store sees at settle
@@ -178,6 +179,11 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         #: exception was caught between nested levels.
         self._txn_failed = False
         self._bootstrap()
+        # One-shot, crash-safe: fold pre-T0.5 ``response_preview`` payloads
+        # into ``response_text`` so telemetry has exactly one field to read
+        # (#616). Stamps a meta marker; every later construction is a no-op
+        # lookup. See ``trace_migration`` for the cutoff.
+        migrate_cognition_response_text_once(self, now_ms=_now_ms())
 
     @property
     def db_path(self) -> str:
@@ -480,18 +486,19 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 # PR-2): the caller-chosen PR base and the pinned delivery
                 # branch a direct ``dispatch_task`` carries through to
                 # ``prepare_workspace`` + ``deliver_change``. NULL on goal-path
-                # rows and pre-existing rows — byte-identical legacy behavior.
+                # rows, which pin neither → the remote default branch.
                 "ALTER TABLE tasks ADD COLUMN base_branch TEXT",
                 "ALTER TABLE tasks ADD COLUMN target_branch TEXT",
                 # The owning project's reference key (#524 P3), stamped at
                 # dispatch. Per-project override knobs resolve BY this id, not by
                 # a normalized-workspace-path scan. NULL on goal-path rows (goals
-                # carry their own project_id) and legacy pre-P3 rows → knobs fall
-                # to the devclaw-wide defaults.
+                # carry their own project_id) and on a task with no owning
+                # project → knobs fall to the devclaw-wide defaults.
                 "ALTER TABLE tasks ADD COLUMN project_id TEXT",
                 # Same reference key on the program row (#524 P3) — child tasks
                 # inherit it via _persist_plan, so a program's slices resolve
-                # their knobs by id too. NULL on legacy pre-P3 programs.
+                # their knobs by id too. NULL on a standalone program with no
+                # registered project.
                 "ALTER TABLE programs ADD COLUMN project_id TEXT",
                 # Idle cycle flag (2026-08-07) — 1 iff the loop did no work in
                 # the window (off/held/all-cancelled): excluded from the
@@ -1229,11 +1236,11 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         """Aggregate stats over all trace events for a goal: counts per kind,
         cognition total latency, tokens, and cost. Cheap SQL — no LLM call.
 
-        Token totals prefer REAL usage (recorded from the CLI's json envelope
-        since T0.5) per row; rows without it (legacy rows, raw-stdout fallback)
-        contribute their len/4 estimate — ``cognition_rows_estimated`` says how
-        many rows in the total are estimates. The pure-estimate ``*_est`` sums
-        are kept for back-compat."""
+        Token totals prefer REAL usage (recorded from the CLI's json
+        envelope) per row; a row without one — stub cognition, an errored call,
+        the raw-stdout degrade path — contributes its len/4 estimate, and
+        ``cognition_rows_estimated`` says how many rows in the total are
+        estimates."""
         with self._lock:
             counts = dict(
                 self._db.execute(
@@ -1249,8 +1256,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
         latency_ms = 0
         tokens_in = 0
         tokens_out = 0
-        tokens_in_est = 0
-        tokens_out_est = 0
         rows_with_real = 0
         rows_estimated = 0
         cost_usd = 0.0
@@ -1260,8 +1265,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
             except (TypeError, json.JSONDecodeError):
                 continue
             latency_ms += int(p.get("latency_ms") or 0)
-            tokens_in_est += int(p.get("tokens_in_est") or 0)
-            tokens_out_est += int(p.get("tokens_out_est") or 0)
             real_in, real_out = p.get("tokens_in"), p.get("tokens_out")
             if real_in is not None or real_out is not None:
                 rows_with_real += 1
@@ -1282,8 +1285,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
             "cognition_rows_with_real_usage": rows_with_real,
             "cognition_rows_estimated": rows_estimated,
             "cognition_cost_usd": round(cost_usd, 6),
-            "cognition_tokens_in_est": tokens_in_est,
-            "cognition_tokens_out_est": tokens_out_est,
         }
 
     def _prune_table_batch(self, *, table: str, older_than_ms: int, limit: int) -> int:

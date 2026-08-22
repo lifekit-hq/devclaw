@@ -63,24 +63,30 @@ def test_get_goal_surfaces_goal_branch_strategy_for_both_modes(svc):
     assert g2["lifecycle"] == "executing"
 
 
-def test_surfaces_return_raw_lifecycle_never_coalesced(svc):
-    """#496 named regression: a legacy row's NULL lifecycle renders as null on
-    get_goal / tail_goal / list_goals — never "helpfully" coalesced to
-    "executing" while resolve_strategy branches on the raw value."""
-    import dataclasses
+def test_surfaces_report_the_lifecycle_and_strategy_delivery_actually_resolves(svc):
+    """#496's rule, re-aimed by the #616 cutoff.
 
-    _mk(svc, "legacy", mode="one_shot")
-    s = svc._goal_store.load_status("legacy")
-    # simulate a pre-lifecycle legacy row
-    svc._goal_store.save_status("legacy", dataclasses.replace(s, lifecycle=None))
-    assert svc._goal_store.load_status("legacy").lifecycle is None
+    #496 said: never "helpfully" coalesce the stored lifecycle on a read
+    surface, because ``resolve_strategy`` branched on the RAW value — so a
+    display that showed "executing" for a NULL row actively misled diagnosis
+    (the #493 bug lived exactly in that gap). The rule was "surfaces must
+    agree with what delivery will actually do".
 
-    assert svc.get_goal("legacy")["lifecycle"] is None
-    assert svc.tail_goal("legacy")["lifecycle"] is None
-    row = next(r for r in svc.list_goals() if r["id"] == "legacy")
-    assert row["lifecycle"] is None
-    # and the strategy shown is what delivery actually resolves: per-action
-    assert row["delivery_strategy"] == "per-action"
+    The cutoff removed the gap rather than the rule: there is one lifecycle
+    value, every row has it, and every goal resolves to goal-branch. The
+    surfaces must still agree with delivery — which is what this asserts, and
+    what would fail if a surface ever started reporting a strategy it had
+    guessed rather than resolved."""
+    from devclaw.goal import delivery_strategy as ds
+
+    _mk(svc, "g1", mode="one_shot")
+    assert svc._goal_store.load_status("g1").lifecycle == "executing"
+
+    assert svc.get_goal("g1")["lifecycle"] == "executing"
+    assert svc.tail_goal("g1")["lifecycle"] == "executing"
+    row = next(r for r in svc.list_goals() if r["id"] == "g1")
+    assert row["lifecycle"] == "executing"
+    assert row["delivery_strategy"] == ds.resolve_strategy(svc._goal_store, "g1").name
 
 
 def test_get_goal_next_shows_objective_never_advance_brief(svc):
