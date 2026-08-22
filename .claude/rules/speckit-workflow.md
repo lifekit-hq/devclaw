@@ -14,7 +14,9 @@ never write there.
 ```
 
 - **Every behavior-changing change starts with `/speckit-specify`** — a spec
-  under `.specify/specs/`. No implementation before the clarify step is done.
+  under `specs/` at the repo ROOT — not under the .specify directory, which
+  holds only the scripts, templates and constitution the pipeline runs on.
+  No implementation before the clarify step is done.
 - **`/speckit-clarify` is mandatory** and is run WITH Denys, one question at a
   time; answers are encoded back into the spec. This carries forward the old
   walk-the-`[OPEN]`s discipline — it was the highest-value anti-drift move and
