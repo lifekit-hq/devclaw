@@ -3178,3 +3178,87 @@ async def test_steering_only_advance_brief_carries_no_failure_context(tmp_path):
     action, _, _ = engine.dispatched[0]
     assert FAILURE_CONTEXT_MARKER not in action.goal
     assert "try the other API" in action.goal
+
+
+# ---- the saga feed-forward (spec 012 US1) ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_advance_brief_carries_prior_increments_after_a_settled_delivery(tmp_path):
+    """US1 end-to-end: once an increment has settled, the NEXT increment's
+    brief states its position and what that increment delivered — outcome and
+    verdict — so the work is not re-implemented (the observed cost this story
+    exists to remove)."""
+    from devclaw.advance_brief import PRIOR_INCREMENTS_MARKER
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    # An increment settles: delivery row + settlement row, exactly as
+    # tick_settle writes them.
+    store.record_settlement("g", ref_id="t1", ref_kind="task", status="done")
+    store.append_delivery(
+        "g", "add the /health endpoint",
+        "PR: https://github.com/o/r/pull/7\n\n"
+        "Agent summary:\nI did the thing and it works great.\n\n"
+        "Verify gate `pytest -q`: PASSED\n",
+        ref_id="t1",
+    )
+    store.save_status("g", GoalStatus(phase="idle"))
+    store.append_steering("g", ["keep going"], source="owner")
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert PRIOR_INCREMENTS_MARKER in action.goal
+    assert "This is increment 2 of this goal" in action.goal
+    assert "add the /health endpoint" in action.goal
+    assert "status=done" in action.goal
+    assert "gate=PASSED" in action.goal
+    # #358: the previous worker's self-report must NOT become this worker's
+    # premise — only devclaw's own settlement facts cross the channel.
+    assert "it works great" not in action.goal
+
+
+@pytest.mark.asyncio
+async def test_first_advance_brief_states_no_prior_increments(tmp_path):
+    """FR-004: with nothing settled, the absence is stated, not omitted."""
+    from devclaw.advance_brief import PRIOR_INCREMENTS_MARKER
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(phase="idle"))
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert PRIOR_INCREMENTS_MARKER in action.goal
+    assert "this is the first" in action.goal.lower()
+
+
+@pytest.mark.asyncio
+async def test_idle_tick_performs_no_increment_record_read(tmp_path, monkeypatch):
+    """Constitution III / SC-007: the feed-forward read sits BELOW the
+    should_plan gate. An idle tick spends no cognition AND performs no delivery
+    read — the zero-token idle guard covers I/O, not just LLM calls."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", cadence="1d")
+    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
+
+    reads: list[str] = []
+    real = type(store).increment_records
+    monkeypatch.setattr(
+        type(store), "increment_records",
+        lambda self, goal_id: (reads.append(goal_id), real(self, goal_id))[1],
+    )
+    evaluator, engine = FakeClaude(), FakeEngine()
+
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.IDLE
+    assert evaluator.calls == 0
+    assert reads == []
+    assert engine.dispatched == []

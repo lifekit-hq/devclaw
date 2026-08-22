@@ -4,7 +4,9 @@
 
 **Created**: 2026-08-22
 
-**Status**: SPECIFIED, NOT IMPLEMENTED — merged 2026-08-22; no plan or tasks yet
+**Status**: US1 IMPLEMENTED 2026-08-22 (plan + tasks in this directory). US2
+(saga authoring slots) and US3 (expected increment count) remain SPECIFIED,
+NOT IMPLEMENTED — named-unsized until US1 has production nights behind it.
 
 **Relationship to spec 010**: the 2026-08-18 ruling has two halves. Spec 010
 (`010-unit-of-work-parallelism`, drafted 2026-08-19, merged 2026-08-22) specifies

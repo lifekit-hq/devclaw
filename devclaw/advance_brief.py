@@ -19,6 +19,8 @@ and every DETECTOR in lockstep.
 
 from __future__ import annotations
 
+import re
+
 # The brief's opening-line prefix. goal/tick._advance_brief builds its first
 # line from this constant; is_advance_brief matches on it — they cannot drift.
 ADVANCE_BRIEF_MARKER = "Advance this goal by one substantive"
@@ -28,6 +30,20 @@ ADVANCE_BRIEF_MARKER = "Advance this goal by one substantive"
 #: choke point below both key off these exact strings.
 STEERING_MARKER = "Steering from the owner — incorporate it:"
 FAILURE_CONTEXT_MARKER = "Previous attempt did NOT ship"
+
+#: The saga feed-forward section (spec 012 US1): what previously-settled
+#: increments of THIS goal delivered and how each was judged. Same never-drift
+#: contract — ``goal/prior_increments.render`` builds the section's opening line
+#: from this constant and ``display_goal`` below detects on it.
+PRIOR_INCREMENTS_MARKER = "Prior increments of this goal"
+
+#: The count is rendered into the marker line so the display side can annotate
+#: how many increments preceded this one WITHOUT re-reading the store. Generator
+#: and detector share this pattern for the same never-drift reason as the
+#: markers themselves.
+_PRIOR_INCREMENTS_COUNT = re.compile(
+    re.escape(PRIOR_INCREMENTS_MARKER) + r"[^\n(]*\((\d+) settled\)"
+)
 
 # Rendered when a brief carries no parseable ``Goal:`` line — still never the
 # raw brief.
@@ -70,6 +86,14 @@ def display_goal(text: str) -> str:
         extras.append(f"+{n} steering line(s)")
     if FAILURE_CONTEXT_MARKER in text:
         extras.append("+failure context")
+    # Only annotate when there IS saga history to report. The section itself is
+    # present on EVERY advance — a first increment is told so explicitly (spec
+    # 012 FR-004) — so annotating its mere presence would decorate every
+    # dispatch identically, which is the opposite of what these extras are for:
+    # distinguishing dispatches that differ.
+    m = _PRIOR_INCREMENTS_COUNT.search(text)
+    if m and m.group(1) != "0":
+        extras.append(f"+{m.group(1)} prior increment(s)")
     if extras:
         return f"{label}  [{', '.join(extras)}]"
     return label

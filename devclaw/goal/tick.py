@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from . import merge as _merge
+from . import prior_increments as _prior_increments
 from . import remote_checks as _remote_checks
 from . import triage as _triage
 # _deploy stays at tick.py level even though only tick_donegate._auto_deploy calls
@@ -353,7 +354,10 @@ async def _tick_goal_impl(
 # so the EXECUTING handler can chain on the same tick.
 
 
-def _advance_brief(goal: Goal, steering: str, failure_context: str = "") -> str:
+def _advance_brief(
+    goal: Goal, steering: str, failure_context: str = "",
+    prior_increments: str = "",
+) -> str:
     """The light pull-brief for a thin-path advance session (demolition P3;
     speckit substrate, spec 008 US1).
 
@@ -386,6 +390,13 @@ def _advance_brief(goal: Goal, steering: str, failure_context: str = "") -> str:
     ]
     if goal.done_when.strip():
         parts += ["", f"Done when: {goal.done_when.strip()}"]
+    # The saga feed-forward (spec 012 US1): what earlier increments of THIS goal
+    # delivered and how each was judged. Re-sent in full every increment
+    # (FR-009a) — a fresh sandbox has no memory, so a pointer would be a request
+    # while a slot is a fact. Blank-safe: callers that pass nothing render
+    # byte-identically to before this feature.
+    if prior_increments.strip():
+        parts += ["", prior_increments.strip()]
     if failure_context.strip():
         parts += [
             "",
@@ -482,10 +493,22 @@ async def _handle_long_lived_advance(
     # context-overflow and the 1h wall-clock burns of 2026-08-19 were each
     # followed by a byte-identical brief).
     failure_context = finished_detail if finished_detail else ""
+    # Saga feed-forward (spec 012 US1) — read BELOW the should_plan gate so an
+    # idle or blocked tick performs no delivery read at all (constitution III;
+    # the zero-token idle guard covers I/O, not just cognition). Pure mechanism:
+    # two SQLite reads + string work, never an LLM call. Best-effort — a store
+    # hiccup degrades to "no feed-forward", never a wedged dispatch.
+    try:
+        prior_increments = _prior_increments.render(store.increment_records(goal_id))
+    except Exception:  # noqa: BLE001
+        prior_increments = ""
     action = Action(
         engine="devclaw",
         tool="implement_feature",
-        goal=_advance_brief(goal, steering, failure_context=failure_context),
+        goal=_advance_brief(
+            goal, steering, failure_context=failure_context,
+            prior_increments=prior_increments,
+        ),
         verify_cmd=goal.verify_cmd,
         open_pr=goal.open_pr,
     )
