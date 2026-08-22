@@ -176,9 +176,18 @@ async def test_onboard_task_settles_done_and_writes_agents_md(store, tmp_path):
     assert os.path.exists(os.path.join(ws, "AGENTS.md"))
 
 
-async def test_onboard_task_does_not_gate_or_deliver(store, tmp_path):
-    """Onboarding is comprehension, not a code change: no verify gate, no PR —
-    the human reviews the draft. The submit path leaves both off."""
+async def test_onboard_task_has_no_verify_gate(store, tmp_path):
+    """Onboarding is comprehension, not a code change: there is no verify gate
+    to run, and a bare ``q.submit`` (no ``deliver=``) still defaults to no
+    delivery — the queue's default is unchanged.
+
+    This test used to also assert ``pr_url is None`` under the heading "no PR —
+    the human reviews the draft". #598 overturned that policy, not this code
+    path: the human still reviews the draft, but at the PR instead of in an
+    untracked working tree that the next dispatch's ``git clean -fdx`` deletes.
+    Delivery is decided by the ``onboard`` TOOL, which is what the three
+    outcome tests below exercise; this one pins the queue default it rides on.
+    """
     ws = str(tmp_path / "ws2")
     os.makedirs(ws)
     q = TaskQueue(store, runner=_onboard_runner())
@@ -187,11 +196,139 @@ async def test_onboard_task_does_not_gate_or_deliver(store, tmp_path):
 
     t = store.get_task(tid)
     assert t.verify_cmd is None
-    assert t.deliver is False
-    assert t.pr_url is None
+    assert t.deliver is False  # the QUEUE default, not the tool's choice
 
 
 def test_onboard_kind_round_trips_through_the_store(store):
     store.create_task(id="ob1", kind="onboard", workspace_dir="/ws", goal="g")
     assert store.get_task("ob1").kind == "onboard"
     assert store.list_tasks(kind="onboard")[0].id == "ob1"
+
+
+# ---- delivery: the three outcomes, driven through the onboard TOOL (#598) ---
+#
+# These go through `_tools.onboard(...)`, NOT `q.submit(deliver=True)`. The
+# defect #598 records was one missing kwarg at that single tool call site, so a
+# test that submits the task itself supplies the very thing under test and
+# passes with the bug fully present — which is exactly how PR #610's version of
+# this test passed twice while shipping nothing.
+
+
+@pytest.fixture()
+def onboard_env(store, tmp_path, monkeypatch):
+    """Wire the real TaskQueue behind the real `onboard` tool, stubbing only the
+    edges the tool crosses before submitting: project resolution, the workspace
+    preflight, and the speckit check (adopt path)."""
+    from devclaw import task_queue as _tq
+    from devclaw.project_registry import ResolvedDispatch
+    from devclaw.server import tools as _tools
+
+    ws = str(tmp_path / "repo")
+    os.makedirs(ws)
+    q = TaskQueue(store, runner=_onboard_runner())
+
+    monkeypatch.setattr(
+        _tools, "_resolve_project_or_reject",
+        lambda project_id, tool: ResolvedDispatch(workspace_dir=ws, project_id=project_id),
+    )
+
+    async def _no_preflight(resolved, project_id):
+        return None
+
+    async def _has_speckit(workspace_dir):
+        return True
+
+    monkeypatch.setattr(_tools, "_preflight_or_prep", _no_preflight)
+    monkeypatch.setattr(_tools._speckit, "has_committed_speckit", _has_speckit)
+    monkeypatch.setattr(_tools, "queue", q)
+    monkeypatch.setattr(_tools, "store", store)
+    return _tools, q, ws, _tq
+
+
+async def test_onboard_delivers_its_artifacts_and_records_the_pr_url(onboard_env, monkeypatch):
+    """The #598 defect itself: the run generated ARCHITECTURE.md and
+    .devcontainer/Dockerfile, settled `done` with `error` null, and recorded
+    `pr_url` null while both files sat untracked — one `git clean -fdx` from
+    deletion. A successful onboard must commit what it generated and open a
+    reviewable PR, with that URL on the task, exactly as implement_feature does.
+    """
+    import json as _json
+
+    _tools, q, ws, _tq = onboard_env
+    seen = {}
+
+    async def _fake_deliver(**kwargs):
+        seen.update(kwargs)
+        return {"branch": "docs/onboarding", "pr_url": "https://github.com/o/r/pull/7"}
+
+    monkeypatch.setattr(_tq, "deliver_change", _fake_deliver)
+
+    out = _json.loads(await _tools.onboard("proj"))
+    await q.drain()
+
+    t = _tools.store.get_task(out["task_id"])
+    assert t.deliver is True
+    assert t.status == "done"
+    assert t.pr_url == "https://github.com/o/r/pull/7"
+    # It reused the shared seam rather than a second delivery path, and told it
+    # the kind — `_KIND_TYPE["onboard"] == "docs"`, so the PR stays behind a
+    # human merge.
+    assert seen["kind"] == "onboard"
+    assert seen["workspace_dir"] == ws
+
+
+async def test_onboard_with_nothing_to_deliver_succeeds_without_a_pr(onboard_env, monkeypatch):
+    """A re-onboard where every artifact is already accurate produces no change.
+    That is a SUCCESS with no PR, and it must stay distinguishable from a
+    delivery that broke — not collapsed into it."""
+    import json as _json
+
+    _tools, q, ws, _tq = onboard_env
+    attempted = []
+
+    async def _nothing_to_ship(**kwargs):
+        # The exact string deliver_change writes when the tree is clean
+        # (delivery/__init__.py) — one of the two prefixes _BENIGN_ERRORS
+        # filters out. Using an invented phrase here would settle the task
+        # FAILED, which is the very collapse this test exists to prevent.
+        attempted.append(kwargs["task_id"])
+        return {"error": "no changes to deliver"}
+
+    monkeypatch.setattr(_tq, "deliver_change", _nothing_to_ship)
+
+    out = _json.loads(await _tools.onboard("proj"))
+    await q.drain()
+
+    t = _tools.store.get_task(out["task_id"])
+    assert t.status == "done"      # success...
+    assert t.pr_url is None        # ...with no PR
+    assert t.error is None         # and NOT the failure below
+
+    # Load-bearing: "done with no PR" looks IDENTICAL whether delivery ran and
+    # found nothing or was never attempted at all — which is the #598 bug. Pin
+    # that it was attempted, or this test passes on the unfixed code.
+    assert attempted == [t.id]
+    assert t.deliver is True
+
+
+async def test_onboard_that_cannot_deliver_settles_failed_not_done(onboard_env, monkeypatch):
+    """#183's rule reaches onboard: a run that generated artifacts but could not
+    ship them must settle `failed` with an actionable reason. Settling `done`
+    without a PR is the false-green that made #598 self-concealing — every
+    poller upstream reads such a row as shipped."""
+    import json as _json
+
+    _tools, q, ws, _tq = onboard_env
+
+    async def _push_rejected(**kwargs):
+        return {"error": "push failed: remote rejected"}
+
+    monkeypatch.setattr(_tq, "deliver_change", _push_rejected)
+
+    out = _json.loads(await _tools.onboard("proj"))
+    await q.drain()
+
+    t = _tools.store.get_task(out["task_id"])
+    assert t.status == "failed"
+    assert t.pr_url is None
+    assert "push failed: remote rejected" in (t.error or "")

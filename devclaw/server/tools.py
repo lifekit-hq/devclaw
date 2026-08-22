@@ -482,11 +482,13 @@ async def onboard(
     discipline (no ADR reasoning in README, no quickstart in ARCHITECTURE,
     no narrative in AGENTS.md) so the three docs don't blur into each other.
 
-    Human-in-the-loop: each doc lands with a top-of-file DRAFT marker and is
-    NOT authoritative until you review it. The agent won't clobber a
-    substantive existing doc — it validates each part against the real repo
-    and only corrects what's wrong or missing. Returns task_id immediately;
-    same optional notify_url as implement_feature.
+    Human-in-the-loop: the doc set arrives as a REVIEWABLE PR (a `docs`-typed
+    delivery, so it stays behind a human merge), and each doc lands with a
+    top-of-file DRAFT marker — not authoritative until you review it. The agent
+    won't clobber a substantive existing doc — it validates each part against
+    the real repo and only corrects what's wrong or missing. A re-onboard that
+    finds everything already accurate is a success with no PR. Returns task_id
+    immediately; same optional notify_url as implement_feature.
 
     Speckit substrate (spec 008 US2): every repo devclaw works uses speckit.
     Onboard decides on the repo's COMMITTED ``.specify/`` directory —
@@ -529,6 +531,14 @@ async def onboard(
         workspace_dir=resolved.workspace_dir,
         goal=focus or "general onboarding",
         notify_url=notify_url,
+        # #598: without this the generated docs are left UNTRACKED in the
+        # workspace and the task still settles `done` — the next dispatch's
+        # `git clean -fdx` then deletes them. Routing through the shared
+        # deliver seam (never a second one) also buys the three outcomes for
+        # free: delivered => done + pr_url, nothing-to-deliver => done with no
+        # PR, delivery broken => failed (#183). `_KIND_TYPE["onboard"]` is
+        # already "docs", so the PR lands behind a human merge as intended.
+        deliver=True,
         project_id=resolved.project_id,
     )
     return json.dumps(
