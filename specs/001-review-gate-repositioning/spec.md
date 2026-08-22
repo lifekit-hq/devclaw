@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-14
 
-**Status**: Draft
+**Status**: SHIPPED — `devclaw/quality/gate_pipeline.py`, `devclaw/goal/evaluator.py`; constitution amended to 2.1.0 (2026-08-14) per T003
 
 **Input**: User description: "review-gate-repositioning — per-increment adversarial diff review becomes strict-mode-only; trust mode gates on tests + E2E + test-integrity, with the done-gate and human PR review as the semantic backstop."
 

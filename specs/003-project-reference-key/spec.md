@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-14
 
-**Status**: P1 SHIPPED (#522) · P2 SHIPPED (#523) · P3 SHIPPED (#524) — all 2026-08-14. Feature COMPLETE.
+**Status**: SHIPPED — `ProjectRegistry.resolve_dispatch()` in `devclaw/project_registry.py`
 
 **Tracking issue**: lifekit-hq/devclaw#520 · **Direction memory**: `docs/proposals/project-reference-key.md` (frozen DRAFT #504)
 

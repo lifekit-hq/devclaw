@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-18
 
-**Status**: Draft
+**Status**: SHIPPED — merged as #560
 
 **Input**: User description: "Universal issue adoption — extend the intake readiness pipeline (spec 006) so any existing GitHub issue on a registered project can be graded and admitted through the same pipeline as intake-filed issues. Today regrade_intake rejects issues without devclaw's `## What` section, so hand-written backlogs (e.g. finance-sentry's) can never earn a devclaw-ready/needs-refinement label and would be invisible to the future autonomous pickup (spec 007). Make the grader format-tolerant: no `## What` section ⇒ treat issue title + body as the ask; no verifiable completion criteria found ⇒ grade needs-refinement (fail-closed, as today). Possibly add a bulk 'grade all open issues on this project' verb for onboarding existing backlogs."
 

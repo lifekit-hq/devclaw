@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-14
 
-**Status**: Draft
+**Status**: SUPERSEDED BY 008 — the PLAN.md planning port was rejected on 2026-08-15/16 in favour of speckit-everywhere. Retained as the record of a rejected alternative; do NOT implement
 
 **Input**: User description: "Two strategies for devclaw: one self-contained (planning lives in the repo — PLAN.md), one that relies on GitHub issues (milestones, linking). Selectable, so devclaw can orient and work either way."
 

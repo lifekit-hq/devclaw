@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-15
 
-**Status**: Draft (scoped; not yet sized — P1 [006] lands first)
+**Status**: PARTIAL — `select_for_pickup()` exists in `devclaw/goal/self_issue.py` but autonomous claim stays gated OFF pending the compounding scorecard. Do not treat as unbuilt
 
 **Input**: User description: "P2 of the autonomous issue-driven pipeline arc — the heartbeat claims devclaw-ready issues and dispatches them via the existing create_goal path, but only behind a manually-flipped flag, with a hard provenance wall keeping self-filed work from self-executing and a human as the merge backstop. This is where autonomy turns on."
 

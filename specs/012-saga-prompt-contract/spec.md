@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-22
 
-**Status**: Draft
+**Status**: SPECIFIED, NOT IMPLEMENTED — merged 2026-08-22; no plan or tasks yet
 
 **Relationship to spec 010**: the 2026-08-18 ruling has two halves. Spec 010
 (`010-unit-of-work-parallelism`, drafted 2026-08-19, not yet merged) specifies the
@@ -20,7 +20,10 @@ extent — per the terminology ruled on 2026-08-18.
 ## Context: this formalises a settled decision
 
 The vocabulary below was **ruled by the owner on 2026-08-18** and is adopted
-verbatim. This spec does not reopen it. The owner's durable meta-preference is to
+verbatim. This spec does not reopen it. Spec 010 FR-007 requires the
+same vocabulary be adopted into the architecture documentation; when that lands,
+**that document becomes normative** and this table becomes a convenience copy —
+keep them in step or delete this one. The owner's durable meta-preference is to
 stand on established software-engineering paradigms and their canonical names,
 never homegrown vocabulary implicitly re-derived.
 
@@ -225,6 +228,10 @@ increment count with a stated basis, and that both are executed as sagas.
 - **FR-012**: Every work item MUST execute as a saga regardless of its expected
   increment count. The expected count sizes the plan; it MUST NOT select a
   different execution shape.
+- **FR-012b**: FR-012 governs **work items** — asks that pass through intake and
+  grading. It does NOT govern goal-less direct dispatch, which spec 010 FR-009
+  keeps as a legitimate operator-present path exempt from the project lock. This
+  spec MUST NOT be read as removing that path.
 - **FR-012a**: The completion judgement MUST NOT be bypassed for any work item,
   however small. Mechanical verification passing is never sufficient evidence of
   completion.

@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-15
 
-**Status**: Draft
+**Status**: SHIPPED — `devclaw/intake.py`, `intake_readiness` tier in `devclaw/model_tiers.py`
 
 **Input**: User description: "Intake readiness gate for file_intake (P1 of the autonomous issue-driven pipeline arc) — a validator that grades each incoming ask as dispatch-ready or needs-refinement at intake time, before it can be picked up for execution, keeping ungroundable work out of the plan. Intake-only: no autonomy, no tick changes, no auto-dispatch."
 

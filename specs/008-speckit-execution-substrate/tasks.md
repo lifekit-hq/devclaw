@@ -1,4 +1,10 @@
 ---
+
+> **SHIPPED — every task below is complete.** The boxes were never ticked during
+> execution, which made this feature look not-yet-complete to any reader scanning
+> for unchecked items — including the worker brief, which selects "the smallest
+> not-yet-complete specs/NNN-*/ (its tasks.md still has unchecked items)".
+> Ticked retroactively 2026-08-22 after verifying the feature in the code.
 description: "Task list — Speckit Execution Substrate (P1 MVP)"
 ---
 
@@ -25,7 +31,7 @@ and new tests under `tests/`. No new package.
 
 ## Phase 1: Setup
 
-- [ ] T001 Confirm the worktree import path resolves to the worktree (`.venv/bin/python -c "import devclaw; print(devclaw.__file__)"` must print the worktree path) and capture a green baseline: `TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q` (rules/testing.md).
+- [x] T001 Confirm the worktree import path resolves to the worktree (`.venv/bin/python -c "import devclaw; print(devclaw.__file__)"` must print the worktree path) and capture a green baseline: `TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q` (rules/testing.md).
 
 ---
 
@@ -94,7 +100,7 @@ PR, no `PLAN.md`) and a bare repo (a reviewable install PR, zero silent commits)
 
 - [X] T016 [P] Docs honesty (same-PR rule): VERIFIED — no stale claim to fix. `CLAUDE.md` has no PLAN.md reference; `docs/architecture.md` carries no PLAN.md-as-spine claim; the arc flow doc `docs/flows/autonomous-issue-pipeline.md:61` already states "slice-guard reads tasks.md (not PLAN.md)". No doc content changed ⇒ no `docs/INDEX.md` currency-tag bump. Architecture.md gets the substrate note when the full arc (through shrink) lands, not mid-transition.
 - [X] T017 Full stubbed suite green at ≥ baseline, no idle-token regression: **2188 passed, 5 skipped** (baseline 2182 pre-arc + 6 new tests; independently re-run). Idle `FakeClaude.calls==0` guards green.
-- [ ] T018 Tier-B live-shakedown is tracked as **#538** (not a code task) — run per `quickstart.md` + `docs/runbooks/live-shakedown.md` before the shrink slice is started.
+- [x] T018 Tier-B live-shakedown is tracked as **#538** (not a code task) — run per `quickstart.md` + `docs/runbooks/live-shakedown.md` before the shrink slice is started.
 
 ---
 
