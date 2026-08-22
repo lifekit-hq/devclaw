@@ -12,7 +12,7 @@ import json
 import pytest
 from starlette.requests import Request
 
-import devclaw.server.http as http_mod
+import devclaw.server.routes.goals as http_mod
 from devclaw.goal.service import GoalConfig, GoalService
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue

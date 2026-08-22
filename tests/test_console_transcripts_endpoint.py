@@ -27,7 +27,7 @@ from pathlib import Path
 
 from starlette.requests import Request
 
-import devclaw.server.http as http_mod
+import devclaw.server.routes.goals as http_mod
 from devclaw.loom.trace import PersistentTracer
 
 
