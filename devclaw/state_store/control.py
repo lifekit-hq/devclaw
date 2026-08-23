@@ -13,10 +13,24 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import sqlite3
+    import threading
 
 
 class ControlPlaneMixin:
+    if TYPE_CHECKING:
+        # The composing class owns these (its docstring names the same contract in
+        # prose); declared under TYPE_CHECKING so the seam is checked, never run.
+        _db: sqlite3.Connection
+        _lock: threading.RLock
+
+        def _commit(self) -> None: ...
+        def record_problem(self, *, category: str, kind: str, message: str,
+                           recovered: bool, goal_id: str = "", task_id: str = "") -> None: ...
+
     # ---- meta / global flags (the quota pause) ---------------------------
 
     def set_meta(self, key: str, value: str) -> None:

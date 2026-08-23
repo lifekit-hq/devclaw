@@ -797,12 +797,12 @@ class GoalService:
         live_events: list[dict] = []
         if s.in_flight is not None:
             ref = s.in_flight
-            kwargs = (
-                {"task_id": ref.id} if ref.ref_kind == "task" else {"program_id": ref.id}
-            )
             # list_events is ASC + LIMIT (first N); pull a wide window and tail it
             # in Python so we get the MOST RECENT events of a long-running task.
-            evs = self._store.list_events(limit=10000, **kwargs)
+            if ref.ref_kind == "task":
+                evs = self._store.list_events(limit=10000, task_id=ref.id)
+            else:
+                evs = self._store.list_events(limit=10000, program_id=ref.id)
             for e in evs[-event_limit:]:
                 preview = (e.payload_json or "")[:200]
                 live_events.append(

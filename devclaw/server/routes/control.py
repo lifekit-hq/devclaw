@@ -34,7 +34,7 @@ def _health_freshness() -> dict:
     row (null here), real DB corruption raises loudly — and a /health that
     500s on a corrupt store is a true alarm, not a bug."""
 
-    def _iso(ms: object) -> str | None:
+    def _iso(ms: "int | float | str | None") -> str | None:
         if not ms:
             return None
         return _dt.datetime.fromtimestamp(int(ms) / 1000, tz=_dt.timezone.utc).isoformat()

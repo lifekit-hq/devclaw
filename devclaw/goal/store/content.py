@@ -24,10 +24,31 @@ to the pre-split monolith.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ...state_store import _now_ms
+
+if TYPE_CHECKING:
+    from datetime import datetime
+    from pathlib import Path
+    from typing import Callable
+
+    from ...state_store import StateStore
+    from ..state import GoalState
 
 
 class GoalContentMixin:
+    if TYPE_CHECKING:
+        # The composing class owns these (its docstring names the same contract in
+        # prose); declared under TYPE_CHECKING so the seam is checked, never run.
+        _state: StateStore
+        _goal_state: GoalState
+        _now: Callable[[], datetime]
+        _pending_mirrors: dict[str, list]
+
+        def _dir(self, goal_id: str) -> Path: ...
+        def _write_atomic(self, goal_id: str, name: str, text: str) -> None: ...
+
     # ---- log (events) — PR6: goal_log rows are the source of truth --------
     #
     # log.md is a generated OUTPUT view: written on every append, never read.

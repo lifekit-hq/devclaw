@@ -26,7 +26,7 @@ jobs:
           "$RUNNER_TEMP/venv/bin/python" -m pytest -q
 
   lint:
-    name: Lint (ruff + secrets + yaml)
+    name: Lint (ruff + mypy + secrets + yaml)
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +39,14 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/ruff-venv"
           "$RUNNER_TEMP/ruff-venv/bin/pip" install --quiet ruff
           "$RUNNER_TEMP/ruff-venv/bin/ruff" check --output-format=github .
+
+      # mypy: the typed half of the same correctness gate (config in
+      # pyproject.toml [tool.mypy] — default strictness, zero-error baseline).
+      - name: mypy
+        run: |
+          python3 -m venv "$RUNNER_TEMP/mypy-venv"
+          "$RUNNER_TEMP/mypy-venv/bin/pip" install --quiet mypy pyyaml httpx
+          "$RUNNER_TEMP/mypy-venv/bin/mypy"
 
       # gitleaks via pinned binary (arm64) — exit code is the gate; scans the
       # working tree for secrets. Avoids the gitleaks-action's license + the

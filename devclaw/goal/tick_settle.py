@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
-from typing import Tuple, Union
+from typing import Literal, Tuple, Union
 
 from .tick_context import (
     NotifyLevel,
@@ -45,6 +45,7 @@ async def _resolve_polling_done_gate(
     ``done_when`` via :func:`_resolve_done_gate` (PR7 "light settle" shape:
     settlement + log + transition as one unit; mirrors flush after commit)."""
     ref = status.in_flight
+    assert ref is not None  # phase invariant: settle only runs on an in-flight ref
     try:
         poll = await ctx.engine.poll(ref)
     except GoalEngineError as exc:
@@ -126,7 +127,7 @@ def _readopt_orphaned_ref(
 
 def _readopt_ref(
     store: GoalStore, goal_id: str, status: GoalStatus,
-    *, ref_id: str, ref_kind: str, tool: str, ref_goal: str,
+    *, ref_id: str, ref_kind: 'Literal["task", "program"]', tool: str, ref_goal: str,
 ) -> None:
     """Write the actual re-adoption: restore ``in_flight`` (DISPATCH_ACTION)
     + a log line, as ONE transaction; mirrors flush after commit. A lost
@@ -211,6 +212,7 @@ async def _resolve_polling_action(
     finished_detail)`` so the EXECUTING handler can plan the next action on
     the same tick with the just-finished detail in hand."""
     ref = status.in_flight
+    assert ref is not None  # phase invariant: settle only runs on an in-flight ref
     try:
         poll = await ctx.engine.poll(ref)
     except GoalEngineError as exc:

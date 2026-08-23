@@ -1154,6 +1154,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 (task_id, program_id, type, source, payload_json, ts if ts is not None else _now_ms()),
             )
             self._commit()
+            assert cur.lastrowid is not None  # INSERT always assigns a rowid
             return int(cur.lastrowid)
 
     # ---- traces (per-tick observability) --------------------------------
@@ -1183,6 +1184,7 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
                 ),
             )
             self._commit()
+            assert cur.lastrowid is not None  # INSERT always assigns a rowid
             return int(cur.lastrowid)
 
     def read_traces(

@@ -149,7 +149,10 @@ class InFlight:
     """A reference to an action the engine is currently running for this goal."""
 
     engine: Engine
-    tool: GoalTool
+    #: the dispatching tool's label — a :data:`GoalTool`, or ``"fanout"`` for a
+    #: planned-parallelism program ref (kept ``str``: re-adoption rebuilds refs
+    #: from task/program rows, whose kind is not statically constrained).
+    tool: str
     #: the task_id or program_id the engine returned
     id: str
     #: "task" | "program" — which kind of row to poll
@@ -165,8 +168,12 @@ class GoalStatus:
     """Mutable per-tick state — STATUS.md frontmatter. Overwritten, never appended."""
 
     phase: Phase = "idle"
-    #: the outcome lifecycle stage — one value, always set (see Lifecycle)
-    lifecycle: Lifecycle = "executing"
+    #: the outcome lifecycle stage — canonically a :data:`Lifecycle`
+    #: ("executing" is the only live stage since the 008 shrink), but typed
+    #: ``str`` because the store round-trips legacy pre-shrink stages verbatim
+    #: (fidelity pinned by test_goal_status_migration) and pre-lifecycle rows
+    #: load as None (readers treat that as "executing", cf. tick.py)
+    lifecycle: Optional[str] = "executing"
     in_flight: Optional[InFlight] = None
     blocked_on: Optional[str] = None
     #: structured classification of the CURRENT block — the machine-readable

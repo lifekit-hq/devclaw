@@ -38,7 +38,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, Protocol, cast
 
 from .delivery import deliver_change, delivery_failed, devclaw_commit_title
 from .delivery.integrate import commit_lane, integrate_lane
@@ -274,7 +274,18 @@ MAX_PAUSE_REQUEUES = 5
 
 #: _run_and_settle returns this when a task was paused for a quota limit (not
 #: settled): the task is back to 'pending' and the global pause holds dispatch.
-_PAUSED = object()
+class _PausedSentinel:
+    pass
+
+
+_PAUSED = _PausedSentinel()
+
+
+class _ProjectOverrides(Protocol):
+    """The one method the queue uses on the project registry (wired late via
+    set_registry; a Protocol so tests keep passing plain fakes)."""
+
+    def resolve_override(self, project_id: "str | None", key: str, default): ...
 
 PlannerFn = Callable[[str, str], Awaitable[list[PlannedTask]]]
 #: the execution engine — orchestration depends on this seam, not on the agent
@@ -789,7 +800,7 @@ class _ReviewGate:
     async def check(self, gi: GateInput) -> GateVerdict:
         diff = await gi.diff()
         failure = await self.queue._review_failure(
-            gi.kind, gi.goal, diff, gi.workspace_dir, scaffold=gi.scaffold,
+            cast("TaskKind", gi.kind), gi.goal, diff, gi.workspace_dir, scaffold=gi.scaffold,
             project_id=gi.project_id,
         )
         if failure is not None:
@@ -866,6 +877,9 @@ class TaskQueue(_NotifyMixin):
         # symlink/relative respelling of the same DB can't mint a new id and
         # strand the old id's orphans unreapable.
         self._sandbox_owner: str = sandbox_owner_id(os.path.realpath(store.db_path))
+        #: per-pump host-RAM budget for sandbox launches (None off the sandcastle
+        #: path) — set fresh by every _pump; declared here so the type is honest.
+        self._mem_budget: "int | None" = None
         # Injectable for tests — the default REFUSES loudly (host planning was
         # removed; see _no_host_planner). The runner defaults to sandcastle.
         self._planner: PlannerFn = planner or _no_host_planner
@@ -905,7 +919,7 @@ class TaskQueue(_NotifyMixin):
         #: optional project registry, wired post-construction (see set_registry) —
         #: used ONLY to resolve a per-project review_gate override. None is fine:
         #: the gate falls back to the devclaw-wide REVIEW_GATE_ENABLED default.
-        self._registry: Optional[object] = None
+        self._registry: "Optional[_ProjectOverrides]" = None
         #: last operator-hold reason _pump logged (normalized: local-time suffix
         #: stripped), so a persistent hold logs ONCE per reason, not every tick.
         self._hold_logged: Optional[str] = None
@@ -914,7 +928,7 @@ class TaskQueue(_NotifyMixin):
         """Register the terminal-state hook (the goal layer's heartbeat wake)."""
         self._on_settle = hook
 
-    def set_registry(self, registry: Optional[object]) -> None:
+    def set_registry(self, registry: "Optional[_ProjectOverrides]") -> None:
         """Wire the project registry after construction (the registry is built
         after the queue in server/_state.py). Used only to resolve the
         per-project ``review_gate`` override."""
@@ -1327,7 +1341,7 @@ class TaskQueue(_NotifyMixin):
         measured (fail OPEN: an unmeasurable host must never wedge the queue). On
         denial, log ONCE per pump (loud, not a silent throttle), mirroring the
         operator-hold logging pattern so a memory hold is visible in the logs."""
-        budget = getattr(self, "_mem_budget", None)
+        budget = self._mem_budget
         if budget is None or budget >= MEM_LAUNCH_FLOOR_BYTES:
             return True
         if not getattr(self, "_mem_deny_logged", False):
@@ -1346,7 +1360,7 @@ class TaskQueue(_NotifyMixin):
         pending tasks can't all launch into RAM that only fits one (a fresh
         container's RSS lags its start). The budget is re-measured from /proc each
         pump, so a finished container's memory returns on the next tick."""
-        if getattr(self, "_mem_budget", None) is not None:
+        if self._mem_budget is not None:
             self._mem_budget -= SANDBOX_MEMORY_BYTES
 
     def _maybe_terminalize(self, program: Program, tasks: list[Task]) -> bool:
@@ -1429,7 +1443,10 @@ class TaskQueue(_NotifyMixin):
         # Index it for cancel(); drop the ref the moment it settles so the map
         # only ever names genuinely in-flight runs.
         self._running_tasks[task_id] = task
-        task.add_done_callback(lambda _t, tid=task_id: self._running_tasks.pop(tid, None))
+        def _drop_running(_t: "asyncio.Task", tid: str = task_id) -> None:
+            self._running_tasks.pop(tid, None)
+
+        task.add_done_callback(_drop_running)
 
     async def _prep_branch_target(
         self,
@@ -1564,7 +1581,7 @@ class TaskQueue(_NotifyMixin):
             # otherwise surface downstream as silent diff-range/PR-base skew).
             self._store.mark_failed(task_id, prep_failure)
             self._check_and_trip_breaker(workspace_dir, task_id)
-            success: Optional[dict] = None
+            success: "dict | _PausedSentinel | None" = None
         else:
             success = await self._run_and_settle(
                 task_id, kind, workspace_dir, goal, defer_done=deliver,
@@ -1914,7 +1931,7 @@ class TaskQueue(_NotifyMixin):
     async def _run_and_settle(
         self, task_id: str, kind: TaskKind, workspace_dir: str, goal: str,
         *, defer_done: bool = False, project_id: Optional[str] = None,
-    ) -> Optional[dict]:
+    ) -> "dict | _PausedSentinel | None":
         """Run the agent (with retries) and settle the task. Returns None once the
         task is settled (done/failed/timeout). When ``defer_done`` is set and the
         gate passes, it does NOT mark the task done — it returns the winning result
@@ -2194,9 +2211,9 @@ class TaskQueue(_NotifyMixin):
                         # never reach exhaustion). The always-hard gates (verify /
                         # test_integrity) never set dialable, so the dial can never
                         # loosen them.
-                        last_failure = verdict.reason
+                        last_failure = verdict.reason or "gate failed (no reason recorded)"
                         if verdict.dialable:
-                            dialable_finding = (verdict.gate_id, verdict.reason)
+                            dialable_finding = (verdict.gate_id, last_failure)
                             last_gate_result = result
                             last_gate_change = await gate_input.change()
                     elif defer_done:

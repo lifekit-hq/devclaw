@@ -552,14 +552,13 @@ async def _open_done_gate(
             store.discard_pending_mirrors(goal_id)
             if dispatch_exc is None:
                 raise
-            exc = dispatch_exc
-            store.append_log(goal_id, f"done-gate dispatch failed: {exc}")
+            store.append_log(goal_id, f"done-gate dispatch failed: {dispatch_exc}")
             store.transition(
                 goal_id, Event.RESUME_IDLE,
                 replace(base, phase="idle", next="retry done-gate"),
                 expect=base, consume_steering=consume_steering,
             )
-            await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] done-gate dispatch failed: {exc}")
+            await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] done-gate dispatch failed: {dispatch_exc}")
             return Outcome.ERROR
         store.render_mirrors(goal_id)
         _engine_kick(engine)

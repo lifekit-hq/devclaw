@@ -239,7 +239,7 @@ async def _dispatch_action(
                 )
                 ref = _run_atomic(
                     fanout_dispatch(dispatch_action, goal, notify_url, lanes)
-                    if lanes
+                    if lanes and fanout_dispatch is not None  # lanes ⇒ fanout (guard above)
                     else engine.dispatch(dispatch_action, goal, notify_url)
                 )
             except Exception as exc:  # noqa: BLE001 — caught again below, outside the txn
@@ -268,16 +268,15 @@ async def _dispatch_action(
         store.discard_pending_mirrors(goal_id)
         if dispatch_exc is None:
             raise  # a real TransitionConflict/IllegalTransition — propagate untouched
-        exc = dispatch_exc
         # engine.dispatch raised INSIDE the txn → it rolled back cleanly (no
         # row survives). Re-derive today's error path OUTSIDE the aborted
         # unit: a fresh, separate RESUME_IDLE write.
-        store.append_log(goal_id, f"dispatch error ({action.tool}): {exc}")
+        store.append_log(goal_id, f"dispatch error ({action.tool}): {dispatch_exc}")
         store.transition(
             goal_id, Event.RESUME_IDLE, replace(base, phase="idle", next=display),
             expect=base, consume_steering=consume_steering,
         )
-        await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] dispatch failed: {exc}")
+        await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] dispatch failed: {dispatch_exc}")
         return Outcome.ERROR
     # Past this point the dispatch transaction has committed. Render the
     # deferred mirrors, THEN kick the queue to claim/launch the just-committed

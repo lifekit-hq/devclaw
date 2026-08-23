@@ -124,6 +124,8 @@ def parse_status_md(text: str) -> "tuple[GoalStatus, int]":
 
 
 def _int(value: object) -> int:
+    if not isinstance(value, (int, float, str)):
+        return 0
     try:
         return int(value or 0)
     except (TypeError, ValueError):

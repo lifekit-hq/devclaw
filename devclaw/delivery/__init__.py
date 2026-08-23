@@ -626,8 +626,9 @@ async def deliver_change(
     # reused across deliveries. Per-task-branch mode (workspace on the default
     # branch, off-goal, and unpinned) creates a fresh branch per delivery.
     current = await _current_branch(workspace_dir)
-    goal_mode = bool(current) and (
-        current.startswith("goal/") or (target_branch is not None and current == target_branch)
+    goal_mode = bool(
+        current
+        and (current.startswith("goal/") or (target_branch is not None and current == target_branch))
     )
 
     # Prefer the ENGINEER's own commit for the title / branch / PR body — so the
@@ -658,9 +659,9 @@ async def deliver_change(
     # commit-message path below so we don't churn the message shape.
     title = title_slot
 
-    if goal_mode:
+    if goal_mode and current:  # `and current` is a no-op (goal_mode ⇒ current) that narrows the type
         # Stay on the goal branch — every item commits to it cumulatively.
-        branch = current  # type: ignore[assignment]
+        branch = current
         result["branch"] = branch
     else:
         branch = derived_branch

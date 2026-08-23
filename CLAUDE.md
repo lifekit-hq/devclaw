@@ -193,8 +193,9 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~2100 tests, all stubbed — no docker, no claude; ~27s (-n auto)
+pytest        # ~2200 tests, all stubbed — no docker, no claude; ~27s (-n auto)
 ruff check .  # pyflakes + syntax errors only; CI gates it
+mypy          # type check (config in pyproject [tool.mypy]); CI gates it too
 ```
 
 Engine modes (`DEVCLAW_ENGINE`): **unset** = the worker runner in a per-task docker

@@ -14,7 +14,9 @@ pytest.
   you need `pdb`, live output, or ordered failures — xdist swallows all three.
   A test that passes at `-n0` and fails at `-n auto` is a test with hidden
   shared state (a fixed path, a global, a port), not an xdist problem.
-- **`ruff check .` before you open a PR** — CI gates it. The rule set is narrow
+- **`ruff check .` AND `mypy` before you open a PR** — CI gates both (mypy
+  config lives in pyproject `[tool.mypy]`; default strictness, zero-error
+  baseline — ratchet up, never loosen). The rule set is narrow
   on purpose (`select = ["F", "E9"]` in `pyproject.toml`): pyflakes and syntax
   errors, not style. F821 is the one that earns its keep — it catches the name
   a refactor left dangling on a path no test executes.

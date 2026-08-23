@@ -106,7 +106,7 @@ def _slot(raw: object) -> "list[str] | None":
 class GoalStore(GoalStatusMixin, GoalContentMixin):
     def __init__(
         self,
-        goals_dir: Path,
+        goals_dir: "Path | str",
         *,
         now: Callable[[], datetime] = _default_now,
         state: "StateStore | None" = None,

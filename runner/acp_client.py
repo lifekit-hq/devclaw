@@ -145,7 +145,7 @@ def _pick_permission_option(options: object) -> str | None:
     """The optionId to auto-grant with: allow_always ≻ allow_once ≻ first."""
     if not isinstance(options, list) or not options:
         return None
-    by_kind = {}
+    by_kind: dict[object, str] = {}
     for opt in options:
         if isinstance(opt, dict) and opt.get("optionId") is not None:
             by_kind.setdefault(opt.get("kind"), opt["optionId"])
@@ -408,7 +408,8 @@ class AcpClient:
         method = msg.get("method")
         req_id = msg.get("id")
         if method == "session/request_permission":
-            params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+            raw_params = msg.get("params")
+            params = raw_params if isinstance(raw_params, dict) else {}
             options = params.get("options")
             chosen = _pick_permission_option(options)
             if self._cancelling or chosen is None:
@@ -437,12 +438,14 @@ class AcpClient:
 
     def _handle_notification(self, msg: dict) -> None:
         method = msg.get("method")
-        params = msg.get("params") if isinstance(msg.get("params"), dict) else {}
+        raw_params = msg.get("params")
+        params = raw_params if isinstance(raw_params, dict) else {}
         if method != "session/update":
             self._emit("ACPUpdateEvent", "agent", {"method": method, "params": params})
             return
         accumulate_usage(self._usage_acc, params)
-        update = params.get("update") if isinstance(params.get("update"), dict) else {}
+        raw_update = params.get("update")
+        update = raw_update if isinstance(raw_update, dict) else {}
         kind = update.get("sessionUpdate")
         if kind == "agent_message_chunk":
             self._flush_thought()

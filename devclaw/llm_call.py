@@ -273,7 +273,8 @@ def parse_cli_envelope(stdout: str) -> CliEnvelope | None:
         if not isinstance(result, str):
             return None  # envelope-shaped but no usable text → raw fallback
         error_text = ""
-    usage = parsed.get("usage") if isinstance(parsed.get("usage"), dict) else {}
+    raw_usage = parsed.get("usage")
+    usage = raw_usage if isinstance(raw_usage, dict) else {}
     cost = parsed.get("total_cost_usd")
     return CliEnvelope(
         result_text=result if isinstance(result, str) else "",

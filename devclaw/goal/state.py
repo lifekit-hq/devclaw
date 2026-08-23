@@ -522,6 +522,7 @@ class GoalState:
                     "VALUES (?, ?, ?, ?, ?)",
                     (goal_id, source, line, ts, ts if consumed else None),
                 )
+                assert cur.lastrowid is not None  # INSERT always assigns a rowid
                 ids.append(cur.lastrowid)
             self._store._commit()
         return ids

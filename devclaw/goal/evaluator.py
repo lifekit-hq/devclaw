@@ -30,9 +30,9 @@ import asyncio
 import json
 import os
 import re
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, cast
 
-from .models import ClauseVerdict, EvalResult, Goal, GoalStatus, Strictness, is_standing
+from .models import ClauseVerdict, EvalResult, EvalVerdict, Goal, GoalStatus, Strictness, is_standing
 from .prompt_budget import cap_deliveries, cap_log
 
 # The review gate's workspace-snapshot collector (#227), reused to ground the
@@ -438,9 +438,10 @@ def validate(
     criterion" and still terminally closed ``achieved``; this is the fix."""
     if not isinstance(parsed, dict):
         raise GoalEvalError("Eval must be a JSON object")
-    verdict = parsed.get("verdict")
-    if verdict not in _VALID_VERDICTS:
-        raise GoalEvalError(f"verdict must be one of {_VALID_VERDICTS}, got {verdict!r}")
+    raw_verdict = parsed.get("verdict")
+    if raw_verdict not in _VALID_VERDICTS:
+        raise GoalEvalError(f"verdict must be one of {_VALID_VERDICTS}, got {raw_verdict!r}")
+    verdict: EvalVerdict = cast(EvalVerdict, raw_verdict)
     rationale = str(parsed.get("rationale", "")).strip()
     raw_corr = parsed.get("corrections") or []
     corrections = [str(c).strip() for c in raw_corr if str(c).strip()] if isinstance(raw_corr, list) else []
