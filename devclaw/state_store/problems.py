@@ -41,7 +41,11 @@ home shared by the MCP ``list_problems`` tool and the console ``/problems.json``
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    import sqlite3
+    import threading
 
 from .rows import _now_ms
 
@@ -150,6 +154,14 @@ def problem_lifecycle(p: dict) -> str:
 
 
 class ProblemsMixin:
+    if TYPE_CHECKING:
+        # The composing class owns these (its docstring names the same contract in
+        # prose); declared under TYPE_CHECKING so the seam is checked, never run.
+        _db: sqlite3.Connection
+        _lock: threading.RLock
+
+        def _commit(self) -> None: ...
+
     """The single writer to the ``problems`` table. Lives on the SAME
     :class:`~devclaw.state_store.StateStore` instance as every other writer, so
     the single-connection / single-writer / lock semantics are identical — no

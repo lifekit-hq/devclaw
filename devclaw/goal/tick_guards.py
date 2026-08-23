@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 
 from .tick_context import NotifyLevel, Outcome, TickContext, _notify
 from .engine import GoalEngineError
-from .models import Goal, GoalStatus
+from .models import Goal, GoalStatus, Phase
 from .notify import Notifier
 from ..llm_call import ClaudeCaller
 from .store import GoalStore
@@ -141,6 +141,7 @@ async def _block_on_lost_ref(
     be exactly the string-matching ``blocked_kind`` exists to forbid. The
     owner decides how to proceed (typically steer_goal to re-plan)."""
     ref = status.in_flight
+    assert ref is not None  # only reachable from a poll on an in-flight ref
     msg = f"lost in-flight {ref.ref_kind} {ref.id} — {exc}"
     ctx.store.append_log(goal_id, f"poll failed — blocking for the owner: {msg}")
     ctx.store.transition(
@@ -253,7 +254,7 @@ def _heal_unblock(
     cleared, and a preserved in-flight ref restored to its polling phase so it
     settles normally instead of being orphaned."""
     if status.in_flight is not None:
-        restored_phase = "verifying" if status.in_flight.is_done_check else "in_flight"
+        restored_phase: Phase = "verifying" if status.in_flight.is_done_check else "in_flight"
     else:
         restored_phase = "idle"
     return store.transition(

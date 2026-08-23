@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Protocol
 
 from . import mergeability as _mergeability
 from . import prior_increments as _prior_increments
@@ -102,6 +102,16 @@ from .tick_settle import (  # noqa: F401 (re-exported)
 )
 
 
+class TrendDetector(Protocol):
+    """The two hooks the heartbeat drives on :class:`devclaw.trend_detector.TrendDetector`
+    — a Protocol (not an import) because the concrete class imports goal-layer
+    types and a direct import here would cycle."""
+
+    async def run_per_goal(self, *, goal_id: str, workspace_dir: str) -> None: ...
+    async def run_harness_self(self) -> None: ...
+
+
+
 async def tick_goal(
     goal_id: str,
     *,
@@ -115,7 +125,7 @@ async def tick_goal(
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     summary_caller: "ClaudeCaller | None" = None,
-    trend_detector: "object | None" = None,
+    trend_detector: "TrendDetector | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
@@ -549,7 +559,7 @@ async def tick_all(
     verify_done_resolver: "Callable[[Goal], bool] | None" = None,
     autodeploy_resolver: "Callable[[Goal], bool | None] | None" = None,
     tracer_factory: "Callable[[str], _trace.Tracer | None] | None" = None,
-    trend_detector: "object | None" = None,
+    trend_detector: "TrendDetector | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     triage_caller: "ClaudeCaller | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,

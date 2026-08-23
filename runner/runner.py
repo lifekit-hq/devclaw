@@ -27,6 +27,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+from typing import TextIO
 import tempfile
 import time
 import traceback
@@ -39,11 +40,8 @@ _VERIFY_TIMEOUT_S = int(os.environ.get("DEVCLAW_VERIFY_TIMEOUT_S", "900"))
 #: command can't mask a failing stage's exit code (see _run_verify). Resolved
 #: once, with a POSIX-sh fallback for a box without bash — there the masking
 #: risk returns, but a missing shell must not fail every gate.
-_VERIFY_SHELL = (
-    [shutil.which("bash"), "-o", "pipefail", "-c"]
-    if shutil.which("bash")
-    else ["/bin/sh", "-c"]
-)
+_BASH = shutil.which("bash")
+_VERIFY_SHELL = [_BASH, "-o", "pipefail", "-c"] if _BASH else ["/bin/sh", "-c"]
 
 # Skill bundle baked into the sandbox image at /opt/devclaw/skills/. Layout:
 #   _common.md          → always prepended
@@ -262,7 +260,9 @@ def _run_verify(cmd: str, workspace_dir: str, timeout: int = _VERIFY_TIMEOUT_S) 
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        partial = (exc.output or "") + (exc.stderr or "")
+        out_part = exc.output if isinstance(exc.output, str) else ""
+        err_part = exc.stderr if isinstance(exc.stderr, str) else ""
+        partial = out_part + err_part
         return {
             "ran": True, "cmd": cmd, "passed": False, "exit_code": None,
             "timed_out": True, "output": partial[-4000:],
@@ -490,7 +490,9 @@ def _agent_last_words(final_message: str, transcript: str, keep: int = 20_000) -
 # `sys.__stdout__` is the original stdout the process was started with.
 # The prefixed protocol lines (`event:` / `result:`) go straight to it so a
 # stray library print into a swapped `sys.stdout` can never swallow them.
-_PROTO_OUT = sys.__stdout__
+if sys.__stdout__ is None:  # pragma: no cover — no real interpreter hits this
+    raise RuntimeError("runner requires a real stdout for the line protocol")
+_PROTO_OUT: "TextIO" = sys.__stdout__
 
 
 def _emit_result(payload: dict) -> None:

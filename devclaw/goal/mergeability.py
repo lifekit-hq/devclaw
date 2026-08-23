@@ -49,7 +49,9 @@ async def _run_gh(*argv: str) -> tuple[int, str]:
         out, _ = await proc.communicate()
     except Exception as exc:  # noqa: BLE001 — best-effort; never break the tick
         return -1, f"{exc.__class__.__name__}: {exc}"
-    return proc.returncode, out.decode(errors="replace").strip()
+    rc = proc.returncode
+    assert rc is not None  # communicate() returned, so the process exited
+    return rc, out.decode(errors="replace").strip()
 
 
 async def pr_conflicting(pr_url: str) -> Optional[bool]:

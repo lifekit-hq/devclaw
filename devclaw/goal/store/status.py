@@ -17,6 +17,14 @@ monolith.
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from datetime import datetime
+    from typing import Callable
+
+    from ...state_store import StateStore
+    from ..state import GoalState
 
 import yaml
 
@@ -33,6 +41,16 @@ from ...state_store import _now_ms
 
 
 class GoalStatusMixin:
+    if TYPE_CHECKING:
+        # The composing class owns these (its docstring names the same contract in
+        # prose); declared under TYPE_CHECKING so the seam is checked, never run.
+        _state: StateStore
+        _goal_state: GoalState
+        _now: Callable[[], datetime]
+
+        def _write_atomic(self, goal_id: str, name: str, text: str) -> None: ...
+        def _flush_or_defer_status_view(self, goal_id: str, status: GoalStatus) -> None: ...
+
     # ---- status (state) ----------------------------------------------------
 
     @staticmethod
