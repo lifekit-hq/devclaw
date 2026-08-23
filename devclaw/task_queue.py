@@ -67,6 +67,9 @@ from .quality.gate_policy import Consequence, gate_consequence
 from .quality.gate_pipeline import GateInput, run_pipeline
 from .quality.reachability import judge_reachability
 from . import config as _config
+# Module-local bindings on purpose: tests patch host_mem_available_bytes on
+# THIS namespace (the queue's readers resolve it here).
+from .host_resources import _parse_mem, host_mem_available_bytes
 from .quality.task_gates import (
     _BrowserGate,
     _IntegrityGate,
@@ -133,18 +136,6 @@ GLOBAL_MAX_CONCURRENT = _config.GLOBAL_MAX_CONCURRENT
 # and retried it: survivable, but it never asked why the kernel was reaping us.
 # This gates dispatch on REAL free RAM so we never overcommit in the first place.
 # Mechanism, not appeasement (doctrine: fix the repo, don't appease it).
-def _parse_mem(text: str) -> int:
-    """Docker-style memory string (``2g`` / ``512m`` / ``2048k`` / raw bytes) →
-    bytes. Fail-safe: an unparseable value falls back to 2 GiB rather than
-    crashing import — a typo in ``.env`` must not take the queue down."""
-    s = str(text).strip().lower()
-    units = {"k": 1 << 10, "m": 1 << 20, "g": 1 << 30, "b": 1}
-    try:
-        if s and s[-1] in units:
-            return int(float(s[:-1]) * units[s[-1]])
-        return int(s)
-    except (ValueError, TypeError):
-        return 2 << 30
 
 
 #: per-sandbox memory ceiling in bytes — the SAME value the launcher hands to
@@ -158,20 +149,6 @@ COGNITION_MEM_RESERVE_BYTES = _parse_mem(
 )
 MEM_LAUNCH_FLOOR_BYTES = SANDBOX_MEMORY_BYTES + COGNITION_MEM_RESERVE_BYTES
 
-
-def host_mem_available_bytes() -> Optional[int]:
-    """Best-effort ``/proc/meminfo`` ``MemAvailable`` in bytes. Returns ``None``
-    on ANY failure (non-Linux host, missing field, parse error) so dispatch fails
-    OPEN — an unmeasurable host behaves exactly as before and is never wedged.
-    A module global on purpose: tests patch it on THIS namespace."""
-    try:
-        with open("/proc/meminfo", "r", encoding="ascii", errors="replace") as fh:
-            for line in fh:
-                if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) * 1024  # value is in kB
-    except (OSError, ValueError, IndexError):
-        return None
-    return None
 
 
 #: heartbeat interval — the tick re-derives scheduling from DB state
