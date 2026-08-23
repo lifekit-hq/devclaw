@@ -114,8 +114,8 @@ session quota, not a bill.**
 
 ## Goal layer
 
-Behavior that a **project** can own is not env anymore: `automerge`,
-`merge_strategy`, `review_gate`, `verify_done`, `autodeploy` and the CI-gate
+Behavior that a **project** can own is not env anymore: `review_gate`,
+`verify_done`, `autodeploy` and the CI-gate
 stance resolve as *code default → project-registry override* (set via
 `register_project` / `update_project`). The env middle-layer was removed —
 three precedence layers with divergent defaults was a debugging trap.

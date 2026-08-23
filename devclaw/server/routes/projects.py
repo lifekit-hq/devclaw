@@ -23,9 +23,8 @@ from ._projections import (
 )
 
 #: per-project override fields the console may edit, with their validators.
-_OVR_BOOL = ("automerge", "autodeploy", "review_gate", "verify_done")
-_OVR_STR = {"merge_strategy": ("squash", "merge", "rebase"),
-            "browser_gate_mode": ("flexible", "strict")}
+_OVR_BOOL = ("autodeploy", "review_gate", "verify_done")
+_OVR_STR = {"browser_gate_mode": ("flexible", "strict")}
 #: free-form string overrides — validated by shape, not enum. sandbox_image is
 #: a docker image ref (ADR 0005's escape hatch); the shared grammar (defined
 #: at the registry write choke point, which also enforces it as the backstop)
@@ -35,11 +34,9 @@ _OVR_FREE_STR = ("sandbox_image",)
 
 def _project_overrides(p) -> dict:
     return {
-        "automerge": p.automerge,
         "autodeploy": p.autodeploy,
         "review_gate": p.review_gate,
         "verify_done": p.verify_done,
-        "merge_strategy": p.merge_strategy,
         "browser_gate_mode": p.browser_gate_mode,
         "sandbox_image": p.sandbox_image,
     }

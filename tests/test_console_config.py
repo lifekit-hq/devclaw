@@ -93,12 +93,12 @@ def test_config_env_route_returns_vars():
 def test_project_config_get_returns_overrides(tmp_path, monkeypatch):
     from devclaw.server.routes import projects as projects_routes
     reg = _registry(tmp_path)
-    reg.update("p", automerge=True)
+    reg.update("p", autodeploy=True)
     monkeypatch.setattr(projects_routes, "registry", reg)
     status, body = _call(projects_routes.project_config_get, _req({"project_id": "p"}))
     assert status == 200
-    assert body["overrides"]["automerge"] is True
-    assert body["overrides"]["merge_strategy"] is None  # unset = inherit
+    assert body["overrides"]["autodeploy"] is True
+    assert body["overrides"]["browser_gate_mode"] is None  # unset = inherit
 
 
 def test_project_config_get_404_unknown(tmp_path, monkeypatch):
@@ -114,16 +114,16 @@ def test_project_config_set_persists_and_clears(tmp_path, monkeypatch):
     monkeypatch.setattr(projects_routes, "registry", reg)
     status, body = _call(
         projects_routes.project_config_set,
-        _req({"project_id": "p"}, {"automerge": True, "merge_strategy": "rebase"}),
+        _req({"project_id": "p"}, {"autodeploy": True, "browser_gate_mode": "strict"}),
     )
     assert status == 200
-    assert body["overrides"]["automerge"] is True
-    assert body["overrides"]["merge_strategy"] == "rebase"
-    assert reg.get("p").automerge is True and reg.get("p").merge_strategy == "rebase"
+    assert body["overrides"]["autodeploy"] is True
+    assert body["overrides"]["browser_gate_mode"] == "strict"
+    assert reg.get("p").autodeploy is True and reg.get("p").browser_gate_mode == "strict"
     # null clears back to inherit
-    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"automerge": None}))
-    assert status == 200 and body["overrides"]["automerge"] is None
-    assert reg.get("p").automerge is None
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"autodeploy": None}))
+    assert status == 200 and body["overrides"]["autodeploy"] is None
+    assert reg.get("p").autodeploy is None
 
 
 def test_project_config_set_rejects_unknown_field(tmp_path, monkeypatch):
@@ -136,14 +136,14 @@ def test_project_config_set_rejects_unknown_field(tmp_path, monkeypatch):
 def test_project_config_set_rejects_bad_enum(tmp_path, monkeypatch):
     from devclaw.server.routes import projects as projects_routes
     monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
-    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"merge_strategy": "octopus"}))
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"browser_gate_mode": "octopus"}))
     assert status == 400 and body["error"] == "bad_value"
 
 
 def test_project_config_set_rejects_wrong_type(tmp_path, monkeypatch):
     from devclaw.server.routes import projects as projects_routes
     monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
-    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"automerge": "yes"}))
+    status, body = _call(projects_routes.project_config_set, _req({"project_id": "p"}, {"autodeploy": "yes"}))
     assert status == 400 and body["error"] == "bad_value"
 
 
@@ -157,5 +157,5 @@ def test_project_config_set_empty_patch_is_400(tmp_path, monkeypatch):
 def test_project_config_set_404_unknown(tmp_path, monkeypatch):
     from devclaw.server.routes import projects as projects_routes
     monkeypatch.setattr(projects_routes, "registry", _registry(tmp_path))
-    status, _ = _call(projects_routes.project_config_set, _req({"project_id": "nope"}, {"automerge": True}))
+    status, _ = _call(projects_routes.project_config_set, _req({"project_id": "nope"}, {"autodeploy": True}))
     assert status == 404

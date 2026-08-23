@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 from ..advance_brief import display_goal as _display_goal
 from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
-from . import merge as goal_merge
+from . import mergeability as goal_mergeability
 from . import project_hold as _project_hold
 from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
@@ -125,8 +125,8 @@ class GoalService:
         self._evaluator_caller = evaluator_caller
         self._summary_caller = summary_caller
         self._triage_caller = triage_caller
-        #: used only to resolve per-project automerge overrides (see _merger).
-        #: None is fine — automerge just falls back to the global default.
+        #: used to resolve per-project overrides (verify_done, autodeploy).
+        #: None is fine — each falls back to its devclaw-wide default.
         self._project_registry = project_registry
         self._notifier: Notifier = notifier or (
             HttpNotifier(self._cfg.notify_url) if self._cfg.notify_url else NullNotifier()
@@ -199,25 +199,6 @@ class GoalService:
             self._triage_caller = goal_triage.default_caller()
         return self._triage_caller
 
-    def _merger(self, goal: "Optional[Goal]" = None) -> "Optional[goal_merge.Merger]":
-        """The auto-merger for hands-off delivery (decision 2) — resolved for
-        THIS goal's repo: its owning project's ``automerge`` override if one is
-        set, else the devclaw-wide ``DEVCLAW_GOAL_AUTOMERGE`` default. Merging
-        to the default branch is opt-in either way. ``goal=None`` (e.g. the
-        firming phase, which never merges) just falls back to the global
-        default since there's no project to look up."""
-        project_id = goal.project_id if goal is not None else None
-        if not goal_merge.resolve_automerge(self._project_registry, project_id):
-            return None
-        strategy = goal_merge.resolve_merge_strategy(self._project_registry, project_id)
-        return goal_merge.default_merger(strategy)
-
-    def _merger_resolver(self) -> "Callable[[Goal], Optional[goal_merge.Merger]]":
-        """Bound for tick_all, which ticks every goal in one sweep and needs a
-        fresh per-goal automerge decision rather than one value for the whole
-        fleet (a project override for goal A must not leak onto goal B)."""
-        return self._merger
-
     def _remote_checker(self) -> "Optional[goal_remote_checks.RemoteChecker]":
         """Grounded remote-checks verification at the done-gate (the 2026-07-06
         benchmark fix). On by default; DEVCLAW_GOAL_REMOTE_CHECKS=0 disables —
@@ -242,7 +223,7 @@ class GoalService:
     def _verify_done_resolver(self) -> "Callable[[Goal], bool]":
         """Per-goal ``verify_done`` for tick_all's sweep — a project override
         for one goal must not leak onto another (same reason as
-        :meth:`_merger_resolver`)."""
+        :meth:`_verify_done_resolver`)."""
         return self._verify_done
 
     def _autodeploy(self, goal: "Optional[Goal]" = None) -> "Optional[bool]":
@@ -263,7 +244,7 @@ class GoalService:
 
     def _autodeploy_resolver(self) -> "Callable[[Goal], Optional[bool]]":
         """Per-goal ``autodeploy`` for tick_all's sweep (same reason as
-        :meth:`_merger_resolver`)."""
+        :meth:`_verify_done_resolver`)."""
         return self._autodeploy
 
     def backfill_project_ids(self) -> int:
@@ -446,12 +427,12 @@ class GoalService:
             verify_done=self._cfg.verify_done,
             verify_done_resolver=self._verify_done_resolver(),
             autodeploy=self._cfg.autodeploy, autodeploy_resolver=self._autodeploy_resolver(),
-            summary_caller=self._summary(), merger_resolver=self._merger_resolver(),
+            summary_caller=self._summary(),
             tracer_factory=self._make_tracer,
             trend_detector=self._trend_detector(),
             remote_checker=self._remote_checker(),
             triage_caller=self._triage(),
-            mergeability_probe=goal_merge.pr_conflicting,
+            mergeability_probe=goal_mergeability.pr_conflicting,
             project_workspaces=self._registered_workspaces,
         )
         # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
@@ -469,10 +450,10 @@ class GoalService:
                 notifier=self._notifier, notify_url="",
                 verify_done=self._verify_done(goal),
                 autodeploy=self._autodeploy(goal),
-                summary_caller=self._summary(), merger=self._merger(goal),
+                summary_caller=self._summary(),
                 trend_detector=self._trend_detector(),
                 remote_checker=self._remote_checker(),
-                mergeability_probe=goal_merge.pr_conflicting,
+                mergeability_probe=goal_mergeability.pr_conflicting,
             )
         return outcome.value
 

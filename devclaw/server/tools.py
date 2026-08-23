@@ -1516,8 +1516,6 @@ async def register_project(
     workspace_dir: Optional[str] = None,
     preview_url: Optional[str] = None,
     notes: str = "",
-    automerge: Optional[Literal["on", "off"]] = None,
-    merge_strategy: Optional[Literal["squash", "merge", "rebase"]] = None,
     autodeploy: Optional[Literal["on", "off"]] = None,
     review_gate: Optional[Literal["on", "off"]] = None,
     verify_done: Optional[Literal["on", "off"]] = None,
@@ -1530,8 +1528,6 @@ async def register_project(
     Per-project override knobs (each overrides its devclaw-wide env default;
     omit to inherit — the usual choice). This is the ONLY place these are
     configured per repo; a goal itself carries none of them:
-      - ``automerge`` — auto-merge gate-passed PRs (DEVCLAW_GOAL_AUTOMERGE).
-      - ``merge_strategy`` — squash|merge|rebase for the merge (DEVCLAW_GOAL_MERGE_STRATEGY).
       - ``autodeploy`` — deploy on goal completion (devclaw default: conditional —
         on only when the workspace has an app surface the preview launcher can
         serve; a pure library gets no preview container. 'on'/'off' pins it).
@@ -1544,8 +1540,6 @@ async def register_project(
         p = registry.create(
             id=project_id, name=name, repo_url=repo_url,
             workspace_dir=workspace_dir, preview_url=preview_url, notes=notes,
-            automerge=(None if automerge is None else automerge == "on"),
-            merge_strategy=merge_strategy,
             autodeploy=(None if autodeploy is None else _onoff[autodeploy]),
             review_gate=(None if review_gate is None else _onoff[review_gate]),
             verify_done=(None if verify_done is None else _onoff[verify_done]),
@@ -1588,8 +1582,6 @@ async def update_project(
     preview_url: Optional[str] = None,
     status: Optional[Literal["active", "paused", "archived"]] = None,
     notes: Optional[str] = None,
-    automerge: Optional[Literal["on", "off", "inherit"]] = None,
-    merge_strategy: Optional[Literal["squash", "merge", "rebase", "inherit"]] = None,
     autodeploy: Optional[Literal["on", "off", "inherit"]] = None,
     review_gate: Optional[Literal["on", "off", "inherit"]] = None,
     verify_done: Optional[Literal["on", "off", "inherit"]] = None,
@@ -1598,22 +1590,19 @@ async def update_project(
     """Update a registered project's facts — only the fields you pass change. Use to
     record a preview URL, pause/archive it, or correct the repo/workspace.
 
-    Per-project override knobs — ``automerge`` / ``merge_strategy`` /
-    ``autodeploy`` / ``review_gate`` / ``verify_done`` / ``sandbox_image`` —
+    Per-project override knobs — ``autodeploy`` / ``review_gate`` /
+    ``verify_done`` / ``sandbox_image`` —
     each take a concrete value to PIN this project (overriding its devclaw-wide
     env default), 'inherit' to CLEAR a prior override back to that default, or
     omit to leave whatever is currently set untouched. (bool knobs take
-    'on'/'off'; merge_strategy takes 'squash'/'merge'/'rebase'; sandbox_image
-    takes a docker image ref — ADR 0005's escape hatch, e.g. pin
+    'on'/'off'; sandbox_image takes a docker image ref — ADR 0005's escape hatch, e.g. pin
     'devclaw-sandbox-dotnet:local' until the mise path passes its gate.)"""
     override_kwargs: dict = {}
     _onoff = {"on": True, "off": False, "inherit": None}
-    for field, val in (("automerge", automerge), ("autodeploy", autodeploy),
+    for field, val in (("autodeploy", autodeploy),
                        ("review_gate", review_gate), ("verify_done", verify_done)):
         if val is not None:
             override_kwargs[field] = _onoff[val]
-    if merge_strategy is not None:
-        override_kwargs["merge_strategy"] = None if merge_strategy == "inherit" else merge_strategy
     if sandbox_image is not None:
         override_kwargs["sandbox_image"] = None if sandbox_image == "inherit" else sandbox_image
     try:

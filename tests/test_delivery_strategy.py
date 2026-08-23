@@ -7,9 +7,12 @@ NULL — i.e. one created before the column existed. Both modes have stamped
 being reachable then; the #616 cutoff migrated the last rows that could take
 it and deleted the selection rule.
 
-``PER_ACTION`` itself is deliberately KEPT as the named second topology —
-whether devclaw should regain it (and with it auto-merge, which only fires
-for a per-action delivery) is a design decision, not demolition.
+``PER_ACTION`` and the auto-merge it was the selector for were DELETED in #641
+once that reasoning was followed through: goal-branch delivery makes one
+cumulative PR that must stay open for the done-gate, so nothing could ever
+merge per action again, and in companion mode a human reviews and merges
+anyway. What remains here is branch selection, and a guard that a second
+topology can only come back deliberately.
 """
 
 from dataclasses import dataclass
@@ -44,11 +47,12 @@ def test_executing_lifecycle_resolves_goal_branch():
 
 
 def test_no_stored_lifecycle_value_can_select_per_action_delivery():
-    """#616 regression. A NULL lifecycle used to resolve to PER_ACTION, and a
+    """#616 regression. A NULL lifecycle used to resolve to per-action, and a
     pre-shrink "investigating"/"firming" string did too. Those rows are gone
-    (the cutoff migrated them) and so is the rule — but the rule is the part
-    that matters: resurrecting per-action must be a deliberate change to this
-    function, never an accident of a row shape nobody expected.
+    (the cutoff migrated them) and so is the rule and the strategy itself
+    (#641) — but the rule is the part that matters: resurrecting per-action
+    must be a deliberate change to this function, never an accident of a row
+    shape nobody expected.
 
     Every value, including one from a history nobody documented, resolves to
     goal-branch."""
@@ -56,12 +60,15 @@ def test_no_stored_lifecycle_value_can_select_per_action_delivery():
         assert ds.resolve_strategy(_FakeStore(lifecycle=lc), "g1") is ds.GOAL_BRANCH
 
 
-def test_per_action_remains_available_as_the_second_topology():
-    """It is unselected, not deleted: auto-merge keys off ``goal_branch(...)
-    is None``, so removing the class would silently delete that subsystem's
-    only reachable trigger along with it."""
-    assert ds.PER_ACTION.goal_branch("g1") is None
-    assert ds.PER_ACTION.name == "per-action"
+def test_the_module_offers_no_second_topology_to_select(): 
+    """#641. Per-action delivery is gone, not merely unselected. The seam
+    (Protocol + resolver) survives so a future topology has one place to plug
+    in, but nothing ships a strategy that returns "no goal branch" — a
+    ``goal_branch()`` that can return None is what let auto-merge fire on the
+    cumulative PR and delete the goal branch mid-flight (#486)."""
+    assert not hasattr(ds, "PER_ACTION")
+    assert not hasattr(ds, "PerActionStrategy")
+    assert ds.GOAL_BRANCH.goal_branch("g1") == "goal/g1"
 
 
 def test_fresh_goals_of_both_modes_resolve_goal_branch_delivery(tmp_path):

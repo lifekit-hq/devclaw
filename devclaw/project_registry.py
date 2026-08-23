@@ -49,8 +49,8 @@ GoalGet = Callable[[str], dict]
 
 #: sentinel distinguishing "field not supplied" (leave unchanged) from an
 #: explicit ``None`` (clear the override, fall back to the global default).
-#: Every per-project OVERRIDE field (``automerge``, ``merge_strategy``,
-#: ``autodeploy``, ``review_gate``, ``verify_done``) uses this three-way
+#: Every per-project OVERRIDE field (``autodeploy``, ``review_gate``,
+#: ``verify_done``, ``browser_gate_mode``, ``sandbox_image``) uses this three-way
 #: partial-update semantics.
 _UNSET: Any = object()
 
@@ -58,8 +58,8 @@ _UNSET: Any = object()
 #: stay in lockstep. Each is nullable = "inherit the devclaw-wide default"; a
 #: non-null value pins this project's behaviour regardless of the env default.
 #: ``bool`` fields persist as INTEGER (0/1), ``str`` fields as TEXT.
-_OVERRIDE_BOOL_FIELDS = ("automerge", "autodeploy", "review_gate", "verify_done")
-_OVERRIDE_STR_FIELDS = ("merge_strategy", "browser_gate_mode", "sandbox_image")
+_OVERRIDE_BOOL_FIELDS = ("autodeploy", "review_gate", "verify_done")
+_OVERRIDE_STR_FIELDS = ("browser_gate_mode", "sandbox_image")
 _OVERRIDE_FIELDS = _OVERRIDE_BOOL_FIELDS + _OVERRIDE_STR_FIELDS
 
 #: docker image-ref grammar for the ``sandbox_image`` override, enforced at
@@ -126,17 +126,10 @@ class Project:
     #: durable goals driving this project — linked by id, never copied
     goal_ids: list[str] = field(default_factory=list)
     notes: str = ""
-    #: per-project auto-merge override. ``None`` (the default) means "inherit
-    #: the devclaw-wide DEVCLAW_GOAL_AUTOMERGE default"; ``True``/``False``
-    #: pins this project regardless of the global default. This is the ONLY
-    #: place auto-merge is configured — a goal's own goal.yaml has no
-    #: automerge field (see devclaw.goal.merge.resolve_automerge).
-    automerge: Optional[bool] = None
     #: per-project overrides for delivery/quality knobs that are otherwise
     #: devclaw-wide env defaults. ``None`` = inherit the default; a set value
-    #: pins this repo. Same altitude as ``automerge`` — a decision about a
-    #: REPO, not a goal's objective. Resolved via :meth:`resolve_override`.
-    merge_strategy: Optional[str] = None  # DEVCLAW_GOAL_MERGE_STRATEGY: squash|merge|rebase
+    #: pins this repo. A decision about a REPO, not a goal's objective.
+    #: Resolved via :meth:`resolve_override`.
     autodeploy: Optional[bool] = None     # None = conditional default (app surface ⇒ on, library ⇒ off)
     review_gate: Optional[bool] = None    # devclaw default: task_queue.REVIEW_GATE_ENABLED
     verify_done: Optional[bool] = None    # DEVCLAW_GOAL_VERIFY_DONE
@@ -159,8 +152,6 @@ class Project:
             "status": self.status,
             "goalIds": list(self.goal_ids),
             "notes": self.notes,
-            "automerge": self.automerge,
-            "mergeStrategy": self.merge_strategy,
             "autodeploy": self.autodeploy,
             "reviewGate": self.review_gate,
             "verifyDone": self.verify_done,
@@ -200,8 +191,6 @@ def _row_to_project(r: sqlite3.Row) -> Project:
         status=r["status"],
         goal_ids=goal_ids,
         notes=r["notes"] or "",
-        automerge=_bool_col("automerge"),
-        merge_strategy=_str_col("merge_strategy"),
         autodeploy=_bool_col("autodeploy"),
         review_gate=_bool_col("review_gate"),
         verify_done=_bool_col("verify_done"),
@@ -267,8 +256,6 @@ class ProjectRegistry:
                   status        TEXT NOT NULL DEFAULT 'active',
                   goal_ids      TEXT,
                   notes         TEXT,
-                  automerge     INTEGER,
-                  merge_strategy TEXT,
                   autodeploy    INTEGER,
                   review_gate   INTEGER,
                   verify_done   INTEGER,
@@ -324,8 +311,6 @@ class ProjectRegistry:
         preview_url: Optional[str] = None,
         notes: str = "",
         goal_ids: Optional[list[str]] = None,
-        automerge: Optional[bool] = None,
-        merge_strategy: Optional[str] = None,
         autodeploy: Optional[bool] = None,
         review_gate: Optional[bool] = None,
         verify_done: Optional[bool] = None,
@@ -337,7 +322,7 @@ class ProjectRegistry:
         p = Project(
             id=id, name=name, repo_url=repo_url, workspace_dir=workspace_dir,
             preview_url=preview_url, notes=notes, goal_ids=list(goal_ids or []),
-            automerge=automerge, merge_strategy=merge_strategy, autodeploy=autodeploy,
+            autodeploy=autodeploy,
             review_gate=review_gate, verify_done=verify_done,
             browser_gate_mode=browser_gate_mode, sandbox_image=sandbox_image,
         )
@@ -346,14 +331,14 @@ class ProjectRegistry:
                 self._db.execute(
                     """INSERT INTO projects
                          (id, name, repo_url, workspace_dir, preview_url, status,
-                          goal_ids, notes, automerge, merge_strategy, autodeploy,
+                          goal_ids, notes, autodeploy,
                           review_gate, verify_done, browser_gate_mode, sandbox_image,
                           created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         p.id, p.name, p.repo_url, p.workspace_dir, p.preview_url,
                         p.status, json.dumps(p.goal_ids), p.notes,
-                        _bool_db(p.automerge), p.merge_strategy, _bool_db(p.autodeploy),
+                        _bool_db(p.autodeploy),
                         _bool_db(p.review_gate), _bool_db(p.verify_done),
                         p.browser_gate_mode, p.sandbox_image,
                         p.created_at, p.updated_at,
@@ -400,8 +385,6 @@ class ProjectRegistry:
         preview_url: Optional[str] = None,
         status: Optional[ProjectStatus] = None,
         notes: Optional[str] = None,
-        automerge: Optional[bool] = _UNSET,
-        merge_strategy: Optional[str] = _UNSET,
         autodeploy: Optional[bool] = _UNSET,
         review_gate: Optional[bool] = _UNSET,
         verify_done: Optional[bool] = _UNSET,
@@ -411,7 +394,7 @@ class ProjectRegistry:
         """Partial update — only the supplied fields change. Returns the updated
         project. Raises KeyError if unknown. ``updated_at`` always bumps.
 
-        The per-project override fields (``automerge``, ``merge_strategy``,
+        The per-project override fields (``autodeploy``,
         ``autodeploy``, ``review_gate``, ``verify_done``) use three-way
         semantics (unlike the plain fields): omit one entirely to leave the
         current override untouched; pass a concrete value to pin it; pass
@@ -434,10 +417,6 @@ class ProjectRegistry:
             p.status = status
         if notes is not None:
             p.notes = notes
-        if automerge is not _UNSET:
-            p.automerge = automerge
-        if merge_strategy is not _UNSET:
-            p.merge_strategy = merge_strategy
         if autodeploy is not _UNSET:
             p.autodeploy = autodeploy
         if review_gate is not _UNSET:
@@ -485,14 +464,14 @@ class ProjectRegistry:
             self._db.execute(
                 """UPDATE projects SET
                      name=?, repo_url=?, workspace_dir=?, preview_url=?, status=?,
-                     goal_ids=?, notes=?, automerge=?, merge_strategy=?, autodeploy=?,
+                     goal_ids=?, notes=?, autodeploy=?,
                      review_gate=?, verify_done=?, browser_gate_mode=?, sandbox_image=?,
                      updated_at=?
                    WHERE id=?""",
                 (
                     p.name, p.repo_url, p.workspace_dir, p.preview_url, p.status,
                     json.dumps(p.goal_ids), p.notes,
-                    _bool_db(p.automerge), p.merge_strategy, _bool_db(p.autodeploy),
+                    _bool_db(p.autodeploy),
                     _bool_db(p.review_gate), _bool_db(p.verify_done),
                     p.browser_gate_mode, p.sandbox_image,
                     p.updated_at, p.id,

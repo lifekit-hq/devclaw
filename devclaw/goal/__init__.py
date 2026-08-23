@@ -9,7 +9,7 @@ is achieving the objective. Modules:
   - ``store``     — durable on-disk storage (goal.yaml + STATUS.md + log.md + …)
   - ``evaluator`` — judges direction vs ``done_when``, writes corrections back
   - ``summary``   — plain-prose summary of an action for ``deliveries.md``
-  - ``merge``     — auto-merge a PR once gates are green (off by default)
+  - ``mergeability`` — read-only probe: has a delivered PR gone CONFLICTING?
   - ``notify``    — notify hooks (HTTP webhook + null fallback)
   - ``engine``    — dispatches actions into the task queue in-process
   - ``tick``      — the heartbeat loop (the chef's clock)

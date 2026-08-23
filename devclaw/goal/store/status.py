@@ -201,7 +201,7 @@ class GoalStatusMixin:
         """Column-only telemetry update — ``last_tick_at`` / ``last_plan_at`` /
         ``last_progress_at`` / ``no_progress_notified`` / ``last_eval_verdict``
         / ``last_eval_at`` / ``last_eval_note`` /
-        ``heal_attempts`` / ``next_heal_at`` / ``open_unmerged_pr`` ONLY (see
+        ``heal_attempts`` / ``next_heal_at`` ONLY (see
         :data:`GoalState.STATUS_FIELD_COLUMNS`). NEVER a full-row
         rewrite, so it can never be the write that clobbers a concurrent
         phase/lifecycle/in_flight transition — this is the mechanism half of
@@ -315,7 +315,6 @@ class GoalStatusMixin:
             "last_eval_note": status.last_eval_note,
             "last_progress_at": status.last_progress_at,
             "no_progress_notified": status.no_progress_notified,
-            "open_unmerged_pr": status.open_unmerged_pr,
             "phase_history": [dict(e) for e in status.phase_history],
         }
         body = self._render_status_body(goal_id, status)

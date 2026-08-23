@@ -52,7 +52,7 @@ def backfill_project_ids_once(
     (``find_by_workspace_dir`` — this is its sole surviving caller; the runtime
     joins are all id-keyed now). Without the stamp, a long-lived goal in flight
     at deploy time would lose its owning project's pinned knobs
-    (automerge/verify_done/autodeploy) and fall to the devclaw-wide defaults.
+    (verify_done/autodeploy) and fall to the devclaw-wide defaults.
 
     Zero-token and zero-cognition. Returns the count stamped — 0 on every call
     after the first, and 0 (without stamping) when there is no registry to

@@ -107,7 +107,7 @@ devclaw/
 │   ├── evaluator.py    #   direction evaluation, grounded in deliveries.md
 │   ├── store/          #   GoalStore — goal.yaml (facts) + SQLite status/steering/log/deliveries/docs (base · status · content)
 │   ├── engine.py       #   in-process dispatch into the task queue
-│   ├── merge.py · notify.py · summary.py · models.py
+│   ├── mergeability.py · notify.py · summary.py · models.py
 ├── engine/             # everything that EXECUTES the work:
 │   ├── __init__.py     #   the Engine protocol (one async callable)
 │   ├── sandcastle.py   #   docker run --rm per task; events stream from the runner (production)
