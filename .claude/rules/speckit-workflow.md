@@ -31,10 +31,26 @@ never write there.
   invariant change must say so explicitly and amend the constitution in the
   same arc. `CLAUDE.md` remains the repo contract; on conflict `CLAUDE.md`
   wins and the constitution is corrected in the same PR.
-- **Slice, don't estimate** (kept from the old rule): break novel work into
-  independently-shippable P1/P2/P3 increments, firm and size only P1 in
-  devclaw's own units (N PRs, an end-of-week cap); leave P2/P3 named-unsized
-  in the spec until P1 lands.
+- **Slice for reviewability, never for scope** (ruled by Denys 2026-08-22,
+  replacing "slice, don't estimate — firm only P1"). Break novel work into
+  independently-shippable P1/P2/P3 increments so each lands as ONE coherent,
+  reviewable PR. The increment is the unit of REVIEW. It is not the unit of
+  commitment — **the whole spec is the commitment.**
+  - **P1 landing is not a stopping point.** Keep going until every user story
+    in the spec is built, or say out loud which are dropped and why. A spec
+    left carrying "SPECIFIED, NOT IMPLEMENTED" is unfinished work with no
+    owner, not a deferral — that is how 007, 008, 010 and 012 each ended up
+    part-built with nothing tracking the remainder.
+  - **When a goal drives the work, `done_when` covers the WHOLE spec**, so the
+    done-gate keeps chaining increments until the scope is met instead of
+    closing after the first one. Scoping `done_when` to P1 is what made the
+    autonomous path stop; the chaining mechanism already exists and is
+    progress-aware (a successful dispatch is refunded against the cap), so a
+    healthy full-scope goal runs to completion.
+  - What survives from the old rule: still don't estimate in human-scale time,
+    and still don't over-design P3 before P1 teaches you something. If P1's
+    outcome changes what P2/P3 should be, **revise the spec and keep going** —
+    revision is not a reason to stop.
 
 ## Out of scope (existing rules apply, unchanged)
 
