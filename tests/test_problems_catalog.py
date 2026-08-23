@@ -197,7 +197,7 @@ def test_force_block_records_a_bug_block(tmp_path):
 def test_mark_failed_records_a_task_fail_problem(tmp_path):
     s = _store(tmp_path)
     s.create_task(id="t1", kind="implement_feature", workspace_dir="/repos/x", goal="do it")
-    s.mark_running("t1")
+    s.claim_pending("t1")
     s.mark_failed("t1", "AssertionError: expected /health to return 200\n  full trace...")
     rows = s.list_problems(category="task_fail")
     assert len(rows) == 1
@@ -211,7 +211,7 @@ def test_mark_failed_noop_on_terminal_task_does_not_record(tmp_path):
     # a late duplicate settle can't inflate the count.
     s = _store(tmp_path)
     s.create_task(id="t1", kind="implement_feature", workspace_dir="/repos/x", goal="do it")
-    s.mark_running("t1")
+    s.claim_pending("t1")
     s.mark_failed("t1", "boom")
     s.mark_failed("t1", "boom again")  # no-op: t1 is already 'failed'
     assert s.count_problems() == 1
@@ -299,7 +299,7 @@ def test_recording_a_problem_makes_no_cognition_call(tmp_path):
         expect=s,
     )
     store._state.create_task(id="t", kind="implement_feature", workspace_dir="/x", goal="g")
-    store._state.mark_running("t")
+    store._state.claim_pending("t")
     store._state.mark_failed("t", "boom")
     store._state.set_global_pause(_pause_until(), "quota: out of usage")
     assert claude.calls == 0  # pure mechanism — no LLM anywhere on these paths

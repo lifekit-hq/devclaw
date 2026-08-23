@@ -219,7 +219,7 @@ async def test_crash_recovery_requeue_does_not_count_as_pause(store):
     pause-requeue budget — only quota-pause requeues increment pause_count."""
     tid = "t1"
     store.create_task(id=tid, kind="implement_feature", workspace_dir="/ws", goal="g")
-    store.mark_running(tid)
+    store.claim_pending(tid)
     store.reset_running_to_pending()
     assert store.get_task(tid).pause_count == 0
 

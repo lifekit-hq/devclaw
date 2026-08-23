@@ -70,7 +70,7 @@ def _seed(store: StateStore, *, result_json: str | None = json.dumps(_RESULT)) -
         workspace_dir="/w", goal="Build the thing.\n\nACCEPTANCE: it works.",
         verify_cmd="dotnet test", deliver=True,
     )
-    store.mark_running(_TASK_ID)
+    store.claim_pending(_TASK_ID)
     if result_json is not None:
         store.mark_done(_TASK_ID, result_json, pr_url="https://github.com/o/r/pull/9")
 
