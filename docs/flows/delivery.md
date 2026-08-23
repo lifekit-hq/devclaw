@@ -1,60 +1,18 @@
 # Delivery flows — how work becomes merged code
 
 How a goal's dispatches turn into PRs, how those PRs reach `main`, and where
-the dispatch-cap backstop sits. Three delivery shapes exist; which one a
-dispatch uses decides the PR shape you see on GitHub.
+the dispatch-cap backstop sits.
 
-Automerge is resolved per goal **before** any of this runs: the project
-registry's `automerge` override wins, else the fleet-wide
-`DEVCLAW_GOAL_AUTOMERGE` default (`goal/merge.py:resolve_automerge`). "On"
-means the tick is handed a merger callable; "off" means it is handed none.
+**devclaw never merges.** Every PR it opens is landed by a human. Auto-merge,
+the per-action delivery topology it keyed off, and the program PR-stack
+reconciler were all deleted in #641 — see "Why nothing merges" below.
 
-## Shape 1 — per-action mode (legacy rows only): one task = one PR
+## The shape: one goal = one shared branch = one cumulative PR
 
-Only goals predating the executing-only lifecycle (`lifecycle=NULL` rows —
-`goal/delivery_strategy.py` picks per-action for those alone; every goal
-created today gets Shape 2). Every dispatch forks a fresh branch off current
-`main`.
-
-```
-              heartbeat dispatches an advance
-                        |
-                        v
-        workspace reset to origin/main  (pristine checkout)
-                        |
-                        v
-              engineer runs in sandbox
-              commits -> opens PR #N
-                        |
-                        v
-              sandbox verify gate runs
-                        |
-          +-------------+--------------+
-          | gate PASSED               | gate FAILED / task failed
-          v                           v
-   automerge ON?                 PR left open
-     |        |                  counts +1 toward dispatch cap
-     | yes    | no               settle detail records the failure
-     v        v
-  squash-   PR left open,
-  merge     settle detail says
-  to main   "pr_state=open (unmerged —
-     |       owner review pending)"
-     v
-  next dispatch forks from
-  UPDATED main -> no overlap
-```
-
-**Automerge off + dependent tasks is a misconfiguration in this mode**: the
-next dispatch forks from a `main` that lacks the previous (unmerged) delivery,
-so the engineer re-implements or conflicts. The goal branch (Shape 2) exists
-to prevent exactly this — legacy rows can be cancelled and recreated.
-
-## Shape 2 — goal branch (the standard shape): one goal = one PR, many commits
-
-Every goal with `lifecycle="executing"` — i.e. every goal created since the
-spec-008 shrink. The worker plans in-sandbox (speckit `specs/*/` artifacts in
-the repo); the shared goal branch is the delivery surface.
+Every goal has `lifecycle="executing"` — i.e. every goal created since the
+spec-008 shrink — and `goal/delivery_strategy.py` returns the same answer for
+all of them. The worker plans in-sandbox (speckit `specs/*/` artifacts in the
+repo); the shared goal branch is the delivery surface.
 
 ```
         every dispatch checks out the SHARED
@@ -65,62 +23,57 @@ the repo); the shared goal branch is the delivery surface.
         all pushes go to the SAME PR
                         |
                         v
-        automerge deliberately SKIPPED per advance
-        (merging would delete the shared branch
-         and fork the next advance back to main)
+        the PR stays OPEN for the whole goal
+        (merging it would delete the shared
+         branch and fork the next advance
+         back to main — the 2026-08-08 amnesia)
                         |
                         v
         done-gate = the single review moment
         for the one cumulative PR
-```
-
-No overlap by construction, nothing for automerge to do mid-goal. This shape
-is safe with automerge off.
-
-## Shape 3 — programs: one program = a stack of PRs + reconcile at settle
-
-Programs are the queue's DAG substrate. Since the spec-008 shrink nothing
-host-side *produces* a plan (the default planner refuses loudly), so a
-program runs only when a caller submits an explicitly pre-planned DAG. Each
-task opens its own PR **based on the previous task's branch** (closeloop
-#66 → #67 → #68).
-
-A program settles with `gate_passed=None` (many per-task gates, no single
-verdict), so Shape 1's automerge can't touch the stack. Before 2026-07-09 the
-goal burned follow-up dispatches shepherding its own PRs to main — and when a
-shepherding dispatch landed the content as one consolidating squash, the
-source PRs stayed open as zombies. The **reconcile step** replaces that:
-
-```
-        program settles "done"  (automerge resolved ON)
                         |
                         v
-        for each PR in the stack, IN ORDER (base-most first):
-                        |
-        +---------------+------------------------------+
-        |               |               |              |
-        v               v               v              v
-   already        diff already     mergeable +    conflicting /
-   merged/closed  on main          checks green   checks red / probe failed
-        |         (reverse-apply        |              |
-        |          test passes)         |              |
-        v               v               v              v
-      skip        close PR with     squash-merge   LEFT OPEN with the
-                  "superseded"      (same merger   reason in the summary
-                  comment           as Shape 1)        |
-                                                       v
-                                          surfaced in finished_detail;
-                                          the owner decides whether a
-                                          fix is worth it
+        the HUMAN merges
 ```
 
-Sequential on purpose: merging PR k re-bases k+1 and re-runs its checks, so
-k+1's state only means something after k landed. Every branch is best-effort —
-a failed probe/close/merge degrades to "left open", never breaks the tick.
-With automerge off the reconcile step does not run at all; the owner reviews
-program PRs by hand, same contract as Shape 1.
+Increments never overlap by construction, so there is nothing to merge
+mid-goal. A settled delivery gets one read-only advisory: a `gh pr view` asking
+whether the PR has gone CONFLICTING with its base
+(`goal/mergeability.py:pr_conflicting`). A CONFLICTING verdict logs and pages
+the owner — the next increment would otherwise stack onto a branch that can no
+longer land. An unknown verdict says nothing; it never reads as "all clear".
 
-## The dispatch cap (runaway backstop, all shapes)
+## Programs (the DAG substrate)
+
+Programs are the queue's DAG substrate, and `ref_kind="program"` still exists.
+In production the only producer is spec 010's `[P]` fan-out, and it does **not**
+make a PR stack: lanes run in their own workspaces and integrate **locally**
+onto the shared goal branch (`delivery/integrate.py`, serialized by
+`loom/merge_queue.py`), so delivery is still one push and one cumulative PR,
+exactly as for a sequential increment.
+
+A caller that submits an explicitly pre-planned DAG can still have each task
+open its own PR. Since #641 nothing reconciles such a stack — the owner reviews
+and lands those PRs by hand.
+
+## Why nothing merges (#641)
+
+Auto-merge fired only for a **per-action** delivery, and nothing has selected
+per-action since the spec 008 shrink stamped `executing` on every goal at
+creation. It had been unreachable in production for months, hidden by tests
+that reached it by seeding a goal shape production had stopped writing.
+
+The program PR-stack reconciler went with it. It existed to shepherd a stack of
+per-action PRs to main and close the superseded ones; goal-branch delivery
+never makes a stack, and neither does fan-out. What was left was a hazard
+rather than a capability: the only PR a fan-out program has is the cumulative
+goal-branch PR, so a reconcile that merged it would have re-created the amnesia
+bug through a path that bypassed the goal-branch skip.
+
+The through-line: in companion mode a human reviews and merges every PR.
+Machinery that merges without one is compensating for an absent reviewer.
+
+## The dispatch cap (runaway backstop)
 
 `cap = len(backlog) + 2` (it no longer widens on a checklist — the checklist
 is gone with the host planning chain). Progress-aware since #172/#173:
@@ -147,7 +100,7 @@ caught by the done-gate's direction evaluation after each settled advance
 ## Field history that shaped this
 
 - 2026-06-26 `finance-sentry-mcp-v3/v4` — PR fan-out / shared-branch deletion
-  → Shape 2's skip-automerge rule and stacked goal branch.
+  → the never-merge-mid-goal rule and the stacked goal branch.
 - 2026-07-05 `closeloop-bench` — planner claimed "PR merged" for an unmerged
   PR → settle detail now states the PR's real state, built after the merge
   attempt.
@@ -155,4 +108,5 @@ caught by the done-gate's direction evaluation after each settled advance
   → #172 refund for gated deliveries.
 - 2026-07-09 `closeloop-mission-v2` blocked again on its own on_track
   verification reviews; five zombie superseded PRs found open on closeloop
-  → #173 refund-all-successful-settles + the Shape 3 reconcile step.
+  → #173 refund-all-successful-settles + the program reconcile step (itself
+  deleted in #641 once goal-branch delivery made PR stacks impossible).

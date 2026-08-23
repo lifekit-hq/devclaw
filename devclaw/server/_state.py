@@ -68,7 +68,7 @@ else:
 # repos is devclaw working on, and what's the status of each". Thin — it links to
 # goals by id and joins their live status on read (project_rollup), never caching
 # phase. Shares the SQLite file with the state store. Constructed before the goal
-# layer because GoalService reads it to resolve per-project automerge overrides.
+# layer because GoalService reads it to resolve per-project overrides.
 registry = ProjectRegistry(DB_PATH)
 
 # Wire the registry into the queue so the pre-PR review gate can honour a

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Callable
 
-from . import merge as _merge
+from . import mergeability as _mergeability
 from . import remote_checks as _remote_checks
 from . import summary as _goal_summary
 from .engine import GoalEngine
@@ -239,20 +239,18 @@ class TickContext:
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED
     no_progress_s: int = NO_PROGRESS_S
     summary_caller: "ClaudeCaller | None" = None
-    merger: "_merge.Merger | None" = None
     #: grounded remote-checks verification at the done-gate (the 2026-07-06
     #: benchmark fix: ``achieved`` is only honored when the goal branch's REAL
     #: CI doesn't contradict it). None → skipped (the test seam);
     #: goal_service binds the gh-backed checker, tests inject a fake — the
-    #: same subprocess-free-tick seam as ``merger``.
+    #: same subprocess-free-tick seam as ``mergeability_probe``.
     remote_checker: "_remote_checks.RemoteChecker | None" = None
     #: post-settle mergeability probe (#394): asks GitHub whether a delivered
     #: PR is CONFLICTING with its base so the settle can say "this cannot
     #: land" loudly instead of settling a conflicting delivery
     #: indistinguishably from a landable one. None → skipped (the test
-    #: seam); goal_service binds the gh-backed probe, tests inject a
-    #: fake — the same subprocess-free-tick seam as ``merger``.
-    mergeability_probe: "_merge.MergeabilityProbe | None" = None
+    #: seam); goal_service binds the gh-backed probe, tests inject a fake.
+    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None
     #: ``scope_key -> holding goal_id`` for the single-writer project hold
     #: (spec 010 P1). Computed ONCE per ``tick_all`` sweep and threaded down —
     #: the derivation reads every goal, so re-deriving it per goal would turn

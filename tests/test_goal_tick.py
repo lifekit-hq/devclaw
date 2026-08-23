@@ -15,7 +15,6 @@ from dataclasses import replace
 
 import pytest
 
-from devclaw.goal import delivery_strategy as _delivery
 from devclaw.goal.engine import GoalEngineError
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore, view_migration
@@ -56,27 +55,15 @@ def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _tick(store, goal_id, evaluator, engine, notifier, *, verify_done=True, summary_caller=None, merger=None, remote_checker=None, mergeability_probe=None):
+async def _tick(store, goal_id, evaluator, engine, notifier, *, verify_done=True, summary_caller=None, remote_checker=None, mergeability_probe=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
         verify_done=verify_done, summary_caller=summary_caller,
-        merger=merger, remote_checker=remote_checker,
+        remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
     )
-
-
-class RecordingMerger:
-    """A fake auto-merger: records the PR urls it was asked to merge."""
-
-    def __init__(self, ok: bool = True):
-        self.merged: list[str] = []
-        self._ok = ok
-
-    async def __call__(self, pr_url: str) -> bool:
-        self.merged.append(pr_url)
-        return self._ok
 
 
 class RecordingProbe:
@@ -670,86 +657,6 @@ async def test_done_gate_review_off_track_steers_and_continues(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_done_gate_blocks_when_delivered_pr_is_open_and_unmerged(tmp_path, monkeypatch):
-    """#430: a per-action goal whose green fix sits on an open, unmerged PR must
-    BLOCK for a merge — not re-dispatch. The done-gate reviews the default
-    branch, which lacks the PR's commits, so it re-finds the gaps that PR already
-    closed and 'keep going' re-dispatches the same fix forever (closeloop's
-    wasted night). The detection is mechanical (zero LLM beyond the eval that had
-    to run) and the marker is cleared on the block."""
-    _force_per_action(monkeypatch)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="verifying",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
-        open_unmerged_pr="https://github.com/o/r/pull/9",
-    ))
-    evaluator = FakeClaude(json.dumps({
-        "verdict": "off_track",
-        "rationale": "NotificationDispatcherTests.cs still has zero coverage",
-        "corrections": ["add the missing dispatcher test"],
-    }))
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="main lacks the fix"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.BLOCKED
-    s = store.load_status("g")
-    assert s.phase == "blocked"
-    assert s.blocked_kind == "needs_answer"     # human-gated, never auto-heals
-    assert "pull/9" in (s.blocked_on or "")
-    assert engine.dispatched == []               # no re-dispatch of the same fix
-    assert not s.open_unmerged_pr                # marker cleared on the block
-    assert any("pull/9" in m for m in notifier.sent)  # owner pinged to merge
-
-
-@pytest.mark.asyncio
-async def test_settle_marks_open_unmerged_pr_when_auto_merge_off(tmp_path):
-    """#430 set-side: a green per-action delivery whose PR was NOT merged
-    (auto-merge off → merger=None) records the PR on the goal so the done-gate
-    can later detect the wrong-ref loop."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier = RecordingNotifier()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=None)
-
-    assert store.load_status("g").open_unmerged_pr == "https://github.com/o/r/pull/9"
-
-
-@pytest.mark.asyncio
-async def test_settle_clears_open_unmerged_pr_when_pr_merges(tmp_path, monkeypatch):
-    """#430 clear-side: a green delivery that DID merge clears the marker, so a
-    later done-gate isn't misled into blocking on an already-landed PR."""
-    _force_per_action(monkeypatch)
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    # Pre-seed a stale marker from a prior action; a merged delivery must clear it.
-    st = _delivery_status()
-    store.save_status("g", replace(st, open_unmerged_pr="https://github.com/o/r/pull/8"))
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == ["https://github.com/o/r/pull/9"]
-    assert store.load_status("g").open_unmerged_pr is None   # cleared on merge
-
-
-@pytest.mark.asyncio
 async def test_done_gate_disabled_uses_artifact_eval(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -984,213 +891,6 @@ def _delivery_status():
     )
 
 
-def _force_per_action(monkeypatch):
-    """Select the PER-ACTION delivery topology for the tick under test.
-
-    #486/Part C keyed the auto-merge SKIP on the delivery TOPOLOGY: a
-    goal-branch delivery's cumulative PR stays OPEN for the done-gate, and
-    only a per-action delivery auto-merges. So the auto-merge machinery can
-    only be exercised under per-action.
-
-    These tests used to reach it by seeding ``lifecycle=None`` — a goal shape
-    production stopped writing at the spec 008 shrink, and one the #616 cutoff
-    migrated away entirely. Faking a legacy row to reach live machinery is
-    coverage theater (#359): it hid the fact that **auto-merge has been
-    unreachable in production since that shrink**, because every real goal is
-    goal-branch. Selecting the topology explicitly keeps the machinery under
-    test and stops the test asserting a route the loop cannot take. See
-    ``resolve_strategy``'s docstring and
-    ``test_production_goals_never_auto_merge_because_they_are_all_goal_branch``.
-    """
-    monkeypatch.setattr(
-        "devclaw.goal.delivery_strategy.resolve_strategy",
-        lambda store, goal_id: _delivery.PER_ACTION,
-    )
-
-
-@pytest.mark.asyncio
-async def test_green_delivery_auto_merges_when_enabled(tmp_path, monkeypatch):
-    """A delivered change whose verify gate passed is merged by devclaw and a
-    TASK-altitude ping is emitted — when the automerge default is on.
-    The ping is TASK-altitude (not OWNER) so per-PR merges don't spam the owner
-    on a goal that lands many PRs; drop the floor so this test can observe it."""
-    _force_per_action(monkeypatch)
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    monkeypatch.setenv("DEVCLAW_NOTIFY_ALTITUDE", "task")
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == ["https://github.com/o/r/pull/9"]
-    assert any("merged" in m.lower() for m in notifier.sent)
-
-
-@pytest.mark.asyncio
-async def test_failed_auto_merge_pings_owner_loudly(tmp_path, monkeypatch):
-    """A FAILED automerge (enabled, gate green, but the merge didn't land) must
-    ping the OWNER, not silently leave the PR and later page to 'please merge PR
-    X' as if nothing tried — the finance-sentry 'automerge never fired'
-    confusion (2026-07-17). Loud failure over silent degradation."""
-    _force_per_action(monkeypatch)
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger(ok=False)
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == ["https://github.com/o/r/pull/9"]  # the merge WAS attempted
-    # …and its failure produced an OWNER-altitude ping (default floor) naming the
-    # PR the owner must now merge by hand — not a silent log line.
-    pings = [m for m in notifier.sent if "auto-merge failed" in m.lower()]
-    assert pings, f"expected a loud owner ping on failed automerge, got {notifier.sent}"
-    assert "https://github.com/o/r/pull/9" in pings[0]
-
-
-@pytest.mark.asyncio
-async def test_merge_fires_on_a_passed_merger_even_with_global_flag_off(tmp_path, monkeypatch):
-    """Regression lock for the per-project-override bug found 2026-07-05: a
-    project can pin automerge ON for its own repo even while the devclaw-wide
-    devclaw-wide automerge default is off. GoalService resolves that into an
-    actual merger callable (or None) and hands it to the tick — this proves
-    the tick honors WHATEVER merger it's given and does not independently
-    re-check the raw global flag, which would silently override a project's
-    explicit 'on' with the fleet default."""
-    _force_per_action(monkeypatch)
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", False)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    # A project override resolved this ON despite the global default being off —
-    # simulated here by simply handing tick_goal a real merger regardless of flag.
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == ["https://github.com/o/r/pull/9"]
-
-
-@pytest.mark.asyncio
-async def test_program_settle_reconciles_pr_stack(tmp_path, monkeypatch):
-    """A finished program leaves a STACK of PRs no single gate verdict covers
-    (gate_passed=None), so the single-PR auto-merge can't touch them — the
-    goal used to burn follow-up dispatches shepherding its own PRs and left
-    zombies behind (2026-07-09: five open superseded closeloop PRs). The
-    settle hook must reconcile the stack in order and log the REAL per-PR
-    outcome instead of 'unmerged — owner review pending'."""
-    calls = {}
-
-    async def fake_reconcile(stack, *, workspace_dir, merger):
-        calls["stack"] = stack
-        return [f"{u}: merged" for u in stack]
-
-    monkeypatch.setattr("devclaw.goal.reconcile.reconcile_stack", fake_reconcile)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="executing",
-        in_flight=InFlight("devclaw", "start_program", "p1", "program", "ship CI/CD"),
-    ))
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="program done",
-        pr_url="https://github.com/o/r/pull/66; https://github.com/o/r/pull/67",
-        gate_passed=None,
-    ))
-
-    await _tick(store, "g", evaluator, engine, RecordingNotifier(), merger=RecordingMerger())
-
-    assert calls["stack"] == [
-        "https://github.com/o/r/pull/66", "https://github.com/o/r/pull/67",
-    ]
-    log = (tmp_path / "g" / "log.md").read_text()
-    assert "reconcile: https://github.com/o/r/pull/66: merged" in log
-    assert "reconcile: https://github.com/o/r/pull/67: merged" in log
-
-
-@pytest.mark.asyncio
-async def test_program_settle_without_merger_leaves_stack_alone(tmp_path, monkeypatch):
-    """Automerge off (no merger resolved) → the reconcile step must not run:
-    the owner reviews program PRs by hand, same contract as single-task
-    auto-merge."""
-    async def boom(stack, *, workspace_dir, merger):  # pragma: no cover - must not run
-        raise AssertionError("reconcile must not run without a merger")
-
-    monkeypatch.setattr("devclaw.goal.reconcile.reconcile_stack", boom)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight", lifecycle="executing",
-        in_flight=InFlight("devclaw", "start_program", "p1", "program", "ship CI/CD"),
-    ))
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="program done",
-        pr_url="https://github.com/o/r/pull/66", gate_passed=None,
-    ))
-
-    await _tick(store, "g", FakeClaude(), engine, RecordingNotifier(), merger=None)
-
-    # boom above proves reconcile never ran; the log carries no reconcile rows.
-    assert "reconcile:" not in (tmp_path / "g" / "log.md").read_text()
-
-
-@pytest.mark.asyncio
-async def test_production_goals_never_auto_merge_because_they_are_all_goal_branch(
-    tmp_path, monkeypatch,
-):
-    """#616 made this legible rather than accidental, and it is worth stating
-    plainly: **no goal devclaw creates today can reach auto-merge.**
-
-    Auto-merge fires only for a per-action delivery (#486/Part C: a
-    goal-branch delivery's cumulative PR must stay OPEN for the done-gate).
-    Since the spec 008 shrink both modes stamp ``lifecycle="executing"`` at
-    creation, so every goal is goal-branch — and the #616 cutoff migrated the
-    last rows that could have resolved otherwise.
-
-    This test replaces one that asserted the opposite conclusion by seeding a
-    goal with ``lifecycle=None``: a shape production had already stopped
-    writing. It passed, and in passing it hid this. The merger must be handed
-    in and still never called, and the skip must be logged with its reason —
-    silence here is what forced an owner to infer "it didn't engage" from an
-    open PR and an empty log (#394 totality)."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    svc_status = _delivery_status()
-    assert svc_status.lifecycle == "executing"   # the only value there is
-    store.save_status("g", svc_status)
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="ok",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", FakeClaude(), engine, notifier, merger=merger)
-
-    assert merger.merged == []      # handed a merger, never called it
-    log = store.recent_log("g")
-    assert "auto-merge skipped (goal-branch: cumulative PR stays open" in log
-
-
 # ---- SDLC pipeline P2: milestone-keyed mega-dump guardrail ------------------
 
 
@@ -1276,79 +976,7 @@ async def test_slice_guardrail_fails_open_when_detection_finds_no_megadump(tmp_p
     assert "slice guardrail" not in (tmp_path / "g" / "log.md").read_text()
 
 
-@pytest.mark.asyncio
-async def test_slice_guardrail_never_runs_on_per_action_topology(tmp_path, monkeypatch):
-    """The guardrail is scoped to the goal-branch topology (accumulating
-    tasks.md). A per-action delivery has no such plan — detection must not
-    even be consulted, so a build-ahead stub can't block it."""
-    _force_per_action(monkeypatch)
-    def _boom(ws):  # pragma: no cover - must not be called
-        raise AssertionError("detection ran on a per-action delivery")
-
-    monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", _boom)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="ok",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-
-    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier(), merger=None)
-
-    assert out is not Outcome.BLOCKED
-
-
-@pytest.mark.asyncio
-async def test_long_lived_goal_branch_pr_is_not_auto_merged(tmp_path, monkeypatch):
-    """#486 (Part C): a long_lived goal-branch delivery's PR is the
-    cumulative goal-branch PR — auto-merging it mid-flight would delete the goal branch
-    and wipe the accumulated work on the next night's re-fork. The skip is
-    re-keyed off the delivery TOPOLOGY, so this PR stays open for the done-gate
-    and the skip is logged legibly."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    monkeypatch.setattr("devclaw.goal.slice_guard.tasks_flips_sync", lambda ws: 0)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", mode="long_lived")
-    store.save_status("g", _long_lived_executing_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="one clean milestone",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == []  # the cumulative PR is NOT merged mid-flight
-    log = (tmp_path / "g" / "log.md").read_text()
-    assert "auto-merge skipped (goal-branch:" in log
-    assert "https://github.com/o/r/pull/9" in log
-
-
 # ---- #394: total merge-policy resolution + settle-time mergeability --------
-
-
-@pytest.mark.asyncio
-async def test_automerge_off_green_pr_skip_is_logged_legibly(tmp_path, monkeypatch):
-    """#394 totality: when no merger is resolved (automerge off globally, or a
-    project's own ``automerge: false`` override — indistinguishable by the
-    tick, both arrive as merger=None), a gate-green delivery's PR still
-    resolves legibly as skipped instead of falling through in silence."""
-    _force_per_action(monkeypatch)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-
-    await _tick(store, "g", evaluator, engine, RecordingNotifier(), merger=None)
-
-    log = (tmp_path / "g" / "log.md").read_text()
-    assert "auto-merge skipped (auto-merge is off for this repo)" in log
 
 
 @pytest.mark.asyncio
@@ -1358,7 +986,6 @@ async def test_conflicting_pr_at_settle_pings_owner_and_logs_conflict(tmp_path, 
     a log line that says the PR cannot land — never a silent `done`
     indistinguishable from a landable one (closeloop-bench PR #8 accumulated
     three such deliveries overnight, 2026-07-28)."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
@@ -1375,7 +1002,7 @@ async def test_conflicting_pr_at_settle_pings_owner_and_logs_conflict(tmp_path, 
     notifier, probe = RecordingNotifier(), RecordingProbe(verdict=True)
 
     await _tick(store, "g", evaluator, engine, notifier,
-                merger=RecordingMerger(), mergeability_probe=probe)
+                mergeability_probe=probe)
 
     assert probe.asked == ["https://github.com/o/r/pull/9"]
     pings = [m for m in notifier.sent if "cannot land" in m]
@@ -1405,149 +1032,17 @@ async def test_mergeable_open_pr_at_settle_stays_quiet(tmp_path):
         ))
 
         await _tick(store, goal_id, FakeClaude(), engine, notifier,
-                    merger=None, mergeability_probe=RecordingProbe(verdict=verdict))
+                    mergeability_probe=RecordingProbe(verdict=verdict))
 
         assert not any("cannot land" in m for m in notifier.sent)
         assert "CONFLICTING" not in (tmp_path / goal_id / "log.md").read_text()
 
 
-@pytest.mark.asyncio
-async def test_failed_merge_of_conflicting_pr_pages_owner_once(tmp_path, monkeypatch):
-    """One page per event: when the merge was attempted and failed AND the
-    probe then confirms the PR is CONFLICTING, the owner hears the (earlier,
-    actionable) 'auto-merge failed — merge it by hand' ping only — the
-    conflict fact rides the log, not a second page."""
-    _force_per_action(monkeypatch)
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier, probe = RecordingNotifier(), RecordingProbe(verdict=True)
-
-    await _tick(store, "g", evaluator, engine, notifier,
-                merger=RecordingMerger(ok=False), mergeability_probe=probe)
-
-    assert any("auto-merge failed" in m.lower() for m in notifier.sent)
-    assert not any("cannot land" in m for m in notifier.sent)
-    # the conflict is still fully legible where it matters:
-    assert "CONFLICTING" in (tmp_path / "g" / "log.md").read_text()
-
-
-@pytest.mark.asyncio
-async def test_merged_pr_is_not_probed_for_conflicts(tmp_path, monkeypatch):
-    """A PR the tick just auto-merged is definitionally landable — the probe
-    must not burn a gh call (or worse, ping) on it."""
-    _force_per_action(monkeypatch)
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    probe = RecordingProbe(verdict=True)
-
-    await _tick(store, "g", evaluator, engine, RecordingNotifier(),
-                merger=RecordingMerger(ok=True), mergeability_probe=probe)
-
-    assert probe.asked == []
-
-
-@pytest.mark.asyncio
-async def test_failed_gate_is_not_auto_merged(tmp_path, monkeypatch):
-    """A PR whose gate did NOT pass must never be auto-merged."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="broke a test",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=False,
-    ))
-    notifier, merger = RecordingNotifier(), RecordingMerger()
-
-    await _tick(store, "g", evaluator, engine, notifier, merger=merger)
-
-    assert merger.merged == []
-
-
-@pytest.mark.asyncio
-async def test_auto_merge_off_by_default(tmp_path):
-    """With automerge disabled, no merger is ever passed down to a tick in the
-    first place — the enabled/disabled decision is resolved ONCE, by
-    GoalService._merger (project override, else the devclaw-wide
-    merge.AUTOMERGE_ENABLED default; see devclaw.goal.merge.resolve_automerge),
-    before a merger callable is even constructed. This tick layer's own
-    contract is simpler and absolute: given no merger (``merger=None``, what
-    GoalService actually produces when automerge is off), never attempt to
-    merge — it must not independently re-check any global flag itself, since
-    that would prevent a project's override from ever turning merging ON
-    against an off-by-default fleet (or OFF against an on-by-default one)."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", _delivery_status())
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier, merger=None)
-
-    assert out is Outcome.VERIFYING   # settled normally → proposed done (no merge attempt)
-    assert not any("merged" in m.lower() for m in notifier.sent)
-
-
-@pytest.mark.asyncio
-async def test_tick_all_resolves_merger_per_goal(tmp_path, monkeypatch):
-    """tick_all sweeps every goal in ONE pass. A project's automerge override
-    for one goal must not leak onto another goal in the same sweep — this is
-    what merger_resolver is for (GoalService._merger_resolver binds it to a
-    per-project lookup; see devclaw.goal.merge.resolve_automerge). Prove
-    tick_all actually calls the resolver fresh per goal_id rather than
-    resolving a single merger once for the whole fleet."""
-    _force_per_action(monkeypatch)
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", False)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "on", workspace_dir="/repos/on")
-    seed_goal(tmp_path, "off", workspace_dir="/repos/off")
-    store.save_status("on", _delivery_status())
-    store.save_status("off", _delivery_status())
-
-    on_merger = RecordingMerger()
-
-    def _resolver(goal):
-        return on_merger if goal.workspace_dir == "/repos/on" else None
-
-    evaluator = FakeClaude()
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="added /health",
-        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
-    ))
-    notifier = RecordingNotifier()
-
-    await tick_all(
-        store=store, engine=engine, evaluator_caller=evaluator,
-        notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
-        merger_resolver=_resolver,
-    )
-
-    assert on_merger.merged == ["https://github.com/o/r/pull/9"]  # "on" project merged
-    # "off" project resolved to no merger — nothing else was merged anywhere.
 
 
 @pytest.mark.asyncio
 async def test_tick_all_resolves_verify_done_per_goal(tmp_path):
-    """Same per-goal-freshness contract as the merger, for the done-gate
+    """The per-goal-freshness contract for the done-gate
     re-check flag: tick_all must call verify_done_resolver once per goal (so a
     project's verify_done override can't leak onto another goal in the sweep),
     not resolve one fleet-wide value. Prove the resolver is invoked per goal_id."""
@@ -1817,62 +1312,6 @@ async def test_blocked_on_prep_failure_does_not_respam(tmp_path):
     assert len(notifier.sent) == sent_after_block        # no second ping
 
 
-@pytest.mark.asyncio
-async def test_ship_notification_is_concise_not_the_full_prompt(tmp_path, monkeypatch):
-    _force_per_action(monkeypatch)  # the shipped+merged ping only fires on a merge
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    # shipped+merged is TASK-altitude (per-PR chatter, not owner-altitude) — drop
-    # the floor so this test can observe it.
-    monkeypatch.setenv("DEVCLAW_NOTIFY_ALTITUDE", "task")
-    # The notification must not paste the action's full instruction prompt (which
-    # is what happened when the plain-language summarizer was quota-blocked and
-    # fell back to raw text). With summary_caller=None the raw text is sent — and
-    # it must already be terse.
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    long_goal = "Implement M2 deals CRUD\n\nSECRET_DETAIL_LINE that must never be pasted into a ping\n- a\n- b"
-    store.save_status("g", GoalStatus(
-        phase="in_flight",
-        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", long_goal),
-    ))
-    notifier = RecordingNotifier()
-
-    await _tick(store, "g", FakeClaude(), FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="done",
-        pr_url="https://github.com/o/r/pull/2", gate_passed=True,
-    )), notifier, merger=RecordingMerger())
-
-    ship = [m for m in notifier.sent if "shipped + merged" in m]
-    assert ship, "expected a shipped+merged notification"
-    assert "SECRET_DETAIL_LINE" not in ship[0]      # not the full prompt
-    assert len(ship[0]) < 160                        # terse
-
-
-@pytest.mark.asyncio
-async def test_ship_notification_is_suppressed_at_owner_altitude(tmp_path, monkeypatch):
-    """Per-PR shipped+merged is TASK-altitude, so at the default OWNER floor it
-    must not reach the owner (otherwise a goal that lands 10 PRs in an afternoon
-    fires 10 owner-altitude "✅ complete" pings — the dogfood incident that
-    demoted this notification)."""
-    monkeypatch.setattr("devclaw.goal.tick._merge.AUTOMERGE_ENABLED", True)
-    monkeypatch.setenv("DEVCLAW_NOTIFY_ALTITUDE", "owner")  # the default; explicit for the test
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="in_flight",
-        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "short goal"),
-    ))
-    notifier = RecordingNotifier()
-
-    await _tick(store, "g", FakeClaude(), FakeEngine(poll_result=PollResult(
-        terminal=True, status="done", detail="done",
-        pr_url="https://github.com/o/r/pull/2", gate_passed=True,
-    )), notifier, merger=RecordingMerger())
-
-    assert not [m for m in notifier.sent if "shipped + merged" in m], \
-        "shipped+merged must not reach owner altitude"
-
-
 # ---- done-gate review brief — the two-axis structural fix -------------------
 
 
@@ -2066,28 +1505,6 @@ async def test_checker_exception_fails_open(tmp_path):
 
     assert out is Outcome.DONE
     assert "unknown" in store.recent_log("g")
-
-
-@pytest.mark.asyncio
-async def test_per_action_goal_skips_the_checker(tmp_path, monkeypatch):
-    # Per-action topology → no shared goal branch → no branch CI to consult,
-    # so the remote checker is never called.
-    _force_per_action(monkeypatch)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(
-        phase="verifying",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
-    ))
-    checker = FakeRemoteChecker()
-    evaluator = FakeClaude(_ACHIEVED_EVAL)
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
-
-    assert out is Outcome.DONE
-    assert checker.calls == []
 
 
 def test_done_gate_review_brief_forbids_existence_only_test_evidence(tmp_path):
@@ -2448,32 +1865,6 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path, monkeypatch):
     store.save_status("gd", GoalStatus(phase="idle", actions_dispatched=4))
     assert await _tick(store, "gd", evaluator, engine, notifier) is Outcome.BLOCKED
     assert store.load_status("gd").blocked_kind == "mechanical:dispatch_cap"
-
-    # needs_answer — the done-gate blocked for a human decision (#430: the
-    # delivered fix sits on an open, unmerged PR only the owner can land)
-    seed_goal(tmp_path, "gq", workspace_dir="/repos/gq")
-    store.save_status("gq", GoalStatus(
-        phase="verifying",
-        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
-        open_unmerged_pr="https://github.com/o/r/pull/9",
-    ))
-    ask_eval = FakeClaude(json.dumps({
-        "verdict": "off_track", "rationale": "main lacks the fix",
-        "corrections": ["merge the delivered PR"],
-    }))
-    eng_q = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="main lacks the fix"))
-    # #430's wrong-ref block is per-action only (a goal-branch goal reviews its
-    # own branch, so the trap cannot exist there) — and per-action is no longer
-    # selected by anything, so the topology is chosen explicitly rather than by
-    # seeding a legacy goal shape. See _force_per_action.
-    with monkeypatch.context() as mp:
-        mp.setattr(
-            "devclaw.goal.delivery_strategy.resolve_strategy",
-            lambda store, goal_id: _delivery.PER_ACTION,
-        )
-        assert await _tick(store, "gq", ask_eval, eng_q, notifier) is Outcome.BLOCKED
-    sq = store.load_status("gq")
-    assert "pull/9" in (sq.blocked_on or "") and sq.blocked_kind == "needs_answer"
 
     # bug — the force_block illegal-transition escape hatch
     seed_goal(tmp_path, "gb", workspace_dir="/repos/gb")

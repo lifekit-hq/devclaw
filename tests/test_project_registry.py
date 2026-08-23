@@ -265,97 +265,13 @@ def test_failed_create_does_not_leak_a_write_lock(tmp_path):
     assert b.get("other") is not None
 
 
-# ---- automerge: per-project override -----------------------------------
-#
-# Deliberately NOT a goal.yaml field (see devclaw.goal.merge) — the only place
-# auto-merge is configured is here: a project's own override, or nothing
-# (meaning "inherit the devclaw-wide default").
-
-
-def test_automerge_defaults_to_none_on_create(reg):
-    p = reg.create(id="todo", name="Todo")
-    assert p.automerge is None
-    assert reg.get("todo").automerge is None
-
-
-def test_automerge_set_on_create(reg):
-    reg.create(id="on", name="On", automerge=True)
-    reg.create(id="off", name="Off", automerge=False)
-    assert reg.get("on").automerge is True
-    assert reg.get("off").automerge is False
-
-
-def test_update_omitting_automerge_leaves_it_untouched(reg):
-    reg.create(id="todo", name="Todo", automerge=True)
-    reg.update("todo", notes="unrelated change")
-    assert reg.get("todo").automerge is True
-
-
-def test_update_can_set_automerge_on_or_off(reg):
-    reg.create(id="todo", name="Todo")
-    reg.update("todo", automerge=True)
-    assert reg.get("todo").automerge is True
-    reg.update("todo", automerge=False)
-    assert reg.get("todo").automerge is False
-
-
-def test_update_explicit_none_clears_automerge_override(reg):
-    """Passing automerge=None explicitly is different from omitting it — it
-    clears a prior pin back to 'inherit the global default'."""
-    reg.create(id="todo", name="Todo", automerge=True)
-    reg.update("todo", automerge=None)
-    assert reg.get("todo").automerge is None
-
-
-def test_automerge_persists_across_reopen(tmp_path):
-    db = str(tmp_path / "devclaw.db")
-    ProjectRegistry(db).create(id="todo", name="Todo", automerge=True)
-    reopened = ProjectRegistry(db)
-    assert reopened.get("todo").automerge is True
-
-
-def test_automerge_column_migrates_onto_a_pre_existing_table(tmp_path):
-    """A projects table created before the automerge column existed must gain
-    it on the next open, not error and not lose existing rows."""
-    import sqlite3
-
-    db = str(tmp_path / "devclaw.db")
-    con = sqlite3.connect(db)
-    con.executescript(
-        """
-        CREATE TABLE projects (
-          id TEXT PRIMARY KEY, name TEXT NOT NULL, repo_url TEXT,
-          workspace_dir TEXT, preview_url TEXT, status TEXT NOT NULL DEFAULT 'active',
-          goal_ids TEXT, notes TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-        );
-        """
-    )
-    con.execute(
-        "INSERT INTO projects (id, name, status, created_at, updated_at) "
-        "VALUES ('legacy', 'Legacy', 'active', 0, 0)"
-    )
-    con.commit()
-    con.close()
-
-    reg = ProjectRegistry(db)  # must not raise
-    p = reg.get("legacy")
-    assert p is not None and p.automerge is None  # pre-existing row reads as "inherit"
-    reg.update("legacy", automerge=True)  # column is genuinely writable now
-    assert reg.get("legacy").automerge is True
-
-
 def test_find_by_workspace_dir(reg):
-    reg.create(id="todo", name="Todo", workspace_dir="/src/todo/", automerge=True)
+    reg.create(id="todo", name="Todo", workspace_dir="/src/todo/", autodeploy=True)
     found = reg.find_by_workspace_dir("/src//todo")  # normalized match
     assert found is not None and found.id == "todo"
     assert reg.find_by_workspace_dir("/src/nope") is None
     assert reg.find_by_workspace_dir(None) is None
     assert reg.find_by_workspace_dir("") is None
-
-
-def test_automerge_in_to_dict(reg):
-    p = reg.create(id="todo", name="Todo", automerge=False)
-    assert p.to_dict()["automerge"] is False
 
 
 def test_contended_writer_waits_instead_of_failing(tmp_path):
@@ -387,16 +303,16 @@ def test_contended_writer_waits_instead_of_failing(tmp_path):
     assert writer.get("b") is not None
 
 
-# ---- per-project overrides (merge_strategy / autodeploy / review_gate /
-#      verify_done) — same three-way + inherit shape as automerge --------------
+# ---- per-project overrides (browser_gate_mode / autodeploy / review_gate /
+#      verify_done) — one three-way + inherit shape for every knob -------------
 
 
 def test_override_fields_default_to_none_on_create(reg):
     p = reg.create(id="todo", name="Todo")
-    assert p.merge_strategy is None and p.autodeploy is None
+    assert p.browser_gate_mode is None and p.autodeploy is None
     assert p.review_gate is None and p.verify_done is None
     got = reg.get("todo")
-    assert got.merge_strategy is None and got.autodeploy is None
+    assert got.browser_gate_mode is None and got.autodeploy is None
     assert got.review_gate is None and got.verify_done is None
 
 
@@ -404,33 +320,33 @@ def test_override_fields_set_on_create_and_persist(tmp_path):
     db = str(tmp_path / "devclaw.db")
     ProjectRegistry(db).create(
         id="p", name="P", workspace_dir="/src/p",
-        merge_strategy="rebase", autodeploy=False, review_gate=True, verify_done=False,
+        browser_gate_mode="strict", autodeploy=False, review_gate=True, verify_done=False,
     )
     got = ProjectRegistry(db).get("p")  # reopen — proves durable
-    assert got.merge_strategy == "rebase"
+    assert got.browser_gate_mode == "strict"
     assert got.autodeploy is False
     assert got.review_gate is True
     assert got.verify_done is False
 
 
 def test_update_three_way_semantics_per_override_field(reg):
-    reg.create(id="p", name="P", autodeploy=True, merge_strategy="squash")
+    reg.create(id="p", name="P", autodeploy=True, browser_gate_mode="flexible")
     # omit → untouched
     reg.update("p", notes="unrelated")
-    assert reg.get("p").autodeploy is True and reg.get("p").merge_strategy == "squash"
+    assert reg.get("p").autodeploy is True and reg.get("p").browser_gate_mode == "flexible"
     # concrete → pinned
-    reg.update("p", autodeploy=False, merge_strategy="merge")
-    assert reg.get("p").autodeploy is False and reg.get("p").merge_strategy == "merge"
+    reg.update("p", autodeploy=False, browser_gate_mode="strict")
+    assert reg.get("p").autodeploy is False and reg.get("p").browser_gate_mode == "strict"
     # explicit None → cleared back to inherit
-    reg.update("p", autodeploy=None, merge_strategy=None)
-    assert reg.get("p").autodeploy is None and reg.get("p").merge_strategy is None
+    reg.update("p", autodeploy=None, browser_gate_mode=None)
+    assert reg.get("p").autodeploy is None and reg.get("p").browser_gate_mode is None
 
 
 def test_override_fields_in_to_dict(reg):
-    p = reg.create(id="p", name="P", review_gate=False, verify_done=True, merge_strategy="rebase")
+    p = reg.create(id="p", name="P", review_gate=False, verify_done=True, browser_gate_mode="strict")
     d = p.to_dict()
     assert d["reviewGate"] is False and d["verifyDone"] is True
-    assert d["mergeStrategy"] == "rebase" and d["autodeploy"] is None
+    assert d["browserGateMode"] == "strict" and d["autodeploy"] is None
 
 
 def test_all_override_columns_migrate_onto_a_legacy_table(tmp_path):
@@ -459,10 +375,10 @@ def test_all_override_columns_migrate_onto_a_legacy_table(tmp_path):
     reg = ProjectRegistry(db)  # must not raise; must add all override columns
     p = reg.get("legacy")
     assert p is not None
-    assert p.automerge is None and p.merge_strategy is None
+    assert p.autodeploy is None and p.browser_gate_mode is None
     assert p.autodeploy is None and p.review_gate is None and p.verify_done is None
-    reg.update("legacy", merge_strategy="rebase", review_gate=True)  # columns writable
-    assert reg.get("legacy").merge_strategy == "rebase"
+    reg.update("legacy", browser_gate_mode="strict", review_gate=True)  # columns writable
+    assert reg.get("legacy").browser_gate_mode == "strict"
     assert reg.get("legacy").review_gate is True
 
 
@@ -495,10 +411,10 @@ def test_resolve_override_unregistered_workspace_returns_default(reg):
 
 
 def test_resolve_override_string_field(reg):
-    reg.create(id="p", name="P", workspace_dir="/src/p", merge_strategy="rebase")
-    assert reg.resolve_override("p", "merge_strategy", "squash") == "rebase"
+    reg.create(id="p", name="P", workspace_dir="/src/p", browser_gate_mode="strict")
+    assert reg.resolve_override("p", "browser_gate_mode", "flexible") == "strict"
     reg.create(id="q", name="Q", workspace_dir="/src/q")  # no pin
-    assert reg.resolve_override("q", "merge_strategy", "squash") == "squash"
+    assert reg.resolve_override("q", "browser_gate_mode", "flexible") == "flexible"
 
 
 def test_resolve_override_rejects_unknown_field(reg):
@@ -510,15 +426,15 @@ def test_resolve_override_survives_a_workspace_rename(reg):
     """#524 P3: knobs resolve by project_id, so renaming the project's
     workspace_dir does NOT unbind them — the exact fragility the id-key
     eliminates (the old workspace scan would have missed the renamed row)."""
-    reg.create(id="p", name="P", workspace_dir="/src/p", automerge=True)
+    reg.create(id="p", name="P", workspace_dir="/src/p", autodeploy=True)
     reg.update("p", workspace_dir="/src/p-RENAMED")
-    assert reg.resolve_override("p", "automerge", None) is True
+    assert reg.resolve_override("p", "autodeploy", None) is True
 
 
 def test_resolve_override_none_project_id_returns_default(reg):
     """A goal/task with no owning project (a self-fix, say) falls to the
     default — never raises, never scans."""
-    assert reg.resolve_override(None, "automerge", "DFLT") == "DFLT"
+    assert reg.resolve_override(None, "autodeploy", "DFLT") == "DFLT"
 
 
 def test_backfill_stamps_project_id_from_the_workspace_match(tmp_path):
@@ -533,7 +449,7 @@ def test_backfill_stamps_project_id_from_the_workspace_match(tmp_path):
     goals_dir = tmp_path / "goals"
     db = StateStore(str(tmp_path / "t.db"))
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
-    reg.create(id="proj", name="P", workspace_dir="/repos/demo", automerge=True)
+    reg.create(id="proj", name="P", workspace_dir="/repos/demo", autodeploy=True)
     cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900,
                      verify_done=False)
     svc = GoalService(TaskQueue(db), db, config=cfg, project_registry=reg)
@@ -645,11 +561,11 @@ def test_add_column_is_idempotent_when_another_writer_won_the_race(tmp_path):
     # Bootstrap already added them, so these are exactly the statements the
     # losing writer issues after its stale introspection. None may raise.
     reg._add_column("sandbox_image", "TEXT")
-    reg._add_column("automerge", "INTEGER")
+    reg._add_column("autodeploy", "INTEGER")
 
     # ...and the table is intact afterwards.
-    reg.create(id="p", name="P", automerge=True)
-    assert reg.get("p").automerge is True
+    reg.create(id="p", name="P", autodeploy=True)
+    assert reg.get("p").autodeploy is True
 
 
 def test_bootstrap_completes_on_a_partially_migrated_table(tmp_path):
@@ -685,8 +601,8 @@ def test_bootstrap_completes_on_a_partially_migrated_table(tmp_path):
     reg = ProjectRegistry(db)
 
     cols = {row[1] for row in reg._db.execute("PRAGMA table_info(projects)")}
-    for name in ("sandbox_image", "automerge", "autodeploy", "review_gate",
-                 "verify_done", "merge_strategy", "browser_gate_mode"):
+    for name in ("sandbox_image", "autodeploy", "review_gate",
+                 "verify_done", "browser_gate_mode"):
         assert name in cols, name
 
     reg.create(id="p", name="P")

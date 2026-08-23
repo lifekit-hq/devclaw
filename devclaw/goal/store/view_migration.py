@@ -118,7 +118,6 @@ def parse_status_md(text: str) -> "tuple[GoalStatus, int]":
         last_eval_note=fm.get("last_eval_note", "") or "",
         last_progress_at=fm.get("last_progress_at") or None,
         no_progress_notified=bool(fm.get("no_progress_notified", False)),
-        open_unmerged_pr=fm.get("open_unmerged_pr") or None,
         phase_history=history,
     )
     return status, _int(fm.get("inbox_cursor"))

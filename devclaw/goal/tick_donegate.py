@@ -457,35 +457,6 @@ async def _resolve_done_gate(
         )
         await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] not done — {q}", summarize=summarize)
         return Outcome.BLOCKED
-    # #430: a per-action goal that shipped a green PR we never merged (auto-merge
-    # off) can NEVER satisfy its own done-gate — the gate reviews the default
-    # branch, which lacks the PR's commits, so it re-finds the gaps that PR
-    # already closed and "keep going" re-dispatches the same fix forever
-    # (closeloop's wasted night: four fix_bug tasks piled onto one unmerged PR).
-    # Detect it mechanically (zero LLM: a stored marker + a per-action-mode check)
-    # and block for a merge instead. Per-action only — checklist goals review
-    # their own goal branch, so no wrong-ref trap exists there. Clear the marker
-    # on the block so a resumed goal isn't re-blocked on a since-merged PR (a
-    # fresh unmerged delivery re-sets it).
-    if (
-        status.open_unmerged_pr
-        and _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id) is None
-    ):
-        q = (
-            f"I shipped work in {status.open_unmerged_pr} but it's an open, unmerged "
-            f"PR, and the done-gate reviews the default branch — which doesn't have "
-            f"those commits, so it keeps re-finding the gaps that PR already closed. "
-            f"Merge it (or enable auto-merge for this repo) and I'll re-verify — I "
-            f"won't re-do the work."
-        )
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q, blocked_kind="needs_answer",
-                    next="", open_unmerged_pr=None),
-            expect=status, consume_steering=consume_steering,
-        )
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q}", summarize=summarize)
-        return Outcome.BLOCKED
     # on_track / off_track → not done yet. Count the round: a gate that
     # refuses to close the same goal DONEGATE_ROUND_CAP times in a row is a
     # treadmill (fresh nits per round, each round burning a worker + a review

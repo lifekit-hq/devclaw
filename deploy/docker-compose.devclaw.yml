@@ -56,7 +56,6 @@ services:
       # project, reachable over the shared external network by service name).
       DEVCLAW_GOAL_NOTIFY_URL: http://notify-relay:8090/text
       DEVCLAW_NOTIFY_ALTITUDE: ${DEVCLAW_NOTIFY_ALTITUDE:-task}
-      DEVCLAW_GOAL_AUTOMERGE: ${DEVCLAW_GOAL_AUTOMERGE:-0}
       # fastmcp >= 3.4 HostOriginGuard: allowlist the docker-network MCP host and
       # the tailnet console host (else 421 / 403 on non-loopback routes).
       FASTMCP_HTTP_ALLOWED_HOSTS: ${FASTMCP_HTTP_ALLOWED_HOSTS:-["devclaw-mcp:8000","lifekit-vps.tail1cb676.ts.net:18791"]}

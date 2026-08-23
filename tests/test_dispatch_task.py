@@ -223,7 +223,7 @@ async def test_by_key_dispatch_preserves_override_knobs(monkeypatch, tmp_path):
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
     ws = tmp_path / "wsp"
     register_tmp_project(reg, ws, project_id="knobbed",
-                         automerge=True, review_gate=False)
+                         autodeploy=True, review_gate=False)
     monkeypatch.setattr(_tools, "registry", reg)
     await _tools.dispatch_task(
         kind="implement_feature", project_id="knobbed", goal="x"
@@ -232,7 +232,7 @@ async def test_by_key_dispatch_preserves_override_knobs(monkeypatch, tmp_path):
     # the submitted task carries the project_id, and the knobs resolve BY that id
     # (#524 P3) — the same values a by-path resolve produced before.
     assert call["project_id"] == "knobbed"
-    assert reg.resolve_override("knobbed", "automerge", None) is True
+    assert reg.resolve_override("knobbed", "autodeploy", None) is True
     assert reg.resolve_override("knobbed", "review_gate", True) is False
 
 

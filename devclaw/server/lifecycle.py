@@ -123,7 +123,7 @@ def main() -> None:
 
     # #524 P3 migration, ONCE per database (#616): stamp project_id onto goals
     # written before the field, so a long-lived goal in flight at deploy keeps
-    # its owning project's pinned knobs (automerge/verify_done/autodeploy)
+    # its owning project's pinned knobs (verify_done/autodeploy)
     # instead of falling to the devclaw-wide defaults. Marker-guarded and
     # zero-token — it resolves each goal's owner by the workspace-path match
     # exactly once and never scans again (devclaw/goal/project_id_cutoff.py).

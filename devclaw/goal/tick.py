@@ -27,7 +27,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable
 
-from . import merge as _merge
+from . import mergeability as _mergeability
 from . import prior_increments as _prior_increments
 from . import saga_framing as _saga_framing
 from . import project_hold as _project_hold
@@ -115,10 +115,9 @@ async def tick_goal(
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     summary_caller: "ClaudeCaller | None" = None,
-    merger: "_merge.Merger | None" = None,
     trend_detector: "object | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    mergeability_probe: "_merge.MergeabilityProbe | None" = None,
+    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
 ) -> Outcome:
     """Run one heartbeat and record a single ``tick`` trace event with the
@@ -149,7 +148,7 @@ async def tick_goal(
                 notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
                 verify_done=verify_done, autodeploy=autodeploy,
                 no_progress_s=no_progress_s,
-                summary_caller=summary_caller, merger=merger,
+                summary_caller=summary_caller,
                 remote_checker=remote_checker,
                 mergeability_probe=mergeability_probe,
                 holders=holders,
@@ -224,9 +223,8 @@ async def _tick_goal_impl(
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     summary_caller: "ClaudeCaller | None" = None,
-    merger: "_merge.Merger | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    mergeability_probe: "_merge.MergeabilityProbe | None" = None,
+    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
 ) -> Outcome:
     """Run one heartbeat. Reads the goal's status, classifies it into a
@@ -247,7 +245,7 @@ async def _tick_goal_impl(
         notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
         verify_done=verify_done, autodeploy=autodeploy,
         no_progress_s=no_progress_s,
-        summary_caller=summary_caller, merger=merger,
+        summary_caller=summary_caller,
         remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
         holders=holders,
@@ -548,15 +546,13 @@ async def tick_all(
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
     summary_caller: "ClaudeCaller | None" = None,
-    merger: "_merge.Merger | None" = None,
-    merger_resolver: "Callable[[Goal], _merge.Merger | None] | None" = None,
     verify_done_resolver: "Callable[[Goal], bool] | None" = None,
     autodeploy_resolver: "Callable[[Goal], bool | None] | None" = None,
     tracer_factory: "Callable[[str], _trace.Tracer | None] | None" = None,
     trend_detector: "object | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     triage_caller: "ClaudeCaller | None" = None,
-    mergeability_probe: "_merge.MergeabilityProbe | None" = None,
+    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     project_workspaces: "Callable[[], set[str]] | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal. One goal's failure never stops the others, and a usage
@@ -566,13 +562,10 @@ async def tick_all(
     to attach a :class:`PersistentTracer` per goal-tick so the cascade's
     cognition / dispatch / delivery events land in the durable trace store.
 
-    ``merger_resolver``, when given, computes automerge FRESH per goal (a
-    project's automerge override must not leak from one goal onto another in
-    the same sweep) and takes precedence over the flat ``merger``. Plain
-    ``merger`` stays supported for callers (and existing tests) with a single
-    fleet-wide value. ``verify_done_resolver`` and ``autodeploy_resolver`` are
-    the same idea for the done-gate re-check flag and the on-complete deploy
-    flag: fresh per goal, each taking precedence over its flat counterpart.
+    ``verify_done_resolver`` and ``autodeploy_resolver`` compute the done-gate
+    re-check flag and the on-complete deploy flag FRESH per goal (a project's
+    override must not leak from one goal onto another in the same sweep), each
+    taking precedence over its flat counterpart.
 
     ``trend_detector`` (typed as ``object`` to avoid the import cycle with
     ``devclaw.trend_detector``): when set, runs per-project signals inside each
@@ -692,22 +685,19 @@ async def tick_all(
             outcomes[goal_id] = Outcome.RATE_LIMITED
             continue
         tracer = tracer_factory(goal_id) if tracer_factory else None
-        goal_merger = merger
         goal_verify_done = verify_done
         goal_autodeploy = autodeploy
         # Load the goal once for whichever per-goal resolvers are wired (a bad
         # goal.yaml must not sink the sweep — fall back to the flat values).
-        if any(r is not None for r in (merger_resolver, verify_done_resolver, autodeploy_resolver)):
+        if any(r is not None for r in (verify_done_resolver, autodeploy_resolver)):
             try:
                 _g = store.load_goal(goal_id)
-                if merger_resolver is not None:
-                    goal_merger = merger_resolver(_g)
                 if verify_done_resolver is not None:
                     goal_verify_done = verify_done_resolver(_g)
                 if autodeploy_resolver is not None:
                     goal_autodeploy = autodeploy_resolver(_g)
             except Exception:  # noqa: BLE001 — a bad goal.yaml must not sink the sweep
-                goal_merger, goal_verify_done, goal_autodeploy = merger, verify_done, autodeploy
+                goal_verify_done, goal_autodeploy = verify_done, autodeploy
         try:
             with _trace.tracer_scope(tracer):
                 outcomes[goal_id] = await tick_goal(
@@ -716,7 +706,7 @@ async def tick_all(
                     notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
                     verify_done=goal_verify_done,
                     autodeploy=goal_autodeploy, no_progress_s=no_progress_s,
-                    summary_caller=summary_caller, merger=goal_merger,
+                    summary_caller=summary_caller,
                     trend_detector=trend_detector,
                     remote_checker=remote_checker,
                     mergeability_probe=mergeability_probe,

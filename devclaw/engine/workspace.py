@@ -125,7 +125,7 @@ async def _reseed_merged_branch(
     local-only re-seed would break the next push):
 
     - **Fully landed** (remote tip == the merged PR's head): the branch is
-      spent. Delete it on origin — the same end state auto-merge's
+      spent. Delete it on origin — the end state a merge with
       ``--delete-branch`` leaves — and start fresh from the default branch.
       Remote delete goes FIRST: if it is refused, keep today's behavior
       rather than leave a re-seeded local racing a stale remote.

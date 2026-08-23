@@ -1,7 +1,7 @@
 """Settle & recover in-flight work — the goal-tick polling resolvers.
 
 Where dispatched work comes back: the atomic settle of a regular action
-(delivery row + auto-merge / goal-branch reconcile), the done-gate poll
+(delivery row + mergeability advisory), the done-gate poll
 resolver, and the once-per-service-start orphaned-ref sweep. This is the top
 of the tick_* import graph — it consumes tick_donegate (_resolve_done_gate)
 plus tick_guards + tick_context, and is re-exported from tick.py
@@ -25,8 +25,6 @@ from .tick_context import (
 )
 from .tick_guards import _block_on_lost_ref, _block_on_prep_failure
 from .tick_donegate import _resolve_done_gate
-from . import delivery_strategy as _delivery
-from . import reconcile as _reconcile
 from . import repo_brief as _repo_brief
 from . import slice_guard as _slice_guard
 from .engine import GoalEngine, GoalEngineError
@@ -204,11 +202,11 @@ async def _resolve_polling_action(
     Otherwise: record the delivery (grounded evidence for the evaluator),
     update the no-progress watchdog, and commit the settlement + delivery +
     log + checklist rows + the ACTION_SETTLED transition as ONE transaction
-    (PR7) — protects against the duplicate-merge loop dogfooded 2026-06-21
+    (PR7) — protects against the duplicate-settle loop dogfooded 2026-06-21
     AND closes a PR4-review nuance: a TransitionConflict landing in this
     window now rolls EVERYTHING back (no partial artifacts, no duplicate log
-    line), where before only the transition itself was guarded. Auto-merge /
-    program-reconcile move to AFTER the commit — see the comment at that
+    line), where before only the transition itself was guarded. The mergeability
+    probe moves to AFTER the commit — see the comment at that
     call site for the observable-order note. Returns ``(new_status,
     finished_detail)`` so the EXECUTING handler can plan the next action on
     the same tick with the just-finished detail in hand."""
@@ -353,15 +351,12 @@ async def _resolve_polling_action(
     # VERDICT rides the EXISTING strictness dial (:func:`gate_consequence`, a
     # dial-able "slice" gate): under ``trust`` it ADVISES (loud log, ship anyway —
     # the done-gate + human review are the backstop), under ``strict`` it BLOCKS
-    # the goal for a re-slice. Scoped to a delivered increment (poll ``done``)
-    # whose topology is a goal branch — the per-action topology has no
-    # accumulating plan to reason about, and this runs only on the POLLING_ACTION
-    # settle path (never idle/blocked), so the ``FakeClaude.calls == 0`` guards
-    # stay green. The fail-closed-under-strict consequence is unchanged.
-    if (
-        poll.status == "done"
-        and _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
-    ):
+    # the goal for a re-slice. Scoped to a delivered increment (poll ``done``);
+    # every goal accumulates on a goal branch, so there is no topology to check
+    # (the per-action exemption went with per-action itself, #641). Runs only on
+    # the POLLING_ACTION settle path (never idle/blocked), so the
+    # ``FakeClaude.calls == 0`` guards stay green. The fail-closed-under-strict consequence is unchanged.
+    if poll.status == "done":
         flips = await asyncio.to_thread(
             _slice_guard.tasks_flips_sync, goal.workspace_dir
         )
@@ -393,176 +388,65 @@ async def _resolve_polling_action(
             # done-gate's grounded review + the human merge are the backstop.
             ctx.store.append_log(goal_id, "⚠️ " + note + " — shipped anyway (trust mode)")
 
-    # ---- post-commit tail: auto-merge / program-reconcile (real awaits) ----
-    # Moved here (from before the status write, pre-PR7) so both now run
-    # STRICTLY AFTER the settle has committed — shrinking the 2026-06-21
-    # duplicate-merge window and killing the remaining conflict-retry
-    # artifacts. Two observable differences from pre-PR7, both intentional:
-    # (a) the "auto-merged …" / "reconcile: …" log lines now land AFTER the
-    # settle line in log.md (same content, slightly different file order);
-    # (b) a crash after commit but before the merge attempt now leaves the
-    # task settled-but-unmerged (a PR left for review — the SAFE direction:
-    # pre-PR7, a crash there lost the settle too and the whole thing re-ran).
+    # ---- post-commit tail: mergeability probe (the one real await) --------
+    # Nothing merges here, and that is the design rather than an omission
+    # (#641). Every goal delivers on a shared goal branch as ONE cumulative PR
+    # which must stay OPEN for the done-gate: merging it mid-flight deletes the
+    # branch and forces the next night to re-fork from main, wiping the
+    # accumulated work (#486). Auto-merge and the program PR-stack reconciler
+    # that used to run here were deleted — they served a per-action topology
+    # nothing has selected since the spec 008 shrink, and in companion mode the
+    # human reviews and merges. Do not reintroduce a merge on this path.
     #
-    # Hands-off auto-merge: a delivered change whose verify gate passed is
-    # merged by devclaw itself, with a plain owner ping. Best-effort + gated —
-    # a failed merge just leaves the PR for review.
-    #
-    # ``ctx.merger`` being non-None IS the enabled decision — GoalService
-    # resolves it per-goal (project automerge override, else the devclaw-wide
-    # DEVCLAW_GOAL_AUTOMERGE default; see devclaw.goal.merge.resolve_automerge)
-    # BEFORE it ever reaches this tick. This function must not re-check the
-    # raw global flag itself — doing so would mean a project's explicit
-    # override could never turn merging ON when the fleet-wide default is off
-    # (or off when the default is on), defeating the whole point of a
-    # per-project override.
-    #
-    # #394 totality: every gate-green delivery that produced a PR resolves to
-    # exactly ONE of merged | left-for-owner(reason) | skipped(reason), and the
-    # resolution is always visible in the goal log. The two skip paths below
-    # used to fall through in silence — a goal whose skip path never said so
-    # forced the owner to infer "it silently didn't engage" from an open PR
-    # and an empty log.
-    # #486: the auto-merge SKIP keys on the delivery TOPOLOGY. A goal-branch
-    # delivery's PR is the cumulative goal-branch PR — auto-merging it
-    # mid-flight deletes the goal branch and forces the next night to re-fork
-    # from main, wiping the accumulated PR. The cumulative PR stays OPEN for
-    # the done-gate; only a per-action (``goal_branch(...) is None``) delivery
-    # auto-merges per action.
-    on_goal_branch = (
-        _delivery.resolve_strategy(ctx.store, goal_id).goal_branch(goal_id) is not None
-    )
-    merged_now = False
-    merge_failed_pinged = False  # an OWNER ping already fired for this PR this settle
-    merge_skip = ""  # non-empty ⇒ this green delivery's PR was deliberately not merged
-    green_pr = bool(poll.status == "done" and poll.gate_passed and poll.pr_url)
-    if green_pr and on_goal_branch:
-        merge_skip = "goal-branch: cumulative PR stays open for the done-gate"
-    elif green_pr and ctx.merger is None:
-        merge_skip = "auto-merge is off for this repo"
-    elif green_pr:
-        if await ctx.merger(poll.pr_url):
-            merged_now = True
-            ctx.store.append_log(goal_id, f"auto-merged {poll.pr_url}")
-            await _notify(
-                ctx.notifier, NotifyLevel.TASK,
-                f"✅ [{goal_id}] shipped + merged — {_action_label(ref)} ({poll.pr_url})",
-                summarize=ctx.summary_caller,
-            )
-        else:
-            merge_failed_pinged = True
-            ctx.store.append_log(goal_id, f"auto-merge failed, left for review: {poll.pr_url}")
-            # Loud, not silent (2026-07-17): automerge is ENABLED for this goal
-            # but the merge did not land (failing/pending checks, a conflict, a gh
-            # hiccup). The best-effort merger swallows the reason and returns
-            # False, so WITHOUT this the owner never learns it was attempted — and
-            # is later paged to "please merge PR X" as if nothing tried (the
-            # finance-sentry "automerge never fired" confusion, 2026-07-17). A PR
-            # that needs a manual merge IS a needs-you event → OWNER altitude.
-            await _notify(
-                ctx.notifier, NotifyLevel.OWNER,
-                f"⚠️ [{goal_id}] auto-merge failed — {_action_label(ref)} shipped "
-                f"but its PR did not merge automatically (check its CI/mergeability). "
-                f"Please merge it by hand: {poll.pr_url}",
-                summarize=ctx.summary_caller,
-            )
-    if merge_skip:
-        # skipped(reason) — one legible line, log-only (no ping: a skip is
-        # configured behavior, not a needs-you event; the conflict probe below
-        # is what escalates when the skipped PR also cannot land).
-        ctx.store.append_log(goal_id, f"auto-merge skipped ({merge_skip}): {poll.pr_url}")
-
-    # #430: remember a green PR we shipped but did NOT land (auto-merge
-    # off/failed), so the done-gate can tell it is reviewing a ref (the default
-    # branch) that cannot see the fix — and block for a merge instead of
-    # re-dispatching the same work forever. Cleared the moment such a PR
-    # merges. A column-only write AFTER the atomic settle (the merge attempt
-    # above is async, outside the transaction) — and its returned
-    # fresh-versioned status is threaded onward so the advance handler's
-    # `expect=` still CAS's against the current version. The done-gate consumer
-    # of this marker (tick_donegate) is guarded on ``goal_branch(...) is
-    # None``, so a goal-branch PR that lands here sets a marker the goal-branch
-    # done-gate never reads — benign.
-    if green_pr:
-        new_status = ctx.store.update_status_fields(
-            goal_id, open_unmerged_pr=(None if merged_now else poll.pr_url)
-        )
+    # This runs STRICTLY AFTER the settle has committed (PR7). A crash between
+    # the two leaves the task settled with its probe unrun — the SAFE direction:
+    # before PR7 a crash here lost the settle too and the whole thing re-ran.
 
     # ---- mergeability probe (#394) -----------------------------------------
     # A delivery whose PR is CONFLICTING at settle is a degraded delivery and
-    # must be loud — today it settles `done` indistinguishably from a landable
-    # one (both live 2026-07-28 instances: closeloop-bench PR #8 accumulated
-    # three gate-green deliveries on a branch that structurally conflicted
-    # with main after PR #7's squash-merge; fs PR #329 was CONFLICTING at
-    # open and reported success anyway). One cheap gh read per settled PR
-    # that is still open; best-effort — an unknown verdict (probe None, gh
-    # hiccup) stays silent rather than crying wolf. Programs are excluded:
-    # their PR stacks were just reconciled above, per-PR, with reasons.
+    # must be loud — otherwise it settles `done` indistinguishably from a
+    # landable one (both live 2026-07-28 instances: closeloop-bench PR #8
+    # accumulated three gate-green deliveries on a branch that structurally
+    # conflicted with main after PR #7's squash-merge; fs PR #329 was
+    # CONFLICTING at open and reported success anyway). One cheap gh read per
+    # settled PR; best-effort — an unknown verdict (probe None, gh hiccup)
+    # stays silent rather than crying wolf.
+    #
+    # Programs are no longer excluded. That exclusion existed because their PR
+    # stacks "were just reconciled above, per-PR, with reasons"; with the
+    # reconciler gone its premise is gone too, and a fan-out program delivers
+    # ONE cumulative PR exactly like a sequential increment
+    # (devclaw/delivery/integrate.py), so it deserves the same advisory.
     conflicting: "bool | None" = None
-    if (
-        ctx.mergeability_probe is not None
-        and poll.status == "done" and poll.pr_url and not merged_now
-        and ref.ref_kind != "program"
-    ):
+    if ctx.mergeability_probe is not None and poll.status == "done" and poll.pr_url:
         conflicting = await ctx.mergeability_probe(poll.pr_url)
         if conflicting:
             ctx.store.append_log(
                 goal_id, f"PR is CONFLICTING with its base — cannot land as-is: {poll.pr_url}"
             )
-            # One page per event: the failed-merge branch above already sent an
-            # OWNER ping for this same PR ("merge it by hand") — the conflict
-            # fact still lands in the log + planner detail, but a second page
-            # for the same delivery would just be noise.
-            if not merge_failed_pinged:
-                await _notify(
-                    ctx.notifier, NotifyLevel.OWNER,
-                    f"⚠️ [{goal_id}] delivered PR cannot land — {_action_label(ref)} "
-                    f"shipped, but its PR conflicts with the base branch and will not "
-                    f"merge as-is. It needs a rebase or hand-resolution: {poll.pr_url}",
-                    summarize=ctx.summary_caller,
-                )
+            await _notify(
+                ctx.notifier, NotifyLevel.OWNER,
+                f"⚠️ [{goal_id}] delivered PR cannot land — {_action_label(ref)} "
+                f"shipped, but its PR conflicts with the base branch and will not "
+                f"merge as-is. It needs a rebase or hand-resolution: {poll.pr_url}",
+                summarize=ctx.summary_caller,
+            )
 
-    # Program settle: a finished program leaves a STACK of PRs the single-PR
-    # auto-merge above can't touch (no single gate verdict). Reconcile the
-    # stack mechanically — close superseded, merge green in order, leave red
-    # with a reason — so the goal stops burning follow-up dispatches
-    # shepherding its own PRs to main and stops leaving zombies behind
-    # (live-found 2026-07-09: five open superseded closeloop PRs). Same
-    # merger gate as auto-merge: no merger resolved → owner reviews by hand.
-    reconcile_summary: list[str] = []
-    if (
-        ctx.merger is not None
-        and ref.ref_kind == "program" and poll.status == "done" and poll.pr_url
-    ):
-        stack = [u.strip() for u in poll.pr_url.split(";") if u.strip()]
-        reconcile_summary = await _reconcile.reconcile_stack(
-            stack, workspace_dir=goal.workspace_dir, merger=ctx.merger,
-        )
-        for line in reconcile_summary:
-            ctx.store.append_log(goal_id, f"reconcile: {line}")
-
-    # Built AFTER the auto-merge attempt so the planner is told the PR's real
-    # state instead of inferring it. "open (unmerged — owner review pending)"
-    # is the closeloop-bench 2026-07-05 fix: the planner's done-proposal prose
+    # Tells the planner the PR's REAL state instead of letting it infer one.
+    # The closeloop-bench 2026-07-05 fix: the planner's done-proposal prose
     # claimed "PR merged (gate passed)" for a PR nothing had merged, because
     # the detail string never said otherwise.
     pr_state = ""
-    if reconcile_summary:
-        pr_state = " pr_stack reconciled:\n" + "\n".join(f"  - {line}" for line in reconcile_summary)
-    elif poll.pr_url:
-        if merged_now:
-            pr_state = " pr_state=merged"
-        else:
-            pr_state = " pr_state=open (unmerged — owner review pending)"
-            if merge_skip:
-                pr_state += f" · auto-merge skipped ({merge_skip})"
-            if conflicting:
-                # Ground the planner in the PR's real landability, not just its
-                # openness — a conflicting PR must not read as shippable work.
-                pr_state += (
-                    " · mergeable=CONFLICTING — cannot land without a rebase/"
-                    "conflict resolution"
-                )
+    if poll.pr_url:
+        pr_state = " pr_state=open (unmerged — owner review pending)"
+        if conflicting:
+            # Ground the planner in the PR's real landability, not just its
+            # openness — a conflicting PR must not read as shippable work.
+            pr_state += (
+                " · mergeable=CONFLICTING — cannot land without a rebase/"
+                "conflict resolution"
+            )
+
     finished_detail = f"tool={ref.tool} id={ref.id} status={poll.status}{ev_str}{pr_state}\n{poll.detail}"
 
     return new_status, finished_detail

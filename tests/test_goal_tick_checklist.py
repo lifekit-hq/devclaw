@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 
-from devclaw.goal import delivery_strategy as _delivery
 from devclaw.goal.models import Action, GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import Outcome, _dispatch_action, tick_goal
@@ -27,48 +26,7 @@ def _store(tmp_path):
     return GoalStore(tmp_path, now=Clock())
 
 
-def _force_per_action(monkeypatch):
-    """Select the per-action delivery topology for the tick under test.
-
-    Nothing selects it on its own any more (#616 retired the legacy-lifecycle
-    rule; see ``resolve_strategy``). Choosing it explicitly keeps the
-    default-branch-reset path under test without a test asserting a route the
-    loop cannot take by itself."""
-    monkeypatch.setattr(
-        "devclaw.goal.delivery_strategy.resolve_strategy",
-        lambda store, goal_id: _delivery.PER_ACTION,
-    )
-
-
 # ---- which branch a dispatch checks out -------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_dispatch_uses_the_default_branch_under_per_action_delivery(tmp_path, monkeypatch):
-    """A per-action delivery gets the default-branch reset on every dispatch
-    (``branch_for_dispatch`` is None). Goal-branch accumulation — the
-    2026-08-08 amnesia fix — is the other side of this, and is what every real
-    goal now gets."""
-    _force_per_action(monkeypatch)
-    store = _store(tmp_path)
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle"))
-
-    calls: list = []
-
-    async def rec_prepare(ws, repo_url=None, branch=None):
-        calls.append(branch)
-        return branch or "main"
-
-    engine = FakeEngine()
-
-    await tick_goal(
-        "g", store=store, engine=engine,
-        evaluator_caller=FakeClaude(role="evaluator"),
-        notifier=RecordingNotifier(), prepare_ws=rec_prepare,
-    )
-
-    assert calls == [None]
 
 
 @pytest.mark.asyncio
@@ -308,36 +266,3 @@ async def test_dispatch_proceeds_when_staleness_probe_returns_none(tmp_path, mon
     assert out is Outcome.DISPATCHED
     assert len(engine.dispatched) == 1
 
-
-@pytest.mark.asyncio
-async def test_staleness_probe_not_called_in_per_action_mode(tmp_path, monkeypatch):
-    """A per-action delivery never hits the staleness probe —
-    ``branch_for_dispatch`` is None for that path. (A goal-branch goal
-    accumulates on ``goal/<id>`` and DOES probe — covered by
-    test_long_lived_goal_accumulates_on_goal_branch.)"""
-    from devclaw.goal import tick_dispatch
-
-    _force_per_action(monkeypatch)
-
-    probe_calls: list = []
-
-    async def _staleness_recording(workspace_dir, goal_id):
-        probe_calls.append((workspace_dir, goal_id))
-        return {"commits_behind": 0, "commits_ahead": 0}
-
-    monkeypatch.setattr(tick_dispatch, "_branch_staleness", _staleness_recording)
-
-    store = _store(tmp_path)
-    seed_goal(tmp_path, "g")
-    store.save_status("g", GoalStatus(phase="idle"))
-
-    engine = FakeEngine()
-
-    out = await tick_goal(
-        "g", store=store, engine=engine,
-        evaluator_caller=FakeClaude(role="evaluator"),
-        notifier=RecordingNotifier(), prepare_ws=fake_prepare,
-    )
-
-    assert probe_calls == []  # staleness probe was never invoked
-    assert out is Outcome.DISPATCHED  # dispatch still happened normally
