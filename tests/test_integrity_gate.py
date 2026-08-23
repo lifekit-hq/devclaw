@@ -8,6 +8,7 @@ import subprocess
 import pytest
 
 from devclaw import task_queue
+from devclaw.quality import task_gates
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
@@ -52,7 +53,7 @@ async def test_integrity_scanner_crash_fails_closed(store, tmp_path, monkeypatch
 
     def boom(diff):
         raise RuntimeError("scanner exploded")
-    monkeypatch.setattr(task_queue, "scan_diff", boom)
+    monkeypatch.setattr(task_gates, "scan_diff", boom)
 
     async def runner(req: EngineRequest):
         with open(os.path.join(req.workspace_dir, "f.py"), "w") as f:

@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from devclaw import task_queue
+from devclaw.quality import task_gates
 from devclaw.llm_call import PlannerError
 from devclaw.quality.reachability import (
     build_reachability_prompt,
@@ -282,4 +283,4 @@ async def test_settle_blocks_when_reachability_says_reachable(store, _frontend_s
     await q.drain()
     t = store.get_task(tid)
     assert t.status == "failed"
-    assert task_queue._BROWSER_GATE_MARKER in (t.error or "")
+    assert task_gates._BROWSER_GATE_MARKER in (t.error or "")

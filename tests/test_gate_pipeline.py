@@ -20,7 +20,7 @@ Pure unit tests — no docker, no claude, no git.
 
 from __future__ import annotations
 
-from devclaw import task_queue as tq
+from devclaw.quality import task_gates as tg
 from devclaw.quality.gate_pipeline import GateInput, GateVerdict, run_pipeline
 
 
@@ -127,7 +127,7 @@ async def test_verify_gate_short_circuits_before_any_diff_is_computed():
     )
     downstream = _RecordingGate("test_integrity")
 
-    verdict = await run_pipeline(gi, (tq._VerifyGate(), downstream))
+    verdict = await run_pipeline(gi, (tg._VerifyGate(), downstream))
 
     assert verdict is not None
     assert verdict.gate_id == "verify"
@@ -167,7 +167,7 @@ async def test_review_gate_finding_is_dialable():
     gi = _gate_input(calls)
     q = _FakeQueue(review_fail="review found a real defect")
 
-    verdict = await tq._ReviewGate(q).check(gi)
+    verdict = await tg._ReviewGate(q).check(gi)
 
     assert verdict.ok is False
     assert verdict.gate_id == "review"
@@ -181,7 +181,7 @@ async def test_review_gate_pass_is_ok_and_not_dialable():
     gi = _gate_input(calls)
     q = _FakeQueue(review_fail=None)
 
-    verdict = await tq._ReviewGate(q).check(gi)
+    verdict = await tg._ReviewGate(q).check(gi)
 
     assert verdict.ok is True
     assert verdict.gate_id == "review"

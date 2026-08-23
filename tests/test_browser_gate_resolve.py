@@ -7,7 +7,7 @@ suite is wedged under strict, waved through under flexible).
 from __future__ import annotations
 
 from devclaw.project_registry import ProjectRegistry
-from devclaw.task_queue import _browser_gate_failure
+from devclaw.quality.task_gates import _browser_gate_failure
 
 _FRONTEND_DIFF = (
     "diff --git a/frontend/src/app/x.component.ts b/frontend/src/app/x.component.ts\n"

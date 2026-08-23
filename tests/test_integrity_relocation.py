@@ -12,7 +12,7 @@ closed on no evidence.
 from __future__ import annotations
 
 from devclaw.loom.test_integrity import present_test_names
-from devclaw.task_queue import _integrity_failure
+from devclaw.quality.task_gates import _integrity_failure
 
 # A deletion diff removing two xUnit tests from the old duplicate file.
 _DELETION_DIFF = (

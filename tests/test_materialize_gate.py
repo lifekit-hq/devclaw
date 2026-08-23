@@ -14,6 +14,7 @@ import subprocess
 import pytest
 
 from devclaw import task_queue
+from devclaw.quality import task_gates
 from devclaw.engine import EngineRequest
 from devclaw.quality.gate_pipeline import GateInput, run_pipeline
 from devclaw.quality.gate_policy import ALWAYS_HARD, Consequence, gate_consequence
@@ -61,7 +62,7 @@ async def test_an_undeterminable_span_fails_the_gate_closed_instead_of_reading_a
     async def _broken():
         return ChangeSet(status=ERROR, reason="git could not diff abc..def")
 
-    verdict = await task_queue._MaterializeGate().check(_input(_broken))
+    verdict = await task_gates._MaterializeGate().check(_input(_broken))
     assert verdict.ok is False
     assert verdict.gate_id == "materialize"
     assert "could not be determined" in (verdict.reason or "")
@@ -78,7 +79,7 @@ async def test_a_crash_capturing_the_span_also_fails_closed():
     async def _boom():
         raise RuntimeError("thread died")
 
-    verdict = await task_queue._MaterializeGate().check(_input(_boom))
+    verdict = await task_gates._MaterializeGate().check(_input(_boom))
     assert verdict.ok is False and "thread died" in (verdict.reason or "")
 
 
@@ -93,8 +94,8 @@ async def test_a_verify_failure_short_circuits_before_the_span_is_captured():
 
     gi = _input(_capture, verify=_gate(False))
     verdict = await run_pipeline(
-        gi, (task_queue._VerifyGate(), task_queue._MaterializeGate(),
-             task_queue._IntegrityGate()),
+        gi, (task_gates._VerifyGate(), task_gates._MaterializeGate(),
+             task_gates._IntegrityGate()),
     )
     assert verdict is not None and verdict.gate_id == "verify"
     assert captured == []
@@ -172,13 +173,13 @@ async def test_every_read_the_change_gate_sees_the_materialized_span(
         return {"verdict": "approve", "summary": "ok", "issues": [], "blocking": []}
 
     integrity_seen: list = []
-    real_integrity = task_queue._integrity_failure
+    real_integrity = task_gates._integrity_failure
 
     def spy_integrity(diff, workspace_dir=None):
         integrity_seen.append(diff)
         return real_integrity(diff, workspace_dir)
 
-    monkeypatch.setattr(task_queue, "_integrity_failure", spy_integrity)
+    monkeypatch.setattr(task_gates, "_integrity_failure", spy_integrity)
 
     async def runner(req: EngineRequest):
         (ws / "never_recorded.py").write_text("N = 1\n")

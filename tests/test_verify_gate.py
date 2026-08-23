@@ -17,7 +17,8 @@ import pytest
 
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
-from devclaw.task_queue import TaskQueue, _verify_failure_summary
+from devclaw.quality.task_gates import _verify_failure_summary
+from devclaw.task_queue import TaskQueue
 
 _RUNNER_PATH = Path(__file__).resolve().parents[1] / "runner" / "runner.py"
 

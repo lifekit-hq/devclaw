@@ -319,7 +319,8 @@ def _row_to_program(r: sqlite3.Row) -> Program:
 # cognition, so the projection derives its classes the same way). Checked in
 # priority order; first hit wins. The phrases are the stable marker strings the
 # settle paths already emit (task_queue's _WORKER_BLOCKED_MARKER /
-# _REVIEW_CRASH_MARKER / _verify_failure_summary / the timeout + pause-bound +
+# _REVIEW_CRASH_MARKER, quality/task_gates' _verify_failure_summary, the
+# timeout + pause-bound +
 # delivery messages), so bucketing here can't drift from the wording without a
 # test catching it. Basket report errors ride the same buckets — the reports
 # store the identical settle-path texts.

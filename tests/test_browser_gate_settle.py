@@ -1,5 +1,5 @@
 """Regression tests for the browser-gate settle wiring
-(``_browser_gate_failure`` + ``_has_playwright_config`` in task_queue).
+(``_browser_gate_failure`` + ``_has_playwright_config`` in quality/task_gates).
 
 These assert the host-side half of the gate: a web-UI change with no passing
 real-browser run fails CLOSED (a feed-back reason → the retry loop, never a
@@ -11,8 +11,8 @@ covers config detection + enablement + mode against a real workspace on disk.
 
 from __future__ import annotations
 
-import devclaw.task_queue as tq
-from devclaw.task_queue import _browser_gate_failure, _has_playwright_config
+import devclaw.quality.task_gates as tq
+from devclaw.quality.task_gates import _browser_gate_failure, _has_playwright_config
 
 _FRONTEND_DIFF = (
     "diff --git a/frontend/src/app/select/select.component.ts "
