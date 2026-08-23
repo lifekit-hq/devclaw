@@ -29,12 +29,12 @@ Hook points (Stage 4 wires these — Stage 1 just exposes the methods):
 from __future__ import annotations
 
 import json
-import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
+from . import config as _config
 from .goal.state import GoalState
 from .loom import trace as _trace
 from .llm_call import extract_json
@@ -73,19 +73,19 @@ from .model_tiers import model_for as _model_for
 TREND_MODEL = _model_for("trend")
 
 #: Kill switch for the whole discipline. Set to ``0`` to disable.
-TREND_ENABLED = os.environ.get("DEVCLAW_TREND_ENABLED", "1") != "0"
+TREND_ENABLED = _config.TREND_ENABLED
 
 #: Comma-separated signal IDs to silence without redeploying — e.g.
 #: ``DEVCLAW_TREND_DISABLE=R2,H4`` mutes those two while calibration is in flight.
 TREND_DISABLE = {
     s.strip().upper()
-    for s in os.environ.get("DEVCLAW_TREND_DISABLE", "").split(",")
+    for s in _config.TREND_DISABLE_RAW.split(",")
     if s.strip()
 }
 
 #: Where the harness-self trends file lives. Defaults into Denys's vault.
 HARNESS_SELF_TRENDS_PATH = Path(
-    os.environ.get("DEVCLAW_TREND_HARNESS_SELF_FILE", "~/memory/projects/devclaw/trends.md")
+    _config.TREND_HARNESS_SELF_FILE
 ).expanduser()
 
 #: Default cooldown when a signal doesn't set its own.

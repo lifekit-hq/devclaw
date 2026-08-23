@@ -32,11 +32,11 @@ from the daemons. Tests inject a fake runner so they never touch docker/tailscal
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from pathlib import Path
 
 from ..engine.sandcastle import _translate_workspace_path  # reuse host-path mapping
+from .. import config as _config
 from ..procutil import run as _run
 
 # In-container launcher. Detects backend/ (FastAPI) and frontend/ (static), serves
@@ -97,11 +97,9 @@ else
 fi
 """
 
-DEPLOY_IMAGE = os.environ.get("DEVCLAW_DEPLOY_IMAGE") or os.environ.get(
-    "DEVCLAW_SANDBOX_IMAGE", "devclaw-sandbox:latest"
-)
-DOCKER_BIN = os.environ.get("DEVCLAW_DOCKER_BIN", "docker")
-TAILSCALE_BIN = os.environ.get("DEVCLAW_TAILSCALE_BIN", "tailscale")
+DEPLOY_IMAGE = _config.DEPLOY_IMAGE
+DOCKER_BIN = _config.DOCKER_BIN
+TAILSCALE_BIN = _config.TAILSCALE_BIN
 CONTAINER_PORT = 8000
 _NAME_PREFIX = "devclaw-deploy-"
 
@@ -109,14 +107,14 @@ _NAME_PREFIX = "devclaw-deploy-"
 # redeploys, so the port is derived from the slug (not assigned sequentially or
 # read back from a registry). 8200–8399 avoids the preview default (8000) and the
 # common dev ports; 200 slots is far more than a single small VPS will host.
-DEPLOY_PORT_BASE = int(os.environ.get("DEVCLAW_DEPLOY_PORT_BASE", "8200"))
-DEPLOY_PORT_SPAN = int(os.environ.get("DEVCLAW_DEPLOY_PORT_SPAN", "200"))
+DEPLOY_PORT_BASE = _config.DEPLOY_PORT_BASE
+DEPLOY_PORT_SPAN = _config.DEPLOY_PORT_SPAN
 
 # Resource governance — deploys are even longer-lived than previews, so the same
 # hard per-container caps apply and the count is bounded (oldest-first eviction).
-DEPLOY_MEMORY = os.environ.get("DEVCLAW_DEPLOY_MEMORY", "512m")
-DEPLOY_CPUS = os.environ.get("DEVCLAW_DEPLOY_CPUS", "1.0")
-DEPLOY_MAX = int(os.environ.get("DEVCLAW_DEPLOY_MAX", "5"))
+DEPLOY_MEMORY = _config.DEPLOY_MEMORY
+DEPLOY_CPUS = _config.DEPLOY_CPUS
+DEPLOY_MAX = _config.DEPLOY_MAX
 
 
 class DeployError(Exception):

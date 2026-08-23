@@ -21,18 +21,21 @@ then the default keeps the pre-existing ``devclaw@local``.
 
 from __future__ import annotations
 
-import os
+
+from . import config as _config
 
 _DEFAULT_NAME = "devclaw"
 _DEFAULT_EMAIL = "devclaw@local"
 
 
 def git_name() -> str:
-    return os.environ.get("DEVCLAW_GIT_NAME", _DEFAULT_NAME)
+    v = _config.git_name()
+    return v if v is not None else _DEFAULT_NAME
 
 
 def git_email() -> str:
-    return os.environ.get("DEVCLAW_GIT_EMAIL", _DEFAULT_EMAIL)
+    v = _config.git_email()
+    return v if v is not None else _DEFAULT_EMAIL
 
 
 def git_identity_env() -> dict[str, str]:

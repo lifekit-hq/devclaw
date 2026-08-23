@@ -25,11 +25,11 @@ there is no self-modification here, and no cognition call: it is pure wiring.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from dataclasses import dataclass, field
 from typing import Callable, Optional, Protocol
 
+from .. import config as _config
 from ..state_store.problems import PROBLEM_CATEGORIES
 from ..procutil import run as _run
 
@@ -41,16 +41,16 @@ from ..procutil import run as _run
 #: production: 7 live cycles, 93 problems, max cross-cycle survival 2, ZERO
 #: filed — the session-led fix loop repairs real recurrences in ~a day, so a
 #: 3-cycle bar means devclaw only ever files problems humans already fixed.
-RECURRENCE_THRESHOLD = int(os.environ.get("DEVCLAW_SELF_ISSUE_MIN_CYCLES", "2"))
+RECURRENCE_THRESHOLD = _config.SELF_ISSUE_MIN_CYCLES
 #: one cycle-day: the membership window each cycle close marks problems over.
 DAY_MS = 24 * 3600 * 1000
 #: quiet span after which an open self-filed issue auto-closes as stale (O2 /
 #: backlog #259 age-out). Cycles are ~daily, so K cycles ≈ K days.
-_QUIET_DAYS = int(os.environ.get("DEVCLAW_SELF_ISSUE_QUIET_DAYS", "3"))
+_QUIET_DAYS = _config.SELF_ISSUE_QUIET_DAYS
 QUIET_MS = _QUIET_DAYS * 24 * 3600 * 1000
 #: cap on NEW issues opened per cycle (O4 noise budget); suppressed ones are
 #: named in the cycle-report line, never silently dropped.
-MAX_NEW_ISSUES_PER_CYCLE = int(os.environ.get("DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE", "3"))
+MAX_NEW_ISSUES_PER_CYCLE = _config.SELF_ISSUE_MAX_PER_CYCLE
 
 #: the self-filed marker label + the per-class label prefix (O3). Labels map from
 #: ``problems.category`` (NOT eval_outcomes.failure_class — distinct taxonomies).
@@ -74,7 +74,7 @@ FIXING_LABEL = "devclaw:fixing"
 #: how many self-fix goals may be in flight at once. Concurrency 1 = serialize
 #: self-modification: parallel self-fixes multiply the self-brick surface and muddy
 #: failure attribution (proposal §5A). Tunable via env.
-SELF_FIX_CONCURRENCY = int(os.environ.get("DEVCLAW_SELF_FIX_CONCURRENCY", "1"))
+SELF_FIX_CONCURRENCY = _config.SELF_FIX_CONCURRENCY
 
 
 # ---- pure decisions (no DB, no clock, no network) ---------------------------
@@ -279,7 +279,7 @@ def self_repo() -> Optional[str]:
     """The repo devclaw files against — itself (O6). Configured explicitly via
     ``DEVCLAW_SELF_REPO`` (``owner/name``); unset ⇒ the whole feature is a no-op
     (default + every test path shells nothing)."""
-    slug = (os.environ.get("DEVCLAW_SELF_REPO") or "").strip()
+    slug = _config.self_repo()
     return slug or None
 
 
@@ -449,7 +449,7 @@ def self_fix_workspace(goal_id: str) -> str:
     """Where the self-fix goal's clone lands. In prod the sandbox only binds paths
     under ``DEVCLAW_CONTAINER_PATH_PREFIX`` (``engine/sandcastle.py``), so derive from
     it; unset (dev/host/tests) ⇒ the ``/repos/<id>`` convention the tests use."""
-    base = (os.environ.get("DEVCLAW_CONTAINER_PATH_PREFIX") or "").rstrip("/") or "/repos"
+    base = (_config.container_path_prefix() or "").rstrip("/") or "/repos"
     return f"{base}/{goal_id}"
 
 

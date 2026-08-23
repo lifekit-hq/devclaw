@@ -43,17 +43,18 @@ from typing import NamedTuple
 from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
 from ..claude_trust import write_trusted_copy
+from .. import config as _config
 from ..git_identity import git_identity_env
 
-SANDBOX_IMAGE = os.environ.get("DEVCLAW_SANDBOX_IMAGE", "devclaw-sandbox:latest")
-DOCKER_BIN = os.environ.get("DEVCLAW_DOCKER_BIN", "docker")
+SANDBOX_IMAGE = _config.SANDBOX_IMAGE
+DOCKER_BIN = _config.DOCKER_BIN
 # The model the in-sandbox agent runs on — this is the heavy coding
 # path and the bulk of the Pro/Max quota burn, so it defaults to Sonnet (strong
 # at code, far lighter than Opus); set DEVCLAW_EXEC_MODEL=claude-opus-4-8 to opt
 # a run up to Opus. Passed to the runner, which hands it to ACPAgent as the
 # `acp_model` (Claude ACP selects it via session _meta). Must be a full model id,
 # not an alias. Empty → the ACP server's default.
-EXEC_MODEL = os.environ.get("DEVCLAW_EXEC_MODEL", "claude-sonnet-4-6") or None
+EXEC_MODEL = _config.EXEC_MODEL
 # The ACP agent command the in-sandbox worker session runs on. Unset → the
 # runner's claude-agent-acp default (the only ACP binary the stock image bakes).
 # Set DEVCLAW_ACP_COMMAND to swap the worker for any CLI speaking ACP — the
@@ -63,14 +64,14 @@ EXEC_MODEL = os.environ.get("DEVCLAW_EXEC_MODEL", "claude-sonnet-4-6") or None
 # DEVCLAW_EXEC_MODEL's claude model ids, the auth/rate-limit classifiers), and
 # the alternate binary must be baked into the sandbox image — this var is the
 # seam, not the whole swap.
-ACP_COMMAND = os.environ.get("DEVCLAW_ACP_COMMAND", "") or None
+ACP_COMMAND = _config.ACP_COMMAND
 # Per-sandbox resource caps. The task queue bounds the NUMBER of concurrent
 # builds (DEVCLAW_MAX_CONCURRENT), but without a per-container memory ceiling N
 # parallel builds can still OOM a small VPS. --memory-swap == --memory disables
 # swap growth (a hard ceiling). Generous by default (builds run pip/compilers +
 # claude); tighten per host via env.
-SANDBOX_MEMORY = os.environ.get("DEVCLAW_SANDBOX_MEMORY", "2g")
-SANDBOX_CPUS = os.environ.get("DEVCLAW_SANDBOX_CPUS", "2.0")
+SANDBOX_MEMORY = _config.SANDBOX_MEMORY
+SANDBOX_CPUS = _config.SANDBOX_CPUS
 # The identity label every task sandbox carries, and the ONLY filter the startup
 # orphan sweep matches. Container names (devclaw-<uuid8>) are never persisted, so
 # after a process death the label is the one durable handle on leaked sandboxes.
@@ -133,7 +134,7 @@ CONTAINER_MISE_DATA = "/home/agent/.local/share/mise"
 _DEFAULT_CLAUDE_ALLOWLIST = (".credentials.json", ".claude.json")
 SANDBOX_CLAUDE_ALLOWLIST: tuple[str, ...] = tuple(
     e.strip()
-    for e in os.environ.get("DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST", "").split(",")
+    for e in _config.SANDBOX_CLAUDE_ALLOWLIST_RAW.split(",")
     if e.strip()
 ) or _DEFAULT_CLAUDE_ALLOWLIST
 
@@ -281,8 +282,8 @@ def _translate_workspace_path(workspace_dir: str) -> str:
     socket, the workspace path it sees internally is not the host's view of
     that bind-mounted dir. The path-prefix env pair tells us how to translate.
     Unset -> pass through (typical local dev, running directly on host)."""
-    container_prefix = os.environ.get("DEVCLAW_CONTAINER_PATH_PREFIX")
-    host_prefix = os.environ.get("DEVCLAW_HOST_PATH_PREFIX")
+    container_prefix = _config.container_path_prefix()
+    host_prefix = _config.host_path_prefix()
     if container_prefix and host_prefix and workspace_dir.startswith(container_prefix):
         return host_prefix + workspace_dir[len(container_prefix) :]
     return workspace_dir
@@ -309,8 +310,8 @@ def _validate_workspace(workspace_dir: str) -> str | None:
 
     Fail fast with a specific message instead — the goal layer surfaces it
     verbatim and the operator (or planner) can correct course immediately."""
-    container_prefix = os.environ.get("DEVCLAW_CONTAINER_PATH_PREFIX")
-    host_prefix = os.environ.get("DEVCLAW_HOST_PATH_PREFIX")
+    container_prefix = _config.container_path_prefix()
+    host_prefix = _config.host_path_prefix()
     if container_prefix and host_prefix and not workspace_dir.startswith(container_prefix):
         return (
             f"workspace_dir {workspace_dir!r} is outside the devclaw workspaces "
@@ -588,9 +589,7 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
     # source. When devclaw-mcp runs in a container, that path intentionally does
     # NOT exist in the container's view — we pass the string through and let
     # docker emit a clear error if the operator misconfigured the env var.
-    claude_dir = os.environ.get("DEVCLAW_HOST_CLAUDE_DIR") or str(
-        Path.home() / ".claude"
-    )
+    claude_dir = _config.host_claude_dir()
     # Fail fast on a workspace the sandbox can't usefully mount — see
     # _validate_workspace for the two silent-timeout traps this closes.
     bind_err = _validate_workspace(req.workspace_dir)

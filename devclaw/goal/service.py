@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 import uuid
 from dataclasses import dataclass, replace
@@ -22,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
+from .. import config as _config
 from ..advance_brief import display_goal as _display_goal
 from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
@@ -73,11 +73,10 @@ class GoalConfig:
 
     @staticmethod
     def from_env() -> "GoalConfig":
-        raw = os.environ.get("DEVCLAW_GOALS_DIR", "~/memory/goals")
         return GoalConfig(
-            goals_dir=Path(os.path.expanduser(raw)),
-            notify_url=os.environ.get("DEVCLAW_GOAL_NOTIFY_URL", ""),
-            tick_seconds=int(os.environ.get("DEVCLAW_GOAL_TICK_SECONDS", "900")),
+            goals_dir=Path(_config.goals_dir()),
+            notify_url=_config.goal_notify_url(),
+            tick_seconds=_config.goal_tick_seconds(),
             verify_done=VERIFY_DONE,
             autodeploy=AUTODEPLOY_ENABLED,
         )

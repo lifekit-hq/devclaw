@@ -39,6 +39,7 @@ def _health_freshness() -> dict:
             return None
         return _dt.datetime.fromtimestamp(int(ms) / 1000, tz=_dt.timezone.utc).isoformat()
 
+    from ... import config as _config
     from ...dispatch_gate import operator_block
     from ...state_store import _now_ms
 
@@ -50,8 +51,8 @@ def _health_freshness() -> dict:
     # WHETHER dispatch is open, not what is being dispatched.
     blocked, why = operator_block(store.operator_hold(), store.get_run_schedule(), _now_ms())
     return {
-        "git_sha": os.environ.get("DEVCLAW_GIT_SHA") or None,
-        "built_at": os.environ.get("DEVCLAW_BUILT_AT") or None,
+        "git_sha": _config.git_sha(),
+        "built_at": _config.built_at(),
         "started_at": _iso(getattr(goals, "started_at_ms", None)),
         "last_tick_at": _iso(getattr(goals, "last_tick_at_ms", None)),
         "last_cycle_report_at": _iso(last_report_ms),

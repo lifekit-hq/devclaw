@@ -14,11 +14,11 @@ chain in ``_tick_goal_impl`` relies on it being a single class.
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Callable
 
+from .. import config as _config
 from . import mergeability as _mergeability
 from . import remote_checks as _remote_checks
 from . import summary as _goal_summary
@@ -43,7 +43,7 @@ WorkspacePrep = Callable[[str, "str | None", "str | None"], Awaitable[str]]
 #: no-progress watchdog pings the owner once. Complements the per-task timeout
 #: (which kills one hung run) by catching a goal that keeps churning — dispatching,
 #: failing the gate, re-planning — without ever shipping. 0 disables. Default 6h.
-NO_PROGRESS_S = int(os.environ.get("DEVCLAW_GOAL_NO_PROGRESS_S", "21600"))
+NO_PROGRESS_S = _config.NO_PROGRESS_S
 
 
 #: when True, a planner "done" proposal dispatches a read-only review of the repo
@@ -100,9 +100,7 @@ def _notify_floor() -> NotifyLevel:
     """The lowest level that still reaches the owner. Default OWNER — only
     owner-altitude events go out; set DEVCLAW_NOTIFY_ALTITUDE=task for the full
     firehose. Read from env each call so it's overridable per process / in tests."""
-    return _ALTITUDES.get(
-        os.environ.get("DEVCLAW_NOTIFY_ALTITUDE", "owner").strip().lower(), NotifyLevel.OWNER
-    )
+    return _ALTITUDES.get(_config.notify_altitude_raw(), NotifyLevel.OWNER)
 
 
 def _action_label(ref) -> str:

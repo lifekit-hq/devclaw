@@ -17,15 +17,15 @@ goal_tick); cognition here writes WHAT it says.
 
 from __future__ import annotations
 
-import os
 
+from .. import config as _config
 from ..llm_call import ClaudeCaller
 
 #: cheap tier — owner notifications are rare, so this never touches idle quota.
 from ..model_tiers import model_for as _model_for
 GOAL_SUMMARY_MODEL = _model_for("summary")
 #: on by default; disable with DEVCLAW_GOAL_PLAIN_SUMMARY=0 to send raw text.
-PLAIN_SUMMARY_ENABLED = os.environ.get("DEVCLAW_GOAL_PLAIN_SUMMARY", "1") not in ("0", "false", "")
+PLAIN_SUMMARY_ENABLED = _config.PLAIN_SUMMARY_ENABLED
 
 #: a rewrite longer than this is treated as runaway/garbage → fall back to raw.
 _MAX_LEN = 600

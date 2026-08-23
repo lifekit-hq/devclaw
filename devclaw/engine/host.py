@@ -21,6 +21,7 @@ from pathlib import Path
 
 from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
+from .. import config as _config
 from ..git_identity import git_identity_env
 
 #: The REPOSITORY ROOT — ``runner/`` and its skill bundle are siblings of the
@@ -32,19 +33,31 @@ from ..git_identity import git_identity_env
 #: default resolves — see ``tests/test_host_engine_paths.py``.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 # the in-sandbox runner, run here on the host
-RUNNER_PY = os.environ.get("DEVCLAW_RUNNER_PY", str(_REPO_ROOT / "runner" / "runner.py"))
+RUNNER_PY = (
+    _config.RUNNER_PY_OVERRIDE
+    if _config.RUNNER_PY_OVERRIDE is not None
+    else str(_REPO_ROOT / "runner" / "runner.py")
+)
 #: The ONE home for worker-kind instructions (#613). The sandbox bakes
 #: ``runner/skills/`` to /opt/devclaw/skills; on the host nothing mounts it, so
 #: point the runner at the in-repo source it was baked from. Without this the
 #: host engine finds no skills at all and ``_wrap_goal`` raises — which is the
 #: correct loud failure, but the wiring is the fix, not the fallback text that
 #: used to paper over it.
-SKILLS_DIR = os.environ.get("DEVCLAW_SKILLS_DIR", str(_REPO_ROOT / "runner" / "skills"))
-HOOKS_DIR = os.environ.get("DEVCLAW_HOOKS_DIR", str(_REPO_ROOT / "runner" / "hooks"))
+SKILLS_DIR = (
+    _config.SKILLS_DIR_OVERRIDE
+    if _config.SKILLS_DIR_OVERRIDE is not None
+    else str(_REPO_ROOT / "runner" / "skills")
+)
+HOOKS_DIR = (
+    _config.HOOKS_DIR_OVERRIDE
+    if _config.HOOKS_DIR_OVERRIDE is not None
+    else str(_REPO_ROOT / "runner" / "hooks")
+)
 # the runner is stdlib-only (spec 011); a runner venv is still preferred if
 # present, else this interpreter
 _RUNNER_VENV = _REPO_ROOT / "runner" / ".venv" / "bin" / "python"
-RUNNER_PYTHON = os.environ.get("DEVCLAW_RUNNER_PYTHON") or (
+RUNNER_PYTHON = _config.RUNNER_PYTHON_OVERRIDE or (
     str(_RUNNER_VENV) if _RUNNER_VENV.exists() else sys.executable
 )
 

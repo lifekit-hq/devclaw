@@ -11,6 +11,7 @@ import urllib.parse
 from starlette.responses import JSONResponse
 
 from .. import __version__
+from .. import config as _config
 from .. import intake as intake_mod
 from ..claude_trust import config_path_for, ensure_trusted_in_place
 from ._state import (
@@ -114,7 +115,7 @@ async def _serve_http() -> None:
 
 
 def main() -> None:
-    transport = os.environ.get("DEVCLAW_TRANSPORT", "stdio")
+    transport = _config.transport()
     if transport not in ("stdio", "http"):
         raise SystemExit(f'Unknown DEVCLAW_TRANSPORT={transport}; expected "stdio" or "http"')
 

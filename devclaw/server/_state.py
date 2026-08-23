@@ -8,7 +8,6 @@ methods, they don't create state.
 
 from __future__ import annotations
 
-import os
 import sys
 import urllib.parse
 
@@ -22,26 +21,27 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from .. import __version__
+from .. import config as _config
 from ..goal.service import GoalService
 from ..project_registry import ProjectRegistry
 from ..state_store import StateStore
 from ..task_queue import TaskQueue
 
 SERVER_NAME = "devclaw"
-DB_PATH = os.path.abspath(os.environ.get("DEVCLAW_DB", "devclaw.db"))
-HTTP_PORT = int(os.environ.get("DEVCLAW_PORT", "8000"))
+DB_PATH = _config.db_path()
+HTTP_PORT = _config.HTTP_PORT
 # Default 0.0.0.0 so sibling compose containers (e.g. openclaw-gateway) can
 # reach the endpoint. Set DEVCLAW_HOST=127.0.0.1 to restrict to loopback.
-HTTP_HOST = os.environ.get("DEVCLAW_HOST", "0.0.0.0")
+HTTP_HOST = _config.HTTP_HOST
 # Optional bearer-token guard for the HTTP transport. When DEVCLAW_TOKEN is set,
 # every route except /health requires it — via `Authorization: Bearer <token>`
 # (MCP clients) or a `?token=<token>` query param (the browser dashboard +
 # EventSource, which can't set headers). Unset -> auth disabled (local dev).
-AUTH_TOKEN = os.environ.get("DEVCLAW_TOKEN", "")
+AUTH_TOKEN = _config.AUTH_TOKEN
 TOKEN_QS = f"?token={urllib.parse.quote(AUTH_TOKEN)}" if AUTH_TOKEN else ""
 
 store = StateStore(DB_PATH)
-_engine = os.environ.get("DEVCLAW_ENGINE", "")
+_engine = _config.ENGINE
 if _engine == "stub":
     # Harness-validation mode: deterministic stub engine + cognition, no docker,
     # no claude. Proves the plumbing around the agent; never use in production.

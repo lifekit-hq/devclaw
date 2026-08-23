@@ -43,19 +43,20 @@ a DB or a live clock (mirrors ``dispatch_gate``).
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+from .. import config as _config
 from zoneinfo import ZoneInfo
 
 # ---- window config ----------------------------------------------------------
 # The per-cycle run window. Defaults to 22:00–05:00 Europe/London (the schedule tz
 # the operator's cycle runs use). Overridable via env for a different cadence /
 # timezone; the pure helpers also take explicit overrides so tests pin a clock.
-CYCLE_WINDOW_START = os.environ.get("DEVCLAW_RUN_CYCLE_START", "22:00")
-CYCLE_WINDOW_END = os.environ.get("DEVCLAW_RUN_CYCLE_END", "05:00")
-CYCLE_WINDOW_TZ = os.environ.get("DEVCLAW_RUN_CYCLE_TZ", "Europe/London")
+CYCLE_WINDOW_START = _config.CYCLE_WINDOW_START
+CYCLE_WINDOW_END = _config.CYCLE_WINDOW_END
+CYCLE_WINDOW_TZ = _config.CYCLE_WINDOW_TZ
 
 
 # ---- failure-class → clean-cycle bucket (mechanical, zero LLM) ---------------

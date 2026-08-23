@@ -181,6 +181,7 @@ devclaw/
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
 ├── task_change.py   ONE mechanical answer to "what did the agent change?" (spec 013)
+├── config.py        the single doorway for DEVCLAW_* env config (one home, one default, one parse)
 ├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
 runner/runner.py   the in-sandbox worker harness — drives the ACP agent via acp_client.py; line-delimited JSON on stdout
 .sandcastle/Dockerfile       per-task sandbox image
