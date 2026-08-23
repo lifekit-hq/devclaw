@@ -638,15 +638,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
             )
             self._commit()
 
-    def mark_running(self, task_id: str) -> None:
-        with self._lock:
-            self._db.execute(
-                "UPDATE tasks SET status = 'running', started_at = ? "
-                "WHERE id = ? AND status = 'pending'",
-                (_now_ms(), task_id),
-            )
-            self._commit()
-
     def claim_pending(self, task_id: str) -> bool:
         """Atomically transition pending -> running. Returns True if THIS call
         won the race (caller must execute the task), False otherwise. Used by
@@ -1363,15 +1354,6 @@ class StateStore(ControlPlaneMixin, ProblemsMixin):
             # and the next tick continues the drain.
             self.set_meta(meta_key, str(now_ms))
         return deleted
-
-    def prune_trace_batch(
-        self, *, older_than_ms: int, limit: int = TRACE_PRUNE_BATCH
-    ) -> int:
-        """One bounded batch of the traces retention prune. See
-        :meth:`_prune_table_batch`."""
-        return self._prune_table_batch(
-            table="traces", older_than_ms=older_than_ms, limit=limit,
-        )
 
     def maybe_prune_traces(
         self,

@@ -336,15 +336,6 @@ class GoalService:
             self._wake = asyncio.Event()
             self._loop_task = asyncio.ensure_future(self._loop())
 
-    async def stop(self) -> None:
-        if self._loop_task is not None:
-            self._loop_task.cancel()
-            try:
-                await self._loop_task
-            except asyncio.CancelledError:
-                pass
-            self._loop_task = None
-
     def poke(self) -> None:
         """Wake the heartbeat NOW — wired to the task queue's on-settle hook so a
         finished engine task triggers an immediate goal tick (the in-process

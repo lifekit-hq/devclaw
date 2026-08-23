@@ -129,7 +129,7 @@ def test_node_vitals_excludes_idle_cycles_from_clean_rate(http_mod, monkeypatch)
 def test_node_vitals_layers_stay_honest(http_mod, monkeypatch):
     monkeypatch.setattr(http_mod, "goals", _fake_goals([]))
     http_mod.store.create_task(id="t1", kind="implement_feature", workspace_dir="/w", goal="g")
-    http_mod.store.mark_running("t1")
+    http_mod.store.claim_pending("t1")
     v = http_mod._node_vitals()
 
     layers = {l["key"]: l["status"] for l in v["layers"]}

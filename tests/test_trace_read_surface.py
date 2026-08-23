@@ -97,15 +97,15 @@ def _seed_representative_rows(store: StateStore) -> None:
     # -- tasks: a retry storm (same title x2, one failed) + a clean done ---
     store.create_task(id="task-a1", kind="implement_feature", workspace_dir="/ws",
                       goal="add /health", title="add /health endpoint")
-    store.mark_running("task-a1")
+    store.claim_pending("task-a1")
     store.mark_failed("task-a1", "review gate crashed: non-JSON verdict")
     store.create_task(id="task-a2", kind="implement_feature", workspace_dir="/ws",
                       goal="add /health", title="add /health endpoint")
-    store.mark_running("task-a2")
+    store.claim_pending("task-a2")
     store.mark_done("task-a2", "{}")
     store.create_task(id="task-b", kind="fix_bug", workspace_dir="/ws",
                       goal="fix login", title="fix login redirect")
-    store.mark_running("task-b")
+    store.claim_pending("task-b")
     store.mark_failed("task-b", "claude --print timed out after 240000ms")
 
 
