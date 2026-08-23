@@ -136,7 +136,7 @@ async def feature_block_reason(workspace_dir: str) -> "str | None":
     """An actionable reason feature work must NOT run in this repo yet (a speckit
     install is pending), else ``None`` — the GOAL-path (heartbeat) gate for US2's
     'no half-installed execution', the durable-goal counterpart of
-    :func:`devclaw.server.tools._block_if_speckit_pending`.
+    :func:`devclaw.server.tools.tasks._block_if_speckit_pending`.
 
     Cheap and inert for ordinary repos: probes ONLY when a LOCAL install branch
     exists (concrete evidence onboard scaffolded here), so a repo with no

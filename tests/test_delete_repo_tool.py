@@ -33,7 +33,7 @@ def registry(tmp_path):
 def _patch_registry(registry, monkeypatch):
     # tools.py binds `registry` at import; point it at a throwaway one. Pin the
     # owner so full_slug derivation is deterministic in tests.
-    monkeypatch.setattr(_tools, "registry", registry)
+    monkeypatch.setattr(_tools.delivery, "registry", registry)
     monkeypatch.setenv("DEVCLAW_GITHUB_OWNER", "dsdevq")
     return registry
 
@@ -47,7 +47,7 @@ async def test_delete_repo_tool_refuses_repos_devclaw_did_not_create(
     async def never(*args, **kwargs):
         raise AssertionError("gh must not be reached for an unmanaged repo")
 
-    monkeypatch.setattr(_tools._repo, "delete_repo", never)
+    monkeypatch.setattr(_tools.delivery._repo, "delete_repo", never)
 
     with pytest.raises(ToolError, match="managed-repo ledger"):
         await _tools.delete_repo("finance-sentry", confirm="dsdevq/finance-sentry")
@@ -68,7 +68,7 @@ async def test_create_repo_tool_records_provenance_only_when_it_created(
     async def fake_create(name, **kwargs):
         return next(results)
 
-    monkeypatch.setattr(_tools._repo, "create_repo", fake_create)
+    monkeypatch.setattr(_tools.delivery._repo, "create_repo", fake_create)
 
     await _tools.create_repo("scratch")
     await _tools.create_repo("theirs")
@@ -90,7 +90,7 @@ async def test_delete_repo_tool_refuses_repo_still_referenced_by_project(
     async def never(*args, **kwargs):
         raise AssertionError("gh must not be reached while a project references the repo")
 
-    monkeypatch.setattr(_tools._repo, "delete_repo", never)
+    monkeypatch.setattr(_tools.delivery._repo, "delete_repo", never)
 
     with pytest.raises(ToolError, match="delete_project"):
         await _tools.delete_repo("ledger", confirm="dsdevq/ledger")
@@ -110,7 +110,7 @@ async def test_delete_repo_tool_guard_also_matches_confirm_slug_after_rename(
     async def never(*args, **kwargs):
         raise AssertionError("gh must not be reached while a project references the repo")
 
-    monkeypatch.setattr(_tools._repo, "delete_repo", never)
+    monkeypatch.setattr(_tools.delivery._repo, "delete_repo", never)
 
     with pytest.raises(ToolError, match="delete_project"):
         await _tools.delete_repo("old-ledger", confirm="dsdevq/new-ledger")
@@ -126,7 +126,7 @@ async def test_delete_repo_tool_deletes_managed_repo_and_retires_its_ledger_entr
         seen["name"], seen["confirm"] = name, confirm
         return {"deleted": True, "repo": "dsdevq/scratch"}
 
-    monkeypatch.setattr(_tools._repo, "delete_repo", fake_delete)
+    monkeypatch.setattr(_tools.delivery._repo, "delete_repo", fake_delete)
 
     out = json.loads(await _tools.delete_repo("scratch", confirm="dsdevq/scratch"))
 

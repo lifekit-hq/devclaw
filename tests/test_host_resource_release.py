@@ -298,12 +298,12 @@ def tool_env(tmp_path, monkeypatch, docker_ok):
     reg.create(id="doomed", name="Doomed", workspace_dir=str(ws))
 
     state = types.SimpleNamespace(goals=[], running=[])
-    monkeypatch.setattr(_tools, "registry", reg)
+    monkeypatch.setattr(_tools.projects, "registry", reg)
     monkeypatch.setattr(
-        _tools, "goals", types.SimpleNamespace(list_goals=lambda: state.goals)
+        _tools.projects, "goals", types.SimpleNamespace(list_goals=lambda: state.goals)
     )
     monkeypatch.setattr(
-        _tools,
+        _tools.projects,
         "store",
         types.SimpleNamespace(list_tasks=lambda **kw: state.running),
     )

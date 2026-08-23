@@ -1,7 +1,7 @@
 """evaluate_goal: the on-demand direction-evaluation surface.
 
 Exists as ``GoalService.evaluate_goal`` but only just got an ``@mcp.tool``
-wrapper in ``server/tools.py``. These tests pin the service behavior the
+wrapper in ``server/tools/goals.py``. These tests pin the service behavior the
 wrapper relies on — verdict pass-through, corrections-to-inbox round-trip,
 unknown-goal error — so future refactors can't quietly break the L1 contract
 ops-agent depends on (see lifekit-stack PR #77)."""

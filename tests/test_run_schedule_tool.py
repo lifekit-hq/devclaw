@@ -35,7 +35,7 @@ def store(tmp_path):
 @pytest.fixture(autouse=True)
 def _patch_store(store, monkeypatch):
     # tools.py binds `store` at import; point it at a throwaway control plane.
-    monkeypatch.setattr(_tools, "store", store)
+    monkeypatch.setattr(_tools.control, "store", store)
     return store
 
 
@@ -60,7 +60,7 @@ async def test_set_run_schedule_persists_and_reads_back(store):
 
 
 async def test_set_run_schedule_disabled_opens_dispatch_on_demand(store, monkeypatch):
-    monkeypatch.setattr(_tools, "_now_ms", lambda: _NOON_UTC_MS)
+    monkeypatch.setattr(_tools.control, "_now_ms", lambda: _NOON_UTC_MS)
     # A window that EXCLUDES noon UTC → dispatch is gated.
     await _tools.set_run_schedule(enabled=True, start="22:00", end="23:00", tz="UTC")
     closed = json.loads(await _tools.get_run_schedule())

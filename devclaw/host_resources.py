@@ -9,7 +9,7 @@ them, and until now nothing ever removed either:
 
 The leak they caused was never an ownership problem. Since spec 003 every
 dispatch entry point resolves a ``project_id`` into the PROJECT's workspace
-(``server/tools.py::_resolve_project_or_reject``), so the workspace is a project
+(``server/tools/_common.py::_resolve_project_or_reject``), so the workspace is a project
 resource recorded in the registry, and the volume name is a pure function of
 that path. What was missing is the other half of ownership: a *release*.
 ``delete_project`` dropped the registry row and left ~1G of ledger checkout on

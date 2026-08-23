@@ -173,7 +173,7 @@ surfaced them. Apply this while triaging, planning, and fixing:
 
 ```
 devclaw/
-├── server/          MCP surface — tools.py (@mcp.tool), http.py (routes/SSE), lifecycle.py (auth+serve)
+├── server/          MCP surface — tools/ (@mcp.tool, split by domain), http.py + routes/ (routes/SSE), lifecycle.py (auth+serve)
 ├── goal/            durable goal layer — the facade, the heartbeat tick, the done-gate evaluator, the store, dispatch, merge, notify
 ├── engine/          execution — sandcastle.py (docker run --rm, prod), host.py, stub.py
 ├── delivery/        commit → branch → push → PR; deploy.py (Tailscale); repo.py (gh repo create)

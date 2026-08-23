@@ -42,8 +42,8 @@ def store(tmp_path):
 @pytest.fixture(autouse=True)
 def spy_queue(store, monkeypatch):
     spy = _SpyQueue()
-    monkeypatch.setattr(_tools, "store", store)
-    monkeypatch.setattr(_tools, "queue", spy)
+    monkeypatch.setattr(_tools.tasks, "store", store)
+    monkeypatch.setattr(_tools.tasks, "queue", spy)
     return spy
 
 

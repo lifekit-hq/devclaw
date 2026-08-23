@@ -345,7 +345,7 @@ this table is the mechanical feeder between them. The self-improving loop
 tool and the console `/problems.json` — carries that linkage plus a derived
 `lifecycle` (`identified → filed → resolved`, one home: `problems.problem_lifecycle`)
 so it points at the canonical Issue rather than inviting independent triage. See
-`devclaw/state_store/problems.py` and the tool in `devclaw/server/tools.py`.
+`devclaw/state_store/problems.py` and the tool in `devclaw/server/tools/observability.py`.
 
 **Self-triage — the propose-only interceptor (slice 1, 2026-07-18).** The first
 consumer of that catalog. Before an **eligible** owner ping fires (an allowlist,
@@ -370,7 +370,7 @@ and `tests/test_self_triage.py`.
 
 ### Layer 1 — MCP surface
 
-- **Public surface:** every `@mcp.tool` decorator in `devclaw/server/tools.py`.
+- **Public surface:** every `@mcp.tool` decorator in `devclaw/server/tools/`.
   HTTP endpoints in `devclaw/server/http.py`.
 - **Allowed to call:** layer 2 (`goals.create_goal(...)`, `goals.get_goal(...)`,
   etc.), the project registry, `delivery/repo.py` (the `create_repo`/`delete_repo`

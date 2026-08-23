@@ -53,7 +53,7 @@ def env(monkeypatch, tmp_path):
     ws = tmp_path / "wsp"
     register_tmp_project(reg, ws, project_id="proj",
                          repo_url="https://github.com/lifekit-hq/x.git")
-    monkeypatch.setattr(_tools, "registry", reg)
+    monkeypatch.setattr(_tools._common, "registry", reg)
     return _Env(calls, "proj", str(ws))
 
 
@@ -204,7 +204,7 @@ async def test_preflight_rejects_non_git_workspace_before_submit(monkeypatch, tm
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
     bare = tmp_path / "bare"  # exists but no .git
     register_tmp_project(reg, bare, project_id="nogit", git_init=False)
-    monkeypatch.setattr(_tools, "registry", reg)
+    monkeypatch.setattr(_tools._common, "registry", reg)
     with pytest.raises(ToolError, match="not a git checkout"):
         await _tools.dispatch_task(
             kind="implement_feature", project_id="nogit", goal="x"
@@ -224,7 +224,7 @@ async def test_by_key_dispatch_preserves_override_knobs(monkeypatch, tmp_path):
     ws = tmp_path / "wsp"
     register_tmp_project(reg, ws, project_id="knobbed",
                          autodeploy=True, review_gate=False)
-    monkeypatch.setattr(_tools, "registry", reg)
+    monkeypatch.setattr(_tools._common, "registry", reg)
     await _tools.dispatch_task(
         kind="implement_feature", project_id="knobbed", goal="x"
     )
@@ -266,7 +266,7 @@ async def test_dispatch_auto_preps_missing_workspace_from_repo_url(monkeypatch, 
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
     ws = tmp_path / "clone-here"  # does NOT exist yet
     reg.create(id="fresh", name="fresh", workspace_dir=str(ws), repo_url=repo_url)
-    monkeypatch.setattr(_tools, "registry", reg)
+    monkeypatch.setattr(_tools._common, "registry", reg)
     await _tools.dispatch_task(
         kind="implement_feature", project_id="fresh", goal="x"
     )
@@ -284,7 +284,7 @@ async def test_dispatch_missing_workspace_no_repo_url_still_rejects(monkeypatch,
     monkeypatch.setattr(_state.queue, "submit", lambda **k: calls.append(k) or "t1")
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
     reg.create(id="norepo", name="norepo", workspace_dir=str(tmp_path / "nope"))
-    monkeypatch.setattr(_tools, "registry", reg)
+    monkeypatch.setattr(_tools._common, "registry", reg)
     with pytest.raises(ToolError, match="does not exist"):
         await _tools.dispatch_task(
             kind="implement_feature", project_id="norepo", goal="x"
