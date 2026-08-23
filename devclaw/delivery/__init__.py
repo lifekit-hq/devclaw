@@ -20,12 +20,11 @@ Design:
 
 from __future__ import annotations
 
-import asyncio
-import os
 import re
 
 from ..advance_brief import is_advance_brief, objective_from_brief
 from ..git_identity import git_identity_env
+from ..procutil import run as _run
 
 
 # conventional-commit type per task kind — so a delivered PR reads `feat: …` /
@@ -400,21 +399,6 @@ def devclaw_commit_title(
     )
     return title
 
-
-async def _run(
-    prog: str, *args: str, cwd: str, env_extra: dict[str, str] | None = None
-) -> tuple[int, str]:
-    """Run a command, return (exit_code, combined-output). Never raises."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            prog, *args, cwd=cwd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            env={**os.environ, **env_extra} if env_extra else None,
-        )
-    except OSError as exc:
-        return 127, f"{prog} not runnable: {exc}"
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace").strip()
 
 
 def _extract_pr_url(text: str) -> str | None:
