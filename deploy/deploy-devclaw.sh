@@ -34,6 +34,22 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || die "compose file not found: $COMPOSE_FILE"
 [[ -f "$ENV_FILE" ]]     || die "env file not found: $ENV_FILE (set DEVCLAW_ENV_FILE)"
 
+# ─── Cognition credential: present, or say so LOUDLY ───────────────────────
+# CLAUDE_CODE_OAUTH_TOKEN is the instance's own subscription OAuth credential.
+# Its home is the repo's Actions secret, injected into this script's env by
+# .github/workflows/deploy.yml; compose prefers the shell env over --env-file,
+# so it needs no line in $ENV_FILE. Absent from BOTH, the deploy still succeeds
+# — the containers fall back to the bind-mounted ~/.claude/.credentials.json —
+# but that is the revocable interactive login whose expiry has taken this box
+# down overnight, so it must never be a silent fallback. Never echo the value.
+if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+  say "cognition credential: CLAUDE_CODE_OAUTH_TOKEN supplied by the environment"
+elif grep -qE '^CLAUDE_CODE_OAUTH_TOKEN=.+' "$ENV_FILE" 2>/dev/null; then
+  say "cognition credential: CLAUDE_CODE_OAUTH_TOKEN present in $ENV_FILE"
+else
+  printf '\033[1;33m⚠ no CLAUDE_CODE_OAUTH_TOKEN (env or %s) — this instance will run on the mounted ~/.claude login, which an interactive login elsewhere on the account can revoke mid-run. Set the repo Actions secret and deploy from the workflow.\033[0m\n' "$ENV_FILE" >&2
+fi
+
 export DEVCLAW_MCP_IMAGE="${REGISTRY}/devclaw-mcp:${TAG}"
 export DEVCLAW_SANDBOX_IMAGE="${REGISTRY}/devclaw-sandbox:${TAG}"
 
