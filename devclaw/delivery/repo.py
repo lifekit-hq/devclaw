@@ -21,8 +21,8 @@ module creates, behind an explicit confirm echo (deletion needs the extra
 
 from __future__ import annotations
 
-import os
 import re
+from .. import config as _config
 from ..procutil import run as _run
 
 #: GitHub repo names: letters, digits, '.', '_', '-'. We slug the goal/idea into one.
@@ -41,7 +41,7 @@ def slug_repo_name(text: str, n: int = 60) -> str:
 
 def _default_owner() -> str | None:
     """Owner for new repos. None → gh uses the authenticated user's account."""
-    return os.environ.get("DEVCLAW_GITHUB_OWNER") or None
+    return _config.github_owner()
 
 
 def full_slug(name: str, owner: str | None = None) -> str:

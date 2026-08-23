@@ -33,6 +33,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from . import config as _config
 from .goal.store import GoalStore
 from .project_registry import ProjectExists, ProjectRegistry, project_rollup
 from .state_store import StateStore
@@ -45,11 +46,11 @@ from .telemetry import (
 )
 
 def _db_path() -> str:
-    return os.path.abspath(os.environ.get("DEVCLAW_DB", "devclaw.db"))
+    return _config.db_path()
 
 
 def _goals_dir() -> str:
-    return os.path.expanduser(os.environ.get("DEVCLAW_GOALS_DIR", "~/memory/goals"))
+    return _config.goals_dir()
 
 
 def _list_goals(goal_store: GoalStore) -> list[dict]:

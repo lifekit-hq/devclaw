@@ -32,13 +32,13 @@ between what is recorded and what is present — is a separate, read-only job
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from . import config as _config
 from .engine.sandcastle import (
     DOCKER_BIN,
     _toolchain_volume_name,
@@ -301,7 +301,7 @@ def _parse_days(raw: "str | None", default: int) -> int:
 def workspace_retention_days() -> int:
     """Clean-terminal workspace retention from ``DEVCLAW_WORKSPACE_RETENTION_DAYS``."""
     return _parse_days(
-        os.environ.get("DEVCLAW_WORKSPACE_RETENTION_DAYS"),
+        _config.workspace_retention_days_raw(),
         WORKSPACE_RETENTION_DAYS_DEFAULT,
     )
 
@@ -309,7 +309,7 @@ def workspace_retention_days() -> int:
 def failed_workspace_retention_days() -> int:
     """Forensic retention from ``DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED``."""
     return _parse_days(
-        os.environ.get("DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED"),
+        _config.failed_workspace_retention_days_raw(),
         WORKSPACE_RETENTION_DAYS_FAILED_DEFAULT,
     )
 

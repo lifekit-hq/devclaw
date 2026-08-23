@@ -28,10 +28,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 from typing import Awaitable, Callable, Optional, cast
 
+from .. import config as _config
 from .models import ClauseVerdict, EvalResult, EvalVerdict, Goal, GoalStatus, Strictness, is_standing
 from .prompt_budget import cap_deliveries, cap_log
 
@@ -64,7 +64,7 @@ GOAL_EVAL_MODEL = _model_for("goal_eval")
 #: (#467) confirms the diary is dead weight (mirrors the flag-gated planner cut,
 #: #463). Dropping only *claim/history* context can never loosen the gate — the
 #: repo review is still required for every clause — so this fails toward CLOSED.
-DONEGATE_LEAN = os.environ.get("DEVCLAW_DONEGATE_LEAN", "0") == "1"
+DONEGATE_LEAN = _config.DONEGATE_LEAN
 
 
 class GoalEvalError(Exception):

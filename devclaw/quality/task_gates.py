@@ -14,6 +14,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, cast
 
+from .. import config as _config
 from ..loom.declared_scope import scope_check, violation_summary
 from ..loom.test_integrity import present_test_names, scan_diff
 from .browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 #: the running app is broken (finance-sentry cmn-select threw NG05105 unopened).
 #: Fail-open on capability uncertainty (a project with no browser suite, under
 #: `flexible`), fail-closed on evidence (a failed/un-run suite).
-BROWSER_GATE_ENABLED = os.environ.get("DEVCLAW_GOAL_BROWSER_GATE", "1") not in ("0", "false", "")
+BROWSER_GATE_ENABLED = _config.BROWSER_GATE_ENABLED
 #: Stable prefix on the browser-gate feed-back reason (parallels the review/
 #: integrity reasons) so the settle path and tests can recognise it.
 _BROWSER_GATE_MARKER = "browser gate (failing closed):"

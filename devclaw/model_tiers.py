@@ -15,11 +15,12 @@ Empty string → ``None`` → the account's default model.
 
 from __future__ import annotations
 
-import os
 
-MODEL_LIGHT = os.environ.get("DEVCLAW_MODEL_LIGHT", "haiku") or None
-MODEL_STANDARD = os.environ.get("DEVCLAW_MODEL_STANDARD", "sonnet") or None
-MODEL_DEEP = os.environ.get("DEVCLAW_MODEL_DEEP", "opus") or None
+from . import config as _config
+
+MODEL_LIGHT = _config.MODEL_LIGHT
+MODEL_STANDARD = _config.MODEL_STANDARD
+MODEL_DEEP = _config.MODEL_DEEP
 
 #: role → tier. Deep = rare, high-leverage calls where a wrong answer is
 #: expensive to unwind. Standard = judgment

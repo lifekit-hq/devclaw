@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from .loom import trace as _trace
+from . import config as _config
 
 #: A bound, one-argument LLM caller: ``await caller(prompt) -> response``. The
 #: cognition callers are all this shape (``claude_with_model`` builds one). Lives
@@ -65,10 +66,8 @@ def _cognition_timeout_ms_from_env(raw: str | None) -> int:
 #: :func:`claude_with_model` when its expected output volume warrants — the
 #: decomposer is the canonical example (opus generating multi-KB YAML
 #: routinely needs more than the default).
-PLANNER_TIMEOUT_MS = _cognition_timeout_ms_from_env(
-    os.environ.get("DEVCLAW_COGNITION_TIMEOUT_S")
-)
-CLAUDE_BIN = os.environ.get("DEVCLAW_CLAUDE_BIN", "claude")
+PLANNER_TIMEOUT_MS = _cognition_timeout_ms_from_env(_config.cognition_timeout_s_raw())
+CLAUDE_BIN = _config.CLAUDE_BIN
 
 #: Bounded retry for a TRANSIENT cognition failure — the clean-run fix
 #: (2026-07-30). The #1 wedge of an unattended run was the host-side
@@ -96,9 +95,7 @@ def _cognition_retries_from_env(raw: str | None) -> int:
     return n if n >= 0 else _COGNITION_RETRIES_DEFAULT
 
 
-COGNITION_MAX_RETRIES = _cognition_retries_from_env(
-    os.environ.get("DEVCLAW_COGNITION_RETRIES")
-)
+COGNITION_MAX_RETRIES = _cognition_retries_from_env(_config.cognition_retries_raw())
 #: backoff (seconds) before a transient retry: geometric base·4**attempt (5s,
 #: 20s, …) capped, unless the provider STATED a retry-after hint (then that
 #: wins, up to the cap). Kept short because a signal-death returns instantly —
@@ -158,7 +155,7 @@ def _host_cognition_semaphore() -> asyncio.Semaphore:
     loop = asyncio.get_running_loop()
     if _host_cognition_sem is None or _host_cognition_sem_loop is not loop:
         _host_cognition_sem = asyncio.Semaphore(
-            _max_host_cognition_from_env(os.environ.get("DEVCLAW_MAX_HOST_COGNITION"))
+            _max_host_cognition_from_env(_config.max_host_cognition_raw())
         )
         _host_cognition_sem_loop = loop
     return _host_cognition_sem

@@ -66,6 +66,7 @@ from .quality.browser_gate import browser_run_verdict
 from .quality.gate_policy import Consequence, gate_consequence
 from .quality.gate_pipeline import GateInput, run_pipeline
 from .quality.reachability import judge_reachability
+from . import config as _config
 from .quality.task_gates import (
     _BrowserGate,
     _IntegrityGate,
@@ -117,9 +118,9 @@ from .quality.change_advisories import change_advisories
 from .task_notify import _NotifyMixin
 
 NOTIFY_BACKOFF_MS = (1000, 2000, 4000)
-MAX_CONCURRENT_PER_PROGRAM = int(os.environ.get("DEVCLAW_MAX_CONCURRENT_PER_PROGRAM", "2"))
+MAX_CONCURRENT_PER_PROGRAM = _config.MAX_CONCURRENT_PER_PROGRAM
 #: global cap on concurrently-running tasks across all programs — backpressure
-GLOBAL_MAX_CONCURRENT = int(os.environ.get("DEVCLAW_MAX_CONCURRENT", "4"))
+GLOBAL_MAX_CONCURRENT = _config.GLOBAL_MAX_CONCURRENT
 
 
 # ---- host-memory admission (the `claude --print` -9 OOM cure) ----------------
@@ -153,7 +154,7 @@ SANDBOX_MEMORY_BYTES = _parse_mem(SANDBOX_MEMORY)
 #: the OOM victim. Env-tunable per host (``DEVCLAW_COGNITION_MEM_RESERVE``); the
 #: floor to admit one more sandbox launch is sandbox-ceiling + this reserve.
 COGNITION_MEM_RESERVE_BYTES = _parse_mem(
-    os.environ.get("DEVCLAW_COGNITION_MEM_RESERVE", "1536m")
+    _config.COGNITION_MEM_RESERVE
 )
 MEM_LAUNCH_FLOOR_BYTES = SANDBOX_MEMORY_BYTES + COGNITION_MEM_RESERVE_BYTES
 
@@ -174,7 +175,7 @@ def host_mem_available_bytes() -> Optional[int]:
 
 
 #: heartbeat interval — the tick re-derives scheduling from DB state
-TICK_SECONDS = float(os.environ.get("DEVCLAW_TICK_SECONDS", "10"))
+TICK_SECONDS = _config.TICK_SECONDS
 #: per-task wall-clock cap (seconds). A run that exceeds it is cancelled — which
 #: tears down its sandbox via run_sandcastle's finally — and the task is marked
 #: failed, so a hung agent fails CLEANLY instead of burning Pro/Max quota forever
@@ -185,13 +186,13 @@ TICK_SECONDS = float(os.environ.get("DEVCLAW_TICK_SECONDS", "10"))
 #: generous enough for real program work (2026-07-09: a mid-stack closeloop
 #: implement_feature doing honest work was reaped at 30min, failing the whole
 #: program).
-TASK_TIMEOUT_S = float(os.environ.get("DEVCLAW_TASK_TIMEOUT_S", "3600"))
+TASK_TIMEOUT_S = _config.TASK_TIMEOUT_S
 #: how many times to RE-RUN a task that fails its verify gate (or errors), each
 #: time with the failure fed back into the goal, before escalating. The gate
 #: catches a bad result; retry gives the agent a bounded second chance to
 #: self-correct (a fix that didn't fully land, a transient error). 0 disables.
 #: NOT applied to timeouts — a stuck run would likely just hang again.
-TASK_MAX_RETRIES = int(os.environ.get("DEVCLAW_MAX_RETRIES", "1"))
+TASK_MAX_RETRIES = _config.TASK_MAX_RETRIES
 #: the pre-PR adversarial review gate: after the verify gate + test-integrity
 #: pass (behaviour is proven), a Claude pass READS the diff against the ticket +
 #: the quality bar and can send it back through the retry loop (request_changes)

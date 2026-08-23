@@ -2,7 +2,10 @@
 
 Single source of truth for every env var the runtime reads — enforced by
 `tests/test_env_vars_doc_sync.py` (a var read in code but missing here, or
-documented here but read nowhere, fails the suite). Grouped by what each one
+documented here but read nowhere, fails the suite). The CODE home is
+`devclaw/config.py`: the one module allowed to read `DEVCLAW_*` vars
+(`tests/test_config_single_doorway.py` enforces the boundary; the in-sandbox
+`runner/` reads its own env by design). Grouped by what each one
 controls. Set in `.env` (devclaw loads it on startup), the systemd unit, the
 compose file, or the shell — devclaw doesn't care.
 

@@ -32,6 +32,8 @@ import tempfile
 import time
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
+from . import config as _config
+
 
 class Cognition(Protocol):
     """One LLM call. ``role`` labels the cognition site (evaluator, grill,
@@ -121,7 +123,7 @@ def _inactivity_budget_s(timeout_ms: Optional[int]) -> float:
     180)."""
     if timeout_ms is not None and timeout_ms > 0:
         return timeout_ms / 1000
-    raw = os.environ.get("DEVCLAW_COGNITION_TIMEOUT_S")
+    raw = _config.cognition_timeout_s_raw()
     if raw is not None:
         try:
             v = float(raw)
@@ -377,7 +379,7 @@ def set_cognition(cog: Optional[Cognition]) -> None:
 
 def _from_env() -> Cognition:
     """Backend selection — read once at first use."""
-    name = os.environ.get("DEVCLAW_COGNITION", "claude").strip().lower()
+    name = _config.cognition_name()
     if name == "claude":
         return ClaudeCognition()
     if name == "stub":

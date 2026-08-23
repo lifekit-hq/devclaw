@@ -49,15 +49,16 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
+from .. import config as _config
+
 #: takes (repo_url, branch), returns the combined remote-check verdict.
 RemoteChecker = Callable[[str, str], Awaitable["RemoteChecksResult"]]
 
-REMOTE_CHECKS_ENABLED = os.environ.get("DEVCLAW_GOAL_REMOTE_CHECKS", "1") not in ("0", "false", "")
+REMOTE_CHECKS_ENABLED = _config.REMOTE_CHECKS_ENABLED
 
 #: "strict" → infra-broken CI (startup_failure-only / zero runs) blocks the
 #: done-gate; anything else → "flexible" (the default), where only real test

@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
+from .. import config as _config
 from .control import ControlPlaneMixin
 from .problems import ProblemsMixin
 from .rows import (
@@ -99,7 +100,7 @@ def _parse_retention_days(raw: Optional[str], default: int) -> int:
     every retention surface: unset/blank → ``default``; ``0``, a negative value,
     or anything unparseable → ``0`` (retention disabled, gracefully — a typo in
     an env var must never make a prune delete aggressively or crash the
-    heartbeat). Callers pass ``os.environ.get("DEVCLAW_…")`` directly so the env
+    heartbeat). Callers read the env live via :mod:`devclaw.config` so the
     read stays a literal the doc-sync test (test_env_vars_doc_sync.py) can see."""
     if raw is None or not raw.strip():
         return default
@@ -114,7 +115,7 @@ def trace_retention_days() -> int:
     """Trace retention in days from ``DEVCLAW_TRACE_RETENTION_DAYS`` (see
     :func:`_parse_retention_days`)."""
     return _parse_retention_days(
-        os.environ.get("DEVCLAW_TRACE_RETENTION_DAYS"), TRACE_RETENTION_DAYS_DEFAULT
+        _config.trace_retention_days_raw(), TRACE_RETENTION_DAYS_DEFAULT
     )
 
 
@@ -122,7 +123,7 @@ def events_retention_days() -> int:
     """Event retention in days from ``DEVCLAW_EVENTS_RETENTION_DAYS`` (see
     :func:`_parse_retention_days`)."""
     return _parse_retention_days(
-        os.environ.get("DEVCLAW_EVENTS_RETENTION_DAYS"), EVENTS_RETENTION_DAYS_DEFAULT
+        _config.events_retention_days_raw(), EVENTS_RETENTION_DAYS_DEFAULT
     )
 
 
@@ -147,7 +148,7 @@ def db_size_alert_bytes() -> int:
     the 2000MB default; ``0``, negative, or unparseable → ``0`` (alarm disabled,
     gracefully — a typo must never crash the heartbeat). The env read is a
     literal so the doc-sync test (test_env_vars_doc_sync.py) sees it."""
-    raw = os.environ.get("DEVCLAW_DB_SIZE_ALERT_MB")
+    raw = _config.db_size_alert_mb_raw()
     if raw is None or not raw.strip():
         mb = DB_SIZE_ALERT_MB_DEFAULT
     else:

@@ -43,6 +43,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from .. import config as _config
 from ..loom.declared_scope import parse_plan_rows, scopes_disjoint
 from . import slice_guard as _slice_guard
 
@@ -58,11 +59,10 @@ LANES_DIR_SUFFIX = ".lanes"
 def enabled() -> bool:
     """Whether planned fan-out is switched on for this instance.
 
-    The var name is spelled out literally rather than read through
-    :data:`FANOUT_ENV`: ``tests/test_env_vars_doc_sync.py`` greps the runtime for
-    string literals, and a constant-indirected read is invisible to it — which is
-    how a dial ends up undocumented."""
-    return (os.environ.get("DEVCLAW_FANOUT", "") or "").strip().lower() not in (
+    The raw value comes from the :mod:`devclaw.config` doorway (where the
+    ``DEVCLAW_FANOUT`` literal lives, visible to ``tests/test_env_vars_doc_sync.py``);
+    the truthiness parse stays here."""
+    return _config.fanout_raw().strip().lower() not in (
         "", "0", "false", "no", "off",
     )
 
