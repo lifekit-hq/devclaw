@@ -2,6 +2,50 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.5.0](https://github.com/lifekit-hq/devclaw/compare/v0.4.1...v0.5.0) (2026-08-23)
+
+
+### Features
+
+* **deploy:** the instance's OAuth credential lives in the repo, not on the box ([#645](https://github.com/lifekit-hq/devclaw/issues/645)) ([7f6819c](https://github.com/lifekit-hq/devclaw/commit/7f6819cd8eec858ee62d37b589f71bfe8e3a2538))
+* **engine:** a setup-token that reaches BOTH cognition surfaces, not just the host half ([#644](https://github.com/lifekit-hq/devclaw/issues/644)) ([2c0128b](https://github.com/lifekit-hq/devclaw/commit/2c0128bab5a8ffd76a433c549a1060b6596a0ddb))
+* **goal:** an increment knows what its siblings delivered (spec 012 US1) ([#609](https://github.com/lifekit-hq/devclaw/issues/609)) ([0af2660](https://github.com/lifekit-hq/devclaw/commit/0af2660ce22a6a6d77c4941b12685dabf55a9e22))
+* **goal:** author a saga from named slots, not prose (spec 012 US2) ([#635](https://github.com/lifekit-hq/devclaw/issues/635)) ([a9ac193](https://github.com/lifekit-hq/devclaw/commit/a9ac19310b928d07d0b7a6c4b0b12518ae1c794c))
+* **goal:** one goal per project — the single-writer default (spec 010 P1) ([#618](https://github.com/lifekit-hq/devclaw/issues/618)) ([203706e](https://github.com/lifekit-hq/devclaw/commit/203706e3448543524d52f74be3cd9022e2fd5511))
+* **goal:** planned [P] fan-out with a serial merge queue (spec 010 FR-101/FR-102) ([#639](https://github.com/lifekit-hq/devclaw/issues/639)) ([8f9b78b](https://github.com/lifekit-hq/devclaw/commit/8f9b78bf5fd2c882cbd6a9eebc7443d88315a40f))
+* **intake:** a work item carries its expected increment count (spec 012 US3) ([#633](https://github.com/lifekit-hq/devclaw/issues/633)) ([9a62455](https://github.com/lifekit-hq/devclaw/commit/9a62455cf7a1b7c22d5416cb5ff359f619b8c86a))
+* **quality:** hold a [P] increment to its declared file scope (spec 010 FR-103) ([#637](https://github.com/lifekit-hq/devclaw/issues/637)) ([de84e61](https://github.com/lifekit-hq/devclaw/commit/de84e61de9f0ad0051b7c3cd8f70da64a2545992))
+* **queue:** one definition of the change — materialize it once, mechanically (spec 013, [#630](https://github.com/lifekit-hq/devclaw/issues/630)) ([#643](https://github.com/lifekit-hq/devclaw/issues/643)) ([ceffdba](https://github.com/lifekit-hq/devclaw/commit/ceffdba4c66ec7d2fa01ac5d0de3c0896b6756a3))
+* **resources:** devclaw releases the durable host resources it creates ([#595](https://github.com/lifekit-hq/devclaw/issues/595)) ([#606](https://github.com/lifekit-hq/devclaw/issues/606)) ([a4f4142](https://github.com/lifekit-hq/devclaw/commit/a4f41428223edc08ea6183c6a7637bb51e078d67))
+
+
+### Bug Fixes
+
+* **console:** the Plan tab shows the speckit contract, not a file nobody writes ([#624](https://github.com/lifekit-hq/devclaw/issues/624)) ([237b8b0](https://github.com/lifekit-hq/devclaw/commit/237b8b097f24895c24006de27bbc337703d2a9b7))
+* **onboard:** deliver the generated docs instead of dropping them ([#598](https://github.com/lifekit-hq/devclaw/issues/598)) ([#629](https://github.com/lifekit-hq/devclaw/issues/629)) ([933733f](https://github.com/lifekit-hq/devclaw/commit/933733faba83538a894a1b89bdb39fac2fb07e6b))
+
+
+### Refactoring
+
+* **goal:** delete PLAN.md — a dead concept with live code ([#622](https://github.com/lifekit-hq/devclaw/issues/622)) ([398c898](https://github.com/lifekit-hq/devclaw/commit/398c898f3923ecf9194594d3b22a072d3de75c18))
+* **goal:** one migration, one cutoff — the goal-layer legacy shapes ([#616](https://github.com/lifekit-hq/devclaw/issues/616)) ([#638](https://github.com/lifekit-hq/devclaw/issues/638)) ([a514d33](https://github.com/lifekit-hq/devclaw/commit/a514d33038b1a4938e97d7202779179573e1150e))
+* **goal:** one migration, one cutoff — views stop being read back ([#617](https://github.com/lifekit-hq/devclaw/issues/617)) ([#634](https://github.com/lifekit-hq/devclaw/issues/634)) ([b3e7fa0](https://github.com/lifekit-hq/devclaw/commit/b3e7fa06c0e6b8d4bd3a442caf828b353ba1445a))
+* **queue:** one migration, one cutoff — the queue-layer legacy branches ([#616](https://github.com/lifekit-hq/devclaw/issues/616)) ([#640](https://github.com/lifekit-hq/devclaw/issues/640)) ([645a566](https://github.com/lifekit-hq/devclaw/commit/645a5667f0872f2a5c34489eb156b7b83865e708))
+* **runner:** one home for worker-kind instructions ([#621](https://github.com/lifekit-hq/devclaw/issues/621)) ([7a2f519](https://github.com/lifekit-hq/devclaw/commit/7a2f519160b056bc0fef55c143b441d0677e2fa8))
+* **server:** split http.py into route modules; console becomes a top-level product ([#625](https://github.com/lifekit-hq/devclaw/issues/625)) ([806363e](https://github.com/lifekit-hq/devclaw/commit/806363eceb68c513ba211198d419f46151cf3fc5))
+* **telemetry:** one migration, one cutoff — delete the response_preview read path ([#636](https://github.com/lifekit-hq/devclaw/issues/636)) ([8c589e8](https://github.com/lifekit-hq/devclaw/commit/8c589e872f07145de60a23b21364f03a54a4a4f9))
+
+
+### Documentation
+
+* retire the OpenHands vocabulary — the dependency went, the words stayed ([#623](https://github.com/lifekit-hq/devclaw/issues/623)) ([678e7f6](https://github.com/lifekit-hq/devclaw/commit/678e7f6af042f3816ba87344809f54a9208baff0))
+* **rules:** the auto-loaded harness map must point at code that exists ([#620](https://github.com/lifekit-hq/devclaw/issues/620)) ([9bd7dff](https://github.com/lifekit-hq/devclaw/commit/9bd7dff7bfb16859f496fbf76d12ed4cd9b66add))
+* **spec:** 010 and 012 are implemented in full — say so where it rots otherwise ([#642](https://github.com/lifekit-hq/devclaw/issues/642)) ([770c246](https://github.com/lifekit-hq/devclaw/commit/770c246cef25fcec4e202d57bdd95e32bfa92538))
+* **spec:** 012 — record WHY a unit of work has no authoring schema ([#608](https://github.com/lifekit-hq/devclaw/issues/608)) ([02e14f1](https://github.com/lifekit-hq/devclaw/commit/02e14f11050e540273e5d612ee9be7af40e8ceb0))
+* **spec:** 013 — one definition of the change ([#630](https://github.com/lifekit-hq/devclaw/issues/630)) ([#631](https://github.com/lifekit-hq/devclaw/issues/631)) ([99128e2](https://github.com/lifekit-hq/devclaw/commit/99128e290ee9aacefa033c61a7d9e0a06033858b))
+* **specs:** fix 010/012 boundary defects found in pre-implementation review ([#607](https://github.com/lifekit-hq/devclaw/issues/607)) ([3d3b963](https://github.com/lifekit-hq/devclaw/commit/3d3b9636ba9b6a524f548888795b1aba2014179c))
+* **specs:** status audit — shipped specs looked unbuilt to the worker brief ([#604](https://github.com/lifekit-hq/devclaw/issues/604)) ([a2bca97](https://github.com/lifekit-hq/devclaw/commit/a2bca9707e173b668cd83759ca6f4792421021d1))
+
 ## [0.4.1](https://github.com/lifekit-hq/devclaw/compare/v0.4.0...v0.4.1) (2026-08-22)
 
 
