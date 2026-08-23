@@ -424,3 +424,69 @@ def test_unreadable_credential_falls_back_loudly_not_silently(tmp_path, monkeypa
     err = capsys.readouterr().err
     assert "falling back to a read-only bind" in err
     assert "refresh an expired OAuth token" in err
+
+
+# ---- the setup-token crosses the boundary; a metered key still never does ----
+# devclaw's cognition lives on two sides of the container wall: the host half
+# (evaluator, gates, done-gate) inherits the devclaw-mcp env, the working half
+# runs in a per-task sandbox that deliberately receives NO host env. That split
+# meant a `claude setup-token` supplied on the host protected only the judging
+# half and left every night run on the mounted `/login` credential — the exact
+# credential whose revocation took the box down on 2026-08-22. The token now
+# rides in beside the git identity, and only the token: the OAuth-only
+# invariant is unchanged, so these pin both halves of that sentence.
+
+
+def test_setup_token_crosses_into_the_sandbox(monkeypatch):
+    monkeypatch.setenv(sc.OAUTH_TOKEN_VAR, "sk-ant-oat-live")
+    args = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    assert "-e" in args
+    assert f"{sc.OAUTH_TOKEN_VAR}=sk-ant-oat-live" in args
+
+
+def test_no_setup_token_leaves_the_sandbox_argv_untouched(monkeypatch):
+    # The pre-token deployment must keep working byte-identically: absent (or
+    # blank) ⇒ no `-e` for it at all, never `CLAUDE_CODE_OAUTH_TOKEN=`.
+    monkeypatch.delenv(sc.OAUTH_TOKEN_VAR, raising=False)
+    absent = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    monkeypatch.setenv(sc.OAUTH_TOKEN_VAR, "   ")
+    blank = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    assert blank == absent
+    assert not any(sc.OAUTH_TOKEN_VAR in a for a in absent)
+
+
+def test_sandbox_forwards_the_oauth_token_but_never_a_metered_key(monkeypatch):
+    # The whole point of forwarding ONE auth var: it must not become a general
+    # env bridge. A key sitting in the host env alongside the token stays out of
+    # the container argv AND out of the docker CLI's own env.
+    monkeypatch.setenv(sc.OAUTH_TOKEN_VAR, "sk-ant-oat-live")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-metered")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "bearer-metered")
+    args = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    joined = " ".join(args)
+    assert "sk-ant-oat-live" in joined
+    assert "sk-ant-metered" not in joined
+    assert "bearer-metered" not in joined
+    clean = sc._strip_api_keys(dict(__import__("os").environ))
+    assert clean[sc.OAUTH_TOKEN_VAR] == "sk-ant-oat-live"
+    assert "ANTHROPIC_API_KEY" not in clean

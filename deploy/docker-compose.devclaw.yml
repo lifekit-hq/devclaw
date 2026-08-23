@@ -63,6 +63,13 @@ services:
       FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
+      # Long-lived subscription OAuth token (`claude setup-token`, ~1 year),
+      # supplied from /srv/devclaw/.env — NEVER committed. Ranks above the
+      # mounted /login credential, so an interactive login elsewhere on the
+      # account can no longer revoke this box's cognition mid-night. Still
+      # OAuth, still the Pro/Max subscription: not a metered key. Blank/unset
+      # ⇒ the mounted ~/.claude credential stays the only auth path.
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       # The per-task sandbox image, pulled from ghcr by tag (built from the same
       # source as this MCP image — no md5-verify crutch; both are this commit).
       DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}
