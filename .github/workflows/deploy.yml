@@ -81,4 +81,13 @@ jobs:
       # Scoped deploy — pulls the tag, recreates ONLY the devclaw project,
       # verifies /health, fails loud. OpenClaw-side containers are untouched.
       - name: Deploy (scoped, readiness-gated)
+        # The instance's subscription OAuth credential (`claude setup-token`)
+        # rides in from the repo secret, making THIS the single source of truth
+        # for it — the box is never hand-edited to carry auth. Compose resolves
+        # ${CLAUDE_CODE_OAUTH_TOKEN} from the shell environment in preference to
+        # --env-file, so nothing is written to disk on the VPS and the secret
+        # exists only for the life of this step. Unset ⇒ the script says so
+        # loudly and the instance falls back to the mounted ~/.claude credential.
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: bash deploy/deploy-devclaw.sh "${{ steps.id.outputs.deploy_tag }}"
