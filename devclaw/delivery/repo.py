@@ -21,9 +21,9 @@ module creates, behind an explicit confirm echo (deletion needs the extra
 
 from __future__ import annotations
 
-import asyncio
 import os
 import re
+from ..procutil import run as _run
 
 #: GitHub repo names: letters, digits, '.', '_', '-'. We slug the goal/idea into one.
 _NAME_OK = re.compile(r"[^A-Za-z0-9._-]+")
@@ -51,19 +51,6 @@ def full_slug(name: str, owner: str | None = None) -> str:
     owner = owner or _default_owner()
     return f"{owner}/{safe}" if owner else safe
 
-
-async def _run(*args: str) -> tuple[int, str]:
-    """Run a command, return (exit_code, combined output). Never raises."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except OSError as exc:
-        return 127, f"{args[0]} not runnable: {exc}"
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace").strip()
 
 
 async def _clone_url(slug: str) -> str | None:

@@ -23,11 +23,11 @@ explicit install action — surfaces a real failure.
 
 from __future__ import annotations
 
-import asyncio
 import shutil
 from pathlib import Path
 
 from .delivery import deliver_change  # module global so tests can patch it
+from .procutil import run as _run
 
 #: The deterministic branch the install PR lands on, so the dispatch gate can
 #: find an open install PR by head without any persisted state.
@@ -68,18 +68,6 @@ def _resolve_speckit_source(package_dir: Path) -> Path:
         return packaged
     return package_dir.parent / ".specify"
 
-
-async def _run(*args: str, cwd: str) -> tuple[int, str]:
-    """Run a command, return (exit_code, combined output). Never raises."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args, cwd=cwd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )
-    except OSError as exc:
-        return 127, f"{args[0]} not runnable: {exc}"
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace").strip()
 
 
 async def has_committed_speckit(workspace_dir: str) -> bool:

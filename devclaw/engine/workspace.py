@@ -12,9 +12,9 @@ merged since the last action.
 
 from __future__ import annotations
 
-import asyncio
 import re
 from pathlib import Path
+from ..procutil import run as _run
 
 
 class WorkspaceError(RuntimeError):
@@ -51,18 +51,6 @@ def workspace_is_dispatchable(workspace_dir: str | None) -> str | None:
         )
     return None
 
-
-async def _run(*args: str, cwd: str | None = None) -> tuple[int, str]:
-    """Run a command, return (exit_code, combined output). Never raises."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args, cwd=cwd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )
-    except OSError as exc:
-        return 127, f"{args[0]} not runnable: {exc}"
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace").strip()
 
 
 async def _default_branch(workspace_dir: str) -> str:

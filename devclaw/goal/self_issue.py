@@ -24,7 +24,6 @@ there is no self-modification here, and no cognition call: it is pure wiring.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -32,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Protocol
 
 from ..state_store.problems import PROBLEM_CATEGORIES
+from ..procutil import run as _run
 
 # ---- tunables (env-overridable) --------------------------------------------
 #: distinct run-cycles a problem must survive before it earns an issue (O1,
@@ -156,20 +156,6 @@ class GhAdapter(Protocol):
     async def mark_fixing(self, repo: str, number: int, *, label: str, comment: str) -> bool: ...
     async def open_prs_for_issue(self, repo: str, number: int) -> list[int]: ...
 
-
-async def _run(*args: str) -> tuple[int, str]:
-    """Run a command, return (exit_code, combined output). Never raises. Mirrors
-    ``delivery/repo.py`` — the subprocess boundary of the whole module."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except OSError as exc:
-        return 127, f"{args[0]} not runnable: {exc}"
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace").strip()
 
 
 class GhCli:

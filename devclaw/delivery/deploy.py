@@ -37,6 +37,7 @@ import re
 from pathlib import Path
 
 from ..engine.sandcastle import _translate_workspace_path  # reuse host-path mapping
+from ..procutil import run as _run
 
 # In-container launcher. Detects backend/ (FastAPI) and frontend/ (static), serves
 # them on ONE origin (so UI + API share a host), and rewrites hard-coded localhost
@@ -184,17 +185,6 @@ def deploy_port(slug: str) -> int:
         acc = (acc * 31 + ch) & 0xFFFFFFFF
     return DEPLOY_PORT_BASE + (acc % DEPLOY_PORT_SPAN)
 
-
-async def _run(bin_: str, *args: str) -> tuple[int, str]:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            bin_, *args,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )
-    except OSError as exc:
-        return 127, f"{bin_} not runnable: {exc}"
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace").strip()
 
 
 async def _docker(*args: str) -> tuple[int, str]:

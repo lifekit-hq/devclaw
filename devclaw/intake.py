@@ -20,12 +20,12 @@ call fails; there is no silent half-filed state.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import sys
 from datetime import datetime, timezone
 from typing import Optional, Protocol
+from .procutil import run as _run
 
 #: the intake marker label every filed ask carries (proposal §5).
 INTAKE_LABEL = "devclaw-intake"
@@ -221,20 +221,6 @@ class GhAdapter(Protocol):
     async def list_intake_awaiting_grade(self, repo: str) -> list[str]: ...
     async def list_open_issues(self, repo: str) -> Optional[list[dict]]: ...
 
-
-async def _run(*args: str) -> tuple[int, str]:
-    """Run a command, return (exit_code, combined output). Never raises. The
-    subprocess boundary of the module — mirrors ``delivery/repo.py``."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-    except OSError as exc:
-        return 127, f"{args[0]} not runnable: {exc}"
-    out, _ = await proc.communicate()
-    return proc.returncode or 0, out.decode("utf-8", "replace").strip()
 
 
 class GhCli:
