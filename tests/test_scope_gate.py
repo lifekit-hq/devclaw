@@ -29,6 +29,7 @@ import pathlib
 import pytest
 
 from devclaw import task_queue as tq
+from devclaw.quality import task_gates as tg
 from devclaw.quality.gate_pipeline import GateInput, GateVerdict, run_pipeline
 from devclaw.quality.gate_policy import ALWAYS_HARD, Consequence, gate_consequence
 
@@ -85,7 +86,7 @@ def _gate_input(diff: str, *, declared=(), diff_calls=None) -> GateInput:
 @pytest.mark.asyncio
 async def test_out_of_scope_increment_fails_the_gate_and_never_ships():
     gi = _gate_input(CLAIM_DIFF + _file_diff("src/widget/a.py") + _file_diff("infra/deploy.sh"))
-    verdict = await tq._ScopeGate().check(gi)
+    verdict = await tg._ScopeGate().check(gi)
     assert verdict.ok is False
     assert verdict.gate_id == "scope"
     assert "infra/deploy.sh" in (verdict.reason or "")
@@ -96,7 +97,7 @@ async def test_out_of_scope_increment_fails_the_gate_and_never_ships():
 @pytest.mark.asyncio
 async def test_in_scope_increment_passes_the_gate_untouched():
     gi = _gate_input(CLAIM_DIFF + _file_diff("src/widget/a.py") + _file_diff("src/widget/deep/b.py"))
-    verdict = await tq._ScopeGate().check(gi)
+    verdict = await tg._ScopeGate().check(gi)
     assert verdict.ok is True
 
 
@@ -105,7 +106,7 @@ async def test_a_dispatched_lane_scope_is_enforced_without_any_plan_bookkeeping(
     """The fan-out lane case: the host pinned the scope at dispatch, so the
     contract holds even if the worker never checked its task row off."""
     gi = _gate_input(_file_diff("src/core/db.py"), declared=("src/widget/**",))
-    verdict = await tq._ScopeGate().check(gi)
+    verdict = await tg._ScopeGate().check(gi)
     assert verdict.ok is False and "src/core/db.py" in (verdict.reason or "")
 
 
@@ -122,7 +123,7 @@ async def test_scope_gate_runs_after_integrity_and_before_review():
     review = _RecordingCognitionGate()
     gi = _gate_input(CLAIM_DIFF + _file_diff("infra/deploy.sh"))
     verdict = await run_pipeline(
-        gi, (tq._VerifyGate(), tq._IntegrityGate(), tq._ScopeGate(), review)
+        gi, (tg._VerifyGate(), tg._IntegrityGate(), tg._ScopeGate(), review)
     )
     assert verdict is not None and verdict.gate_id == "scope"
     assert review.calls == 0, "a scope violation must not spend cognition"
@@ -136,7 +137,7 @@ async def test_a_plan_without_declared_scopes_leaves_the_gate_chain_byte_identic
     review = _RecordingCognitionGate()
     gi = _gate_input(_file_diff("anywhere/at/all.py"), diff_calls=diff_calls)
     verdict = await run_pipeline(
-        gi, (tq._VerifyGate(), tq._IntegrityGate(), tq._ScopeGate(), review)
+        gi, (tg._VerifyGate(), tg._IntegrityGate(), tg._ScopeGate(), review)
     )
     assert verdict is None
     assert review.calls == 1  # the chain ran to completion, unchanged
@@ -152,8 +153,8 @@ async def test_an_unreviewable_scope_check_fails_closed(monkeypatch):
     def _boom(diff, declared=None):
         raise RuntimeError("parser exploded")
 
-    monkeypatch.setattr(tq, "scope_check", _boom)
-    verdict = await tq._ScopeGate().check(_gate_input(CLAIM_DIFF))
+    monkeypatch.setattr(tg, "scope_check", _boom)
+    verdict = await tg._ScopeGate().check(_gate_input(CLAIM_DIFF))
     assert verdict.ok is False
     assert "could not produce a verdict" in (verdict.reason or "")
     assert verdict.dialable is False
@@ -170,7 +171,7 @@ async def test_a_spec_directory_claimed_at_runtime_fails_the_declared_scope_gate
         + _file_diff("src/widget/a.py")
         + _file_diff("specs/014-invented-at-runtime/spec.md")
     )
-    verdict = await tq._ScopeGate().check(gi)
+    verdict = await tg._ScopeGate().check(gi)
     assert verdict.ok is False
     assert "specs/014-invented-at-runtime/spec.md" in (verdict.reason or "")
 
@@ -248,7 +249,7 @@ async def test_an_unrecorded_out_of_scope_file_still_fails_the_gate(tmp_path):
     (ws / "src" / "core" / "db.py").write_text("D = 1\n")  # never recorded
     (ws / "notes.txt").write_text("scratch\n")             # never recorded
 
-    verdict = await tq._ScopeGate().check(
+    verdict = await tg._ScopeGate().check(
         _materialized_input(ws, base, declared=("src/widget/**",))
     )
     assert verdict.ok is False
@@ -270,7 +271,7 @@ async def test_the_scope_gate_makes_no_probe_of_its_own(monkeypatch):
 
     monkeypatch.setattr(tq, "_git_diff", _forbidden)
     gi = _gate_input(CLAIM_DIFF + _file_diff("src/widget/a.py"))
-    verdict = await tq._ScopeGate().check(gi)
+    verdict = await tg._ScopeGate().check(gi)
     assert verdict.ok is True
     assert calls == []
 
@@ -291,6 +292,6 @@ async def test_an_increment_that_records_nothing_at_all_is_still_judged_in_full(
     (ws / "src" / "core").mkdir(parents=True)
     (ws / "src" / "core" / "db.py").write_text("D = 1\n")
 
-    verdict = await tq._ScopeGate().check(_materialized_input(ws, base))
+    verdict = await tg._ScopeGate().check(_materialized_input(ws, base))
     assert verdict.ok is False
     assert "src/core/db.py" in (verdict.reason or "")
