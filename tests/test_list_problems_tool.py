@@ -26,7 +26,7 @@ def store(tmp_path):
 @pytest.fixture(autouse=True)
 def _patch_store(store, monkeypatch):
     # tools.py binds `store` at import; point it at a throwaway catalog.
-    monkeypatch.setattr(_tools, "store", store)
+    monkeypatch.setattr(_tools.observability, "store", store)
     return store
 
 

@@ -77,9 +77,10 @@ async def test_onboard_adopts_a_repo_with_committed_specify_no_plan_no_pr(
     _commit_all(ws, "add speckit")
 
     registry.create(id="adopt", name="adopt", workspace_dir=str(ws))
-    monkeypatch.setattr(_tools, "registry", registry)
+    monkeypatch.setattr(_tools._common, "registry", registry)
     fake_q = _FakeQueue()
-    monkeypatch.setattr(_tools, "queue", fake_q)
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
 
     installed = {"called": False}
 
@@ -116,9 +117,10 @@ async def test_onboard_installs_speckit_via_reviewable_pr_no_silent_commit(
     commits_before = _git(ws, "rev-list", "--count", default_branch)
 
     registry.create(id="bare", name="bare", workspace_dir=str(ws))
-    monkeypatch.setattr(_tools, "registry", registry)
+    monkeypatch.setattr(_tools._common, "registry", registry)
     fake_q = _FakeQueue()
-    monkeypatch.setattr(_tools, "queue", fake_q)
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
 
     calls: list[dict] = []
 
@@ -175,9 +177,10 @@ async def test_feature_dispatch_blocked_while_install_pr_open(
     _init_repo(ws)  # bare, no committed .specify/
 
     registry.create(id="pending", name="pending", workspace_dir=str(ws))
-    monkeypatch.setattr(_tools, "registry", registry)
+    monkeypatch.setattr(_tools._common, "registry", registry)
     fake_q = _FakeQueue()
-    monkeypatch.setattr(_tools, "queue", fake_q)
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
 
     async def _open_pr(workspace_dir):
         return "https://github.com/x/y/pull/7"
@@ -205,9 +208,10 @@ async def test_review_repository_not_blocked_by_open_install_pr(
     _init_repo(ws)
 
     registry.create(id="rev", name="rev", workspace_dir=str(ws))
-    monkeypatch.setattr(_tools, "registry", registry)
+    monkeypatch.setattr(_tools._common, "registry", registry)
     fake_q = _FakeQueue()
-    monkeypatch.setattr(_tools, "queue", fake_q)
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
 
     async def _open_pr(workspace_dir):
         return "https://github.com/x/y/pull/7"
@@ -231,9 +235,10 @@ async def test_feature_dispatch_allowed_for_legacy_repo_without_install_pr(
     _init_repo(ws)
 
     registry.create(id="legacy", name="legacy", workspace_dir=str(ws))
-    monkeypatch.setattr(_tools, "registry", registry)
+    monkeypatch.setattr(_tools._common, "registry", registry)
     fake_q = _FakeQueue()
-    monkeypatch.setattr(_tools, "queue", fake_q)
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
 
     async def _no_pr(workspace_dir):
         return None
@@ -260,9 +265,10 @@ async def test_feature_dispatch_blocked_when_gh_unverifiable_and_install_branch_
     _init_repo(ws)  # no committed .specify/
 
     registry.create(id="unc", name="unc", workspace_dir=str(ws))
-    monkeypatch.setattr(_tools, "registry", registry)
+    monkeypatch.setattr(_tools._common, "registry", registry)
     fake_q = _FakeQueue()
-    monkeypatch.setattr(_tools, "queue", fake_q)
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
 
     async def _no_pr(workspace_dir):
         return None  # gh returned nothing — but was it 'no PR' or 'gh down'?

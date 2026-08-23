@@ -43,13 +43,13 @@ def svc(tmp_path):
 
 @pytest.fixture(autouse=True)
 def _patch(svc, monkeypatch, tmp_path):
-    monkeypatch.setattr(_tools, "goals", svc)
+    monkeypatch.setattr(_tools.goals, "goals", svc)
     # spec 003 / #520: start_program resolves its workspace from a registered
     # project_id. Goal path — no git preflight (prepare_ws handles it on tick),
     # so a plain registered row pointing at /ws is enough.
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
     reg.create(id="proj", name="proj", workspace_dir="/ws")
-    monkeypatch.setattr(_tools, "registry", reg)
+    monkeypatch.setattr(_tools._common, "registry", reg)
     return svc
 
 

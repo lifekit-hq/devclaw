@@ -2,7 +2,7 @@
 
 The canonical narrative for how an ask enters devclaw. Enforcement lives in
 code (`devclaw/intake.py`, surfaced as the `file_intake` MCP tool in
-`devclaw/server/tools.py`); this page is the human-readable reference. The
+`devclaw/server/tools/intake.py`); this page is the human-readable reference. The
 direction it implements is locked in
 [`../proposals/single-intake-doorway.md`](../proposals/single-intake-doorway.md).
 There are deliberately **no per-repo issue templates** — the tool renders the

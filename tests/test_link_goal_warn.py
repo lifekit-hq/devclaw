@@ -38,8 +38,8 @@ def wire(monkeypatch, tmp_path):
     monkeypatch.setattr(_state, "goals", _FakeGoals())
     # The tools module imports registry / goals at import time from _state, so
     # patch them there too.
-    monkeypatch.setattr(_tools, "registry", reg)
-    monkeypatch.setattr(_tools, "goals", _FakeGoals())
+    monkeypatch.setattr(_tools.projects, "registry", reg)
+    monkeypatch.setattr(_tools.projects, "goals", _FakeGoals())
     yield reg, fake_goals
     reg.close() if hasattr(reg, "close") else None
 

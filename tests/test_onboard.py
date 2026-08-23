@@ -228,7 +228,7 @@ def onboard_env(store, tmp_path, monkeypatch):
     q = TaskQueue(store, runner=_onboard_runner())
 
     monkeypatch.setattr(
-        _tools, "_resolve_project_or_reject",
+        _tools.intake, "_resolve_project_or_reject",
         lambda project_id, tool: ResolvedDispatch(workspace_dir=ws, project_id=project_id),
     )
 
@@ -238,10 +238,10 @@ def onboard_env(store, tmp_path, monkeypatch):
     async def _has_speckit(workspace_dir):
         return True
 
-    monkeypatch.setattr(_tools, "_preflight_or_prep", _no_preflight)
-    monkeypatch.setattr(_tools._speckit, "has_committed_speckit", _has_speckit)
-    monkeypatch.setattr(_tools, "queue", q)
-    monkeypatch.setattr(_tools, "store", store)
+    monkeypatch.setattr(_tools.intake, "_preflight_or_prep", _no_preflight)
+    monkeypatch.setattr(_tools.intake._speckit, "has_committed_speckit", _has_speckit)
+    monkeypatch.setattr(_tools.intake, "queue", q)
+    monkeypatch.setattr(_tools.tasks, "store", store)
     return _tools, q, ws, _tq
 
 
@@ -266,7 +266,7 @@ async def test_onboard_delivers_its_artifacts_and_records_the_pr_url(onboard_env
     out = _json.loads(await _tools.onboard("proj"))
     await q.drain()
 
-    t = _tools.store.get_task(out["task_id"])
+    t = _tools.tasks.store.get_task(out["task_id"])
     assert t.deliver is True
     assert t.status == "done"
     assert t.pr_url == "https://github.com/o/r/pull/7"
@@ -299,7 +299,7 @@ async def test_onboard_with_nothing_to_deliver_succeeds_without_a_pr(onboard_env
     out = _json.loads(await _tools.onboard("proj"))
     await q.drain()
 
-    t = _tools.store.get_task(out["task_id"])
+    t = _tools.tasks.store.get_task(out["task_id"])
     assert t.status == "done"      # success...
     assert t.pr_url is None        # ...with no PR
     assert t.error is None         # and NOT the failure below
@@ -328,7 +328,7 @@ async def test_onboard_that_cannot_deliver_settles_failed_not_done(onboard_env, 
     out = _json.loads(await _tools.onboard("proj"))
     await q.drain()
 
-    t = _tools.store.get_task(out["task_id"])
+    t = _tools.tasks.store.get_task(out["task_id"])
     assert t.status == "failed"
     assert t.pr_url is None
     assert "push failed: remote rejected" in (t.error or "")

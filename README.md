@@ -98,7 +98,7 @@ devclaw/
 ├── server/             # MCP server (FastMCP) — split by job:
 │   ├── __init__.py     #   re-exports + load-order
 │   ├── _state.py       #   FastMCP instance + long-lived services + env
-│   ├── tools.py        #   every @mcp.tool decorator (the chef's menu)
+│   ├── tools/          #   every @mcp.tool decorator (the chef’s menu), split by domain
 │   ├── http.py         #   every @mcp.custom_route (console, SSE, /traces.json)
 │   └── lifecycle.py    #   main() + serve loops + bearer-token auth middleware
 ├── goal/               # the durable goal layer (folded-in goalclaw):
