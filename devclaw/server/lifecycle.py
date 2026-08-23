@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import sys
 import urllib.parse
@@ -38,10 +39,10 @@ class AuthMiddleware:
             return
         headers = dict(scope.get("headers") or [])
         auth = headers.get(b"authorization", b"").decode()
-        ok = auth == f"Bearer {AUTH_TOKEN}"
+        ok = hmac.compare_digest(auth, f"Bearer {AUTH_TOKEN}")
         if not ok:
             qs = urllib.parse.parse_qs(scope.get("query_string", b"").decode())
-            ok = qs.get("token", [None])[0] == AUTH_TOKEN
+            ok = hmac.compare_digest(qs.get("token", [""])[0] or "", AUTH_TOKEN)
         if ok:
             await self.app(scope, receive, send)
             return
