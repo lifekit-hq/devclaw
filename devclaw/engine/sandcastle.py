@@ -137,6 +137,25 @@ SANDBOX_CLAUDE_ALLOWLIST: tuple[str, ...] = tuple(
     if e.strip()
 ) or _DEFAULT_CLAUDE_ALLOWLIST
 
+# The one AUTH env var that deliberately crosses the container boundary, joining
+# the git identity as a host-owned credential the sandbox cannot work without.
+# A `claude setup-token` OAuth token (one-year, subscription-backed — never a
+# metered key) supplied on the host as CLAUDE_CODE_OAUTH_TOKEN. Without this the
+# token reaches host cognition only and every sandbox run stays on the mounted
+# `.credentials.json`, i.e. on exactly the interactive login whose revocation
+# takes the box down mid-night. Claude Code ranks this variable ABOVE the
+# `/login` credential, so when it is set the mounted identity pair stops being
+# load-bearing for auth (`.claude.json` still carries the account identity the
+# ACP loop needs). Absent/blank ⇒ no `-e` at all: the mount posture is unchanged
+# and the pre-token deployment keeps working byte-identically.
+OAUTH_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
+
+
+def _oauth_token_env() -> tuple[str, ...]:
+    """``-e CLAUDE_CODE_OAUTH_TOKEN=…`` when the host carries a setup-token."""
+    token = os.environ.get(OAUTH_TOKEN_VAR, "").strip()
+    return ("-e", f"{OAUTH_TOKEN_VAR}={token}") if token else ()
+
 
 def _strip_api_keys(env: dict[str, str]) -> dict[str, str]:
     clean = dict(env)
@@ -532,6 +551,10 @@ def _build_docker_args(
         # image or leaked through a mount can't put the owner's name on agent
         # commits. The worker's own "Co-Authored-By: Claude …" trailer stays.
         *(part for k, v in git_identity_env().items() for part in ("-e", f"{k}={v}")),
+        # The subscription OAuth token, when the host carries one — see
+        # OAUTH_TOKEN_VAR. A metered key never rides along: _strip_api_keys
+        # governs the docker CLI's own env and the runner refuses one outright.
+        *_oauth_token_env(),
         sandbox_image or SANDBOX_IMAGE,
         payload,
     ]
@@ -539,8 +562,12 @@ def _build_docker_args(
 
 def _build_payload(req: EngineRequest) -> dict:
     """The runner JSON payload for one task. Pure (no I/O) so the host→sandbox
-    contract — the ONLY channel that crosses the container boundary; host env
-    vars deliberately do not — is unit-testable without docker."""
+    contract — the only channel carrying WORK across the container boundary — is
+    unit-testable without docker. The host env does not cross wholesale; the two
+    deliberate exceptions are credentials the sandbox cannot function without,
+    forwarded one variable at a time in :func:`_build_docker_args`: the git
+    identity (:func:`git_identity_env`) and the subscription OAuth token
+    (:data:`OAUTH_TOKEN_VAR`). Adding a third is a decision, not a convenience."""
     return {
         "kind": req.kind,
         "workspace_dir": CONTAINER_WORKSPACE,

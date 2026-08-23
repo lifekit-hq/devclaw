@@ -75,3 +75,28 @@ def test_call_claude_strips_api_keys_from_subprocess_env(monkeypatch):
     assert "ANTHROPIC_AUTH_TOKEN" not in seen["env"]
 
 
+
+
+def test_call_claude_keeps_the_setup_token_in_subprocess_env(monkeypatch):
+    # The other half of the OAuth-only invariant: the strip is a DENYLIST of
+    # metered credentials, not an allowlist. A `claude setup-token` OAuth token
+    # (subscription-backed, ranked above the /login credential) must survive
+    # into host cognition's subprocess env — stripping it would silently put the
+    # box back on the interactive login this token exists to stop depending on.
+    import asyncio as real_asyncio
+
+    from devclaw import llm_call
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat-live")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-leak")
+    seen: dict = {}
+
+    async def fake_spawn(*argv, **kwargs):
+        seen["env"] = kwargs.get("env")
+        raise OSError("stop here — env captured")
+
+    monkeypatch.setattr(llm_call.asyncio, "create_subprocess_exec", fake_spawn)
+    with pytest.raises(llm_call.PlannerError):
+        real_asyncio.run(llm_call.call_claude("hi"))
+    assert seen["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat-live"
+    assert "ANTHROPIC_API_KEY" not in seen["env"]
