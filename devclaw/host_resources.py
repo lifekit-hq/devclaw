@@ -55,6 +55,36 @@ TERMINAL_PHASES = frozenset({"done", "cancelled"})
 _DOCKER_TIMEOUT_S = 20
 
 
+# ---- host-memory probes (mechanism; the admission POLICY lives in
+# task_queue's _mem_can_launch/_mem_commit_launch) ---------------------------
+def _parse_mem(text: str) -> int:
+    """Docker-style memory string (``2g`` / ``512m`` / ``2048k`` / raw bytes) →
+    bytes. Fail-safe: an unparseable value falls back to 2 GiB rather than
+    crashing import — a typo in ``.env`` must not take the queue down."""
+    s = str(text).strip().lower()
+    units = {"k": 1 << 10, "m": 1 << 20, "g": 1 << 30, "b": 1}
+    try:
+        if s and s[-1] in units:
+            return int(float(s[:-1]) * units[s[-1]])
+        return int(s)
+    except (ValueError, TypeError):
+        return 2 << 30
+
+def host_mem_available_bytes() -> Optional[int]:
+    """Best-effort ``/proc/meminfo`` ``MemAvailable`` in bytes. Returns ``None``
+    on ANY failure (non-Linux host, missing field, parse error) so dispatch fails
+    OPEN — an unmeasurable host behaves exactly as before and is never wedged.
+    Patched by tests via the task_queue re-binding (its readers' namespace)."""
+    try:
+        with open("/proc/meminfo", "r", encoding="ascii", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) * 1024  # value is in kB
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def toolchain_volume_for(workspace_dir: str) -> str:
     """The toolchain volume name for a workspace, derived exactly as
     ``sandcastle`` derives it when it mounts one.
