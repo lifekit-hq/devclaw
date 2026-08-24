@@ -18,6 +18,7 @@ from ...engine.workspace import (
     prepare_workspace,
     workspace_is_dispatchable,
 )
+from ...project_manifest import ManifestError, load_manifest
 from ...project_registry import ResolvedDispatch, UnknownProject
 from .._state import registry
 
@@ -60,6 +61,18 @@ async def _preflight_or_prep(resolved: ResolvedDispatch, project_id: str) -> Non
     ``prepare_workspace`` + ``_block_on_prep_failure`` and does not use this."""
     reason = workspace_is_dispatchable(resolved.workspace_dir)
     if reason is None:
+        # Workspace is dispatchable — also validate its devclaw.json (spec 016
+        # FR-010): an ABSENT manifest is fine (instance defaults), a
+        # present-but-malformed one rejects HERE with the parse error, never a
+        # silent fallback discovered mid-run. Worktree read on purpose — this
+        # catches the human's own bad edit before any work is claimed.
+        try:
+            load_manifest(resolved.workspace_dir)
+        except ManifestError as exc:
+            raise ToolError(
+                f"cannot dispatch to project {project_id!r}: {exc} — fix "
+                f"devclaw.json (it is human-owned) and retry"
+            )
         return
     absent = not _Path(resolved.workspace_dir).exists()
     if absent and resolved.repo_url:

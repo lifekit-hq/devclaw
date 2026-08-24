@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/lifekit-hq/devclaw/main/docs/reference/devclaw-manifest.schema.json",
+  "title": "devclaw project manifest (devclaw.json)",
+  "description": "Human-owned, PR-reviewed per-project declaration read by devclaw through the project_manifest doorway. Devclaw never writes this file outside the reviewable onboard PR path.",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional pointer at this schema for editor validation."
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Manifest schema version. A version newer than the running instance understands fails loudly ('instance too old'), never a partial parse."
+    },
+    "boilerplateRevision": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "The devclaw boilerplate revision this repo was last brought up to. Compared by doctor against the instance's BOILERPLATE_REVISION constant; re-onboard migrates."
+    },
+    "strictnessDefault": {
+      "enum": ["trust", "strict"],
+      "description": "Per-project gate-strictness default. Precedence: explicit per-goal setting > this value > instance default ('trust'), resolved live at each goal-level read."
+    },
+    "surface": {
+      "enum": ["app", "library"],
+      "description": "Declared frontend surface kind for the browser-E2E gate. 'library' applies the library exemption without path heuristics; 'app' or absent keeps the default glob heuristics. Read at pre_run_sha for gate decisions."
+    },
+    "verifyCmd": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Project-default verify command. Precedence: planner action verify_cmd > goal verify_cmd > this value. Resolved at dispatch (pre-run)."
+    },
+    "stack": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Declared stack markers (e.g. 'dotnet', 'angular'). Informational in schema v1."
+    }
+  },
+  "additionalProperties": true
+}

@@ -113,7 +113,8 @@ def _has_playwright_config(workspace_dir: str) -> bool:
 
 
 def _browser_gate_failure(
-    verify: Optional[dict], diff: str, workspace_dir: str, *, mode: str
+    verify: Optional[dict], diff: str, workspace_dir: str, *, mode: str,
+    surface: Optional[str] = None,
 ) -> Optional[str]:
     """Return a feed-back reason if a web-UI change failed the browser-E2E gate
     CLOSED, else None. A change that touched a frontend path must carry a passing
@@ -125,8 +126,24 @@ def _browser_gate_failure(
     verdict."""
     if not BROWSER_GATE_ENABLED:
         return None
+    # Declared surface (spec 016 US2, devclaw.json read at the merged base):
+    # 'library' = the whole repo is library surface — the gate's app-surface
+    # expectation does not apply (the declared form of the path-glob
+    # exemption); 'app' = every frontend path is app surface — the glob
+    # exemption is disabled; None/undeclared = heuristics as before.
+    if surface == "library":
+        sys.stderr.write(
+            "task-queue: browser-gate not applicable — devclaw.json declares "
+            "surface=library (library build/test gates own this change)\n"
+        )
+        return None
     config_present = _has_playwright_config(workspace_dir)
-    verdict = browser_run_verdict(verify, diff, config_present=config_present)
+    if surface == "app":
+        verdict = browser_run_verdict(
+            verify, diff, config_present=config_present, library_globs=(),
+        )
+    else:
+        verdict = browser_run_verdict(verify, diff, config_present=config_present)
     if not verdict.blocks_delivery(mode):
         if verdict.state == "absent":
             sys.stderr.write(
@@ -322,7 +339,8 @@ class _BrowserGate:
     async def check(self, gi: GateInput) -> GateVerdict:
         diff = await gi.diff()
         failure = _browser_gate_failure(
-            gi.verify, diff, gi.workspace_dir, mode=gi.browser_mode
+            gi.verify, diff, gi.workspace_dir, mode=gi.browser_mode,
+            surface=gi.surface,
         )
         if failure is not None and await self.queue._browser_reachability_clears(
             gi.verify, diff, gi.workspace_dir

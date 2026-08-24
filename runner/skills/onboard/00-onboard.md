@@ -74,6 +74,12 @@ If you cannot confidently determine the base image for the stack, still write yo
 
 **Read-only otherwise:** everything else in the repo is read-only during this task.
 
+**`devclaw.json` is human-owned:** the per-project manifest at the repo root
+(schema version, boilerplate revision, per-project settings) is authored and
+edited by humans through PRs. Never create, edit, or delete it — devclaw's
+host side seeds it mechanically on the install PR; your job here is the three
+docs plus the dev container only.
+
 ## Summary
 
 End with a short summary to STDOUT in your final message: for each of the three docs, whether you CREATED, UPDATED, or LEFT UNCHANGED, plus the two or three most load-bearing facts you captured (per doc). Then one line for `.devcontainer/Dockerfile`: CREATED (name the base image + toolchains) or LEFT UNCHANGED (a dev container already existed).

@@ -242,7 +242,7 @@ async def create_goal(
     open_pr: bool = True,
     spec: str = "",
     mode: str = "long_lived",
-    strictness: str = "trust",
+    strictness: Optional[str] = None,
     out_of_scope: Optional[list[str]] = None,
     invariants: Optional[list[str]] = None,
     established: Optional[list[str]] = None,
@@ -282,7 +282,9 @@ async def create_goal(
         raise ToolError("create_goal requires goal_id")
     if mode not in ("long_lived", "one_shot"):
         raise ToolError("create_goal mode must be 'long_lived' or 'one_shot'")
-    if strictness not in ("trust", "strict"):
+    # Omitted strictness = "not explicitly chosen": the repo's devclaw.json
+    # strictnessDefault (if any) applies live; passing a value pins the goal.
+    if strictness is not None and strictness not in ("trust", "strict"):
         raise ToolError("create_goal strictness must be 'trust' or 'strict'")
     # Resolve the project reference key → workspace + repo (spec 003 / #520).
     # Unknown project rejects here; the workspace is NOT preflighted for

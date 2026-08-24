@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from .. import config as _config
+from .. import project_manifest as _manifest
 from ..delivery import deliver_change, delivery_failed, devclaw_commit_title
 from ..delivery.integrate import commit_lane, integrate_lane
 from ..engine import EngineEvent, EngineRequest
@@ -1013,6 +1014,15 @@ class SettleMixin:
                         verify=result.get("verify"),
                         scaffold=scaffold,
                         browser_mode=self._browser_gate_mode(project_id),
+                        # Spec 016 US2: the declared surface kind, read from
+                        # devclaw.json at the MERGED base — host-side, never
+                        # the worker-writable worktree/goal branch (FR-009).
+                        # A malformed base manifest raises here and settles
+                        # the task failed — a gate input that cannot be
+                        # determined fails CLOSED (#186), never defaults.
+                        surface=await asyncio.to_thread(
+                            _manifest.resolve_surface, workspace_dir
+                        ),
                         change_fn=lambda: _capture_change(
                             workspace_dir, pre_run_sha,
                             task_id=task_id, message=materialize_msg,

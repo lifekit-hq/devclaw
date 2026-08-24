@@ -87,6 +87,12 @@ class Goal:
     #: the gate strictness dial (see :data:`Strictness`, ADR 0007). Defaulted to
     #: "trust" so existing goal.yaml (predates the field) loads advisory.
     strictness: Strictness = "trust"
+    #: the RAW dial (spec 016 FR-008): the value only when the author/operator
+    #: explicitly set it (create param or set_strictness); None when the goal
+    #: never chose — which is what lets a repo's ``devclaw.json``
+    #: strictnessDefault apply (most-specific-wins, resolved live). ``strictness``
+    #: above stays the resolved non-null view for pre-016 readers.
+    strictness_explicit: Optional[Strictness] = None
     #: ---- the authored saga slots (spec 012 US2, FR-007) -------------------
     #: Three named slots the author fills at creation, alongside ``objective``
     #: ("what is being achieved") and ``done_when`` ("what completion means").

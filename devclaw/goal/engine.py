@@ -37,6 +37,24 @@ class GoalEngineError(RuntimeError):
     pass
 
 
+def _manifest_tiers(goal: Goal) -> "tuple[str, Optional[str]]":
+    """(strictness, manifest verify_cmd) for a dispatch — the spec 016 US2
+    manifest tiers, read from the merged base in ONE manifest load. A
+    malformed manifest raises GoalEngineError (loud dispatch block)."""
+    from ..project_manifest import ManifestError, effective_strictness, load_manifest_at_base
+
+    manifest = None
+    if goal.workspace_dir:
+        try:
+            manifest = load_manifest_at_base(goal.workspace_dir)
+        except ManifestError as exc:
+            raise GoalEngineError(f"devclaw.json blocks dispatch: {exc}") from exc
+    strictness = effective_strictness(
+        goal.strictness_explicit, manifest.strictness_default if manifest else None
+    )
+    return strictness, (manifest.verify_cmd if manifest else None)
+
+
 class GoalEngine(Protocol):
     async def dispatch(self, action: Action, goal: Goal, notify_url: str) -> InFlight: ...
     async def poll(self, ref: InFlight) -> PollResult: ...
@@ -70,6 +88,15 @@ class InProcessEngine:
         queue via ``kick()`` AFTER its transaction commits."""
         ws = goal.workspace_dir
         nu = notify_url or None
+        # Spec 016 US2: resolve the per-project manifest tiers ONCE per
+        # dispatch — strictness (explicit goal > devclaw.json strictnessDefault
+        # > 'trust') and the verify_cmd fallback tier. Read from the MERGED
+        # base (never worktree/goal-branch — worker-writable, FR-009), and
+        # deliberately SYNCHRONOUS: this method runs inside the tick's atomic
+        # dispatch transaction, where an await that yields would let other
+        # coroutines re-enter the held store lock mid-unit. A malformed
+        # manifest blocks dispatch loudly (FR-010), never a silent default.
+        strictness, manifest_verify_cmd = _manifest_tiers(goal)
         if action.tool == "start_program":
             # Program-child tasks inherit ``open_pr`` and ``verify_cmd`` — the
             # standing-goal / reviewable-slice contract. Under a mission goal
@@ -81,9 +108,9 @@ class InProcessEngine:
             program_id = self._queue.submit_program(
                 workspace_dir=ws, goal=action.goal, notify_url=nu,
                 open_pr=action.open_pr,
-                verify_cmd=action.verify_cmd or goal.verify_cmd,
+                verify_cmd=action.verify_cmd or goal.verify_cmd or manifest_verify_cmd,
                 parent_goal_id=goal.id,
-                strictness=goal.strictness,
+                strictness=strictness,
                 project_id=goal.project_id,
                 pump=False,
             )
@@ -97,14 +124,15 @@ class InProcessEngine:
                 workspace_dir=ws,
                 goal=action.goal,
                 notify_url=nu,
-                verify_cmd=None if is_review else (action.verify_cmd or goal.verify_cmd),
+                verify_cmd=None if is_review else (
+                    action.verify_cmd or goal.verify_cmd or manifest_verify_cmd),
                 deliver=False if is_review else action.open_pr,
                 parent_goal_id=goal.id,
                 # L3 (#222): a pure-scaffolding item skips the adversarial review
                 # gate (verified structurally by the build gate instead). Never
                 # for a read-only review_repository — it has no diff to review.
                 scaffold=False if is_review else action.scaffold,
-                strictness=goal.strictness,
+                strictness=strictness,
                 project_id=goal.project_id,
                 pump=False,
             )
@@ -149,15 +177,17 @@ class InProcessEngine:
             )
             for lane in lanes
         ]
+        # Same manifest tiers as dispatch() — sync on purpose (atomic tick unit).
+        strictness, manifest_verify_cmd = _manifest_tiers(goal)
         program_id = self._queue.start_planned_program(
             goal=action.goal,
             workspace_dir=goal.workspace_dir,
             planned=planned,
             notify_url=notify_url or None,
             open_pr=action.open_pr,
-            verify_cmd=action.verify_cmd or goal.verify_cmd,
+            verify_cmd=action.verify_cmd or goal.verify_cmd or manifest_verify_cmd,
             parent_goal_id=goal.id,
-            strictness=goal.strictness,
+            strictness=strictness,
             project_id=goal.project_id,
             pump=False,
         )
