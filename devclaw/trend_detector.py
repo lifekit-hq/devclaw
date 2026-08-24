@@ -381,7 +381,9 @@ class TrendDetector:
         scope_label: Scope,
     ) -> None:
         """Build payload → LLM retrospective → parse → write entry → cooldown →
-        notify. Failures of cognition or parse are recorded and skipped (no
+        notify (actionable verdicts only — a benign ``proposed_action: null``
+        entry is recorded without an owner ping).
+        Failures of cognition or parse are recorded and skipped (no
         cooldown set so the next heartbeat retries); failures of write or
         notify are recorded but still set the cooldown (we don't want a write
         glitch to trigger the same fire every tick)."""
@@ -428,6 +430,11 @@ class TrendDetector:
             if head is not None:
                 self._store.set_trend_bookmark(ctx.workspace_dir, head)
 
+        # The verdict owns the notification altitude: a benign fire
+        # (proposed_action null per the prompt contract) stays in trends.md
+        # for machine consumption but never pings the owner.
+        if not entry.get("proposed_action"):
+            return
         try:
             self._notify({
                 "kind": "trend_observed",
