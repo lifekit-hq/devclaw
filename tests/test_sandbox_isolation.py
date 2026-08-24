@@ -121,6 +121,44 @@ def test_docker_args_do_not_leak_skills_or_plugins():
         assert leaked not in joined
 
 
+def test_workspace_claude_rules_passes_through_over_tmpfs():
+    """Spec 017 criterion 6: the worker can read the workspace's commit/PR
+    conventions (.claude/rules/) while hooks and settings.json stay blocked.
+    A bind-mount over the tmpfs gives Docker the layered-mount it needs; the
+    hook files are never forwarded because only rules/ is mounted explicitly."""
+    args = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+        workspace_claude_rules_host_path="/host/ws/.claude/rules",
+    )
+    joined = " ".join(args)
+    # The tmpfs shadow is still present — hooks/ and settings.json remain blocked.
+    assert f"{sc.CONTAINER_WORKSPACE}/.claude:rw,exec" in joined
+    # rules/ is re-exposed read-only OVER the tmpfs.
+    assert f"/host/ws/.claude/rules:{sc.CONTAINER_WORKSPACE}/.claude/rules:ro" in joined
+    # hooks/ is NOT mounted (no explicit pass-through for dangerous subdirs).
+    assert ".claude/hooks" not in joined
+    # settings.json is NOT mounted.
+    assert "settings.json" not in joined
+
+
+def test_workspace_claude_rules_absent_leaves_no_extra_mount():
+    """When the workspace has no .claude/rules/, no extra bind is added and the
+    tmpfs shadow stands alone — no broken bind source for a non-devclaw repo."""
+    args = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+        workspace_claude_rules_host_path=None,
+    )
+    joined = " ".join(args)
+    assert "/host/ws/.claude/rules" not in joined
+    assert f"{sc.CONTAINER_WORKSPACE}/.claude:rw,exec" in joined
+
+
 # ---- workspace pre-flight (close the silent-timeout traps) ----
 
 

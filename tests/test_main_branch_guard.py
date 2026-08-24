@@ -29,6 +29,12 @@ def _hook_source(path: Path = _HOOK) -> str:
             cwd=_REPO, capture_output=True, text=True, check=True,
         ).stdout
 
+if not _HOOK.exists():
+    pytest.skip(
+        f"hook file absent ({_HOOK}) — .claude/ is not present in this environment",
+        allow_module_level=True,
+    )
+
 
 def _load():
     mod = types.ModuleType("main_branch_guard")

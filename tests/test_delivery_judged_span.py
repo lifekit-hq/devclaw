@@ -147,18 +147,27 @@ async def test_a_devclaw_authored_span_does_not_title_the_pr_from_its_own_messag
 ):
     """``agent_authored`` replaces the old ``ahead > 0`` proxy. Without it,
     devclaw's own materialization commit would be mistaken for the worker's
-    description of the change and re-used as the PR title."""
+    description of the change and re-used as the PR title. Spec 017 criterion 2:
+    neither the devclaw commit subject NOR the dispatch prompt can title the PR —
+    only the worker's own commit subject or MACHINE_COMMIT_SUBJECT applies."""
     ws = _repo(tmp_path)
     (ws / "f.py").write_text("F = 1\n")
     _git(ws, "add", "-A")
-    _git(ws, "commit", "-q", "-m", "feat: add a health endpoint\n\nDelivered by devclaw (task t1).")
+    _git(ws, "commit", "-q", "-m",
+         "feat: add a health endpoint\n\nDelivered by devclaw (task t1).")
     judged = _git(ws, "rev-parse", "HEAD")
 
     result = await deliver_change(
         workspace_dir=str(ws), task_id="t1", goal="wire up the /metrics route",
         kind="implement_feature", judged_head=judged, agent_authored=False,
     )
-    assert "metrics" in result["branch"]
+    # The devclaw-authored commit subject is NOT used (not "add a health endpoint").
+    # The dispatch prompt is NOT used (not "metrics").
+    # The machine-commit subject IS used — a self-describing snapshot label.
+    assert "add-a-health-endpoint" not in result["branch"]
+    assert "metrics" not in result["branch"]
+    # MACHINE_COMMIT_SUBJECT → branch suffix is "-snapshot"
+    assert result["branch"].endswith("-snapshot")
 
 
 async def test_a_goal_branch_delivery_publishes_the_judged_head_too(

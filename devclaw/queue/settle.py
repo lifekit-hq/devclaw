@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from .. import config as _config
 from .. import project_manifest as _manifest
 from .. import validation_loop as _validation
-from ..delivery import deliver_change, delivery_failed, devclaw_commit_title
+from ..delivery import deliver_change, delivery_failed
 from ..delivery.integrate import commit_lane, integrate_lane
 from ..engine import EngineEvent, EngineRequest
 from ..loom.limits import classify_failure, pause_seconds
@@ -1002,18 +1002,9 @@ class SettleMixin:
         # (pause-resume, crash-recovery requeue) re-uses it, degrading to a
         # fresh capture when the persisted sha no longer resolves (e.g. the
         # workspace was re-cloned meanwhile).
-        # The message devclaw writes IF it has to author the commit (the worker
-        # recorded nothing). Resolved through delivery's own title resolver, so a
-        # worker that never commits gets the identical title, branch slug and
-        # message it gets today — materialization changes WHEN the commit is
-        # written, not what it says (FR-008).
-        materialize_msg = materialization_message(
-            devclaw_commit_title(
-                planner_title=(row.title if row else None),
-                goal=goal, kind=kind, task_id=task_id,
-            ),
-            task_id,
-        )
+        # The self-describing message devclaw writes if the worker left no commit.
+        # Dispatch prompt is never a source for this message (spec 017 FR).
+        materialize_msg = materialization_message(task_id)
 
         pre_run_sha = ""
         stored_base = row.pre_run_sha if row else None

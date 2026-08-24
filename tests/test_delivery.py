@@ -13,6 +13,7 @@ import pytest
 
 from devclaw import delivery
 from devclaw.delivery import (
+    _NO_AGENT_COMMIT_LEAD,
     _closes_issues,
     _extract_pr_url,
     _goal_pr_body,
@@ -24,6 +25,7 @@ from devclaw.delivery import (
     _slug,
     deliver_change,
 )
+from devclaw.task_change import MACHINE_COMMIT_SUBJECT
 
 # The thin-advance pull-brief shape (goal/tick.py:_advance_brief) — the generic
 # task ``goal`` on every long_lived tick post-demolition.
@@ -109,18 +111,27 @@ def test_resolve_title_decorates_with_resolved_issue():
     assert branch == "fix/42-stop-pagination-drift"
 
 
-def test_resolve_title_rejects_advance_brief_falls_back_to_objective():
-    # No worker commit at all (pure dirty tree). We must still not render the
-    # brief — fall back to its embedded `Goal:` objective.
+def test_resolve_title_no_worker_commit_returns_machine_commit_subject():
+    # Spec 017 criterion 2: when there is no worker commit and no planner title,
+    # the PR title must be the machine-commit subject — NEVER any text from the
+    # dispatch prompt. This means the advance brief can't leak (the original
+    # intent of the old test) AND no other prompt text can leak either.
     title, branch, changes = _resolve_title(
         planner_title=None, agent_msg=None,
         goal=_ADVANCE_BRIEF, kind="implement_feature", task_id="deadbeef12",
     )
+    assert title == MACHINE_COMMIT_SUBJECT
     assert "Advance this goal by one substantive" not in title
-    assert title.startswith("feat: Build a small field notes REST API")
-    assert "advance-this-goal" not in branch
+    assert "Build a small field notes REST API" not in title
+    assert "snapshot" in branch   # branch is `devclaw/<task_id[:8]>-snapshot`
     assert changes is None
     assert _is_advance_brief(_ADVANCE_BRIEF) and not _is_advance_brief("add a widget")
+    # Same for a plain (non-brief) goal: dispatch prompt still cannot source title.
+    title2, _, _ = _resolve_title(
+        planner_title=None, agent_msg=None,
+        goal="add a widget", kind="implement_feature", task_id="deadbeef12",
+    )
+    assert title2 == MACHINE_COMMIT_SUBJECT
 
 
 def test_goal_branch_pr_body_never_renders_the_advance_brief():
@@ -185,11 +196,20 @@ def test_pr_body_uses_summary_and_testing_sections():
     # `## Summary` of what changed and a `## Testing` note, with a clean
     # generated-by signature — no task-UUID "Delivered by devclaw" footer.
     verify = {"ran": True, "cmd": "dotnet test", "passed": True, "exit_code": 0}
-    body = _pr_body("Add an endpoint", "abcd1234", verify)
-    assert "## Summary" in body and "Add an endpoint" in body
+    # With a worker commit body (changes=), the summary shows that text.
+    body = _pr_body("Add an endpoint", "abcd1234", verify,
+                    changes="feat: add endpoint\n\nDid the thing.")
+    assert "## Summary" in body and "Did the thing." in body
+    assert "Add an endpoint" not in body   # goal text NOT in body (criterion 2)
     assert "## Testing" in body and "Verified with `dotnet test` — passing." in body
     assert "🤖 Generated with [Claude Code]" in body
     assert "Delivered by devclaw" not in body
+    # Without a worker commit (changes=None): body explicitly says so, never
+    # echoes the dispatch prompt (spec 017 criterion 3).
+    nocommit = _pr_body("x", "id", verify)
+    assert "## Summary" in nocommit
+    assert "Agent authored no commit" in nocommit
+    assert "x" not in nocommit.split("## Summary")[1].split("## Testing")[0].strip()
     # degrades cleanly when there was no gate → no ## Testing section at all
     nogate = _pr_body("x", "id", None)
     assert "Verified with" not in nogate and "## Testing" not in nogate
@@ -254,6 +274,17 @@ def test_pr_body_renders_trust_advisory_section():
     assert "Advisory" not in _pr_body("Add X", "id", None)
 
 
+def test_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit():
+    """Spec 017 criterion 3: when changes=None (agent committed nothing), the PR
+    body must say so EXPLICITLY rather than silently presenting the goal text as
+    a description of the change."""
+    body = _pr_body("Add a very specific endpoint", "id", None)
+    assert "Agent authored no commit" in body            # explicit, not silent
+    assert "Add a very specific endpoint" not in body   # prompt text never leaks
+    # The constant is in the summary section.
+    assert _NO_AGENT_COMMIT_LEAD in body
+
+
 def test_closes_issues_extraction():
     # Explicit fix/close verbs and the self-fix `issue #N` objective count…
     assert _closes_issues("Fix devclaw issue #42: x") == [42]
@@ -284,11 +315,12 @@ async def test_deliver_commits_to_a_branch_and_degrades_without_remote(tmp_path)
     r = await deliver_change(workspace_dir=repo, task_id="abcd1234ef", goal="add new file")
 
     assert r["committed"] is True
-    assert r["branch"] == "devclaw/abcd1234-add-new-file"
+    # Branch is machine-capture slug (not derived from goal) — spec 017 criterion 2.
+    assert r["branch"] == "devclaw/abcd1234-snapshot"
     assert r["pushed"] is False and r["pr_url"] is None
     assert r["delivered"] is True
     assert "no 'origin' remote" in r["error"]
-    assert _branch(repo) == "devclaw/abcd1234-add-new-file"  # change is on the branch
+    assert _branch(repo) == "devclaw/abcd1234-snapshot"  # change is on the branch
 
 
 async def test_deliver_rejects_non_git_dir(tmp_path):

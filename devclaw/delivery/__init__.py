@@ -25,6 +25,7 @@ import re
 from ..advance_brief import is_advance_brief, objective_from_brief
 from ..git_identity import git_identity_env
 from ..procutil import run as _run
+from ..task_change import MACHINE_COMMIT_SUBJECT
 
 
 # conventional-commit type per task kind — so a delivered PR reads `feat: …` /
@@ -239,14 +240,12 @@ def _resolve_title(
         branch = f"{_cc_type(subject, kind)}/{_slug(_cc_description(subject))}"
         title, branch = _link_title_branch(title, branch, _closes_issues(goal, body, subject))
         return title, branch, body or subject
-    # No worker commit to describe the change (dirty tree, nothing committed).
-    # Derive from the goal — but the thin-advance brief is plumbing, not a
-    # description, so fall back to its embedded objective rather than leak it.
-    base_text = goal
-    if _is_advance_brief(goal):
-        base_text = _objective_from_brief(goal) or "advance the goal by one increment"
-    title = _pr_title(base_text, kind)
-    branch = f"devclaw/{task_id[:8]}-{_slug(base_text)}"
+    # No worker commit and no planner title — the dispatch prompt is NOT a
+    # source for the PR title (criterion 2). Use the fixed machine-commit
+    # subject so the PR title matches the actual commit devclaw will write,
+    # and so no instruction text from the ask can ever appear here.
+    branch = f"devclaw/{task_id[:8]}-snapshot"
+    title = MACHINE_COMMIT_SUBJECT
     title, branch = _link_title_branch(title, branch, _closes_issues(goal))
     return title, branch, None
 
@@ -287,6 +286,13 @@ async def _apply_pr_labels(workspace_dir: str, pr_url: str, title: str) -> None:
 # stays visible as co-author), NOT duplicated into the PR description body.
 _COAUTHOR_LINE = re.compile(r"\s*Co-Authored-By:\s*.+$", re.IGNORECASE)
 
+#: PR body lead used when the agent committed nothing — explicit about the
+#: absence rather than silently substituting the dispatch prompt (criterion 3).
+_NO_AGENT_COMMIT_LEAD = (
+    "_Agent authored no commit for this change — the workspace was captured "
+    "as a machine snapshot. See the task run log for details._"
+)
+
 
 def _strip_coauthor_lines(text: str) -> str:
     """Drop ``Co-Authored-By:`` trailer lines from a PR-body lead."""
@@ -313,7 +319,11 @@ def _pr_body(
     ``advisories`` (ADR 0007): trust-mode dial-able gate findings this change
     SHIPPED past rather than blocked on. Rendered as a loud section so the human
     sees them at the merge boundary — the backstop for advisory gates."""
-    lead = _strip_directive_lines(changes) if changes is not None else goal.strip()
+    lead = (
+        _strip_directive_lines(changes)
+        if changes is not None
+        else _NO_AGENT_COMMIT_LEAD
+    )
     lead = _strip_coauthor_lines(lead)
     parts = ["## Summary", "", lead or "(see commit)", ""]
     if verify and verify.get("ran"):
@@ -692,7 +702,14 @@ async def deliver_change(
                 env_extra=git_identity_env(),
             )
         else:
-            msg = f"{title}\n\nDelivered by devclaw (task {task_id})."
+            # Devclaw authors this commit because the agent left none. The
+            # message is self-describing (machine snapshot), never derived from
+            # the dispatch prompt — criterion 4 (spec 017).
+            msg = (
+                f"{MACHINE_COMMIT_SUBJECT}\n\n"
+                f"Delivered by devclaw (task {task_id}). "
+                "Agent authored no commit — this captures the uncommitted workspace tree."
+            )
             # Identity via GIT_* env (not -c): env beats every config level, so an
             # ambient/leaked identity can't author devclaw's delivery commit.
             rc, out = await _run(

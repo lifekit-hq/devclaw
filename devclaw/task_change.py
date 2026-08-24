@@ -173,8 +173,20 @@ def materialize_worktree_sync(
         return out
 
 
-def materialization_message(title: str, task_id: str) -> str:
-    """The commit message devclaw writes when the worker recorded nothing —
-    byte-identical to the one delivery composed at its own commit site, so a
-    worker that never commits still gets the same PR title and branch slug."""
-    return f"{title}\n\nDelivered by devclaw (task {task_id})."
+#: The self-describing commit subject devclaw uses when the agent committed
+#: nothing. Fixed, never derived from the dispatch prompt — so neither the PR
+#: title nor the branch slug ever echoes the ask (criteria 2 and 4, spec 017).
+MACHINE_COMMIT_SUBJECT = "chore: machine-captured uncommitted workspace state"
+
+
+def materialization_message(task_id: str) -> str:
+    """The commit message devclaw writes when the worker recorded nothing.
+
+    Self-describing by design: it says WHAT the commit is (a machine snapshot),
+    not what the agent was ASKED to do. The dispatch prompt is never a source for
+    either the PR title or the commit subject (spec 017 criteria 2 and 4)."""
+    return (
+        f"{MACHINE_COMMIT_SUBJECT}\n\n"
+        f"Delivered by devclaw (task {task_id}). "
+        "Agent authored no commit — this captures the uncommitted workspace tree."
+    )
