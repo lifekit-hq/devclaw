@@ -26,6 +26,7 @@ The MCP tools you use:
 | `tail_goal(id)` | the deliveries tail (what each action shipped: summary + gate verdict + PR) and the live event stream — use only to explain a specific goal, not for every goal |
 | `list_projects` / `project_status(id)` | the project rollup, if Denys wants it grouped by project |
 | `list_problems` | the deduplicated problems catalog (message ×count) — **only if the tool exists** (see Problems below) |
+| `review_trends` | the trend detector's observations — `scope="harness_self"` for the instance-wide file, `scope=<workspace path>` for a project's `.devclaw/trends.md` (see Trends below) |
 
 There is **one exception** to "everything is an MCP tool": the **cycle reports**.
 They are NOT exposed as an MCP tool — the only read surface is the HTTP route
@@ -92,10 +93,19 @@ repo forbids. A digest that looks current but isn't is worse than no digest.
    only a handful of cycles exist, say so — the mechanism is young and the rate
    is noisy.
 
-6. **Optional project grouping.** Only if Denys asked for it, or there are enough
+6. **Actionable trends.** Call `review_trends(scope="harness_self")`, plus
+   `review_trends(scope=<workspace>)` for each distinct workspace among the
+   non-quiet goals (skip quiet ones — their trends aren't going anywhere).
+   Surface **only entries carrying a real `Proposed action:`** (skip every
+   "(none — pattern noted…)" entry — those are machine context, not operator
+   items) and only ones dated within the last ~7 days. When nothing qualifies,
+   **omit the Trends section entirely** — a calm instance reads calm. Never
+   re-surface an entry Denys already acted on in a previous digest.
+
+7. **Optional project grouping.** Only if Denys asked for it, or there are enough
    goals that grouping helps, fold in `list_projects` / `project_status`.
 
-7. **Render the digest** (next section). Keep it tight — this is a glance, not a
+8. **Render the digest** (next section). Keep it tight — this is a glance, not a
    report.
 
 ### How Denys clears a blocked goal — put the right verb on each blocked line
@@ -138,6 +148,10 @@ calm — don't manufacture urgency.
   …or ⚠️ <n> wedge(s): <class ×n, class ×n>
 - Clean rate: <clean>/<total> cycles · recurring wedge: <class> (<n> nights)
 
+## Trends (actionable)   ← omit the section when none qualify
+- [<signal> · <scope or repo>] <observation, one line>
+  → proposed: <the entry's proposed action>
+
 ## Quiet (<n>)
 - <objective> — <lifecycle> (done / idle / cancelled)
 ```
@@ -173,3 +187,9 @@ Rules that keep it honest and scannable:
   gates). The clean/wedge boundary is deliberately narrow: only mechanism
   breakage counts, so the rate doesn't get diluted by needs_answer gates and
   self-healed pauses that are the system *working*.
+- **Trends surface here, not in Telegram** (2026-08-24 ruling): benign trend
+  observations no longer ping the owner at all — they live in `trends.md` for
+  machine consumption — and *actionable* ones get their one human surface in
+  this digest, where the read is deliberate. If weeks of digests go by and no
+  trend entry ever changes a decision, that's the evidence to retire the
+  discipline; this section is the measurement.
