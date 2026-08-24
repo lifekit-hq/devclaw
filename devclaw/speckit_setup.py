@@ -28,6 +28,7 @@ from pathlib import Path
 
 from .delivery import deliver_change  # module global so tests can patch it
 from .procutil import run as _run
+from .project_manifest import seed_manifest
 
 #: The deterministic branch the install PR lands on, so the dispatch gate can
 #: find an open install PR by head without any persisted state.
@@ -214,6 +215,12 @@ async def install_speckit_pr(workspace_dir: str, *, project_id: str | None = Non
                     "error": f"could not create install branch: {out[-200:]}", "created": []}
 
         created = scaffold_specify(workspace_dir)
+        # Spec 016 US2: seed the per-project manifest on the SAME reviewable
+        # PR — the one devclaw-write path devclaw.json has. No-op when the
+        # repo already carries one (human-owned; never touched here).
+        seeded = seed_manifest(workspace_dir)
+        if seeded:
+            created.append(seeded)
 
         result = await deliver_change(
             workspace_dir=workspace_dir,

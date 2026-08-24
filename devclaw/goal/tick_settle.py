@@ -27,6 +27,7 @@ from .tick_guards import _block_on_lost_ref, _block_on_prep_failure
 from .tick_donegate import _resolve_done_gate
 from . import repo_brief as _repo_brief
 from . import slice_guard as _slice_guard
+from .. import project_manifest as _manifest
 from .engine import GoalEngine, GoalEngineError
 from .models import Goal, GoalStatus, InFlight
 from .store import GoalStore
@@ -363,13 +364,23 @@ async def _resolve_polling_action(
             _slice_guard.tasks_flips_sync, goal.workspace_dir
         )
         if flips > 1:
+            # Spec 016 FR-008: the slice dial rides the LIVE resolved
+            # strictness (explicit goal > manifest default at the merged
+            # base). Resolution runs only on this rare tripped path — never
+            # idle — and a malformed base manifest fails LOUD (strict-side).
+            try:
+                _resolved_strictness = await asyncio.to_thread(
+                    _manifest.resolve_goal_strictness, goal
+                )
+            except _manifest.ManifestError:
+                _resolved_strictness = "strict"
             note = (
                 f"slice guardrail: this increment advanced {flips} story-slices "
                 f"in one delivery — a coherent increment advances ONE story-slice "
                 f"([US<n>]) and ships as one reviewable PR, not a build-ahead "
                 f"through later stories"
             )
-            if gate_consequence("slice", goal.strictness) is Consequence.BLOCK:
+            if gate_consequence("slice", _resolved_strictness) is Consequence.BLOCK:
                 reason = (
                     note + ". Parked for a re-slice (strict mode): steer a smaller "
                     "next step (one story-slice), or set trust to ship-and-advise."

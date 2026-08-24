@@ -83,6 +83,11 @@ class GateInput:
     scaffold: bool
     #: browser-gate stance (``flexible`` | ``strict``) resolved for this workspace
     browser_mode: str
+    #: declared frontend surface kind (``app`` | ``library`` | None) from the
+    #: repo's ``devclaw.json`` — resolved HOST-SIDE from the merged base (spec
+    #: 016 FR-009), never from worker-writable state. None = undeclared: the
+    #: path-glob heuristics stay in charge.
+    surface: Optional[str] = None
     #: async producer of the post-run diff vs. the pre-run base. The older
     #: seam, kept for direct constructions (tests, callers with a span already in
     #: hand); production passes :attr:`change_fn` instead. Called at most once.

@@ -313,7 +313,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         backlog: list[str] | None = None,
         stub_acceptable: list[str] | None = None,
         mode: str = "long_lived",
-        strictness: str = "trust",
+        strictness: str | None = None,
         project_id: str | None = None,
         out_of_scope: list[str] | None = None,
         invariants: list[str] | None = None,
@@ -364,7 +364,10 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
                     "backlog": list(backlog or []),
                     "stub_acceptable": list(stub_acceptable or []),
                     "mode": mode,
-                    "strictness": strictness,
+                    # Written ONLY when explicitly chosen (spec 016 FR-008):
+                    # an absent key is what lets the repo manifest's
+                    # strictnessDefault apply; a present key always wins.
+                    **({"strictness": strictness} if strictness is not None else {}),
                     "project_id": project_id,
                 },
                 sort_keys=False,
@@ -401,7 +404,14 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             mode=("one_shot" if raw.get("mode") == "one_shot" else "long_lived"),
             # Unrecognized reads as "trust" (advisory) — the default
             # dial: dial-able gates log-and-ship rather than wedge (ADR 0007).
+            # The RAW tier (spec 016): a PRESENT recognized key is an explicit
+            # author/operator choice; an absent (or garbled) key is None, which
+            # is what lets a repo manifest's strictnessDefault apply.
             strictness=("strict" if raw.get("strictness") == "strict" else "trust"),
+            strictness_explicit=(
+                raw.get("strictness")
+                if raw.get("strictness") in ("trust", "strict") else None
+            ),
             # A goal.yaml written before P3 has no project_id → None until the
             # one-shot backfill stamps it (knobs fall to defaults meanwhile).
             project_id=(str(raw["project_id"]) if raw.get("project_id") else None),

@@ -549,7 +549,7 @@ class GoalService:
         done_when: str = "", backlog: Optional[list[str]] = None,
         spec: str = "",
         mode: str = "long_lived",
-        strictness: str = "trust",
+        strictness: Optional[str] = None,
         project_id: Optional[str] = None,
         out_of_scope: Optional[list[str]] = None,
         invariants: Optional[list[str]] = None,
@@ -573,7 +573,9 @@ class GoalService:
 
         if mode not in ("long_lived", "one_shot"):
             raise ValueError(f"unknown goal mode {mode!r} — expected 'long_lived' or 'one_shot'")
-        if strictness not in ("trust", "strict"):
+        # None = "author didn't choose" (spec 016 FR-008): the key is not
+        # written, so the repo manifest's strictnessDefault applies live.
+        if strictness is not None and strictness not in ("trust", "strict"):
             raise ValueError(f"unknown strictness {strictness!r} — expected 'trust' or 'strict'")
 
         admission = _verify(

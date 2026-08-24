@@ -12,6 +12,7 @@ from tick.py.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 from dataclasses import replace
@@ -29,6 +30,7 @@ from .tick_context import (
 )
 from . import evaluator as _evaluator
 from . import remote_checks as _remote_checks
+from .. import project_manifest as _manifest
 from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
 from .engine import GoalEngine
@@ -314,11 +316,26 @@ async def _resolve_done_gate(
     # Ground the gate on the executing feature's speckit spec (FR-006 / D6),
     # falling back to the goal's scope spec / done_when when none is recorded.
     spec = _feature_spec_grounding(goal, store, goal_id)
+    # Spec 016 FR-008: the done-gate's structural axis rides the LIVE resolved
+    # dial — explicit goal setting > devclaw.json strictnessDefault (read from
+    # the merged base, never the worker-writable worktree/goal branch, FR-009).
+    # A malformed base manifest fails LOUD like an eval error, never a silent
+    # 'trust'. asyncio.to_thread: settle-time path, no transaction held.
+    try:
+        resolved_strictness = await asyncio.to_thread(
+            _manifest.resolve_goal_strictness, goal
+        )
+    except _manifest.ManifestError as exc:
+        store.append_log(goal_id, f"done-gate blocked by manifest: {exc}")
+        store.update_status_fields(goal_id, last_tick_at=store.now_iso())
+        await _notify(notifier, NotifyLevel.TASK,
+                      f"⚠️ [{goal_id}] done-gate blocked: {exc}")
+        return Outcome.ERROR
     try:
         ev = await _evaluator.evaluate(
             goal, status, store.recent_log(goal_id), store.recent_deliveries(goal_id),
             claude_caller=evaluator_caller, review_report=review_report, at_done_gate=True,
-            spec=spec, repo_context=repo_context,
+            spec=spec, repo_context=repo_context, strictness=resolved_strictness,
         )
     except _evaluator.GoalEvalError as exc:
         store.append_log(goal_id, f"done-gate eval error: {exc}")

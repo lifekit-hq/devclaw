@@ -224,10 +224,17 @@ goes green after merge.
   `set_goal_strictness` remains authoritative for a goal it was called on.
   Rejected: snapshot-at-goal-creation (stale until cancel+recreate);
   manifest-always-wins (silently deprecates the existing per-goal verb).
-- **FR-009**: Gate-relevant manifest settings MUST be read host-side from the
-  pre-run SHA of the manifest; edits made to the manifest during a run MUST
-  have no effect on that run's gates (named regression test — the #358/#233
-  worker-routes-around-constraints class).
+- **FR-009**: Gate-relevant manifest settings MUST be read host-side from
+  state the worker cannot write. *(Strengthened during implementation, PR 2:
+  the read is pinned to the repo's REMOTE DEFAULT-BRANCH TIP — the
+  human-merged truth — rather than the originally-specified pre-run SHA. The
+  pre-run SHA sits on the goal branch, so a PRIOR task's worker commit could
+  still have carried a gate-weakening manifest edit into the next task's
+  baseline; the merged base closes within-run AND cross-task tamper in one
+  rule. Workspaces with no remote — dev/stub — fall back to the worktree,
+  which is there the only truth.)* Edits made to the manifest by the worker
+  (worktree or goal-branch commit) MUST have no effect on any gate (named
+  regression test — the #358/#233 worker-routes-around-constraints class).
 - **FR-010**: An absent manifest yields instance defaults plus a doctor warn;
   a malformed manifest fails dispatch loudly with an actionable message —
   never a silent fallback. A manifest schema version newer than the instance

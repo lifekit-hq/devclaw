@@ -641,6 +641,7 @@ async def evaluate(
     spec: str = "",
     repo_context: Optional[str] = None,
     lean_done_gate: Optional[bool] = None,
+    strictness: Optional[Strictness] = None,
 ) -> EvalResult:
     """Run the direction evaluation. ``claude_caller`` is injected so tests stub
     the LLM. Pass ``review_report`` + ``at_done_gate`` when judging a done proposal;
@@ -660,9 +661,13 @@ async def evaluate(
         parsed = json.loads(extract_json(raw))
     except json.JSONDecodeError as exc:
         raise GoalEvalError(f"evaluator emitted invalid JSON: {exc}", raw) from exc
+    # ``strictness`` (spec 016 FR-008): the caller passes the LIVE resolved
+    # dial (explicit goal > manifest default) — falling back to the goal's
+    # resolved field keeps every pre-016 caller byte-identical.
     return validate(
         parsed, at_done_gate=at_done_gate, stub_acceptable=goal.stub_acceptable,
-        standing=is_standing(goal.done_when), strictness=goal.strictness,
+        standing=is_standing(goal.done_when),
+        strictness=strictness or goal.strictness,
     )
 
 
