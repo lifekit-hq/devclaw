@@ -16,6 +16,38 @@
       },
       "registered_skills": [],
       "installed_at": "2026-08-24T09:10:38.790206+00:00"
+    },
+    "verify-tasks": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:6428b6dccaa3daa8aa5d72a73001cd3f82b9908e8c67bedd84697dd7547c96e8",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.verify-tasks.run",
+          "speckit.verify-tasks"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-08-24T11:12:50.886204+00:00"
+    },
+    "trace": {
+      "version": "1.0.0",
+      "source": "local",
+      "manifest_hash": "sha256:14f9e41fa5e85ddb2d850db04de1c2c41b8395efb697d86a33b9c1e8d00d314b",
+      "enabled": true,
+      "priority": 10,
+      "registered_commands": {
+        "claude": [
+          "speckit.trace.build",
+          "speckit.trace.gaps",
+          "speckit.trace.orphans",
+          "speckit.trace.report"
+        ]
+      },
+      "registered_skills": [],
+      "installed_at": "2026-08-24T11:13:23.066102+00:00"
     }
   }
 }

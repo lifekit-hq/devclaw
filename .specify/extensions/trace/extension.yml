@@ -1,0 +1,35 @@
+schema_version: "1.0"
+
+extension:
+  id: trace
+  name: Spec Trace
+  version: "1.0.0"
+  description: "Build a requirement → test traceability matrix from spec.md and the test suite — surface untested requirements and orphan tests"
+  author: Quratulain-bilal
+  repository: https://github.com/Quratulain-bilal/spec-kit-trace
+  license: MIT
+
+requires:
+  speckit_version: ">=0.4.0"
+
+provides:
+  commands:
+    - name: "speckit.trace.build"
+      file: "commands/speckit.trace.build.md"
+      description: "Build a requirement → test traceability matrix from spec.md and the test suite"
+    - name: "speckit.trace.gaps"
+      file: "commands/speckit.trace.gaps.md"
+      description: "List every requirement in spec.md that has no covering test"
+    - name: "speckit.trace.orphans"
+      file: "commands/speckit.trace.orphans.md"
+      description: "List tests that reference a requirement ID that no longer exists in spec.md"
+    - name: "speckit.trace.report"
+      file: "commands/speckit.trace.report.md"
+      description: "Generate a compact, CI-friendly compliance report combining matrix, gaps, and orphans"
+
+tags:
+  - traceability
+  - testing
+  - coverage
+  - compliance
+  - requirements

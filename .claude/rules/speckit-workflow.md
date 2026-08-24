@@ -66,10 +66,15 @@ overhead. When in doubt whether work is tiny or spec-sized,
 `/speckit-tinyspec-classify` routes it — and anything touching an invariant,
 a layer boundary, or more than a handful of files is NOT tiny.
 
-Docs-only and test-only changes still need no artifact at all. The tinyspec
-extension is vendored at `.specify/extensions/tinyspec/` (v1.0.0, pinned,
-content-vetted; installed via `specify extension add --from <v1.0.0 zip>` —
-the community catalog stays discovery-only). The worker-side lane (routing
+Docs-only and test-only changes still need no artifact at all. Adopted
+spec-kit extensions are vendored under `.specify/extensions/` — currently
+`tinyspec` (the lane itself), `verify-tasks` (phantom-completion detector,
+optional after-implement hook) and `trace` (requirement → test traceability;
+writes a single generated matrix file under `.specify/`, nothing else) — each version-pinned and content-vetted
+before install (`specify extension add --from <pinned release>` or `--dev`
+from a vetted local copy; the community catalog stays discovery-only, and a
+vendored copy is pruned to its runtime surface: manifest + commands + license
+docs). The worker-side lane (routing
 small in-sandbox dispatches through tinyspec instead of full speckit) is the
 remaining half of #668 and is NOT yet adopted.
 
