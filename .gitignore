@@ -65,3 +65,4 @@ evals/baskets/*.json
 
 # /live-shakedown scratch repos — generated agent output, never committed
 .shakedown/
+.specify/extensions/.cache/

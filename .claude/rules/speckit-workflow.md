@@ -52,11 +52,28 @@ never write there.
     outcome changes what P2/P3 should be, **revise the spec and keep going** —
     revision is not a reason to stop.
 
-## Out of scope (existing rules apply, unchanged)
+## Below spec size: the tiny lane (adopted 2026-08-24, issue #668)
 
-Bug fixes, incident response, mechanical refactors, docs/test-only changes,
-and single bounded PRs Denys directly requests need no spec. The testing,
-git-workflow, and cognition-prompts rules are untouched by this swap.
+Bug fixes, incident response, mechanical refactors, and single bounded PRs
+Denys directly requests do NOT enter the full pipeline — they run through the
+**tinyspec lane** instead: `/speckit-tinyspec-tinyspec` writes ONE file at
+`specs/tiny/<name>.md` (What / Context / Requirements / Plan / Tasks /
+Done-When), committed with the change, and
+`/speckit-tinyspec-implement` executes it. `specs/tiny/` sits outside the
+`NNN-` sequential numbering on purpose. This replaces the old "needs no spec"
+exemption: small work now leaves direction memory too, at one file of
+overhead. When in doubt whether work is tiny or spec-sized,
+`/speckit-tinyspec-classify` routes it — and anything touching an invariant,
+a layer boundary, or more than a handful of files is NOT tiny.
+
+Docs-only and test-only changes still need no artifact at all. The tinyspec
+extension is vendored at `.specify/extensions/tinyspec/` (v1.0.0, pinned,
+content-vetted; installed via `specify extension add --from <v1.0.0 zip>` —
+the community catalog stays discovery-only). The worker-side lane (routing
+small in-sandbox dispatches through tinyspec instead of full speckit) is the
+remaining half of #668 and is NOT yet adopted.
+
+The testing, git-workflow, and cognition-prompts rules are untouched.
 
 ## What happened to the old pipeline (2026-08-13)
 
