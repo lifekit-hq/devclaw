@@ -149,6 +149,42 @@ async def test_per_goal_fire_writes_entry_and_sets_cooldown(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_benign_verdict_writes_entry_but_does_not_notify(tmp_path):
+    """2026-08-24 live evidence: 2 of 3 owner pings were self-declared-benign
+    "(none)" reports. The verdict owns the notification altitude — a benign
+    fire (proposed_action null) records its trends.md entry and sets
+    cooldown + fingerprint as usual, but never pings the owner."""
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    caller = _CountingCaller(payload={
+        "date": "2026-06-29T18:00:00+00:00",
+        "signal": "S1",
+        "category": "drift",
+        "observation": "benign scaffolding artifact",
+        "evidence_refs": [],
+        "proposed_action": None,
+    })
+    detector, store, sent, _ = _detector_for(
+        tmp_path=tmp_path,
+        signals=[_StubSignal("S1", scope="per_project")],
+        caller=caller,
+    )
+
+    await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
+
+    # Entry recorded for machine consumption…
+    trends = workspace / ".devclaw" / "trends.md"
+    assert trends.exists()
+    assert "benign scaffolding artifact" in trends.read_text()
+    # …dedup state set as usual (a benign fire still mutes identical re-fires)…
+    assert store.get_trend_cooldown(f"project:{workspace}", "S1") is not None
+    assert store.get_trend_fingerprint(f"project:{workspace}", "S1") is not None
+    # …but the owner was NOT pinged.
+    assert sent == []
+    store.close()
+
+
+@pytest.mark.asyncio
 async def test_cooldown_silences_repeated_fires(tmp_path):
     workspace = tmp_path / "repo"
     workspace.mkdir()
@@ -295,8 +331,8 @@ async def test_harness_self_fire_writes_to_configured_path(tmp_path):
     assert "harness-self stub fired" in content
     # proposed_action=null renders as "(none — pattern noted, no action recommended)"
     assert "no action recommended" in content
-    assert sent[0]["scope"] == "harness_self"
-    assert sent[0]["proposed_action"] is None
+    # …and a benign verdict never pings the owner (the notify gate).
+    assert sent == []
     store.close()
 
 
@@ -674,7 +710,7 @@ async def test_entry_signal_category_and_date_are_pinned_not_trusted_from_model(
         "category": "wrong_cat", # model lies
         "observation": "obs",
         "evidence_refs": [],
-        "proposed_action": None,
+        "proposed_action": "do the thing",  # actionable, so the notify fires
     })
     detector, store, sent, _ = _detector_for(
         tmp_path=tmp_path,
