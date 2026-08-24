@@ -128,7 +128,11 @@ async def dashboard_projects(request: Request) -> Response:
 # The SPA does client-side routing under basename="/console", so any path that
 # doesn't map to a file falls through to `index.html`.
 
-_CONSOLE_DIST = Path(__file__).resolve().parent / "console_dist"
+# The bundle ships in the SERVER package (deploy/Dockerfile builds it there;
+# pyproject's wheel `artifacts` glob names the same path) — this file lives one
+# level deeper in routes/, hence parents[1]. tests/test_console_dist_path.py
+# pins the two locations together (#625 moved this file and left `parent`).
+_CONSOLE_DIST = Path(__file__).resolve().parents[1] / "console_dist"
 
 
 def _serve_console_file(rel: str) -> Response:
