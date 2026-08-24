@@ -63,7 +63,7 @@ moves to its own repo, those three seams are the entire integration surface.
 
 ## How devclaw consumes it
 
-One call site: `task_queue.py` runs this package's gate chain (`task_gates.py`) in the settle path, in order —
+One call site: the TaskQueue settle mixin (`devclaw/queue/settle.py`) runs this package's gate chain (`task_gates.py`) in the settle path, in order —
 verify gate (green tests) → `test_integrity` (nobody weakened the tests) →
 `loom.declared_scope` (a `[P]` increment stayed inside its declared file
 scope — spec 010 FR-103) → `review_gate` (adversarial review) →

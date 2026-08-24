@@ -20,6 +20,7 @@ import subprocess
 import pytest
 
 from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.task_change import (
     CHANGE,
     ERROR,
@@ -204,7 +205,7 @@ async def test_a_git_failure_is_a_failure_to_determine_the_change_not_an_empty_o
     async def _broken(host_dir, base="", head=""):
         return None  # git could not answer
 
-    monkeypatch.setattr(task_queue, "_git_diff", _broken)
+    monkeypatch.setattr(queue_settle, "_git_diff", _broken)
     change = await _capture(d, base)
     assert change.status == ERROR and change.is_error
     assert "could not diff" in change.reason
@@ -219,7 +220,7 @@ async def test_a_crash_while_materializing_is_reported_not_swallowed(
     async def _boom(*a, **kw):
         raise OSError("git vanished")
 
-    monkeypatch.setattr(task_queue, "_materialize_worktree", _boom)
+    monkeypatch.setattr(queue_settle, "_materialize_worktree", _boom)
     change = await _capture(d, base)
     assert change.status == ERROR and "git vanished" in change.reason
 

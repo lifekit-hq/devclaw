@@ -90,7 +90,7 @@ the technical sense — the rest is orchestration.
 | 1 | **MCP surface** | `devclaw/server/` | tools, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | the goal state machine + the ~15-min tick |
 | 3 | **Cognition callers** | `goal/{evaluator,summary,triage}.py`, `devclaw/elicitation.py`, `devclaw/intake_readiness.py` | one-shot `claude --print` prompt/parse calls (planning cognition relocated into the worker's speckit run — spec 008 shrink) |
-| 4 | **TaskQueue + engine** | `task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
+| 4 | **TaskQueue + engine** | `task_queue.py` (+ its `devclaw/queue/` mixins), `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (inside the sandbox) | the in-sandbox agent turn-loop, skills, hooks, `verify_cmd` |
 
 There are exactly **two paths through the stack**, and they never cross layers:
@@ -655,7 +655,7 @@ devclaw/
 ├── quality/         gates past green tests — pre-PR review, browser_gate, reachability
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── state_store/     StateStore package (rows · control · core) — the append-only log
-├── task_queue.py + task_{git,notify}.py    layer 4 — dispatch, concurrency, settle
+├── task_queue.py + queue/ + task_{git,notify}.py    layer 4 — dispatch, concurrency, settle (queue/ = the settle/programs/admission mixins)
 └── prompts/         system prompts as .md files (load_prompt(slug)); gate prompts live in quality/prompts/
 runner/runner.py    layer 5 — the in-sandbox harness
 ```

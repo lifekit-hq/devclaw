@@ -14,6 +14,7 @@ import subprocess
 import pytest
 
 from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.quality import task_gates
 from devclaw.engine import EngineRequest
 from devclaw.quality.gate_pipeline import GateInput, run_pipeline
@@ -107,13 +108,13 @@ async def test_the_gate_chain_captures_the_span_exactly_once(store, tmp_path, mo
     monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", True)
     ws = _repo(tmp_path)
     calls: list = []
-    real = task_queue._capture_change
+    real = queue_settle._capture_change
 
     async def spy(workspace_dir, base, **kw):
         calls.append(base)
         return await real(workspace_dir, base, **kw)
 
-    monkeypatch.setattr(task_queue, "_capture_change", spy)
+    monkeypatch.setattr(queue_settle, "_capture_change", spy)
 
     async def runner(req: EngineRequest):
         (ws / "f.py").write_text("F = 1\n")
@@ -135,13 +136,13 @@ async def test_a_task_whose_span_cannot_be_determined_never_settles_done(
 ):
     """End to end: #186 for the span itself. The change is real, but git cannot
     answer — the task must not ship on that silence."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     ws = _repo(tmp_path)
 
     async def _broken(host_dir, base="", head=""):
         return None
 
-    monkeypatch.setattr(task_queue, "_git_diff", _broken)
+    monkeypatch.setattr(queue_settle, "_git_diff", _broken)
 
     async def runner(req: EngineRequest):
         (ws / "f.py").write_text("F = 1\n")

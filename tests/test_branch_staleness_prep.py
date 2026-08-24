@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.state_store import StateStore
 from devclaw.task_queue import BRANCH_STALE_THRESHOLD, TaskQueue
 
@@ -65,10 +65,10 @@ def _patch_prep(monkeypatch, *, staleness_return, base_error=None, default_branc
     async def fake_branch_staleness(host_dir, base_branch):
         return staleness_return
 
-    monkeypatch.setattr(task_queue, "_base_branch_error", fake_base_branch_error)
-    monkeypatch.setattr(task_queue, "_workspace_default_branch", fake_default_branch)
-    monkeypatch.setattr(task_queue, "prepare_workspace", fake_prepare_workspace)
-    monkeypatch.setattr(task_queue, "_branch_staleness", fake_branch_staleness)
+    monkeypatch.setattr(queue_settle, "_base_branch_error", fake_base_branch_error)
+    monkeypatch.setattr(queue_settle, "_workspace_default_branch", fake_default_branch)
+    monkeypatch.setattr(queue_settle, "prepare_workspace", fake_prepare_workspace)
+    monkeypatch.setattr(queue_settle, "_branch_staleness", fake_branch_staleness)
 
 
 # ---------------------------------------------------------------------------
@@ -190,9 +190,9 @@ async def test_no_base_branch_skips_staleness_probe(queue, monkeypatch):
     async def fake_prepare_workspace(workspace_dir, branch=None, base_branch=None):
         return branch or "main"
 
-    monkeypatch.setattr(task_queue, "_branch_staleness", spy_branch_staleness)
-    monkeypatch.setattr(task_queue, "_workspace_default_branch", fake_default_branch)
-    monkeypatch.setattr(task_queue, "prepare_workspace", fake_prepare_workspace)
+    monkeypatch.setattr(queue_settle, "_branch_staleness", spy_branch_staleness)
+    monkeypatch.setattr(queue_settle, "_workspace_default_branch", fake_default_branch)
+    monkeypatch.setattr(queue_settle, "prepare_workspace", fake_prepare_workspace)
 
     result = await queue._prep_branch_target(
         "/ws", base_branch=None, target_branch="feat/no-base"

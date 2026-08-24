@@ -15,7 +15,7 @@ import subprocess
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.goal.engine import _no_change
 from devclaw.state_store import StateStore
@@ -58,7 +58,7 @@ async def test_a_code_task_that_changed_nothing_settles_done_without_publishing(
         delivered.append(kwargs)
         return {"delivered": True, "pr_url": "https://example/pull/1"}
 
-    monkeypatch.setattr(task_queue, "deliver_change", _never)
+    monkeypatch.setattr(queue_settle, "deliver_change", _never)
     ws = _repo(tmp_path)
 
     async def runner(req: EngineRequest):

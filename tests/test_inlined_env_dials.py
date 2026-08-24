@@ -22,6 +22,7 @@ import pytest
 
 from devclaw import task_git, task_queue
 from devclaw import quality
+from devclaw.queue import settle as queue_settle
 
 _REPO = Path(__file__).resolve().parents[1]
 
@@ -62,7 +63,7 @@ def test_inlined_dials_are_no_longer_read_from_env():
     "obj, attr, expected",
     [
         (task_queue, "BROWSER_GATE_MODE", "flexible"),
-        (task_queue, "BROWSER_REACHABILITY_ENABLED", True),
+        (queue_settle, "BROWSER_REACHABILITY_ENABLED", True),
         (task_git, "BRANCH_STALE_THRESHOLD", 50),
         (quality, "_DEGRADE_ENABLED", True),
         (quality, "_DEGRADE_MAX_FILES_DEFAULT", 40),

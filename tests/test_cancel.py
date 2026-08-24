@@ -158,7 +158,8 @@ async def test_cancel_program_is_noop_when_terminal(store):
 
 
 async def test_cancel_child_task_sticky_cancels_program(store, monkeypatch):
-    monkeypatch.setattr("devclaw.task_queue.GLOBAL_MAX_CONCURRENT", 1)
+    # program-child scheduling reads the cap in queue/programs (_schedule_program)
+    monkeypatch.setattr("devclaw.queue.programs.GLOBAL_MAX_CONCURRENT", 1)
     runner, started, release, _state = _gated_runner()
     q = TaskQueue(store, runner=runner)
     pid = q.start_planned_program(

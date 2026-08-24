@@ -14,7 +14,7 @@ import subprocess
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.delivery import deliver_change, delivery_failed
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
@@ -59,13 +59,13 @@ async def test_delivery_publishes_the_judged_head_without_rediscovering_the_chan
     and it is the sha the gates judged."""
     ws = _repo(tmp_path)
     seen: dict = {}
-    real = task_queue.deliver_change
+    real = queue_settle.deliver_change
 
     async def spy(**kwargs):
         seen.update(kwargs)
         return await real(**kwargs)
 
-    monkeypatch.setattr(task_queue, "deliver_change", spy)
+    monkeypatch.setattr(queue_settle, "deliver_change", spy)
 
     async def runner(req: EngineRequest):
         (ws / "never_recorded.py").write_text("N = 1\n")
@@ -170,13 +170,13 @@ async def test_a_goal_branch_delivery_publishes_the_judged_head_too(
     ws = _repo(tmp_path)
     _git(ws, "checkout", "-q", "-b", "goal/g1")
     seen: list = []
-    real = task_queue.deliver_change
+    real = queue_settle.deliver_change
 
     async def spy(**kwargs):
         seen.append(kwargs.get("judged_head"))
         return await real(**kwargs)
 
-    monkeypatch.setattr(task_queue, "deliver_change", spy)
+    monkeypatch.setattr(queue_settle, "deliver_change", spy)
 
     async def runner(req: EngineRequest):
         n = len(seen) + 1

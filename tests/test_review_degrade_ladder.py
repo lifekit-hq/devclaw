@@ -21,6 +21,7 @@ from __future__ import annotations
 import pytest
 
 from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.llm_call import PlannerError
 from devclaw import quality
@@ -345,7 +346,7 @@ def _enable_gate_and_fake_diff(monkeypatch):
     async def fake_diff(_host_dir, _base="", _head=""):
         return _DIFF
 
-    monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", fake_diff)
 
 
 def _ok_gate_runner(calls: list):
@@ -368,7 +369,7 @@ async def test_review_gate_through_queue_ships_like_the_single_reviewer(store, m
     """Through the queue: a clean approve ships the task done on the first try, no
     needless retry."""
     import functools
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
 
     async def one_approve(prompt: str) -> str:
         return _approve_json()
@@ -393,7 +394,7 @@ async def test_queue_review_timeout_exhausted_fails_closed_without_agent_retry(
     is NOT re-run. (The autouse fixture's _git_diff returns a single-file diff, so
     the ladder can't split → re-raises the timeout.)"""
     import functools
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 3)  # generous — must NOT be used
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)  # generous — must NOT be used
     calls: list = []
 
     async def timing_out(prompt: str) -> str:

@@ -546,7 +546,7 @@ async def test_done_is_not_observable_before_delivery(store, tmp_path, monkeypat
         seen["pr_url_during_delivery"] = store.get_task(task_id).pr_url
         return {"delivered": True, "pr_url": pr, "branch": "devclaw/x", "pushed": True}
 
-    monkeypatch.setattr("devclaw.task_queue.deliver_change", fake_deliver)
+    monkeypatch.setattr("devclaw.queue.settle.deliver_change", fake_deliver)
 
     q = TaskQueue(store, runner=_writing_runner("feature.txt"))
     tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature", deliver=True)
@@ -602,7 +602,7 @@ async def test_broken_delivery_settles_failed_not_done(store, tmp_path, monkeypa
                 "pushed": False, "pr_url": None,
                 "error": "push failed (check repo push auth): remote rejected"}
 
-    monkeypatch.setattr("devclaw.task_queue.deliver_change", broken_deliver)
+    monkeypatch.setattr("devclaw.queue.settle.deliver_change", broken_deliver)
 
     q = TaskQueue(store, runner=_writing_runner("feature.txt"))
     tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature", deliver=True)
@@ -625,7 +625,7 @@ async def test_delivery_exception_settles_failed_not_done(store, tmp_path, monke
                      title=None, advisories=None, **kw):
         raise RuntimeError("gh exploded")
 
-    monkeypatch.setattr("devclaw.task_queue.deliver_change", raising_deliver)
+    monkeypatch.setattr("devclaw.queue.settle.deliver_change", raising_deliver)
 
     q = TaskQueue(store, runner=_writing_runner("feature.txt"))
     tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature", deliver=True)
@@ -985,8 +985,8 @@ async def test_pinned_target_branch_miss_settles_failed_not_delivered(
                 "committed": True, "pushed": True,
                 "pr_url": "https://github.com/acme/widgets/pull/9", "error": None}
 
-    monkeypatch.setattr("devclaw.task_queue.prepare_workspace", fake_prep)
-    monkeypatch.setattr("devclaw.task_queue.deliver_change", landed_elsewhere_deliver)
+    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", fake_prep)
+    monkeypatch.setattr("devclaw.queue.settle.deliver_change", landed_elsewhere_deliver)
 
     q = TaskQueue(store, runner=_writing_runner("feature.txt"))
     tid = q.submit(
@@ -1035,8 +1035,8 @@ async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_
                 "pushed": True, "pr_url": "https://github.com/acme/w/pull/3",
                 "error": None}
 
-    monkeypatch.setattr("devclaw.task_queue.prepare_workspace", fake_prep)
-    monkeypatch.setattr("devclaw.task_queue.deliver_change", legacy_deliver)
+    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", fake_prep)
+    monkeypatch.setattr("devclaw.queue.settle.deliver_change", legacy_deliver)
 
     q = TaskQueue(store, runner=_writing_runner("feature.txt"))
     tid = q.submit(
@@ -1072,7 +1072,7 @@ async def test_target_branch_on_base_or_default_is_rejected_before_any_push(
     async def recording_prep(*a, **kw):
         prep_calls.append((a, kw))
 
-    monkeypatch.setattr("devclaw.task_queue.prepare_workspace", recording_prep)
+    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", recording_prep)
 
     q = TaskQueue(store, runner=runner)
 
