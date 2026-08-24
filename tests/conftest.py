@@ -36,6 +36,20 @@ os.environ.setdefault(
         / f"devclaw-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}.db"),
 )
 
+# test_main_branch_guard.py imports the hook at module scope; if .claude/ is
+# absent (sandboxed or stripped environments) collection would raise
+# FileNotFoundError before any test runs. Tell pytest to skip that file when
+# the hook file is not present — the tests are still collected in the normal
+# dev environment where .claude/ exists.
+_MAIN_BRANCH_GUARD_HOOK = (
+    pathlib.Path(__file__).resolve().parent.parent
+    / ".claude" / "hooks" / "main-branch-guard.py"
+)
+if not _MAIN_BRANCH_GUARD_HOOK.exists():
+    collect_ignore = [
+        str(pathlib.Path(__file__).parent / "test_main_branch_guard.py")
+    ]
+
 from devclaw import task_queue
 from devclaw.delivery import deploy as _deploy_mod
 from devclaw.engine import sandcastle as _sandcastle_mod
