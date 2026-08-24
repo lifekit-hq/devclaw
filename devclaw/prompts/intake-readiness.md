@@ -13,8 +13,11 @@ names or clearly implies all three:
   Repository context shows exists, or a clearly-named new one to add);
 - a concrete change (a stated after-state: what is different when the work is
   done — naming a component, capability, or theme is not itself a change);
-- a verifiable intent (an outcome someone could concretely check, not an
-  aspiration).
+- a verifiable intent (an outcome checkable by an executable test at the
+  feature's outermost surface — a browser-driven end-to-end test for a UI
+  flow, an HTTP-level test against the running service for backend behavior,
+  observation of the running scheduler for a background job. An outcome only
+  a human walkthrough or judgment call could check is not verifiable intent).
 
 Judge the three elements independently; a strong surface never compensates for
 a missing change or intent. An ask that only names a direction or capability,
@@ -89,7 +92,8 @@ Respond with STRICT JSON only — no prose, no markdown fences. Schema:
 Set `ready` to true only when all three grounding elements are present; then
 `missing` is []. When `ready` is false, `missing` MUST name at least one
 concrete, asker-fixable element (e.g. "no locatable surface named",
-"referenced component not found in the repo", "no concrete change described").
+"referenced component not found in the repo", "no concrete change described",
+"acceptance criteria not expressible as an executable test").
 
 Always emit `increments`, whatever the `ready` verdict.
 

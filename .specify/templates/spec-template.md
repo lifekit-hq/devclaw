@@ -31,7 +31,7 @@
 
 **Independent Test**: [Describe how this can be tested independently - e.g., "Can be fully tested by [specific action] and delivers [specific value]"]
 
-**Acceptance Scenarios**:
+**Acceptance Scenarios**: <!-- each scenario must be expressible as an executable acceptance test at the feature's outermost surface (spec 015): browser e2e for UI flows, HTTP against the running service for backend behavior, observation of the running scheduler for background jobs — never a scenario only a human walkthrough could check -->
 
 1. **Given** [initial state], **When** [action], **Then** [expected outcome]
 2. **Given** [initial state], **When** [action], **Then** [expected outcome]
@@ -46,7 +46,7 @@
 
 **Independent Test**: [Describe how this can be tested independently]
 
-**Acceptance Scenarios**:
+**Acceptance Scenarios**: <!-- each scenario must be expressible as an executable acceptance test at the feature's outermost surface (spec 015): browser e2e for UI flows, HTTP against the running service for backend behavior, observation of the running scheduler for background jobs — never a scenario only a human walkthrough could check -->
 
 1. **Given** [initial state], **When** [action], **Then** [expected outcome]
 
@@ -60,7 +60,7 @@
 
 **Independent Test**: [Describe how this can be tested independently]
 
-**Acceptance Scenarios**:
+**Acceptance Scenarios**: <!-- each scenario must be expressible as an executable acceptance test at the feature's outermost surface (spec 015): browser e2e for UI flows, HTTP against the running service for backend behavior, observation of the running scheduler for background jobs — never a scenario only a human walkthrough could check -->
 
 1. **Given** [initial state], **When** [action], **Then** [expected outcome]
 
