@@ -105,3 +105,22 @@ async def test_per_goal_run_schedule_is_isolated_from_global(store):
     # The per-goal window is stored under the goal, not the global key.
     assert json.loads(await _tools.get_run_schedule(goal_id="g1"))["schedule"]["enabled"] is True
     assert json.loads(await _tools.get_run_schedule())["schedule"]["enabled"] is False
+
+
+async def test_clear_usage_pause_reopens_dispatch_the_operator_already_fixed(store):
+    """The 2026-08-24 shakedown gap: an auth pause held dispatch closed for its
+    full re-probe cadence AFTER the credential was repaired, and no surface
+    could clear it (POST /control/resume explicitly refuses). The verb clears
+    the persisted pause immediately; hold and window are untouched."""
+    store.set_global_pause(4102444800000, "auth: 401 OAuth access token has expired")
+    assert store.global_pause()[0] > 0
+    out = json.loads(await _tools.clear_usage_pause())
+    assert out["cleared"] is True
+    assert "401" in out["was_reason"]
+    assert store.global_pause() == (0, "")
+
+
+async def test_clear_usage_pause_is_a_safe_noop_without_a_pause(store):
+    out = json.loads(await _tools.clear_usage_pause())
+    assert out["cleared"] is False
+    assert store.global_pause() == (0, "")

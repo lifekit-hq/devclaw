@@ -31,6 +31,7 @@ from . import control, delivery, goals, intake, observability, projects, tasks  
 
 from .control import (  # noqa: F401
     get_run_schedule,
+    clear_usage_pause,
     set_operator_hold,
     set_run_schedule,
 )

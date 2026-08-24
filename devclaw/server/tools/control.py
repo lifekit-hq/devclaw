@@ -108,3 +108,23 @@ async def set_operator_hold(on: bool, reason: str = "") -> str:
     store.set_operator_hold(bool(on), reason)
     hold = store.operator_hold()
     return json.dumps({"operator_hold": {"on": hold[0], "reason": hold[1]}}, indent=2)
+
+
+@mcp.tool
+async def clear_usage_pause() -> str:
+    """Clear an active account-wide usage/auth pause NOW — the operator's
+    "I fixed the cause" verb. The automatic pause assumes its reason still
+    holds until the re-probe (quota: the cap reset; auth: a fixed cadence);
+    when the operator has already repaired the cause — re-login, a rotated
+    setup-token, a deployed fix — this clears the persisted ``paused_until``
+    so dispatch resumes immediately instead of waiting out the clock.
+    Safe: a no-op when no pause is active, and clearing a pause whose cause
+    is still real merely lets the next limited call re-pause with a fresh
+    timestamp. Distinct from the manual hold (set_operator_hold) and the
+    run-window — those gate independently and are untouched."""
+    until, reason = store.global_pause()
+    store.clear_global_pause()
+    return json.dumps(
+        {"cleared": bool(until), "was_until_ms": until, "was_reason": reason},
+        indent=2,
+    )
