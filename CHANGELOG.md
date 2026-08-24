@@ -2,6 +2,33 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.5.1](https://github.com/lifekit-hq/devclaw/compare/v0.5.0...v0.5.1) (2026-08-24)
+
+
+### Refactoring
+
+* **config:** one doorway for DEVCLAW_* configuration ([#654](https://github.com/lifekit-hq/devclaw/issues/654)) ([5868a33](https://github.com/lifekit-hq/devclaw/commit/5868a33031ee88672dceaed57832ca8b59a0833f))
+* **goal:** devclaw does not merge — delete auto-merge and the PR-stack reconciler ([#641](https://github.com/lifekit-hq/devclaw/issues/641)) ([#647](https://github.com/lifekit-hq/devclaw/issues/647)) ([44bd78c](https://github.com/lifekit-hq/devclaw/commit/44bd78c254f1e9fba31c89e59a4ec2332aa37b0d))
+* **goal:** GoalState splits into status/content mixins mirroring the store ([#659](https://github.com/lifekit-hq/devclaw/issues/659)) ([2278181](https://github.com/lifekit-hq/devclaw/commit/2278181544b8c3aae66269cf54e6c942ff413f38))
+* **host-resources:** move the memory probes out of task_queue ([#655](https://github.com/lifekit-hq/devclaw/issues/655)) ([025e340](https://github.com/lifekit-hq/devclaw/commit/025e34065572ee9098a4f8374797f3df76ac77b1))
+* **procutil:** one subprocess boundary — collapse seven identical _run copies ([#652](https://github.com/lifekit-hq/devclaw/issues/652)) ([a304665](https://github.com/lifekit-hq/devclaw/commit/a30466524bfe091529269630984e09c96880e9a3))
+* **quality:** move the task-gate adapters out of task_queue into quality/task_gates ([#653](https://github.com/lifekit-hq/devclaw/issues/653)) ([00939a0](https://github.com/lifekit-hq/devclaw/commit/00939a09e8207cec8b3a991e06ea22b9b85d5bd1))
+* **queue:** split TaskQueue into settle/programs/admission mixins ([#660](https://github.com/lifekit-hq/devclaw/issues/660)) ([352a1f6](https://github.com/lifekit-hq/devclaw/commit/352a1f6366e37bb919e02161c146385ce1b00050))
+* **server:** split the tools.py monolith into a tools/ package by domain ([#650](https://github.com/lifekit-hq/devclaw/issues/650)) ([8ddb5f9](https://github.com/lifekit-hq/devclaw/commit/8ddb5f97d6fa383438d7b1dc37da8c4034d471e1))
+* **state-store:** events/traces and eval-outcome families become mixins ([#658](https://github.com/lifekit-hq/devclaw/issues/658)) ([8608a39](https://github.com/lifekit-hq/devclaw/commit/8608a39781f89cb641baf7fc4fb4682b5f3f43cf))
+* **state-store:** the schema is a module, not a 337-line method ([#657](https://github.com/lifekit-hq/devclaw/issues/657)) ([06cfa8d](https://github.com/lifekit-hq/devclaw/commit/06cfa8da70721baf27797ec29d6088ee8a42882d))
+
+
+### Hardening
+
+* **server:** timing-safe token compare + drop stale OpenHands description ([#649](https://github.com/lifekit-hq/devclaw/issues/649)) ([a574041](https://github.com/lifekit-hq/devclaw/commit/a574041b3bf7c2f5397ab749807e270b4d9e1e99))
+* **types:** mypy gate at zero errors — fix the 183 type-lies it found ([#651](https://github.com/lifekit-hq/devclaw/issues/651)) ([7ffd75d](https://github.com/lifekit-hq/devclaw/commit/7ffd75d9069321d9369e01c6ea83e77b6a3cfc66))
+
+
+### Documentation
+
+* **rules:** an increment is the unit of review, not of commitment ([#632](https://github.com/lifekit-hq/devclaw/issues/632)) ([463ebd5](https://github.com/lifekit-hq/devclaw/commit/463ebd5356f6b400fa5f2943232012dc4ddcad78))
+
 ## [0.5.0](https://github.com/lifekit-hq/devclaw/compare/v0.4.1...v0.5.0) (2026-08-23)
 
 

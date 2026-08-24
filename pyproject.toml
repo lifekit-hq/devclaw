@@ -1,6 +1,6 @@
 [project]
 name = "devclaw"
-version = "0.5.0"
+version = "0.5.1"
 description = "DevClaw — MCP server driving an autonomous software-development loop in per-task sandboxes"
 requires-python = ">=3.11"
 dependencies = [
