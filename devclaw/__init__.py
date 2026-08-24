@@ -13,4 +13,4 @@ try:  # populated from package metadata once installed
 
     __version__ = _version("devclaw")
 except Exception:  # running from a source tree that isn't installed
-    __version__ = "0.5.1"  # x-release-please-version
+    __version__ = "0.5.2"  # x-release-please-version

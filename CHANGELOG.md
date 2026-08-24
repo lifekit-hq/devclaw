@@ -2,6 +2,13 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.5.2](https://github.com/lifekit-hq/devclaw/compare/v0.5.1...v0.5.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* **runner:** forward the setup-token across the agent-env allowlist ([#661](https://github.com/lifekit-hq/devclaw/issues/661)) ([83eb3f0](https://github.com/lifekit-hq/devclaw/commit/83eb3f051496ae2b06f9b326aa90ef143a6f8e00))
+
 ## [0.5.1](https://github.com/lifekit-hq/devclaw/compare/v0.5.0...v0.5.1) (2026-08-24)
 
 
