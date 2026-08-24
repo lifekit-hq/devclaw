@@ -79,21 +79,21 @@ reviewable PR (plan.md slicing). The whole spec is the commitment.
 
 ### Tests (write first)
 
-- [ ] T020 [P] [US3] Extend `tests/test_doctor.py` — revision-behind finding (monkeypatched constant) naming both revisions + `onboard` remedy; `devclaw:managed` marker integrity (missing end, duplicated start) in a fixture AGENTS.md; `.specify/` scaffold drift vs `_resolve_speckit_source` (mutate one scaffold file); manifest presence/validity findings (`project.manifest.presence` warn, `project.manifest.valid` fail, schema-too-new)
+- [X] T020 [P] [US3] Extend `tests/test_doctor.py` — revision-behind finding (monkeypatched constant) naming both revisions + `onboard` remedy; `devclaw:managed` marker integrity (missing end, duplicated start) in a fixture AGENTS.md; `.specify/` scaffold drift vs `_resolve_speckit_source` (mutate one scaffold file); manifest presence/validity findings (`project.manifest.presence` warn, `project.manifest.valid` fail, schema-too-new)
 
 ### Implementation
 
-- [ ] T021 [US3] Extend `devclaw/doctor/checks_project.py` — `project.manifest.presence`, `project.manifest.valid`, `project.manifest.revision`, `project.markers.integrity`, `project.scaffold.drift` per research R12 scope (marker literals defined once as module constants here or in project_manifest.py — no third home)
-- [ ] T022 [US3] Re-onboard migration path — `devclaw/speckit_setup.py`: when `devclaw.json` exists but `boilerplateRevision < BOILERPLATE_REVISION`, the onboard/install PR path updates ONLY the mechanical fields (schemaVersion/boilerplateRevision), preserving every human-set field byte-for-byte; named regression test in `tests/test_onboard_speckit.py`
-- [ ] T023 [US3] Convention rider — add to `CLAUDE.md` Conventions: "a PR that changes persisted state shape or in-repo boilerplate ships its doctor check, like it ships its named regression test" (FR-014); note the check-registry pattern in `devclaw/doctor/__init__.py` docstring
-- [ ] T024 [US3] Docs sweep: INDEX.md currency tags for every doc this arc touched; full suite + ruff + mypy; open **PR 3**
+- [X] T021 [US3] Extend `devclaw/doctor/checks_project.py` — `project.manifest.presence`, `project.manifest.valid`, `project.manifest.revision`, `project.markers.integrity`, `project.scaffold.drift` per research R12 scope (marker literals defined once as module constants here or in project_manifest.py — no third home)
+- [X] T022 [US3] Re-onboard migration path — `devclaw/speckit_setup.py`: when `devclaw.json` exists but `boilerplateRevision < BOILERPLATE_REVISION`, the onboard/install PR path updates ONLY the mechanical fields (schemaVersion/boilerplateRevision), preserving every human-set field byte-for-byte; named regression test in `tests/test_onboard_speckit.py`
+- [X] T023 [US3] Convention rider — add to `CLAUDE.md` Conventions: "a PR that changes persisted state shape or in-repo boilerplate ships its doctor check, like it ships its named regression test" (FR-014); note the check-registry pattern in `devclaw/doctor/__init__.py` docstring
+- [X] T024 [US3] Docs sweep: INDEX.md currency tags for every doc this arc touched; full suite + ruff + mypy; open **PR 3**
 
 **Checkpoint**: whole-spec scope met; nothing left "SPECIFIED, NOT IMPLEMENTED".
 
 ## Phase 6: Polish & Cross-Cutting
 
-- [ ] T025 Run quickstart.md validation end-to-end (all three story blocks) in the worktree; confirm suite count ≥ pre-arc baseline
-- [ ] T026 Verify structural guards explicitly: `test_config_single_doorway.py` (zero new env reads), `test_views_never_read_back.py`, `test_env_vars_doc_sync.py` (no new env vars), the ~20 zero-token guards in `tests/test_goal_tick.py`
+- [X] T025 Run quickstart.md validation end-to-end (all three story blocks) in the worktree; confirm suite count ≥ pre-arc baseline
+- [X] T026 Verify structural guards explicitly: `test_config_single_doorway.py` (zero new env reads), `test_views_never_read_back.py`, `test_env_vars_doc_sync.py` (no new env vars), the ~20 zero-token guards in `tests/test_goal_tick.py`
 
 ## Dependencies & Execution Order
 

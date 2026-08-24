@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pathlib import Path
+
+from .. import project_manifest as _manifest
 from ..engine.workspace import workspace_is_dispatchable
 from .model import Finding, Verdict
 
@@ -73,8 +76,114 @@ def check_unstamped_goals(ctx: "InstanceContext", project: "Project") -> list[Fi
     return [Finding(cid, Verdict.OK, "no unstamped goals on this workspace", project_id=project.id)]
 
 
+# ---- manifest / boilerplate drift (spec 016 US3) --------------------------
+
+
+def check_manifest(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """Presence + validity + revision currency of the repo's devclaw.json.
+    Worktree read on purpose — doctor reports the repo's CURRENT state; the
+    gate reads stay pinned to the merged base (FR-009)."""
+    pid = project.id
+    ws = project.workspace_dir or ""
+    if not ws or not Path(ws).exists():
+        return [Finding("project.manifest.presence", Verdict.UNKNOWN,
+                        "workspace not on disk — manifest state unknowable",
+                        project_id=pid)]
+    try:
+        manifest = _manifest.load_manifest(ws)
+    except _manifest.ManifestError as exc:
+        return [Finding("project.manifest.valid", Verdict.FAIL, str(exc),
+                        remedy="fix devclaw.json by PR (it is human-owned)",
+                        project_id=pid)]
+    if manifest is None:
+        return [Finding("project.manifest.presence", Verdict.WARN,
+                        "no devclaw.json — instance defaults apply; per-project "
+                        "declarations (strictness, surface, verify_cmd) unavailable",
+                        remedy="onboard (the install PR seeds one)",
+                        project_id=pid)]
+    findings = [Finding("project.manifest.presence", Verdict.OK,
+                        f"devclaw.json present (schema {manifest.schema_version})",
+                        project_id=pid)]
+    if manifest.boilerplate_revision < _manifest.BOILERPLATE_REVISION:
+        findings.append(Finding(
+            "project.manifest.revision", Verdict.WARN,
+            f"boilerplate revision {manifest.boilerplate_revision} behind the "
+            f"instance's {_manifest.BOILERPLATE_REVISION}",
+            remedy="onboard (re-onboard migrates via a reviewable PR)",
+            project_id=pid))
+    else:
+        findings.append(Finding("project.manifest.revision", Verdict.OK,
+                                f"boilerplate revision current "
+                                f"({manifest.boilerplate_revision})",
+                                project_id=pid))
+    return findings
+
+
+def check_marker_integrity(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    cid = "project.markers.integrity"
+    pid = project.id
+    agents = Path(project.workspace_dir or "") / "AGENTS.md"
+    if not agents.exists():
+        return [Finding(cid, Verdict.OK, "no AGENTS.md (nothing to bound)",
+                        project_id=pid)]
+    problem = _manifest.managed_marker_problem(agents.read_text(encoding="utf-8"))
+    if problem:
+        return [Finding(cid, Verdict.FAIL, f"AGENTS.md: {problem} — a re-onboard "
+                        "cannot tell devclaw-owned from human-owned content",
+                        remedy="fix the marker pair by PR, then onboard",
+                        project_id=pid)]
+    return [Finding(cid, Verdict.OK, "devclaw:managed markers well-formed",
+                    project_id=pid)]
+
+
+def check_scaffold_drift(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """Diff the repo's committed-in-worktree ``.specify/`` scaffold against the
+    packaged canonical source (the file-copied half of the boilerplate — the
+    #610 silent-fork class, detectable per repo). Extra repo-local files are
+    fine; a canonical file that is missing or differs is drift."""
+    cid = "project.scaffold.drift"
+    pid = project.id
+    ws = Path(project.workspace_dir or "")
+    dest = ws / ".specify"
+    if not dest.is_dir():
+        return [Finding(cid, Verdict.OK, "no .specify/ scaffold (not onboarded yet)",
+                        project_id=pid)]
+    from ..speckit_setup import _SCAFFOLD_DIRS, _SCAFFOLD_FILES, _speckit_source
+    src = _speckit_source()
+    if not src.is_dir():
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"vendored speckit source missing at {src}", project_id=pid)]
+    drifted: list[str] = []
+    for dirname in _SCAFFOLD_DIRS:
+        s = src / dirname
+        if not s.is_dir():
+            continue
+        for f in sorted(p for p in s.rglob("*") if p.is_file()):
+            rel = f.relative_to(src)
+            target = dest / rel
+            if not target.exists() or target.read_bytes() != f.read_bytes():
+                drifted.append(str(rel))
+    for name in _SCAFFOLD_FILES:
+        s = src / name
+        if s.is_file():
+            target = dest / name
+            if not target.exists() or target.read_bytes() != s.read_bytes():
+                drifted.append(name)
+    if drifted:
+        shown = ", ".join(drifted[:5]) + (f" (+{len(drifted) - 5} more)" if len(drifted) > 5 else "")
+        return [Finding(cid, Verdict.WARN,
+                        f".specify/ drifted from the packaged scaffold: {shown}",
+                        remedy="onboard (re-onboard refreshes the scaffold via PR)",
+                        project_id=pid)]
+    return [Finding(cid, Verdict.OK, ".specify/ matches the packaged scaffold",
+                    project_id=pid)]
+
+
 PROJECT_CHECKS: tuple = (
     check_workspace_preflight,
     check_dangling_links,
     check_unstamped_goals,
+    check_manifest,
+    check_marker_integrity,
+    check_scaffold_drift,
 )

@@ -211,6 +211,12 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 - **Conventional-commit messages** (`fix(queue): …`, `feat(cognition): …`).
 - **Every behavior-change PR adds a named regression test** — the T0 fixes each
   shipped with one (`test_integrity_gate.py`, `test_delivery.py`, `test_goal_tick.py`, …).
+- **A PR that changes persisted state shape or in-repo boilerplate ships its
+  doctor check** (spec 016 FR-014) — the deployed-instance sibling of the
+  named-regression-test rule: the stubbed suite guards the code, doctor guards
+  the running instance, and drift the suite structurally cannot see (#641's
+  class) gets a named check + seeded-fault test in the same PR. Checks live in
+  `devclaw/doctor/checks_instance.py` / `checks_project.py`.
 - **Branch per change**; open a PR, don't push to `main`.
 - **`ruff check .` clean before the PR** — a narrow correctness gate (`F` + `E9`),
   not a style one. CI runs it alongside the suite.

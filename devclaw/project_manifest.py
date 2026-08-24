@@ -247,6 +247,34 @@ def resolve_surface(workspace_dir: str) -> Optional[str]:
     return manifest.surface if manifest else None
 
 
+# ---- devclaw:managed markers (one home — spec 016 US3) --------------------
+
+#: the marker pair bounding devclaw-owned blocks in operated-repo docs
+#: (AGENTS.md). Everything outside them is human-owned; a re-onboard replaces
+#: only within. Previously these literals lived only in the onboard skill's
+#: prose + two tests — this is now the ONE code home (doctor's marker-integrity
+#: check reads them from here).
+MANAGED_START = "<!-- devclaw:managed:start -->"
+MANAGED_END = "<!-- devclaw:managed:end -->"
+
+
+def managed_marker_problem(text: str) -> Optional[str]:
+    """A human-readable defect in the managed-marker pairing of ``text``, or
+    None when markers are absent-or-well-formed (absent is fine — not every
+    doc carries a managed block)."""
+    starts = text.count(MANAGED_START)
+    ends = text.count(MANAGED_END)
+    if starts == 0 and ends == 0:
+        return None
+    if starts != ends:
+        return f"unpaired devclaw:managed markers ({starts} start / {ends} end)"
+    if starts > 1:
+        return f"{starts} devclaw:managed blocks (expected at most one)"
+    if text.index(MANAGED_START) > text.index(MANAGED_END):
+        return "devclaw:managed end marker precedes the start marker"
+    return None
+
+
 # ---- seeding (the ONE devclaw-write path — reviewable PR only) ------------
 
 
@@ -265,3 +293,24 @@ def seed_manifest(workspace_dir: str) -> Optional[str]:
     }
     path.write_text(json.dumps(seed, indent=2) + "\n", encoding="utf-8")
     return MANIFEST_NAME
+
+
+def migrate_manifest(workspace_dir: str) -> bool:
+    """Bring an existing manifest's MECHANICAL fields current — schemaVersion
+    and boilerplateRevision only; every human-set field (and any unknown key)
+    is preserved verbatim. Returns True when the file changed. Like
+    :func:`seed_manifest`, called ONLY from a reviewable-PR path (spec 016
+    US3: doctor detects, re-onboard migrates, the human merges). Raises
+    ManifestError on a malformed file — migration never repairs by guessing."""
+    path = Path(workspace_dir) / MANIFEST_NAME
+    if not path.exists():
+        return False
+    parse_manifest(path.read_text(encoding="utf-8"), source=str(path))  # validate loud
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if (raw.get("schemaVersion") == SCHEMA_VERSION
+            and raw.get("boilerplateRevision", 0) >= BOILERPLATE_REVISION):
+        return False
+    raw["schemaVersion"] = SCHEMA_VERSION
+    raw["boilerplateRevision"] = BOILERPLATE_REVISION
+    path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+    return True
