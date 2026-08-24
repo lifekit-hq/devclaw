@@ -16,6 +16,7 @@ import subprocess
 import pytest
 
 from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue, _git_diff_sync, _git_head_sync
@@ -82,7 +83,7 @@ async def test_review_gate_sees_agent_committed_work(store, monkeypatch, tmp_pat
     """An agent that commits everything (clean tree at settle) must present the
     committed change to the reviewer — not an empty/noise diff."""
     monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", True)
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     ws = _init_repo(tmp_path / "ws")
 
     async def committing_runner(req: EngineRequest):

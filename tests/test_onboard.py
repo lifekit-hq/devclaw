@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from devclaw.engine import EngineRequest
+from devclaw.queue import settle as queue_settle
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 
@@ -261,7 +262,7 @@ async def test_onboard_delivers_its_artifacts_and_records_the_pr_url(onboard_env
         seen.update(kwargs)
         return {"branch": "docs/onboarding", "pr_url": "https://github.com/o/r/pull/7"}
 
-    monkeypatch.setattr(_tq, "deliver_change", _fake_deliver)
+    monkeypatch.setattr(queue_settle, "deliver_change", _fake_deliver)
 
     out = _json.loads(await _tools.onboard("proj"))
     await q.drain()
@@ -294,7 +295,7 @@ async def test_onboard_with_nothing_to_deliver_succeeds_without_a_pr(onboard_env
         attempted.append(kwargs["task_id"])
         return {"error": "no changes to deliver"}
 
-    monkeypatch.setattr(_tq, "deliver_change", _nothing_to_ship)
+    monkeypatch.setattr(queue_settle, "deliver_change", _nothing_to_ship)
 
     out = _json.loads(await _tools.onboard("proj"))
     await q.drain()
@@ -323,7 +324,7 @@ async def test_onboard_that_cannot_deliver_settles_failed_not_done(onboard_env, 
     async def _push_rejected(**kwargs):
         return {"error": "push failed: remote rejected"}
 
-    monkeypatch.setattr(_tq, "deliver_change", _push_rejected)
+    monkeypatch.setattr(queue_settle, "deliver_change", _push_rejected)
 
     out = _json.loads(await _tools.onboard("proj"))
     await q.drain()

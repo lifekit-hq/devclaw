@@ -9,7 +9,7 @@ import asyncio
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
@@ -37,7 +37,7 @@ def _flaky_runner(fail_times: int, calls: list):
 
 
 async def test_retry_then_success_feeds_failure_back(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(store, runner=_flaky_runner(fail_times=1, calls=calls))
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
@@ -54,7 +54,7 @@ async def test_retry_prompt_accumulates_all_prior_failures(store, monkeypatch):
     # string), so attempt 3 never learned what attempt 1 tried and could repeat
     # a mistake already fed back once. Now every prior failure rides along,
     # numbered, so the agent can rule out whole approaches.
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 2)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 2)
     calls: list = []
 
     async def runner(req: EngineRequest):
@@ -79,7 +79,7 @@ async def test_retry_prompt_accumulates_all_prior_failures(store, monkeypatch):
 
 
 async def test_retries_exhausted_then_failed(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(store, runner=_flaky_runner(fail_times=99, calls=calls))  # never passes
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
@@ -91,7 +91,7 @@ async def test_retries_exhausted_then_failed(store, monkeypatch):
 
 
 async def test_no_retry_when_disabled(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     calls: list = []
     q = TaskQueue(store, runner=_flaky_runner(fail_times=99, calls=calls))
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
@@ -101,7 +101,7 @@ async def test_no_retry_when_disabled(store, monkeypatch):
 
 
 async def test_success_first_try_runs_once(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(store, runner=_flaky_runner(fail_times=0, calls=calls))
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
@@ -143,7 +143,7 @@ async def test_a_retry_keeps_the_workspace_and_rejudges_the_whole_span_against_t
     against the ORIGINAL pre-run base — not a delta against the rejected
     attempt, which is how gate-rejected content would otherwise reach a PR
     unjudged."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     ws = _repo(tmp_path)
     saw: list = []
     judged: list = []
@@ -159,14 +159,14 @@ async def test_a_retry_keeps_the_workspace_and_rejudges_the_whole_span_against_t
         return {"status": "ok", "workspaceDir": req.workspace_dir,
                 "verify": _gate(True)}
 
-    real_capture = task_queue._capture_change
+    real_capture = queue_settle._capture_change
 
     async def spy(workspace_dir, base, **kw):
         change = await real_capture(workspace_dir, base, **kw)
         judged.append(change)
         return change
 
-    monkeypatch.setattr(task_queue, "_capture_change", spy)
+    monkeypatch.setattr(queue_settle, "_capture_change", spy)
 
     q = TaskQueue(store, runner=runner)
     tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="do X",
@@ -186,7 +186,7 @@ async def test_the_pre_run_reference_stays_pinned_across_retries(store, monkeypa
     """FR-012's second half: promoting a rejected attempt to the new base would
     let gate-REJECTED content reach a PR without ever being re-judged —
     reintroducing this spec's own bug class."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     ws = _repo(tmp_path)
     import subprocess
 
@@ -217,7 +217,7 @@ async def test_worker_blocked_status_is_not_retried_and_surfaces_reason(store, m
     # task is failed (never "done" — invariant #186), not retried (a re-run
     # reproduces the same block), and the reason rides the failure so the goal
     # layer can surface it to the owner.
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 3)  # retries available, must not be used
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)  # retries available, must not be used
     calls: list = []
 
     async def blocked_runner(req: EngineRequest):
@@ -243,7 +243,7 @@ async def test_prompt_too_long_fails_fast_without_retry(store, monkeypatch):
     # overflows again ("(failed after 2 attempts)" was pure quota burn). Fail
     # FAST (exactly one engine invocation) + CLOSED (failed — never done,
     # never paused) with actionable smaller-scope guidance.
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 3)  # retries available, must not be used
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)  # retries available, must not be used
     calls: list = []
 
     async def overflowing_runner(req: EngineRequest):
@@ -271,7 +271,7 @@ async def test_quota_error_mentioning_prompt_too_long_still_pauses(store, monkey
     # must take the pause-and-resume path (requeued, quota preserved), never
     # the terminal no-retry fail. Pins the ordering the settle-path comment
     # promises — a comment alone is not a regression guard.
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
 
     async def quota_with_marker(req: EngineRequest):
@@ -292,8 +292,8 @@ async def test_quota_error_mentioning_prompt_too_long_still_pauses(store, monkey
 
 
 async def test_timeout_is_not_retried(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
-    monkeypatch.setattr(task_queue, "TASK_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_TIMEOUT_S", 0.2)
     calls: list = []
 
     async def slow(req: EngineRequest):
@@ -316,7 +316,7 @@ async def test_retry_prompt_tells_worker_to_reproduce_before_diagnosing(store, m
     # until it overflowed. The retry prompt now instructs: re-run the failing
     # command FIRST; a non-reproducing failure is flakiness to fix (or re-run
     # verify), not a defect in the change.
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(store, runner=_flaky_runner(fail_times=1, calls=calls))
     q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")

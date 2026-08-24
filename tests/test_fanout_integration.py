@@ -16,7 +16,7 @@ import subprocess
 
 import pytest
 
-from devclaw import task_queue as tq
+from devclaw.queue import settle as queue_settle
 from devclaw.delivery.integrate import commit_lane, integrate_lane
 from devclaw.program_plan import PlannedTask
 from devclaw.state_store import StateStore
@@ -197,7 +197,7 @@ async def test_an_out_of_scope_lane_fails_while_its_sibling_lands(tmp_path, stor
         delivered.append(workspace_dir)
         return {"pr_url": "https://github.com/o/r/pull/1", "branch": GOAL_BRANCH}
 
-    monkeypatch.setattr(tq, "deliver_change", _fake_deliver)
+    monkeypatch.setattr(queue_settle, "deliver_change", _fake_deliver)
 
     concurrent = {"now": 0, "peak": 0}
     # A rendezvous, not a sleep: each lane blocks until its sibling has also
@@ -270,7 +270,7 @@ async def test_both_lanes_land_when_both_stay_in_scope(tmp_path, store, monkeypa
     async def _fake_deliver(*, workspace_dir, task_id, goal, **kw):
         return {"pr_url": "https://github.com/o/r/pull/1", "branch": GOAL_BRANCH}
 
-    monkeypatch.setattr(tq, "deliver_change", _fake_deliver)
+    monkeypatch.setattr(queue_settle, "deliver_change", _fake_deliver)
 
     async def runner(req):
         if req.workspace_dir == lane_a:
@@ -312,7 +312,7 @@ async def test_an_ordinary_task_is_untouched_by_any_of_this(tmp_path, store, mon
         delivered.append(workspace_dir)
         return {"pr_url": "https://github.com/o/r/pull/9", "branch": GOAL_BRANCH}
 
-    monkeypatch.setattr(tq, "deliver_change", _fake_deliver)
+    monkeypatch.setattr(queue_settle, "deliver_change", _fake_deliver)
 
     async def runner(req):
         _write_and_commit(ws, "src/widget/render.py", "W = 1\n", "feat: renderer")
@@ -337,7 +337,7 @@ async def test_a_lane_cannot_escape_its_scope_by_not_committing(tmp_path, store,
     async def _fake_deliver(*, workspace_dir, task_id, goal, **kw):  # pragma: no cover
         raise AssertionError("a scope violation must never reach delivery")
 
-    monkeypatch.setattr(tq, "deliver_change", _fake_deliver)
+    monkeypatch.setattr(queue_settle, "deliver_change", _fake_deliver)
 
     async def runner(req):
         _write_and_commit(lane_a, "src/widget/render.py", "W = 1\n", "feat: renderer")

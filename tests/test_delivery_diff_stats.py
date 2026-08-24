@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.goal.engine import _diff_stats as poll_diff_stats
 from devclaw.loom import trace
@@ -69,7 +69,7 @@ async def test_done_result_carries_diff_stats(store, monkeypatch):
     async def fake_diff(host_dir, base="", head=""):
         return _DIFF
 
-    monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", fake_diff)
 
     async def runner(req: EngineRequest):
         gate = {"ran": True, "cmd": "pytest", "passed": True,
@@ -91,7 +91,7 @@ async def test_done_result_omits_diff_stats_on_empty_diff(store, monkeypatch):
     async def fake_diff(host_dir, base="", head=""):
         return ""
 
-    monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", fake_diff)
 
     async def runner(req: EngineRequest):
         gate = {"ran": True, "cmd": "pytest", "passed": True,

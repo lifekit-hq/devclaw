@@ -31,7 +31,7 @@ DevClaw (the chef — this repo, FastMCP)
   ├── goal/    durable goals → heartbeat tick → advance-dispatch + evaluate
   ├── server/  FastMCP stdio + streamable-HTTP, the /console SPA + SSE, auth
   ├── loom/    reusable orchestration core (failure classification, test integrity)
-  ├── advance_brief.py · quality/ · delivery/ · task_queue.py · …
+  ├── advance_brief.py · quality/ · delivery/ · task_queue.py (+ queue/ mixins) · …
   └── sandcastle_runner — `docker run --rm` per task; RO ~/.claude mount; destroyed on exit
         │
         ▼
@@ -133,6 +133,7 @@ devclaw/
 ├── elicitation.py      # scope-grill cognition (called via the scope_grill MCP tool)
 ├── state_store/       # SQLite: programs, tasks, append-only events (rows · control · core)
 ├── task_queue.py       # async task lifecycle, concurrency, on-settle hook → goal poke
+├── queue/              # TaskQueue's mixins: settle (execute/settle path), programs (DAGs), admission (memory + breaker)
 ├── project_registry.py # control plane: repos → driving goals → live status rollup
 └── cli.py              # devclaw projects/trace/scorecard/schedule/cognition … (terminal face of the control plane)
 runner/runner.py  # worker harness inside the sandbox; emits event/result lines

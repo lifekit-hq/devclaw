@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle, admission as queue_admission
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore, _now_ms
 from devclaw.task_queue import TaskQueue
@@ -23,10 +23,10 @@ def store(tmp_path):
 def _tight_breaker(monkeypatch):
     """Threshold=2 / window=30s / hold=30s keeps the tests fast + deterministic.
     Production defaults (3/900s/1800s) are covered by the module constants."""
-    monkeypatch.setattr(task_queue, "WORKSPACE_BREAK_THRESHOLD", 2)
-    monkeypatch.setattr(task_queue, "WORKSPACE_BREAK_WINDOW_S", 30.0)
-    monkeypatch.setattr(task_queue, "WORKSPACE_BREAK_HOLD_S", 30.0)
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)  # one shot per submit
+    monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_THRESHOLD", 2)
+    monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_WINDOW_S", 30.0)
+    monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_HOLD_S", 30.0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)  # one shot per submit
 
 
 async def _submit_and_fail(q: TaskQueue, workspace_dir: str) -> str:
@@ -155,7 +155,7 @@ async def test_trip_emits_exactly_one_event_during_hold(store):
 
 
 async def test_threshold_zero_disables(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "WORKSPACE_BREAK_THRESHOLD", 0)
+    monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_THRESHOLD", 0)
 
     async def boom(req: EngineRequest):
         return {"status": "error", "error": "boom"}

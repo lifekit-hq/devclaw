@@ -29,6 +29,7 @@ import pathlib
 import pytest
 
 from devclaw import task_queue as tq
+from devclaw.queue import settle as queue_settle
 from devclaw.quality import task_gates as tg
 from devclaw.quality.gate_pipeline import GateInput, GateVerdict, run_pipeline
 from devclaw.quality.gate_policy import ALWAYS_HARD, Consequence, gate_consequence
@@ -269,7 +270,7 @@ async def test_the_scope_gate_makes_no_probe_of_its_own(monkeypatch):
         calls.append(a)
         return ""
 
-    monkeypatch.setattr(tq, "_git_diff", _forbidden)
+    monkeypatch.setattr(queue_settle, "_git_diff", _forbidden)
     gi = _gate_input(CLAIM_DIFF + _file_diff("src/widget/a.py"))
     verdict = await tg._ScopeGate().check(gi)
     assert verdict.ok is True

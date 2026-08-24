@@ -28,7 +28,7 @@ Only layer 5 is an agent harness in the technical sense.
 | 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`executing` only since the 008 shrink), the ~15-min tick |
 | 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/elicitation.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, scope-grill, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink) |
-| 4 | **TaskQueue + engine** | `devclaw/task_queue.py`, `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
+| 4 | **TaskQueue + engine** | `devclaw/task_queue.py` (+ its `devclaw/queue/` mixins), `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
 
 The chain is strict: `1 → 2 → 3` (cognition) or `1 → 2 → 4 → 5` (execution). No
@@ -182,6 +182,7 @@ devclaw/
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
 ├── task_change.py   ONE mechanical answer to "what did the agent change?" (spec 013)
 ├── config.py        the single doorway for DEVCLAW_* env config (one home, one default, one parse)
+├── queue/           TaskQueue's mixin modules — settle.py (execute/settle path), programs.py (DAG programs), admission.py (memory + breaker brakes)
 ├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
 runner/runner.py   the in-sandbox worker harness — drives the ACP agent via acp_client.py; line-delimited JSON on stdout
 .sandcastle/Dockerfile       per-task sandbox image

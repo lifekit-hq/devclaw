@@ -21,8 +21,8 @@ from .browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .gate_pipeline import GateInput, GateVerdict
 
 if TYPE_CHECKING:
+    from ..queue.settle import SettleMixin
     from ..state_store import TaskKind
-    from ..task_queue import TaskQueue
 
 #: Browser-E2E gate (2026-07-17): after verify + integrity + review pass, a change
 #: that touched a web-UI path must have been exercised in a REAL browser (a passing
@@ -289,7 +289,7 @@ class _ReviewGate:
     verdict — the queue's fast-fail marker routing (Axis 3) handles it downstream,
     unchanged."""
 
-    queue: "TaskQueue"
+    queue: "SettleMixin"
     gate_id: str = "review"
 
     def applies(self, gi: GateInput) -> bool:
@@ -313,7 +313,7 @@ class _BrowserGate:
     would-be block is cleared ONLY when the independent grounded judge affirms the
     changed UI is not rendered in the running app. Dial-able (ADR 0007)."""
 
-    queue: "TaskQueue"
+    queue: "SettleMixin"
     gate_id: str = "browser"
 
     def applies(self, gi: GateInput) -> bool:

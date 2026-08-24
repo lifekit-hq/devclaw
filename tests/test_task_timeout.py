@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
@@ -34,7 +34,7 @@ def _slow_runner(sleep_s: float, finished: dict):
 
 
 async def test_task_exceeding_wall_clock_is_failed_not_hung(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(queue_settle, "TASK_TIMEOUT_S", 0.2)
     finished: dict = {}
     q = TaskQueue(store, runner=_slow_runner(5.0, finished))  # >> the 0.2s cap
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
@@ -46,7 +46,7 @@ async def test_task_exceeding_wall_clock_is_failed_not_hung(store, monkeypatch):
 
 
 async def test_fast_task_is_not_reaped(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_TIMEOUT_S", 5.0)
+    monkeypatch.setattr(queue_settle, "TASK_TIMEOUT_S", 5.0)
     finished: dict = {}
     q = TaskQueue(store, runner=_slow_runner(0.0, finished))  # well under the cap
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
@@ -58,7 +58,7 @@ async def test_fast_task_is_not_reaped(store, monkeypatch):
 
 async def test_timeout_disabled_lets_a_long_task_finish(store, monkeypatch):
     # <=0 disables the cap entirely (e.g. for a long eval build).
-    monkeypatch.setattr(task_queue, "TASK_TIMEOUT_S", 0.0)
+    monkeypatch.setattr(queue_settle, "TASK_TIMEOUT_S", 0.0)
     finished: dict = {}
     q = TaskQueue(store, runner=_slow_runner(0.3, finished))
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")

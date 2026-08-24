@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle, admission as queue_admission
 from devclaw.loom import limits  # the constant's real home post-extraction
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore, _now_ms
@@ -23,7 +23,7 @@ def store(tmp_path):
 
 
 async def test_rate_limit_pauses_not_fails(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
 
     async def rl(req: EngineRequest):
@@ -42,7 +42,7 @@ async def test_rate_limit_pauses_not_fails(store, monkeypatch):
 
 
 async def test_real_error_still_fails(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
 
     async def boom(req: EngineRequest):
         return {"status": "error", "error": "ModuleNotFoundError: No module named 'fastapi'"}
@@ -72,7 +72,7 @@ async def test_pump_holds_dispatch_while_paused(store):
 
 
 async def test_resumes_after_pause_expires(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     state = {"n": 0}
 
     async def rl_then_ok(req: EngineRequest):
@@ -100,7 +100,7 @@ async def test_stated_hint_survives_not_clobbered_to_max(store, monkeypatch):
     """A STATED reset hint ("try again in 10 hours") must be honoured. The old
     policy clamped it to RATE_LIMIT_MAX_PAUSE_S (3600s) — devclaw then re-probed
     a multi-hour cap hourly, each probe a doomed dispatch."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
 
     async def rl(req: EngineRequest):
         return {"status": "error", "error": "usage limit — try again in 10 hours"}
@@ -115,7 +115,7 @@ async def test_stated_hint_survives_not_clobbered_to_max(store, monkeypatch):
 
 
 async def test_stated_hint_caps_to_stated_max(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     monkeypatch.setattr(limits, "RATE_LIMIT_STATED_MAX_S", 60)
 
     async def rl(req: EngineRequest):
@@ -131,7 +131,7 @@ async def test_stated_hint_caps_to_stated_max(store, monkeypatch):
 
 
 async def test_unstated_default_pause_unchanged(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
 
     async def rl(req: EngineRequest):
         return {"status": "error", "error": "API Error: 429 Too Many Requests"}
@@ -149,7 +149,7 @@ async def test_absolute_reset_time_reaches_the_pause(store, monkeypatch):
     """The queue passes now_utc to the classifier, so Claude's ABSOLUTE reset
     wording ("resets 10pm (UTC)") becomes a real multi-hour pause instead of
     falling back to the 1800s default. Clock frozen at 18:00 UTC → 4h + 120s."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
 
     from datetime import datetime, timezone
 
@@ -158,7 +158,7 @@ async def test_absolute_reset_time_reaches_the_pause(store, monkeypatch):
         def now(tz=None):
             return datetime(2026, 7, 10, 18, 0, 0, tzinfo=timezone.utc)
 
-    monkeypatch.setattr(task_queue, "datetime", _FrozenDatetime)
+    monkeypatch.setattr(queue_settle, "datetime", _FrozenDatetime)
 
     async def rl(req: EngineRequest):
         return {"status": "error", "error": "Internal error: You're out of extra usage · resets 10pm (UTC)"}
@@ -181,9 +181,9 @@ async def test_absolute_reset_time_reaches_the_pause(store, monkeypatch):
 
 
 async def test_pause_requeue_is_bounded(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
-    monkeypatch.setattr(task_queue, "MAX_PAUSE_REQUEUES", 2)
-    monkeypatch.setattr(task_queue, "WORKSPACE_BREAK_THRESHOLD", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "MAX_PAUSE_REQUEUES", 2)
+    monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_THRESHOLD", 1)
 
     async def rl(req: EngineRequest):
         return {"status": "error", "error": "API Error: 429 Too Many Requests"}
@@ -257,7 +257,7 @@ def _git_out(repo, *args) -> str:
 
 
 async def test_pause_snapshots_dirty_tree_as_wip_commit(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     repo = _git_repo(tmp_path)
 
     async def rl(req: EngineRequest):
@@ -278,7 +278,7 @@ async def test_pause_snapshots_dirty_tree_as_wip_commit(store, tmp_path, monkeyp
 
 
 async def test_rerun_after_pause_gets_interruption_brief(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     goals: list = []
 
     async def rl_then_ok(req: EngineRequest):
@@ -306,7 +306,7 @@ async def test_rerun_after_pause_gets_interruption_brief(store, monkeypatch):
 
 
 async def test_pause_with_non_git_workspace_still_requeues(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     ws = tmp_path / "plain"
     ws.mkdir()
     (ws / "notes.txt").write_text("hi\n")
@@ -325,11 +325,11 @@ async def test_pause_with_non_git_workspace_still_requeues(store, tmp_path, monk
 
 
 async def test_snapshot_crash_never_blocks_the_pause(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
 
     def boom(host_dir, task_id):
         raise RuntimeError("git exploded")
-    monkeypatch.setattr(task_queue, "_wip_snapshot_sync", boom)
+    monkeypatch.setattr(queue_settle, "_wip_snapshot_sync", boom)
 
     async def rl(req: EngineRequest):
         return {"status": "error", "error": "API Error: 429 Too Many Requests"}
@@ -354,7 +354,7 @@ async def test_snapshot_crash_never_blocks_the_pause(store, tmp_path, monkeypatc
 async def test_resumed_task_gate_baseline_is_original_base_not_wip_snapshot(
     store, tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     repo = _git_repo(tmp_path)
     base_sha = _git_out(repo, "rev-parse", "HEAD").strip()
 
@@ -364,7 +364,7 @@ async def test_resumed_task_gate_baseline_is_original_base_not_wip_snapshot(
         diff_bases.append(base)
         return ""
 
-    monkeypatch.setattr(task_queue, "_git_diff", recording_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", recording_diff)
 
     runs: list = []
 
@@ -405,7 +405,7 @@ async def test_stale_persisted_baseline_degrades_to_fresh_capture(
     # Best-effort contract: a persisted sha that no longer resolves (workspace
     # re-cloned meanwhile) must not wedge the run — fall back to a fresh
     # capture and overwrite the stale row value.
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     repo = _git_repo(tmp_path)
     head_sha = _git_out(repo, "rev-parse", "HEAD").strip()
 
@@ -501,7 +501,7 @@ async def test_worker_auth_failure_requeues_and_pauses_not_terminal(store, monke
     goal layer then burned the window re-dispatching into the same dead login).
     An auth failure must ride the pause path: requeue + one account-wide pause,
     on AUTH's fixed re-probe backoff."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
 
     async def auth_dead(req: EngineRequest):

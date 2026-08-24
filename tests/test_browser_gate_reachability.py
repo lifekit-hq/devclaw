@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.quality import task_gates
 from devclaw.llm_call import PlannerError
 from devclaw.quality.reachability import (
@@ -84,7 +85,7 @@ def _no_git_context(monkeypatch):
     # workspace degrades to in production (→ judge answers unknown → block stands).
     async def _empty(_ws):
         return ""
-    monkeypatch.setattr(task_queue, "_review_repo_context", _empty)
+    monkeypatch.setattr(queue_settle, "_review_repo_context", _empty)
 
 
 # ============================ pure module ============================
@@ -208,7 +209,7 @@ async def test_backend_change_never_consults_judge(store, tmp_path):
 
 
 async def test_disabled_flag_is_a_noop(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(task_queue, "BROWSER_REACHABILITY_ENABLED", False)
+    monkeypatch.setattr(queue_settle, "BROWSER_REACHABILITY_ENABLED", False)
     ws = _with_pw_config(tmp_path)
     calls: list = []
     q = TaskQueue(store, reachability_judge=_judge("no", calls=calls))
@@ -246,12 +247,12 @@ def _frontend_settle(monkeypatch, tmp_path):
     # A real workspace with a playwright config (→ config_present → never_ran),
     # a frontend diff, gate + review forced to pass so only the browser gate bites.
     monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", True)
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     ws = _with_pw_config(tmp_path)
 
     async def fake_diff(_host, _base="", _head=""):
         return _FRONTEND_DIFF
-    monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", fake_diff)
     return ws
 
 

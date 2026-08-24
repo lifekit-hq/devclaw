@@ -14,6 +14,7 @@ import subprocess
 import pytest
 
 from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw import quality as review_gate
 from devclaw.engine import EngineRequest
 from devclaw.llm_call import PLANNER_TIMEOUT_MS, PlannerError
@@ -336,11 +337,11 @@ def _enable_gate_and_fake_diff(monkeypatch):
 
     async def fake_diff(_host_dir, _base="", _head=""):
         return "diff --git a/f.py b/f.py\n+code"
-    monkeypatch.setattr(task_queue, "_git_diff", fake_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", fake_diff)
 
 
 async def test_request_changes_retries_with_feedback_then_ships(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(
         store, runner=_ok_gate_runner(calls),
@@ -356,7 +357,7 @@ async def test_request_changes_retries_with_feedback_then_ships(store, monkeypat
 
 
 async def test_persistent_request_changes_escalates(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(
         store, runner=_ok_gate_runner(calls),
@@ -382,7 +383,7 @@ async def test_trust_produces_no_review_advisory_because_review_never_runs(store
     # gate's advise-and-ship dial no longer applies; only the browser gate is
     # dial-able under trust now.)
     import json
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(
         store, runner=_ok_gate_runner(calls),
@@ -407,7 +408,7 @@ async def test_trust_mode_skips_per_increment_review_even_when_reviewer_crashes(
     invoked. The change ships on verify + integrity + browser, and the human PR
     review is the semantic backstop. (The #186 crash-fails-closed rule is untouched
     for STRICT, where the gate is still consulted.)"""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     review_calls: list = []
 
@@ -428,7 +429,7 @@ async def test_strict_mode_still_invokes_the_per_increment_review(store, monkeyp
     """Under `strict` the review gate runs exactly as today — it is consulted on
     every increment. (Its blocking behavior on a persistent finding is covered by
     test_persistent_request_changes_escalates.)"""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     review_calls: list = []
 
@@ -447,7 +448,7 @@ async def test_strict_mode_still_invokes_the_per_increment_review(store, monkeyp
 async def test_trust_mode_still_fails_closed_on_verify(store, monkeypatch):
     """Dropping the review gate under trust must NOT loosen the always-hard gates:
     a verify (tests) failure still fails the task closed in trust mode."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
 
     async def failing_verify_runner(req: EngineRequest):
         return {"status": "ok", "workspaceDir": req.workspace_dir,
@@ -462,7 +463,7 @@ async def test_trust_mode_still_fails_closed_on_verify(store, monkeypatch):
 
 
 async def test_approve_ships_first_try(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
     q = TaskQueue(store, runner=_ok_gate_runner(calls), reviewer=_reviewer(["approve"]))
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", verify_cmd="pytest")
@@ -480,7 +481,7 @@ async def test_review_crash_fails_fast_closed(store, monkeypatch):
     crash into the retry loop like a request_changes and burned the whole retry
     budget. The failure message must be actionable (split the diff / review by
     hand), not a bare 'gate crashed'."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 3)  # generous budget, must NOT be used
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)  # generous budget, must NOT be used
     calls: list = []
 
     async def boom(*, goal, kind, diff, repo_context=None):
@@ -502,7 +503,7 @@ async def test_review_quota_crash_pauses_instead_of_failing(store, monkeypatch):
     the caller's quota guard, which classifies it, requeues the task, and
     pauses dispatch — resume re-runs the task INCLUDING its review. The old
     fail-open shipped the change unreviewed precisely when quota ran out."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
 
     async def quota_boom(*, goal, kind, diff, repo_context=None):
         raise RuntimeError("Internal error: You're out of extra usage · resets 10pm (UTC)")
@@ -525,7 +526,7 @@ async def test_review_session_limit_in_planner_raw_pauses_instead_of_failing(sto
     'split the diff' advice (7 tasks across two goals that day). The raw
     response must travel with the crash so the limit pauses dispatch and
     requeues, same as a quota hit anywhere else."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
 
     async def limit_prose_boom(*, goal, kind, diff, repo_context=None):
         raise PlannerError(
@@ -545,7 +546,7 @@ async def test_review_session_limit_in_planner_raw_pauses_instead_of_failing(sto
 
 async def test_review_skipped_when_disabled(store, monkeypatch):
     monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", False)
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     called = {"n": 0}
 
     async def reviewer(*, goal, kind, diff, repo_context=None):
@@ -565,7 +566,7 @@ async def test_project_review_gate_override_off_skips_even_when_global_on(store,
     fixture) — the per-project override wins."""
     from devclaw.project_registry import ProjectRegistry
 
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
     reg.create(id="p", name="P", workspace_dir="/ws", review_gate=False)
 
@@ -593,7 +594,7 @@ async def test_project_review_gate_override_on_runs_even_when_global_off(store, 
     from devclaw.project_registry import ProjectRegistry
 
     monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", False)
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     reg = ProjectRegistry(str(tmp_path / "devclaw.db"))
     reg.create(id="p", name="P", workspace_dir="/ws", review_gate=True)
 
@@ -624,7 +625,7 @@ async def test_diff_uses_workspace_path_verbatim_not_host_translation(store, mon
         seen["path"] = path
         return ""  # empty → guards pass; we only assert WHICH path git was given
 
-    monkeypatch.setattr(task_queue, "_git_diff", capture_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", capture_diff)
     ws = "/var/lib/devclaw/workspaces/abc/due-dates"
     q = TaskQueue(store, runner=_ok_gate_runner([]))
     tid = q.submit(kind="implement_feature", workspace_dir=ws, goal="g", verify_cmd="pytest")
@@ -635,7 +636,7 @@ async def test_diff_uses_workspace_path_verbatim_not_host_translation(store, mon
 
 
 async def test_review_skipped_for_non_code_kind(store, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     called = {"n": 0}
 
     async def reviewer(*, goal, kind, diff, repo_context=None):
@@ -656,7 +657,7 @@ async def test_review_gate_grounded_in_actual_workspace_repo(store, tmp_path, mo
     host-side claude was launched from. Regression for the wrong-codebase review
     (live-found 2026-07-13: a lone ci.yml diff on .NET/Angular closeloop-bench was
     reviewed as devclaw's own Python/React repo because the prompt was ungrounded)."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
 
     def _git(*args):
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
@@ -719,7 +720,7 @@ async def test_scaffold_task_skips_adversarial_review(store, monkeypatch):
     """A scaffold task with a PASSING gate ships done WITHOUT ever invoking the
     reviewer — the review gate is the only thing scaffold bypasses, and here it
     is bypassed even though the reviewer would have requested changes."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     called = {"n": 0}
 
     async def reviewer(*, goal, kind, diff, repo_context=None):
@@ -743,7 +744,7 @@ async def test_scaffold_task_still_fails_failing_verify_gate(store, monkeypatch)
     """THE SAFETY PROPERTY: scaffold skips review but NOT the verify gate. A
     scaffold task whose build gate fails still fails — the flag never rescues a
     change that doesn't compile, and the reviewer is never reached either."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     called = {"n": 0}
 
     async def reviewer(*, goal, kind, diff, repo_context=None):
@@ -767,7 +768,7 @@ async def test_scaffold_task_still_runs_test_integrity(store, monkeypatch):
     """A scaffold task does NOT bypass the test-integrity scan either: a diff
     that deletes a test fails the task (retries exhausted → failed), and the
     reviewer is still never invoked."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     called = {"n": 0}
 
     async def reviewer(*, goal, kind, diff, repo_context=None):
@@ -784,7 +785,7 @@ async def test_scaffold_task_still_runs_test_integrity(store, monkeypatch):
             "-def test_it_works():\n"
             "-    assert True\n"
         )
-    monkeypatch.setattr(task_queue, "_git_diff", gutting_diff)
+    monkeypatch.setattr(queue_settle, "_git_diff", gutting_diff)
 
     q = TaskQueue(store, runner=_ok_gate_runner([]), reviewer=reviewer)
     tid = q.submit(

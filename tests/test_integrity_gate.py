@@ -7,7 +7,7 @@ import subprocess
 
 import pytest
 
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.quality import task_gates
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
@@ -48,7 +48,7 @@ async def test_integrity_scanner_crash_fails_closed(store, tmp_path, monkeypatch
     change (T0.2): the old `except → None` meant any scanner bug shipped a
     potentially test-gutting diff unscanned. The crash feeds the retry loop
     and, with retries exhausted, fails the task with the real error."""
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     repo = _repo_with_test(tmp_path)
 
     def boom(diff):
@@ -71,7 +71,7 @@ async def test_integrity_scanner_crash_fails_closed(store, tmp_path, monkeypatch
 
 
 async def test_deleting_a_test_fails_the_gate(store, tmp_path, monkeypatch):
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 0)  # no retry → straight to failed
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)  # no retry → straight to failed
     repo = _repo_with_test(tmp_path)
 
     async def runner(req: EngineRequest):

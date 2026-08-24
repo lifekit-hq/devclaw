@@ -12,7 +12,7 @@ import json
 import pytest
 
 from devclaw import cli as devclaw_cli
-from devclaw import task_queue
+from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore, derive_failure_class
 from devclaw.task_queue import TaskQueue
@@ -113,7 +113,7 @@ def test_resettling_a_task_does_not_double_write_eval_outcomes(store):
 async def test_retry_path_settles_with_a_single_done_outcome_row(store, monkeypatch):
     # A gate-fail → retry → success run settles ONCE — one projection row, not
     # one per attempt (the retry loop only settles on the terminal outcome).
-    monkeypatch.setattr(task_queue, "TASK_MAX_RETRIES", 1)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
 
     async def flaky(req: EngineRequest):
