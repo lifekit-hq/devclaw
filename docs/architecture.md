@@ -349,7 +349,18 @@ done-when), idempotent by fingerprint via the `machine_issues` ledger, fail-loud
 on any filing error, zero LLM. Every future machine producer (the post-deploy
 smoke, the spec-015 validator) files through it, and a structural guard holds
 `gh issue create` to that module plus the human doorway (`devclaw/intake.py`).
-Every problem read surface — the `list_problems`
+Since spec 015 two machine producers feed that doorway: the **live-validation
+loop** — a `validate_product` task kind whose agent-less runner branch boots
+the repo-declared `devclaw.json` `validation` contract hermetically in the
+sandbox, runs the accumulated acceptance suites, and hands a mechanical
+`validation_report` back to the host (`devclaw/validation_loop.py`), which
+files one finding per failing scenario; and the **read-only post-deploy prod
+smoke**. Validation runs attach to a per-repo `qa`-mode goal that never plans
+feature work, never terminates, never holds the project single-writer slot,
+and idles at zero cognition; the launch trigger is the owner's `deploy_project`
+button-press (a periodic cadence exists but ships OFF). A validation run never
+opens a PR, never commits (the workspace is restored after the run), and is
+never a gate — it emits intake, not verdicts. Every problem read surface — the `list_problems`
 tool and the console `/problems.json` — carries that linkage plus a derived
 `lifecycle` (`identified → filed → resolved`, one home: `problems.problem_lifecycle`)
 so it points at the canonical Issue rather than inviting independent triage. See

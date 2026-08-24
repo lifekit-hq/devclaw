@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from .. import config as _config
 from .. import project_manifest as _manifest
+from .. import validation_loop as _validation
 from ..delivery import deliver_change, delivery_failed, devclaw_commit_title
 from ..delivery.integrate import commit_lane, integrate_lane
 from ..engine import EngineEvent, EngineRequest
@@ -496,6 +497,131 @@ class SettleMixin:
                     )
         return None
 
+    async def _run_validation_task(
+        self,
+        task_id: str,
+        workspace_dir: str,
+        goal: str,
+        *,
+        project_id: Optional[str],
+    ) -> None:
+        """Spec 015 US2 — the ``validate_product`` spine. One engine run, no
+        retries (there is no agent whose behavior a retry could change), no
+        gates, no delivery. The HOST files every failure as a spec-014 finding
+        (the sandbox holds no GitHub credential), restores the workspace so
+        boot/seed artifacts never become commits, and settles the task with
+        the run record as its detail. Red suites settle ``done`` (findings ARE
+        the output); only contract/boot/infra failures settle ``failed``."""
+        slug = await asyncio.to_thread(_validation.repo_slug_for_workspace, workspace_dir)
+
+        async def _file_and_record(report: "object") -> tuple[list, str]:
+            findings = _validation.findings_from_report(report)
+            outcomes: list = []
+            if findings and slug:
+                outcomes = await _validation.file_validation_findings(
+                    self._store, slug, findings
+                )
+            elif findings and not slug:
+                # dev/stub workspace with no remote — nowhere to file; loud.
+                sys.stderr.write(
+                    f"validation: {len(findings)} finding(s) for {workspace_dir} "
+                    "but the workspace has no origin remote — not filed\n"
+                )
+            return outcomes, _validation.run_record_line(report, outcomes)
+
+        # 1) resolve the declared contract from the merged base (trust boundary)
+        try:
+            contract = await asyncio.to_thread(
+                _manifest.resolve_validation_contract, workspace_dir
+            )
+        except _manifest.ManifestError as exc:
+            contract = None
+            contract_error: Optional[str] = str(exc)
+        else:
+            contract_error = None
+        if contract is None:
+            missing: dict = {
+                "contract_ran": False, "boot": None, "suites": None,
+                "browser_report": None, "failing_tests": [], "partial": False,
+                "note": "missing contract: "
+                        + (contract_error or "devclaw.json declares no validation key"),
+            }
+            _, record = await _file_and_record(missing)
+            self._store.mark_failed(
+                task_id,
+                "validation run has no usable contract — declare validation.boot "
+                f"and validation.suites in devclaw.json ({contract_error or 'key absent'}). "
+                f"{record}",
+            )
+            return
+
+        # 2) one engine run, wall-clock bounded like every task
+        request = EngineRequest(
+            kind="validate_product",
+            workspace_dir=workspace_dir,
+            goal=goal,
+            verify_cmd=None,
+            sandbox_image=self._sandbox_image(project_id),
+            owner_id=self._sandbox_owner,
+            validation={"boot": contract.boot, "suites": contract.suites},
+        )
+        try:
+            if TASK_TIMEOUT_S > 0:
+                result = await asyncio.wait_for(self._runner(request), timeout=TASK_TIMEOUT_S)
+            else:
+                result = await self._runner(request)
+        except asyncio.TimeoutError:
+            self._store.mark_failed(
+                task_id,
+                f"validation run exceeded the {TASK_TIMEOUT_S:.0f}s wall clock — "
+                "sandbox torn down; split the suites or raise DEVCLAW_TASK_TIMEOUT_S.",
+            )
+            return
+        except Exception as err:  # noqa: BLE001 — infra crash is loud, no retry
+            self._store.mark_failed(task_id, f"validation runner error: {err}")
+            return
+
+        # 3) restore the workspace — a validation run never mutates the repo
+        #    (FR-005); boot/seed artifacts are discarded, loudly on failure.
+        def _restore() -> Optional[str]:
+            import subprocess as _sp
+            for args in (("reset", "--hard"), ("clean", "-fd")):
+                proc = _sp.run(["git", "-C", workspace_dir, *args],
+                               capture_output=True, text=True, timeout=120)
+                if proc.returncode != 0:
+                    return f"git {' '.join(args)}: {proc.stderr.strip()}"
+            return None
+        restore_err = await asyncio.to_thread(_restore)
+        if restore_err:
+            sys.stderr.write(f"validation: workspace restore failed: {restore_err}\n")
+
+        if result.get("status") != "ok":
+            self._store.mark_failed(
+                task_id, f"validation run failed: {result.get('error', 'unknown error')}"
+            )
+            return
+
+        # 4) findings + run record; verdict per the report
+        report = result.get("validation_report")
+        outcomes, record = await _file_and_record(report)
+        rpt: dict = report if isinstance(report, dict) else {}
+        boot = rpt.get("boot")
+        note = str(rpt.get("note") or "")
+        infra_failed = (
+            not isinstance(report, dict)
+            or note.startswith("missing contract")
+            or not isinstance(boot, dict)
+            or not boot.get("passed")
+        )
+        if infra_failed:
+            self._store.mark_failed(
+                task_id,
+                f"validation could not prove the running product — {record}. "
+                "Fix the boot/contract; the finding is filed.",
+            )
+        else:
+            self._store.mark_done(task_id, record)
+
     async def _execute(
         self,
         task_id: str,
@@ -518,6 +644,15 @@ class SettleMixin:
         # closeloop-mission-v2 defect where the activity-timeline program
         # pushed straight to main.
         row = self._store.get_task(task_id)
+        if kind == "validate_product":
+            # Spec 015: its own spine — no branch prep, no retry loop, no gate
+            # chain, no delivery. A validation run reads the product; it never
+            # ships anything.
+            await self._run_validation_task(
+                task_id, workspace_dir, goal,
+                project_id=(row.project_id if row else None),
+            )
+            return
         deliver = bool(row and row.deliver)
         # Branch-target wire (v1-helper-resurface P1, PR-2) — DIRECT path only:
         # goal-path and program-child rows never carry these, so for them every

@@ -45,7 +45,14 @@ def scope_key(goal: Goal) -> "str | None":
     ``project_id`` is the registered reference key (#524 P3) and wins when set.
     Goals predating it — and self-fix goals with no registered project — fall
     back to the workspace path, which is what actually collides. A goal with
-    neither is never queued: there is no shared repository to serialize."""
+    neither is never queued: there is no shared repository to serialize.
+
+    A ``qa`` goal (spec 015 US3) contends for nothing: its validation runs are
+    read-only toward the repo and execute in the qa goal's own workspace, so
+    it must neither hold the project's single-writer slot nor be blocked by
+    it."""
+    if goal.mode == "qa":
+        return None
     pid = (goal.project_id or "").strip()
     if pid:
         return pid

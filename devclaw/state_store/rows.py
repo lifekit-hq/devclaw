@@ -18,7 +18,9 @@ from typing import Literal, Optional
 #   an execution error). Terminal, so crash recovery (which only revives
 #   'running' rows) never resurrects it — an abort stays aborted across restarts.
 TaskStatus = Literal["pending", "running", "done", "failed", "cancelled"]
-TaskKind = Literal["implement_feature", "fix_bug", "review_repository", "onboard"]
+TaskKind = Literal[
+    "implement_feature", "fix_bug", "review_repository", "onboard", "validate_product"
+]
 # Programs hold a DAG of tasks decomposed from a single high-level goal.
 #   planning  — planner still decomposing (claude subprocess in flight)
 #   running   — tasks exist, none failed/cancelled, not all terminal yet

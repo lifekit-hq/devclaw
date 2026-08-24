@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-24
 
-**Status**: Draft
+**Status**: Implemented (2026-08-24)
 
 **Input**: User description: "Every spec ships executable acceptance tests at its outermost surface; a validate_product mechanism boots a hermetic seeded instance from a repo-declared contract, runs the accumulated suites, and files findings as issues through the spec-014 doorway — never blocking, never opening PRs. Companion-first triggering. Grilled and locked with Denys 2026-08-24."
 

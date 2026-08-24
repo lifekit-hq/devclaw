@@ -64,6 +64,18 @@ class ManifestError(ValueError):
 
 
 @dataclass(frozen=True)
+class ValidationContract:
+    """The repo-declared live-validation contract (spec 015 FR-004): how to
+    boot a hermetic seeded instance, how to run the accumulated acceptance
+    suites against it, and which read-only path the post-deploy prod smoke
+    GETs. The first nested manifest structure; commands run IN the sandbox."""
+
+    boot: str
+    suites: str
+    smoke_path: str = "/"
+
+
+@dataclass(frozen=True)
 class Manifest:
     schema_version: int
     boilerplate_revision: int = 0
@@ -71,6 +83,7 @@ class Manifest:
     surface: Optional[str] = None
     verify_cmd: Optional[str] = None
     stack: tuple[str, ...] = field(default_factory=tuple)
+    validation: Optional[ValidationContract] = None
 
 
 def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
@@ -111,6 +124,7 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
     stack = raw.get("stack", [])
     if not isinstance(stack, list) or any(not isinstance(s, str) for s in stack):
         raise ManifestError(f"{source}: stack must be a list of strings")
+    validation = _parse_validation(raw.get("validation"), source)
     return Manifest(
         schema_version=sv,
         boilerplate_revision=rev,
@@ -118,6 +132,30 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
         surface=surface,
         verify_cmd=verify_cmd.strip() if isinstance(verify_cmd, str) else None,
         stack=tuple(stack),
+        validation=validation,
+    )
+
+
+def _parse_validation(raw, source: str) -> Optional[ValidationContract]:
+    """Absent ⇒ None (repo not opted into the live-validation loop);
+    present-but-malformed ⇒ loud (spec 015 FR-006 starts at the parse)."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{source}: validation must be a JSON object")
+    boot = raw.get("boot")
+    suites = raw.get("suites")
+    if not isinstance(boot, str) or not boot.strip():
+        raise ManifestError(f"{source}: validation.boot must be a non-empty string")
+    if not isinstance(suites, str) or not suites.strip():
+        raise ManifestError(f"{source}: validation.suites must be a non-empty string")
+    smoke_path = raw.get("smokePath", "/")
+    if not isinstance(smoke_path, str) or not smoke_path.startswith("/"):
+        raise ManifestError(
+            f"{source}: validation.smokePath must be a string starting with '/'"
+        )
+    return ValidationContract(
+        boot=boot.strip(), suites=suites.strip(), smoke_path=smoke_path
     )
 
 
@@ -245,6 +283,15 @@ def resolve_surface(workspace_dir: str) -> Optional[str]:
     undeclared (the path-glob heuristics stay in charge)."""
     manifest = load_manifest_at_base(workspace_dir)
     return manifest.surface if manifest else None
+
+
+def resolve_validation_contract(workspace_dir: str) -> Optional[ValidationContract]:
+    """The declared live-validation contract at the merged base (spec 015
+    FR-004), or None when the repo has not opted in. Raises ManifestError on a
+    malformed manifest — a triggered validation run with an unreadable
+    contract must fail loud, never silently skip (FR-006)."""
+    manifest = load_manifest_at_base(workspace_dir)
+    return manifest.validation if manifest else None
 
 
 # ---- devclaw:managed markers (one home — spec 016 US3) --------------------

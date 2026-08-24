@@ -24,7 +24,10 @@ from typing import Literal, Optional
 Engine = Literal["devclaw"]
 #: the engine verbs the goal layer can dispatch — a subset of devclaw's task
 #: kinds plus the program decomposer.
-GoalTool = Literal["start_program", "implement_feature", "fix_bug", "review_repository"]
+GoalTool = Literal[
+    "start_program", "implement_feature", "fix_bug", "review_repository",
+    "validate_product",
+]
 Phase = Literal["idle", "in_flight", "verifying", "blocked", "done", "cancelled"]
 #: The goal lifecycle — ``executing`` only since the host-cognition chain was
 #: removed (spec 008 shrink: the worker plans via speckit in-sandbox). NOT
@@ -37,7 +40,21 @@ EvalVerdict = Literal["on_track", "off_track", "achieved", "stalled", "needs_hum
 #: speckit advance loop, spec 008); the dial is re-evaluation cadence, never a
 #: different execution stack ("done" is still a proposal gated on the grounded
 #: done-gate review in both modes).
-GoalMode = Literal["long_lived", "one_shot"]
+#: ``qa`` (spec 015 US3) is the "never self-advances" point on the same dial:
+#: the goal owns validation runs (deploy-triggered, or an owner-armed cadence)
+#: over the SAME execution path — it never plans feature work, never proposes
+#: done (its done_when is standing by construction), and idles at zero
+#: cognition.
+GoalMode = Literal["long_lived", "one_shot", "qa"]
+
+#: The standing done_when a qa goal is created with (matches
+#: :func:`is_standing`, so the done-gate could never close it even if opened).
+QA_DONE_WHEN = (
+    "Standing goal — continuous live validation of the running product; "
+    "not a bounded criterion (no terminal completion state). Validation runs "
+    "are triggered by completed deploys and by an owner-armed cadence; the "
+    "owner closes this goal."
+)
 
 #: the gate strictness dial (ADR 0007). ``strict`` = a dial-able gate that fails
 #: BLOCKS the goal (today's fail-closed behavior). ``trust`` = a dial-able gate

@@ -334,6 +334,8 @@ async def _tick_goal_impl(
 
     # Lifecycle phase (in_flight is None).
     if phase is Phase.EXECUTING:
+        if goal.mode == "qa":
+            return await _handle_qa_goal(goal_id, goal, status, finished_detail, ctx)
         return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
 
     raise RuntimeError(f"unhandled phase {phase} for goal {goal_id}")
@@ -404,6 +406,56 @@ def _advance_brief(
     if steering.strip():
         parts += ["", STEERING_MARKER, steering.strip()]
     return "\n".join(parts)
+
+
+def validation_action(goal: Goal) -> Action:
+    """The one Action shape a validation run dispatches as (spec 015). Shared
+    by the qa cadence below and the deploy trigger (GoalService), so both
+    edges produce identical runs."""
+    return Action(
+        engine="devclaw",
+        tool="validate_product",
+        goal=(
+            "Validate the running product against the repo-declared "
+            f"devclaw.json validation contract (qa goal {goal.id}). Boot the "
+            "hermetic seeded instance, run the accumulated acceptance suites, "
+            "report every failure."
+        ),
+        verify_cmd=None,
+        open_pr=False,
+    )
+
+
+async def _handle_qa_goal(
+    goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
+) -> Outcome:
+    """Spec 015 US3 — the ``qa`` mode's whole tick surface. A qa goal never
+    plans feature work and never proposes done: a settled validation run's
+    detail is appended as the RUN RECORD (the done-gate is never opened —
+    validation findings are intake, not verdicts), and the only self-initiated
+    dispatch is the owner-armed cadence. Unarmed (cadence empty — the shipped
+    default), an idle tick is a pure timestamp write: zero cognition, zero
+    subprocess (constitution III)."""
+    store = ctx.store
+    if finished_detail:
+        # The settle header/detail IS the run record (US2 scenario 3 — a run
+        # record, not silence). One line; the task row keeps the full detail.
+        first = finished_detail.split("\n", 1)[0][:400]
+        store.append_log(goal_id, f"qa run settled: {first}")
+
+    cadence = (goal.cadence or "").strip()
+    if cadence and store.cadence_due(goal, status):
+        now = store.now_iso()
+        base = replace(status, last_plan_at=now, last_tick_at=now)
+        return await _dispatch_action(
+            goal_id, goal, base, validation_action(goal),
+            store=store, engine=ctx.engine, notifier=ctx.notifier,
+            notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
+            summarize=ctx.summary_caller, consume_steering=[],
+        )
+
+    store.update_status_fields(goal_id, last_tick_at=store.now_iso())
+    return Outcome.IDLE
 
 
 async def _handle_long_lived_advance(

@@ -48,6 +48,11 @@ async def _check_no_progress(
 
     Pure mechanism: it reads timestamps and never calls cognition on the measuring
     path (the summarizer only runs for the one ping that actually clears the gate)."""
+    if goal.mode == "qa":
+        # A qa goal never ships (spec 015 US3) — "no delivery in N hours" is
+        # its healthy steady state, not a stall; the watchdog would ping the
+        # owner forever.
+        return status
     if window_s <= 0 or not _progress_window_active(status):
         return status
     if status.last_progress_at is None:

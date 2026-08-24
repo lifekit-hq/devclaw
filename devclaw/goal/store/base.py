@@ -55,11 +55,11 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 import yaml
 
-from ..models import Goal, GoalStatus
+from ..models import Goal, GoalMode, GoalStatus
 from ..state import GoalState
 from ...state_store import _now_ms
 from .legacy_cutoff import apply_legacy_cutoff
@@ -328,13 +328,17 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         # isolated tick error every ~15min forever, wedging the goal with no
         # actionable surface (fs-monitoring-outage-refile-2026-07-19 died this
         # way — born with cadence "urgent", never once ticked).
-        try:
-            parse_duration(cadence)
-        except ValueError as e:
-            raise ValueError(
-                f"cannot create goal {goal_id!r}: {e} — cadence must be a "
-                f"duration like '15m', '6h', or '1d', not a word"
-            ) from e
+        # A qa goal (spec 015) legitimately carries NO cadence — empty means
+        # "periodic runs disarmed" and its tick path never parses it. Every
+        # other mode still fails loud on anything unparseable.
+        if not (mode == "qa" and not (cadence or "").strip()):
+            try:
+                parse_duration(cadence)
+            except ValueError as e:
+                raise ValueError(
+                    f"cannot create goal {goal_id!r}: {e} — cadence must be a "
+                    f"duration like '15m', '6h', or '1d', not a word"
+                ) from e
         d = self._dir(goal_id)
         d.mkdir(parents=True, exist_ok=True)
         (d / "goal.yaml").write_text(
@@ -401,7 +405,12 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             established=_slot(raw.get("established")),
             # Anything unrecognized (or a file with no field) reads as
             # long_lived — the conservative default: the per-tick loop.
-            mode=("one_shot" if raw.get("mode") == "one_shot" else "long_lived"),
+            # ``qa`` (spec 015) must round-trip: coercing it to long_lived
+            # would silently turn a validation owner into a feature planner.
+            mode=cast(
+                "GoalMode",
+                raw.get("mode") if raw.get("mode") in ("one_shot", "qa") else "long_lived",
+            ),
             # Unrecognized reads as "trust" (advisory) — the default
             # dial: dial-able gates log-and-ship rather than wedge (ADR 0007).
             # The RAW tier (spec 016): a PRESENT recognized key is an explicit

@@ -65,7 +65,12 @@ _WRITES_CODE_KINDS = {"implement_feature", "fix_bug"}
 #: briefed as implement_feature. Kept as an explicit set rather than
 #: inferred from the directory listing so an image that bakes a partial
 #: bundle raises in _wrap_goal instead of silently downgrading the kind.
-_KNOWN_KINDS = {"implement_feature", "fix_bug", "review_repository", "onboard"}
+_KNOWN_KINDS = {
+    "implement_feature", "fix_bug", "review_repository", "onboard",
+    # validate_product (spec 015) is agent-less: no skill bundle, no ACP
+    # session — main() branches into _run_validate_product before _wrap_goal.
+    "validate_product",
+}
 _HOOK_TIMEOUT_S = 30
 
 
@@ -310,6 +315,139 @@ def _read_browser_report(workspace_dir: str) -> "dict | None":
         "flaky": int(stats.get("flaky", 0) or 0),
         "skipped": int(stats.get("skipped", 0) or 0),
     }
+
+
+# --- validate_product (spec 015) ---------------------------------------------
+# The agent-less branch: boot the repo-declared contract, run the accumulated
+# acceptance suites, report — no ACP session, no skills, zero LLM (FR-005).
+
+#: Per-step wall clock for the boot and suites commands. Both must fit inside
+#: the host's overall TASK_TIMEOUT_S; a cut suite is reported as explicit
+#: partial coverage, never a silent truncation.
+_VALIDATION_STEP_TIMEOUT_S = int(
+    os.environ.get("DEVCLAW_VALIDATION_STEP_TIMEOUT_S", "900")
+)
+
+
+def _extract_failing_tests(workspace_dir: str) -> list[str]:
+    """Failing test titles from the Playwright JSON report's suites tree —
+    the per-scenario identity the host turns into finding fingerprints.
+    Best-effort: no/garbled report ⇒ [] (the host degrades to one run-level
+    finding on a red exit code)."""
+    path = os.path.join(workspace_dir, _BROWSER_REPORT_REL)
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    titles: list[str] = []
+
+    def _walk(node, crumbs):
+        if not isinstance(node, dict):
+            return
+        title = str(node.get("title") or "").strip()
+        here = crumbs + [title] if title else crumbs
+        for spec in node.get("specs") or []:
+            if not isinstance(spec, dict):
+                continue
+            spec_title = str(spec.get("title") or "").strip()
+            tests = spec.get("tests") or []
+            failed = any(
+                isinstance(t, dict) and t.get("status") == "unexpected"
+                for t in tests
+            )
+            if failed:
+                titles.append(" > ".join([*here, spec_title]).strip(" >"))
+        for child in node.get("suites") or []:
+            _walk(child, here)
+
+    for suite in (data.get("suites") or []) if isinstance(data, dict) else []:
+        _walk(suite, [])
+    return titles
+
+
+def _step_summary(step: dict) -> dict:
+    return {
+        "passed": bool(step.get("passed")),
+        "exit_code": step.get("exit_code"),
+        "timed_out": bool(step.get("timed_out")),
+        "output_tail": (step.get("output") or "")[-2000:],
+    }
+
+
+def _run_validate_product(req: dict, workspace_dir: str) -> None:
+    """Run one validation: boot → suites → report. Emits the terminal result
+    itself (status ok with a ``validation_report``; the HOST decides the task
+    verdict and files findings — the sandbox holds no GitHub credential)."""
+    contract = req.get("validation") or {}
+    boot_cmd = (contract.get("boot") or "").strip()
+    suites_cmd = (contract.get("suites") or "").strip()
+    vr: dict = {
+        "contract_ran": False, "boot": None, "suites": None,
+        "browser_report": None, "failing_tests": [], "partial": False, "note": "",
+    }
+
+    def _finish(message: str) -> None:
+        _emit_result({
+            "status": "ok", "workspaceDir": workspace_dir,
+            "message": message, "validation_report": vr,
+        })
+
+    if not boot_cmd or not suites_cmd:
+        vr["note"] = "missing contract: payload carried no validation.boot/suites"
+        _finish("validation: missing contract")
+        return
+
+    try:
+        _provision_toolchain(workspace_dir)
+    except Exception as exc:  # noqa: BLE001 — loud in the report, not a crash
+        vr["note"] = f"toolchain_provision_failed: {exc}"
+        _finish("validation: toolchain provisioning failed")
+        return
+
+    # Per-run report hygiene: point Playwright at the devclaw-owned path and
+    # clear any stale artifact so titles reflect THIS run only.
+    report_path = os.path.join(workspace_dir, _BROWSER_REPORT_REL)
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    os.environ["PLAYWRIGHT_JSON_OUTPUT_NAME"] = report_path
+    try:
+        os.remove(report_path)
+    except OSError:
+        pass
+    _resync_mise_env(workspace_dir)
+
+    boot = _run_verify(boot_cmd, workspace_dir, timeout=_VALIDATION_STEP_TIMEOUT_S)
+    vr["boot"] = _step_summary(boot)
+    vr["contract_ran"] = True
+    if not boot.get("passed"):
+        vr["note"] = (
+            "boot timed out" if boot.get("timed_out")
+            else "boot failed — the product did not come up"
+        )
+        _finish("validation: boot failed")
+        return
+
+    suites = _run_verify(suites_cmd, workspace_dir, timeout=_VALIDATION_STEP_TIMEOUT_S)
+    vr["suites"] = _step_summary(suites)
+    vr["browser_report"] = _read_browser_report(workspace_dir)
+    vr["failing_tests"] = _extract_failing_tests(workspace_dir)
+    if suites.get("timed_out"):
+        vr["partial"] = True
+        vr["note"] = (
+            f"partial coverage: suites cut by the {_VALIDATION_STEP_TIMEOUT_S}s "
+            "step timeout — results reflect only what ran"
+        )
+    elif suites.get("passed"):
+        report = vr["browser_report"]
+        executed = (
+            report["expected"] + report["unexpected"] + report["flaky"]
+            if report else None
+        )
+        if executed == 0:
+            vr["note"] = "green-by-vacuity: no acceptance tests accumulated yet"
+        elif report is None:
+            vr["note"] = "suites exit 0; no per-scenario report found"
+    _finish("validation: suites ran")
 
 
 # --- usage-limit detection ---------------------------------------------------
@@ -1028,6 +1166,12 @@ def main() -> None:
     if kind not in _KNOWN_KINDS:
         _emit_result({"status": "error", "error": f"unknown kind: {kind}"})
         sys.exit(2)
+
+    if kind == "validate_product":
+        # Agent-less by construction (spec 015 FR-005): no skills, no ACP
+        # session, no LLM — boot the declared contract, run the suites, report.
+        _run_validate_product(req, workspace_dir)
+        return
 
     # Wrap the user's goal with kind-specific operating instructions. The
     # ACP-driven agent session reads this as the user message,

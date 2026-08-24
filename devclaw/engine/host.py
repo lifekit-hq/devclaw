@@ -85,15 +85,16 @@ async def run_host(req: EngineRequest) -> EngineResult:
     """Run one task by invoking the worker runner on the host (no container).
     The workspace path is used as-is (no bind-mount / no path translation)."""
     Path(req.workspace_dir).mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(
-        {
-            "kind": req.kind,
-            "workspace_dir": req.workspace_dir,
-            "goal": req.goal,
-            # verify gate runs on the host after the agent finishes (host toolchain).
-            "verify_cmd": req.verify_cmd,
-        }
-    )
+    body: dict = {
+        "kind": req.kind,
+        "workspace_dir": req.workspace_dir,
+        "goal": req.goal,
+        # verify gate runs on the host after the agent finishes (host toolchain).
+        "verify_cmd": req.verify_cmd,
+    }
+    if req.validation is not None:
+        body["validation"] = req.validation
+    payload = json.dumps(body)
     try:
         proc = await asyncio.create_subprocess_exec(
             RUNNER_PYTHON,

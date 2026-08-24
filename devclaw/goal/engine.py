@@ -115,10 +115,14 @@ class InProcessEngine:
                 pump=False,
             )
             return InFlight("devclaw", "start_program", program_id, "program", action.goal)
-        if action.tool in ("implement_feature", "fix_bug", "review_repository"):
+        if action.tool in (
+            "implement_feature", "fix_bug", "review_repository", "validate_product"
+        ):
             kind: TaskKind = action.tool  # type: ignore[assignment]
             # review_repository is read-only: no gate, no PR (it writes a report).
-            is_review = action.tool == "review_repository"
+            # validate_product (spec 015) is read-only the same way: the settle
+            # spine files findings; it never delivers.
+            is_review = action.tool in ("review_repository", "validate_product")
             task_id = self._queue.submit(
                 kind=kind,
                 workspace_dir=ws,

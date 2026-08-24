@@ -6,13 +6,16 @@ the Tailscale deploy verbs. See ``devclaw/delivery/``.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastmcp.exceptions import ToolError
 
+from ... import project_manifest as _manifest
+from ... import validation_loop as _validation
 from ...delivery import deploy as _deploy
 from ...delivery import repo as _repo
-from .._state import mcp, registry
+from .._state import goals, mcp, registry, store
 
 
 # ===== build a project from scratch ==========================================
@@ -118,13 +121,52 @@ async def deploy_project(workspace_dir: str, slug: str) -> str:
     port so the URL never changes across redeploys, and is reachable over Tailscale
     (https, auto-TLS, never public). Idempotent: redeploying the same slug replaces
     the container at the same URL. workspace_dir = the goal's checkout; slug = a
-    short stable name."""
+    short stable name.
+
+    Post-deploy edges (spec 015 US3, both best-effort — the deploy result never
+    fails on them): a read-only prod smoke GETs the deployed instance (a failure
+    files a `deploy_smoke` machine issue through the spec-014 doorway), and if
+    the workspace's registered project has a `qa` goal, ONE validation run is
+    triggered — the loop's launch trigger, human-caused by construction because
+    this deploy verb is the owner's button-press."""
     if not workspace_dir or not slug:
         raise ToolError("deploy_project requires workspace_dir and slug")
     try:
-        return json.dumps(await _deploy.deploy_project(workspace_dir, slug), indent=2)
+        result = await _deploy.deploy_project(workspace_dir, slug)
     except _deploy.DeployError as err:
         raise ToolError(str(err))
+    # ---- spec 015 US3: the two post-deploy edges (best-effort, loud) --------
+    try:
+        base_url = result.get("loopback_url") or result.get("url") or ""
+        smoke_path = "/"
+        try:
+            contract = await asyncio.to_thread(
+                _manifest.resolve_validation_contract, workspace_dir
+            )
+            if contract is not None:
+                smoke_path = contract.smoke_path
+        except _manifest.ManifestError:
+            pass  # smoke still runs on "/"; the malformed manifest fails the
+            # validation RUN loudly instead (its own edge below)
+        repo = await asyncio.to_thread(
+            _validation.repo_slug_for_workspace, workspace_dir
+        )
+        if base_url:
+            reason = await _validation.run_prod_smoke(
+                store, slug=repo, base_url=base_url, smoke_path=smoke_path,
+            )
+            result["smoke"] = "ok" if reason is None else f"FAILED: {reason}"
+        ws = workspace_dir.rstrip("/")
+        project = next(
+            (p for p in registry.list() if (p.workspace_dir or "").rstrip("/") == ws),
+            None,
+        )
+        if project is not None:
+            qa_goal = await goals.trigger_validation(project.id)
+            result["validation_triggered"] = qa_goal
+    except Exception as exc:  # noqa: BLE001 — the deploy itself succeeded; say so
+        result["post_deploy_edges_error"] = str(exc)
+    return json.dumps(result, indent=2)
 
 
 @mcp.tool

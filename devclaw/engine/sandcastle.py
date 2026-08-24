@@ -569,7 +569,7 @@ def _build_payload(req: EngineRequest) -> dict:
     forwarded one variable at a time in :func:`_build_docker_args`: the git
     identity (:func:`git_identity_env`) and the subscription OAuth token
     (:data:`OAUTH_TOKEN_VAR`). Adding a third is a decision, not a convenience."""
-    return {
+    payload: dict = {
         "kind": req.kind,
         "workspace_dir": CONTAINER_WORKSPACE,
         "goal": req.goal,
@@ -580,6 +580,11 @@ def _build_payload(req: EngineRequest) -> dict:
         # same toolchain + workspace the agent built in (None → no gate).
         "verify_cmd": req.verify_cmd,
     }
+    if req.validation is not None:
+        # spec 015: the host-resolved validation contract for the agent-less
+        # validate_product branch — the runner never reads the manifest itself.
+        payload["validation"] = req.validation
+    return payload
 
 
 async def run_sandcastle(req: EngineRequest) -> EngineResult:

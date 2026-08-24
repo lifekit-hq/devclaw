@@ -58,6 +58,10 @@ class EngineRequest:
     #: leftovers, never a concurrent devclaw process's live sandboxes on the
     #: same daemon. Docker-less engines (host, stub) ignore it.
     owner_id: Optional[str] = None
+    #: spec 015: the repo-declared validation contract for ``validate_product``
+    #: runs — ``{"boot": …, "suites": …}``, resolved host-side from the merged
+    #: base. None for every other kind.
+    validation: Optional[dict] = None
 
 
 #: Terminal verdict from one task. ``status == "ok"`` carries
