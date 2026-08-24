@@ -257,7 +257,12 @@ async def create_goal(
     mid-flight. 'one_shot' rides the SAME advance loop and proposes done as
     soon as an advance session lands — same gates; the worker owns the plan
     (speckit, spec 008). Use one_shot for a fully-specified batch of work;
-    long_lived for a direction driven over time.
+    long_lived for a direction driven over time. 'qa' (spec 015) is the
+    per-repo live-validation owner: it never plans feature work and never
+    terminates (standing done_when supplied automatically); validation runs
+    fire on completed deploys, and a periodic cadence exists but SHIPS OFF —
+    arm it by passing an explicit cadence (e.g. '24h'); saga slots and
+    done_when may be omitted for this mode.
 
     goal_id: a short stable slug (the on-disk folder name). objective: the durable
     aim. done_when: the prose completion test the evaluator judges against. backlog:
@@ -280,8 +285,8 @@ async def create_goal(
     the worker must build on instead of re-deriving."""
     if not goal_id:
         raise ToolError("create_goal requires goal_id")
-    if mode not in ("long_lived", "one_shot"):
-        raise ToolError("create_goal mode must be 'long_lived' or 'one_shot'")
+    if mode not in ("long_lived", "one_shot", "qa"):
+        raise ToolError("create_goal mode must be 'long_lived', 'one_shot' or 'qa'")
     # Omitted strictness = "not explicitly chosen": the repo's devclaw.json
     # strictnessDefault (if any) applies live; passing a value pins the goal.
     if strictness is not None and strictness not in ("trust", "strict"):

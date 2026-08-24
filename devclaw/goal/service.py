@@ -31,6 +31,7 @@ from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
 from . import summary as goal_summary
 from . import triage as goal_triage
+from ..engine.workspace import prepare_workspace
 from .engine import InProcessEngine
 from .evaluator import ClaudeCaller
 from .models import Goal, GoalStatus
@@ -542,6 +543,49 @@ class GoalService:
 
     # ---- steer / observe surface (wrapped by MCP tools) --------------------
 
+    async def trigger_validation(self, project_id: str) -> Optional[str]:
+        """Spec 015 US3 — the post-deploy trigger. Finds the project's ``qa``
+        goal (none ⇒ no-op: the loop is opt-in per repo) and dispatches ONE
+        ``validate_product`` run through the standard goal-dispatch path, so
+        in-flight bookkeeping, settle polling and the run record all ride the
+        existing machinery. Returns the qa goal id when one was found."""
+        from .tick import validation_action
+        from .tick_dispatch import _dispatch_action
+        from dataclasses import replace as _replace
+
+        pid = (project_id or "").strip()
+        if not pid:
+            return None
+        for gid in self._goal_store.list_goal_ids():
+            try:
+                g = self._goal_store.load_goal(gid)
+                if g.mode != "qa" or (g.project_id or "").strip() != pid:
+                    continue
+                st = self._goal_store.load_status(gid)
+            except Exception:  # noqa: BLE001 — one bad goal must not eat the trigger
+                continue
+            if _project_hold.is_terminal(st):
+                continue
+            if st.in_flight is not None:
+                self._goal_store.append_log(
+                    gid, "qa: deploy completed while a validation run is in "
+                         "flight — not stacking a second run",
+                )
+                return gid
+            now = self._goal_store.now_iso()
+            base = _replace(st, last_plan_at=now, last_tick_at=now)
+            self._goal_store.append_log(
+                gid, f"qa: deploy completed for {pid} — triggering validation run"
+            )
+            await _dispatch_action(
+                gid, g, base, validation_action(g),
+                store=self._goal_store, engine=self._engine,
+                notifier=self._notifier, notify_url="",
+                prepare_ws=prepare_workspace, summarize=self._summary(),
+            )
+            return gid
+        return None
+
     def create_goal(
         self, goal_id: str, *, objective: str, workspace_dir: str,
         cadence: str = "1d", repo_url: Optional[str] = None,
@@ -570,9 +614,27 @@ class GoalService:
         # (waiter or upstream chain) must fix and re-file. Warnings still flow
         # through to the result dict as before. See devclaw/goal/admission.py.
         from .admission import GoalAdmissionRejected, verify_goal as _verify
+        from .models import QA_DONE_WHEN
 
-        if mode not in ("long_lived", "one_shot"):
-            raise ValueError(f"unknown goal mode {mode!r} — expected 'long_lived' or 'one_shot'")
+        if mode not in ("long_lived", "one_shot", "qa"):
+            raise ValueError(
+                f"unknown goal mode {mode!r} — expected 'long_lived', 'one_shot' or 'qa'"
+            )
+        if mode == "qa":
+            # Spec 015 US3 — a qa goal's contract is fixed by construction:
+            # standing done_when (the done-gate could never close it), no
+            # cadence unless the owner explicitly armed one (the periodic
+            # schedule SHIPS OFF), and saga slots that exist only to satisfy
+            # admission — a validation run authors no feature saga.
+            done_when = (done_when or "").strip() or QA_DONE_WHEN
+            if cadence == "1d":  # the unmodified default = unarmed
+                cadence = ""
+            if out_of_scope is None:
+                out_of_scope = ["feature work — validation runs never modify the repository"]
+            if invariants is None:
+                invariants = ["a validation run never commits, pushes, or opens PRs"]
+            if established is None:
+                established = ["the repo's devclaw.json validation contract defines boot and suites"]
         # None = "author didn't choose" (spec 016 FR-008): the key is not
         # written, so the repo manifest's strictnessDefault applies live.
         if strictness is not None and strictness not in ("trust", "strict"):

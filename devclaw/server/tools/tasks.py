@@ -79,7 +79,7 @@ async def _block_if_speckit_pending(resolved: ResolvedDispatch, tool: str) -> No
 
 @mcp.tool
 async def dispatch_task(
-    kind: Literal["implement_feature", "fix_bug", "review_repository"],
+    kind: Literal["implement_feature", "fix_bug", "review_repository", "validate_product"],
     project_id: str,
     goal: str,
     notify_url: Optional[str] = None,
@@ -103,6 +103,12 @@ async def dispatch_task(
       - ``review_repository`` — READ-ONLY code review; the agent inspects the
         workspace and writes a report, prompt-instructed NOT to modify any
         files. ``verify_cmd`` and ``open_pr`` are ignored for this kind.
+      - ``validate_product`` — spec 015's agent-less live validation: boots the
+        repo's declared ``devclaw.json`` validation contract hermetically in
+        the sandbox, runs the accumulated acceptance suites, and files each
+        failure as a machine issue through the spec-014 doorway. Never opens a
+        PR, never commits; ``verify_cmd``/``open_pr``/branch targets are
+        ignored. The manual companion trigger for a validation run.
 
     Pass verify_cmd (e.g. "dotnet test", "npm run build && npm run test:ci") to
     gate the task: after the agent finishes, DevClaw runs that command in the
@@ -133,20 +139,22 @@ async def dispatch_task(
         raise ToolError("dispatch_task requires project_id and goal")
     resolved = _resolve_project_or_reject(project_id, "dispatch_task")
     await _preflight_or_prep(resolved, project_id)
-    is_review = kind == "review_repository"
-    # Feature work (not read-only review) is gated on a merged speckit install:
-    # a repo whose install PR is still open is not run (US2, no half-installed state).
-    if not is_review:
+    # review + validate are read-only toward the repo: no verify gate, no PR,
+    # no branch targets, and no speckit-install gate (they change nothing).
+    read_only = kind in ("review_repository", "validate_product")
+    if not read_only:
+        # Feature work is gated on a merged speckit install: a repo whose
+        # install PR is still open is not run (US2, no half-installed state).
         await _block_if_speckit_pending(resolved, "dispatch_task")
     task_id = queue.submit(
         kind=kind,
         workspace_dir=resolved.workspace_dir,
         goal=goal,
         notify_url=notify_url,
-        verify_cmd=None if is_review else verify_cmd,
-        deliver=False if is_review else open_pr,
-        base_branch=base_branch,
-        target_branch=target_branch,
+        verify_cmd=None if read_only else verify_cmd,
+        deliver=False if read_only else open_pr,
+        base_branch=None if kind == "validate_product" else base_branch,
+        target_branch=None if kind == "validate_product" else target_branch,
         project_id=resolved.project_id,
     )
     out = {"task_id": task_id, "status": "pending"}
