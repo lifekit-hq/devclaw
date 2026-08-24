@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional, Protocol
 
 from .. import config as _config
+from .. import issue_doorway as _doorway
 from ..state_store.problems import PROBLEM_CATEGORIES
 from ..procutil import run as _run
 
@@ -115,32 +116,50 @@ def should_close_stale(problem: dict, now_ms: int, *, quiet_ms: int = QUIET_MS) 
     return (now_ms - last_seen) >= quiet_ms
 
 
-def issue_title(problem: dict) -> str:
+#: The doorway ``source`` string this producer files under (spec 014 US3).
+DOORWAY_SOURCE = "self_issue_catalog"
+
+
+def finding_from_problem(problem: dict, cycle_count: int) -> "_doorway.MachineFinding":
+    """Map a catalog row to the doorway's input (spec 014 US3). The catalog's
+    fingerprint is reused verbatim — the ledger and the problem row dedup on
+    the same identity. Everything is mechanical projection; the doorway renders
+    the schema-v1 body from it."""
     cat = (problem.get("category") or "other").strip()
     kind = (problem.get("kind") or "").strip()
     summary = (problem.get("summary") or "").strip()
     tail = kind or summary or "recurring failure"
-    return f"[self-filed] {cat}: {tail}"[:240]
-
-
-def issue_body(problem: dict, cycle_count: int) -> str:
-    """The grounded issue body — failure class, counts, first/last seen, the
-    goals/tasks it hit, and the dedup fingerprint (the stable identity)."""
-    fp = problem.get("fingerprint", "")
-    return (
-        "> Auto-filed by devclaw's self-issue-filing (Stage 1). This problem "
-        f"recurred across **{cycle_count}** run-cycles.\n\n"
-        f"- **Category:** `{problem.get('category', '')}`\n"
-        f"- **Kind:** {problem.get('kind') or '—'}\n"
-        f"- **Occurrences:** {problem.get('count', 0)} "
+    sample = (problem.get("sample_message") or "").strip() or "unknown"
+    evidence = (
+        f"Recurred across {cycle_count} run-cycles.\n"
+        f"Category: {cat}  Kind: {kind or '—'}\n"
+        f"Occurrences: {problem.get('count', 0)} "
         f"(terminal {problem.get('terminal_count', 0)}, "
         f"recovered {problem.get('recovered_count', 0)})\n"
-        f"- **First seen (ms):** {problem.get('first_seen_ms', 0)}  "
-        f"**Last seen (ms):** {problem.get('last_seen_ms', 0)}\n"
-        f"- **Last goal / task:** `{problem.get('last_goal_id') or '—'}` / "
-        f"`{problem.get('last_task_id') or '—'}`\n\n"
-        f"**Sample:**\n```\n{(problem.get('sample_message') or '').strip()[:1500]}\n```\n\n"
-        f"<sub>fingerprint: `{fp}`</sub>"
+        f"First seen (ms): {problem.get('first_seen_ms', 0)}  "
+        f"Last seen (ms): {problem.get('last_seen_ms', 0)}\n"
+        f"Last goal / task: {problem.get('last_goal_id') or '—'} / "
+        f"{problem.get('last_task_id') or '—'}\n\n"
+        f"Sample:\n{sample[:1500]}"
+    )
+    terminal = int(problem.get("terminal_count") or 0)
+    return _doorway.MachineFinding(
+        source=DOORWAY_SOURCE,
+        fingerprint=str(problem.get("fingerprint") or ""),
+        title=f"{cat}: {tail}",
+        evidence=evidence,
+        expected=f"no recurring '{cat}' failures across run-cycles",
+        actual=(
+            f"'{kind or summary or cat}' recurred across {cycle_count} "
+            f"run-cycles ({terminal} terminal)"
+        ),
+        severity="high" if terminal > 0 else "medium",
+        proposed_done_when=(
+            f"The root cause behind problem fingerprint "
+            f"{problem.get('fingerprint', '')} is fixed and the failure stops "
+            "recurring: the problems catalog records no new occurrence across "
+            "two subsequent run-cycles."
+        ),
     )
 
 
@@ -149,6 +168,7 @@ def issue_body(problem: dict, cycle_count: int) -> str:
 class GhAdapter(Protocol):
     async def ensure_label(self, repo: str, name: str) -> None: ...
     async def create_issue(self, repo: str, *, title: str, body: str, labels: list[str]) -> Optional[int]: ...
+    async def comment_issue(self, repo: str, number: int, *, body: str) -> bool: ...
     async def reopen_issue(self, repo: str, number: int, *, comment: str) -> bool: ...
     async def close_issue(self, repo: str, number: int, *, comment: str) -> bool: ...
     # Stage 2 (P2 — FIX pickup):
@@ -158,26 +178,17 @@ class GhAdapter(Protocol):
 
 
 
-class GhCli:
+class GhCli(_doorway.GhCli):
     """Real adapter: shells ``gh`` service-side (O8 — a GITHUB_TOKEN credential,
     never ``ANTHROPIC_*``; the OAuth-only cognition invariant is untouched). Every
     method is fail-loud-not-fatal: a GitHub hiccup logs and returns a falsey
     result so the caller records it and moves on — a filing failure NEVER wedges
-    the cycle edge."""
+    the cycle edge.
 
-    async def ensure_label(self, repo: str, name: str) -> None:
-        # Created-on-first-use (O3). --force makes it idempotent.
-        await _run("gh", "label", "create", name, "--repo", repo, "--force")
-
-    async def create_issue(self, repo: str, *, title: str, body: str, labels: list[str]) -> Optional[int]:
-        args = ["gh", "issue", "create", "--repo", repo, "--title", title, "--body", body]
-        for lbl in labels:
-            args += ["--label", lbl]
-        rc, out = await _run(*args)
-        if rc != 0:
-            sys.stderr.write(f"self-issue: create failed on {repo}: {out}\n")
-            return None
-        return _parse_issue_number(out)
+    ``ensure_label``/``create_issue`` are INHERITED from the doorway's adapter
+    (spec 014 US3): issue creation has exactly one transport, and the
+    single-writer guard (``tests/test_issue_doorway_single_writer.py``) holds
+    ``gh issue create`` to the doorway + human-intake modules structurally."""
 
     async def reopen_issue(self, repo: str, number: int, *, comment: str) -> bool:
         rc, out = await _run("gh", "issue", "reopen", str(number), "--repo", repo)
@@ -330,15 +341,23 @@ async def run_self_issue_filing(
                     result.suppressed.append(fp)
                     continue
                 new_budget -= 1
-                for lbl in labels_for(p):
-                    await gh.ensure_label(repo, lbl)
-                number = await gh.create_issue(
-                    repo, title=issue_title(p), body=issue_body(p, cycle_count),
-                    labels=labels_for(p),
+                # Spec 014 US3: creation goes through the issue doorway — the
+                # ONE machine-finding issue writer. The legacy labels ride as
+                # pass-through so Stage-2 pickup and the console lifecycle keep
+                # working; ``gh`` satisfies the doorway's create-path protocol
+                # subset (ensure_label + create_issue). The catalog's own
+                # reopen branch below still handles recurrence-after-close, so
+                # the doorway only ever sees brand-new fingerprints here.
+                outcome = await _doorway.file_finding(
+                    finding_from_problem(p, cycle_count),
+                    repo=repo, store=store, gh=gh, labels=labels_for(p),
+                    now_ms=now_ms,
                 )
-                if number is not None:
-                    store.set_problem_issue(fp, issue_number=number, issue_state="open")
-                    result.filed.append(number)
+                if outcome.ok and outcome.issue_number is not None:
+                    store.set_problem_issue(
+                        fp, issue_number=outcome.issue_number, issue_state="open"
+                    )
+                    result.filed.append(outcome.issue_number)
             else:
                 # Recurred after a close → reopen (not capped; not new noise).
                 number = int(p["issue_number"])
