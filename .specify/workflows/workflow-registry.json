@@ -8,6 +8,14 @@
       "source": "bundled",
       "installed_at": "2026-08-13T06:51:41.999630+00:00",
       "updated_at": "2026-08-13T06:51:41.999641+00:00"
+    },
+    "tinyspec": {
+      "name": "Tiny Lane",
+      "version": "1.0.0",
+      "description": "Small-task lane: tinyspec \u2192 human review gate \u2192 implement (see .claude/rules/speckit-workflow.md, 'Below spec size')",
+      "source": ".specify/workflows/tinyspec/workflow.yml",
+      "installed_at": "2026-08-24T09:21:25.683304+00:00",
+      "updated_at": "2026-08-24T09:21:25.683316+00:00"
     }
   }
 }
