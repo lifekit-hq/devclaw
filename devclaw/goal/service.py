@@ -150,6 +150,12 @@ class GoalService:
         the staleness threshold instead of consumers duplicating config."""
         return self._cfg.tick_seconds
 
+    @property
+    def goal_store(self) -> GoalStore:
+        """Read-only handle for diagnostic surfaces (the doctor tool). Writers
+        keep going through the service verbs — this is not a mutation seam."""
+        return self._goal_store
+
     # ---- cognition callers (bound on first real use) -----------------------
 
     def _registered_workspaces(self) -> "set[str]":

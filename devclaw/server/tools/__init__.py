@@ -29,6 +29,12 @@ from __future__ import annotations
 
 from . import control, delivery, goals, intake, observability, projects, tasks  # noqa: F401
 
+# note: `tools.doctor` resolves to the TOOL FUNCTION (the eval harness picks
+# tools by getattr); the submodule import side effect still registers it.
+from .doctor import (  # noqa: F401
+    doctor,
+)
+
 from .control import (  # noqa: F401
     get_run_schedule,
     clear_usage_pause,

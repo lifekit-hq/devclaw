@@ -530,9 +530,49 @@ def _cmd_schedule_clear(args) -> int:
         store.close()
 
 
+_VERDICT_GLYPH = {"ok": "✓", "warn": "!", "fail": "✗", "unknown": "?"}
+
+
+def _cmd_doctor(reg: ProjectRegistry, all_goals, args) -> int:
+    from .doctor import run_doctor
+
+    if args.project and reg.get(args.project) is None:
+        print(f"unknown project '{args.project}' — see `devclaw projects list`", file=sys.stderr)
+        return 2
+    store = StateStore(_db_path())
+    try:
+        goal_store = GoalStore(_goals_dir(), state=store)
+        report = run_doctor(store, goal_store, reg, project_id=args.project or None)
+    finally:
+        store.close()
+    payload = report.to_dict()
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        for f in payload["findings"]:
+            scope = f["project_id"] or "instance"
+            line = f"{_VERDICT_GLYPH[f['verdict']]} [{scope}] {f['check_id']}: {f['evidence']}"
+            if f["remedy"]:
+                line += f"  → {f['remedy']}"
+            print(line)
+        c = payload["counts"]
+        print(f"\n{'healthy' if payload['healthy'] else 'FINDINGS'} — "
+              f"ok {c['ok']} / warn {c['warn']} / fail {c['fail']} / unknown {c['unknown']}")
+    # warns alone don't fail the exit code; fail/unknown do (contract).
+    return 1 if (payload["counts"]["fail"] or payload["counts"]["unknown"]) else 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devclaw", description="devclaw control-plane CLI")
     sub = parser.add_subparsers(dest="group", required=True)
+
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="read-only instance + per-project diagnostics (the post-redeploy checklist)",
+    )
+    p_doctor.add_argument("--project", help="scope the per-project section to one project id")
+    p_doctor.add_argument("--json", action="store_true")
+    p_doctor.set_defaults(func=_cmd_doctor)
 
     p_score = sub.add_parser(
         "scorecard",
