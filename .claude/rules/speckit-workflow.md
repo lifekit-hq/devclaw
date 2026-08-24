@@ -59,7 +59,10 @@ Denys directly requests do NOT enter the full pipeline — they run through the
 **tinyspec lane** instead: `/speckit-tinyspec-tinyspec` writes ONE file at
 `specs/tiny/<name>.md` (What / Context / Requirements / Plan / Tasks /
 Done-When), committed with the change, and
-`/speckit-tinyspec-implement` executes it. `specs/tiny/` sits outside the
+`/speckit-tinyspec-implement` executes it. The lane is also registered as
+the `tinyspec` workflow in `.specify/workflows/workflow-registry.json`
+(`specify workflow list` shows both lanes; its gate = Denys reviews the tiny
+spec before implementation). `specs/tiny/` sits outside the
 `NNN-` sequential numbering on purpose. This replaces the old "needs no spec"
 exemption: small work now leaves direction memory too, at one file of
 overhead. When in doubt whether work is tiny or spec-sized,

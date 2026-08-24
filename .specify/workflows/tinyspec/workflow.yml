@@ -1,0 +1,45 @@
+schema_version: "1.0"
+workflow:
+  id: "tinyspec"
+  name: "Tiny Lane"
+  version: "1.0.0"
+  author: "lifekit-hq/devclaw"
+  description: "Small-task lane: tinyspec → human review gate → implement (see .claude/rules/speckit-workflow.md, 'Below spec size')"
+
+requires:
+  speckit_version: ">=0.8.5"
+  # The schema has no 'extensions' key: the dependency on the vendored
+  # tinyspec extension (.specify/extensions/tinyspec/, v1.0.0 pinned) is
+  # implicit — the two commands in `steps` exist only when it is installed.
+  integrations:
+    any:
+      - "claude"
+
+inputs:
+  task:
+    type: string
+    required: true
+    prompt: "Describe the small change (bug fix, mechanical refactor, bounded request)"
+  integration:
+    type: string
+    default: "auto"
+    prompt: "Integration to use ('auto' uses the project's initialized integration)"
+
+steps:
+  - id: tinyspec
+    command: speckit.tinyspec
+    integration: "{{ inputs.integration }}"
+    input:
+      args: "{{ inputs.task }}"
+
+  - id: review-tinyspec
+    type: gate
+    message: "Review the tiny spec in specs/tiny/ before implementation."
+    options: [approve, reject]
+    on_reject: abort
+
+  - id: implement
+    command: speckit.tinyspec.implement
+    integration: "{{ inputs.integration }}"
+    input:
+      args: "{{ inputs.task }}"
