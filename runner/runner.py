@@ -1165,6 +1165,16 @@ def main() -> None:
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
     }
+    # The ONE sanctioned credential (#644): the instance's subscription
+    # setup-token, injected into the container env by the engine. It must be
+    # forwarded EXPLICITLY — this env is an allowlist, and without this entry
+    # the agent never sees the token and silently falls back to the mounted
+    # ~/.claude login, whose overnight expiry is exactly the outage class the
+    # setup-token exists to end (live-found 2026-08-24). The refused metered
+    # keys (ANTHROPIC_API_KEY/AUTH_TOKEN) stay out by construction.
+    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    if oauth_token:
+        acp_env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
     if acp_model:
         acp_env["ANTHROPIC_MODEL"] = acp_model
 

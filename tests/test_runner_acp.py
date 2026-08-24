@@ -188,3 +188,25 @@ def test_client_env_allowlist_never_leaks_key_to_agent(tmp_path, monkeypatch):
         client.close()
     assert outcome.last_agent_message != "LEAKED-API-KEY"
     assert outcome.last_agent_message.startswith("All done.")
+
+
+def test_runner_forwards_the_sanctioned_oauth_token_to_the_agent(tmp_path):
+    """The setup-token (#644) must cross the runner's env allowlist and reach
+    the agent process — otherwise the agent silently authenticates with the
+    mounted ~/.claude login, whose overnight expiry is the exact outage this
+    token exists to end (live-found 2026-08-24: host cognition green, every
+    sandbox run 401ing)."""
+    _, _, result, _ = _run_runner(
+        tmp_path, "echo_oauth",
+        env_extra={"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-test-token"},
+    )
+    assert result["status"] == "ok"
+    assert result["agent_output"] == "OAUTH-TOKEN-PRESENT"
+
+
+def test_runner_agent_env_stays_lean_without_a_token(tmp_path):
+    """No token on the host ⇒ none invented for the agent: the allowlist
+    posture is unchanged, and the agent falls back to CLAUDE_CONFIG_DIR."""
+    _, _, result, _ = _run_runner(tmp_path, "echo_oauth")
+    assert result["status"] == "ok"
+    assert result["agent_output"] == "OAUTH-TOKEN-ABSENT"

@@ -98,6 +98,14 @@ class FakeAgent:
         handler = getattr(self, f"script_{self.script}")
         handler(prompt_id)
 
+    def script_echo_oauth(self, prompt_id: int) -> None:
+        """Report whether the sanctioned setup-token reached the AGENT env —
+        the seam #644's original test missed (it asserted the container env,
+        one hop above where the allowlist dropped the token)."""
+        present = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+        self.message("OAUTH-TOKEN-PRESENT" if present else "OAUTH-TOKEN-ABSENT")
+        _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
+
     def script_ok(self, prompt_id: int) -> None:
         self.update(
             {
