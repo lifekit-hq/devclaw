@@ -6,22 +6,46 @@ legitimate commit made inside a worktree the command `cd`s into — a systematic
 false positive that trained the DEVCLAW_ALLOW_MAIN reflex and hollowed out the
 guard. The fix resolves the dir the git command actually runs in.
 """
-import importlib.util
+import subprocess
+import types
 from pathlib import Path
 
 import pytest
 
-_HOOK = Path(__file__).resolve().parents[1] / ".claude" / "hooks" / "main-branch-guard.py"
+_REPO = Path(__file__).resolve().parents[1]
+_HOOK = _REPO / ".claude" / "hooks" / "main-branch-guard.py"
+
+
+def _hook_source(path: Path = _HOOK) -> str:
+    # The devclaw sandbox tmpfs-shadows the repo's tracked .claude/, so the
+    # working-tree file can be absent or unreadable in-sandbox; the committed
+    # hook is the same content — read it through git rather than erroring the
+    # whole suite at collection.
+    try:
+        return path.read_text()
+    except OSError:
+        return subprocess.run(
+            ["git", "show", "HEAD:.claude/hooks/main-branch-guard.py"],
+            cwd=_REPO, capture_output=True, text=True, check=True,
+        ).stdout
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("main_branch_guard", _HOOK)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = types.ModuleType("main_branch_guard")
+    mod.__file__ = str(_HOOK)
+    exec(compile(_hook_source(), str(_HOOK), "exec"), mod.__dict__)
     return mod
 
 
 guard = _load()
+
+
+def test_hook_source_falls_back_to_git_when_working_tree_unreadable():
+    # The sandbox case: .claude/ is tmpfs-shadowed, so the working-tree path
+    # is unreadable — the loader must serve the committed hook via `git show`
+    # instead of failing the suite at collection time.
+    src = _hook_source(Path("/nonexistent/.claude/hooks/main-branch-guard.py"))
+    assert "def blocks" in src and "def effective_cwd" in src
 
 MAIN_CHECKOUT = "/home/x/projects/devclaw"  # the session cwd — always on main
 
