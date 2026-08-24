@@ -317,7 +317,7 @@ _BAD_DIRECTIONS = frozenset({"off_track", "stalled"})
 
 def _parse_days(raw: "str | None", default: int) -> int:
     """Retention in days from a raw env value, ``<= 0`` disables — the same
-    contract (and the same shape) as ``state_store.core._parse_retention_days``.
+    contract (and the same shape) as ``state_store.observability._parse_retention_days``.
     The env NAME stays a literal at the call site so the doc-parity scanner in
     ``tests/test_env_vars_doc_sync.py`` can see the read."""
     if raw is None or not raw.strip():
