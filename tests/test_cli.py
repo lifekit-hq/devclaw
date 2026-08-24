@@ -92,3 +92,24 @@ def test_rm(env, capsys):
     main(["projects", "register", "todo", "Todo App"])
     assert main(["projects", "rm", "todo"]) == 0
     assert main(["projects", "show", "todo"]) == 1
+
+
+def test_doctor_json_reports_and_exit_codes(env, capsys, monkeypatch):
+    # isolate host surfaces so the developer's real ~/.claude never leaks in
+    claude_dir = env["db"].parent / "claude-home"
+    claude_dir.mkdir()
+    monkeypatch.setenv("DEVCLAW_HOST_CLAUDE_DIR", str(claude_dir))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(claude_dir))
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    # fresh DB: credentials absent -> a fail finding -> exit 1
+    assert main(["doctor", "--json"]) == 1
+    data = json.loads(capsys.readouterr().out)
+    assert data["healthy"] is False
+    ids = {f["check_id"] for f in data["findings"]}
+    assert "instance.auth.credentials_file" in ids
+    assert "instance.migrations.meta_keys" in ids
+
+
+def test_doctor_unknown_project_rejects(env, capsys):
+    assert main(["doctor", "--project", "ghost"]) == 2
+    assert "unknown project" in capsys.readouterr().err
