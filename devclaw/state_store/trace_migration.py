@@ -10,7 +10,7 @@ in half — which is why telemetry grew a second read path
 code.
 
 That second path guarded rows the database no longer holds: ``traces`` is
-pruned daily to :data:`~devclaw.state_store.core.TRACE_RETENTION_DAYS_DEFAULT`
+pruned daily to :data:`~devclaw.state_store.observability.TRACE_RETENTION_DAYS_DEFAULT`
 (30) days, so a pre-cutoff row survives only in a database whose retention was
 switched off. This module is what makes the deletion safe anyway — it
 backfills ``response_text`` from the preview on any such row and drops the

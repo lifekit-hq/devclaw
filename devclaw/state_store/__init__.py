@@ -7,8 +7,13 @@ The store was split into a package for legibility (behavior-preserving):
 
 - :mod:`.rows` — the pure data (dataclasses, row mappers, literals, constants).
 - :mod:`.control` — :class:`ControlPlaneMixin`, the thin typed ``meta`` wrappers.
+- :mod:`.problems` — :class:`ProblemsMixin`, the deduplicated problems catalog.
+- :mod:`.observability` — :class:`ObservabilityMixin`, the events/traces logs
+  + their retention prunes.
+- :mod:`.evals` — :class:`EvalOutcomesMixin`, the continuous-eval projections
+  (eval_outcomes + cycle_reports, ADR 0006).
 - :mod:`.core` — :class:`StateStore` itself: connection, transactions,
-  task/program/event/trace CRUD, scheduling/recovery.
+  task/program CRUD, scheduling/recovery, VACUUM + DB-size alarm.
 
 Every public name the pre-split ``state_store.py`` exported is re-exported here,
 so no importer changes.
