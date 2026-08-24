@@ -190,6 +190,28 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                   cycle_key   TEXT NOT NULL,
                   PRIMARY KEY (fingerprint, cycle_key)
                 );
+
+                -- Machine-filed issue ledger (spec 014) — the issue doorway's
+                -- dedup source of truth: one row per (repo, fingerprint) a
+                -- machine finding has ever been filed for. Local SQLite, not
+                -- GitHub search, is authoritative (research.md D3): search is
+                -- eventually consistent and rate-limited, and this instance is
+                -- the single writer by construction. Distinct from `problems`
+                -- on purpose: a problems row is a gatherer signal; this row is
+                -- the filing record for ANY producer (catalog, deploy smoke,
+                -- spec-015 validator).
+                CREATE TABLE IF NOT EXISTS machine_issues (
+                  repo             TEXT NOT NULL,
+                  fingerprint      TEXT NOT NULL,
+                  issue_number     INTEGER NOT NULL,
+                  issue_state      TEXT NOT NULL,
+                  schema_version   INTEGER NOT NULL,
+                  source           TEXT NOT NULL,
+                  occurrence_count INTEGER NOT NULL DEFAULT 1,
+                  first_seen_ms    INTEGER NOT NULL,
+                  last_seen_ms     INTEGER NOT NULL,
+                  PRIMARY KEY (repo, fingerprint)
+                );
                 """
             )
 

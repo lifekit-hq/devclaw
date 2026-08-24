@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-24
 
-**Status**: Draft
+**Status**: Implemented (2026-08-24)
 
 **Input**: User description: "One machine-parseable issue schema (source, fingerprint, evidence, expected-vs-actual, severity, proposed done_when) filed through one doorway module, used by every machine-found problem: validator findings, deploy smoke, problems catalog. Grilled and locked with Denys 2026-08-24."
 

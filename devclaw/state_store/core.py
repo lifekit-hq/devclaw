@@ -9,7 +9,9 @@ from background tasks. WAL mode gives concurrent reads with a single writer.
 The thin typed ``meta`` wrappers (quota pause, operator hold, run windows,
 workspace breaker, trend cooldowns) live on :class:`ControlPlaneMixin` in
 ``control.py``; the problems catalog on :class:`ProblemsMixin` in
-``problems.py``; the events/traces logs + their retention prunes on
+``problems.py``; the machine-filed issue ledger (spec 014) on
+:class:`MachineIssuesMixin` in ``machine_issues.py``; the events/traces logs +
+their retention prunes on
 :class:`ObservabilityMixin` in ``observability.py``; the continuous-eval
 projections on :class:`EvalOutcomesMixin` in ``evals.py``; the pure data
 (dataclasses + row mappers + literals) lives in ``rows.py``. This module holds
@@ -37,6 +39,7 @@ from .observability import (  # noqa: F401 — compat re-exports: the retention
     events_retention_days,
     trace_retention_days,
 )
+from .machine_issues import MachineIssuesMixin
 from .problems import ProblemsMixin
 from .schema import bootstrap as _schema_bootstrap
 from .rows import (
@@ -100,7 +103,9 @@ def db_size_alert_bytes() -> int:
     return mb * 1024 * 1024 if mb > 0 else 0
 
 
-class StateStore(ControlPlaneMixin, ProblemsMixin, ObservabilityMixin, EvalOutcomesMixin):
+class StateStore(
+    ControlPlaneMixin, ProblemsMixin, MachineIssuesMixin, ObservabilityMixin, EvalOutcomesMixin
+):
     def __init__(self, db_path: str) -> None:
         Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         #: resolved path to the .db file, kept for VACUUM / on-disk size checks.

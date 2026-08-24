@@ -341,7 +341,15 @@ filter) is the read surface over it. **The catalog is a GATHERER, not a backlog
 failure" — is **GitHub Issues**; SQLite stays canonical for execution *state*;
 this table is the mechanical feeder between them. The self-improving loop
 (`goal/self_issue.py`) files a *recurring* problem as an Issue and links it back
-(`issue_number`/`issue_state`); every problem read surface — the `list_problems`
+(`issue_number`/`issue_state`) — since spec 014 the actual issue creation goes
+through **`devclaw/issue_doorway.py`**, the single writer of machine-found
+problems as GitHub issues: one versioned, machine-parseable body schema
+(source, fingerprint, evidence, expected-vs-actual, severity, proposed
+done-when), idempotent by fingerprint via the `machine_issues` ledger, fail-loud
+on any filing error, zero LLM. Every future machine producer (the post-deploy
+smoke, the spec-015 validator) files through it, and a structural guard holds
+`gh issue create` to that module plus the human doorway (`devclaw/intake.py`).
+Every problem read surface — the `list_problems`
 tool and the console `/problems.json` — carries that linkage plus a derived
 `lifecycle` (`identified → filed → resolved`, one home: `problems.problem_lifecycle`)
 so it points at the canonical Issue rather than inviting independent triage. See
