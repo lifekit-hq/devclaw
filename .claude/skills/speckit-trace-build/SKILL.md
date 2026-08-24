@@ -1,0 +1,1 @@
+../../../.specify/extensions/trace/.specify-dev/agent-commands/claude/speckit-trace-build/SKILL.md
