@@ -256,6 +256,29 @@ async def onboard(
             indent=2,
         )
 
+    # Adopted repo whose devclaw.json is absent or mechanically behind ⇒ the
+    # seed/migrate PR first (spec 016 US3: doctor detects, re-onboard migrates,
+    # the human merges). Mechanical fields only; human-set fields preserved.
+    if _speckit.manifest_needs_upkeep(resolved.workspace_dir):
+        result = await _speckit.migrate_manifest_pr(
+            resolved.workspace_dir, project_id=resolved.project_id
+        )
+        return json.dumps(
+            {
+                "manifest": "migrate_pr",
+                "pr_url": result.get("pr_url"),
+                "branch": result.get("branch"),
+                "changed": result.get("changed", []),
+                "error": result.get("error"),
+                "note": (
+                    "devclaw.json was absent or behind — opened a reviewable "
+                    "seed/migrate PR. Merge it, then re-run onboard for the "
+                    "comprehension-doc pass."
+                ),
+            },
+            indent=2,
+        )
+
     # Committed .specify/ present ⇒ adopt: no plan file, no scaffolding PR; run the
     # comprehension-doc onboarding pass as usual.
     task_id = queue.submit(

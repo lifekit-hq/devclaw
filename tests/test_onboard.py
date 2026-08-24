@@ -226,6 +226,11 @@ def onboard_env(store, tmp_path, monkeypatch):
 
     ws = str(tmp_path / "repo")
     os.makedirs(ws)
+    # a CURRENT manifest, so onboard proceeds to the docs pass instead of
+    # opening the spec-016 seed/migrate PR first
+    from devclaw.project_manifest import seed_manifest
+
+    seed_manifest(ws)
     q = TaskQueue(store, runner=_onboard_runner())
 
     monkeypatch.setattr(

@@ -274,3 +274,65 @@ def test_crashed_check_reports_unknown_never_omitted(env, monkeypatch):
     report = _run(env)
     (f,) = [x for x in report.findings if x.check_id == "instance.boom"]
     assert f.verdict is Verdict.UNKNOWN and "probe exploded" in f.evidence
+
+
+# ---- US3: manifest / boilerplate drift ------------------------------------
+
+
+def test_absent_manifest_warns_with_onboard_remedy(env, tmp_path):
+    register_tmp_project(env["registry"], str(tmp_path / "ws-m1"))
+    (f,) = _findings(_run(env), "project.manifest.presence")
+    assert f.verdict is Verdict.WARN and "onboard" in f.remedy
+
+
+def test_malformed_manifest_is_a_fail_finding(env, tmp_path):
+    ws = tmp_path / "ws-m2"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "devclaw.json").write_text("{oops")
+    (f,) = _findings(_run(env), "project.manifest.valid")
+    assert f.verdict is Verdict.FAIL and "human-owned" in f.remedy
+
+
+def test_schema_newer_than_instance_is_a_fail_finding(env, tmp_path):
+    ws = tmp_path / "ws-m3"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "devclaw.json").write_text('{"schemaVersion": 999}')
+    (f,) = _findings(_run(env), "project.manifest.valid")
+    assert f.verdict is Verdict.FAIL and "instance too old" in f.evidence
+
+
+def test_boilerplate_revision_behind_names_both_revisions(env, tmp_path, monkeypatch):
+    import devclaw.project_manifest as pm
+
+    ws = tmp_path / "ws-m4"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
+    monkeypatch.setattr(pm, "BOILERPLATE_REVISION", 2)
+    (f,) = _findings(_run(env), "project.manifest.revision")
+    assert f.verdict is Verdict.WARN
+    assert "revision 1" in f.evidence and "2" in f.evidence
+    assert "onboard" in f.remedy
+
+
+def test_unpaired_managed_marker_is_a_fail(env, tmp_path):
+    ws = tmp_path / "ws-m5"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "AGENTS.md").write_text("x\n<!-- devclaw:managed:start -->\nowned\n")
+    (f,) = _findings(_run(env), "project.markers.integrity")
+    assert f.verdict is Verdict.FAIL and "unpaired" in f.evidence
+
+
+def test_scaffold_drift_detected_against_packaged_source(env, tmp_path):
+    from devclaw.speckit_setup import scaffold_specify
+
+    ws = tmp_path / "ws-m6"
+    register_tmp_project(env["registry"], str(ws))
+    scaffold_specify(str(ws))
+    # matches the packaged source ⇒ ok
+    (ok,) = _findings(_run(env), "project.scaffold.drift")
+    assert ok.verdict is Verdict.OK
+    # mutate one canonical file ⇒ drift warn naming it
+    tmpl = next((ws / ".specify" / "templates").glob("*.md"))
+    tmpl.write_text(tmpl.read_text() + "\nlocal fork\n")
+    (f,) = _findings(_run(env), "project.scaffold.drift")
+    assert f.verdict is Verdict.WARN and tmpl.name in f.evidence

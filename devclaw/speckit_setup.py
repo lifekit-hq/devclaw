@@ -28,7 +28,14 @@ from pathlib import Path
 
 from .delivery import deliver_change  # module global so tests can patch it
 from .procutil import run as _run
-from .project_manifest import seed_manifest
+from .project_manifest import (
+    BOILERPLATE_REVISION,
+    SCHEMA_VERSION,
+    ManifestError,
+    load_manifest,
+    migrate_manifest,
+    seed_manifest,
+)
 
 #: The deterministic branch the install PR lands on, so the dispatch gate can
 #: find an open install PR by head without any persisted state.
@@ -182,6 +189,71 @@ def scaffold_specify(workspace_dir: str) -> list[str]:
         created.append(".specify/memory/constitution.md")
 
     return created
+
+
+#: deterministic branch for the manifest seed/migrate PR — same rationale as
+#: INSTALL_BRANCH: findable by head with no persisted state.
+MIGRATE_BRANCH = "devclaw/migrate-manifest"
+
+
+def manifest_needs_upkeep(workspace_dir: str) -> bool:
+    """True when the repo's devclaw.json is absent or mechanically behind
+    (schemaVersion / boilerplateRevision) — i.e. a re-onboard should open the
+    seed/migrate PR (spec 016 US3). A malformed manifest returns False: that
+    is a human-fix-by-PR condition doctor reports; migration never repairs by
+    guessing."""
+    try:
+        manifest = load_manifest(workspace_dir)
+    except ManifestError:
+        return False
+    if manifest is None:
+        return True
+    return (manifest.schema_version != SCHEMA_VERSION
+            or manifest.boilerplate_revision < BOILERPLATE_REVISION)
+
+
+async def migrate_manifest_pr(workspace_dir: str, *, project_id: str | None = None) -> dict:
+    """Seed-or-migrate the manifest via a **reviewable PR** (spec 016 US3:
+    doctor detects, re-onboard migrates, the human merges). Mechanical fields
+    only — every human-set field is preserved verbatim (``migrate_manifest``).
+    Idempotent on an already-open migrate PR. Same branch dance as
+    :func:`install_speckit_pr`."""
+    rc_pr, out_pr = await _run(
+        "gh", "pr", "list", "--head", MIGRATE_BRANCH, "--state", "open",
+        "--json", "url", "--jq", ".[0].url // empty", cwd=workspace_dir,
+    )
+    if rc_pr == 0 and out_pr.strip():
+        return {"delivered": True, "pr_url": out_pr.strip(), "branch": MIGRATE_BRANCH,
+                "already_open": True, "changed": []}
+
+    rc0, orig = await _run("git", "rev-parse", "--abbrev-ref", "HEAD", cwd=workspace_dir)
+    orig_branch = orig.strip() if rc0 == 0 and orig.strip() and orig.strip() != "HEAD" else None
+    try:
+        rc, out = await _run("git", "checkout", "-B", MIGRATE_BRANCH, cwd=workspace_dir)
+        if rc != 0:
+            return {"delivered": False, "pr_url": None, "branch": MIGRATE_BRANCH,
+                    "error": f"could not create migrate branch: {out[-200:]}", "changed": []}
+        changed: list[str] = []
+        seeded = seed_manifest(workspace_dir)
+        if seeded:
+            changed.append(seeded)
+        elif migrate_manifest(workspace_dir):
+            changed.append("devclaw.json")
+        if not changed:
+            return {"delivered": False, "pr_url": None, "branch": MIGRATE_BRANCH,
+                    "error": None, "changed": [], "note": "manifest already current"}
+        result = await deliver_change(
+            workspace_dir=workspace_dir,
+            task_id=f"migrate-manifest-{project_id or 'repo'}",
+            goal="Bring devclaw.json to the current schema/boilerplate revision",
+            kind="onboard",
+            target_branch=MIGRATE_BRANCH,
+        )
+        result["changed"] = changed
+        return result
+    finally:
+        if orig_branch:
+            await _run("git", "checkout", orig_branch, cwd=workspace_dir)
 
 
 async def install_speckit_pr(workspace_dir: str, *, project_id: str | None = None) -> dict:

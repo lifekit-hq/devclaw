@@ -189,3 +189,35 @@ def test_seed_manifest_never_touches_an_existing_human_owned_file(tmp_path):
     (tmp_path / MANIFEST_NAME).write_text('{"schemaVersion": 1, "surface": "app"}')
     assert seed_manifest(str(tmp_path)) is None
     assert load_manifest(str(tmp_path)).surface == "app"  # byte-untouched semantics
+
+
+# ---- migration (US3) ------------------------------------------------------
+
+
+def test_migrate_manifest_bumps_mechanical_fields_preserving_human_ones(tmp_path):
+    from devclaw.project_manifest import migrate_manifest
+
+    (tmp_path / MANIFEST_NAME).write_text(json.dumps({
+        "schemaVersion": 1, "boilerplateRevision": 0,
+        "strictnessDefault": "strict", "futureKnob": [1, 2],
+    }))
+    import devclaw.project_manifest as pm
+    orig = pm.BOILERPLATE_REVISION
+    try:
+        pm.BOILERPLATE_REVISION = orig + 1
+        assert migrate_manifest(str(tmp_path)) is True
+        raw = json.loads((tmp_path / MANIFEST_NAME).read_text())
+        assert raw["boilerplateRevision"] == orig + 1
+        assert raw["strictnessDefault"] == "strict"    # human field untouched
+        assert raw["futureKnob"] == [1, 2]             # unknown key preserved
+        assert migrate_manifest(str(tmp_path)) is False  # idempotent
+    finally:
+        pm.BOILERPLATE_REVISION = orig
+
+
+def test_migrate_manifest_refuses_a_malformed_file(tmp_path):
+    from devclaw.project_manifest import migrate_manifest
+
+    (tmp_path / MANIFEST_NAME).write_text("{oops")
+    with pytest.raises(ManifestError):
+        migrate_manifest(str(tmp_path))

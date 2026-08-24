@@ -1,6 +1,6 @@
 # Doctor — the post-redeploy checklist as one verb
 
-**Status**: CURRENT — written with spec 016 US1 (2026-08-24).
+**Status**: CURRENT — written with spec 016 US1 (2026-08-24); US3 drift checks added same day.
 
 After **every** redeploy (and any time the instance feels off), run the
 doctor before trusting the box:
@@ -40,6 +40,11 @@ Per-project section:
 - dangling advisory `goal_ids` links (cancel+refile drift — invisible to
   rollups until doctor)
 - goals on the project's workspace missing their `project_id` stamp
+- `devclaw.json` presence / validity / boilerplate-revision currency (US3 —
+  the remedy is re-`onboard`, which opens the seed/migrate PR; see
+  [`../reference/devclaw-manifest.md`](../reference/devclaw-manifest.md))
+- `devclaw:managed` marker integrity in AGENTS.md, and `.specify/` scaffold
+  drift against the packaged canonical source (the #610 fork class, per repo)
 
 ## Exit codes (CLI)
 

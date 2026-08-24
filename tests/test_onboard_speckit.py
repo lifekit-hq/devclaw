@@ -74,6 +74,11 @@ async def test_onboard_adopts_a_repo_with_committed_specify_no_plan_no_pr(
     # A committed .specify/ is the adopt signal.
     (ws / ".specify" / "memory").mkdir(parents=True)
     (ws / ".specify" / "memory" / "constitution.md").write_text("# Constitution\n")
+    # a CURRENT manifest, so adopt proceeds straight to the docs pass (spec
+    # 016: an absent/behind manifest opens the seed/migrate PR first instead)
+    from devclaw.project_manifest import seed_manifest
+
+    seed_manifest(str(ws))
     _commit_all(ws, "add speckit")
 
     registry.create(id="adopt", name="adopt", workspace_dir=str(ws))
@@ -354,3 +359,78 @@ async def test_feature_block_reason_clears_once_speckit_committed(tmp_path, monk
 
     monkeypatch.setattr(_speckit, "open_install_pr", _boom)
     assert await _speckit.feature_block_reason(str(ws)) is None
+
+
+# ---- (c) spec 016 US3: manifest seed/migrate PR ----------------------------
+
+
+async def test_onboard_migrates_a_behind_manifest_via_reviewable_pr(
+    tmp_path, registry, monkeypatch
+):
+    from devclaw.speckit_setup import MIGRATE_BRANCH
+
+    ws = tmp_path / "behind-repo"
+    _init_repo(ws)
+    (ws / ".specify" / "memory").mkdir(parents=True)
+    (ws / ".specify" / "memory" / "constitution.md").write_text("# C\n")
+    # a manifest mechanically behind, with a human-set field that must survive
+    (ws / "devclaw.json").write_text(
+        '{"schemaVersion": 1, "boilerplateRevision": 0, "surface": "library"}')
+    _commit_all(ws, "add speckit + old manifest")
+    default_branch = _git(ws, "rev-parse", "--abbrev-ref", "HEAD")
+    head_before = _git(ws, "rev-parse", "HEAD")
+
+    registry.create(id="behind", name="behind", workspace_dir=str(ws))
+    monkeypatch.setattr(_tools._common, "registry", registry)
+    fake_q = _FakeQueue()
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
+
+    calls: list[dict] = []
+
+    async def fake_deliver(**kwargs):
+        calls.append(kwargs)
+        return {"delivered": True, "branch": kwargs.get("target_branch"),
+                "pr_url": "https://github.com/x/y/pull/9", "error": None}
+
+    monkeypatch.setattr(_speckit, "deliver_change", fake_deliver)
+
+    out = json.loads(await _tools.onboard(project_id="behind"))
+
+    assert out["manifest"] == "migrate_pr"
+    assert out["pr_url"] == "https://github.com/x/y/pull/9"
+    assert out["changed"] == ["devclaw.json"]
+    assert calls and calls[0]["target_branch"] == MIGRATE_BRANCH
+    # mechanical fields bumped, the human-set field preserved verbatim
+    import json as _json
+    from devclaw.project_manifest import BOILERPLATE_REVISION, SCHEMA_VERSION
+    raw = _json.loads((ws / "devclaw.json").read_text())
+    assert raw["schemaVersion"] == SCHEMA_VERSION
+    assert raw["boilerplateRevision"] == BOILERPLATE_REVISION
+    assert raw["surface"] == "library"
+    # zero silent commits to the default branch; the docs pass was NOT queued
+    assert _git(ws, "rev-parse", default_branch) == head_before
+    assert fake_q.submitted == []
+
+
+async def test_onboard_with_current_manifest_skips_the_migrate_pr(
+    tmp_path, registry, monkeypatch
+):
+    from devclaw.project_manifest import seed_manifest
+
+    ws = tmp_path / "current-repo"
+    _init_repo(ws)
+    (ws / ".specify" / "memory").mkdir(parents=True)
+    (ws / ".specify" / "memory" / "constitution.md").write_text("# C\n")
+    seed_manifest(str(ws))
+    _commit_all(ws, "speckit + current manifest")
+
+    registry.create(id="cur", name="cur", workspace_dir=str(ws))
+    monkeypatch.setattr(_tools._common, "registry", registry)
+    fake_q = _FakeQueue()
+    monkeypatch.setattr(_tools.intake, "queue", fake_q)
+    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
+
+    out = json.loads(await _tools.onboard(project_id="cur"))
+    assert out["speckit"] == "adopted"
+    assert fake_q.submitted and fake_q.submitted[0]["kind"] == "onboard"
