@@ -356,20 +356,24 @@ def _pr_body(
 
 def _goal_pr_body(
     goal: str, task_id: str, verify: dict | None,
-    subjects: list[str], *, advisories: list | None = None,
+    subjects: list[str], *, changes: str | None = None, advisories: list | None = None,
 ) -> str:
-    """The PR body for a GOAL-branch PR (one PR spans the whole goal): the goal
-    objective, the running list of increments landed on the branch, a verify
-    note for the latest increment, ``Closes #N``, any trust-mode advisories, and
-    a plain signature. Refreshed on every delivery so the reviewer always sees
-    the accumulated state instead of the first increment frozen in time."""
-    lead = goal.strip()
-    if _is_advance_brief(lead):
-        # The thin-advance brief is dispatch plumbing, not a description —
-        # render the goal's embedded objective instead (the same rule
-        # _resolve_title applies; the goal-branch path must not leak it either).
-        lead = _objective_from_brief(lead) or "advance the goal by one increment"
-    parts = [lead or "(goal branch)", ""]
+    """The PR body for a GOAL-branch PR (one PR spans the whole goal): a lead
+    derived from the agent's commit body (never the dispatch prompt), the running
+    list of increments landed on the branch, a verify note for the latest
+    increment, ``Closes #N``, any trust-mode advisories, and a plain signature.
+    Refreshed on every delivery so the reviewer always sees the accumulated state.
+
+    ``changes`` is the agent's commit body for the latest increment — the same
+    source ``_pr_body`` uses. When None, renders ``_NO_AGENT_COMMIT_LEAD`` rather
+    than echoing the dispatch prompt (goal text is NEVER the lead)."""
+    lead = (
+        _strip_directive_lines(changes)
+        if changes is not None
+        else _NO_AGENT_COMMIT_LEAD
+    )
+    lead = _strip_coauthor_lines(lead)
+    parts = [lead or "(see commit)", ""]
     if subjects:
         parts += [f"## Increments landed on this goal branch ({len(subjects)})"]
         parts += [f"- {s}" for s in subjects]
@@ -380,9 +384,9 @@ def _goal_pr_body(
             parts += [f"Latest increment verified with `{cmd}` — passing.", ""]
         else:
             parts += [f"Latest gate `{cmd}` did **not** pass — see the task error.", ""]
-    for n in _closes_issues(goal):
+    for n in _closes_issues(goal, changes):
         parts += [f"Closes #{n}"]
-    if _closes_issues(goal):
+    if _closes_issues(goal, changes):
         parts += [""]
     if advisories:
         parts += ["## ⚠️ Advisory — shipped under `trust`, review before merging"]
@@ -764,7 +768,7 @@ async def deliver_change(
                     # Same rule as _resolve_title: the advance brief never titles a PR.
                     title_basis = _objective_from_brief(goal) or "advance the goal by one increment"
                 title = _pr_title(title_basis, kind)
-            body = _goal_pr_body(goal, task_id, verify, subjects, advisories=advisories)
+            body = _goal_pr_body(goal, task_id, verify, subjects, changes=changes, advisories=advisories)
             existing = await _find_pr_for_branch(workspace_dir, branch)
             if existing:
                 # Refresh the existing PR to the accumulated state. Best-effort: a

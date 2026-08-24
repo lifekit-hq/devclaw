@@ -136,20 +136,30 @@ def test_resolve_title_no_worker_commit_returns_machine_commit_subject():
 
 def test_goal_branch_pr_body_never_renders_the_advance_brief():
     # The #538 shakedown live find: the GOAL-BRANCH path fed the raw advance
-    # brief into the PR body (and title), so a delivered PR read as its own
-    # dispatch instructions ("Advance this goal by one substantive…"). Same
-    # rule as _resolve_title: the brief is plumbing — render the embedded
-    # objective instead. Presence AND absence.
+    # brief into the PR body. Now the lead derives from the agent's commit body
+    # (changes=), not the goal text — so the brief stays out whether or not the
+    # agent committed. Presence AND absence.
     body = _goal_pr_body(
         _ADVANCE_BRIEF, "deadbeef12", None,
         ["feat: add truncate_words utility"],
+        changes=None,
     )
     assert "Advance this goal by one substantive" not in body
-    assert body.startswith("Build a small field notes REST API")
+    assert _NO_AGENT_COMMIT_LEAD in body           # explicit, not silent
     assert "feat: add truncate_words utility" in body  # increments list kept
-    # A non-brief goal (one-shot on a goal branch) still renders verbatim.
-    plain = _goal_pr_body("add a widget", "deadbeef12", None, [])
-    assert plain.startswith("add a widget")
+    # With an agent commit body, the commit text leads (not the advance brief).
+    body_with_commit = _goal_pr_body(
+        _ADVANCE_BRIEF, "deadbeef12", None,
+        ["feat: add truncate_words utility"],
+        changes="Adds cursor paging.",
+    )
+    assert "Advance this goal by one substantive" not in body_with_commit
+    assert "Adds cursor paging." in body_with_commit
+    # A non-brief goal also doesn't leak into the lead — goal text is goal text,
+    # not a description of what changed.
+    plain = _goal_pr_body("add a widget", "deadbeef12", None, [], changes=None)
+    assert _NO_AGENT_COMMIT_LEAD in plain
+    assert "add a widget" not in plain.split("## Increments")[0]  # not in lead
 
 
 def test_goal_branch_pr_title_fallback_strips_issue_pointer_preamble_and_truncates_at_word_boundary():
@@ -283,6 +293,48 @@ def test_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit():
     assert "Add a very specific endpoint" not in body   # prompt text never leaks
     # The constant is in the summary section.
     assert _NO_AGENT_COMMIT_LEAD in body
+
+
+def test_goal_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit():
+    """Spec 017 steering [clause 2]: the goal-branch PR body must apply the same
+    rule as _pr_body — when the agent committed nothing, say so explicitly rather
+    than silently presenting the goal text as if it described the change."""
+    body = _goal_pr_body("Add a very specific endpoint", "id", None, [], changes=None)
+    assert "Agent authored no commit" in body            # explicit, not silent
+    assert "Add a very specific endpoint" not in body   # prompt text never leaks in lead
+    assert _NO_AGENT_COMMIT_LEAD in body
+
+
+def test_goal_pr_body_instruction_text_never_leaks():
+    """Spec 017 steering [clause 5]: instruction-only text injected into a goal's
+    objective (IMPORTANT: preambles, branch hints, retry/failure context) must not
+    appear in a goal-branch PR body — covering the gap left by single-task-PR tests."""
+    goal_with_instructions = (
+        "IMPORTANT: read branch hints before starting.\n"
+        "Build a field notes API.\n"
+        "Prior attempt failed due to test collection errors."
+    )
+    body = _goal_pr_body(goal_with_instructions, "id", None, [], changes=None)
+    assert "IMPORTANT:" not in body
+    assert "read branch hints" not in body
+    assert "Prior attempt failed" not in body
+    assert _NO_AGENT_COMMIT_LEAD in body
+    # With an agent commit, the commit text leads — instruction text still absent.
+    body_with_commit = _goal_pr_body(
+        goal_with_instructions, "id", None,
+        ["feat: add notes endpoint"],
+        changes="Adds POST /notes and GET /notes. Verified with pytest.",
+    )
+    assert "IMPORTANT:" not in body_with_commit
+    assert "Prior attempt failed" not in body_with_commit
+    assert "Adds POST /notes" in body_with_commit
+    # Issue refs extracted from goal text still land in Closes section (safe).
+    body_issue = _goal_pr_body(
+        "IMPORTANT: fix the thing urgently. Fix devclaw issue #99: pagination.",
+        "id", None, [], changes=None,
+    )
+    assert "IMPORTANT:" not in body_issue
+    assert "Closes #99" in body_issue
 
 
 def test_closes_issues_extraction():

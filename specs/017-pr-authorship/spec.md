@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-24
 
-**Status**: Implemented
+**Status**: Implemented (US1 + US2)
 
 ## Problem
 
@@ -61,6 +61,37 @@ dispatch prompt that triggered the run.
   file at collection time without a `pytest.skip()` in the test file itself
   (which the test-integrity gate rejects). Use `collect_ignore` in conftest.py.
 
+## User Story 2 — Goal-branch PR body from the agent's commit (Priority: P1)
+
+When a devclaw long-lived goal delivers a PR, the goal-branch PR body describes
+WHAT THE AGENT CHANGED — derived from the agent's own commit body (via `changes`)
+— not the dispatch prompt that triggered the run. This is the same rule US1
+applies to single-task PRs, extended to the cumulative goal-branch path.
+
+**Acceptance Scenarios**:
+
+1. **Given** the agent wrote a commit for the latest increment,
+   **When** `_goal_pr_body` is called with `changes=<body>`,
+   **Then** the PR body leads with that commit body, not the dispatch prompt.
+
+2. **Given** no agent commit exists (`changes=None`),
+   **When** `_goal_pr_body` is rendered,
+   **Then** the body explicitly says "Agent authored no commit" (not the goal text).
+
+3. **Given** instruction-only text in the goal (IMPORTANT: preambles, branch hints,
+   retry/failure context),
+   **When** `_goal_pr_body` is rendered regardless of `changes`,
+   **Then** none of that instruction text appears in the PR body.
+
+## Requirements
+
+- **FR-006**: `_goal_pr_body` MUST NOT echo the dispatch prompt (`goal.strip()`)
+  as its lead. When `changes=None`, it MUST render `_NO_AGENT_COMMIT_LEAD`.
+  When `changes` is set, it MUST lead with `changes` (stripped of directive lines
+  and co-author trailers), exactly as `_pr_body` does.
+- **FR-007**: The `_goal_pr_body` call site in `deliver_change` MUST pass
+  `changes=changes` so the agent's commit body reaches the goal-branch PR body.
+
 ## Success Criteria
 
 - **SC-001**: Dispatch prompt text never appears in a delivered PR title or body.
@@ -68,3 +99,5 @@ dispatch prompt that triggered the run.
   `.claude/` is absent.
 - **SC-003**: The test-integrity gate passes: no `pytest.skip()` markers added
   to test files.
+- **SC-004**: `_goal_pr_body` called with a goal containing "IMPORTANT:" or
+  retry context produces a body with no such text.
