@@ -140,14 +140,14 @@ def test_projection_hiccup_never_unsettles_the_task(store, monkeypatch, capsys):
     # Best-effort telemetry: a bug inside the projection logs and drops the
     # row — the settle itself still commits (a wedged settle path would be
     # worse than a lost telemetry row).
-    from devclaw.state_store import core as store_core
+    from devclaw.state_store import evals as store_evals
 
     def boom(_error):
         raise RuntimeError("projection exploded")
 
     store.create_task(id="t1", kind="implement_feature", workspace_dir="/ws", goal="g")
     store.claim_pending("t1")
-    monkeypatch.setattr(store_core, "derive_failure_class", boom)
+    monkeypatch.setattr(store_evals, "derive_failure_class", boom)
     store.mark_failed("t1", "some terminal error")
     assert store.get_task("t1").status == "failed"
     assert store.list_eval_outcomes() == []
