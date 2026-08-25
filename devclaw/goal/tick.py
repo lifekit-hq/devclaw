@@ -548,7 +548,11 @@ async def _handle_long_lived_advance(
     status = store.load_status(goal_id)
     work = bool(finished_detail) or bool(steering)
     if status.phase == "blocked":
-        should_plan = work
+        # Human-gated: only a settle or HUMAN steering unblocks. Machine
+        # rows (source ``auto-*``, e.g. the churn brake's own corrections)
+        # stay parked with the goal and are consumed by the first dispatch
+        # after a human acts.
+        should_plan = bool(finished_detail) or store.has_unread_human_steering(goal_id)
     else:
         should_plan = work or store.cadence_due(goal, status)
     if not should_plan:
