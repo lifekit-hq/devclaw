@@ -553,6 +553,15 @@ function CycleDetail({ n, onClick }: { n: CycleReport; onClick?: React.MouseEven
         <Field label="created_at" value={relativeTime(n.created_at)} mono />
       </div>
 
+      {n.summary && (
+        <div>
+          <span className="eyebrow" style={{ fontSize: 10 }}>summary</span>
+          <div className="secondary" style={{ fontSize: 12.5, marginTop: 4, whiteSpace: "pre-wrap" }}>
+            {n.summary}
+          </div>
+        </div>
+      )}
+
       {parsedWedges !== null && parsedWedges.length > 0 && (
         <div>
           <span className="eyebrow" style={{ fontSize: 10 }}>wedges ({parsedWedges.length})</span>

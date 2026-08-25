@@ -402,3 +402,46 @@ def test_usage_route_wired_in_main_tsx():
     src = (Path(__file__).resolve().parents[1] / "console" / "src" / "main.tsx").read_text()
     assert "usage" in src.lower()
     assert "Usage" in src
+
+
+# ---------------------------------------------------------------------------
+# Per-project wire shape — fields the console drill-in exposes (issue #682 inc 3)
+# ---------------------------------------------------------------------------
+
+def test_per_project_rows_include_worker_tasks_with_usage(store, registry):
+    """by_project rows must carry worker_tasks_with_usage so the console's
+    per-project drill-in can surface it alongside the token columns."""
+    _add_project(registry, "proj-a", "Project A", "/repos/a")
+    _seed_task(store, workspace="/repos/a", input_tokens=100, cost_usd=0.05)
+    _seed_task(store, workspace="/repos/a", input_tokens=200, cost_usd=0.10)
+    result = _compute(store, registry)
+    by_id = {p["project_id"]: p for p in result["by_project"]}
+    p = by_id["proj-a"]
+    assert "worker_tasks_with_usage" in p, (
+        "by_project rows must include worker_tasks_with_usage"
+    )
+    assert p["worker_tasks_with_usage"] == 2
+    assert "cognition_cost_usd" in p, (
+        "by_project rows must include cognition_cost_usd"
+    )
+    assert "worker_cost_usd" in p, (
+        "by_project rows must include worker_cost_usd"
+    )
+    assert p["worker_cost_usd"] == pytest.approx(0.15)
+
+
+def test_per_project_drill_in_rendered_in_usage_tsx():
+    """Usage.tsx must render worker_tasks_with_usage in the per-project drill-in."""
+    from pathlib import Path
+    src = (
+        Path(__file__).resolve().parents[1] / "console" / "src" / "pages" / "Usage.tsx"
+    ).read_text()
+    assert "worker_tasks_with_usage" in src, (
+        "Usage.tsx must render worker_tasks_with_usage in the per-project drill-in panel"
+    )
+    assert "cognition_cost_usd" in src, (
+        "Usage.tsx must render cognition_cost_usd in the per-project drill-in panel"
+    )
+    assert "worker_cost_usd" in src, (
+        "Usage.tsx must render worker_cost_usd in the per-project drill-in panel"
+    )
