@@ -614,7 +614,9 @@ async def _handle_long_lived_advance(
             )
             await _notify(ctx.notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
             return Outcome.BLOCKED
-        open_snaps = [s for s in snaps if s.state == "open"]
+        open_snaps = [
+            s for s in snaps if s.state == "open" and _issue_ref.is_ready(s)
+        ]
         for s in snaps:
             if s.state != "open":
                 store.append_log(
@@ -622,7 +624,36 @@ async def _handle_long_lived_advance(
                     f"referenced issue #{s.number} is {s.state} — dropped from "
                     "the remaining scope (dispatch-boundary freshness guard)",
                 )
+            elif not _issue_ref.is_ready(s):
+                # readiness revoked mid-goal (spec 019 US4 sc.3): the owner
+                # pulled the label — same freshness semantics as a close.
+                store.append_log(
+                    goal_id,
+                    f"referenced issue #{s.number} is no longer graded ready "
+                    "— skipped until re-graded (dispatch-boundary freshness "
+                    "guard)",
+                )
         if not open_snaps:
+            unready_open = [s for s in snaps if s.state == "open"]
+            if unready_open:
+                # Open issues whose readiness was revoked: NOT done — the
+                # owner pulled the work back. Park human-gated (re-grade or
+                # cancel is their call); proposing done here would judge
+                # unfinished scenarios and churn the gate.
+                nums = ", ".join(f"#{s.number}" for s in unready_open)
+                q = (
+                    f"referenced issue(s) {nums} are open but no longer "
+                    "graded ready — the owner revoked readiness. Re-grade "
+                    "them (regrade_intake) and resume_goal, or cancel."
+                )
+                store.transition(
+                    goal_id, Event.BLOCK,
+                    replace(base, phase="blocked", blocked_on=q,
+                            blocked_kind="needs_answer", next=""),
+                    expect=status, consume_steering=consume_ids,
+                )
+                await _notify(ctx.notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
+                return Outcome.BLOCKED
             # Every referenced issue is resolved out-of-band: spend ZERO
             # worker sessions — propose done directly and let the grounded
             # gate judge done_when (BLOCKED→OPEN_DONE_GATE is legal, so a

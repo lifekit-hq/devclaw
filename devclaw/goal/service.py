@@ -646,22 +646,44 @@ class GoalService:
         done_when = (kwargs.get("done_when") or "").strip()
         repo_url = kwargs.get("repo_url")
         refs = _issue_ref.validate_refs(issues, repo_url=repo_url)
-        if refs and not done_when:
-            try:
-                await _issue_ref.scenarios_contract(
-                    repo_url or "", refs, self._issue_fetcher
-                )
-            except _issue_ref.MissingAcceptance as exc:
+        if refs:
+            # Every referenced creation fetches its refs once (existence) and
+            # requires the earned readiness state (spec 019 US4): grooming
+            # the issue to ready is where the relocated context is REQUIRED
+            # to land — grade_backlog / regrade_intake are the unblocking
+            # verbs. Hard refusal, no override (clarified 2026-08-25).
+            snaps = []
+            for n in refs:
+                try:
+                    snaps.append(await self._issue_fetcher(repo_url or "", n))
+                except _issue_ref.IssueRefError as exc:
+                    raise ValueError(
+                        f"referenced issue #{n} could not be fetched at the "
+                        f"doorway: {exc} — fix the reference (or gh access), "
+                        "then re-file."
+                    )
+            unready = [s2.number for s2 in snaps if not _issue_ref.is_ready(s2)]
+            if unready:
+                nums = ", ".join(f"#{n}" for n in unready)
                 raise ValueError(
-                    f"cannot default done_when from these references: {exc}. "
-                    "Either groom the issue to carry an acceptance section "
-                    "(the readiness convention), or pass an explicit done_when."
+                    f"issue(s) {nums} are not graded ready — a goal can only "
+                    "reference issues carrying the earned readiness state. "
+                    "Grade them first (grade_backlog for the repo, or "
+                    "regrade_intake per issue), then re-file."
                 )
-            except _issue_ref.IssueRefError as exc:
-                raise ValueError(
-                    f"referenced issue could not be fetched at the doorway: "
-                    f"{exc} — fix the reference (or gh access), then re-file."
-                )
+            if not done_when:
+                missing = [
+                    s2.number for s2 in snaps
+                    if _issue_ref.extract_acceptance(s2.body) is None
+                ]
+                if missing:
+                    nums = ", ".join(f"#{n}" for n in missing)
+                    raise ValueError(
+                        f"cannot default done_when from these references: no "
+                        f"acceptance section in issue(s) {nums}. Either groom "
+                        "the issue to carry an acceptance section (the "
+                        "readiness convention), or pass an explicit done_when."
+                    )
         return self.create_goal(goal_id, **kwargs)
 
     def create_goal(
@@ -707,6 +729,28 @@ class GoalService:
             # is ordering/scope glue, not the spec — the spec lives in the
             # graded issue. Explicit done_when is a contract, not context,
             # and is deliberately NOT counted (research D3).
+            # One issue → one LIVE goal (spec 019 US4, clarified: 007's
+            # single-claim semantics one layer earlier). Refiling means
+            # cancelling the holder first — the cancel+recreate doctrine.
+            for other_id in self._goal_store.list_goal_ids():
+                if other_id == goal_id:
+                    continue
+                try:
+                    other = self._goal_store.load_goal(other_id)
+                except Exception:  # noqa: BLE001 — an unreadable record can't hold a claim
+                    continue
+                if not other.issue_refs or other.repo_url != repo_url:
+                    continue
+                if self._goal_store.load_status(other_id).phase in ("done", "cancelled"):
+                    continue
+                overlap = sorted(set(issue_refs) & set(other.issue_refs))
+                if overlap:
+                    nums = ", ".join(f"#{n}" for n in overlap)
+                    raise ValueError(
+                        f"issue(s) {nums} are already referenced by live goal "
+                        f"{other_id!r} — one issue, one live goal. Cancel that "
+                        "goal first (cancel_goal) if this filing supersedes it."
+                    )
             budget = _config.goal_text_budget()
             if len(objective) > budget:
                 ref_list = ", ".join(f"#{n}" for n in issue_refs)

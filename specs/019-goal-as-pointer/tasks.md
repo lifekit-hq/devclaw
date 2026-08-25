@@ -97,10 +97,10 @@ dispatch; exclusivity (one issue → one live goal).
 graded ready → accepted; label revoked mid-goal → item skips; second live
 goal on the same issue refused naming the holder.
 
-- [ ] T019 [US4] Readiness check at creation in devclaw/goal/service.py via the seam's label read — refusal names the grading flow (grade_backlog / regrade_intake)
-- [ ] T020 [US4] Re-check readiness at the dispatch boundary in devclaw/goal/tick_dispatch.py — revoked label ⇒ skip + loud log, consistent with US1's closed semantics (US4 sc.3)
-- [ ] T021 [US4] Exclusivity at creation: scan live goals' issue_refs in the same project, refuse overlap naming the holding goal id (research D6)
-- [ ] T022 [P] [US4] Named tests in tests/test_goal_issue_refs.py: test_unready_ref_refused_naming_grading_verb, test_ready_ref_accepted_after_grading, test_ready_revoked_mid_goal_skips_item, test_second_live_goal_on_same_issue_refused_naming_holder, test_done_goal_releases_its_issue
+- [X] T019 [US4] Readiness check at creation in devclaw/goal/service.py via the seam's label read — refusal names the grading flow (grade_backlog / regrade_intake)
+- [X] T020 [US4] Re-check readiness at the dispatch boundary in devclaw/goal/tick_dispatch.py — revoked label ⇒ skip + loud log, consistent with US1's closed semantics (US4 sc.3)
+- [X] T021 [US4] Exclusivity at creation: scan live goals' issue_refs in the same project, refuse overlap naming the holding goal id (research D6)
+- [X] T022 [P] [US4] Named tests in tests/test_goal_issue_refs.py: test_unready_ref_refused_naming_grading_verb, test_ready_ref_accepted_after_grading, test_ready_revoked_mid_goal_skips_item, test_second_live_goal_on_same_issue_refused_naming_holder, test_done_goal_releases_its_issue
 
 **Checkpoint**: the relocation half enforced — grooming replaces authoring
 
@@ -182,3 +182,19 @@ commitment; any dropped story is said out loud.
   the sections exist before admission runs.
 - T015's rule-doc update (load-bearing vs best-effort collectors) ships in
   this increment.
+
+## Implementation notes (US4, 2026-08-25)
+
+- Readiness reuses the grading pipeline's `intake.READY_LABEL` constant via
+  one helper (`issue_ref.is_ready`) — never a second literal.
+- Doorway precedence: existence → readiness → scenario-default section
+  check. An explicit-done_when referenced goal still fetches once (existence
+  + readiness) — US1's deferred existence check is now fully closed for all
+  referenced creations.
+- New semantic beyond the task list: ALL-refs-open-but-unready at dispatch
+  parks needs_answer ("owner revoked readiness — re-grade or cancel")
+  instead of proposing done — proposing done there would judge unfinished
+  scenarios and churn the gate.
+- The done-gate's scenario fetch deliberately does NOT gate on readiness:
+  judging finished work against its scenarios stays correct even when the
+  label was cleaned up post-merge.
