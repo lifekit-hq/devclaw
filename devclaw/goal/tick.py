@@ -50,6 +50,7 @@ from ..loom import trace as _trace
 from ..loom.limits import FailureKind, classify_failure, pause_seconds
 from ..state_store import _now_ms
 from ..engine.workspace import prepare_workspace
+from .. import config as _config
 
 # ---- extracted-module re-export facade (behavior-preserving split) --------
 # Every symbol MOVED out of this file is re-exported here so
@@ -759,13 +760,21 @@ async def tick_all(
                 # An auth pause is ACTIONABLE, not weather: waiting won't fix a
                 # broken login, a human re-login will (2026-07-20 night: the old
                 # REAL classification burned the whole run window in silent
-                # terminal failures). Say what to do; the fixed re-probe both
-                # auto-resumes after the fix and re-pings while still broken.
+                # terminal failures). Name the exact credential path so the
+                # operator doesn't re-login to the wrong user/path (2026-08-19:
+                # root re-login changed nothing because the container reads a
+                # different home; the hour-long archaeology is the cost of
+                # omitting this line — issue #569).
+                cred_path = _config.host_claude_dir() + "/.credentials.json"
                 msg = (
-                    f"🔑 paused — Claude auth/login failure ({reason}). Waiting "
-                    f"won't fix this: re-login on the devclaw host (`claude` → "
-                    f"/login). Work auto-resumes on the next probe ~{resume_hhmm} "
-                    f"UTC; I'll ping again if it's still broken."
+                    f"🔑 paused — Claude auth/login failure ({reason}). "
+                    f"A re-login must land in `{cred_path}` (the path this "
+                    f"instance reads — a login elsewhere changes nothing). "
+                    f"Fastest fix: `claude setup-token` via the container, or "
+                    f"copy a fresh `.credentials.json` into that path. "
+                    f"Verify with a `dry_evaluate` probe — the pause "
+                    f"auto-resumes on the next probe ~{resume_hhmm} UTC; "
+                    f"I'll re-ping if still broken."
                 )
             else:
                 msg = f"⏸️ paused on a usage limit — {reason}; resuming ~{resume_hhmm} UTC"

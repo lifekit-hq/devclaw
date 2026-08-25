@@ -250,8 +250,8 @@ async def test_goal_cognition_auth_failure_pauses_layer_with_relogin_ping(tmp_pa
     await _tick(store, eng, notifier, evaluator=evaluator)  # still paused → no second ping
     pings = [m for m in notifier.sent if "re-login" in m]
     assert len(pings) == 1
-    assert "auth" in pings[0] and "/login" in pings[0]      # actionable, names the fix
-    assert evaluator.calls == 1                             # zero cognition while paused
+    assert "auth" in pings[0] and "setup-token" in pings[0]  # actionable, names the fix
+    assert evaluator.calls == 1                               # zero cognition while paused
 
 
 async def test_auth_pause_expiry_resumes_silently_and_repings_while_broken(tmp_path):
@@ -325,3 +325,32 @@ async def test_quota_resume_ping_survives_the_same_lazy_clear(tmp_path):
     await _tick(store, eng, notifier)
 
     assert sum("usage limit lifted" in m for m in notifier.sent) == 1
+
+
+# ---- named regression: auth ping names the credential path (issue #569) ------
+# 2026-08-19: operator re-logged as root; container reads /home/lifekit/.claude,
+# so the re-login changed nothing and the outage extended by ~1h. The ping must
+# name the exact path so no one has to do that archaeology again.
+
+async def test_auth_pause_ping_names_the_credential_path(tmp_path, monkeypatch):
+    """The auth-pause ping contains the configured DEVCLAW_HOST_CLAUDE_DIR
+    value, the .credentials.json filename, the fix verb (setup-token), the
+    verification step (dry_evaluate), and the wrong-home trap statement."""
+    monkeypatch.setenv("DEVCLAW_HOST_CLAUDE_DIR", "/home/lifekit/.claude")
+    store = GoalStore(tmp_path, now=Clock())
+    eng = FlaggedPausableEngine()
+    eng.set_global_pause(
+        _now_ms() + 60_000,
+        "auth: OAuth session expired and could not be refreshed",
+    )
+    notifier = RecordingNotifier()
+
+    await _tick(store, eng, notifier)
+
+    pings = [m for m in notifier.sent if "re-login" in m]
+    assert len(pings) == 1, "expected exactly one auth-pause ping"
+    ping = pings[0]
+    assert "/home/lifekit/.claude/.credentials.json" in ping  # the configured path
+    assert "setup-token" in ping                              # the fix verb
+    assert "dry_evaluate" in ping                             # the verification step
+    assert "elsewhere changes nothing" in ping                # the wrong-home trap
