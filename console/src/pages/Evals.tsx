@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import {
   fetchEvalOutcomes,
   fetchCycleReports,
+  tokenQueryString,
   type EvalOutcome,
   type CycleReport,
 } from "../api";
@@ -15,6 +17,8 @@ import { EmptyState, ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
 //   * pass_rate — fraction of settled outcomes that are done AND verify-passed;
 //   * clean-cycle rate — fraction of cycles with zero mechanism-wedges.
 // Both feature-detect empty/missing tables and render an empty state, not a crash.
+// Every row is clickable — expands an inline detail panel showing every stored
+// field (issue #682: universal row drill-ins, increment 1).
 
 type SourceFilter = "all" | "live" | "basket";
 
@@ -240,7 +244,138 @@ function verifyGlyph(v: number | null): { text: string; color: string } {
   return { text: "—", color: "var(--text-muted)" };
 }
 
+// ---- Outcome detail panel (all stored fields) --------------------------------
+
+function OutcomeDetail({ o }: { o: EvalOutcome }) {
+  const qs = tokenQueryString();
+  const v = verifyGlyph(o.verify_passed);
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        background: "var(--surface-raised, var(--bg-alt))",
+        borderTop: "1px solid var(--border)",
+        fontSize: 12.5,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <Field label="id" value={String(o.id)} mono />
+        <Field label="source" value={o.source} />
+        <Field label="kind" value={o.kind ? (KIND_LABEL[o.kind] ?? o.kind) : "—"} />
+        <Field label="status" value={o.status} />
+        <Field
+          label="verify"
+          value={v.text}
+          valueStyle={{ color: v.color }}
+        />
+        <Field
+          label="attempts"
+          value={o.attempts != null ? String(o.attempts) : "—"}
+          mono
+        />
+        <Field
+          label="wall"
+          value={o.wall_ms != null ? `${(o.wall_ms / 1000).toFixed(1)}s` : "—"}
+          mono
+        />
+        <Field label="settled" value={relativeTime(o.settled_at)} mono />
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        {o.task_id && (
+          <span className="secondary" style={{ fontSize: 12 }}>
+            Task:{" "}
+            <Link to={`/tasks/${o.task_id}${qs}`} className="mono" style={{ fontSize: 12 }}>
+              {o.task_id.slice(0, 12)}
+            </Link>
+          </span>
+        )}
+        {o.goal_id && (
+          <span className="secondary" style={{ fontSize: 12 }}>
+            Goal:{" "}
+            <Link to={`/goals/${o.goal_id}${qs}`} className="mono" style={{ fontSize: 12 }}>
+              {o.goal_id.slice(0, 12)}
+            </Link>
+          </span>
+        )}
+        {o.program_id && (
+          <Field label="program_id" value={o.program_id} mono />
+        )}
+        {o.ticket && <Field label="ticket" value={o.ticket} mono />}
+        {o.report_ref && <Field label="report_ref" value={o.report_ref} mono />}
+      </div>
+
+      {o.workspace_dir && (
+        <Field label="workspace" value={o.workspace_dir} mono />
+      )}
+
+      {o.pr_url && (
+        <span className="secondary" style={{ fontSize: 12 }}>
+          PR:{" "}
+          <a href={o.pr_url} target="_blank" rel="noreferrer" className="mono" style={{ fontSize: 12 }}>
+            {o.pr_url.replace("https://github.com/", "")}
+          </a>
+        </span>
+      )}
+
+      {o.failure_class && (
+        <Field label="failure_class" value={o.failure_class} mono valueStyle={{ color: "var(--red)" }} />
+      )}
+
+      {o.error && (
+        <div>
+          <span className="eyebrow" style={{ fontSize: 10 }}>error</span>
+          <pre
+            className="mono"
+            style={{
+              fontSize: 11.5,
+              whiteSpace: "pre-wrap",
+              margin: "4px 0 0",
+              color: "var(--red)",
+              opacity: 0.85,
+              maxHeight: 120,
+              overflow: "auto",
+            }}
+          >
+            {o.error}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Field({
+  label,
+  value,
+  mono,
+  valueStyle,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+  valueStyle?: React.CSSProperties;
+}) {
+  return (
+    <span style={{ whiteSpace: "nowrap" }}>
+      <span className="muted" style={{ fontSize: 11 }}>{label}: </span>
+      <span className={mono ? "mono" : undefined} style={{ fontSize: 12, ...valueStyle }}>
+        {value}
+      </span>
+    </span>
+  );
+}
+
+// ---- Outcomes table with click-to-expand ------------------------------------
+
 function OutcomesTable({ rows }: { rows: EvalOutcome[] }) {
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  const toggle = (id: number) => setExpanded((prev) => (prev === id ? null : id));
+
   return (
     <div className="card" style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -260,48 +395,73 @@ function OutcomesTable({ rows }: { rows: EvalOutcome[] }) {
           {rows.map((o) => {
             const v = verifyGlyph(o.verify_passed);
             const ref = o.ticket ?? o.task_id ?? "—";
+            const isOpen = expanded === o.id;
             return (
-              <tr key={o.id} style={{ borderTop: "1px solid var(--border)" }}>
-                <Td>
-                  <span className="badge">{o.source}</span>
-                </Td>
-                <Td>
-                  <span className="mono truncate" style={{ maxWidth: 180, display: "inline-block" }}>
-                    {ref}
-                  </span>
-                </Td>
-                <Td>{o.kind ? KIND_LABEL[o.kind] ?? o.kind : "—"}</Td>
-                <Td>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                    <StatusDot color={taskStatusColor(o.status)} />
-                    {o.status}
-                  </span>
-                </Td>
-                <Td>
-                  <span style={{ color: v.color }}>{v.text}</span>
-                </Td>
-                <Td>
-                  {o.pr_url ? (
-                    <a href={o.pr_url} target="_blank" rel="noreferrer" className="mono">
-                      PR
-                    </a>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </Td>
-                <Td>
-                  {o.failure_class ? (
-                    <span className="mono" style={{ color: "var(--red)" }}>
-                      {o.failure_class}
+              <>
+                <tr
+                  key={o.id}
+                  style={{
+                    borderTop: "1px solid var(--border)",
+                    cursor: "pointer",
+                    background: isOpen ? "var(--surface-raised, var(--bg-alt))" : undefined,
+                  }}
+                  onClick={() => toggle(o.id)}
+                  title="Click to expand detail"
+                >
+                  <Td>
+                    <span className="badge">{o.source}</span>
+                  </Td>
+                  <Td>
+                    <span className="mono truncate" style={{ maxWidth: 180, display: "inline-block" }}>
+                      {ref}
                     </span>
-                  ) : (
-                    <span className="muted">—</span>
-                  )}
-                </Td>
-                <Td>
-                  <span className="mono muted">{relativeTime(o.settled_at)}</span>
-                </Td>
-              </tr>
+                  </Td>
+                  <Td>{o.kind ? KIND_LABEL[o.kind] ?? o.kind : "—"}</Td>
+                  <Td>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <StatusDot color={taskStatusColor(o.status)} />
+                      {o.status}
+                    </span>
+                  </Td>
+                  <Td>
+                    <span style={{ color: v.color }}>{v.text}</span>
+                  </Td>
+                  <Td>
+                    {o.pr_url ? (
+                      <a
+                        href={o.pr_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="mono"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        PR
+                      </a>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </Td>
+                  <Td>
+                    {o.failure_class ? (
+                      <span className="mono" style={{ color: "var(--red)" }}>
+                        {o.failure_class}
+                      </span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </Td>
+                  <Td>
+                    <span className="mono muted">{relativeTime(o.settled_at)}</span>
+                  </Td>
+                </tr>
+                {isOpen && (
+                  <tr key={`${o.id}-detail`}>
+                    <td colSpan={8} style={{ padding: 0 }}>
+                      <OutcomeDetail o={o} />
+                    </td>
+                  </tr>
+                )}
+              </>
             );
           })}
         </tbody>
@@ -322,29 +482,119 @@ function Td({ children }: { children: ReactNode }) {
   return <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>{children}</td>;
 }
 
+// ---- Cycle report row with click-to-expand ----------------------------------
+
 function CycleRow({ n }: { n: CycleReport }) {
+  const [expanded, setExpanded] = useState(false);
   const wedges = safeLen(n.wedges_json);
   const pauses = safeLen(n.pauses_json);
   const color = n.clean === 1 ? "var(--green)" : "var(--red)";
   return (
-    <div className="card" style={{ padding: "12px 16px", borderLeft: `2px solid ${color}` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <StatusDot color={color} />
-        <span className="mono" style={{ fontWeight: 550, fontSize: 13.5 }}>
-          {n.cycle_key}
-        </span>
-        <span className="badge" style={{ marginLeft: "auto" }}>
-          {n.clean === 1 ? "clean" : `${wedges} wedge${wedges === 1 ? "" : "s"}`}
-        </span>
-        {pauses > 0 && (
-          <span className="badge" title="self-healed pauses (not wedges)">
-            {pauses} pause{pauses === 1 ? "" : "s"}
+    <div
+      className="card"
+      style={{ padding: 0, borderLeft: `2px solid ${color}`, cursor: "pointer" }}
+      onClick={() => setExpanded((e) => !e)}
+      title="Click to expand detail"
+    >
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <StatusDot color={color} />
+          <span className="mono" style={{ fontWeight: 550, fontSize: 13.5 }}>
+            {n.cycle_key}
           </span>
+          <span className="badge" style={{ marginLeft: "auto" }}>
+            {n.clean === 1 ? "clean" : `${wedges} wedge${wedges === 1 ? "" : "s"}`}
+          </span>
+          {pauses > 0 && (
+            <span className="badge" title="self-healed pauses (not wedges)">
+              {pauses} pause{pauses === 1 ? "" : "s"}
+            </span>
+          )}
+          <span className="mono muted" style={{ fontSize: 11 }}>{expanded ? "▲" : "▼"}</span>
+        </div>
+        <div className="secondary" style={{ fontSize: 12.5, paddingLeft: 17, whiteSpace: "pre-wrap" }}>
+          {n.summary || "—"}
+        </div>
+      </div>
+
+      {expanded && (
+        <CycleDetail n={n} onClick={(e) => e.stopPropagation()} />
+      )}
+    </div>
+  );
+}
+
+// ---- Cycle detail panel (all stored fields) ----------------------------------
+
+function CycleDetail({ n, onClick }: { n: CycleReport; onClick?: React.MouseEventHandler }) {
+  const parsedWedges = safeParse(n.wedges_json);
+  const parsedPauses = safeParse(n.pauses_json);
+
+  return (
+    <div
+      style={{
+        padding: "14px 16px",
+        borderTop: "1px solid var(--border)",
+        fontSize: 12.5,
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+      }}
+      onClick={onClick}
+    >
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <Field label="window_start" value={new Date(n.window_start_ms).toISOString()} mono />
+        <Field label="window_end" value={new Date(n.window_end_ms).toISOString()} mono />
+        <Field label="clean" value={n.clean === 1 ? "yes" : "no"} />
+        <Field label="idle" value={n.idle === 1 ? "yes" : "no"} />
+        {n.sent_at != null && (
+          <Field label="sent_at" value={relativeTime(n.sent_at)} mono />
         )}
+        <Field label="created_at" value={relativeTime(n.created_at)} mono />
       </div>
-      <div className="secondary" style={{ fontSize: 12.5, paddingLeft: 17, whiteSpace: "pre-wrap" }}>
-        {n.summary || "—"}
-      </div>
+
+      {parsedWedges !== null && parsedWedges.length > 0 && (
+        <div>
+          <span className="eyebrow" style={{ fontSize: 10 }}>wedges ({parsedWedges.length})</span>
+          <pre
+            className="mono"
+            style={{
+              fontSize: 11.5,
+              whiteSpace: "pre-wrap",
+              margin: "4px 0 0",
+              color: "var(--red)",
+              maxHeight: 200,
+              overflow: "auto",
+            }}
+          >
+            {JSON.stringify(parsedWedges, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {parsedPauses !== null && parsedPauses.length > 0 && (
+        <div>
+          <span className="eyebrow" style={{ fontSize: 10 }}>pauses ({parsedPauses.length})</span>
+          <pre
+            className="mono"
+            style={{
+              fontSize: 11.5,
+              whiteSpace: "pre-wrap",
+              margin: "4px 0 0",
+              color: "var(--amber)",
+              maxHeight: 200,
+              overflow: "auto",
+            }}
+          >
+            {JSON.stringify(parsedPauses, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      {(parsedWedges === null || parsedWedges.length === 0) &&
+        (parsedPauses === null || parsedPauses.length === 0) && (
+          <span className="muted" style={{ fontSize: 12 }}>No wedges or pauses recorded.</span>
+        )}
     </div>
   );
 }
@@ -355,5 +605,14 @@ function safeLen(jsonStr: string): number {
     return Array.isArray(v) ? v.length : 0;
   } catch {
     return 0;
+  }
+}
+
+function safeParse(jsonStr: string): unknown[] | null {
+  try {
+    const v = JSON.parse(jsonStr);
+    return Array.isArray(v) ? v : null;
+  } catch {
+    return null;
   }
 }

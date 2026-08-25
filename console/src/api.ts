@@ -776,6 +776,14 @@ export async function fetchEvalOutcomes(opts?: {
   return r.json();
 }
 
+export async function fetchEvalOutcomeById(id: number): Promise<EvalOutcome> {
+  const url = withParams(`/evals/outcomes/${id}.json`, {});
+  const r = await fetch(url);
+  if (r.status === 404) throw new Error(`eval outcome not found: ${id}`);
+  if (!r.ok) throw new Error(`evals/outcomes/${id}.json ${r.status}`);
+  return r.json();
+}
+
 /** One run-cycle window-close report row (written by the cycle-report edge).
  *  Absent until a window has closed — the endpoint returns [] in that case. */
 export interface CycleReport {
@@ -797,6 +805,14 @@ export async function fetchCycleReports(limit?: number): Promise<CycleReport[]> 
   });
   const r = await fetch(url);
   if (!r.ok) throw new Error(`evals/cycles.json ${r.status}`);
+  return r.json();
+}
+
+export async function fetchCycleReportByKey(cycleKey: string): Promise<CycleReport> {
+  const url = withParams(`/evals/cycles/${encodeURIComponent(cycleKey)}.json`, {});
+  const r = await fetch(url);
+  if (r.status === 404) throw new Error(`cycle report not found: ${cycleKey}`);
+  if (!r.ok) throw new Error(`evals/cycles/${cycleKey}.json ${r.status}`);
   return r.json();
 }
 
