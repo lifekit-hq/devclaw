@@ -139,6 +139,11 @@ class Project:
     #: until the mise path passes its live gate). None = the engine's
     #: DEVCLAW_SANDBOX_IMAGE default.
     sandbox_image: Optional[str] = None
+    #: evidence/shakedown project (spec 018 US2): excluded from every
+    #: ratchet-facing scorecard rate, reported separately. Plain bool —
+    #: a project either is bench or isn't; there is no global default to
+    #: inherit, so no tri-state.
+    bench: bool = False
     created_at: int = field(default_factory=_now_ms)
     updated_at: int = field(default_factory=_now_ms)
 
@@ -157,6 +162,7 @@ class Project:
             "verifyDone": self.verify_done,
             "browserGateMode": self.browser_gate_mode,
             "sandboxImage": self.sandbox_image,
+            "bench": self.bench,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
         }
@@ -196,6 +202,7 @@ def _row_to_project(r: sqlite3.Row) -> Project:
         verify_done=_bool_col("verify_done"),
         browser_gate_mode=_str_col("browser_gate_mode"),
         sandbox_image=_str_col("sandbox_image"),
+        bench=bool(_bool_col("bench")),
         created_at=r["created_at"],
         updated_at=r["updated_at"],
     )
@@ -288,6 +295,8 @@ class ProjectRegistry:
                 self._add_column(name, "INTEGER")
             for name in _OVERRIDE_STR_FIELDS:
                 self._add_column(name, "TEXT")
+            # bench (spec 018 US2): plain bool, NULL-on-old-rows reads False.
+            self._add_column("bench", "INTEGER")
             self._db.commit()
 
     def _add_column(self, name: str, sql_type: str) -> None:
@@ -316,6 +325,7 @@ class ProjectRegistry:
         verify_done: Optional[bool] = None,
         browser_gate_mode: Optional[str] = None,
         sandbox_image: Optional[str] = None,
+        bench: bool = False,
     ) -> Project:
         _validate_sandbox_image(sandbox_image)
         _validate_workspace_path(workspace_dir)
@@ -325,6 +335,7 @@ class ProjectRegistry:
             autodeploy=autodeploy,
             review_gate=review_gate, verify_done=verify_done,
             browser_gate_mode=browser_gate_mode, sandbox_image=sandbox_image,
+            bench=bool(bench),
         )
         with self._lock:
             try:
@@ -333,15 +344,15 @@ class ProjectRegistry:
                          (id, name, repo_url, workspace_dir, preview_url, status,
                           goal_ids, notes, autodeploy,
                           review_gate, verify_done, browser_gate_mode, sandbox_image,
-                          created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                          bench, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         p.id, p.name, p.repo_url, p.workspace_dir, p.preview_url,
                         p.status, json.dumps(p.goal_ids), p.notes,
                         _bool_db(p.autodeploy),
                         _bool_db(p.review_gate), _bool_db(p.verify_done),
                         p.browser_gate_mode, p.sandbox_image,
-                        p.created_at, p.updated_at,
+                        1 if p.bench else 0, p.created_at, p.updated_at,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -390,6 +401,7 @@ class ProjectRegistry:
         verify_done: Optional[bool] = _UNSET,
         browser_gate_mode: Optional[str] = _UNSET,
         sandbox_image: Optional[str] = _UNSET,
+        bench: Optional[bool] = None,
     ) -> Project:
         """Partial update — only the supplied fields change. Returns the updated
         project. Raises KeyError if unknown. ``updated_at`` always bumps.
@@ -428,6 +440,8 @@ class ProjectRegistry:
         if sandbox_image is not _UNSET:
             _validate_sandbox_image(sandbox_image)
             p.sandbox_image = sandbox_image
+        if bench is not None:
+            p.bench = bool(bench)
         p.updated_at = _now_ms()
         self._save(p)
         return p
@@ -466,7 +480,7 @@ class ProjectRegistry:
                      name=?, repo_url=?, workspace_dir=?, preview_url=?, status=?,
                      goal_ids=?, notes=?, autodeploy=?,
                      review_gate=?, verify_done=?, browser_gate_mode=?, sandbox_image=?,
-                     updated_at=?
+                     bench=?, updated_at=?
                    WHERE id=?""",
                 (
                     p.name, p.repo_url, p.workspace_dir, p.preview_url, p.status,
@@ -474,7 +488,7 @@ class ProjectRegistry:
                     _bool_db(p.autodeploy),
                     _bool_db(p.review_gate), _bool_db(p.verify_done),
                     p.browser_gate_mode, p.sandbox_image,
-                    p.updated_at, p.id,
+                    1 if p.bench else 0, p.updated_at, p.id,
                 ),
             )
             self._db.commit()

@@ -52,7 +52,10 @@ def _emit_evaluator_verdict(store: StateStore, goal_id: str, verdict: str) -> No
 def test_empty_store_returns_zero_metrics(store):
     sc = compute_scorecard(store, window_hours=24)
     assert sc["tasks"]["total_terminal"] == 0
-    assert sc["merge_rate"] == 0.0
+    assert "merge_rate" not in sc            # replaced by the pr block (spec 018 US2)
+    assert "merged_with_pr" not in sc["tasks"]
+    assert sc["pr"]["opened"] == 0 and sc["pr"]["decided_merge_rate"] is None
+    assert sc["pr"]["state_as_of_ms"] is None   # never refreshed → stale, said out loud
     assert sc["workspace_breaks_tripped"] == 0
     assert sc["evaluator"]["total_calls"] == 0
     assert sc["evaluator"]["steer_rate"] == 0.0
@@ -64,21 +67,26 @@ def test_empty_store_returns_zero_metrics(store):
     assert isinstance(sc["estimate_notes"], list) and len(sc["estimate_notes"]) >= 1
 
 
-def test_task_counts_and_merge_rate(store):
+def test_task_counts_and_distinct_pr_ledger(store):
+    """PRs are counted by URL identity, never by task rows: three increments
+    sharing one goal-branch PR are ONE opened PR (the audited 36-rows-vs-18-
+    PRs collapse), and a PR is 'merged' only when the platform said so —
+    pr_url presence proves nothing (spec 018 US2)."""
+    _land_task(store, workspace="/w", status="done", pr_url="https://gh/x/1")
+    _land_task(store, workspace="/w", status="done", pr_url="https://gh/x/1")
     _land_task(store, workspace="/w", status="done", pr_url="https://gh/x/1")
     _land_task(store, workspace="/w", status="done", pr_url="https://gh/x/2")
-    _land_task(store, workspace="/w", status="done")  # no pr_url — counts as done, not merged
+    _land_task(store, workspace="/w", status="done")  # review-style: no PR, moves no PR number
     _land_task(store, workspace="/w", status="failed")
     _land_task(store, workspace="/w", status="cancelled")
 
     sc = compute_scorecard(store, window_hours=24)
-    assert sc["tasks"]["total_terminal"] == 5
-    assert sc["tasks"]["done"] == 3
-    assert sc["tasks"]["failed"] == 1
-    assert sc["tasks"]["cancelled"] == 1
-    assert sc["tasks"]["merged_with_pr"] == 2
-    # 2 of 3 done tasks carry a pr_url
-    assert sc["merge_rate"] == pytest.approx(2 / 3, abs=1e-4)
+    assert sc["tasks"]["total_terminal"] == 7
+    assert sc["tasks"]["done"] == 5
+    assert sc["pr"]["opened"] == 2          # 4 pr-carrying rows → 2 distinct PRs
+    assert sc["pr"]["open"] == 2            # never refreshed: everything still 'open'
+    assert sc["pr"]["merged"] == 0          # a pr_url is NOT a merge
+    assert sc["pr"]["decided_merge_rate"] is None
 
 
 def test_evaluator_verdicts_and_derived_rates(store):
@@ -149,9 +157,15 @@ def test_window_excludes_old_rows(store):
 
     _land_task(store, workspace="/w", status="done", pr_url="https://gh/x/2")
 
+    # backdate the old PR's ledger row alongside its task row
+    with store._lock:
+        store._db.execute(
+            "UPDATE pr_ledger SET opened_at_ms = ? WHERE pr_url = 'https://gh/x/1'", (old_ms,))
+        store._db.commit()
+
     sc = compute_scorecard(store, window_hours=168)
     assert sc["tasks"]["total_terminal"] == 1
-    assert sc["tasks"]["merged_with_pr"] == 1
+    assert sc["pr"]["opened"] == 1          # only the in-window PR
 
 
 def test_workspace_break_events_counted(store):
@@ -175,7 +189,7 @@ def test_format_scorecard_smoke(store):
 
     text = format_scorecard(compute_scorecard(store, window_hours=24))
     for token in (
-        "window:", "tasks (terminal):", "merged with PR:",
+        "window:", "tasks (terminal):", "PRs (distinct):",
         "workspace breaks:", "evaluator calls:", "verdicts:",
         "steer rate:", "convergence:", "estimate notes:",
     ):
@@ -311,6 +325,11 @@ def test_scorecard_usage_sums_worker_and_cognition_into_tokens_per_merged_pr(sto
                  "tokens_in_est": 80, "tokens_out_est": 20},
     )
 
+    # ground truth: both delivered PRs actually merged (refresh stamped)
+    store.upsert_pr_states(
+        {"https://gh/x/1": "merged", "https://gh/x/2": "merged"},
+        as_of_ms=_now_ms(), truncated=False,
+    )
     sc = compute_scorecard(store, window_hours=24)
     u = sc["usage"]
     assert u["worker_input_tokens"] == 1300
@@ -320,7 +339,7 @@ def test_scorecard_usage_sums_worker_and_cognition_into_tokens_per_merged_pr(sto
     assert u["cognition_tokens_in"] == 480  # 400 real + 80 estimated fallback
     assert u["cognition_tokens_out"] == 120
     assert u["total_tokens"] == 1300 + 700 + 480 + 120
-    # 2 merged PRs → integer tokens-per-PR; no dollar cost recorded → None.
+    # 2 MERGED (ground-truth) PRs → integer tokens-per-PR; no dollar cost → None.
     assert u["tokens_per_merged_pr"] == (1300 + 700 + 480 + 120) // 2
     assert u["cost_per_merged_pr_usd"] is None
 
@@ -336,6 +355,7 @@ def test_scorecard_cost_per_merged_pr_when_real_cost_recorded(store):
                  "tokens_in": 10, "tokens_out": 5, "cost_usd": 0.10,
                  "response_text": json.dumps({"verdict": "achieved"})},
     )
+    store.upsert_pr_states({"https://gh/x/1": "merged"}, as_of_ms=_now_ms(), truncated=False)
     sc = compute_scorecard(store, window_hours=24)
     u = sc["usage"]
     assert u["total_cost_usd"] == pytest.approx(0.40)
@@ -464,3 +484,62 @@ def test_zero_denominator_reports_null_not_zero(store, tmp_path):
     assert c["rounds_max"] is None
     # tables present → the pre-018 degrade note must NOT appear
     assert not any("convergence unknown" in n for n in sc["estimate_notes"])
+
+
+# ---- ground-truth PR block + bench split (spec 018 US2) --------------------
+
+
+def _mark_pr(store, url, state):
+    store.upsert_pr_states({url: state}, as_of_ms=_now_ms(), truncated=False)
+
+
+def test_decided_merge_rate_excludes_open_and_unknown(store):
+    for i, st in enumerate(["merged", "merged", "rejected", "open", "unknown"]):
+        _land_task(store, workspace="/w", status="done", pr_url=f"https://gh/x/{i}")
+        if st != "open":
+            _mark_pr(store, f"https://gh/x/{i}", st)
+    sc = compute_scorecard(store, window_hours=24)
+    pr = sc["pr"]
+    assert pr["opened"] == 5
+    assert (pr["merged"], pr["rejected"], pr["open"], pr["unknown"]) == (2, 1, 1, 1)
+    # open + unknown sit in NO rate denominator (2 / (2+1))
+    assert pr["decided_merge_rate"] == pytest.approx(2 / 3, abs=1e-4)
+    assert pr["state_as_of_ms"] is not None
+    assert pr["refresh_truncated"] is False
+
+
+def test_bench_project_moves_only_bench_figures(store, tmp_path):
+    """SC-006: bench work changes no ratchet-facing number — PRs land in the
+    bench sub-block, bench goals leave convergence untouched."""
+    from devclaw.project_registry import ProjectRegistry
+
+    registry = ProjectRegistry(str(tmp_path / "reg.db"))
+    registry.create(id="bench-p", name="bench-p", workspace_dir="/bench-ws", bench=True)
+    registry.create(id="real-p", name="real-p", workspace_dir="/real-ws")
+
+    _land_task(store, workspace="/bench-ws", status="done", pr_url="https://gh/b/1")
+    _mark_pr(store, "https://gh/b/1", "merged")
+    _land_task(store, workspace="/real-ws", status="done", pr_url="https://gh/r/1")
+    _mark_pr(store, "https://gh/r/1", "rejected")
+    gs = _with_goal_tables(store, tmp_path)
+    gs._goal_state.record_convergence(
+        "bench-goal", outcome="achieved", rounds=1, workspace_dir="/bench-ws",
+        closed_at=__import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc).isoformat(timespec="seconds"),
+    )
+    _seed_convergence(gs, "real-goal", outcome="achieved", rounds=2)
+
+    sc = compute_scorecard(store, window_hours=24, registry=registry)
+    pr = sc["pr"]
+    assert pr["opened"] == 1 and pr["rejected"] == 1      # only the real PR
+    assert pr["decided_merge_rate"] == 0.0                # 0 merged / 1 decided
+    assert pr["bench"]["opened"] == 1 and pr["bench"]["merged"] == 1
+    c = sc["convergence"]
+    assert c["goals_closed"] == 1 and c["first_pass"] == 0  # bench goal excluded
+
+
+def test_pr_block_degrades_loudly_without_refresh(store):
+    _land_task(store, workspace="/w", status="done", pr_url="https://gh/x/1")
+    sc = compute_scorecard(store, window_hours=24)
+    assert sc["pr"]["state_as_of_ms"] is None   # never refreshed — stale, named
+    assert sc["pr"]["open"] == 1                 # unrefreshed rows read as opened-only

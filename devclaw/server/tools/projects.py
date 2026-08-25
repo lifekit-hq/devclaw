@@ -99,6 +99,7 @@ async def update_project(
     review_gate: Optional[Literal["on", "off", "inherit"]] = None,
     verify_done: Optional[Literal["on", "off", "inherit"]] = None,
     sandbox_image: Optional[str] = None,
+    bench: Optional[bool] = None,
 ) -> str:
     """Update a registered project's facts — only the fields you pass change. Use to
     record a preview URL, pause/archive it, or correct the repo/workspace.
@@ -118,6 +119,10 @@ async def update_project(
             override_kwargs[field] = _onoff[val]
     if sandbox_image is not None:
         override_kwargs["sandbox_image"] = None if sandbox_image == "inherit" else sandbox_image
+    if bench is not None:
+        # bench (spec 018 US2): evidence/shakedown marker — excluded from every
+        # ratchet-facing scorecard rate. Plain bool, no inherit state.
+        override_kwargs["bench"] = bool(bench)
     try:
         p = registry.update(
             project_id, name=name, repo_url=repo_url, workspace_dir=workspace_dir,

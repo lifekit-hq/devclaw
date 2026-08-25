@@ -12,7 +12,7 @@ from typing import Annotated, Literal, Optional
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from .._state import goals, mcp, store
+from .._state import goals, mcp, registry, store
 
 
 @mcp.tool
@@ -100,7 +100,7 @@ async def list_tasks(
 async def get_scorecard_metrics(
     window_hours: Annotated[int, Field(ge=1, le=24 * 30)] = 168,
 ) -> str:
-    """L8 rolling scorecard: merge rate, evaluator verdict distribution, steer
+    """L8 rolling scorecard: ground-truth distinct-PR merge state (spec 018 US2), evaluator verdict distribution, steer
     rate, per-goal convergence (first-pass rate + rounds-to-close, spec 018),
     workspace-break count — computed over the last
     ``window_hours`` (default 168 = one week). Reads state_store directly, so
@@ -108,7 +108,7 @@ async def get_scorecard_metrics(
     the goal loop. See ``plan.md`` §Measurement direction for how the numbers
     relate to the C1-C8 production-ready scorecard."""
     from ...telemetry import compute_scorecard
-    return json.dumps(compute_scorecard(store, window_hours=int(window_hours)), indent=2)
+    return json.dumps(compute_scorecard(store, window_hours=int(window_hours), registry=registry), indent=2)
 
 
 @mcp.tool

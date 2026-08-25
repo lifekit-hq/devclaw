@@ -52,8 +52,9 @@ One row per distinct PR devclaw opened.
 
 **State transitions**: `open → merged | rejected | unknown`;
 `unknown → merged | rejected | open` (a later successful read corrects it);
-`merged`/`rejected` are terminal (a reopened PR re-enters as `open` on the
-next refresh — current state wins, per spec edge case).
+`merged` is terminal; `rejected` stays in the refresh set (a rejected PR
+can be reopened — it re-enters `open` on the next refresh; merged cannot
+un-merge).
 
 ## Extended: `Project` (project_registry)
 

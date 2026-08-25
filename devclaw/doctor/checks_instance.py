@@ -346,6 +346,33 @@ def check_goal_convergence_table(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "goal_convergence terminal ledger present")]
 
 
+def check_pr_ledger(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 018 US2: the pr_ledger must exist (FAIL: DB predates the code —
+    a boot bootstraps it), and a populated ledger that has NEVER been
+    refreshed is surfaced (WARN: the scorecard's PR numbers all read
+    unknown/stale until a cycle-report window closes)."""
+    cid = "instance.scorecard.pr_ledger"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "pr_ledger" not in tables:
+            return [Finding(
+                cid, Verdict.FAIL,
+                "pr_ledger table absent — the DB predates spec 018 US2; PR "
+                "ground truth cannot be recorded",
+                remedy="restart devclaw (the store bootstraps tables at boot)",
+            )]
+        n = db.execute("SELECT COUNT(*) AS n FROM pr_ledger").fetchone()["n"]
+    if n and not ctx.store.get_meta("pr_ledger_refresh"):
+        return [Finding(
+            cid, Verdict.WARN,
+            f"pr_ledger holds {n} PR(s) but no refresh has ever run — the "
+            "scorecard reports the ledger as stale until the next cycle-report "
+            "window closes",
+            remedy="wait for the next run-window close (the refresh rides it)",
+        )]
+    return [Finding(cid, Verdict.OK, "pr_ledger present" + (" and refreshed" if n else " (empty)"))]
+
+
 INSTANCE_CHECKS: tuple = (
     check_migration_meta_keys,
     check_legacy_goal_status_lifecycle,
@@ -359,4 +386,5 @@ INSTANCE_CHECKS: tuple = (
     check_schedule_raw_key,
     check_schedule_dispatch,
     check_goal_convergence_table,
+    check_pr_ledger,
 )

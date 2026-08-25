@@ -214,3 +214,26 @@ def default_checker() -> RemoteChecker:
     """The production checker (real gh). Indirected so goal_service can bind it
     and tests inject a recording fake — the merge.py seam shape."""
     return check_branch
+
+
+# ---- PR-state read for the pr_ledger refresh (spec 018 US2) ----------------
+
+#: injectable seam, same pattern as :data:`RemoteChecker`: the cycle-report
+#: refresh binds :func:`pr_state`; tests inject a fake so the stubbed suite
+#: never spawns gh.
+PrStateFetcher = Callable[[str], Awaitable[str]]
+
+
+async def pr_state(pr_url: str) -> str:
+    """Ground-truth state of one delivered PR: ``merged`` | ``rejected`` |
+    ``open`` | ``unknown``. Any failure (gone repo, auth, network, weird
+    payload) is ``unknown`` — reported as such, never guessed (spec 018
+    FR-004: this is telemetry, so it fails loud in the numbers, not closed)."""
+    rc, out = await _gh("pr", "view", pr_url, "--json", "state")
+    if rc != 0:
+        return "unknown"
+    try:
+        st = json.loads(out).get("state")
+    except (ValueError, AttributeError):
+        return "unknown"
+    return {"MERGED": "merged", "CLOSED": "rejected", "OPEN": "open"}.get(st, "unknown")

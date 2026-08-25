@@ -63,16 +63,16 @@ refreshed once per cycle; bench split; loud staleness.
 with a FakeRemoteStates checker updates only undecided rows and stamps
 as_of; an unreachable PR lands in unknown without failing.
 
-- [ ] T012 [US2] Add `pr_ledger` table to devclaw/state_store/schema.py per data-model.md
-- [ ] T013 [US2] Upsert `pr_ledger` rows (INSERT OR IGNORE, state='open') at the settle site that records eval_outcomes pr_url, plus `upsert_pr_states` + `undecided_pr_urls(window)` methods in devclaw/state_store/evals.py
-- [ ] T014 [P] [US2] Add a `pr_state(pr_url)` lookup (gh pr view --json state,mergedAt → open|merged|rejected|unknown) on the existing `_gh` seam with an injectable checker, in devclaw/goal/remote_checks.py
-- [ ] T015 [US2] Bounded ledger refresh inside `_maybe_emit_cycle_report` in devclaw/goal/service.py: undecided in-window rows only, hard cap (default 50) with a loud refresh_truncated flag persisted for the scorecard, checker injected the way default_checker() is bound today
-- [ ] T016 [P] [US2] Add `Project.bench: bool = False` (dataclass + to_dict/from_dict + update_project passthrough) in devclaw/project_registry.py and the update_project tool surface in devclaw/server/tools/
-- [ ] T017 [US2] Replace `merge_rate` with the `pr` block in devclaw/telemetry.py — distinct-PR counts, decided_merge_rate, unknown bucket, state_as_of_ms stamp, refresh_truncated, bench sub-block — and render it in devclaw/cli.py
-- [ ] T018 [P] [US2] Named refresh tests in tests/test_pr_ledger_refresh.py: test_refresh_touches_only_undecided_in_window, test_refresh_cap_reports_truncation, test_unreachable_pr_lands_unknown_without_failing, test_reopened_pr_returns_to_open
-- [ ] T019 [P] [US2] Named seeded-metric tests in tests/test_telemetry_scorecard.py: test_increments_sharing_goal_branch_pr_count_once (SC-001 18-not-36 fixture), test_review_tasks_move_no_pr_number, test_open_and_unknown_in_no_rate_denominator, test_bench_project_moves_only_bench_figures (SC-006)
-- [ ] T020 [US2] Extend the zero-token idle guard in tests/test_goal_tick.py: test_idle_tick_makes_no_gh_calls_with_pr_ledger_wired (checker call count == 0 on idle paths; FakeClaude.calls == 0 untouched)
-- [ ] T021 [US2] Doctor instance checks: pr_ledger table exists + ledger-staleness surfaced (never-refreshed reported, not failed) in devclaw/doctor/checks_instance.py, with seeded-fault tests
+- [X] T012 [US2] Add `pr_ledger` table to devclaw/state_store/schema.py per data-model.md
+- [X] T013 [US2] Upsert `pr_ledger` rows (INSERT OR IGNORE, state='open') at the settle site that records eval_outcomes pr_url, plus `upsert_pr_states` + `undecided_pr_urls(window)` methods in devclaw/state_store/evals.py
+- [X] T014 [P] [US2] Add a `pr_state(pr_url)` lookup (gh pr view --json state,mergedAt → open|merged|rejected|unknown) on the existing `_gh` seam with an injectable checker, in devclaw/goal/remote_checks.py
+- [X] T015 [US2] Bounded ledger refresh inside `_maybe_emit_cycle_report` in devclaw/goal/service.py: undecided in-window rows only, hard cap (default 50) with a loud refresh_truncated flag persisted for the scorecard, checker injected the way default_checker() is bound today
+- [X] T016 [P] [US2] Add `Project.bench: bool = False` (dataclass + to_dict/from_dict + update_project passthrough) in devclaw/project_registry.py and the update_project tool surface in devclaw/server/tools/
+- [X] T017 [US2] Replace `merge_rate` with the `pr` block in devclaw/telemetry.py — distinct-PR counts, decided_merge_rate, unknown bucket, state_as_of_ms stamp, refresh_truncated, bench sub-block — and render it in devclaw/cli.py
+- [X] T018 [P] [US2] Named refresh tests in tests/test_pr_ledger_refresh.py: test_refresh_touches_only_undecided_in_window, test_refresh_cap_reports_truncation, test_unreachable_pr_lands_unknown_without_failing, test_reopened_pr_returns_to_open
+- [X] T019 [P] [US2] Named seeded-metric tests in tests/test_telemetry_scorecard.py: test_increments_sharing_goal_branch_pr_count_once (SC-001 18-not-36 fixture), test_review_tasks_move_no_pr_number, test_open_and_unknown_in_no_rate_denominator, test_bench_project_moves_only_bench_figures (SC-006)
+- [X] T020 [US2] Extend the zero-token idle guard in tests/test_goal_tick.py: test_idle_tick_makes_no_gh_calls_with_pr_ledger_wired (checker call count == 0 on idle paths; FakeClaude.calls == 0 untouched)
+- [X] T021 [US2] Doctor instance checks: pr_ledger table exists + ledger-staleness surfaced (never-refreshed reported, not failed) in devclaw/doctor/checks_instance.py, with seeded-fault tests
 
 **Checkpoint**: US1 and US2 each independently shippable
 
@@ -166,3 +166,14 @@ out loud.
   helpers used by one file was overhead.
 - Bench-goal exclusion from convergence arrives with the `bench` flag in
   US2 (the flag does not exist yet, so there is nothing to exclude).
+
+## Implementation notes (US2, 2026-08-25)
+
+- Refresh-set deviation from the contract's edge case: `merged` is the ONE
+  terminal state; `rejected` stays in the refresh set because GitHub PRs can
+  be REOPENED (rejected → open on the next refresh). Contract doc updated.
+- The refresh summary (as-of + truncation) persists in the meta table
+  (`pr_ledger_refresh`) rather than a column — one stamp for the whole
+  ledger, matching how the scorecard reports staleness.
+- Bench-goal convergence exclusion (deferred from US1) landed here with the
+  flag.
