@@ -310,7 +310,7 @@ async def create_goal(
 
     try:
         return json.dumps(
-            goals.create_goal(
+            await goals.create_goal_async(
                 goal_id, objective=objective, workspace_dir=resolved.workspace_dir,
                 done_when=done_when, backlog=backlog, cadence=cadence,
                 repo_url=resolved.repo_url, verify_cmd=verify_cmd, open_pr=open_pr,

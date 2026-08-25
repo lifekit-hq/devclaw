@@ -63,10 +63,10 @@ explicit done_when overrides; absence blocks loudly.
 the issue's scenarios; a mid-goal scenario edit is honored next round;
 scenario-absence blocks the round, never evaluates empty.
 
-- [ ] T013 [US2] Creation-time guard in devclaw/goal/service.py: refs + defaulted done_when requires every ref to carry an acceptance section (extract_acceptance non-None), else refuse naming the section convention OR the explicit-done_when alternative (US2 sc.4)
-- [ ] T014 [US2] Done-gate call site (devclaw/goal/tick_donegate.py / tick_settle.py): when done_when is defaulted, fetch scenarios live via the seam and thread them as the contract into the evaluator call; fetch failure or absent section ⇒ block the round legibly — LOAD-BEARING, not best-effort (research D5)
-- [ ] T015 [US2] Document the load-bearing-vs-best-effort collector distinction in .claude/rules/cognition-prompts.md in the same increment (plan's constitution note)
-- [ ] T016 [P] [US2] Named tests in tests/test_done_when_scenarios.py: test_defaulted_contract_reads_scenarios_live_at_eval, test_mid_goal_scenario_edit_honored_next_round, test_explicit_done_when_overrides_scenarios, test_scenario_absence_blocks_round_never_evaluates_empty, test_creation_refuses_default_when_section_missing
+- [X] T013 [US2] Creation-time guard in devclaw/goal/service.py: refs + defaulted done_when requires every ref to carry an acceptance section (extract_acceptance non-None), else refuse naming the section convention OR the explicit-done_when alternative (US2 sc.4)
+- [X] T014 [US2] Done-gate call site (devclaw/goal/tick_donegate.py / tick_settle.py): when done_when is defaulted, fetch scenarios live via the seam and thread them as the contract into the evaluator call; fetch failure or absent section ⇒ block the round legibly — LOAD-BEARING, not best-effort (research D5)
+- [X] T015 [US2] Document the load-bearing-vs-best-effort collector distinction in .claude/rules/cognition-prompts.md in the same increment (plan's constitution note)
+- [X] T016 [P] [US2] Named tests in tests/test_done_when_scenarios.py: test_defaulted_contract_reads_scenarios_live_at_eval, test_mid_goal_scenario_edit_honored_next_round, test_explicit_done_when_overrides_scenarios, test_scenario_absence_blocks_round_never_evaluates_empty, test_creation_refuses_default_when_section_missing
 
 **Checkpoint**: one contract source end to end
 
@@ -168,3 +168,17 @@ commitment; any dropped story is said out loud.
   takes the same path.
 - Fetch failures block with `blocked_kind="lost_ref"` (the existing
   human-gated lost-reference class) rather than a new kind.
+
+## Implementation notes (US2, 2026-08-25)
+
+- The doorway check landed as `GoalService.create_goal_async` (the MCP tool
+  now awaits it): the async fetch seam the sync create path cannot carry.
+  The sync `create_goal` stays fetch-free for internal/test callers; the
+  gate's load-bearing block is the backstop for anything that bypasses the
+  doorway. This also delivers US1's deferred existence-at-creation check for
+  the defaulted-contract path (the fetch doubles as the existence probe).
+- Admission gains `has_issue_refs`: a referenced goal's defaulted contract
+  satisfies the "something to grade against" condition — the doorway proved
+  the sections exist before admission runs.
+- T015's rule-doc update (load-bearing vs best-effort collectors) ships in
+  this increment.

@@ -134,10 +134,18 @@ def _check_workspace_dir(workspace_dir: str) -> Optional[AdmissionCondition]:
     return None
 
 
-def _check_done_when(done_when: str, spec: str) -> Optional[AdmissionCondition]:
+def _check_done_when(
+    done_when: str, spec: str, has_issue_refs: bool = False,
+) -> Optional[AdmissionCondition]:
     """Reject when there's nothing for the evaluator to grade against: empty
     ``done_when`` AND no ``spec`` (which carries acceptance criteria the
-    evaluator can derive done_when clauses from). At least one must be present."""
+    evaluator can derive done_when clauses from). At least one must be
+    present — OR the goal carries issue references (spec 019 US2): a
+    referenced goal's defaulted contract IS the issues' acceptance
+    scenarios, read live at the gate; the doorway proved the sections exist
+    before this check runs."""
+    if has_issue_refs:
+        return None
     if (done_when and done_when.strip()) or (spec and spec.strip()):
         return None
     return AdmissionCondition(
@@ -300,6 +308,7 @@ def verify_goal(
     out_of_scope: Optional[list[str]] = None,
     invariants: Optional[list[str]] = None,
     established: Optional[list[str]] = None,
+    has_issue_refs: bool = False,
 ) -> AdmissionResult:
     """Run all admission checks against a candidate goal's parameters. Pure
     function — does NOT touch the store, does NOT raise. Returns the full
@@ -325,7 +334,7 @@ def verify_goal(
     for check in (
         _check_objective(objective),
         _check_workspace_dir(workspace_dir),
-        _check_done_when(done_when, spec),
+        _check_done_when(done_when, spec, has_issue_refs),
     ):
         if check is not None:
             conditions.append(check)
