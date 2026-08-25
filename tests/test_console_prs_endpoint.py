@@ -175,3 +175,28 @@ def test_collect_pr_rows_isolates_by_goal(store, monkeypatch):
     )
     assert [r["prNumber"] for r in http_mod._collect_goal_pr_rows("g1")] == [1]
     assert [r["prNumber"] for r in http_mod._collect_goal_pr_rows("g2")] == [2]
+
+
+def test_collect_pr_rows_includes_gate_passed_and_ts(store, monkeypatch):
+    """Wire-shape pin: _collect_goal_pr_rows includes gatePassed and ts so the
+    console PRDetail panel (issue #682 increment 2) can surface them without an
+    extra round-trip. gatePassed comes from the delivery trace payload;
+    ts is the trace row's timestamp, always set by the store on append."""
+    from devclaw.server.routes import goals as http_mod
+    monkeypatch.setattr(http_mod, "store", store)
+
+    _seed_delivery(
+        store, goal_id="g1", trace_id="t1",
+        pr_url="https://github.com/dsdevq/closeloop/pull/99",
+        action_label="feature shipped",
+    )
+    rows = http_mod._collect_goal_pr_rows("g1")
+    assert len(rows) == 1
+    row = rows[0]
+    # gatePassed — the delivery trace payload carries gate_passed=True (seeded by
+    # _seed_delivery). Must survive as a boolean (not dropped/renamed).
+    assert "gatePassed" in row
+    assert row["gatePassed"] is True
+    # ts — the delivery trace timestamp; always set by StateStore.append_trace_event.
+    assert "ts" in row
+    assert row["ts"] is not None
