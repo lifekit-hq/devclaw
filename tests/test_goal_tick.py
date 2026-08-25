@@ -257,6 +257,81 @@ async def test_blocked_goal_stays_idle_without_steering(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_donegate_churn_park_survives_auto_eval_steering(tmp_path):
+    """Named regression (2026-08-25, devclaw-pr-authorship-2026-08-24 night):
+    the churn brake parks a goal AND appends its corrections as steering
+    (source auto-eval) — and the blocked gate counted ANY unread steering as
+    unblock-work, so the brake un-parked itself within one tick, three times
+    in one night, while the owner slept. Machine steering must never unblock
+    a human-gated park: the goal stays blocked, zero cognition, rows unread."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_kind="donegate_churn",
+        blocked_on="done-gate churn brake: parked",
+        donegate_rounds=DONEGATE_ROUND_CAP,
+    ))
+    store.append_steering("g", ["[clause 1] fix the skip mechanism"], source="auto-eval")
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.IDLE
+    s = store.load_status("g")
+    assert s.phase == "blocked"
+    assert s.blocked_kind == "donegate_churn"
+    assert evaluator.calls == 0
+    assert engine.dispatched == []
+    # the corrections stay parked with the goal, unconsumed
+    assert "[clause 1] fix the skip mechanism" in store.unread_steering("g")
+
+
+@pytest.mark.asyncio
+async def test_blocked_goal_unblocks_on_human_steering_and_consumes_parked_corrections(tmp_path):
+    """The human half of the contract: owner steering unblocks the parked
+    goal, and the machine corrections parked with it ride the SAME dispatch —
+    both rows consumed, both in the brief, so nothing the gate recorded for
+    the owner's decision is lost."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_kind="donegate_churn",
+        blocked_on="done-gate churn brake: parked",
+        donegate_rounds=DONEGATE_ROUND_CAP,
+    ))
+    store.append_steering("g", ["[clause 1] fix the skip mechanism"], source="auto-eval")
+    store.append_steering("g", ["reviewed the PR — take the conftest approach"], source="denys")
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert "fix the skip mechanism" in action.goal
+    assert "take the conftest approach" in action.goal
+    assert store.unread_steering_rows("g") == []
+
+
+@pytest.mark.asyncio
+async def test_idle_goal_still_advances_on_auto_eval_corrections(tmp_path):
+    """The ralph-loop pin: below the churn cap the done-gate returns the goal
+    to IDLE with its corrections as auto-eval steering, and the next tick must
+    advance on them — the human-gating above applies ONLY to blocked goals."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", cadence="1d")
+    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
+    store.append_steering("g", ["[clause 2] add the parity test"], source="auto-eval")
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert "add the parity test" in action.goal
+    assert store.unread_steering_rows("g") == []
+
+
+@pytest.mark.asyncio
 async def test_dispatch_cap_blocks_runaway(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")  # backlog 2 → cap = 4

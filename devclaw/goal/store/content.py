@@ -279,6 +279,20 @@ class GoalContentMixin:
         parameter)."""
         return "\n".join(line for _, line in self.unread_steering_rows(goal_id)).strip()
 
+    def has_unread_human_steering(self, goal_id: str) -> bool:
+        """Whether any unread steering row was written by a human — any
+        ``source`` not prefixed ``auto-`` (machine appenders, e.g. the
+        done-gate's ``auto-eval`` corrections, use that prefix). The
+        blocked branch of the advance gate unblocks a parked goal only on
+        this, never on plain unread-row presence: the ``donegate_churn``
+        brake parks a goal AND records its corrections as steering, so
+        counting machine rows as unblock-work lets the brake un-park
+        itself. Read-only; consumption stays with ``transition()``."""
+        rows = self._goal_state.unread_steering_rows(goal_id)
+        return any(
+            not str(r["source"] or "").startswith("auto-") for r in rows
+        )
+
     def append_steering(self, goal_id: str, lines: list[str], *, source: str = "denys") -> None:
         """Append steering lines. Writes UNCONSUMED ``goal_steering`` rows
         (the source of truth the planner reads) AND mirrors the same lines
