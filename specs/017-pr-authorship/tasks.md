@@ -8,6 +8,7 @@
 - [x] `sandcastle._build_docker_args`: re-expose `.claude/rules/` via nested bind-mount when present (hooks/settings.json stay blocked)
 - [x] Fix test collection: use `collect_ignore` in `tests/conftest.py` when hook file absent (not `pytest.skip()` in the test file)
 - [x] Regression tests: `test_resolve_title_no_worker_commit_returns_machine_commit_subject`, `test_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit`, sandbox isolation tests
+- [x] Integration test: `test_run_sandcastle_passes_through_workspace_claude_rules` — exercises `run_sandcastle` with a workspace containing `.claude/rules/` and asserts the read-only rules mount appears in the docker argv (steering clauses 6+7)
 - [x] Commit + spec artifacts together
 
 ## [US2] Goal-branch PR body never echoes the dispatch prompt
