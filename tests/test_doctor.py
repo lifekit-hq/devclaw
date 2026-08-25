@@ -376,3 +376,22 @@ def test_wellformed_issue_refs_ok(env):
     fs = _findings(_run(env), "project.goals.issue_refs")
     assert fs and all(x.verdict is Verdict.OK for x in fs
                       if x.project_id == "refs-proj2")
+
+
+# ---- instance: pr_ledger (spec 018 US2) -----------------------------------
+
+
+def test_missing_pr_ledger_table_detected(env):
+    db = env["store"]._db
+    db.execute("DROP TABLE pr_ledger")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.scorecard.pr_ledger")
+    assert f.verdict is Verdict.FAIL and "pr_ledger" in f.evidence
+
+
+def test_populated_never_refreshed_ledger_is_a_warn(env):
+    db = env["store"]._db
+    db.execute("INSERT INTO pr_ledger (pr_url, opened_at_ms) VALUES ('https://gh/x/1', 1)")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.scorecard.pr_ledger")
+    assert f.verdict is Verdict.WARN and "stale" in f.evidence

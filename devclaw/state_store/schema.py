@@ -146,6 +146,23 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 -- mechanical slice (never an LLM call). `sent_at` NULL = the
                 -- notifier was unconfigured / the push didn't land (log-only,
                 -- never an error). Read by the console Evals tab (PR3).
+                -- PR ledger (spec 018 US2): ONE row per distinct PR devclaw
+                -- opened — the PK on the URL is what makes distinct-PR
+                -- counting a structural fact (goal-branch increments sharing
+                -- a cumulative PR upsert one row). Created at the settle that
+                -- first observes the URL; `state` is GROUND TRUTH read from
+                -- the platform by the once-per-cycle refresh (the cycle-
+                -- report step), never inferred from pr_url presence.
+                -- state_as_of_ms NULL = never refreshed (reported as stale,
+                -- never as current). States: open | merged | rejected | unknown.
+                CREATE TABLE IF NOT EXISTS pr_ledger (
+                    pr_url          TEXT PRIMARY KEY,
+                    workspace_dir   TEXT,
+                    opened_at_ms    INTEGER NOT NULL,
+                    state           TEXT NOT NULL DEFAULT 'open',
+                    state_as_of_ms  INTEGER
+                );
+
                 CREATE TABLE IF NOT EXISTS cycle_reports (
                     cycle_key      TEXT PRIMARY KEY,  -- YYYY-MM-DD of window OPEN, schedule tz
                     window_start_ms INTEGER NOT NULL,

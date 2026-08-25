@@ -233,7 +233,10 @@ def _cmd_scorecard(args) -> int:
     168 = one week). Reads state_store directly, no engine/server needed."""
     store = StateStore(_db_path())
     try:
-        sc = compute_scorecard(store, window_hours=int(args.window_hours))
+        sc = compute_scorecard(
+            store, window_hours=int(args.window_hours),
+            registry=ProjectRegistry(_db_path()),
+        )
     finally:
         store.close()
     if args.json:

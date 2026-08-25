@@ -338,15 +338,28 @@ def sum_task_usage(result_jsons: Any) -> dict:
     return totals
 
 
-def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
+def compute_scorecard(store: Any, *, window_hours: int = 168, registry: Any = None) -> dict:
     """Roll up L8 scorecard metrics over the last ``window_hours``.
 
     ``store`` is a ``devclaw.state_store.StateStore`` — typed as ``Any`` here
     to keep the telemetry module import-light (no circular pull-in with the
-    goal layer). Everything read is via public methods on the store: tasks
-    counts + a raw cursor over ``traces`` for evaluator calls.
+    goal layer). ``registry`` (a ProjectRegistry, optional) supplies the
+    bench-project marking (spec 018 US2): bench workspaces are reported
+    separately and excluded from every ratchet-facing rate; with no registry
+    nothing is bench. Pure store read — the pr_ledger's platform state was
+    written by the once-per-cycle refresh, never here.
     """
     since_ms = _now_ms() - int(window_hours * 3600 * 1000)
+    bench_ws: set = set()
+    if registry is not None:
+        try:
+            bench_ws = {
+                _ws_norm(p.workspace_dir)
+                for p in registry.list()
+                if getattr(p, "bench", False) and p.workspace_dir
+            }
+        except Exception:  # noqa: BLE001 — a registry hiccup never breaks the read
+            bench_ws = set()
 
     # ---- tasks + merge rate --------------------------------------------
     with store._lock:  # noqa: SLF001 — telemetry co-designs with state_store
@@ -358,13 +371,22 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
                 (since_ms,),
             ).fetchall()
         )
-        merged_with_pr_row = store._db.execute(
-            "SELECT COUNT(*) AS n FROM tasks "
-            "WHERE status = 'done' AND pr_url IS NOT NULL AND pr_url != '' "
-            "AND completed_at IS NOT NULL AND completed_at >= ?",
-            (since_ms,),
-        ).fetchone()
-        merged_with_pr = int(merged_with_pr_row["n"] if merged_with_pr_row else 0)
+        try:
+            ledger_rows = store._db.execute(
+                "SELECT pr_url, workspace_dir, opened_at_ms, state, state_as_of_ms "
+                "FROM pr_ledger WHERE opened_at_ms >= ?",
+                (since_ms,),
+            ).fetchall()
+            ledger_present = True
+        except sqlite3.OperationalError:
+            ledger_rows, ledger_present = [], False
+        refresh_meta_row = None
+        try:
+            refresh_meta_row = store._db.execute(
+                "SELECT value FROM meta WHERE key = 'pr_ledger_refresh'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            pass
 
         # ---- worker usage (per-task result_json "usage" blocks) ---------
         usage_rows = store._db.execute(
@@ -440,7 +462,44 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
     failed_count = int(by_status.get("failed", 0))
     cancelled_count = int(by_status.get("cancelled", 0))
 
-    merge_rate = (merged_with_pr / done_count) if done_count else 0.0
+    # ---- distinct-PR ground truth (spec 018 US2) -----------------------
+    # PRs, never task rows (goal-branch increments share one PR and upsert
+    # one ledger row); state is the platform's, stamped by the cycle refresh.
+    # The verdict-free merged_with_pr/merge_rate this replaces counted "task
+    # rows carrying a pr_url" — PR *opened*, never merged, with review tasks
+    # polluting the denominator (audited 2026-08-25: 0.50 reported vs 11/13
+    # decided = 0.85 ground truth).
+    def _pr_bucket() -> dict:
+        return {"opened": 0, "merged": 0, "rejected": 0, "open": 0, "unknown": 0}
+
+    pr_main = _pr_bucket()
+    pr_bench = _pr_bucket()
+    for r in ledger_rows:
+        bucket = pr_bench if (_ws_norm(r["workspace_dir"]) in bench_ws) else pr_main
+        bucket["opened"] += 1
+        st = r["state"] if r["state"] in ("merged", "rejected", "open", "unknown") else "unknown"
+        bucket[st] += 1
+    decided = pr_main["merged"] + pr_main["rejected"]
+    refresh_at_ms = None
+    refresh_truncated = False
+    if refresh_meta_row and refresh_meta_row["value"]:
+        try:
+            meta = json.loads(refresh_meta_row["value"])
+            refresh_at_ms = meta.get("at_ms")
+            refresh_truncated = bool(meta.get("truncated"))
+        except (TypeError, ValueError):
+            pass
+    pr_block = {
+        **pr_main,
+        "decided_merge_rate": (round(pr_main["merged"] / decided, 4) if decided else None),
+        "state_as_of_ms": refresh_at_ms,   # null = ledger never refreshed → STALE
+        "refresh_truncated": refresh_truncated,
+        "bench": pr_bench,
+    }
+    pr_note = None if ledger_present else (
+        "pr_ledger table absent (DB predates spec 018 US2) — PR ground truth "
+        "unknown for this window."
+    )
     # Steer rate: of evaluator verdicts that landed cleanly, what fraction were
     # off_track (each off_track writes corrections to inbox.md → the planner
     # picks them up next tick, i.e. one implicit steer). A rough but honest
@@ -464,7 +523,8 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
     try:
         with store._lock:
             conv_rows = store._db.execute(
-                "SELECT goal_id, outcome, rounds, closed_at FROM goal_convergence"
+                "SELECT goal_id, outcome, rounds, workspace_dir, closed_at "
+                "FROM goal_convergence"
             ).fetchall()
             term_rows = store._db.execute(
                 "SELECT goal_id, at FROM goal_phase_history "
@@ -482,6 +542,8 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
         ms = _iso_to_ms(r["closed_at"])
         if ms is None or ms < since_ms:
             continue
+        if _ws_norm(r["workspace_dir"]) in bench_ws:
+            continue  # bench goals move no ratchet-facing number (SC-006)
         if r["outcome"] == "achieved":
             achieved_rounds.append(int(r["rounds"]))
         elif r["outcome"] == "abandoned":
@@ -515,12 +577,15 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
         + worker_usage["input_tokens"] + worker_usage["output_tokens"]
     )
     total_cost_usd = round(cog_cost_usd + worker_usage["cost_usd"], 6)
+    # denominator is now DISTINCT merged PRs (ground truth, non-bench) —
+    # the name finally means what it says; null when nothing merged in-window.
+    merged_prs = pr_main["merged"]
     tokens_per_merged_pr = (
-        int(total_tokens / merged_with_pr) if merged_with_pr else None
+        int(total_tokens / merged_prs) if merged_prs else None
     )
     cost_per_merged_pr_usd = (
-        round(total_cost_usd / merged_with_pr, 6)
-        if merged_with_pr and total_cost_usd > 0
+        round(total_cost_usd / merged_prs, 6)
+        if merged_prs and total_cost_usd > 0
         else None
     )
 
@@ -533,9 +598,8 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
             "done": done_count,
             "failed": failed_count,
             "cancelled": cancelled_count,
-            "merged_with_pr": merged_with_pr,
         },
-        "merge_rate": round(merge_rate, 4),
+        "pr": pr_block,
         "convergence": convergence,
         "workspace_breaks_tripped": workspace_breaks,
         "usage": {
@@ -565,6 +629,7 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
         "estimate_notes": [
             n for n in (
                 convergence_note,
+                pr_note,
                 "steer_rate uses off_track verdicts as a steering proxy; owner-"
                 "written inbox.md steers are not (yet) traced separately.",
                 "usage: cognition rows without real CLI usage contribute their "
@@ -801,6 +866,26 @@ def format_trace_report(rep: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_pr_line(pr: dict) -> str:
+    if not pr:
+        return "PRs:              (no ledger)"
+    rate = (
+        f"{pr['decided_merge_rate'] * 100:.1f}%" if pr.get("decided_merge_rate") is not None
+        else "n/a"
+    )
+    stale = ""
+    if pr.get("state_as_of_ms") is None:
+        stale = "  [STALE: ledger never refreshed]"
+    elif pr.get("refresh_truncated"):
+        stale = "  [refresh cap hit — counts bounded]"
+    return (
+        f"PRs (distinct):   {pr.get('opened', 0)} opened — "
+        f"{pr.get('merged', 0)} merged / {pr.get('rejected', 0)} rejected / "
+        f"{pr.get('open', 0)} open / {pr.get('unknown', 0)} unknown  →  "
+        f"decided-merge {rate}{stale}"
+    )
+
+
 def format_scorecard(sc: dict) -> str:
     """Render a scorecard dict for human eyeballing on the terminal."""
     t = sc["tasks"]
@@ -809,7 +894,7 @@ def format_scorecard(sc: dict) -> str:
         f"window:           last {sc['window_hours']}h",
         f"tasks (terminal): {t['total_terminal']} "
         f"(done {t['done']}, failed {t['failed']}, cancelled {t['cancelled']})",
-        f"merged with PR:   {t['merged_with_pr']}  →  merge rate {sc['merge_rate'] * 100:.1f}%",
+        _format_pr_line(sc.get("pr") or {}),
         f"workspace breaks: {sc['workspace_breaks_tripped']}",
         f"evaluator calls:  {e['total_calls']}  (unparseable {e['unparseable_responses']})",
         "verdicts:",

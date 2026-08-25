@@ -457,6 +457,37 @@ class GoalService:
             )
         return outcome.value
 
+    #: injectable PR-state seam (spec 018 US2) — same posture as the
+    #: remote-checks binding: production uses the gh-backed reader, tests
+    #: assign a fake so the stubbed suite never spawns a subprocess.
+    _pr_state_fetcher: "goal_remote_checks.PrStateFetcher" = staticmethod(
+        goal_remote_checks.pr_state
+    )
+
+    async def _refresh_pr_ledger(self) -> None:
+        """Read ground-truth state for every undecided in-window PR and stamp
+        the ledger (store method owns the write). Bounded: window + cap from
+        the store constants; per-URL failures land as 'unknown' (stamped —
+        the read RAN and could not decide), and the cap-truncation flag is
+        persisted so the scorecard reports the bound out loud."""
+        now = _now_ms()
+        since = now - self._store.PR_REFRESH_WINDOW_DAYS * 24 * 3600 * 1000
+        urls, truncated = self._store.undecided_pr_urls(
+            since_ms=since, limit=self._store.PR_REFRESH_CAP,
+        )
+        if not urls and not truncated:
+            # nothing undecided: still stamp the summary so staleness reads
+            # "refreshed, nothing to do", not "never ran".
+            self._store.upsert_pr_states({}, as_of_ms=now, truncated=False)
+            return
+        states: dict[str, str] = {}
+        for url in urls:
+            try:
+                states[url] = await self._pr_state_fetcher(url)
+            except Exception:  # noqa: BLE001 — one bad URL never stops the batch
+                states[url] = "unknown"
+        self._store.upsert_pr_states(states, as_of_ms=now, truncated=truncated)
+
     async def _maybe_emit_cycle_report(self) -> Optional[str]:
         """The scheduled-edge owner (ADR 0006 decision 3): once per per-cycle
         run-window close, assemble the cycle's slice from existing rows and push
@@ -482,6 +513,17 @@ class GoalService:
         cycle_key, start_ms, end_ms = win
         if self._store.cycle_report_exists(cycle_key):
             return None  # already reported this cycle (idempotent)
+
+        # PR-ledger refresh (spec 018 US2, clarified option B): the ONE place
+        # platform state enters the ledger — bounded (undecided in-window
+        # rows only, hard cap, truncation persisted loudly), riding this
+        # once-per-cycle edge so the scorecard read stays a pure store read
+        # and the idle tick stays subprocess-free. Telemetry-shaped: a
+        # refresh failure must never block the cycle report.
+        try:
+            await self._refresh_pr_ledger()
+        except Exception as exc:  # noqa: BLE001 — telemetry, never fatal
+            sys.stderr.write(f"goal-layer: pr-ledger refresh failed: {exc}\n")
 
         report = _nr.assemble_cycle_report(self._store, cycle_key, start_ms, end_ms)
         # Push best-effort; NullNotifier / a relay outage returns False → log-only.
