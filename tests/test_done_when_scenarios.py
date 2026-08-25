@@ -43,8 +43,14 @@ async def _tick(store, goal_id, evaluator, engine, notifier, fetcher):
     )
 
 
+from devclaw.intake import READY_LABEL
+
+
 def _snap(n, *, body, state="open", title="t"):
-    return IssueSnapshot(number=n, title=title, body=body, state=state)
+    # ready by default: since US4 the doorway checks readiness before the
+    # scenario check, and these tests exercise the scenario semantics.
+    return IssueSnapshot(number=n, title=title, body=body, state=state,
+                         labels=(READY_LABEL,))
 
 
 BODY_V1 = "context\n## Acceptance\n- the widget parses the new shape\n## Notes\nx"
@@ -211,6 +217,8 @@ async def test_creation_with_explicit_done_when_skips_the_scenario_check(tmp_pat
         svc._issue_fetcher = fetcher
         await svc.create_goal_async(
             "g", issues=[7], done_when="the endpoint returns 200", **_KW)
-        assert fetcher.calls == 0
+        # US4's readiness read still fetched once, but the section-less body
+        # did NOT refuse — the scenario check only guards the DEFAULTED path.
+        assert fetcher.calls == 1
     finally:
         db.close()

@@ -141,6 +141,16 @@ def render_issue_context(
     return "\n".join(parts)
 
 
+def is_ready(snapshot: "IssueSnapshot") -> bool:
+    """Whether the issue currently carries the earned readiness state (specs
+    006/009's grading verdict) — the ONE label read for both the creation
+    doorway and the dispatch-boundary re-check (spec 019 US4). Reuses the
+    grading pipeline's constant; never a second literal."""
+    from ..intake import READY_LABEL
+
+    return READY_LABEL in snapshot.labels
+
+
 # ---- acceptance scenarios as the completion contract (spec 019 US2) --------
 
 

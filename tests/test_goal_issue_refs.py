@@ -174,3 +174,95 @@ def test_budget_configurable_via_config_doorway(tmp_path, monkeypatch):
                 done_when="GET /health returns 200 and is covered by a named test", backlog=[], mode="one_shot", **_SAGA)
     finally:
         db.close()
+
+
+# ---- readiness gate + exclusivity (spec 019 US4) ---------------------------
+
+
+def _ready_snap(n, *, body="ctx\n## Acceptance\n- holds\n", state="open"):
+    from devclaw.goal.issue_ref import IssueSnapshot
+    from devclaw.intake import READY_LABEL
+    return IssueSnapshot(number=n, title="t", body=body, state=state,
+                         labels=(READY_LABEL, "P1"))
+
+
+def _unready_snap(n, **kw):
+    from devclaw.goal.issue_ref import IssueSnapshot
+    return IssueSnapshot(number=n, title="t", body="b", state="open",
+                         labels=("needs-refinement",))
+
+
+_KW4 = dict(
+    objective="Fix the referenced issue.",
+    backlog=[], mode="one_shot",
+    done_when="GET /health returns 200 and is covered by a named test",
+)
+
+
+@pytest.mark.asyncio
+async def test_unready_ref_refused_naming_grading_verb(tmp_path):
+    from tests.goal_fakes import FakeIssueFetcher
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({7: _unready_snap(7)})
+        with pytest.raises(ValueError) as exc:
+            await svc.create_goal_async(
+                "g", issues=[7], workspace_dir=str(tmp_path / "ws"),
+                repo_url="https://github.com/o/r", **_KW4, **_SAGA)
+        msg = str(exc.value)
+        assert "not graded ready" in msg
+        assert "grade_backlog" in msg and "regrade_intake" in msg
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_ready_ref_accepted_after_grading(tmp_path):
+    from tests.goal_fakes import FakeIssueFetcher
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({7: _ready_snap(7)})
+        await svc.create_goal_async(
+            "g", issues=[7], workspace_dir=str(tmp_path / "ws"),
+            repo_url="https://github.com/o/r", **_KW4, **_SAGA)
+        assert svc.get_goal("g")["issue_refs"] == [7]
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_second_live_goal_on_same_issue_refused_naming_holder(tmp_path):
+    from tests.goal_fakes import FakeIssueFetcher
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({7: _ready_snap(7), 8: _ready_snap(8)})
+        kw = dict(workspace_dir=str(tmp_path / "ws"),
+                  repo_url="https://github.com/o/r", **_KW4, **_SAGA)
+        await svc.create_goal_async("holder", issues=[7], **kw)
+        with pytest.raises(ValueError) as exc:
+            await svc.create_goal_async("second", issues=[7, 8], **kw)
+        msg = str(exc.value)
+        assert "#7" in msg and "'holder'" in msg and "cancel_goal" in msg
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_done_goal_releases_its_issue(tmp_path):
+    from devclaw.goal.models import GoalStatus
+    from tests.goal_fakes import FakeIssueFetcher
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({7: _ready_snap(7)})
+        kw = dict(workspace_dir=str(tmp_path / "ws"),
+                  repo_url="https://github.com/o/r", **_KW4, **_SAGA)
+        await svc.create_goal_async("holder", issues=[7], **kw)
+        svc._goal_store.save_status("holder", GoalStatus(phase="done"))
+        await svc.create_goal_async("successor", issues=[7], **kw)
+        assert svc.get_goal("successor")["issue_refs"] == [7]
+    finally:
+        db.close()

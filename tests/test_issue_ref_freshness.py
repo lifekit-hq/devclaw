@@ -30,8 +30,14 @@ async def _tick(store, goal_id, evaluator, engine, notifier, fetcher):
     )
 
 
-def _snap(n, *, state="open", title="t", body="b"):
-    return IssueSnapshot(number=n, title=title, body=body, state=state)
+from devclaw.intake import READY_LABEL
+
+
+def _snap(n, *, state="open", title="t", body="b", labels=(READY_LABEL,)):
+    """Default snapshots carry the ready label — since US4 the dispatch
+    boundary re-checks readiness live, and a doorway-created referenced goal
+    is guaranteed ready-at-creation. Pass ``labels=()`` for a revoked one."""
+    return IssueSnapshot(number=n, title=title, body=body, state=state, labels=tuple(labels))
 
 
 @pytest.mark.asyncio
@@ -136,4 +142,49 @@ async def test_idle_and_blocked_ticks_make_no_issue_fetches(tmp_path):
     out = await _tick(store, "g", evaluator, engine, RecordingNotifier(), fetcher)
     assert out is Outcome.IDLE
     assert fetcher.calls == 0
+    assert evaluator.calls == 0
+
+
+# ---- readiness re-check at the dispatch boundary (spec 019 US4) ------------
+
+
+@pytest.mark.asyncio
+async def test_ready_revoked_mid_goal_skips_item(tmp_path):
+    """US4 sc.3: the label was pulled on one of two items — the other still
+    dispatches; the revoked one is skipped with a loud log."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", issue_refs=[7, 8])
+    store.save_status("g", GoalStatus(phase="idle"))
+    fetcher = FakeIssueFetcher({
+        7: _snap(7, title="revoked", body="was ready, no more", labels=()),
+        8: _snap(8, title="still ready", body="do this"),
+    })
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier(), fetcher)
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert "Issue #8: still ready" in action.goal
+    assert "### Issue #7" not in action.goal
+    assert "no longer graded ready" in store.recent_log("g")
+
+
+@pytest.mark.asyncio
+async def test_all_refs_unready_parks_for_the_owner_not_done(tmp_path):
+    """Open-but-unready is NOT 'all closed': the goal parks needs_answer
+    (re-grade or cancel) instead of proposing done on unfinished scenarios."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", issue_refs=[7])
+    store.save_status("g", GoalStatus(phase="idle"))
+    fetcher = FakeIssueFetcher({7: _snap(7, body="open but label pulled", labels=())})
+    evaluator, engine = FakeClaude(), FakeEngine()
+
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier(), fetcher)
+
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.blocked_kind == "needs_answer"
+    assert "revoked readiness" in (s.blocked_on or "")
+    assert engine.dispatched == []
     assert evaluator.calls == 0
