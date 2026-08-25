@@ -1084,5 +1084,12 @@ class GoalService:
         self._goal_store.transition(
             goal_id, Event.CANCEL, replace(s, phase="cancelled", in_flight=None), expect=s,
         )
+        # Convergence ledger (spec 018 US1): a cancel is the abandoned
+        # terminal. After the CAS'd transition, same as the achieved close.
+        try:
+            ws = self._goal_store.load_goal(goal_id).workspace_dir
+        except Exception:
+            ws = None
+        self._goal_store.record_convergence(goal_id, "abandoned", ws)
         self._goal_store.append_log(goal_id, "goal cancelled")
         return {"goal_id": goal_id, "cancelled": True, "phase": "cancelled"}

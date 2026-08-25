@@ -414,6 +414,9 @@ async def _resolve_done_gate(
             replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0),
             expect=status, consume_steering=consume_steering,
         )
+        # Convergence ledger (spec 018 US1) — after the CAS'd close, so a
+        # rejected transition never leaves a phantom row.
+        store.record_convergence(goal_id, "achieved", goal.workspace_dir)
         if ev.structural_concerns:
             # Trust-dial close: the structural axis advises-and-ships (ADR
             # 0007) — loud in the goal log + the owner ping, never a silent

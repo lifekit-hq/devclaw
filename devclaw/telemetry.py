@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
+import statistics
 import time
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -54,6 +56,17 @@ _STRUCTURAL_GRADES = ("clean", "concerns", "poor")
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _iso_to_ms(s: Optional[str]) -> Optional[int]:
+    """Best-effort ISO timestamp → epoch ms (goal tables store TEXT
+    timestamps). Unparseable → None; the caller skips the row."""
+    if not s:
+        return None
+    try:
+        return int(datetime.fromisoformat(s).timestamp() * 1000)
+    except (TypeError, ValueError):
+        return None
 
 
 def _extract_verdict(text: str) -> Optional[str]:
@@ -434,15 +447,64 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
     # proxy for "how often the loop needed correction to stay on track."
     classified = sum(verdicts.values())
     steer_rate = (verdicts["off_track"] / classified) if classified else 0.0
-    # First-pass hit rate: of classified evaluator verdicts, what fraction
-    # were `achieved` — a coarse cousin of "done-gate first-pass hit rate."
-    # Coarse because the trace doesn't separate done-gate calls from
-    # progress-check calls; both flow through the same evaluator role. If
-    # done-gate calls dominate the achieved bucket (they usually do — the
-    # progress-check verdict is typically on_track), this is a reasonable
-    # first cut. Tightening it needs a `at_done_gate` flag on the cognition
-    # trace record — a small state_store change, out of L8-v1 scope.
-    first_pass_hit_rate = (verdicts["achieved"] / classified) if classified else 0.0
+
+    # ---- per-goal convergence (spec 018 US1) ---------------------------
+    # Goal-weighted, from the goal_convergence terminal ledger — the
+    # verdict-weighted first_pass_hit_rate this replaces let one churny
+    # goal shift a whole week (audited 2026-08-25: 0.36 reported vs 0.45
+    # per-goal). Goal tables share this store's sqlite file (Tranche 1);
+    # a DB predating the table degrades to an explicit note, never to
+    # silent zeros.
+    convergence: dict[str, Any] = {
+        "goals_closed": 0, "first_pass": 0, "first_pass_rate": None,
+        "rounds_median": None, "rounds_max": None,
+        "abandoned": 0, "rounds_unknown": 0,
+    }
+    convergence_note: Optional[str] = None
+    try:
+        with store._lock:
+            conv_rows = store._db.execute(
+                "SELECT goal_id, outcome, rounds, closed_at FROM goal_convergence"
+            ).fetchall()
+            term_rows = store._db.execute(
+                "SELECT goal_id, at FROM goal_phase_history "
+                "WHERE phase IN ('done', 'cancelled')"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        conv_rows, term_rows = [], []
+        convergence_note = (
+            "goal_convergence/goal_phase_history tables absent (DB predates "
+            "spec 018) — per-goal convergence unknown for this window."
+        )
+    achieved_rounds: list[int] = []
+    recorded_ids = {r["goal_id"] for r in conv_rows}
+    for r in conv_rows:
+        ms = _iso_to_ms(r["closed_at"])
+        if ms is None or ms < since_ms:
+            continue
+        if r["outcome"] == "achieved":
+            achieved_rounds.append(int(r["rounds"]))
+        elif r["outcome"] == "abandoned":
+            convergence["abandoned"] += 1
+    unknown_ids = set()
+    for r in term_rows:
+        ms = _iso_to_ms(r["at"])
+        if ms is None or ms < since_ms:
+            continue
+        if r["goal_id"] not in recorded_ids:
+            unknown_ids.add(r["goal_id"])  # pre-018 close: never guessed
+    convergence["rounds_unknown"] = len(unknown_ids)
+    convergence["goals_closed"] = len(achieved_rounds)
+    if achieved_rounds:
+        # rounds counts every done proposal incl. the closing one, so
+        # first-pass is rounds<=1 (0 covers a close with no verifying entry,
+        # e.g. a manual evaluation path — it never proposed-and-failed).
+        convergence["first_pass"] = sum(1 for n in achieved_rounds if n <= 1)
+        convergence["first_pass_rate"] = round(
+            convergence["first_pass"] / len(achieved_rounds), 4
+        )
+        convergence["rounds_median"] = statistics.median(achieved_rounds)
+        convergence["rounds_max"] = max(achieved_rounds)
 
     # ---- cost per merged PR (the legibility number) ---------------------
     # Tokens are the honest unit on OAuth (Pro/Max) runs — the CLI reports no
@@ -474,6 +536,7 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
             "merged_with_pr": merged_with_pr,
         },
         "merge_rate": round(merge_rate, 4),
+        "convergence": convergence,
         "workspace_breaks_tripped": workspace_breaks,
         "usage": {
             "cognition_tokens_in": cog_tokens_in,
@@ -494,22 +557,21 @@ def compute_scorecard(store: Any, *, window_hours: int = 168) -> dict:
             "verdicts": verdicts,
             "unparseable_responses": unparseable,
             "steer_rate": round(steer_rate, 4),
-            "first_pass_hit_rate": round(first_pass_hit_rate, 4),
             # Axis-B distribution — only counted for responses that carried a
             # structural_health field (post-C3 done-gate calls). Empty when no
             # evaluator response in-window reported one.
             "structural_grades": structural,
         },
         "estimate_notes": [
-            "first_pass_hit_rate mixes done-gate + progress-check evaluator "
-            "calls; a dedicated at_done_gate flag on cognition trace records "
-            "would tighten this — see plan.md §Measurement direction.",
-            "steer_rate uses off_track verdicts as a steering proxy; owner-"
-            "written inbox.md steers are not (yet) traced separately.",
-            "usage: cognition rows without real CLI usage contribute their "
-            "len/4 estimate; OAuth (Pro/Max) runs report no dollar cost, so "
-            "tokens_per_merged_pr is the honest cross-billing number and "
-            "cost_per_merged_pr_usd is null unless a real cost was recorded.",
+            n for n in (
+                convergence_note,
+                "steer_rate uses off_track verdicts as a steering proxy; owner-"
+                "written inbox.md steers are not (yet) traced separately.",
+                "usage: cognition rows without real CLI usage contribute their "
+                "len/4 estimate; OAuth (Pro/Max) runs report no dollar cost, so "
+                "tokens_per_merged_pr is the honest cross-billing number and "
+                "cost_per_merged_pr_usd is null unless a real cost was recorded.",
+            ) if n
         ],
     }
 
@@ -755,7 +817,24 @@ def format_scorecard(sc: dict) -> str:
     for v in _EVAL_VERDICTS:
         lines.append(f"  {v:<14} {e['verdicts'][v]}")
     lines.append(f"steer rate:       {e['steer_rate'] * 100:.1f}%   (off_track / classified)")
-    lines.append(f"first-pass hit:   {e['first_pass_hit_rate'] * 100:.1f}%   (achieved / classified)")
+    c = sc.get("convergence") or {}
+    if c:
+        fp = (
+            f"{c['first_pass_rate'] * 100:.1f}%" if c.get("first_pass_rate") is not None
+            else "n/a"
+        )
+        med = c.get("rounds_median")
+        lines.append(
+            f"convergence:      {c.get('goals_closed', 0)} goal(s) closed, "
+            f"first-pass {fp} ({c.get('first_pass', 0)}), "
+            f"rounds median {med if med is not None else 'n/a'} "
+            f"max {c.get('rounds_max') if c.get('rounds_max') is not None else 'n/a'}"
+        )
+        if c.get("abandoned") or c.get("rounds_unknown"):
+            lines.append(
+                f"                  abandoned {c.get('abandoned', 0)}, "
+                f"rounds-unknown {c.get('rounds_unknown', 0)} (pre-018 closes)"
+            )
     struct = e.get("structural_grades") or {}
     if any(struct.values()):
         lines.append("structural (done-gate only):")

@@ -56,7 +56,11 @@ def test_empty_store_returns_zero_metrics(store):
     assert sc["workspace_breaks_tripped"] == 0
     assert sc["evaluator"]["total_calls"] == 0
     assert sc["evaluator"]["steer_rate"] == 0.0
-    assert sc["evaluator"]["first_pass_hit_rate"] == 0.0
+    assert "first_pass_hit_rate" not in sc["evaluator"]  # replaced by per-goal convergence (spec 018)
+    c = sc["convergence"]
+    assert c["goals_closed"] == 0 and c["first_pass_rate"] is None
+    # a bare StateStore has no goal tables — the degrade is an explicit note
+    assert any("convergence unknown" in n for n in sc["estimate_notes"])
     assert isinstance(sc["estimate_notes"], list) and len(sc["estimate_notes"]) >= 1
 
 
@@ -94,8 +98,9 @@ def test_evaluator_verdicts_and_derived_rates(store):
     assert sc["evaluator"]["total_calls"] == 6
     # 2 off_track out of 6 classified → steer_rate 33.3%
     assert sc["evaluator"]["steer_rate"] == pytest.approx(2 / 6, abs=1e-4)
-    # 3 achieved out of 6 classified → first_pass_hit_rate 50%
-    assert sc["evaluator"]["first_pass_hit_rate"] == pytest.approx(3 / 6, abs=1e-4)
+    # the verdict-weighted first_pass_hit_rate is GONE (spec 018): achieved
+    # verdict share is not a per-goal first-pass rate
+    assert "first_pass_hit_rate" not in sc["evaluator"]
 
 
 def test_non_evaluator_cognition_is_ignored(store):
@@ -172,7 +177,7 @@ def test_format_scorecard_smoke(store):
     for token in (
         "window:", "tasks (terminal):", "merged with PR:",
         "workspace breaks:", "evaluator calls:", "verdicts:",
-        "steer rate:", "first-pass hit:", "estimate notes:",
+        "steer rate:", "convergence:", "estimate notes:",
     ):
         assert token in text, f"format_scorecard dropped {token!r}"
 
@@ -372,3 +377,90 @@ def test_format_scorecard_renders_structural_when_any_reported(store):
         assert "structural (done-gate only):" not in empty_text
     finally:
         empty_store.close()
+
+
+# ---- per-goal convergence (spec 018 US1) -----------------------------------
+
+
+def _with_goal_tables(store: StateStore, tmp_path):
+    """Bootstrap the goal tables onto the SAME sqlite file (Tranche 1 shape:
+    production GoalStore wraps the shared StateStore) and hand back the
+    GoalStore for seeding."""
+    from devclaw.goal.store import GoalStore
+    return GoalStore(tmp_path / "goals", state=store)
+
+
+def _seed_convergence(gs, goal_id, *, outcome, rounds, closed_at=None):
+    from datetime import datetime, timezone
+    gs._goal_state.record_convergence(
+        goal_id, outcome=outcome, rounds=rounds, workspace_dir="/w",
+        closed_at=closed_at or datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+
+
+def test_first_pass_weighs_goals_not_verdicts(store, tmp_path):
+    """Named regression (spec 018 SC-003, audited 2026-08-25): a goal that
+    churned 6 done-gate rounds shifts the rate by ONE goal's weight — the old
+    verdict-weighted rate let it dump 5 off_track verdicts into the week."""
+    gs = _with_goal_tables(store, tmp_path)
+    _seed_convergence(gs, "churny", outcome="achieved", rounds=6)
+    _seed_convergence(gs, "clean", outcome="achieved", rounds=1)
+    # the churny goal's verdict trail must NOT move the per-goal rate
+    for _ in range(5):
+        _emit_evaluator_verdict(store, "churny", "off_track")
+    _emit_evaluator_verdict(store, "churny", "achieved")
+
+    sc = compute_scorecard(store, window_hours=24)
+    c = sc["convergence"]
+    assert c["goals_closed"] == 2
+    assert c["first_pass"] == 1
+    assert c["first_pass_rate"] == pytest.approx(0.5, abs=1e-4)
+    assert c["rounds_median"] == pytest.approx(3.5)
+    assert c["rounds_max"] == 6
+
+
+def test_rounds_unknown_bucket_never_counts_as_first_pass(store, tmp_path):
+    """A goal closed BEFORE the ledger existed (terminal phase-history entry,
+    no convergence row) lands in rounds_unknown — never silently first-pass."""
+    from datetime import datetime, timezone
+    gs = _with_goal_tables(store, tmp_path)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    gs._goal_state.append_phase_history("pre018", "done", now)
+
+    sc = compute_scorecard(store, window_hours=24)
+    c = sc["convergence"]
+    assert c["rounds_unknown"] == 1
+    assert c["goals_closed"] == 0
+    assert c["first_pass_rate"] is None
+
+
+def test_abandoned_goals_counted_but_not_in_convergence_denominator(store, tmp_path):
+    gs = _with_goal_tables(store, tmp_path)
+    _seed_convergence(gs, "killed", outcome="abandoned", rounds=0)
+    _seed_convergence(gs, "done1", outcome="achieved", rounds=1)
+
+    sc = compute_scorecard(store, window_hours=24)
+    c = sc["convergence"]
+    assert c["abandoned"] == 1
+    assert c["goals_closed"] == 1
+    assert c["first_pass_rate"] == pytest.approx(1.0)
+
+
+def test_convergence_window_excludes_old_closes(store, tmp_path):
+    gs = _with_goal_tables(store, tmp_path)
+    _seed_convergence(gs, "ancient", outcome="achieved", rounds=1,
+                      closed_at="2020-01-01T00:00:00+00:00")
+    sc = compute_scorecard(store, window_hours=24)
+    assert sc["convergence"]["goals_closed"] == 0
+    assert sc["convergence"]["first_pass_rate"] is None  # null, never 0% or 100%
+
+
+def test_zero_denominator_reports_null_not_zero(store, tmp_path):
+    _with_goal_tables(store, tmp_path)  # tables exist, nothing closed
+    sc = compute_scorecard(store, window_hours=24)
+    c = sc["convergence"]
+    assert c["first_pass_rate"] is None
+    assert c["rounds_median"] is None
+    assert c["rounds_max"] is None
+    # tables present → the pre-018 degrade note must NOT appear
+    assert not any("convergence unknown" in n for n in sc["estimate_notes"])

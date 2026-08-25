@@ -325,6 +325,27 @@ def check_schedule_dispatch(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "dispatch currently open (informational)")]
 
 
+def check_goal_convergence_table(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 018 US1: the goal_convergence terminal ledger must exist wherever
+    goal tables do — an instance whose DB predates the table silently reports
+    every close as rounds-unknown, which the scorecard names but a fresh boot
+    fixes (GoalState bootstraps tables at construction)."""
+    cid = "instance.scorecard.goal_convergence"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "goal_status" not in tables:
+        return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
+    if "goal_convergence" not in tables:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal_convergence table absent while goal tables exist — the DB "
+            "predates spec 018; every goal close lands in the scorecard's "
+            "rounds-unknown bucket until the table exists",
+            remedy="restart devclaw (GoalState bootstraps tables at construction)",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_convergence terminal ledger present")]
+
+
 INSTANCE_CHECKS: tuple = (
     check_migration_meta_keys,
     check_legacy_goal_status_lifecycle,
@@ -337,4 +358,5 @@ INSTANCE_CHECKS: tuple = (
     check_skills_bundle,
     check_schedule_raw_key,
     check_schedule_dispatch,
+    check_goal_convergence_table,
 )
