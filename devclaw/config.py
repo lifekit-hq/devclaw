@@ -132,6 +132,29 @@ def goal_tick_seconds() -> int:
     return int(os.environ.get("DEVCLAW_GOAL_TICK_SECONDS", "900"))
 
 
+# ---- autonomy-ratchet thresholds (spec 018 US4) ---------------------------
+# The finish-line numbers the scorecard grades itself against (agreed
+# 2026-08-25). Configuration, not code: tune without a deploy. The gate they
+# feed is INFORMATIONAL ONLY — the spec 007 autonomy flip stays a manual
+# operator act; no mechanism reads the verdict.
+
+
+def ratchet_first_pass() -> float:
+    """``DEVCLAW_RATCHET_FIRST_PASS`` — per-goal first-pass rate threshold."""
+    return float(os.environ.get("DEVCLAW_RATCHET_FIRST_PASS", "0.70"))
+
+
+def ratchet_decided_merge() -> float:
+    """``DEVCLAW_RATCHET_DECIDED_MERGE`` — decided-PR merge-rate threshold."""
+    return float(os.environ.get("DEVCLAW_RATCHET_DECIDED_MERGE", "0.80"))
+
+
+def ratchet_window_days() -> int:
+    """``DEVCLAW_RATCHET_WINDOW_DAYS`` — the rolling window every ratchet
+    metric (and the wedge-free-cycles condition) is judged over."""
+    return int(os.environ.get("DEVCLAW_RATCHET_WINDOW_DAYS", "14"))
+
+
 #: wall-clock seconds an EXECUTING goal may go without a delivery before the
 #: no-progress watchdog pings the owner once. 0 disables. Default 6h.
 NO_PROGRESS_S = int(os.environ.get("DEVCLAW_GOAL_NO_PROGRESS_S", "21600"))
