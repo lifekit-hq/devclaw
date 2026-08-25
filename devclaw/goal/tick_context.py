@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Awaitable, Callable
 
 from .. import config as _config
+from . import issue_ref as _issue_ref
 from . import mergeability as _mergeability
 from . import remote_checks as _remote_checks
 from . import summary as _goal_summary
@@ -243,6 +244,11 @@ class TickContext:
     #: goal_service binds the gh-backed checker, tests inject a fake — the
     #: same subprocess-free-tick seam as ``mergeability_probe``.
     remote_checker: "_remote_checks.RemoteChecker | None" = None
+    #: live issue fetch for referenced goals (spec 019) — same
+    #: subprocess-free-tick seam as ``remote_checker``: goal_service binds the
+    #: gh-backed :func:`devclaw.goal.issue_ref.fetch_issue`, tests inject a
+    #: fake. None → the gh default is used at the dispatch boundary.
+    issue_fetcher: "_issue_ref.IssueFetcher | None" = None
     #: post-settle mergeability probe (#394): asks GitHub whether a delivered
     #: PR is CONFLICTING with its base so the settle can say "this cannot
     #: land" loudly instead of settling a conflicting delivery

@@ -1,0 +1,115 @@
+"""The goal-as-pointer doorway (spec 019 US1) — structural validation of
+first-class issue references, hard refusals with actionable messages, and the
+issue-less lane's byte-compatibility."""
+
+from __future__ import annotations
+
+import pytest
+
+from devclaw.goal.issue_ref import validate_refs
+from devclaw.goal.store import GoalStore
+from tests.goal_fakes import Clock, seed_goal
+
+
+# ---- validate_refs: every refusal names rule + input + fixing verb ---------
+
+
+def test_refs_require_a_repository_naming_the_issue_less_lane():
+    with pytest.raises(ValueError) as exc:
+        validate_refs([1], repo_url=None)
+    msg = str(exc.value)
+    assert "repository" in msg and "issue-less lane" in msg
+
+
+def test_non_positive_and_non_int_refs_refused():
+    for bad in ([0], [-3], ["7"], [True]):
+        with pytest.raises(ValueError) as exc:
+            validate_refs(bad, repo_url="https://github.com/o/r")
+        assert "positive issue number" in str(exc.value)
+
+
+def test_duplicate_refs_refused_naming_the_duplicate():
+    with pytest.raises(ValueError) as exc:
+        validate_refs([4, 7, 4], repo_url="https://github.com/o/r")
+    assert "#4" in str(exc.value) and "twice" in str(exc.value)
+
+
+def test_empty_and_none_pass_through_as_the_issue_less_lane():
+    assert validate_refs(None, repo_url=None) == []
+    assert validate_refs([], repo_url=None) == []
+
+
+def test_valid_ordered_refs_preserved():
+    assert validate_refs([9, 2, 5], repo_url="https://github.com/o/r") == [9, 2, 5]
+
+
+# ---- goal.yaml round trip ---------------------------------------------------
+
+
+def test_goal_yaml_round_trips_issue_refs(tmp_path):
+    store = GoalStore(tmp_path, now=Clock())
+    store.create_goal(
+        "g", objective="Fix the referenced issues.", workspace_dir="/repos/demo",
+        repo_url="https://github.com/o/r", done_when="issues resolved",
+        issue_refs=[7, 3],
+    )
+    g = store.load_goal("g")
+    assert g.issue_refs == [7, 3]
+
+
+def test_pre_019_goal_yaml_loads_as_the_issue_less_lane(tmp_path):
+    """US5's byte-compat pin: a goal.yaml with no issue_refs key (every goal
+    authored before spec 019) loads with an empty list — the issue-less lane,
+    behavior unchanged."""
+    seed_goal(tmp_path, "old")
+    store = GoalStore(tmp_path, now=Clock())
+    assert store.load_goal("old").issue_refs == []
+
+
+# ---- service doorway --------------------------------------------------------
+
+
+def _service(tmp_path):
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+
+    goals_dir = tmp_path / "goals"
+    db = StateStore(str(tmp_path / "state.db"))
+    cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
+    return GoalService(TaskQueue(db), db, config=cfg), db
+
+
+_SAGA = dict(out_of_scope=[], invariants=[], established=[])
+
+
+def test_create_goal_threads_issues_to_the_record_and_display(tmp_path):
+    svc, db = _service(tmp_path)
+    try:
+        svc.create_goal(
+            "g", objective="Fix the referenced issues end to end.",
+            workspace_dir=str(tmp_path / "ws"),
+            repo_url="https://github.com/o/r",
+            done_when="the referenced issues' behavior holds",
+            backlog=[], mode="one_shot", issues=[11, 4], **_SAGA,
+        )
+        assert svc.get_goal("g")["issue_refs"] == [11, 4]
+    finally:
+        db.close()
+
+
+def test_create_goal_refuses_bad_refs_and_persists_nothing(tmp_path):
+    svc, db = _service(tmp_path)
+    try:
+        with pytest.raises(ValueError):
+            svc.create_goal(
+                "g", objective="Fix the referenced issues end to end.",
+                workspace_dir=str(tmp_path / "ws"),
+                repo_url="https://github.com/o/r",
+                done_when="the referenced issues' behavior holds",
+                backlog=[], mode="one_shot", issues=[4, 4], **_SAGA,
+            )
+        with pytest.raises(KeyError):
+            svc.get_goal("g")   # nothing persisted on refusal
+    finally:
+        db.close()

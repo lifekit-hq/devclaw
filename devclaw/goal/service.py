@@ -26,6 +26,7 @@ from ..advance_brief import display_goal as _display_goal
 from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
 from . import mergeability as goal_mergeability
+from . import issue_ref as _issue_ref
 from . import project_hold as _project_hold
 from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
@@ -428,6 +429,7 @@ class GoalService:
             tracer_factory=self._make_tracer,
             trend_detector=self._trend_detector(),
             remote_checker=self._remote_checker(),
+            issue_fetcher=_issue_ref.fetch_issue,
             triage_caller=self._triage(),
             mergeability_probe=goal_mergeability.pr_conflicting,
             project_workspaces=self._registered_workspaces,
@@ -451,6 +453,7 @@ class GoalService:
                 trend_detector=self._trend_detector(),
                 remote_checker=self._remote_checker(),
                 mergeability_probe=goal_mergeability.pr_conflicting,
+                issue_fetcher=_issue_ref.fetch_issue,
             )
         return outcome.value
 
@@ -598,6 +601,7 @@ class GoalService:
         out_of_scope: Optional[list[str]] = None,
         invariants: Optional[list[str]] = None,
         established: Optional[list[str]] = None,
+        issues: Optional[list[int]] = None,
     ) -> dict:
         """File a durable goal. Beyond ``objective`` and ``done_when``, a saga
         is authored from three further NAMED SLOTS (spec 012 US2, FR-007):
@@ -620,6 +624,9 @@ class GoalService:
             raise ValueError(
                 f"unknown goal mode {mode!r} — expected 'long_lived', 'one_shot' or 'qa'"
             )
+        # First-class issue references (spec 019 US1) — hard refusal at the
+        # doorway, nothing persisted (clarified 2026-08-25: no override).
+        issue_refs = _issue_ref.validate_refs(issues, repo_url=repo_url)
         if mode == "qa":
             # Spec 015 US3 — a qa goal's contract is fixed by construction:
             # standing done_when (the done-gate could never close it), no
@@ -653,7 +660,7 @@ class GoalService:
             repo_url=repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
             done_when=done_when, backlog=backlog, mode=mode, strictness=strictness,
             project_id=project_id, out_of_scope=out_of_scope, invariants=invariants,
-            established=established,
+            established=established, issue_refs=issue_refs,
         )
         # The waiter may have grilled scope before filing the order — persist the
         # spec it landed on so the evaluator judges done against the shared contract.
@@ -793,6 +800,9 @@ class GoalService:
             "out_of_scope": g.out_of_scope,
             "invariants": g.invariants,
             "established": g.established,
+            # First-class refs (spec 019): non-empty = the referenced lane —
+            # the dispatch fetches these issues' live state; [] = issue-less.
+            "issue_refs": g.issue_refs,
             "cadence": g.cadence,
             "workspace_dir": g.workspace_dir,
             "backlog": g.backlog,

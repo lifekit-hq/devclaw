@@ -356,3 +356,23 @@ def test_missing_goal_convergence_table_detected(env):
 def test_goal_convergence_table_present_is_ok(env):
     (f,) = _findings(_run(env), "instance.scorecard.goal_convergence")
     assert f.verdict is Verdict.OK
+# ---- project: referenced-goal record shape (spec 019 US1) -----------------
+
+
+def test_malformed_issue_refs_detected(env):
+    """Seeded fault: a referenced goal whose refs are not positive ints —
+    hand-edit/corruption drift that would otherwise surface only as a
+    mid-night dispatch crash."""
+    register_tmp_project(env["registry"], env["tmp"] / "ws-refs", project_id="refs-proj")
+    seed_goal(env["goals_dir"], "bad-refs", project_id="refs-proj", issue_refs=[-1])
+    (f,) = [x for x in _findings(_run(env), "project.goals.issue_refs")
+            if x.verdict is Verdict.FAIL]
+    assert "bad-refs" in f.evidence and "cancel + recreate" in f.remedy
+
+
+def test_wellformed_issue_refs_ok(env):
+    register_tmp_project(env["registry"], env["tmp"] / "ws-refs2", project_id="refs-proj2")
+    seed_goal(env["goals_dir"], "good-refs", project_id="refs-proj2", issue_refs=[4, 7])
+    fs = _findings(_run(env), "project.goals.issue_refs")
+    assert fs and all(x.verdict is Verdict.OK for x in fs
+                      if x.project_id == "refs-proj2")

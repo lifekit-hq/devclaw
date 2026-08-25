@@ -318,6 +318,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         out_of_scope: list[str] | None = None,
         invariants: list[str] | None = None,
         established: list[str] | None = None,
+        issue_refs: list[int] | None = None,
     ) -> Goal:
         """Write a new goal.yaml. Raises FileExistsError if the id is taken."""
         if self.exists(goal_id):
@@ -367,6 +368,9 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
                     },
                     "backlog": list(backlog or []),
                     "stub_acceptable": list(stub_acceptable or []),
+                    # Written ONLY when present — a pre-019 goal.yaml has no
+                    # key and loads as the issue-less lane.
+                    **({"issue_refs": [int(x) for x in issue_refs]} if issue_refs else {}),
                     "mode": mode,
                     # Written ONLY when explicitly chosen (spec 016 FR-008):
                     # an absent key is what lets the repo manifest's
@@ -395,6 +399,7 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             open_pr=bool(raw.get("open_pr", True)),
             done_when=str(raw.get("done_when", "")).strip(),
             backlog=[str(x).strip() for x in (raw.get("backlog") or [])],
+            issue_refs=[int(x) for x in (raw.get("issue_refs") or [])],
             stub_acceptable=[str(x).strip() for x in (raw.get("stub_acceptable") or []) if str(x).strip()],
             # Saga slots (spec 012 US2). ``_slot`` — NOT ``or []``: an ABSENT
             # key must stay None (goal authored before the schema ⇒ its brief

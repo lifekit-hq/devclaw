@@ -179,6 +179,33 @@ def check_scaffold_drift(ctx: "InstanceContext", project: "Project") -> list[Fin
                     project_id=pid)]
 
 
+def check_issue_refs_shape(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """Referenced-goal records parse (spec 019 US1): every goal on this
+    project whose goal.yaml carries ``issue_refs`` must load, and the refs
+    must be positive integers — a hand-edited or corrupted record would
+    otherwise surface only as a mid-night dispatch crash."""
+    cid = "project.goals.issue_refs"
+    bad: list[str] = []
+    for gid in ctx.goal_store.list_goal_ids():
+        try:
+            g = ctx.goal_store.load_goal(gid)
+        except Exception as exc:  # noqa: BLE001 — the unparseable record IS the finding
+            bad.append(f"{gid} (goal.yaml unreadable: {exc})")
+            continue
+        if g.project_id != project.id:
+            continue
+        if any(isinstance(n, bool) or not isinstance(n, int) or n <= 0 for n in g.issue_refs):
+            bad.append(f"{gid} (issue_refs {g.issue_refs!r} not positive ints)")
+    if bad:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "referenced-goal record(s) malformed: " + "; ".join(sorted(bad)[:5]),
+            remedy="cancel + recreate the goal (goals are durable — no field patches)",
+            project_id=project.id,
+        )]
+    return [Finding(cid, Verdict.OK, "all referenced-goal records parse", project_id=project.id)]
+
+
 PROJECT_CHECKS: tuple = (
     check_workspace_preflight,
     check_dangling_links,
@@ -186,4 +213,5 @@ PROJECT_CHECKS: tuple = (
     check_manifest,
     check_marker_integrity,
     check_scaffold_drift,
+    check_issue_refs_shape,
 )
