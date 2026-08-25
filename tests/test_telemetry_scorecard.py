@@ -58,7 +58,8 @@ def test_empty_store_returns_zero_metrics(store):
     assert sc["pr"]["state_as_of_ms"] is None   # never refreshed → stale, said out loud
     assert sc["workspace_breaks_tripped"] == 0
     assert sc["evaluator"]["total_calls"] == 0
-    assert sc["evaluator"]["steer_rate"] == 0.0
+    assert "steer_rate" not in sc["evaluator"]   # split into steering block (spec 018 US3)
+    assert sc["steering"]["human_steers"] == 0
     assert "first_pass_hit_rate" not in sc["evaluator"]  # replaced by per-goal convergence (spec 018)
     c = sc["convergence"]
     assert c["goals_closed"] == 0 and c["first_pass_rate"] is None
@@ -104,8 +105,9 @@ def test_evaluator_verdicts_and_derived_rates(store):
     assert v["stalled"] == 0
     assert v["needs_human"] == 0
     assert sc["evaluator"]["total_calls"] == 6
-    # 2 off_track out of 6 classified → steer_rate 33.3%
-    assert sc["evaluator"]["steer_rate"] == pytest.approx(2 / 6, abs=1e-4)
+    # the conflated steer_rate is GONE (spec 018 US3): machine off_track
+    # verdicts are not human steering and no field may imply they are
+    assert "steer_rate" not in sc["evaluator"]
     # the verdict-weighted first_pass_hit_rate is GONE (spec 018): achieved
     # verdict share is not a per-goal first-pass rate
     assert "first_pass_hit_rate" not in sc["evaluator"]
@@ -191,7 +193,7 @@ def test_format_scorecard_smoke(store):
     for token in (
         "window:", "tasks (terminal):", "PRs (distinct):",
         "workspace breaks:", "evaluator calls:", "verdicts:",
-        "steer rate:", "convergence:", "estimate notes:",
+        "steering:", "convergence:", "ratchet:", "estimate notes:",
     ):
         assert token in text, f"format_scorecard dropped {token!r}"
 
@@ -634,3 +636,61 @@ def test_ratchet_is_informational_only():
         if "ratchet" in p.read_text()
     ]
     assert hits == [], f"goal-layer module(s) reference the ratchet: {hits}"
+
+
+# ---- steering split (spec 018 US3) + the final wire shape ------------------
+
+
+def test_human_steers_exclude_auto_sources(store, tmp_path):
+    gs = _with_goal_tables(store, tmp_path)
+    gs.append_steering("g1", ["take the conftest approach"], source="denys")
+    gs.append_steering("g1", ["one more thing"], source="denys")
+    gs.append_steering("g2", ["ship it"], source="denys")
+    for _ in range(5):
+        gs.append_steering("g1", ["[clause] fix"], source="auto-eval")
+
+    sc = compute_scorecard(store, window_hours=24)
+    assert sc["steering"]["human_steers"] == 3
+
+
+def test_no_field_names_human_steering_from_machine_verdicts(store):
+    """Wire-shape scan: nothing named steer/steering outside the steering
+    block — the class of misnamed machine-derived fields stays dead."""
+    sc = compute_scorecard(store, window_hours=24)
+
+    def walk(prefix, obj, hits):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                path = f"{prefix}.{k}"
+                if "steer" in k.lower() and not path.startswith(".steering"):
+                    hits.append(path)
+                walk(path, v, hits)
+
+    hits: list = []
+    walk("", sc, hits)
+    assert hits == [], hits
+
+
+def test_scorecard_wire_shape_matches_the_contract(store, tmp_path):
+    """The corrected output's presence AND absence pins (spec 018 polish,
+    contracts/scorecard-output.md): removed legacy fields stay removed, the
+    four new blocks exist with their key fields."""
+    _with_goal_tables(store, tmp_path)
+    sc = compute_scorecard(store, window_hours=24)
+    # absences — a name that survives must keep its meaning; these couldn't
+    assert "merge_rate" not in sc
+    assert "merged_with_pr" not in sc["tasks"]
+    assert "first_pass_hit_rate" not in sc["evaluator"]
+    assert "steer_rate" not in sc["evaluator"]
+    # presences
+    for key in ("opened", "merged", "rejected", "open", "unknown",
+                "decided_merge_rate", "state_as_of_ms", "refresh_truncated", "bench"):
+        assert key in sc["pr"], key
+    for key in ("goals_closed", "first_pass", "first_pass_rate",
+                "rounds_median", "rounds_max", "abandoned", "rounds_unknown"):
+        assert key in sc["convergence"], key
+    for key in ("human_steers", "machine_correction_rounds_median"):
+        assert key in sc["steering"], key
+    assert set(sc["ratchet"]["checks"]) == {
+        "first_pass_rate", "decided_merge_rate", "wedge_free_window"}
+    assert isinstance(sc["ratchet"]["pass"], bool)

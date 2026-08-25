@@ -506,12 +506,6 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
         "pr_ledger table absent (DB predates spec 018 US2) — PR ground truth "
         "unknown for this window."
     )
-    # Steer rate: of evaluator verdicts that landed cleanly, what fraction were
-    # off_track (each off_track writes corrections to inbox.md → the planner
-    # picks them up next tick, i.e. one implicit steer). A rough but honest
-    # proxy for "how often the loop needed correction to stay on track."
-    classified = sum(verdicts.values())
-    steer_rate = (verdicts["off_track"] / classified) if classified else 0.0
 
     # ---- per-goal convergence (spec 018 US1) ---------------------------
     # Goal-weighted, from the goal_convergence terminal ledger — the
@@ -595,6 +589,32 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
         else None
     )
 
+    # ---- steering split (spec 018 US3) ---------------------------------
+    # HUMAN steering (owner-written rows, source not auto-*) counted from
+    # where it already lives; the machine half is the convergence rounds
+    # distribution — the single conflated steer_rate this replaces counted
+    # only the machine's own off_track verdicts while wearing a name that
+    # implied the owner.
+    human_steers = 0
+    steering_note = None
+    try:
+        with store._lock:
+            hs_row = store._db.execute(
+                "SELECT COUNT(*) AS n FROM goal_steering "
+                "WHERE source NOT LIKE 'auto-%' AND created_at >= ?",
+                (since_ms,),
+            ).fetchone()
+        human_steers = int(hs_row["n"] if hs_row else 0)
+    except sqlite3.OperationalError:
+        steering_note = (
+            "goal_steering table absent (DB predates the goal tables) — "
+            "human-steer count unknown for this window."
+        )
+    steering_block = {
+        "human_steers": human_steers,
+        "machine_correction_rounds_median": convergence["rounds_median"],
+    }
+
     # ---- the finish line, machine-checked (spec 018 US4) ---------------
     # Pass/fail against the configured thresholds + the wedge-free-cycles
     # condition (non-idle cycle_reports rows in-window, all clean). A null
@@ -650,6 +670,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
         },
         "pr": pr_block,
         "convergence": convergence,
+        "steering": steering_block,
         "ratchet": ratchet,
         "workspace_breaks_tripped": workspace_breaks,
         "usage": {
@@ -670,7 +691,6 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
             "total_calls": eval_calls,
             "verdicts": verdicts,
             "unparseable_responses": unparseable,
-            "steer_rate": round(steer_rate, 4),
             # Axis-B distribution — only counted for responses that carried a
             # structural_health field (post-C3 done-gate calls). Empty when no
             # evaluator response in-window reported one.
@@ -680,8 +700,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
             n for n in (
                 convergence_note,
                 pr_note,
-                "steer_rate uses off_track verdicts as a steering proxy; owner-"
-                "written inbox.md steers are not (yet) traced separately.",
+                steering_note,
                 "usage: cognition rows without real CLI usage contribute their "
                 "len/4 estimate; OAuth (Pro/Max) runs report no dollar cost, so "
                 "tokens_per_merged_pr is the honest cross-billing number and "
@@ -951,7 +970,12 @@ def format_scorecard(sc: dict) -> str:
     ]
     for v in _EVAL_VERDICTS:
         lines.append(f"  {v:<14} {e['verdicts'][v]}")
-    lines.append(f"steer rate:       {e['steer_rate'] * 100:.1f}%   (off_track / classified)")
+    st = sc.get("steering") or {}
+    med = st.get("machine_correction_rounds_median")
+    lines.append(
+        f"steering:         human {st.get('human_steers', 0)} steer(s) · "
+        f"machine correction median {med if med is not None else 'n/a'} round(s)"
+    )
     r = sc.get("ratchet") or {}
     if r:
         parts = []

@@ -107,8 +107,8 @@ steer_rate retired.
 goals → human_steers=3; no output field implies human steering computed from
 machine verdicts.
 
-- [ ] T026 [US3] Add the `steering` block (human_steers from goal_steering source NOT LIKE 'auto-%' over the shared devclaw.db connection; machine_correction_rounds_median aliasing convergence) and REMOVE `evaluator.steer_rate` + the two obsoleted estimate_notes in devclaw/telemetry.py; update devclaw/cli.py rendering
-- [ ] T027 [P] [US3] Named tests in tests/test_telemetry_scorecard.py: test_human_steers_exclude_auto_sources, test_no_field_names_human_steering_from_machine_verdicts (wire-shape scan of the output keys)
+- [X] T026 [US3] Add the `steering` block (human_steers from goal_steering source NOT LIKE 'auto-%' over the shared devclaw.db connection; machine_correction_rounds_median aliasing convergence) and REMOVE `evaluator.steer_rate` + the two obsoleted estimate_notes in devclaw/telemetry.py; update devclaw/cli.py rendering
+- [X] T027 [P] [US3] Named tests in tests/test_telemetry_scorecard.py: test_human_steers_exclude_auto_sources, test_no_field_names_human_steering_from_machine_verdicts (wire-shape scan of the output keys)
 
 **Checkpoint**: all four stories independently functional
 
@@ -116,9 +116,9 @@ machine verdicts.
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T028 Wire-shape contract test pinning the full corrected output against specs/018-scorecard-ratchet/contracts/scorecard-output.md (presence AND absence of the removed legacy fields) in tests/test_telemetry_scorecard.py
-- [ ] T029 [P] Docs honesty: add the three DEVCLAW_RATCHET_* vars to docs/reference/env-vars.md, sweep docs mentioning merge_rate/first_pass_hit_rate/steer_rate, update the get_scorecard_metrics docstring in devclaw/server/tools/observability.py, and bump touched docs' currency tags in docs/INDEX.md
-- [ ] T030 Run specs/018-scorecard-ratchet/quickstart.md end-to-end: full suite vs T001 baseline, ruff, mypy, live CLI read against a dev instance
+- [X] T028 Wire-shape contract test pinning the full corrected output against specs/018-scorecard-ratchet/contracts/scorecard-output.md (presence AND absence of the removed legacy fields) in tests/test_telemetry_scorecard.py
+- [X] T029 [P] Docs honesty: add the three DEVCLAW_RATCHET_* vars to docs/reference/env-vars.md, sweep docs mentioning merge_rate/first_pass_hit_rate/steer_rate, update the get_scorecard_metrics docstring in devclaw/server/tools/observability.py, and bump touched docs' currency tags in docs/INDEX.md
+- [X] T030 Run specs/018-scorecard-ratchet/quickstart.md end-to-end: full suite vs T001 baseline, ruff, mypy, live CLI read against a dev instance
 
 ---
 
@@ -177,3 +177,13 @@ out loud.
   ledger, matching how the scorecard reports staleness.
 - Bench-goal convergence exclusion (deferred from US1) landed here with the
   flag.
+
+## Implementation notes (US3 + polish, 2026-08-25)
+
+- All four stories built; spec 018 is code-complete. T030's live-read leg
+  (CLI against a running instance) is deliberately deferred to the next VPS
+  redeploy — the instance runs pre-018 code until then, so a live read today
+  proves nothing the stubbed gates haven't.
+- No repo doc referenced the removed fields (merge_rate /
+  first_pass_hit_rate / steer_rate) outside telemetry itself; the env-vars
+  reference gained the three DEVCLAW_RATCHET_* rows in US4's increment.
