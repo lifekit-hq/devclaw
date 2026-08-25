@@ -246,11 +246,19 @@ async def create_goal(
     out_of_scope: Optional[list[str]] = None,
     invariants: Optional[list[str]] = None,
     established: Optional[list[str]] = None,
+    issues: Optional[list[int]] = None,
 ) -> str:
     """Register a goal that DevClaw drives: on each heartbeat it plans, dispatches
     to the engine, records what shipped, and only closes when a grounded review
     confirms done_when is met. Steer it any time with steer_goal; inspect it with
     get_goal.
+
+    issues (spec 019, the referenced lane): ordered issue NUMBERS on the
+    project's own repository. Each dispatch fetches their LIVE state into the
+    worker brief — never a creation-time copy — a closed issue drops out of
+    the remaining scope, and when every referenced issue is closed the goal
+    proposes done without spending a worker session. Omit for the issue-less
+    lane (bench/greenfield), which behaves exactly as before.
 
     mode selects the execution dial (ADR 0003): 'long_lived' (default) is the
     per-tick loop — plan the single next action each heartbeat, steerable
@@ -309,9 +317,14 @@ async def create_goal(
                 spec=spec, mode=mode, strictness=strictness,
                 project_id=resolved.project_id, out_of_scope=out_of_scope,
                 invariants=invariants, established=established,
+                issues=issues,
             ),
             indent=2,
         )
+    except ValueError as exc:
+        # Issue-reference doorway refusals (spec 019) surface verbatim — each
+        # message names the rule, the offending input, and the fixing verb.
+        raise ToolError(str(exc))
     except FileExistsError:
         raise ToolError(f"goal {goal_id!r} already exists")
     except GoalAdmissionRejected as exc:

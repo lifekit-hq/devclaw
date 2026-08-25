@@ -180,6 +180,7 @@ def seed_goal(
     out_of_scope: list[str] | None = None,
     invariants: list[str] | None = None,
     established: list[str] | None = None,
+    issue_refs: list[int] | None = None,
 ) -> None:
     """Write a minimal goal.yaml under goals_dir/<goal_id>/.
 
@@ -228,6 +229,8 @@ def seed_goal(
         doc["mode"] = mode
     if project_id is not None:
         doc["project_id"] = project_id
+    if issue_refs is not None:
+        doc["issue_refs"] = list(issue_refs)
     for key, value in (
         ("out_of_scope", out_of_scope),
         ("invariants", invariants),
@@ -236,3 +239,25 @@ def seed_goal(
         if value is not None:
             doc[key] = list(value)
     (d / "goal.yaml").write_text(yaml.safe_dump(doc))
+
+
+class FakeIssueFetcher:
+    """Scripted issue fetch for the referenced lane (spec 019): map issue
+    number → :class:`~devclaw.goal.issue_ref.IssueSnapshot` (or an Exception
+    to raise). ``.calls`` is the zero-fetch idle-guard counter — the sibling
+    of ``FakeClaude.calls``: it must stay 0 on idle and blocked tick paths."""
+
+    def __init__(self, issues: dict | None = None):
+        self._issues = dict(issues or {})
+        self.calls = 0
+
+    async def __call__(self, repo_url: str, number: int):
+        from devclaw.goal.issue_ref import IssueRefError
+
+        self.calls += 1
+        v = self._issues.get(number)
+        if isinstance(v, Exception):
+            raise v
+        if v is None:
+            raise IssueRefError(f"scripted: no such issue #{number}")
+        return v

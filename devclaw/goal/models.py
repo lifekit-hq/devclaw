@@ -91,6 +91,13 @@ class Goal:
     done_when: str = ""
     #: concrete starting work-list the planner draws the next action from
     backlog: list[str] = field(default_factory=list)
+    #: first-class issue references (spec 019): ordered issue NUMBERS on this
+    #: goal's own repository. Non-empty ⇒ the referenced lane — the dispatch
+    #: boundary fetches each issue's LIVE state into the worker brief and a
+    #: closed issue is dropped from the remaining scope; empty ⇒ the
+    #: issue-less lane, today's behavior unchanged. The lane IS this field —
+    #: no separate flag to drift.
+    issue_refs: list[int] = field(default_factory=list)
     #: explicit list of MCP tool names (or capability slugs) for which a
     #: ``not_yet_available`` stub is an acceptable terminal state. The
     #: decomposer is forbidden from emitting stubs unless the tool appears

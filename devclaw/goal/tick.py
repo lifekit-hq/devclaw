@@ -27,6 +27,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable, Protocol
 
+from . import issue_ref as _issue_ref
 from . import mergeability as _mergeability
 from . import prior_increments as _prior_increments
 from . import saga_framing as _saga_framing
@@ -44,7 +45,7 @@ from .models import Action, Goal, GoalStatus
 from .notify import Notifier
 from ..llm_call import ClaudeCaller
 from .store import GoalStore
-from .transitions import IllegalTransition, TransitionConflict
+from .transitions import Event, IllegalTransition, TransitionConflict
 from ..loom import trace as _trace
 from ..loom.limits import FailureKind, classify_failure, pause_seconds
 from ..state_store import _now_ms
@@ -129,6 +130,7 @@ async def tick_goal(
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
+    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> Outcome:
     """Run one heartbeat and record a single ``tick`` trace event with the
     incoming (lifecycle, phase) and outgoing outcome — the only place the trace
@@ -162,6 +164,7 @@ async def tick_goal(
                 remote_checker=remote_checker,
                 mergeability_probe=mergeability_probe,
                 holders=holders,
+                issue_fetcher=issue_fetcher,
             )
         except IllegalTransition as exc:
             # A handler proposed an (event, target) the LEGAL table doesn't permit
@@ -236,6 +239,7 @@ async def _tick_goal_impl(
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
+    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> Outcome:
     """Run one heartbeat. Reads the goal's status, classifies it into a
     :class:`Phase`, dispatches to the matching handler.
@@ -259,6 +263,7 @@ async def _tick_goal_impl(
         remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
         holders=holders,
+        issue_fetcher=issue_fetcher,
     )
 
     status = store.load_status(goal_id)
@@ -352,7 +357,7 @@ async def _tick_goal_impl(
 
 def _advance_brief(
     goal: Goal, steering: str, failure_context: str = "",
-    prior_increments: str = "",
+    prior_increments: str = "", issue_context: str = "",
 ) -> str:
     """The light pull-brief for a thin-path advance session (demolition P3;
     speckit substrate, spec 008 US1).
@@ -392,6 +397,11 @@ def _advance_brief(
     # (FR-009a) — a fresh sandbox has no memory, so a pointer would be a request
     # while a slot is a fact. Blank-safe: callers that pass nothing render
     # byte-identically to before this feature.
+    # Referenced-lane context (spec 019 US1): the referenced issues' LIVE
+    # state, fetched at this dispatch — the worker reads current truth, never
+    # a creation-time copy. Blank-safe: issue-less goals render byte-identically.
+    if issue_context.strip():
+        parts += ["", issue_context.strip()]
     if prior_increments.strip():
         parts += ["", prior_increments.strip()]
     if failure_context.strip():
@@ -578,12 +588,69 @@ async def _handle_long_lived_advance(
         prior_increments = _prior_increments.render(store.increment_records(goal_id))
     except Exception:  # noqa: BLE001
         prior_increments = ""
+    # Referenced lane (spec 019 US1): resolve every ref to LIVE issue state at
+    # this dispatch boundary — below the should_plan gate, so idle/blocked
+    # ticks fetch nothing. The fetch is LOAD-BEARING input (a worker brief,
+    # not optional grounding): a failure BLOCKS human-gated instead of
+    # degrading to a stale or empty ask.
+    issue_context = ""
+    if goal.issue_refs:
+        fetcher = ctx.issue_fetcher or _issue_ref.fetch_issue
+        snaps: list[_issue_ref.IssueSnapshot] = []
+        try:
+            for n in goal.issue_refs:
+                snaps.append(await fetcher(goal.repo_url or "", n))
+        except _issue_ref.IssueRefError as exc:
+            q = (
+                f"referenced issue could not be fetched: {exc} — a referenced "
+                "goal dispatches only from live issue state, never a stale "
+                "copy. Fix access or the reference, then resume_goal."
+            )
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=q,
+                        blocked_kind="lost_ref", next=""),
+                expect=status, consume_steering=consume_ids,
+            )
+            await _notify(ctx.notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
+            return Outcome.BLOCKED
+        open_snaps = [s for s in snaps if s.state == "open"]
+        for s in snaps:
+            if s.state != "open":
+                store.append_log(
+                    goal_id,
+                    f"referenced issue #{s.number} is {s.state} — dropped from "
+                    "the remaining scope (dispatch-boundary freshness guard)",
+                )
+        if not open_snaps:
+            # Every referenced issue is resolved out-of-band: spend ZERO
+            # worker sessions — propose done directly and let the grounded
+            # gate judge done_when (BLOCKED→OPEN_DONE_GATE is legal, so a
+            # steered-while-parked goal takes this path too).
+            store.append_log(
+                goal_id,
+                "all referenced issues are closed — proposing done without "
+                "dispatching a worker",
+            )
+            return await _open_done_gate(
+                goal_id, goal, base,
+                store=store, engine=ctx.engine,
+                evaluator_caller=ctx.evaluator_caller,
+                notifier=ctx.notifier, notify_url=ctx.notify_url,
+                prepare_ws=ctx.prepare_ws, verify_done=ctx.verify_done,
+                note="all referenced issues closed",
+                summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+                autodeploy=ctx.autodeploy, consume_steering=consume_ids,
+            )
+        issue_context = _issue_ref.render_issue_context(
+            open_snaps, [s for s in snaps if s.state != "open"]
+        )
     action = Action(
         engine="devclaw",
         tool="implement_feature",
         goal=_advance_brief(
             goal, steering, failure_context=failure_context,
-            prior_increments=prior_increments,
+            prior_increments=prior_increments, issue_context=issue_context,
         ),
         verify_cmd=goal.verify_cmd,
         open_pr=goal.open_pr,
@@ -620,6 +687,7 @@ async def tick_all(
     triage_caller: "ClaudeCaller | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     project_workspaces: "Callable[[], set[str]] | None" = None,
+    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal. One goal's failure never stops the others, and a usage
     limit pauses the whole layer (0 tokens) rather than crashing per-goal.
@@ -777,6 +845,7 @@ async def tick_all(
                     remote_checker=remote_checker,
                     mergeability_probe=mergeability_probe,
                     holders=holders,
+                    issue_fetcher=issue_fetcher,
                 )
         except Exception as exc:  # noqa: BLE001 — isolate per-goal blast radius
             # the goal's OWN cognition (claude --print) hitting a limit pauses the
