@@ -29,17 +29,6 @@ def _hook_source(path: Path = _HOOK) -> str:
             cwd=_REPO, capture_output=True, text=True, check=True,
         ).stdout
 
-# Guard the module-level load so that running this file DIRECTLY
-# (`pytest tests/test_main_branch_guard.py`) is safe in sandboxed / stripped
-# environments where .claude/ is absent — not only full-suite collection, which
-# relies on conftest.py's collect_ignore. Both guards are needed: collect_ignore
-# prevents the import entirely in full-suite runs; this skip fires for direct runs.
-if not _HOOK.exists():
-    pytest.skip(
-        f"{_HOOK.name} not found — .claude/ absent, skipping guard tests",
-        allow_module_level=True,
-    )
-
 
 def _load():
     mod = types.ModuleType("main_branch_guard")
