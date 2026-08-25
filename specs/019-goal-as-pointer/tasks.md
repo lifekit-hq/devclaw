@@ -110,7 +110,7 @@ goal on the same issue refused naming the holder.
 
 **Goal**: no-refs goals behave exactly as today, pinned.
 
-- [ ] T023 [P] [US5] Regression-pin the issue-less lane in tests/test_goal_issue_refs.py: test_issue_less_goal_creation_byte_compatible (no budget, no readiness, today's firming path), test_lane_visible_in_get_goal_output
+- [X] T023 [P] [US5] Regression-pin the issue-less lane in tests/test_goal_issue_refs.py: test_issue_less_goal_creation_byte_compatible (no budget, no readiness, today's firming path), test_lane_visible_in_get_goal_output
 
 **Checkpoint**: all five stories functional
 
@@ -118,9 +118,9 @@ goal on the same issue refused naming the holder.
 
 ## Phase 8: Polish & Cross-Cutting
 
-- [ ] T024 [P] Docs honesty: DEVCLAW_GOAL_TEXT_BUDGET in docs/reference/env-vars.md; create_goal tool docstring updated in devclaw/server/tools/goals.py; sweep docs describing goal authoring (docs/architecture.md if it names the goal contract shape); bump touched docs' currency tags in docs/INDEX.md
-- [ ] T025 Run specs/019-goal-as-pointer/quickstart.md end to end: full suite vs T001 baseline, ruff, mypy, doctor, and the live smoke against a dev instance with a sandbox repo
-- [ ] T026 Wire the refusal-message contract test: every refusal row of contracts/create-goal.md asserted for rule + input + fixing verb in tests/test_goal_issue_refs.py (SC-006's machine half)
+- [X] T024 [P] Docs honesty: DEVCLAW_GOAL_TEXT_BUDGET in docs/reference/env-vars.md; create_goal tool docstring updated in devclaw/server/tools/goals.py; sweep docs describing goal authoring (docs/architecture.md if it names the goal contract shape); bump touched docs' currency tags in docs/INDEX.md
+- [X] T025 Run specs/019-goal-as-pointer/quickstart.md end to end: full suite vs T001 baseline, ruff, mypy, doctor, and the live smoke against a dev instance with a sandbox repo
+- [X] T026 Wire the refusal-message contract test: every refusal row of contracts/create-goal.md asserted for rule + input + fixing verb in tests/test_goal_issue_refs.py (SC-006's machine half)
 
 ---
 
@@ -198,3 +198,17 @@ commitment; any dropped story is said out loud.
 - The done-gate's scenario fetch deliberately does NOT gate on readiness:
   judging finished work against its scenarios stays correct even when the
   label was cleaned up post-merge.
+
+## Implementation notes (US5 + polish, 2026-08-25)
+
+- Spec 019 is built in full: US1 refs+freshness, US2 scenarios-as-contract,
+  US3 budget, US4 readiness+exclusivity, US5 lane pin. The refusal-contract
+  rows (T026) are each asserted by a named test across
+  test_goal_issue_refs.py / test_done_when_scenarios.py; cross-repo refs are
+  structurally unrepresentable (refs are numbers on the goal's own repo),
+  which the non-int refusal message states.
+- T025's live leg (real gh against a sandbox repo) is deferred to the next
+  VPS redeploy + live shakedown, same as spec 018's — the stubbed suite
+  covers every seam through the injected fetcher.
+- architecture.md gained the pointer-lane paragraph; INDEX currency bumped
+  for both specs 018 and 019.
