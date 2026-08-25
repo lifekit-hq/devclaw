@@ -257,6 +257,36 @@ class GoalStateStatusMixin:
             )
             self._store._commit()
 
+    def count_verifying_rounds(self, goal_id: str) -> int:
+        """How many done-gate proposals this goal has made over its LIFE —
+        every proposal enters the ``verifying`` phase exactly once, and
+        phase history is append-only, so this count survives the
+        ``donegate_rounds`` streak resets a human steer/resume performs."""
+        with self._store._lock:
+            row = self._store._db.execute(
+                "SELECT COUNT(*) AS n FROM goal_phase_history "
+                "WHERE goal_id = ? AND phase = 'verifying'",
+                (goal_id,),
+            ).fetchone()
+        return int(row["n"] if row else 0)
+
+    def record_convergence(
+        self, goal_id: str, *, outcome: str, rounds: int,
+        workspace_dir: "str | None", closed_at: str,
+    ) -> None:
+        """INSERT the goal's one terminal convergence row (spec 018 US1).
+        ``INSERT OR IGNORE``: terminal is terminal — a duplicate write (e.g.
+        a cancel raced against a close) keeps the first row rather than
+        clobbering it."""
+        with self._store._lock:
+            self._store._db.execute(
+                "INSERT OR IGNORE INTO goal_convergence "
+                "(goal_id, outcome, rounds, workspace_dir, closed_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (goal_id, outcome, rounds, workspace_dir, closed_at),
+            )
+            self._store._commit()
+
     def seed_phase_history(self, goal_id: str, entries: "tuple[dict, ...]") -> None:
         """Bulk-insert existing phase entries verbatim — the lazy migration path
         that carries a pre-cutoff STATUS.md's phase_history onto the table."""

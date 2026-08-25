@@ -336,3 +336,23 @@ def test_scaffold_drift_detected_against_packaged_source(env, tmp_path):
     tmpl.write_text(tmpl.read_text() + "\nlocal fork\n")
     (f,) = _findings(_run(env), "project.scaffold.drift")
     assert f.verdict is Verdict.WARN and tmpl.name in f.evidence
+
+
+# ---- instance: scorecard convergence ledger (spec 018 US1) ----------------
+
+
+def test_missing_goal_convergence_table_detected(env):
+    """Seeded fault: goal tables exist but goal_convergence was dropped (a DB
+    predating spec 018) — every close would land rounds-unknown; FAIL with the
+    restart remedy (GoalState bootstraps tables at construction)."""
+    db = env["store"]._db
+    db.execute("DROP TABLE goal_convergence")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.scorecard.goal_convergence")
+    assert f.verdict is Verdict.FAIL
+    assert "goal_convergence" in f.evidence and "restart" in f.remedy
+
+
+def test_goal_convergence_table_present_is_ok(env):
+    (f,) = _findings(_run(env), "instance.scorecard.goal_convergence")
+    assert f.verdict is Verdict.OK

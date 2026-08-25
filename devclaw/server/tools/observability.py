@@ -101,7 +101,8 @@ async def get_scorecard_metrics(
     window_hours: Annotated[int, Field(ge=1, le=24 * 30)] = 168,
 ) -> str:
     """L8 rolling scorecard: merge rate, evaluator verdict distribution, steer
-    rate, first-pass hit rate, workspace-break count — computed over the last
+    rate, per-goal convergence (first-pass rate + rounds-to-close, spec 018),
+    workspace-break count — computed over the last
     ``window_hours`` (default 168 = one week). Reads state_store directly, so
     it's cheap and can be called from Telegram or a dashboard without waking
     the goal loop. See ``plan.md`` §Measurement direction for how the numbers

@@ -139,6 +139,21 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                   at         TEXT NOT NULL
                 );
 
+                -- Convergence ledger (spec 018 US1): ONE row per terminal
+                -- goal event, written at the close/cancel transition —
+                -- eval_outcomes' settle-ledger pattern applied to goals.
+                -- rounds = done-gate proposals over the goal's LIFE (counted
+                -- from goal_phase_history 'verifying' entries at write time,
+                -- so a mid-goal steer's donegate_rounds reset can't hide
+                -- churn). The scorecard reads this; nothing else does.
+                CREATE TABLE IF NOT EXISTS goal_convergence (
+                  goal_id        TEXT PRIMARY KEY,
+                  outcome        TEXT NOT NULL,   -- 'achieved' | 'abandoned'
+                  rounds         INTEGER NOT NULL,
+                  workspace_dir  TEXT,
+                  closed_at      TEXT NOT NULL
+                );
+
                 -- Steering lines (inbox.md is a generated mirror; since
                 -- #617 nothing reads it back). consumed_at NULL == unread, the
                 -- source of truth for what the planner hasn't seen yet;

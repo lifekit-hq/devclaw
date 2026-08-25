@@ -77,6 +77,24 @@ class GoalStatusMixin:
             return self._goal_state.read_status(goal_id)
         return GoalStatus()
 
+    def record_convergence(self, goal_id: str, outcome: str, workspace_dir: "str | None") -> None:
+        """Write the goal's terminal convergence row (spec 018 US1) — call
+        AFTER the terminal transition committed, so a CAS-rejected close
+        never leaves a phantom row (a crash in between degrades to the
+        scorecard's rounds-unknown bucket, never to a wrong count).
+
+        The ONE definition of rounds: lifetime done-gate proposals, counted
+        from the append-only phase history's ``verifying`` entries — NOT the
+        ``donegate_rounds`` streak counter, which a human steer/resume
+        legitimately resets mid-goal."""
+        self._goal_state.record_convergence(
+            goal_id,
+            outcome=outcome,
+            rounds=self._goal_state.count_verifying_rounds(goal_id),
+            workspace_dir=workspace_dir,
+            closed_at=self._now().isoformat(timespec="seconds"),
+        )
+
     def save_status(self, goal_id: str, status: GoalStatus) -> None:
         # Source of truth is the goal_status table; STATUS.md is a generated
         # full-fidelity view rewritten on every save (the rollback path).
