@@ -543,3 +543,94 @@ def test_pr_block_degrades_loudly_without_refresh(store):
     sc = compute_scorecard(store, window_hours=24)
     assert sc["pr"]["state_as_of_ms"] is None   # never refreshed — stale, named
     assert sc["pr"]["open"] == 1                 # unrefreshed rows read as opened-only
+
+
+# ---- the finish line, machine-checked (spec 018 US4) -----------------------
+
+
+def _seed_cycle(store, key, *, clean, idle=0):
+    store.record_cycle_report(
+        cycle_key=key, window_start_ms=_now_ms() - 3600_000,
+        window_end_ms=_now_ms(), clean=clean, idle=idle,
+        wedges_json="[]", pauses_json="[]", summary="s", sent_at=None,
+    )
+
+
+def _pass_fixture(store, tmp_path):
+    """Metrics just above every threshold: 3/4 first-pass (0.75 ≥ 0.70),
+    merged 5 / rejected 1 (0.833 ≥ 0.80), one clean non-idle cycle."""
+    gs = _with_goal_tables(store, tmp_path)
+    for i, rounds in enumerate([1, 1, 1, 3]):
+        _seed_convergence(gs, f"g{i}", outcome="achieved", rounds=rounds)
+    for i in range(6):
+        _land_task(store, workspace="/w", status="done", pr_url=f"https://gh/x/{i}")
+    states = {f"https://gh/x/{i}": "merged" for i in range(5)}
+    states["https://gh/x/5"] = "rejected"
+    store.upsert_pr_states(states, as_of_ms=_now_ms(), truncated=False)
+    _seed_cycle(store, "2026-08-24", clean=1)
+
+
+def test_ratchet_passes_when_every_check_holds(store, tmp_path):
+    _pass_fixture(store, tmp_path)
+    sc = compute_scorecard(store, window_hours=24)
+    r = sc["ratchet"]
+    assert r["checks"]["first_pass_rate"]["pass"] is True
+    assert r["checks"]["decided_merge_rate"]["pass"] is True
+    assert r["checks"]["wedge_free_window"]["pass"] is True
+    assert r["pass"] is True
+    assert r["thresholds"]["first_pass_rate"] == pytest.approx(0.70)
+
+
+def test_ratchet_flips_per_threshold_boundary(store, tmp_path, monkeypatch):
+    _pass_fixture(store, tmp_path)
+    monkeypatch.setenv("DEVCLAW_RATCHET_FIRST_PASS", "0.76")  # just above 0.75
+    sc = compute_scorecard(store, window_hours=24)
+    r = sc["ratchet"]
+    assert r["checks"]["first_pass_rate"]["pass"] is False
+    assert r["pass"] is False
+    assert r["thresholds"]["first_pass_rate"] == pytest.approx(0.76)  # echoed
+
+
+def test_nonclean_cycle_fails_wedge_free_check(store, tmp_path):
+    _pass_fixture(store, tmp_path)
+    _seed_cycle(store, "2026-08-25", clean=0)
+    r = compute_scorecard(store, window_hours=24)["ratchet"]
+    assert r["checks"]["wedge_free_window"]["pass"] is False
+    assert r["pass"] is False
+
+
+def test_idle_cycles_do_not_count_toward_wedge_free(store, tmp_path):
+    _pass_fixture(store, tmp_path)
+    _seed_cycle(store, "2026-08-25", clean=0, idle=1)  # idle: neither clean nor wedged
+    r = compute_scorecard(store, window_hours=24)["ratchet"]
+    assert r["checks"]["wedge_free_window"]["total_cycles"] == 1
+    assert r["pass"] is True
+
+
+def test_null_metric_never_passes_gate(store, tmp_path):
+    _with_goal_tables(store, tmp_path)   # tables exist, nothing closed → nulls
+    _seed_cycle(store, "2026-08-24", clean=1)
+    r = compute_scorecard(store, window_hours=24)["ratchet"]
+    assert r["checks"]["first_pass_rate"]["value"] is None
+    assert r["checks"]["first_pass_rate"]["pass"] is False
+    assert r["pass"] is False
+
+
+def test_default_window_is_the_ratchet_window(store, monkeypatch):
+    monkeypatch.setenv("DEVCLAW_RATCHET_WINDOW_DAYS", "7")
+    sc = compute_scorecard(store)
+    assert sc["window_hours"] == 7 * 24
+
+
+def test_ratchet_is_informational_only():
+    """No goal/tick/dispatch mechanism may read the gate verdict — the spec
+    007 flip stays a human act. Structural pin: the goal layer never imports
+    or references the ratchet result."""
+    import pathlib
+
+    goal_dir = pathlib.Path(__file__).resolve().parents[1] / "devclaw" / "goal"
+    hits = [
+        p.name for p in goal_dir.rglob("*.py")
+        if "ratchet" in p.read_text()
+    ]
+    assert hits == [], f"goal-layer module(s) reference the ratchet: {hits}"

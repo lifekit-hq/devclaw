@@ -89,10 +89,10 @@ accordingly; null values never pass.
 
 **Depends on**: US1 + US2 (their corrected values are the inputs).
 
-- [ ] T022 [P] [US4] Add DEVCLAW_RATCHET_FIRST_PASS / DEVCLAW_RATCHET_DECIDED_MERGE / DEVCLAW_RATCHET_WINDOW_DAYS through the single doorway in devclaw/config.py (one home, one default, one parse)
-- [ ] T023 [US4] Add the `ratchet` block to devclaw/telemetry.py — thresholds echoed, per-metric checks, wedge_free_window from cycle_reports.clean over the window, overall AND, null-never-passes — and render the verdict line in devclaw/cli.py
-- [ ] T024 [P] [US4] Named tests in tests/test_telemetry_scorecard.py: test_ratchet_flips_per_threshold_boundary, test_null_metric_never_passes_gate, test_nonclean_cycle_fails_wedge_free_check, test_thresholds_come_from_config_and_are_echoed
-- [ ] T025 [US4] Assert nothing actuates from the verdict: a grep-style guard test that no goal/tick/dispatch module imports the ratchet result (tests/test_telemetry_scorecard.py::test_ratchet_is_informational_only)
+- [X] T022 [P] [US4] Add DEVCLAW_RATCHET_FIRST_PASS / DEVCLAW_RATCHET_DECIDED_MERGE / DEVCLAW_RATCHET_WINDOW_DAYS through the single doorway in devclaw/config.py (one home, one default, one parse)
+- [X] T023 [US4] Add the `ratchet` block to devclaw/telemetry.py — thresholds echoed, per-metric checks, wedge_free_window from cycle_reports.clean over the window, overall AND, null-never-passes — and render the verdict line in devclaw/cli.py
+- [X] T024 [P] [US4] Named tests in tests/test_telemetry_scorecard.py: test_ratchet_flips_per_threshold_boundary, test_null_metric_never_passes_gate, test_nonclean_cycle_fails_wedge_free_check, test_thresholds_come_from_config_and_are_echoed
+- [X] T025 [US4] Assert nothing actuates from the verdict: a grep-style guard test that no goal/tick/dispatch module imports the ratchet result (tests/test_telemetry_scorecard.py::test_ratchet_is_informational_only)
 
 **Checkpoint**: "are we finished?" is a single read
 

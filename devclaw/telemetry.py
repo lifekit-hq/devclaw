@@ -338,7 +338,7 @@ def sum_task_usage(result_jsons: Any) -> dict:
     return totals
 
 
-def compute_scorecard(store: Any, *, window_hours: int = 168, registry: Any = None) -> dict:
+def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry: Any = None) -> dict:
     """Roll up L8 scorecard metrics over the last ``window_hours``.
 
     ``store`` is a ``devclaw.state_store.StateStore`` — typed as ``Any`` here
@@ -349,6 +349,12 @@ def compute_scorecard(store: Any, *, window_hours: int = 168, registry: Any = No
     nothing is bench. Pure store read — the pr_ledger's platform state was
     written by the once-per-cycle refresh, never here.
     """
+    from . import config as _config  # local import: telemetry stays light at module load
+
+    if window_hours is None:
+        # the default display window IS the ratchet window (spec 018 US4) —
+        # the gate and the numbers it grades are read over one span.
+        window_hours = _config.ratchet_window_days() * 24
     since_ms = _now_ms() - int(window_hours * 3600 * 1000)
     bench_ws: set = set()
     if registry is not None:
@@ -589,6 +595,49 @@ def compute_scorecard(store: Any, *, window_hours: int = 168, registry: Any = No
         else None
     )
 
+    # ---- the finish line, machine-checked (spec 018 US4) ---------------
+    # Pass/fail against the configured thresholds + the wedge-free-cycles
+    # condition (non-idle cycle_reports rows in-window, all clean). A null
+    # metric NEVER passes; the overall verdict is the AND. Informational
+    # only — nothing actuates from it (spec 007's flip stays a human act).
+    try:
+        with store._lock:
+            cyc_rows = store._db.execute(
+                "SELECT clean, idle FROM cycle_reports WHERE window_end_ms >= ?",
+                (since_ms,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        cyc_rows = []
+    counted = [r for r in cyc_rows if not (r["idle"] or 0)]
+    clean_cycles = sum(1 for r in counted if r["clean"])
+    thresholds = {
+        "first_pass_rate": _config.ratchet_first_pass(),
+        "decided_merge_rate": _config.ratchet_decided_merge(),
+        "window_days": _config.ratchet_window_days(),
+    }
+    fp_val = convergence["first_pass_rate"]
+    dm_val = pr_block["decided_merge_rate"]
+    checks = {
+        "first_pass_rate": {
+            "value": fp_val,
+            "pass": fp_val is not None and fp_val >= thresholds["first_pass_rate"],
+        },
+        "decided_merge_rate": {
+            "value": dm_val,
+            "pass": dm_val is not None and dm_val >= thresholds["decided_merge_rate"],
+        },
+        "wedge_free_window": {
+            "clean_cycles": clean_cycles,
+            "total_cycles": len(counted),
+            "pass": len(counted) > 0 and clean_cycles == len(counted),
+        },
+    }
+    ratchet = {
+        "thresholds": thresholds,
+        "checks": checks,
+        "pass": all(c["pass"] for c in checks.values()),
+    }
+
     return {
         "window_hours": window_hours,
         "since_ms": since_ms,
@@ -601,6 +650,7 @@ def compute_scorecard(store: Any, *, window_hours: int = 168, registry: Any = No
         },
         "pr": pr_block,
         "convergence": convergence,
+        "ratchet": ratchet,
         "workspace_breaks_tripped": workspace_breaks,
         "usage": {
             "cognition_tokens_in": cog_tokens_in,
@@ -902,6 +952,13 @@ def format_scorecard(sc: dict) -> str:
     for v in _EVAL_VERDICTS:
         lines.append(f"  {v:<14} {e['verdicts'][v]}")
     lines.append(f"steer rate:       {e['steer_rate'] * 100:.1f}%   (off_track / classified)")
+    r = sc.get("ratchet") or {}
+    if r:
+        parts = []
+        for name, chk in (r.get("checks") or {}).items():
+            parts.append(f"{name} {'PASS' if chk.get('pass') else 'fail'}")
+        verdict = "PASS — autonomy gate satisfied" if r.get("pass") else "fail"
+        lines.append(f"ratchet:          {verdict}  ({'; '.join(parts)})")
     c = sc.get("convergence") or {}
     if c:
         fp = (
