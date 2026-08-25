@@ -132,6 +132,7 @@ pure library gets no preview container unless its project pins `autodeploy=on`.
 |---|---|---|
 | `DEVCLAW_GOALS_DIR` | `~/memory/goals` | Root holding one folder per durable goal. `goal.yaml` (facts) and `spec.md` are plain files; `STATUS.md` / `log.md` / `inbox.md` / `deliveries.md` are generated **views** over the SQLite goal-state tables (`DEVCLAW_DB`) — human-readable, never read back for decisions. |
 | `DEVCLAW_GOAL_TICK_SECONDS` | `900` | Goal heartbeat interval. Also poked in-process the moment a task settles. |
+| `DEVCLAW_GOAL_TEXT_BUDGET` | `1000` | Max free-text characters on a REFERENCED goal (spec 019): the spec lives in the graded issue, the goal is a pointer. Hard doorway refusal, no override; issue-less goals exempt. |
 | `DEVCLAW_RATCHET_FIRST_PASS` | `0.70` | Autonomy-ratchet threshold (spec 018): per-goal first-pass rate the scorecard grades against. Informational — the spec 007 flip stays manual. |
 | `DEVCLAW_RATCHET_DECIDED_MERGE` | `0.80` | Autonomy-ratchet threshold: decided-PR merge rate (merged / merged+rejected, bench excluded). |
 | `DEVCLAW_RATCHET_WINDOW_DAYS` | `14` | Rolling window the ratchet metrics and the wedge-free-cycles condition are judged over; also the scorecard's default display window. |

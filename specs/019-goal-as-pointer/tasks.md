@@ -24,7 +24,7 @@ reviewable PR; the whole spec is the commitment.
 **Purpose**: the one reference seam every story consumes
 
 - [X] T002 Create devclaw/goal/issue_ref.py: `IssueSnapshot`, the `IssueFetcher` protocol with the gh-backed default (`gh api repos/{owner}/{repo}/issues/{n}`), readiness read reusing the grading pipeline's ready-label constant, and mechanical `extract_acceptance(body)` per the spec 015 section convention (research D2/D4)
-- [ ] T003 [P] Add `DEVCLAW_GOAL_TEXT_BUDGET` (default 1000) through the single doorway in devclaw/config.py (research D3)
+- [X] T003 [P] Add `DEVCLAW_GOAL_TEXT_BUDGET` (default 1000) through the single doorway in devclaw/config.py (research D3)
 - [X] T004 [P] Add `FakeIssueFetcher` (call-counting, scriptable per-ref responses) in tests/goal_fakes.py, following the FakeClaude/FakeEngine conventions
 - [X] T005 [P] Unit tests for the seam in tests/test_goal_issue_refs.py: test_extract_acceptance_slices_section, test_extract_acceptance_returns_none_when_absent, test_fetcher_protocol_injectable
 
@@ -81,8 +81,8 @@ actionable relocation message.
 budget, count, destination issue, regrade flow); within-budget accepted;
 issue-less goal of any length unaffected.
 
-- [ ] T017 [US3] Enforce the budget in GoalService.create_goal (devclaw/goal/service.py) for referenced goals only — objective + note counted, explicit done_when excluded (research D3); refusal message per contracts/create-goal.md
-- [ ] T018 [P] [US3] Named tests in tests/test_goal_issue_refs.py: test_over_budget_referenced_goal_refused_with_relocation_message, test_within_budget_accepted, test_issue_less_goal_exempt_from_budget, test_budget_configurable_via_config_doorway
+- [X] T017 [US3] Enforce the budget in GoalService.create_goal (devclaw/goal/service.py) for referenced goals only — objective + note counted, explicit done_when excluded (research D3); refusal message per contracts/create-goal.md
+- [X] T018 [P] [US3] Named tests in tests/test_goal_issue_refs.py: test_over_budget_referenced_goal_refused_with_relocation_message, test_within_budget_accepted, test_issue_less_goal_exempt_from_budget, test_budget_configurable_via_config_doorway
 
 **Checkpoint**: essays with refs impossible
 
