@@ -266,3 +266,21 @@ async def test_done_goal_releases_its_issue(tmp_path):
         assert svc.get_goal("successor")["issue_refs"] == [7]
     finally:
         db.close()
+
+
+# ---- the issue-less lane stays open (spec 019 US5) -------------------------
+
+
+def test_lane_visible_in_get_goal_output(tmp_path):
+    """US5 sc.2: the lane IS the refs field, visible on the record — [] for
+    issue-less, the ordered numbers for referenced."""
+    svc, db = _service(tmp_path)
+    try:
+        svc.create_goal(
+            "plain", objective="Scope a fresh bench repo.",
+            workspace_dir=str(tmp_path / "ws"), repo_url="https://github.com/o/r",
+            done_when="GET /health returns 200 and is covered by a named test",
+            backlog=[], mode="one_shot", **_SAGA)
+        assert svc.get_goal("plain")["issue_refs"] == []
+    finally:
+        db.close()

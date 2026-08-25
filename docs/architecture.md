@@ -47,6 +47,20 @@ with a slot unfilled is rejected at creation naming that slot — an EMPTY LIST
 declares a slot empty, and only silence is refused, because silence and "there
 are none" produce different prompts and only one of them is a decision.
 
+Since spec 019 a goal that works tracked issues is a **pointer, not an
+essay**: `create_goal(issues=[...])` records ordered issue numbers on the
+project's repository, and the dispatch boundary fetches each issue's LIVE
+state into the worker brief — a creation-time copy is unrepresentable, a
+closed or readiness-revoked issue drops out of scope loudly, and when every
+referenced issue is closed the goal proposes done without spending a worker
+session. `done_when` may then be omitted: the completion contract defaults
+to the issues' acceptance sections, read live at each done-gate round. The
+doorway enforces the discipline mechanically — references must be graded
+`devclaw-ready`, one issue is held by at most one live goal, and the goal's
+own free text is budget-capped (`DEVCLAW_GOAL_TEXT_BUDGET`): the knowledge
+lives in the issue, the goal carries ordering and scope glue. Goals without
+references (bench, greenfield) keep the full prose lane above unchanged.
+
 Every slot earns its place by changing what a worker does (spec 012 FR-009);
 the framing is re-sent in full with every unit of work — a fresh sandbox has no
 memory, so a pointer would be a request while a slot is a fact — which is why
