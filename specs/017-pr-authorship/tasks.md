@@ -20,3 +20,10 @@
 - [x] Add `test_goal_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit` (steering clause 2)
 - [x] Add `test_goal_pr_body_instruction_text_never_leaks` (steering clause 5)
 - [x] Commit + spec artifacts together
+
+## [US3] Goal-branch multi-increment PR title from latest commit, not dispatch prompt
+
+- [x] Fix `deliver_change` multi-increment else-branch: use `subjects[-1]` (latest commit) or `MACHINE_COMMIT_SUBJECT` instead of `goal`/advance-brief heuristic
+- [x] Update `test_deliver_goal_branch_refreshes_the_existing_pr_to_accumulated_state`: assert title from latest commit subject ("M2"), not goal text ("Ledger")
+- [x] Add `test_goal_branch_multi_increment_title_never_echoes_dispatch_prompt`: assert IMPORTANT:/branch-hint/retry text absent from multi-increment goal-branch title
+- [x] Commit + spec artifacts together

@@ -757,17 +757,21 @@ async def deliver_change(
             # "scaffold … (M1)") while later milestones pile up underneath it —
             # the stale-title bug over an eight-commit branch.
             subjects = await _recent_commit_subjects(workspace_dir, base)
-            if len(subjects) == 1:
-                s = subjects[0]
+            if subjects:
+                # Title from the LATEST increment's commit subject — the same rule
+                # _resolve_title applies: when there's a worker commit, it IS the
+                # description of the change, never the dispatch prompt. For a single
+                # increment subjects[-1] == subjects[0]; for multi-increment the
+                # PR is re-titled to the most recent increment on every delivery so
+                # it never stays frozen at the first increment's subject.
+                s = subjects[-1]
                 title = _truncate_words(
                     s if _looks_conventional(s) else _pr_title(s, kind), 72
                 )
             else:
-                title_basis = goal
-                if _is_advance_brief(goal):
-                    # Same rule as _resolve_title: the advance brief never titles a PR.
-                    title_basis = _objective_from_brief(goal) or "advance the goal by one increment"
-                title = _pr_title(title_basis, kind)
+                # No worker commits — use MACHINE_COMMIT_SUBJECT (same rule as
+                # _resolve_title: the dispatch prompt is not a source for PR titles).
+                title = MACHINE_COMMIT_SUBJECT
             body = _goal_pr_body(goal, task_id, verify, subjects, changes=changes, advisories=advisories)
             existing = await _find_pr_for_branch(workspace_dir, branch)
             if existing:

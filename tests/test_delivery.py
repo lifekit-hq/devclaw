@@ -1264,9 +1264,9 @@ async def test_deliver_never_amends_an_already_pushed_goal_increment(tmp_path):
 
 async def test_deliver_goal_branch_refreshes_the_existing_pr_to_accumulated_state(tmp_path, monkeypatch):
     """The stale-goal-PR bug (ledger PR #4 kept M1's title over 8 commits): on a
-    goal branch whose PR already exists, delivery must REFRESH the PR title
-    (goal-level) and body (the running increment list) via `gh pr edit`, not
-    return the frozen first-increment title."""
+    goal branch whose PR already exists, delivery must REFRESH the PR title to the
+    LATEST increment's commit subject (never the frozen first-increment subject)
+    and the body (the running increment list) via `gh pr edit`."""
     origin, repo = _clone_with_origin(tmp_path)
     _git(repo, "checkout", "-q", "-b", "goal/ledger")
     (tmp_path / "repo" / "m1.txt").write_text("m1\n")
@@ -1289,9 +1289,50 @@ async def test_deliver_goal_branch_refreshes_the_existing_pr_to_accumulated_stat
     assert edits, "expected a gh pr edit refresh call"
     edit = edits[0]
     ti = edit[edit.index("--title") + 1]
-    assert "Ledger" in ti and "M1" not in ti
+    # Title comes from the LATEST increment's commit subject (not the goal/dispatch text)
+    assert "M2" in ti and "M1" not in ti
+    assert "Ledger" not in ti  # goal/dispatch text never sources the title
     body = edit[edit.index("--body") + 1]
     assert "Increments landed" in body and "(M1)" in body and "(M2)" in body
+
+
+async def test_goal_branch_multi_increment_title_never_echoes_dispatch_prompt(tmp_path, monkeypatch):
+    """Spec 017 steering [clause 2]: on a multi-increment goal branch, the PR
+    title must come from the LATEST increment's commit subject — never from goal
+    text, IMPORTANT: preambles, branch hints, or retry/failure context in the
+    dispatch prompt. Mirrors the body-side instruction-leak test."""
+    origin, repo = _clone_with_origin(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "goal/abc")
+    (tmp_path / "repo" / "a.txt").write_text("a\n")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "feat(api): first increment")
+    (tmp_path / "repo" / "b.txt").write_text("b\n")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "fix(api): second increment")
+
+    calls = []
+    existing = "https://github.com/acme/widgets/pull/9"
+    _github_faking_run(monkeypatch, calls, existing_pr=existing)
+
+    instruction_goal = (
+        "IMPORTANT: read branch hints before starting.\n"
+        "Branch: goal/abc\n"
+        "Retry context: previous attempt failed.\n"
+        "Build a widget system."
+    )
+    await deliver_change(
+        workspace_dir=repo, task_id="aabbccddee",
+        goal=instruction_goal, kind="implement_feature",
+    )
+
+    edits = [c for c in calls if c[:3] == ("gh", "pr", "edit")]
+    assert edits, "expected a gh pr edit refresh call"
+    edit = edits[0]
+    ti = edit[edit.index("--title") + 1]
+    # Title is the latest commit subject — no instruction text from the goal
+    assert "IMPORTANT:" not in ti
+    assert "Branch:" not in ti
+    assert "Retry context" not in ti
+    assert "Build a widget" not in ti
+    assert "second increment" in ti   # latest commit subject wins
 
 
 async def test_goal_branch_pr_title_prefers_worker_commit_subject(tmp_path, monkeypatch):
