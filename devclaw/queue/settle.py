@@ -810,6 +810,19 @@ class SettleMixin:
                 pr_url = delivery.get("pr_url")
                 failure = delivery_failed(delivery)
                 sys.stderr.write(f"task-queue: delivery task={task_id}: {delivery}\n")
+                # Criterion 3 (spec 017): machine-readable telemetry for no-agent-commit
+                # — separate from the prose note in the PR body so tools/dashboards can
+                # filter on event type without parsing markdown.
+                if delivery.get("no_agent_commit"):
+                    self._store.append_event(
+                        task_id=task_id,
+                        program_id=program_id,
+                        type="delivery.no_agent_commit",
+                        source="devclaw",
+                        payload_json=json.dumps({
+                            "reason": "agent authored no commit; workspace captured as machine snapshot",
+                        }),
+                    )
             except Exception as err:  # deliver_change promises not to raise; belt+suspenders
                 failure = f"{err.__class__.__name__}: {err}"
                 sys.stderr.write(f"task-queue: delivery failed task={task_id}: {err}\n")

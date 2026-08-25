@@ -1368,3 +1368,30 @@ async def test_goal_branch_pr_title_prefers_worker_commit_subject(tmp_path, monk
     # the issue ref lands where it belongs — the body's Closes line
     body = create[create.index("--body") + 1]
     assert "Closes #2" in body
+
+
+async def test_no_agent_commit_emits_telemetry_event(store, tmp_path):
+    """Criterion 3 (spec 017): when the agent authors no commit, delivery must
+    record a machine-readable 'delivery.no_agent_commit' event on the task's
+    StateStore timeline — distinct from the prose note in the PR body, so
+    tools and dashboards can filter on event type without parsing markdown."""
+    import json as _json
+
+    repo = str(tmp_path / "ws_nac")
+    os.makedirs(repo)
+    _init_repo(repo)
+
+    # The _writing_runner writes a file but never commits — devclaw captures the
+    # dirty tree as a machine snapshot (no worker commit path).
+    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
+    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature", deliver=True)
+    await q.drain()
+
+    events = store.list_events(task_id=tid)
+    no_commit_events = [e for e in events if e.type == "delivery.no_agent_commit"]
+    assert len(no_commit_events) == 1, (
+        f"Expected exactly one delivery.no_agent_commit event; "
+        f"got types: {[e.type for e in events]}"
+    )
+    payload = _json.loads(no_commit_events[0].payload_json)
+    assert "agent authored no commit" in payload.get("reason", "").lower()

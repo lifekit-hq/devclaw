@@ -7,6 +7,10 @@
 - [x] Fix `materialization_message` / dirty-tree commit in `deliver_change`: use `MACHINE_COMMIT_SUBJECT`; drop `title` param
 - [x] `sandcastle._build_docker_args`: re-expose `.claude/rules/` via nested bind-mount when present (hooks/settings.json stay blocked)
 - [x] Fix test collection: use `collect_ignore` in `tests/conftest.py` when hook file absent (not `pytest.skip()` in the test file)
+- [x] Fix direct invocation: add module-level `pytest.skip(allow_module_level=True)` guard in `test_main_branch_guard.py` so `pytest tests/test_main_branch_guard.py` skips safely when `.claude/` absent (steering clause 1)
+- [x] Machine-readable telemetry: add `result["no_agent_commit"] = True` in `deliver_change`; emit `delivery.no_agent_commit` StateStore event in settle.py (steering clause 3)
+- [x] End-to-end regression test: `test_guard_test_skips_cleanly_when_claude_absent` (subprocess pytest, asserts exit 5 not 2) in `tests/test_main_branch_guard_absent.py` (steering clause 7)
+- [x] Telemetry regression test: `test_no_agent_commit_emits_telemetry_event` in `tests/test_delivery.py`
 - [x] Regression tests: `test_resolve_title_no_worker_commit_returns_machine_commit_subject`, `test_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit`, sandbox isolation tests
 - [x] Integration test: `test_run_sandcastle_passes_through_workspace_claude_rules` — exercises `run_sandcastle` with a workspace containing `.claude/rules/` and asserts the read-only rules mount appears in the docker argv (steering clauses 6+7)
 - [x] Commit + spec artifacts together

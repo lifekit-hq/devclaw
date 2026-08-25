@@ -649,6 +649,11 @@ async def deliver_change(
     # class of guessing spec 013 removes elsewhere.
     read_agent_msg = bool(agent_authored) if judged_head else ahead > 0
     agent_msg = await _agent_commit_msg(workspace_dir, base) if read_agent_msg else None
+    # Machine-readable signal: the agent committed nothing. Recorded on the result
+    # dict so the caller (settle path) can emit a StateStore event — a telemetry
+    # surface distinct from the prose in the PR body (criterion 3, spec 017).
+    if agent_msg is None:
+        result["no_agent_commit"] = True
     title_slot, derived_branch, changes = _resolve_title(
         planner_title=title, agent_msg=agent_msg, goal=goal, kind=kind, task_id=task_id,
     )
