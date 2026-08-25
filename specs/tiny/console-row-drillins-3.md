@@ -31,10 +31,10 @@ No new backend endpoints needed — all fields are already returned by /usage.js
 
 **Tasks:**
 - [x] tinyspec written
-- [ ] CycleDetail: add summary field (Evals.tsx)
-- [ ] Usage.tsx: per-project expandable rows
-- [ ] test_usage_endpoint.py: wire-shape regression test
-- [ ] pytest suite green
+- [x] CycleDetail: add summary field (Evals.tsx)
+- [x] Usage.tsx: per-project expandable rows
+- [x] test_usage_endpoint.py: wire-shape regression test
+- [x] pytest suite green
 
 **Done-When:** CycleDetail shows the summary text when expanded; each per-project
 usage row opens a detail panel with the three hidden fields; regression test pins the
