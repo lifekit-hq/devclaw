@@ -702,6 +702,23 @@ class GoalService:
         # First-class issue references (spec 019 US1) — hard refusal at the
         # doorway, nothing persisted (clarified 2026-08-25: no override).
         issue_refs = _issue_ref.validate_refs(issues, repo_url=repo_url)
+        if issue_refs:
+            # The length budget (spec 019 US3): a referenced goal's free text
+            # is ordering/scope glue, not the spec — the spec lives in the
+            # graded issue. Explicit done_when is a contract, not context,
+            # and is deliberately NOT counted (research D3).
+            budget = _config.goal_text_budget()
+            if len(objective) > budget:
+                ref_list = ", ".join(f"#{n}" for n in issue_refs)
+                raise ValueError(
+                    f"objective is {len(objective)} chars — over the "
+                    f"{budget}-char budget for a referenced goal. The context "
+                    f"belongs in the referenced issue(s) {ref_list}: move it "
+                    "there (edit the issue, or regrade_intake after), keep "
+                    "the objective to ordering/scope glue, and re-file. "
+                    "(Budget: DEVCLAW_GOAL_TEXT_BUDGET; issue-less goals are "
+                    "exempt.)"
+                )
         if mode == "qa":
             # Spec 015 US3 — a qa goal's contract is fixed by construction:
             # standing done_when (the done-gate could never close it), no

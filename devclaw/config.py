@@ -139,6 +139,15 @@ def goal_tick_seconds() -> int:
 # operator act; no mechanism reads the verdict.
 
 
+def goal_text_budget() -> int:
+    """``DEVCLAW_GOAL_TEXT_BUDGET`` — max characters of free text (the
+    objective) on a REFERENCED goal (spec 019 US3). The knowledge belongs in
+    the referenced issue; the goal is ordering/scope glue. Issue-less goals
+    are exempt. Hard refusal at the doorway, no override (clarified
+    2026-08-25)."""
+    return int(os.environ.get("DEVCLAW_GOAL_TEXT_BUDGET", "1000"))
+
+
 def ratchet_first_pass() -> float:
     """``DEVCLAW_RATCHET_FIRST_PASS`` — per-goal first-pass rate threshold."""
     return float(os.environ.get("DEVCLAW_RATCHET_FIRST_PASS", "0.70"))

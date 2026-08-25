@@ -113,3 +113,64 @@ def test_create_goal_refuses_bad_refs_and_persists_nothing(tmp_path):
             svc.get_goal("g")   # nothing persisted on refusal
     finally:
         db.close()
+
+
+# ---- the length budget (spec 019 US3) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_over_budget_referenced_goal_refused_with_relocation_message(tmp_path):
+    svc, db = _service(tmp_path)
+    try:
+        kw = dict(_SAGA, workspace_dir=str(tmp_path / "ws"),
+                  repo_url="https://github.com/o/r",
+                  done_when="GET /health returns 200 and is covered by a named test", backlog=[], mode="one_shot")
+        with pytest.raises(ValueError) as exc:
+            svc.create_goal("g", objective="x" * 1500, issues=[7], **kw)
+        msg = str(exc.value)
+        # the refusal names rule + input + destination + fixing verb (FR-010)
+        assert "1500 chars" in msg and "1000-char budget" in msg
+        assert "#7" in msg and "regrade_intake" in msg
+        with pytest.raises(KeyError):
+            svc.get_goal("g")
+    finally:
+        db.close()
+
+
+def test_within_budget_referenced_goal_accepted(tmp_path):
+    svc, db = _service(tmp_path)
+    try:
+        svc.create_goal(
+            "g", objective="Fix #7 end to end.", issues=[7],
+            workspace_dir=str(tmp_path / "ws"), repo_url="https://github.com/o/r",
+            done_when="GET /health returns 200 and is covered by a named test", backlog=[], mode="one_shot", **_SAGA)
+        assert svc.get_goal("g")["issue_refs"] == [7]
+    finally:
+        db.close()
+
+
+def test_issue_less_goal_exempt_from_budget(tmp_path):
+    """US5's protection: the essay stays legal WITHOUT refs (bench/greenfield
+    scoping is real work) — the budget targets essay-plus-issue only."""
+    svc, db = _service(tmp_path)
+    try:
+        svc.create_goal(
+            "g", objective="long scoping essay " * 200,
+            workspace_dir=str(tmp_path / "ws"), repo_url="https://github.com/o/r",
+            done_when="GET /health returns 200 and is covered by a named test", backlog=[], mode="one_shot", **_SAGA)
+        assert svc.get_goal("g")["issue_refs"] == []
+    finally:
+        db.close()
+
+
+def test_budget_configurable_via_config_doorway(tmp_path, monkeypatch):
+    svc, db = _service(tmp_path)
+    try:
+        monkeypatch.setenv("DEVCLAW_GOAL_TEXT_BUDGET", "40")
+        with pytest.raises(ValueError):
+            svc.create_goal(
+                "g", objective="x" * 41, issues=[7],
+                workspace_dir=str(tmp_path / "ws"), repo_url="https://github.com/o/r",
+                done_when="GET /health returns 200 and is covered by a named test", backlog=[], mode="one_shot", **_SAGA)
+    finally:
+        db.close()
