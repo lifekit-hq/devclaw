@@ -72,7 +72,7 @@ async def _resolve_polling_done_gate(
         goal_id, goal, new_status, review_report,
         store=ctx.store, evaluator_caller=ctx.evaluator_caller, notifier=ctx.notifier,
         summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
-        autodeploy=ctx.autodeploy,
+        autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
     )
 
 

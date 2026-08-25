@@ -29,6 +29,7 @@ from .tick_context import (
     _run_atomic,
 )
 from . import evaluator as _evaluator
+from . import issue_ref as _issue_ref
 from . import remote_checks as _remote_checks
 from .. import project_manifest as _manifest
 from . import slice_guard as _slice_guard
@@ -278,6 +279,61 @@ async def _auto_deploy(
     return f"\n🔗 deployed on the VPS — expose once: {out.get('serve_command', '')}"
 
 
+
+
+async def _live_contract(
+    goal_id: str, goal: Goal, base: GoalStatus,
+    *, store: GoalStore, notifier: Notifier,
+    issue_fetcher: "_issue_ref.IssueFetcher | None",
+    consume_steering: "list[int] | None",
+) -> "tuple[Goal, Outcome | None]":
+    """Resolve the scenario-default completion contract for a referenced goal
+    with no explicit ``done_when`` — the acceptance sections of its issues,
+    read LIVE at this gate round (spec 019 US2, clarified: evaluation time).
+    LOAD-BEARING, unlike the best-effort repo-context collectors: an
+    unfetchable or scenario-less contract BLOCKS the round legibly — the gate
+    never evaluates against emptiness. Returns ``(goal', None)`` with
+    ``done_when`` substituted, or ``(goal, Outcome.BLOCKED)`` after writing
+    the block."""
+    if not goal.issue_refs or goal.done_when.strip():
+        return goal, None
+    fetcher = issue_fetcher or _issue_ref.fetch_issue
+    try:
+        contract = await _issue_ref.scenarios_contract(
+            goal.repo_url or "", goal.issue_refs, fetcher
+        )
+    except _issue_ref.MissingAcceptance as exc:
+        q = (
+            f"the scenario-default done_when cannot be built: {exc}. Groom the "
+            "issue's acceptance section back, or cancel + recreate the goal "
+            "with an explicit done_when — the gate never evaluates an empty "
+            "contract."
+        )
+        store.transition(
+            goal_id, Event.BLOCK,
+            replace(base, phase="blocked", blocked_on=q,
+                    blocked_kind="needs_answer", next=""),
+            expect=base, consume_steering=consume_steering,
+        )
+        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
+        return goal, Outcome.BLOCKED
+    except _issue_ref.IssueRefError as exc:
+        q = (
+            f"the completion contract could not be fetched: {exc} — a "
+            "referenced goal is judged only against live issue state. Fix "
+            "access or the reference, then resume_goal."
+        )
+        store.transition(
+            goal_id, Event.BLOCK,
+            replace(base, phase="blocked", blocked_on=q,
+                    blocked_kind="lost_ref", next=""),
+            expect=base, consume_steering=consume_steering,
+        )
+        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
+        return goal, Outcome.BLOCKED
+    return replace(goal, done_when=contract), None
+
+
 async def _resolve_done_gate(
     goal_id: str, goal: Goal, status: GoalStatus, review_report: str,
     *, store: GoalStore, evaluator_caller: ClaudeCaller, notifier: Notifier,
@@ -285,6 +341,7 @@ async def _resolve_done_gate(
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
+    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> Outcome:
     """A done-gate review just finished — judge the repo against done_when. Only
     'achieved' closes the goal; otherwise corrections are steered back in and the
@@ -306,6 +363,12 @@ async def _resolve_done_gate(
     sandbox gate was green and nothing ever looked at the repo's actual
     checks. ``unknown`` / ``no_workflows`` do NOT block (fail-open on infra
     uncertainty, fail-closed on evidence of a problem) but are logged."""
+    goal, blocked = await _live_contract(
+        goal_id, goal, status, store=store, notifier=notifier,
+        issue_fetcher=issue_fetcher, consume_steering=consume_steering,
+    )
+    if blocked is not None:
+        return blocked
     # Ground the evaluator in the goal's ACTUAL workspace (triage F3, the
     # evaluator sibling of #227): on the verify_done=False fallthrough
     # review_report is empty and the prompt otherwise carries ZERO first-hand
@@ -519,6 +582,7 @@ async def _open_done_gate(
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
+    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> Outcome:
     """A settled advance session proposed done. Don't trust it: either dispatch a read-only
     review of the repo against done_when (the grounded path) and let the next
@@ -530,6 +594,12 @@ async def _open_done_gate(
     the VERIFYING open), and is forwarded into the ``verify_done=False``
     fallthrough to :func:`_resolve_done_gate` too, so consumption is atomic
     with whichever decision actually lands, no matter which branch fires."""
+    goal, blocked = await _live_contract(
+        goal_id, goal, base, store=store, notifier=notifier,
+        issue_fetcher=issue_fetcher, consume_steering=consume_steering,
+    )
+    if blocked is not None:
+        return blocked
     if verify_done:
         # In checklist mode the done-gate reviewer needs to see the goal's
         # accumulated work — read the goal branch, not the default branch
@@ -590,5 +660,5 @@ async def _open_done_gate(
         goal_id, goal, base, review_report="",  # no review run; artifact-only
         store=store, evaluator_caller=evaluator_caller, notifier=notifier,
         summarize=summarize, remote_checker=remote_checker, autodeploy=autodeploy,
-        consume_steering=consume_steering,
+        consume_steering=consume_steering, issue_fetcher=issue_fetcher,
     )

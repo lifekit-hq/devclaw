@@ -54,3 +54,14 @@ five modules the 008 shrink deleted.
   weakening a gate** — verification stays fail-CLOSED; an undocumented model
   output field is ignored, not honored (cf. the removed planner `verify_cmd`
   override, #233).
+
+## Load-bearing inputs vs best-effort collectors (spec 019, 2026-08-25)
+
+The never-raises degrade-to-`""` convention above applies to OPTIONAL
+grounding (repo-context snapshots). It does NOT apply to load-bearing
+cognition inputs — a completion contract (the scenario-default `done_when`
+read live from referenced issues) or a worker brief's referenced-issue
+content. Those fail LOUD AND BLOCKING (`lost_ref` / `needs_answer`): a gate
+judged against an empty contract is a silently-weakened gate, and a worker
+dispatched with no ask is a burned session. When adding a new cognition
+input, decide which class it is and say so at the call site.

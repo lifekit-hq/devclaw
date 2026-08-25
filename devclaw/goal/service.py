@@ -631,6 +631,39 @@ class GoalService:
             return gid
         return None
 
+    #: the doorway's live-issue reader (spec 019 US2) — tests override the
+    #: instance attribute; production uses the gh-backed default.
+    _issue_fetcher: "_issue_ref.IssueFetcher" = staticmethod(_issue_ref.fetch_issue)
+
+    async def create_goal_async(self, goal_id: str, **kwargs) -> dict:
+        """The MCP doorway's entry (spec 019 US2): before the sync create, a
+        referenced goal that DEFAULTS its done_when must prove the contract is
+        buildable — every ref fetchable and carrying an acceptance section —
+        so the refusal lands at filing time with the fixing verb, not at 2am
+        as a blocked gate round. Hard refusal, nothing persisted (clarified
+        2026-08-25: no override)."""
+        issues = kwargs.get("issues")
+        done_when = (kwargs.get("done_when") or "").strip()
+        repo_url = kwargs.get("repo_url")
+        refs = _issue_ref.validate_refs(issues, repo_url=repo_url)
+        if refs and not done_when:
+            try:
+                await _issue_ref.scenarios_contract(
+                    repo_url or "", refs, self._issue_fetcher
+                )
+            except _issue_ref.MissingAcceptance as exc:
+                raise ValueError(
+                    f"cannot default done_when from these references: {exc}. "
+                    "Either groom the issue to carry an acceptance section "
+                    "(the readiness convention), or pass an explicit done_when."
+                )
+            except _issue_ref.IssueRefError as exc:
+                raise ValueError(
+                    f"referenced issue could not be fetched at the doorway: "
+                    f"{exc} — fix the reference (or gh access), then re-file."
+                )
+        return self.create_goal(goal_id, **kwargs)
+
     def create_goal(
         self, goal_id: str, *, objective: str, workspace_dir: str,
         cadence: str = "1d", repo_url: Optional[str] = None,
@@ -693,6 +726,7 @@ class GoalService:
             objective=objective, workspace_dir=workspace_dir, done_when=done_when,
             backlog=backlog, repo_url=repo_url, verify_cmd=verify_cmd, spec=spec,
             out_of_scope=out_of_scope, invariants=invariants, established=established,
+            has_issue_refs=bool(issue_refs),
         )
         if not admission.admitted:
             raise GoalAdmissionRejected(admission)

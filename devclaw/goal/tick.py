@@ -519,7 +519,7 @@ async def _handle_long_lived_advance(
             notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
             verify_done=ctx.verify_done, note="thin: advance session settled",
             summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
-            autodeploy=ctx.autodeploy,
+            autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
         )
 
     # Single-writer project hold (spec 010 P1). THE dispatch choke point: a
@@ -641,6 +641,7 @@ async def _handle_long_lived_advance(
                 note="all referenced issues closed",
                 summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
                 autodeploy=ctx.autodeploy, consume_steering=consume_ids,
+                issue_fetcher=ctx.issue_fetcher,
             )
         issue_context = _issue_ref.render_issue_context(
             open_snaps, [s for s in snaps if s.state != "open"]

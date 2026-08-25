@@ -139,3 +139,63 @@ def render_issue_context(
             "do NOT work on it.",
         ]
     return "\n".join(parts)
+
+
+# ---- acceptance scenarios as the completion contract (spec 019 US2) --------
+
+
+class MissingAcceptance(Exception):
+    """A referenced issue carries no recognizable acceptance section — the
+    scenario-default ``done_when`` cannot be built from it. Carries the
+    offending issue numbers; every consumer surfaces them with the fixing
+    verbs (groom the issue, or write an explicit ``done_when``)."""
+
+    def __init__(self, numbers: "list[int]"):
+        self.numbers = list(numbers)
+        super().__init__(
+            "no acceptance section in issue(s) "
+            + ", ".join(f"#{n}" for n in self.numbers)
+        )
+
+
+def extract_acceptance(body: str) -> Optional[str]:
+    """Mechanically slice the acceptance section out of an issue body: from a
+    heading whose text starts with 'Acceptance' to the next heading of the
+    same or higher level. Zero cognition — the grading pipeline guarantees
+    the format; this only cuts along it. None when absent."""
+    import re
+
+    if not body:
+        return None
+    m = re.search(r"^(#{2,4})\s*Acceptance\b.*$", body, flags=re.MULTILINE | re.IGNORECASE)
+    if not m:
+        return None
+    level = len(m.group(1))
+    tail = body[m.end():]
+    stop = re.search(rf"^#{{1,{level}}}\s", tail, flags=re.MULTILINE)
+    section = tail[: stop.start()] if stop else tail
+    section = section.strip()
+    return section or None
+
+
+async def scenarios_contract(
+    repo_url: str, refs: "list[int]", fetcher: "IssueFetcher",
+) -> str:
+    """The scenario-default completion contract, read LIVE (clarified
+    2026-08-25: evaluation time, never a creation-time copy): every
+    referenced issue's acceptance section, in goal order. Raises
+    :class:`IssueRefError` on any fetch failure and
+    :class:`MissingAcceptance` when a body carries no section — both
+    LOAD-BEARING: a completion contract is never silently empty."""
+    parts: list[str] = []
+    missing: list[int] = []
+    for n in refs:
+        snap = await fetcher(repo_url, n)
+        acc = extract_acceptance(snap.body)
+        if acc is None:
+            missing.append(n)
+            continue
+        parts.append(f"Acceptance scenarios of issue #{n} ({snap.title.strip()}):\n{acc}")
+    if missing:
+        raise MissingAcceptance(missing)
+    return "\n\n".join(parts)
