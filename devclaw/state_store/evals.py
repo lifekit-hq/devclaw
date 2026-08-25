@@ -198,6 +198,15 @@ class EvalOutcomesMixin:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_eval_outcome(self, id: int) -> Optional[dict]:
+        """One eval_outcomes row by integer primary key. Returns None when the
+        id is unknown — the detail endpoint 404s rather than 500ing."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM eval_outcomes WHERE id = ?", (id,)
+            ).fetchone()
+        return dict(row) if row else None
+
     # ---- PR ledger (spec 018 US2) ---------------------------------------
 
     #: env-free constants for the once-per-cycle refresh: only PRs opened in
@@ -316,3 +325,12 @@ class EvalOutcomesMixin:
                 (limit,),
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_cycle_report(self, cycle_key: str) -> Optional[dict]:
+        """One cycle_reports row by cycle_key (the YYYY-MM-DD window-open date).
+        Returns None when the key is unknown — the detail endpoint 404s."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT * FROM cycle_reports WHERE cycle_key = ?", (cycle_key,)
+            ).fetchone()
+        return dict(row) if row else None
