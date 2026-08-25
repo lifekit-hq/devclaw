@@ -121,6 +121,44 @@ def test_docker_args_do_not_leak_skills_or_plugins():
         assert leaked not in joined
 
 
+def test_workspace_claude_rules_passes_through_over_tmpfs():
+    """Spec 017 criterion 6: the worker can read the workspace's commit/PR
+    conventions (.claude/rules/) while hooks and settings.json stay blocked.
+    A bind-mount over the tmpfs gives Docker the layered-mount it needs; the
+    hook files are never forwarded because only rules/ is mounted explicitly."""
+    args = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+        workspace_claude_rules_host_path="/host/ws/.claude/rules",
+    )
+    joined = " ".join(args)
+    # The tmpfs shadow is still present — hooks/ and settings.json remain blocked.
+    assert f"{sc.CONTAINER_WORKSPACE}/.claude:rw,exec" in joined
+    # rules/ is re-exposed read-only OVER the tmpfs.
+    assert f"/host/ws/.claude/rules:{sc.CONTAINER_WORKSPACE}/.claude/rules:ro" in joined
+    # hooks/ is NOT mounted (no explicit pass-through for dangerous subdirs).
+    assert ".claude/hooks" not in joined
+    # settings.json is NOT mounted.
+    assert "settings.json" not in joined
+
+
+def test_workspace_claude_rules_absent_leaves_no_extra_mount():
+    """When the workspace has no .claude/rules/, no extra bind is added and the
+    tmpfs shadow stands alone — no broken bind source for a non-devclaw repo."""
+    args = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+        workspace_claude_rules_host_path=None,
+    )
+    joined = " ".join(args)
+    assert "/host/ws/.claude/rules" not in joined
+    assert f"{sc.CONTAINER_WORKSPACE}/.claude:rw,exec" in joined
+
+
 # ---- workspace pre-flight (close the silent-timeout traps) ----
 
 
@@ -369,6 +407,60 @@ async def test_run_sandcastle_binds_trusted_copy_and_unlinks_it(no_prefix, tmp_p
     # ...and cleaned up both temp copies (by their LOCAL path) once the container exited.
     assert not fake_copy.exists()
     assert not fake_cred.exists()
+
+
+async def test_run_sandcastle_passes_through_workspace_claude_rules(no_prefix, tmp_path, monkeypatch):
+    """Spec 017 clause 6: run_sandcastle detects a workspace .claude/rules/ dir
+    and wires it into the docker argv as a read-only bind OVER the tmpfs shadow,
+    so the worker can read commit/PR conventions while hooks and settings.json
+    stay blocked. This is the integration proof; test_workspace_claude_rules_*
+    covers only the mount-primitive (_build_docker_args). A missing isdir() check
+    or a dropped kwarg on the _build_docker_args call would leave both of those
+    green while production never mounts the directory."""
+    rules_dir = tmp_path / ".claude" / "rules"
+    rules_dir.mkdir(parents=True)
+    (rules_dir / "git-workflow.md").write_text("use conventional commits")
+    (tmp_path / "README.md").write_text("repo")  # populated workspace
+
+    seen: dict = {}
+
+    def fake_write_trusted_copy(src, workspace_path, *, dest_dir=None):
+        return None  # no copy — test is about the rules path, not the identity pair
+
+    monkeypatch.setattr(sc, "write_trusted_copy", fake_write_trusted_copy)
+
+    def fake_disposable_copy(rel, host_claude_dir):
+        return None  # no copy
+
+    monkeypatch.setattr(sc, "_disposable_copy", fake_disposable_copy)
+
+    class _FakeProc:
+        returncode = 0
+
+    async def fake_exec(_bin, *args, **kwargs):
+        seen["docker_args"] = list(args)
+        return _FakeProc()
+
+    monkeypatch.setattr(sc.asyncio, "create_subprocess_exec", fake_exec)
+
+    async def fake_consume(proc, on_event, label):
+        return {"status": "ok"}
+
+    monkeypatch.setattr(sc, "consume_runner_output", fake_consume)
+
+    req = EngineRequest(kind="implement_feature", workspace_dir=str(tmp_path), goal="g")
+    await sc.run_sandcastle(req)
+
+    joined = " ".join(seen["docker_args"])
+    # The tmpfs shadow is present — hooks/ and settings.json remain blocked.
+    assert f"{sc.CONTAINER_WORKSPACE}/.claude:rw,exec" in joined
+    # The rules/ dir is re-exposed read-only OVER the tmpfs.
+    rules_host = str(tmp_path / ".claude" / "rules")
+    assert f"{rules_host}:{sc.CONTAINER_WORKSPACE}/.claude/rules:ro" in joined
+    # hooks/ is NOT forwarded.
+    assert ".claude/hooks" not in joined
+    # settings.json is NOT forwarded.
+    assert "settings.json" not in joined
 
 
 # ---- the credential copy must work when devclaw itself is containerized -----

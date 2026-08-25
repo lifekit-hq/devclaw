@@ -24,6 +24,7 @@ from devclaw.queue import settle as queue_settle
 from devclaw.task_change import (
     CHANGE,
     ERROR,
+    MACHINE_COMMIT_SUBJECT,
     NO_CHANGE,
     NO_REPO,
     materialization_message,
@@ -50,9 +51,9 @@ def _repo(tmp_path):
     return d, _git(d, "rev-parse", "HEAD").stdout.strip()
 
 
-async def _capture(d, base, *, task_id="t1", title="chore: capture"):
+async def _capture(d, base, *, task_id="t1"):
     return await task_queue._capture_change(
-        str(d), base, task_id=task_id, message=materialization_message(title, task_id),
+        str(d), base, task_id=task_id, message=materialization_message(task_id),
     )
 
 
@@ -238,6 +239,22 @@ def test_a_commit_that_cannot_be_written_is_an_error_not_an_empty_change(tmp_pat
     finally:
         objects.chmod(0o755)
     assert out["status"] == ERROR and out["reason"]
+
+
+# ---- authorship — machine-commit subject (spec 017) ------------------------
+
+
+def test_materialization_message_is_self_describing_not_prompt_derived():
+    """Spec 017 criterion 4: the commit devclaw writes when the agent authored
+    none must say it is a machine snapshot, never repeat the dispatch prompt.
+    The subject matches MACHINE_COMMIT_SUBJECT exactly so the PR title and the
+    commit subject are always the same string."""
+    msg = materialization_message("task-abc")
+    subject = msg.splitlines()[0]
+    assert subject == MACHINE_COMMIT_SUBJECT
+    assert "machine" in subject.lower()
+    assert "task-abc" in msg
+    assert "Agent authored no commit" in msg
 
 
 # ---- the reference pair ----------------------------------------------------

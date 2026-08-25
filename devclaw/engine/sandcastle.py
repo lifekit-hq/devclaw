@@ -480,6 +480,7 @@ def _build_docker_args(
     owner_id: str | None = None,
     claude_json_src: str | None = None,
     credentials_src: str | None = None,
+    workspace_claude_rules_host_path: str | None = None,
 ) -> list[str]:
     """Assemble the full ``docker run`` argv for one task. Pure (no I/O) so the
     mount posture — curated claude allowlist, writable scratch tmpfs, no API-key
@@ -487,7 +488,12 @@ def _build_docker_args(
 
     ``sandbox_image`` is the per-task override (the owning project's
     ``sandbox_image`` registry field, riding the EngineRequest — ADR 0005's
-    escape hatch/migration bridge); None → the DEVCLAW_SANDBOX_IMAGE default."""
+    escape hatch/migration bridge); None → the DEVCLAW_SANDBOX_IMAGE default.
+
+    ``workspace_claude_rules_host_path`` (optional) is the HOST-namespace path to
+    the workspace's ``.claude/rules/`` directory. When supplied, it is mounted
+    read-only OVER the tmpfs so the worker can read the repo's commit and PR
+    conventions while hooks and settings.json remain blocked (criterion 6)."""
     return [
         "run",
         "--rm",
@@ -518,14 +524,26 @@ def _build_docker_args(
         # self-fix settled `done` having shipped nothing (task b9e3c3af,
         # 2026-08-20). The repo's own permission allowlist buys the sandbox
         # nothing either: acp_client auto-grants every permission request, and
-        # the container IS the security boundary. Per-repo guidance the worker
-        # SHOULD read stays the model-agnostic channel — AGENTS.md and
-        # `.agent/skills/`. tmpfs (not a filesystem edit) so the host checkout
-        # is untouched, nothing needs cleanup after a hard kill, and anything
-        # the agent writes there dies with the container instead of landing in
-        # the repo's diff (#583).
+        # the container IS the security boundary. The rules/ subdirectory is the
+        # exception: it carries commit/PR conventions (not hooks or permissions)
+        # and is re-exposed via a nested bind-mount below. tmpfs (not a filesystem
+        # edit) so the host checkout is untouched, nothing needs cleanup after a
+        # hard kill, and anything the agent writes there dies with the container
+        # instead of landing in the repo's diff (#583).
         "--tmpfs",
         f"{CONTAINER_WORKSPACE}/.claude:rw,exec",
+        # Re-expose the repo's commit/PR conventions (.claude/rules/) OVER the
+        # tmpfs. Docker layered-mounts honour last-writer: a bind-mount on a
+        # subdirectory of a tmpfs-mounted parent takes precedence for that path,
+        # so hooks/ and settings.json remain blocked while rules/ becomes visible.
+        # Only mounted when the workspace actually has a rules/ dir — absent repos
+        # (including non-devclaw repos with no .claude/rules/) get nothing extra.
+        *(
+            ["-v", f"{workspace_claude_rules_host_path}:"
+             f"{CONTAINER_WORKSPACE}/.claude/rules:ro"]
+            if workspace_claude_rules_host_path
+            else []
+        ),
         # Per-project toolchain cache (ADR 0005): mise's data dir survives
         # across this project's tasks, so only the first task per toolchain
         # version pays the SDK download.
@@ -626,6 +644,16 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
     trusted_claude_json = _shared_paths(_trusted_local, claude_dir) if _trusted_local else None
     disposable_credentials = _disposable_copy(".credentials.json", claude_dir)
 
+    # Detect .claude/rules/ in the workspace (readable through the local view).
+    # Hooks and settings.json stay blocked by the tmpfs; rules/ is the one
+    # safe subdirectory that carries commit/PR conventions the worker needs.
+    _rules_local = os.path.join(req.workspace_dir, ".claude", "rules")
+    workspace_claude_rules_host = (
+        os.path.join(host_bind_path, ".claude", "rules")
+        if os.path.isdir(_rules_local)
+        else None
+    )
+
     docker_args = _build_docker_args(
         container_name=container_name,
         host_bind_path=host_bind_path,
@@ -635,6 +663,7 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
         owner_id=req.owner_id,
         claude_json_src=trusted_claude_json.host if trusted_claude_json else None,
         credentials_src=disposable_credentials.host if disposable_credentials else None,
+        workspace_claude_rules_host_path=workspace_claude_rules_host,
     )
 
     try:

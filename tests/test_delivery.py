@@ -13,6 +13,7 @@ import pytest
 
 from devclaw import delivery
 from devclaw.delivery import (
+    _NO_AGENT_COMMIT_LEAD,
     _closes_issues,
     _extract_pr_url,
     _goal_pr_body,
@@ -24,6 +25,7 @@ from devclaw.delivery import (
     _slug,
     deliver_change,
 )
+from devclaw.task_change import MACHINE_COMMIT_SUBJECT
 
 # The thin-advance pull-brief shape (goal/tick.py:_advance_brief) — the generic
 # task ``goal`` on every long_lived tick post-demolition.
@@ -109,36 +111,55 @@ def test_resolve_title_decorates_with_resolved_issue():
     assert branch == "fix/42-stop-pagination-drift"
 
 
-def test_resolve_title_rejects_advance_brief_falls_back_to_objective():
-    # No worker commit at all (pure dirty tree). We must still not render the
-    # brief — fall back to its embedded `Goal:` objective.
+def test_resolve_title_no_worker_commit_returns_machine_commit_subject():
+    # Spec 017 criterion 2: when there is no worker commit and no planner title,
+    # the PR title must be the machine-commit subject — NEVER any text from the
+    # dispatch prompt. This means the advance brief can't leak (the original
+    # intent of the old test) AND no other prompt text can leak either.
     title, branch, changes = _resolve_title(
         planner_title=None, agent_msg=None,
         goal=_ADVANCE_BRIEF, kind="implement_feature", task_id="deadbeef12",
     )
+    assert title == MACHINE_COMMIT_SUBJECT
     assert "Advance this goal by one substantive" not in title
-    assert title.startswith("feat: Build a small field notes REST API")
-    assert "advance-this-goal" not in branch
+    assert "Build a small field notes REST API" not in title
+    assert "snapshot" in branch   # branch is `devclaw/<task_id[:8]>-snapshot`
     assert changes is None
     assert _is_advance_brief(_ADVANCE_BRIEF) and not _is_advance_brief("add a widget")
+    # Same for a plain (non-brief) goal: dispatch prompt still cannot source title.
+    title2, _, _ = _resolve_title(
+        planner_title=None, agent_msg=None,
+        goal="add a widget", kind="implement_feature", task_id="deadbeef12",
+    )
+    assert title2 == MACHINE_COMMIT_SUBJECT
 
 
 def test_goal_branch_pr_body_never_renders_the_advance_brief():
     # The #538 shakedown live find: the GOAL-BRANCH path fed the raw advance
-    # brief into the PR body (and title), so a delivered PR read as its own
-    # dispatch instructions ("Advance this goal by one substantive…"). Same
-    # rule as _resolve_title: the brief is plumbing — render the embedded
-    # objective instead. Presence AND absence.
+    # brief into the PR body. Now the lead derives from the agent's commit body
+    # (changes=), not the goal text — so the brief stays out whether or not the
+    # agent committed. Presence AND absence.
     body = _goal_pr_body(
         _ADVANCE_BRIEF, "deadbeef12", None,
         ["feat: add truncate_words utility"],
+        changes=None,
     )
     assert "Advance this goal by one substantive" not in body
-    assert body.startswith("Build a small field notes REST API")
+    assert _NO_AGENT_COMMIT_LEAD in body           # explicit, not silent
     assert "feat: add truncate_words utility" in body  # increments list kept
-    # A non-brief goal (one-shot on a goal branch) still renders verbatim.
-    plain = _goal_pr_body("add a widget", "deadbeef12", None, [])
-    assert plain.startswith("add a widget")
+    # With an agent commit body, the commit text leads (not the advance brief).
+    body_with_commit = _goal_pr_body(
+        _ADVANCE_BRIEF, "deadbeef12", None,
+        ["feat: add truncate_words utility"],
+        changes="Adds cursor paging.",
+    )
+    assert "Advance this goal by one substantive" not in body_with_commit
+    assert "Adds cursor paging." in body_with_commit
+    # A non-brief goal also doesn't leak into the lead — goal text is goal text,
+    # not a description of what changed.
+    plain = _goal_pr_body("add a widget", "deadbeef12", None, [], changes=None)
+    assert _NO_AGENT_COMMIT_LEAD in plain
+    assert "add a widget" not in plain.split("## Increments")[0]  # not in lead
 
 
 def test_goal_branch_pr_title_fallback_strips_issue_pointer_preamble_and_truncates_at_word_boundary():
@@ -185,11 +206,20 @@ def test_pr_body_uses_summary_and_testing_sections():
     # `## Summary` of what changed and a `## Testing` note, with a clean
     # generated-by signature — no task-UUID "Delivered by devclaw" footer.
     verify = {"ran": True, "cmd": "dotnet test", "passed": True, "exit_code": 0}
-    body = _pr_body("Add an endpoint", "abcd1234", verify)
-    assert "## Summary" in body and "Add an endpoint" in body
+    # With a worker commit body (changes=), the summary shows that text.
+    body = _pr_body("Add an endpoint", "abcd1234", verify,
+                    changes="feat: add endpoint\n\nDid the thing.")
+    assert "## Summary" in body and "Did the thing." in body
+    assert "Add an endpoint" not in body   # goal text NOT in body (criterion 2)
     assert "## Testing" in body and "Verified with `dotnet test` — passing." in body
     assert "🤖 Generated with [Claude Code]" in body
     assert "Delivered by devclaw" not in body
+    # Without a worker commit (changes=None): body explicitly says so, never
+    # echoes the dispatch prompt (spec 017 criterion 3).
+    nocommit = _pr_body("x", "id", verify)
+    assert "## Summary" in nocommit
+    assert "Agent authored no commit" in nocommit
+    assert "x" not in nocommit.split("## Summary")[1].split("## Testing")[0].strip()
     # degrades cleanly when there was no gate → no ## Testing section at all
     nogate = _pr_body("x", "id", None)
     assert "Verified with" not in nogate and "## Testing" not in nogate
@@ -254,6 +284,59 @@ def test_pr_body_renders_trust_advisory_section():
     assert "Advisory" not in _pr_body("Add X", "id", None)
 
 
+def test_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit():
+    """Spec 017 criterion 3: when changes=None (agent committed nothing), the PR
+    body must say so EXPLICITLY rather than silently presenting the goal text as
+    a description of the change."""
+    body = _pr_body("Add a very specific endpoint", "id", None)
+    assert "Agent authored no commit" in body            # explicit, not silent
+    assert "Add a very specific endpoint" not in body   # prompt text never leaks
+    # The constant is in the summary section.
+    assert _NO_AGENT_COMMIT_LEAD in body
+
+
+def test_goal_pr_body_never_echoes_dispatch_prompt_when_no_agent_commit():
+    """Spec 017 steering [clause 2]: the goal-branch PR body must apply the same
+    rule as _pr_body — when the agent committed nothing, say so explicitly rather
+    than silently presenting the goal text as if it described the change."""
+    body = _goal_pr_body("Add a very specific endpoint", "id", None, [], changes=None)
+    assert "Agent authored no commit" in body            # explicit, not silent
+    assert "Add a very specific endpoint" not in body   # prompt text never leaks in lead
+    assert _NO_AGENT_COMMIT_LEAD in body
+
+
+def test_goal_pr_body_instruction_text_never_leaks():
+    """Spec 017 steering [clause 5]: instruction-only text injected into a goal's
+    objective (IMPORTANT: preambles, branch hints, retry/failure context) must not
+    appear in a goal-branch PR body — covering the gap left by single-task-PR tests."""
+    goal_with_instructions = (
+        "IMPORTANT: read branch hints before starting.\n"
+        "Build a field notes API.\n"
+        "Prior attempt failed due to test collection errors."
+    )
+    body = _goal_pr_body(goal_with_instructions, "id", None, [], changes=None)
+    assert "IMPORTANT:" not in body
+    assert "read branch hints" not in body
+    assert "Prior attempt failed" not in body
+    assert _NO_AGENT_COMMIT_LEAD in body
+    # With an agent commit, the commit text leads — instruction text still absent.
+    body_with_commit = _goal_pr_body(
+        goal_with_instructions, "id", None,
+        ["feat: add notes endpoint"],
+        changes="Adds POST /notes and GET /notes. Verified with pytest.",
+    )
+    assert "IMPORTANT:" not in body_with_commit
+    assert "Prior attempt failed" not in body_with_commit
+    assert "Adds POST /notes" in body_with_commit
+    # Issue refs extracted from goal text still land in Closes section (safe).
+    body_issue = _goal_pr_body(
+        "IMPORTANT: fix the thing urgently. Fix devclaw issue #99: pagination.",
+        "id", None, [], changes=None,
+    )
+    assert "IMPORTANT:" not in body_issue
+    assert "Closes #99" in body_issue
+
+
 def test_closes_issues_extraction():
     # Explicit fix/close verbs and the self-fix `issue #N` objective count…
     assert _closes_issues("Fix devclaw issue #42: x") == [42]
@@ -284,11 +367,12 @@ async def test_deliver_commits_to_a_branch_and_degrades_without_remote(tmp_path)
     r = await deliver_change(workspace_dir=repo, task_id="abcd1234ef", goal="add new file")
 
     assert r["committed"] is True
-    assert r["branch"] == "devclaw/abcd1234-add-new-file"
+    # Branch is machine-capture slug (not derived from goal) — spec 017 criterion 2.
+    assert r["branch"] == "devclaw/abcd1234-snapshot"
     assert r["pushed"] is False and r["pr_url"] is None
     assert r["delivered"] is True
     assert "no 'origin' remote" in r["error"]
-    assert _branch(repo) == "devclaw/abcd1234-add-new-file"  # change is on the branch
+    assert _branch(repo) == "devclaw/abcd1234-snapshot"  # change is on the branch
 
 
 async def test_deliver_rejects_non_git_dir(tmp_path):
@@ -1180,9 +1264,9 @@ async def test_deliver_never_amends_an_already_pushed_goal_increment(tmp_path):
 
 async def test_deliver_goal_branch_refreshes_the_existing_pr_to_accumulated_state(tmp_path, monkeypatch):
     """The stale-goal-PR bug (ledger PR #4 kept M1's title over 8 commits): on a
-    goal branch whose PR already exists, delivery must REFRESH the PR title
-    (goal-level) and body (the running increment list) via `gh pr edit`, not
-    return the frozen first-increment title."""
+    goal branch whose PR already exists, delivery must REFRESH the PR title to the
+    LATEST increment's commit subject (never the frozen first-increment subject)
+    and the body (the running increment list) via `gh pr edit`."""
     origin, repo = _clone_with_origin(tmp_path)
     _git(repo, "checkout", "-q", "-b", "goal/ledger")
     (tmp_path / "repo" / "m1.txt").write_text("m1\n")
@@ -1205,9 +1289,50 @@ async def test_deliver_goal_branch_refreshes_the_existing_pr_to_accumulated_stat
     assert edits, "expected a gh pr edit refresh call"
     edit = edits[0]
     ti = edit[edit.index("--title") + 1]
-    assert "Ledger" in ti and "M1" not in ti
+    # Title comes from the LATEST increment's commit subject (not the goal/dispatch text)
+    assert "M2" in ti and "M1" not in ti
+    assert "Ledger" not in ti  # goal/dispatch text never sources the title
     body = edit[edit.index("--body") + 1]
     assert "Increments landed" in body and "(M1)" in body and "(M2)" in body
+
+
+async def test_goal_branch_multi_increment_title_never_echoes_dispatch_prompt(tmp_path, monkeypatch):
+    """Spec 017 steering [clause 2]: on a multi-increment goal branch, the PR
+    title must come from the LATEST increment's commit subject — never from goal
+    text, IMPORTANT: preambles, branch hints, or retry/failure context in the
+    dispatch prompt. Mirrors the body-side instruction-leak test."""
+    origin, repo = _clone_with_origin(tmp_path)
+    _git(repo, "checkout", "-q", "-b", "goal/abc")
+    (tmp_path / "repo" / "a.txt").write_text("a\n")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "feat(api): first increment")
+    (tmp_path / "repo" / "b.txt").write_text("b\n")
+    _git(repo, "add", "-A"); _git(repo, "commit", "-q", "-m", "fix(api): second increment")
+
+    calls = []
+    existing = "https://github.com/acme/widgets/pull/9"
+    _github_faking_run(monkeypatch, calls, existing_pr=existing)
+
+    instruction_goal = (
+        "IMPORTANT: read branch hints before starting.\n"
+        "Branch: goal/abc\n"
+        "Retry context: previous attempt failed.\n"
+        "Build a widget system."
+    )
+    await deliver_change(
+        workspace_dir=repo, task_id="aabbccddee",
+        goal=instruction_goal, kind="implement_feature",
+    )
+
+    edits = [c for c in calls if c[:3] == ("gh", "pr", "edit")]
+    assert edits, "expected a gh pr edit refresh call"
+    edit = edits[0]
+    ti = edit[edit.index("--title") + 1]
+    # Title is the latest commit subject — no instruction text from the goal
+    assert "IMPORTANT:" not in ti
+    assert "Branch:" not in ti
+    assert "Retry context" not in ti
+    assert "Build a widget" not in ti
+    assert "second increment" in ti   # latest commit subject wins
 
 
 async def test_goal_branch_pr_title_prefers_worker_commit_subject(tmp_path, monkeypatch):
@@ -1243,3 +1368,30 @@ async def test_goal_branch_pr_title_prefers_worker_commit_subject(tmp_path, monk
     # the issue ref lands where it belongs — the body's Closes line
     body = create[create.index("--body") + 1]
     assert "Closes #2" in body
+
+
+async def test_no_agent_commit_emits_telemetry_event(store, tmp_path):
+    """Criterion 3 (spec 017): when the agent authors no commit, delivery must
+    record a machine-readable 'delivery.no_agent_commit' event on the task's
+    StateStore timeline — distinct from the prose note in the PR body, so
+    tools and dashboards can filter on event type without parsing markdown."""
+    import json as _json
+
+    repo = str(tmp_path / "ws_nac")
+    os.makedirs(repo)
+    _init_repo(repo)
+
+    # The _writing_runner writes a file but never commits — devclaw captures the
+    # dirty tree as a machine snapshot (no worker commit path).
+    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
+    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature", deliver=True)
+    await q.drain()
+
+    events = store.list_events(task_id=tid)
+    no_commit_events = [e for e in events if e.type == "delivery.no_agent_commit"]
+    assert len(no_commit_events) == 1, (
+        f"Expected exactly one delivery.no_agent_commit event; "
+        f"got types: {[e.type for e in events]}"
+    )
+    payload = _json.loads(no_commit_events[0].payload_json)
+    assert "agent authored no commit" in payload.get("reason", "").lower()
