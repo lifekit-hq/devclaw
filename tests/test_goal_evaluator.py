@@ -704,6 +704,81 @@ def test_evaluator_prompt_names_the_existence_is_not_execution_rule():
     assert "presence, not coverage" in prompt
 
 
+# ---- mechanical run evidence outranks wording (2026-08-25 no-op round) ------
+#
+# devclaw-auth-ping-path-2026-08-25 round 1: the evaluator returned achieved,
+# the increment's verify gate had run the full suite green in-sandbox, and the
+# existence-only regex still flipped the test clause on the words "test exists"
+# — burning a full dispatch round whose only output was reworded evidence. The
+# host-written `Verify gate …: PASSED` marker in the deliveries tail is the
+# mechanical fact; when it's present and green, wording must not flip a clause.
+
+_EXISTENCE_WORDED_TEST_CLAUSE = {
+    "clause": "the behavior is pinned by the named regression test",
+    "satisfied": True,
+    "evidence": "tests/test_x.py:12 — test exists, seeds the state and asserts all four properties",
+}
+
+
+def test_existence_only_flip_yields_to_mechanical_verify_evidence():
+    r = validate(
+        _achieved_with([dict(_EXISTENCE_WORDED_TEST_CLAUSE)]),
+        at_done_gate=True,
+        verified_execution=True,
+    )
+    assert r.verdict == "achieved"
+    assert r.clauses[0].satisfied
+
+
+def test_existence_only_flip_still_applies_without_run_evidence():
+    # default (no mechanical evidence) — behavior byte-identical to before
+    r = validate(
+        _achieved_with([dict(_EXISTENCE_WORDED_TEST_CLAUSE)]),
+        at_done_gate=True,
+    )
+    assert r.verdict == "off_track"
+    assert not r.clauses[0].satisfied
+    assert "existence-only" in r.clauses[0].evidence
+
+
+def test_verified_execution_derived_from_last_gate_marker():
+    from devclaw.goal.evaluator import _deliveries_verified_execution
+
+    passed = "PR: x\n\nVerify gate `pytest -q`: PASSED\n\nGate output (tail):\nok"
+    failed_after_pass = passed + "\n\nVerify gate `pytest -q`: FAILED\n"
+    assert _deliveries_verified_execution(passed) is True
+    assert _deliveries_verified_execution(failed_after_pass) is False
+    assert _deliveries_verified_execution("no markers here") is False
+    assert _deliveries_verified_execution("") is False
+    # the worker's own prose never matches: the marker is anchored at column 0
+    inline = "Agent summary:\n  they said Verify gate `x`: PASSED somewhere"
+    assert _deliveries_verified_execution(inline) is False
+
+
+def test_mechanical_downgrade_rationale_states_the_flip():
+    # An achieved-arguing model rationale must never stand alone next to the
+    # downgraded off_track verdict (the round-1 log contradiction).
+    model_rationale = "All clauses have specific, repo-confirmed evidence"
+    r = validate(
+        {
+            "verdict": "achieved",
+            "rationale": model_rationale,
+            "clauses": [dict(_EXISTENCE_WORDED_TEST_CLAUSE)],
+        },
+        at_done_gate=True,
+    )
+    assert r.verdict == "off_track"
+    assert r.rationale != model_rationale
+    assert "downgraded from 'achieved'" in r.rationale
+    # the no-clauses downgrade branch states the flip too
+    r2 = validate(
+        {"verdict": "achieved", "rationale": model_rationale, "clauses": []},
+        at_done_gate=True,
+    )
+    assert r2.verdict == "off_track"
+    assert "downgraded from 'achieved'" in r2.rationale
+
+
 # ---- standing-goal contract (the 2026-07-06 benchmark safety net) ----------
 #
 # Backstory: closeloop-bench-2026-07-05's done_when read "Not applicable as a

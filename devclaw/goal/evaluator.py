@@ -349,6 +349,23 @@ def _test_clause_existence_only(clause: ClauseVerdict) -> bool:
     return bool(_EXISTENCE_EVIDENCE_RE.search(ev)) and not _EXECUTION_EVIDENCE_RE.search(ev)
 
 
+#: The host-written verify-gate marker inside a delivery body
+#: (``engine._task_detail``) — the same devclaw-controlled line
+#: ``prior_increments._GATE_RE`` feeds forward, and the same trust boundary:
+#: the worker's free-text ``Agent summary:`` shares the body, so this reads a
+#: host-authored fact with the accepted residual risk of a worker echoing the
+#: exact line shape at column 0.
+_VERIFY_GATE_RE = re.compile(r"^Verify gate\s+`[^`]*`:\s*(PASSED|FAILED)", re.MULTILINE)
+
+
+def _deliveries_verified_execution(deliveries: str) -> bool:
+    """Whether the deliveries tail carries mechanical run evidence: the LAST
+    host-written ``Verify gate …:`` marker is PASSED. Last wins — an old green
+    increment must never vouch for a newer failed one. No marker ⇒ False."""
+    matches = _VERIFY_GATE_RE.findall(deliveries or "")
+    return bool(matches) and matches[-1] == "PASSED"
+
+
 _VERB_PREFIXES = ("get", "list", "fetch", "read", "describe", "show")
 
 
@@ -418,6 +435,19 @@ def _parse_structural(parsed: dict) -> tuple[str, list[str]]:
     return health, concerns
 
 
+def _downgrade_rationale(reason: str, model_rationale: str) -> str:
+    """The rationale recorded when a mechanical post-check downgrades an
+    ``achieved`` verdict. The mechanical reason leads — the model's original
+    rationale argued FOR the close, so left standing alone next to
+    ``off_track`` it makes the log contradict itself (the
+    devclaw-auth-ping-path-2026-08-25 round-1 record read "off_track — All
+    four clauses have repo-confirmed evidence…"). The model text stays as
+    trailing context."""
+    if model_rationale:
+        return f"downgraded from 'achieved': {reason} (model rationale: {model_rationale})"
+    return f"downgraded from 'achieved': {reason}"
+
+
 def validate(
     parsed: object,
     *,
@@ -425,6 +455,7 @@ def validate(
     stub_acceptable: list[str] | None = None,
     standing: bool = False,
     strictness: Strictness = "strict",
+    verified_execution: bool = False,
 ) -> EvalResult:
     """Validate + normalize the model's evaluation. When ``at_done_gate=True``,
     ``achieved`` requires (a) every clause in ``clauses`` to be ``satisfied=True``
@@ -438,7 +469,12 @@ def validate(
     mechanical net at the done-gate: a fully-passing ``achieved`` becomes
     ``needs_human`` — the owner closes standing goals, never the gate. The
     closeloop-bench-2026-07-05 contract said "standing goal — not a bounded
-    criterion" and still terminally closed ``achieved``; this is the fix."""
+    criterion" and still terminally closed ``achieved``; this is the fix.
+
+    ``verified_execution=True`` (the caller holds mechanical run evidence — the
+    deliveries tail's last host-written verify-gate marker is PASSED) disarms
+    the existence-only test-clause flip: a fact the host established by running
+    the suite outranks how the model happened to word its evidence."""
     if not isinstance(parsed, dict):
         raise GoalEvalError("Eval must be a JSON object")
     raw_verdict = parsed.get("verdict")
@@ -501,9 +537,11 @@ def validate(
         if not clauses:
             return EvalResult(
                 verdict="off_track",
-                rationale=(
-                    rationale or "evaluator returned 'achieved' but provided no per-clause "
-                    "evidence — the done-gate requires explicit clause-by-clause grading."
+                rationale=_downgrade_rationale(
+                    "evaluator returned 'achieved' but provided no per-clause "
+                    "evidence — the done-gate requires explicit clause-by-clause "
+                    "grading.",
+                    rationale,
                 ),
                 corrections=[
                     "Return a per-clause `clauses` array with satisfied + evidence for "
@@ -539,7 +577,10 @@ def validate(
             # Execution-evidence enforcement for test clauses: presence of the
             # spec files is not coverage. The flip message names what WOULD
             # satisfy the clause so the correction steers the next action.
-            if c.satisfied and c.evidence and _test_clause_existence_only(c):
+            if (
+                c.satisfied and c.evidence and _test_clause_existence_only(c)
+                and not verified_execution
+            ):
                 normalized.append(ClauseVerdict(
                     clause=c.clause, satisfied=False,
                     evidence=(
@@ -562,9 +603,10 @@ def validate(
             ]
             return EvalResult(
                 verdict="off_track",
-                rationale=(
-                    rationale or f"{len(unsatisfied)} of {len(clauses)} done_when "
-                    "clause(s) lack confirmed evidence."
+                rationale=_downgrade_rationale(
+                    f"{len(unsatisfied)} of {len(clauses)} done_when clause(s) "
+                    "lack confirmed evidence after mechanical normalization.",
+                    rationale,
                 ),
                 corrections=derived,
                 clauses=clauses,
@@ -594,10 +636,11 @@ def validate(
             ]
             return EvalResult(
                 verdict="off_track",
-                rationale=(
-                    rationale or f"functional clauses met but structural axis "
-                    f"failed ({structural_health}); clean up the shape before "
-                    "declaring done."
+                rationale=_downgrade_rationale(
+                    f"functional clauses met but structural axis failed "
+                    f"({structural_health}); clean up the shape before "
+                    "declaring done.",
+                    rationale,
                 ),
                 corrections=derived,
                 clauses=clauses,
@@ -671,6 +714,7 @@ async def evaluate(
         parsed, at_done_gate=at_done_gate, stub_acceptable=goal.stub_acceptable,
         standing=is_standing(goal.done_when),
         strictness=strictness or goal.strictness,
+        verified_execution=_deliveries_verified_execution(deliveries),
     )
 
 
