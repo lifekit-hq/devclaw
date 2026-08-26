@@ -408,3 +408,24 @@ async def test_oversized_chunk_demands_reslice_and_refuses_identical_retry(store
     assert len(calls) == 1
     assert "[active_slice: 001-f US2]" in t.error
     assert "re-slice IT" in t.error
+
+
+async def test_tripwire_firing_lands_one_problems_row_countable_per_goal(store):
+    # Spec 021 US2 / SC-005: a result carrying a tripwire record produces ONE
+    # problems-catalog row (limit|context_tripwire), recovered per `landed` —
+    # the ratchet metric that tells us when chunk sizing has bedded in.
+    async def tripped_runner(req: EngineRequest):
+        return {"status": "error",
+                "error": "Conversation run failed: Internal error: Prompt is too long",
+                "tripwire": {"threshold_pct": 75, "used": 990, "size": 1000,
+                             "active_slice": "US2", "landed": False}}
+
+    q = TaskQueue(store, runner=tripped_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X")
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    rows = [p for p in store.list_problems() if p.get("kind") == "context_tripwire"]
+    assert len(rows) == 1
+    assert rows[0]["category"] == "limit"
+    assert rows[0]["terminal_count"] == 1 and rows[0]["recovered_count"] == 0

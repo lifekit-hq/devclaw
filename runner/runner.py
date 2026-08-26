@@ -662,6 +662,71 @@ _LAND_SLICE_PROMPT = (
 )
 
 
+# ─── Context tripwire (spec 021, US2) ────────────────────────────────────────
+# The graceful-degradation backstop under the slice watcher: when the agent's
+# own usage reports say the context window is nearly spent, end the turn and
+# land a coherent partial increment instead of running into the wall (the
+# "Prompt is too long" wedge class, devclaw#707). Signal: the agent's
+# `usage_update` session notifications carrying {used, size} — observed live
+# from claude-agent-acp; an agent that reports nothing leaves the tripwire
+# INERT with one loud note in the result (never fabricated, never guessed).
+
+#: Fire threshold as a percentage of the reported window; 0 disables. The
+#: engine declares it into the sandbox env (config doorway excludes runner/).
+def _tripwire_threshold_pct() -> int:
+    try:
+        return int(os.environ.get("DEVCLAW_CONTEXT_TRIPWIRE_PCT", "75"))
+    except ValueError:
+        return 75
+
+
+_LAND_BUDGET_PROMPT = (
+    "STOP — your context budget is nearly spent (the harness measured it). "
+    "Do not start anything new. Land a coherent partial increment now: make "
+    "tasks.md honest about exactly what is done, run the relevant checks, "
+    "commit the work with the specs/ artifacts, and end with the structured "
+    "hand-back. Anything unfinished goes to FOLLOW-UPS — the next session "
+    "continues from the workspace."
+)
+
+
+class _ContextTripwire:
+    """Tracks the latest {used, size} from `usage_update` notifications and
+    fires at most once when used/size crosses the threshold."""
+
+    def __init__(self, threshold_pct: int) -> None:
+        self.threshold_pct = threshold_pct
+        self.fired = False
+        self.landed = False
+        self.seen = False
+        self.used: "int | None" = None
+        self.size: "int | None" = None
+
+    def observe(self, params: object) -> bool:
+        """Feed one session/update's params. True exactly once — at the
+        observation that crosses the threshold."""
+        if not isinstance(params, dict):
+            return False
+        upd = params.get("update")
+        if not isinstance(upd, dict) or upd.get("sessionUpdate") != "usage_update":
+            return False
+        used, size = upd.get("used"), upd.get("size")
+        if (
+            not isinstance(used, (int, float)) or isinstance(used, bool)
+            or not isinstance(size, (int, float)) or isinstance(size, bool)
+            or size <= 0
+        ):
+            return False
+        self.seen = True
+        self.used, self.size = int(used), int(size)
+        if self.threshold_pct <= 0 or self.fired:
+            return False
+        if used * 100 >= size * self.threshold_pct:
+            self.fired = True
+            return True
+        return False
+
+
 def _chunk_task_rows(text: str) -> "list[tuple[str, str | None, bool]]":
     """Mirror of slice_guard._task_rows: (key, story, checked) per checkbox
     line — key is the stable ``T<id>`` when present, else the trimmed label;
@@ -1609,7 +1674,31 @@ def main() -> None:
             if watcher.check():
                 client.cancel_turn()
 
-    client = acp.AcpClient(acp_command, acp_env, on_event=_emit_and_watch)
+    # Context tripwire (spec 021 US2): reads the agent's own usage stream via
+    # the client's on_update seam; fires at most once per session.
+    tripwire = _ContextTripwire(_tripwire_threshold_pct())
+
+    def _observe_update(params: dict) -> None:
+        if tripwire.observe(params):
+            _emit_event(
+                {
+                    "id": None,
+                    "type": "ContextTripwire",
+                    "source": "runner",
+                    "ts": time.time(),
+                    "payload": {
+                        "used": tripwire.used,
+                        "size": tripwire.size,
+                        "threshold_pct": tripwire.threshold_pct,
+                        "active_slice": watcher.active_slice() or None,
+                    },
+                }
+            )
+            client.cancel_turn()
+
+    client = acp.AcpClient(
+        acp_command, acp_env, on_event=_emit_and_watch, on_update=_observe_update
+    )
 
     usage: dict | None = None
     # Snapshot the cgroup OOM counter before the agent runs so a kill DURING
@@ -1618,16 +1707,22 @@ def main() -> None:
     try:
         try:
             outcome = client.run(workspace_dir, wrapped_goal)
-            if (
-                watcher.stop_requested
-                and client.turn_cancel_requested
-                and outcome.stop_reason == "cancelled"
-            ):
+            if client.turn_cancel_requested and outcome.stop_reason == "cancelled":
                 # The landing sequence (spec 021): the session survives the
                 # turn cancel with all file state intact; the follow-up turn
                 # commits and hands back, then the normal verify/result path
-                # runs on ITS outcome.
-                outcome = client.prompt(_LAND_SLICE_PROMPT)
+                # runs on ITS outcome. The slice watcher's prompt wins when
+                # both it and the tripwire stopped the turn.
+                land_prompt = (
+                    _LAND_SLICE_PROMPT if watcher.stop_requested else _LAND_BUDGET_PROMPT
+                )
+                outcome = client.prompt(land_prompt)
+                if tripwire.fired:
+                    tripwire.landed = outcome.stop_reason != "cancelled"
+            elif tripwire.fired and outcome.stop_reason == "end_turn":
+                # The agent finished its turn before the cancel took effect —
+                # nothing was interrupted, so the session counts as landed.
+                tripwire.landed = True
             if outcome.stop_reason == "cancelled" and not client.turn_cancel_requested:
                 # Fail CLOSED: an externally-cancelled turn used to leak
                 # through as status="ok" on whatever half-finished state the
@@ -1675,6 +1770,16 @@ def main() -> None:
                 client.last_agent_message, client.stderr_tail()
             ),
         )
+        if tripwire.fired:
+            # The landing sequence did not complete — the firing still rides
+            # the result so the host counts it (recovered=False).
+            err_payload["tripwire"] = {
+                "threshold_pct": tripwire.threshold_pct,
+                "used": tripwire.used,
+                "size": tripwire.size,
+                "active_slice": watcher.active_slice() or None,
+                "landed": False,
+            }
         if hook_warnings:
             err_payload["hook_warnings"] = hook_warnings
         _emit_result(err_payload)
@@ -1733,6 +1838,24 @@ def main() -> None:
             "advanced_slices": watcher.advanced_slices(),
             "stopped_by_watcher": watcher.stop_requested,
         }
+    # Context-budget observability (spec 021 US2, contracts/runner-result.md):
+    # the last observed usage, the firing record, or the loud inert note —
+    # never fabricated (no usage stream ⇒ no `context` field).
+    if tripwire.seen:
+        result_payload["context"] = {"used": tripwire.used, "size": tripwire.size}
+    if tripwire.fired:
+        result_payload["tripwire"] = {
+            "threshold_pct": tripwire.threshold_pct,
+            "used": tripwire.used,
+            "size": tripwire.size,
+            "active_slice": watcher.active_slice() or None,
+            "landed": bool(tripwire.landed),
+        }
+    elif tripwire.threshold_pct > 0 and not tripwire.seen:
+        result_payload["usage_absent_note"] = (
+            f"context tripwire configured at {tripwire.threshold_pct}% but the "
+            "agent reported no usage stream — tripwire inert this session"
+        )
     if usage:
         result_payload["usage"] = usage
     if repo_notes:
