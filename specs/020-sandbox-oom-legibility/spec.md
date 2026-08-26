@@ -22,6 +22,14 @@ deterministic given the environment, so the retry reproduced it, and
 This spec fixes the class, not the instance (design doctrine 2026-07-18).
 Fix-direction detail lives in issue #702 and its design comment.
 
+## Clarifications
+
+### Session 2026-08-26
+
+- Q: After an OOM kills the agent session, should the goal get one adapted re-dispatch (brief carries the cap + bounding instructions) before blocking for the owner? → A: One adapted re-dispatch; block only if it also dies of the environment cap. Identical retries stay forbidden.
+- Q: Does per-project sandbox sizing (US4) ship in this arc, or get cut from the spec now? → A: Ships in this arc — the whole spec (US1–US4) is the commitment.
+- Q: Should a per-project sizing override the host can never admit be rejected loudly at registry write time, or accepted with dispatch deferring? → A: Reject loudly at write time; no unadmittable value can be stored.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - An OOM death is legible and never retried unchanged (Priority: P1)
@@ -183,9 +191,14 @@ the instance default.
   capturing the evidence before the sandbox is destroyed.
 - **FR-002**: A task whose agent session died with OOM evidence MUST settle
   failed with a reason that names the effective memory cap and the remedies
-  (raise instance/project sizing, or bound the verify workload), and MUST
-  join the deterministic no-auto-retry class (no identical in-task retry, no
-  identical goal-level re-dispatch).
+  (raise instance/project sizing, or bound the verify workload), with no
+  identical in-task retry (retrying the same attempt reproduces the kill).
+- **FR-002a**: At the goal level, an environment-cap failure earns exactly
+  ONE adapted re-dispatch: the new brief names the effective cap and directs
+  the worker to bound its tooling (capped workers, serial runs) — replacing
+  the generic "take a strictly smaller slice" advice, which is wrong for this
+  class. If the adapted attempt also dies of the environment cap, the goal
+  blocks per FR-003; identical re-dispatches remain forbidden in all cases.
 - **FR-003**: A goal blocking after an environment-cap failure MUST carry a
   block reason naming that class; the "review the open PRs" phrasing MUST
   only appear when at least one dispatch actually delivered something
@@ -212,8 +225,10 @@ the instance default.
   bounded-memory-first, wall-clock-second.
 - **FR-009**: The project registry MUST accept optional per-project sandbox
   memory (and CPU) overrides; task launch MUST apply the project override
-  when present, else the instance default; invalid values fail loudly at the
-  point of use.
+  when present, else the instance default. A malformed value, or one the
+  host's admission budget can never satisfy, is rejected LOUDLY at registry
+  write time (the error names the host budget) — no unadmittable override
+  can be stored to wedge dispatch silently.
 - **FR-010**: Host launch admission MUST account for the effective (possibly
   overridden) sandbox memory of the task being launched, so per-project
   sizing cannot overcommit the host.
@@ -263,10 +278,10 @@ the instance default.
   their parent's score, so where the hook lands is a plan decision).
 - Sizing values use docker-accepted unit strings (e.g. "4g"), consistent
   with the existing `DEVCLAW_SANDBOX_MEMORY` knob.
-- US1's "no identical re-dispatch" follows the existing prompt-too-long
-  precedent, including how failure context reaches any NON-identical future
-  dispatch; the misleading "take a strictly smaller slice" advice for this
-  class is corrected as part of US1's messaging.
+- US1's in-task no-retry follows the existing prompt-too-long precedent; the
+  goal level diverges deliberately (FR-002a: one adapted re-dispatch, then
+  block) because a cap-aware attempt has a real success path where an
+  identical one does not.
 - The stubbed test suite proves classification, messaging, retry policy, and
   sizing resolution; the live behavior of the shield and of real OOM kills is
   proven via the live-shakedown lane, not pytest (suite stays docker-free).
