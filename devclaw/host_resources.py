@@ -70,6 +70,21 @@ def _parse_mem(text: str) -> int:
     except (ValueError, TypeError):
         return 2 << 30
 
+def host_mem_total_bytes() -> Optional[int]:
+    """Best-effort ``/proc/meminfo`` ``MemTotal`` in bytes; ``None`` on any
+    failure. The STABLE host budget — write-time admittability of per-project
+    sizing overrides (spec 020 US4) validates against this, not the
+    fluctuating ``MemAvailable``."""
+    try:
+        with open("/proc/meminfo", "r", encoding="ascii", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) * 1024
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
 def host_mem_available_bytes() -> Optional[int]:
     """Best-effort ``/proc/meminfo`` ``MemAvailable`` in bytes. Returns ``None``
     on ANY failure (non-Linux host, missing field, parse error) so dispatch fails

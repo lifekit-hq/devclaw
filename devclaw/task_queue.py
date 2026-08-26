@@ -508,10 +508,11 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
                     break
                 if self._workspace_break_active(t.workspace_dir):
                     continue
-                if not self._mem_can_launch():
+                need = self._effective_sandbox_mem_bytes(t.project_id)
+                if not self._mem_can_launch(need):
                     break  # not enough host RAM for another sandbox this tick
                 if self._store.claim_pending(t.id):
-                    self._mem_commit_launch()
+                    self._mem_commit_launch(need)
                     running += 1
                     self._launch(t.id, t.kind, t.workspace_dir, t.goal, None)
 
@@ -568,6 +569,27 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
         if self._registry is None:
             return None
         return self._registry.resolve_override(project_id, "sandbox_image", None)
+
+    def _sandbox_sizing(self, project_id):
+        """Per-task sandbox sizing (spec 020 US4) for a task owned by
+        ``project_id``: ``(sandbox_memory, sandbox_cpus)`` — each the owning
+        project's override if set, else None (the engine then applies its own
+        DEVCLAW_SANDBOX_MEMORY / DEVCLAW_SANDBOX_CPUS defaults). Same shape
+        and rationale as ``_sandbox_image`` above."""
+        if self._registry is None:
+            return None, None
+        return (
+            self._registry.resolve_override(project_id, "sandbox_memory", None),
+            self._registry.resolve_override(project_id, "sandbox_cpus", None),
+        )
+
+    def _effective_sandbox_mem_bytes(self, project_id) -> int:
+        """The bytes launch admission must account for THIS task (spec 020
+        US4/FR-010): the project's override when set, else the instance
+        default — so a large per-project cap cannot overcommit the host by
+        being admitted at default-size."""
+        mem, _ = self._sandbox_sizing(project_id)
+        return _parse_mem(mem) if mem else SANDBOX_MEMORY_BYTES
 
     def _browser_gate_mode(self, project_id: Optional[str]) -> str:
         """Browser-gate stance (``flexible``|``strict``) for a task owned by
