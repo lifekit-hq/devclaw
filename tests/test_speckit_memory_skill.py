@@ -119,3 +119,28 @@ def test_skill_does_not_reintroduce_the_dropped_gh_issue_machinery():
     lowered = _text().lower()
     assert "gh issue" not in lowered
     assert "wayfinder:map" not in lowered
+
+
+# ─── spec 021 US3: the read-side diet ────────────────────────────────────────
+
+
+def test_skill_teaches_per_slice_read_budget():
+    """US3 (spec 021): exploration cost is paid once at planning — each slice
+    gets a declared surface line in plan.md — and build sessions pull from it
+    before raw exploration. Presence AND absence per rules/testing.md: the
+    skill must demand the declared-surface read order and must never license
+    silent repo-wide fallback."""
+    text = _text()
+    assert "the next session's read budget" in text
+    assert "explore raw files only within the slice's declared surface" in text
+    assert "never silently" in text  # stale entry → fix it loud, no fallback
+    # the diet must not contradict the pull doctrine (no pushed dossiers):
+    assert "dossier" not in text.lower()
+
+
+def test_skill_states_the_harness_enforced_slice_stop_once():
+    """US1's contract line survives US3's edits: one slice per session, and
+    the stop is stated as the HARNESS's act exactly once (prompt-style rule:
+    each rule stated once)."""
+    text = _text()
+    assert text.count("the harness ends the session") == 1

@@ -34,5 +34,12 @@ task.
   else; the next slice belongs to the next session.
 - Record load-bearing choices (a stack, a schema, an API shape) with a
   one-line why in the feature's plan.md, so no session relitigates them.
+- While planning (the tasks step), record for EACH story-slice one line in
+  the feature's plan.md naming the files/areas that slice touches and any
+  constraint discovered — the next session's read budget.
+- When implementing a slice, read its plan.md line and AGENTS.md FIRST and
+  explore raw files only within the slice's declared surface. If the line is
+  stale or missing, fix it first and say so in the commit — never silently
+  fall back to repo-wide exploration.
 - Commit the `specs/NNN-*/` artifact changes together with the code they
   describe.

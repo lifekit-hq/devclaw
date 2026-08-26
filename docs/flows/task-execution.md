@@ -112,9 +112,18 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • client = acp.AcpClient(                    │                                 │
      │  │           acp_command, # DEVCLAW_ACP_COMMAND     │                                 │
      │  │           acp_env,     # allowlist + model tier  │                                 │
-     │  │           on_event=_emit_event)                  │                                 │
+     │  │           on_event=…, on_update=…)               │                                 │
      │  │     • client.run("/workspace", wrapped_goal)     │                                 │
      │  │       (initialize → session/new → session/prompt)│                                 │
+     │  │     • spec 021 seatbelts, both may cancel the    │                                 │ an EXTERNALLY-cancelled
+     │  │       turn + send a land-now follow-up prompt    │                                 │ turn (no runner landing)
+     │  │       in the SAME session:                       │                                 │ fails CLOSED, never "ok"
+     │  │       – slice watcher: one story-slice per       │                                 │
+     │  │         session, enforced from specs/*/tasks.md  │                                 │
+     │  │       – context tripwire: usage_update ≥         │                                 │
+     │  │         DEVCLAW_CONTEXT_TRIPWIRE_PCT → land a    │                                 │
+     │  │         partial increment (ContextTripwire       │                                 │
+     │  │         event + problems row at settle)          │                                 │
      │  │                     ──────► spawns subprocess:  │                                  │
      │  │                                                  │                                 │
      │  │     ┌──────────────────────────────────────┐     │                                 │
