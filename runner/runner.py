@@ -546,6 +546,61 @@ def _failure_result(error_text: str, **extra) -> dict:
     return payload
 
 
+# ─── Sandbox OOM evidence (spec 020, US1) ────────────────────────────────────
+# The runner shares the container cgroup with the agent and provably survives
+# the agent's OOM death, so IT captures the kernel's evidence — one file read,
+# no docker lifecycle involvement. Contract with the queue's settle path:
+# specs/020-sandbox-oom-legibility/contracts/runner-oom-marker.md. Everything
+# here is best-effort and never-raises: unreadable cgroup files mean NO
+# evidence, and the terminal error stays byte-identical to the pre-020 shape.
+
+_CGROUP_MEMORY_EVENTS = "/sys/fs/cgroup/memory.events"
+_CGROUP_MEMORY_MAX = "/sys/fs/cgroup/memory.max"
+
+
+def _read_oom_kill_count() -> "int | None":
+    """The cgroup v2 ``oom_kill`` counter, or None when unreadable/absent."""
+    try:
+        with open(_CGROUP_MEMORY_EVENTS, encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("oom_kill "):
+                    return int(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _sandbox_mem_cap_label() -> str:
+    """Human-readable memory cap: the engine-declared env value when present
+    (single source: the launch parameters), else the raw cgroup limit."""
+    declared = os.environ.get("DEVCLAW_SANDBOX_MEMORY", "").strip()
+    if declared:
+        return declared
+    try:
+        with open(_CGROUP_MEMORY_MAX, encoding="utf-8") as fh:
+            raw = fh.read().strip()
+        if raw and raw != "max":
+            return f"{raw} bytes"
+    except OSError:
+        pass
+    return "unknown"
+
+
+def _oom_annotate(error_text: str, baseline: "int | None") -> str:
+    """Prefix the ``sandbox OOM-killed`` marker iff the cgroup recorded a NEW
+    OOM kill since ``baseline``. No evidence ⇒ the text passes through
+    unchanged (conservative: exit-137 alone is any SIGKILL, never proof)."""
+    if baseline is None:
+        return error_text
+    now = _read_oom_kill_count()
+    if now is None or now <= baseline:
+        return error_text
+    return (
+        f"sandbox OOM-killed (cap={_sandbox_mem_cap_label()}, "
+        f"oom_kill={now - baseline}): {error_text}"
+    )
+
+
 # The engineer's return-contract (_RETURN_CONTRACT) tells it to end its final
 # message with a STATUS field whose value is either ``DONE`` or
 # ``BLOCKED: <one-line reason>`` when it genuinely cannot finish (a missing
@@ -1325,6 +1380,9 @@ def main() -> None:
     client = acp.AcpClient(acp_command, acp_env, on_event=_emit_event)
 
     usage: dict | None = None
+    # Snapshot the cgroup OOM counter before the agent runs so a kill DURING
+    # this session is distinguishable from pre-existing history (spec 020).
+    oom_baseline = _read_oom_kill_count()
     try:
         try:
             outcome = client.run(workspace_dir, wrapped_goal)
@@ -1342,8 +1400,11 @@ def main() -> None:
         # A clear usage/rate limit becomes status="rate_limited" so the host
         # pauses-and-resumes instead of retry-burning quota; anything ambiguous
         # stays status="error" (the host regex fallback classifies the text).
+        # OOM evidence check (spec 020): if the cgroup recorded a kill during
+        # this session, stamp the marker so the queue classifies the failure
+        # as a deterministic environment cap instead of retrying it.
         err_payload = _failure_result(
-            str(exc),
+            _oom_annotate(str(exc), oom_baseline),
             trace=traceback.format_exc(),
             agent_output=_agent_last_words(
                 client.last_agent_message, client.stderr_tail()

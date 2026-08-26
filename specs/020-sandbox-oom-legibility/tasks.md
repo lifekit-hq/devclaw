@@ -11,13 +11,13 @@ One story = one increment = one reviewable PR (US1 → US2 → US3 → US4).
 
 (no project scaffolding needed — existing repo; the worktree/branch exists)
 
-- [ ] T001 Confirm baseline green in the worktree: full suite + ruff + mypy (`TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q`, `ruff check .`, `mypy`)
+- [x] T001 Confirm baseline green in the worktree: full suite + ruff + mypy (`TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q`, `ruff check .`, `mypy`)
 
 ## Phase 2: Foundational
 
 (blocking prerequisite for US1 and US3 — the marker/env names are shared vocabulary)
 
-- [ ] T002 Add `SANDBOX_OOM_MARKER = "sandbox OOM-killed"` and the evidence-string format helper to a seam importable by both runner and queue WITHOUT coupling them: define the literal in `devclaw/queue/settle.py` (`_SANDBOX_OOM_MARKER`) and independently in `runner/runner.py` (the runner is deliberately stdlib-only and self-contained; the contract doc `contracts/runner-oom-marker.md` is the single spec both cite in comments)
+- [x] T002 Add `SANDBOX_OOM_MARKER = "sandbox OOM-killed"` and the evidence-string format helper to a seam importable by both runner and queue WITHOUT coupling them: define the literal in `devclaw/queue/settle.py` (`_SANDBOX_OOM_MARKER`) and independently in `runner/runner.py` (the runner is deliberately stdlib-only and self-contained; the contract doc `contracts/runner-oom-marker.md` is the single spec both cite in comments)
 
 ## Phase 3: User Story 1 — OOM death is legible and never retried unchanged (P1)
 
@@ -29,16 +29,16 @@ cap-naming reason; the goal gets one adapted re-dispatch, then blocks with
 task fails fast with the remedy text, runner called once; goal tick drives
 adapted-brief-then-block; counter resets on productive settle.
 
-- [ ] T003 [US1] Runner cgroup evidence: in `runner/runner.py`, read `/sys/fs/cgroup/memory.events` (`oom_kill`) at session start, after agent-process death, and at exit; read `/sys/fs/cgroup/memory.max` (fallback `DEVCLAW_SANDBOX_MEMORY` env) — best-effort, unreadable ⇒ no evidence; on agent death with an `oom_kill` increase, prefix the terminal error with `sandbox OOM-killed (cap=<cap>, oom_kill=<n>): ` and skip any in-runner session re-attempt for this class
-- [ ] T004 [US1] Queue fast-fail: in `devclaw/queue/settle.py`, add `_SANDBOX_OOM_MARKER` branch beside `_PROMPT_TOO_LONG_MARKER` (same ordering discipline, before the retry-continue arm): `mark_failed` with the data-model.md reason template (cap + both remedies), breaker check, `return None`
-- [ ] T005 [P] [US1] Failure-class rule: add `("sandbox_oom", ("sandbox oom-killed",))` to `_FAILURE_CLASS_RULES` in `devclaw/state_store/rows.py`
-- [ ] T006 [US1] Goal counter: add `envcap_redispatches: int = 0` to `GoalStatus` across all five lockstep seams — `devclaw/goal/models.py`, `devclaw/goal/state.py` (DDL), `devclaw/goal/state_status.py` (upsert + read), `devclaw/goal/store/status.py` (frontmatter), `devclaw/goal/store/view_migration.py`
-- [ ] T007 [US1] Adapted brief: in `devclaw/goal/tick.py` `_advance_brief`, when `failure_context` carries the OOM marker, replace the generic "take a strictly smaller slice" advice with the cap-naming bounded-tooling directive (data-model.md); in the dispatch path increment `envcap_redispatches`
-- [ ] T008 [US1] Env-cap block: in `devclaw/goal/tick.py`/`tick_dispatch.py`, when the settled failure is the OOM class and `envcap_redispatches >= 1`, transition to `phase=blocked`, `blocked_kind="mechanical:env_cap"`, reason per data-model.md; reset the counter on productive settle in `devclaw/goal/tick_settle.py` beside `heal_attempts`
-- [ ] T009 [US1] Honest dispatch-cap message: in `devclaw/goal/tick_dispatch.py`, when the cap trips with zero delivered increments, the `blocked_on` reason carries the dominant terminal failure class instead of "review the open PRs"
-- [ ] T010 [P] [US1] Named regression tests in `tests/test_task_retry.py` (`test_sandbox_oom_fails_fast_without_retry_and_names_the_cap`, plus a quota-misroute shield case per the `test_quota_error_mentioning_prompt_too_long_still_pauses` pattern) and `tests/test_eval_outcomes.py` (class bucketing)
-- [ ] T011 [P] [US1] Named regression tests in `tests/test_goal_tick.py`: adapted brief content (presence of cap directive AND absence of "strictly smaller slice" for this class), block-after-one-adapted-retry, counter reset on productive settle, honest cap message with zero deliveries
-- [ ] T012 [US1] Runner-side test (fake cgroup dir fixture) proving marker emission with evidence and byte-identical behavior without, in the runner test module the suite already uses for runner behavior
+- [x] T003 [US1] Runner cgroup evidence: in `runner/runner.py`, read `/sys/fs/cgroup/memory.events` (`oom_kill`) at session start, after agent-process death, and at exit; read `/sys/fs/cgroup/memory.max` (fallback `DEVCLAW_SANDBOX_MEMORY` env) — best-effort, unreadable ⇒ no evidence; on agent death with an `oom_kill` increase, prefix the terminal error with `sandbox OOM-killed (cap=<cap>, oom_kill=<n>): ` and skip any in-runner session re-attempt for this class
+- [x] T004 [US1] Queue fast-fail: in `devclaw/queue/settle.py`, add `_SANDBOX_OOM_MARKER` branch beside `_PROMPT_TOO_LONG_MARKER` (same ordering discipline, before the retry-continue arm): `mark_failed` with the data-model.md reason template (cap + both remedies), breaker check, `return None`
+- [x] T005 [P] [US1] Failure-class rule: add `("sandbox_oom", ("sandbox oom-killed",))` to `_FAILURE_CLASS_RULES` in `devclaw/state_store/rows.py`
+- [x] T006 [US1] Goal counter: add `envcap_redispatches: int = 0` to `GoalStatus` across all five lockstep seams — `devclaw/goal/models.py`, `devclaw/goal/state.py` (DDL), `devclaw/goal/state_status.py` (upsert + read), `devclaw/goal/store/status.py` (frontmatter), `devclaw/goal/store/view_migration.py`
+- [x] T007 [US1] Adapted brief: in `devclaw/goal/tick.py` `_advance_brief`, when `failure_context` carries the OOM marker, replace the generic "take a strictly smaller slice" advice with the cap-naming bounded-tooling directive (data-model.md); in the dispatch path increment `envcap_redispatches`
+- [x] T008 [US1] Env-cap block: in `devclaw/goal/tick.py`/`tick_dispatch.py`, when the settled failure is the OOM class and `envcap_redispatches >= 1`, transition to `phase=blocked`, `blocked_kind="mechanical:env_cap"`, reason per data-model.md; reset the counter on productive settle in `devclaw/goal/tick_settle.py` beside `heal_attempts`
+- [x] T009 [US1] Honest dispatch-cap message: in `devclaw/goal/tick_dispatch.py`, when the cap trips with zero delivered increments, the `blocked_on` reason carries the dominant terminal failure class instead of "review the open PRs"
+- [x] T010 [P] [US1] Named regression tests in `tests/test_task_retry.py` (`test_sandbox_oom_fails_fast_without_retry_and_names_the_cap`, plus a quota-misroute shield case per the `test_quota_error_mentioning_prompt_too_long_still_pauses` pattern) and `tests/test_eval_outcomes.py` (class bucketing)
+- [x] T011 [P] [US1] Named regression tests in `tests/test_goal_tick.py`: adapted brief content (presence of cap directive AND absence of "strictly smaller slice" for this class), block-after-one-adapted-retry, counter reset on productive settle, honest cap message with zero deliveries
+- [x] T012 [US1] Runner-side test (fake cgroup dir fixture) proving marker emission with evidence and byte-identical behavior without, in the runner test module the suite already uses for runner behavior
 
 ## Phase 4: User Story 2 — memory exhaustion kills the workload, not the supervisor (P2)
 

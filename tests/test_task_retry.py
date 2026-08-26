@@ -329,3 +329,57 @@ async def test_retry_prompt_tells_worker_to_reproduce_before_diagnosing(store, m
     assert "First re-run the failing command" in retry
     assert "flaky" in retry
     assert retry.index("re-run the failing command") < retry.index("diagnose the cause")
+
+
+async def test_sandbox_oom_fails_fast_without_retry_and_names_the_cap(store, monkeypatch):
+    # Spec 020 US1: the runner-stamped "sandbox OOM-killed" marker is kernel
+    # evidence that the container memory cap killed the agent — deterministic
+    # for this environment, so an identical retry only reproduces the kill
+    # (the 2026-08-26 incident burned two dispatches this way). Fail FAST
+    # (one engine invocation) + CLOSED (failed, never paused) with the cap
+    # and BOTH remedies in the reason.
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)  # available, must not be used
+    calls: list = []
+
+    async def oom_runner(req: EngineRequest):
+        calls.append(req.goal)
+        return {"status": "error",
+                "error": ("sandbox OOM-killed (cap=2g, oom_kill=1): "
+                          "session/prompt failed: Internal error: The Claude "
+                          "Agent process exited unexpectedly.")}
+
+    q = TaskQueue(store, runner=oom_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "failed"  # fail closed — an OOM kill is never an approval
+    assert len(calls) == 1  # no second engine invocation — same cgroup, same kill
+    assert "sandbox OOM-killed (cap=2g" in t.error
+    assert "Not auto-retried" in t.error
+    assert "DEVCLAW_SANDBOX_MEMORY" in t.error and "bound the verify workload" in t.error
+    until_ms, _reason = store.global_pause()
+    assert until_ms == 0  # a memory cap is a REAL failure, never a usage pause
+
+
+async def test_quota_error_mentioning_sandbox_oom_still_pauses(store, monkeypatch):
+    # Same ordering shield as the prompt-too-long class: classify_failure runs
+    # BEFORE the OOM marker check, so a quota-shaped error that also carries
+    # the marker takes the pause-and-resume path, never the terminal fail.
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
+    calls: list = []
+
+    async def quota_with_oom_marker(req: EngineRequest):
+        calls.append(req.goal)
+        return {"status": "error",
+                "error": ("sandbox OOM-killed (cap=2g, oom_kill=1): Internal "
+                          "error: You're out of extra usage · resets 3:30am "
+                          "(UTC)")}
+
+    q = TaskQueue(store, runner=quota_with_oom_marker)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "pending"  # requeued for the pause window, NOT failed
+    assert len(calls) == 1
+    until_ms, _reason = store.global_pause()
+    assert until_ms > 0

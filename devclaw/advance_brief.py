@@ -30,6 +30,13 @@ ADVANCE_BRIEF_MARKER = "Advance this goal by one substantive"
 #: choke point below both key off these exact strings.
 STEERING_MARKER = "Steering from the owner — incorporate it:"
 FAILURE_CONTEXT_MARKER = "Previous attempt did NOT ship"
+#: The runner-stamped sandbox-OOM marker (spec 020) as it rides inside a failed
+#: increment's verbatim terminal reason. The brief generator keys the ADAPTED
+#: (cap-aware) failure advice on it, and the dispatch path keys the
+#: one-adapted-re-dispatch budget on it — same never-drift contract as the
+#: markers above; the queue-side twin is settle._SANDBOX_OOM_MARKER (contract:
+#: specs/020-sandbox-oom-legibility/contracts/runner-oom-marker.md).
+ENVCAP_FAILURE_MARKER = "sandbox OOM-killed"
 
 #: The saga framing's objective line (spec 012 US2 moved the GENERATOR into
 #: ``goal/saga_framing.py``; the DETECTOR below and ``delivery``'s title helper

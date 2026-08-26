@@ -180,6 +180,10 @@ def test_projection_hiccup_never_unsettles_the_task(store, monkeypatch, capsys):
     ("verify gate timed out: `npm test`", "verify_failed"),
     ("task exceeded the 3600s wall-clock timeout with no terminal result — "
      "sandbox torn down.", "timeout"),
+    # spec 020: the runner-stamped kernel evidence of a container OOM kill —
+    # buckets ahead of the generic engine_error catch-all.
+    ("sandbox OOM-killed (cap=2g, oom_kill=1): session/prompt failed: Internal "
+     "error: The Claude Agent process exited unexpectedly.", "sandbox_oom"),
     ("gate passed but delivery failed: push rejected", "delivery_failed"),
     ("claude-sdk: no result line emitted", "no_result_line"),
     ("exceeded 5 usage-limit pauses; last: usage limit reached", "rate_limited"),

@@ -108,6 +108,7 @@ def parse_status_md(text: str) -> "tuple[GoalStatus, int]":
         blocked_on=fm.get("blocked_on") or None,
         blocked_kind=fm.get("blocked_kind", "") or "",
         heal_attempts=_int(fm.get("heal_attempts")),
+        envcap_redispatches=_int(fm.get("envcap_redispatches")),
         next_heal_at=fm.get("next_heal_at") or None,
         next=fm.get("next", "") or "",
         last_plan_at=fm.get("last_plan_at") or None,

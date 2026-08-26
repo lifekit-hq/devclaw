@@ -3128,3 +3128,105 @@ def test_green_mechanical_verification_alone_never_closes_a_goal():
         if name in path.read_text(encoding="utf-8")
     ]
     assert leaks == [], f"execution path reads the expected increment count: {leaks}"
+
+
+# ---- sandbox OOM environment-cap class (spec 020 US1) ---------------------
+
+_OOM_DETAIL = (
+    "sandbox OOM-killed (cap=2g, oom_kill=1): session/prompt failed: Internal "
+    "error: The Claude Agent process exited unexpectedly. — the sandbox memory "
+    "cap was exhausted and the kernel OOM killer took the agent."
+)
+
+
+@pytest.mark.asyncio
+async def test_sandbox_oom_failure_gets_one_adapted_redispatch_with_bounding_advice(tmp_path):
+    """Spec 020 FR-002a: the FIRST environment-cap failure re-dispatches ONCE
+    with cap-aware bounding advice — never the generic "strictly smaller
+    slice" directive, which cannot shrink a test suite."""
+    from devclaw.advance_brief import FAILURE_CONTEXT_MARKER
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight", actions_dispatched=0,
+            in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "advance"),
+        ),
+    )
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="failed", detail=_OOM_DETAIL))
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert FAILURE_CONTEXT_MARKER in action.goal
+    assert "MEMORY CAP" in action.goal
+    assert "DEVCLAW_SANDBOX_MEMORY" in action.goal
+    assert "strictly smaller slice" not in action.goal  # wrong advice for this class
+    assert store.load_status("g").envcap_redispatches == 1
+
+
+@pytest.mark.asyncio
+async def test_second_sandbox_oom_blocks_with_env_cap_kind_naming_the_cap(tmp_path):
+    """FR-002a's other half: the class recurring past the one-adapted-retry
+    budget parks the goal with the cap in the reason — resume_goal after
+    raising sizing is the recovery verb."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight", actions_dispatched=1, envcap_redispatches=1,
+            in_flight=InFlight("devclaw", "implement_feature", "t2", "task", "advance"),
+        ),
+    )
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="failed", detail=_OOM_DETAIL))
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.BLOCKED
+    st = store.load_status("g")
+    assert st.blocked_kind == "mechanical:env_cap"
+    assert "sandbox OOM at cap 2g" in st.blocked_on
+    assert "resume_goal" in st.blocked_on
+    assert engine.dispatched == []  # no third burn
+
+
+@pytest.mark.asyncio
+async def test_productive_settle_resets_envcap_redispatch_budget(tmp_path):
+    """A shipped increment proves the environment now fits — the budget
+    resets alongside heal_attempts (same stability signal)."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight", actions_dispatched=1, envcap_redispatches=1,
+            in_flight=InFlight("devclaw", "implement_feature", "t3", "task", "advance"),
+        ),
+    )
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", gate_passed=True))
+    await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+    assert store.load_status("g").envcap_redispatches == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cap_reason_is_honest_when_nothing_was_delivered(tmp_path):
+    """Spec 020 FR-003: "review the open PRs" was a lie when every dispatch
+    failed and nothing shipped (the 2026-08-26 shape). With only failed
+    increments on record, the cap block says so and carries the last error."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")  # default 2-item backlog → cap = 4
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight", actions_dispatched=4,  # at cap already
+            in_flight=InFlight("devclaw", "implement_feature", "t4", "task", "advance"),
+        ),
+    )
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed", detail="Error:\nboom-mechanism died",
+    ))
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.BLOCKED
+    st = store.load_status("g")
+    assert st.blocked_kind == "mechanical:dispatch_cap"
+    assert "NO delivered increment" in st.blocked_on
+    assert "review the open PRs" not in st.blocked_on
