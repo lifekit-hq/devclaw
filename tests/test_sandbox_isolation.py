@@ -582,3 +582,25 @@ def test_sandbox_forwards_the_oauth_token_but_never_a_metered_key(monkeypatch):
     clean = sc._strip_api_keys(dict(__import__("os").environ))
     assert clean[sc.OAUTH_TOKEN_VAR] == "sk-ant-oat-live"
     assert "ANTHROPIC_API_KEY" not in clean
+
+
+def test_docker_args_declare_the_enforced_sizing_to_the_worker():
+    """Spec 020 US3 (FR-007): the sandbox env carries the SAME memory/cpus
+    values the engine enforces with --memory/--cpus — single source, never a
+    re-derivation. /proc/meminfo and nproc inside a cgroup report the HOST,
+    which is exactly the false trail the 2026-08-26 incident's agent
+    followed; the declared pair is the number it can trust."""
+    args = sc._build_docker_args(
+        container_name="devclaw-deadbeef",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    mem = args[args.index("--memory") + 1]
+    cpus = args[args.index("--cpus") + 1]
+    assert args[args.index("--memory-swap") + 1] == mem  # no swap headroom
+    assert f"DEVCLAW_SANDBOX_MEMORY={mem}" in args
+    assert f"DEVCLAW_SANDBOX_CPUS={cpus}" in args
+    # each declaration rides an explicit -e pair (the allowlist convention)
+    assert args[args.index(f"DEVCLAW_SANDBOX_MEMORY={mem}") - 1] == "-e"
+    assert args[args.index(f"DEVCLAW_SANDBOX_CPUS={cpus}") - 1] == "-e"

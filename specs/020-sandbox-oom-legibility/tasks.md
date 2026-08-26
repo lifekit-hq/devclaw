@@ -62,10 +62,10 @@ guidance bounds tooling by it.
 **Independent test**: pure `_build_docker_args` assertions (declared env ==
 enforced flags, same source); skill-content presence/absence test.
 
-- [ ] T017 [US3] Engine declaration: in `devclaw/engine/sandcastle.py` `_build_docker_args`, add the third env-forward family `-e DEVCLAW_SANDBOX_MEMORY=<v> -e DEVCLAW_SANDBOX_CPUS=<v>` sourced from the same variables used for `--memory`/`--cpus`; update the `_build_payload`/docstring "two families" comment honestly
-- [ ] T018 [US3] Agent visibility: add `DEVCLAW_SANDBOX_MEMORY`/`DEVCLAW_SANDBOX_CPUS` to the agent env allowlist in `runner/runner.py`
-- [ ] T019 [US3] Worker guidance: extend `runner/skills/_writes-code/40-verify-iterate.md` — bound test-runner workers/heap by the declared allocation; name the `/proc/meminfo`/`nproc` host-lying trap; encode bounded-memory-first, wall-clock second
-- [ ] T020 [P] [US3] Named regression tests: `tests/test_sandbox_isolation.py` same-source assertion (env pair equals the `--memory`/`--cpus` values, including when a per-project override later changes them); skill-content test asserting the guidance is present in the canonical file and matches the prompt-test presence/absence rule
+- [x] T017 [US3] Engine declaration: in `devclaw/engine/sandcastle.py` `_build_docker_args`, add the third env-forward family `-e DEVCLAW_SANDBOX_MEMORY=<v> -e DEVCLAW_SANDBOX_CPUS=<v>` sourced from the same variables used for `--memory`/`--cpus`; update the `_build_payload`/docstring "two families" comment honestly
+- [x] T018 [US3] Agent visibility: add `DEVCLAW_SANDBOX_MEMORY`/`DEVCLAW_SANDBOX_CPUS` to the agent env allowlist in `runner/runner.py`
+- [x] T019 [US3] Worker guidance: extend `runner/skills/_writes-code/40-verify-iterate.md` — bound test-runner workers/heap by the declared allocation; name the `/proc/meminfo`/`nproc` host-lying trap; encode bounded-memory-first, wall-clock second
+- [x] T020 [P] [US3] Named regression tests: `tests/test_sandbox_isolation.py` same-source assertion (env pair equals the `--memory`/`--cpus` values, including when a per-project override later changes them); skill-content test asserting the guidance is present in the canonical file and matches the prompt-test presence/absence rule
 
 ## Phase 6: User Story 4 — per-project sandbox sizing (P4)
 

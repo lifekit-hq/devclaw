@@ -574,6 +574,15 @@ def _build_docker_args(
         # OAUTH_TOKEN_VAR. A metered key never rides along: _strip_api_keys
         # governs the docker CLI's own env and the runner refuses one outright.
         *_oauth_token_env(),
+        # The THIRD env-forward family (the _build_payload docstring makes
+        # adding one a decision — this is spec 020 US3's): declare the
+        # ENFORCED resource allocation to the worker, sourced from the SAME
+        # variables passed to --memory/--cpus above (single source, FR-007).
+        # /proc/meminfo and nproc inside a cgroup report the HOST, which sent
+        # the 2026-08-26 incident's agent down a false "memory is fine" path;
+        # these are the numbers it can actually trust.
+        "-e", f"DEVCLAW_SANDBOX_MEMORY={SANDBOX_MEMORY}",
+        "-e", f"DEVCLAW_SANDBOX_CPUS={SANDBOX_CPUS}",
         sandbox_image or SANDBOX_IMAGE,
         payload,
     ]
@@ -585,8 +594,10 @@ def _build_payload(req: EngineRequest) -> dict:
     unit-testable without docker. The host env does not cross wholesale; the two
     deliberate exceptions are credentials the sandbox cannot function without,
     forwarded one variable at a time in :func:`_build_docker_args`: the git
-    identity (:func:`git_identity_env`) and the subscription OAuth token
-    (:data:`OAUTH_TOKEN_VAR`). Adding a third is a decision, not a convenience."""
+    identity (:func:`git_identity_env`), the subscription OAuth token
+    (:data:`OAUTH_TOKEN_VAR`), and the enforced sandbox sizing declaration
+    (spec 020 US3 — the decision the previous sentence demanded). Adding a
+    fourth is a decision, not a convenience."""
     payload: dict = {
         "kind": req.kind,
         "workspace_dir": CONTAINER_WORKSPACE,

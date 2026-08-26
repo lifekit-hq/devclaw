@@ -1416,6 +1416,13 @@ def main() -> None:
     # the sandbox image ships the script — host-engine runs stay untouched.
     if os.path.exists(_OOM_SHIELD_SCRIPT):
         acp_env["BASH_ENV"] = _OOM_SHIELD_SCRIPT
+    # Cage visibility (spec 020 US3): the engine declares the ENFORCED
+    # sandbox allocation; forward it so the agent sizes its tooling from the
+    # truth instead of the host-lying /proc/meminfo and nproc.
+    for _sizing_var in ("DEVCLAW_SANDBOX_MEMORY", "DEVCLAW_SANDBOX_CPUS"):
+        _sizing_val = os.environ.get(_sizing_var, "").strip()
+        if _sizing_val:
+            acp_env[_sizing_var] = _sizing_val
     if acp_model:
         acp_env["ANTHROPIC_MODEL"] = acp_model
 
