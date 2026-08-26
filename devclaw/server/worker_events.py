@@ -133,6 +133,23 @@ def _classify(etype: str, source: str, payload: dict) -> tuple[str, str, str]:
         detail = "\n\n".join(parts)
         kind = "error" if payload.get("is_error") else "action"
         return kind, tool_title, detail
+    if "contexttripwire" in t:
+        # Spec 021 US2: the runner is landing the session before a context
+        # overflow — render the numbers, not raw JSON.
+        return (
+            "observation",
+            "context tripwire",
+            (
+                f"context {payload.get('used')}/{payload.get('size')} tokens "
+                f"crossed the {payload.get('threshold_pct')}% threshold — "
+                "landing a coherent partial increment now"
+                + (
+                    f" (active slice {payload.get('active_slice')})"
+                    if payload.get("active_slice")
+                    else ""
+                )
+            ),
+        )
     if "systemprompt" in t:
         return "other", "system prompt", _first_str(payload, ("system_prompt", "content", "text", "prompt")) or _pretty(payload)
     if "message" in t:

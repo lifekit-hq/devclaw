@@ -586,6 +586,9 @@ def _build_docker_args(
         # these are the numbers it can actually trust.
         "-e", f"DEVCLAW_SANDBOX_MEMORY={sandbox_memory or SANDBOX_MEMORY}",
         "-e", f"DEVCLAW_SANDBOX_CPUS={sandbox_cpus or SANDBOX_CPUS}",
+        # Spec 021 US2: the context-tripwire threshold, declared to the runner
+        # (which reads its own env — config.py's doorway excludes runner/).
+        "-e", f"DEVCLAW_CONTEXT_TRIPWIRE_PCT={_config.context_tripwire_pct()}",
         sandbox_image or SANDBOX_IMAGE,
         payload,
     ]
