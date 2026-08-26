@@ -106,6 +106,14 @@ class FakeAgent:
         self.message("OAUTH-TOKEN-PRESENT" if present else "OAUTH-TOKEN-ABSENT")
         _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
 
+    def script_echo_bash_env(self, prompt_id: int) -> None:
+        """Report the BASH_ENV the AGENT process sees — the OOM-shield seam
+        (spec 020 US2): the runner sets it only when the sandbox image ships
+        /opt/devclaw/oom-shield.sh, so agent bash children self-raise their
+        oom_score_adj."""
+        self.message(os.environ.get("BASH_ENV") or "BASH-ENV-ABSENT")
+        _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
+
     def script_ok(self, prompt_id: int) -> None:
         self.update(
             {

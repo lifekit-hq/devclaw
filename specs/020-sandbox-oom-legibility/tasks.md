@@ -49,10 +49,10 @@ adapted-brief-then-block; counter resets on productive settle.
 score and outputs are unchanged; the real-kill proof is quickstart step 1
 (live shakedown).
 
-- [ ] T013 [US2] Preexec shield: in `runner/runner.py`, add a module-level `_raise_oom_score()` preexec helper (write `800` to `/proc/self/oom_score_adj`, swallow errors) and wire it into `_run_verify`, `_run_one_hook`, and `_mise_run` spawns
-- [ ] T014 [US2] Shield script: add `/opt/devclaw/oom-shield.sh` via `.sandcastle/Dockerfile` (`echo 800 > /proc/self/oom_score_adj 2>/dev/null || true`, chmod like the existing hooks layer)
-- [ ] T015 [US2] Agent-side shield: in `runner/runner.py`'s agent env allowlist, set `BASH_ENV=/opt/devclaw/oom-shield.sh` (only when the file exists — host-engine runs without the image must not break)
-- [ ] T016 [P] [US2] Named regression tests: runner spawn seams use the preexec and agent env carries `BASH_ENV` (and does NOT leak other env — extend the existing allowlist test); happy-path verify output unchanged
+- [x] T013 [US2] Preexec shield: in `runner/runner.py`, add a module-level `_raise_oom_score()` preexec helper (write `800` to `/proc/self/oom_score_adj`, swallow errors) and wire it into `_run_verify`, `_run_one_hook`, and `_mise_run` spawns
+- [x] T014 [US2] Shield script: add `/opt/devclaw/oom-shield.sh` via `.sandcastle/Dockerfile` (`echo 800 > /proc/self/oom_score_adj 2>/dev/null || true`, chmod like the existing hooks layer)
+- [x] T015 [US2] Agent-side shield: in `runner/runner.py`'s agent env allowlist, set `BASH_ENV=/opt/devclaw/oom-shield.sh` (only when the file exists — host-engine runs without the image must not break)
+- [x] T016 [P] [US2] Named regression tests: runner spawn seams use the preexec and agent env carries `BASH_ENV` (and does NOT leak other env — extend the existing allowlist test); happy-path verify output unchanged
 
 ## Phase 5: User Story 3 — the worker can see its cage (P3)
 
