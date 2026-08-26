@@ -27,7 +27,11 @@ task.
 - Flip `- [ ]` → `- [x]` in the feature's `tasks.md` as each task lands — that
   is how the next session sees what's left without re-deriving it.
 - Implement only the smallest not-yet-done story-slice (`[US<n>]`); one
-  coherent slice = one reviewable PR. Never build ahead into later stories.
+  coherent slice = one reviewable PR. Never build ahead into later stories —
+  one slice is this session's whole scope, and the harness ends the session
+  once a completed slice is left behind for the next one. Land the slice
+  (tasks.md honest, artifacts committed, checks run) before touching anything
+  else; the next slice belongs to the next session.
 - Record load-bearing choices (a stack, a schema, an API shape) with a
   one-line why in the feature's plan.md, so no session relitigates them.
 - Commit the `specs/NNN-*/` artifact changes together with the code they

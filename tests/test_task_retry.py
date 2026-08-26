@@ -383,3 +383,28 @@ async def test_quota_error_mentioning_sandbox_oom_still_pauses(store, monkeypatc
     assert len(calls) == 1
     until_ms, _reason = store.global_pause()
     assert until_ms > 0
+
+
+async def test_oversized_chunk_demands_reslice_and_refuses_identical_retry(store, monkeypatch):
+    # Spec 021 FR-008: when the runner's slice watcher named the active slice
+    # in the overflow error, the terminal failure carries the re-slice demand
+    # (the goal layer's next brief turns it into "re-slice THAT slice first")
+    # — still exactly one engine invocation, still failed, never paused.
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)
+    calls: list = []
+
+    async def overflowing_runner(req: EngineRequest):
+        calls.append(req.goal)
+        return {"status": "error",
+                "error": ("Conversation run failed for id=abc123: "
+                          "Internal error: Prompt is too long "
+                          "[active_slice: 001-f US2]")}
+
+    q = TaskQueue(store, runner=overflowing_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert len(calls) == 1
+    assert "[active_slice: 001-f US2]" in t.error
+    assert "re-slice IT" in t.error

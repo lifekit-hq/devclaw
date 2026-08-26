@@ -18,6 +18,11 @@ Scripts (what happens on ``session/prompt``):
   rate_limit   session/prompt answered with a quota-worded JSON-RPC error
   hang         swallows session/prompt and sleeps forever (idle-timeout prey)
   malformed    emits a non-JSON line mid-turn
+  cancelled    ends the turn stopReason "cancelled" with no runner cancel —
+               the runner must fail closed (spec 021)
+  slice_flip   completes slice US1 then touches a US2 row → the watcher's
+               stop condition; answers the land-now follow-up prompt (spec 021)
+  wrapup_only  completes ONE slice then only wraps up — must NOT be stopped
 
 Every script first checks the environment: if an Anthropic API key leaked
 into the agent env, the final message is ``LEAKED-API-KEY`` — the named
@@ -53,6 +58,9 @@ class FakeAgent:
         self.script = script
         self.session_id = "sess-fake-1"
         self._next_id = 1000
+        #: prompt turns served so far — the spec-021 landing-sequence scripts
+        #: behave differently on the follow-up (land-now) prompt.
+        self.prompt_count = 0
 
     # --- protocol helpers ----------------------------------------------------
 
@@ -88,6 +96,7 @@ class FakeAgent:
     # --- the one prompt turn -------------------------------------------------
 
     def run_prompt(self, prompt_id: int) -> None:
+        self.prompt_count += 1
         leaked = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get(
             "ANTHROPIC_AUTH_TOKEN"
         )
@@ -211,6 +220,106 @@ class FakeAgent:
     def script_hang(self, prompt_id: int) -> None:
         while True:
             time.sleep(3600)
+
+    def script_cancelled(self, prompt_id: int) -> None:
+        """An externally-cancelled turn (spec 021 T003): the agent ends the
+        turn with stopReason 'cancelled' WITHOUT any runner-initiated cancel —
+        the runner must fail closed, never settle ok."""
+        self.message("half-finished work left behind")
+        _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "cancelled"}})
+
+    # --- spec 021 slice-watcher scripts --------------------------------------
+
+    def _tool_step(self, call_id: str) -> None:
+        self.update(
+            {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": call_id,
+                "status": "completed",
+            }
+        )
+
+    def _write(self, rel_path: str, text: str) -> None:
+        os.makedirs(os.path.dirname(rel_path) or ".", exist_ok=True)
+        with open(rel_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+
+    def _await_cancel_then_end(self, prompt_id: int) -> None:
+        """Consume inbound frames until the runner's session/cancel arrives,
+        then end the current turn with stopReason 'cancelled' (the agent-side
+        half of the landing sequence)."""
+        while True:
+            msg = _read()
+            if msg is None:
+                sys.exit(1)
+            if msg.get("method") == "session/cancel":
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": prompt_id,
+                        "result": {"stopReason": "cancelled"},
+                    }
+                )
+                return
+
+    def script_slice_flip(self, prompt_id: int) -> None:
+        """Completes slice US1 then touches a US2 row — the exact stop
+        condition. The runner cancels the turn; the follow-up (land-now)
+        prompt gets an honest landing hand-back."""
+        if self.prompt_count > 1:
+            self.message(
+                "LANDED: slice committed honestly.\n\nSTATUS: DONE\n"
+                "REPO NOTES: none"
+            )
+            _send(
+                {"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}}
+            )
+            return
+        tasks = "specs/001-f/tasks.md"
+        self._write(
+            tasks,
+            "- [x] T001 [US1] first slice work\n"
+            "- [x] T002 [US1] first slice tests\n"
+            "- [ ] T003 [US2] second slice work\n",
+        )
+        self._tool_step("tc-flip-1")
+        # Sync barrier: a request/response round-trip guarantees the client's
+        # single-threaded pump has processed tc-flip-1 (and its watcher
+        # observation of the intermediate file state) BEFORE the next write —
+        # updates alone are notifications and would race the second write.
+        self.request(
+            "session/request_permission",
+            {
+                "sessionId": self.session_id,
+                "toolCall": {"toolCallId": "tc-flip-sync", "title": "sync"},
+                "options": [
+                    {"optionId": "opt-ok", "name": "ok", "kind": "allow_once"}
+                ],
+            },
+        )
+        self._write(
+            tasks,
+            "- [x] T001 [US1] first slice work\n"
+            "- [x] T002 [US1] first slice tests\n"
+            "- [x] T003 [US2] second slice work\n",
+        )
+        self._tool_step("tc-flip-2")
+        self._await_cancel_then_end(prompt_id)
+
+    def script_wrapup_only(self, prompt_id: int) -> None:
+        """Completes slice US1 and then only wraps up (no rows outside the
+        advanced slice touched) — the watcher must NOT stop this session."""
+        tasks = "specs/001-f/tasks.md"
+        self._write(
+            tasks,
+            "- [x] T001 [US1] first slice work\n"
+            "- [x] T002 [US1] first slice tests\n"
+            "- [ ] T003 [US2] second slice work\n",
+        )
+        self._tool_step("tc-wrap-1")
+        self._tool_step("tc-wrap-2")
+        self.message("done after one slice.\n\nSTATUS: DONE")
+        _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
 
     def script_malformed(self, prompt_id: int) -> None:
         sys.stdout.write("this is not json-rpc\n")

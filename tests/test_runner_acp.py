@@ -229,3 +229,62 @@ def test_runner_sets_bash_env_shield_when_image_ships_the_script(tmp_path):
         assert result["agent_output"] == "BASH-ENV-ABSENT"
     else:  # pragma: no cover — sandbox-image host
         assert result["agent_output"] == "/opt/devclaw/oom-shield.sh"
+
+
+# ─── spec 021: cancelled fail-closed + the slice watcher ─────────────────────
+
+_MULTI_SLICE_TASKS = (
+    "- [ ] T001 [US1] first slice work\n"
+    "- [ ] T002 [US1] first slice tests\n"
+    "- [ ] T003 [US2] second slice work\n"
+)
+
+
+def _seed_specs(tmp_path, tasks=_MULTI_SLICE_TASKS):
+    ws = tmp_path / "ws"
+    (ws / "specs" / "001-f").mkdir(parents=True, exist_ok=True)
+    (ws / "specs" / "001-f" / "tasks.md").write_text(tasks)
+    return ws
+
+
+def test_cancelled_stop_reason_fails_closed_not_ok(tmp_path):
+    """The pre-021 hole: an externally-cancelled turn leaked through as
+    status='ok' on whatever half-finished state the agent left behind. Only
+    the runner's own landing sequence may ride a cancelled stopReason."""
+    proc, _events, result, _ = _run_runner(tmp_path, "cancelled")
+    assert result["status"] == "error"
+    assert "cancelled" in result["error"]
+    assert proc.returncode == 1
+
+
+def test_watcher_stops_session_after_one_slice(tmp_path):
+    """FR-001: completing a slice and then touching rows outside it ends the
+    turn mechanically; the land-now follow-up turn's hand-back is the result."""
+    _seed_specs(tmp_path)
+    proc, _events, result, _ = _run_runner(tmp_path, "slice_flip")
+    assert proc.returncode == 0
+    assert result["status"] == "ok"
+    assert result["chunk"]["stopped_by_watcher"] is True
+    assert result["chunk"]["advanced_slices"] == ["US1"]
+    assert result["chunk"]["feature"] == "001-f"
+    assert result["agent_output"].startswith("LANDED")
+
+
+def test_single_slice_workspace_never_arms_watcher(tmp_path):
+    """FR-005: a single-chunk ask has zero ceremony — the watcher stays
+    disarmed and the result carries no chunk field at all."""
+    _seed_specs(tmp_path, "- [ ] T001 [US1] only slice\n")
+    _proc, _events, result, _ = _run_runner(tmp_path, "ok")
+    assert result["status"] == "ok"
+    assert "chunk" not in result
+
+
+def test_worker_wrapup_does_not_trigger_stop(tmp_path):
+    """Completing ONE slice and wrapping up (commits, notes, no rows outside
+    the slice) must never be truncated by the watcher."""
+    _seed_specs(tmp_path)
+    proc, _events, result, _ = _run_runner(tmp_path, "wrapup_only")
+    assert proc.returncode == 0
+    assert result["status"] == "ok"
+    assert result["chunk"]["stopped_by_watcher"] is False
+    assert result["chunk"]["advanced_slices"] == ["US1"]

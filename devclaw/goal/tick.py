@@ -23,6 +23,8 @@ claude — and the quota assertion is just "FakeClaude.calls == 0" on idle paths
 
 from __future__ import annotations
 
+import asyncio
+import os
 import re
 
 from dataclasses import replace
@@ -30,6 +32,7 @@ from datetime import datetime, timezone
 from typing import Callable, Protocol
 
 from . import issue_ref as _issue_ref
+from . import slice_guard as _slice_guard
 from . import mergeability as _mergeability
 from . import prior_increments as _prior_increments
 from . import saga_framing as _saga_framing
@@ -363,6 +366,35 @@ async def _tick_goal_impl(
 # so the EXECUTING handler can chain on the same tick.
 
 
+def _chunk_plan_corruption(workspace_dir: str) -> str:
+    """Why the goal's chunk-plan artifact (the current feature's committed
+    ``tasks.md``, spec 021 FR-004) cannot be read — or ``""`` when it can.
+
+    Load-bearing on a CONTINUATION: mid-arc, tasks.md is the execution
+    contract the next session continues from, so an unreadable one blocks the
+    goal loudly instead of dispatching a session that would silently re-plan
+    over prior work. Detection is narrow by design — only a feature dir that
+    EXISTS with a tasks.md that cannot be read/decoded counts (a repo that
+    never adopted speckit legitimately has none). Zero-LLM, pure fs; an
+    unexpected checker failure degrades to "" (a checker bug must not wedge
+    every dispatch). Module-global so tests patch it here."""
+    try:
+        feature = _slice_guard.current_feature_dir_sync(workspace_dir)
+        if not feature:
+            return ""
+        path = os.path.join(workspace_dir, feature, "tasks.md")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                fh.read()
+        except UnicodeDecodeError:
+            return f"{feature}/tasks.md is not valid UTF-8"
+        except OSError as exc:
+            return f"{feature}/tasks.md unreadable: {exc}"
+        return ""
+    except Exception:  # noqa: BLE001 — narrow guard, never a dispatch wedge
+        return ""
+
+
 def _advance_brief(
     goal: Goal, steering: str, failure_context: str = "",
     prior_increments: str = "", issue_context: str = "",
@@ -427,6 +459,19 @@ def _advance_brief(
                 "workers, run suites serially, limit node heap. Prefer a "
                 "slower bounded run over a faster parallel one; do NOT "
                 "re-run the previous attempt's commands unchanged:"
+            )
+        elif "[active_slice:" in failure_context:
+            # Spec 021 FR-008: the runner named the slice whose session
+            # overflowed the model context. An identical re-attempt of that
+            # slice is refused by construction — the brief demands a re-slice
+            # of the PLAN first.
+            adapt = (
+                " (failed task or failed gate) — its terminal reason, "
+                "verbatim. The previous session overflowed the model context "
+                "while working the NAMED slice. FIRST re-slice that slice in "
+                "its tasks.md into strictly smaller slices (edit the plan, "
+                "commit it); THEN implement only the first sub-slice. Do not "
+                "re-attempt the oversized slice unchanged:"
             )
         else:
             adapt = (
@@ -644,9 +689,34 @@ async def _handle_long_lived_advance(
     # two SQLite reads + string work, never an LLM call. Best-effort — a store
     # hiccup degrades to "no feed-forward", never a wedged dispatch.
     try:
-        prior_increments = _prior_increments.render(store.increment_records(goal_id))
+        increment_rows = store.increment_records(goal_id)
+        prior_increments = _prior_increments.render(increment_rows)
     except Exception:  # noqa: BLE001
+        increment_rows = []
         prior_increments = ""
+    # Chunk-plan integrity (spec 021 FR-004): a continuation (prior increments
+    # exist) whose current feature's tasks.md cannot be read blocks LOUD —
+    # the committed speckit artifacts are the workspace's memory of the arc,
+    # and dispatching over a corrupt one silently re-plans prior work. The
+    # mechanical:corrupt_doc kind self-heals when the condition clears
+    # (restore the file on the goal branch, or resume_goal after fixing).
+    if increment_rows:
+        corrupt = await asyncio.to_thread(_chunk_plan_corruption, goal.workspace_dir)
+        if corrupt:
+            q = (
+                f"chunk-plan artifact unreadable: {corrupt} — the committed "
+                "speckit tasks.md is this goal's continuation contract. "
+                "Restore it on the goal branch (or cancel and re-file), then "
+                "resume_goal."
+            )
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=q,
+                        blocked_kind="mechanical:corrupt_doc", next=""),
+                expect=status, consume_steering=consume_ids,
+            )
+            await _notify(ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {q[:400]}")
+            return Outcome.BLOCKED
     # Referenced lane (spec 019 US1): resolve every ref to LIVE issue state at
     # this dispatch boundary — below the should_plan gate, so idle/blocked
     # ticks fetch nothing. The fetch is LOAD-BEARING input (a worker brief,

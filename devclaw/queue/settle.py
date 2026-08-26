@@ -1346,6 +1346,16 @@ class SettleMixin:
             # as the review-crash fast-fail above. Substring match: the marker
             # rides mid-string inside the engine's error, not as our prefix.
             if _PROMPT_TOO_LONG_MARKER in last_failure:
+                # Spec 021 FR-008: when the runner's slice watcher named the
+                # active slice, say so — the goal layer's next brief demands a
+                # re-slice of THAT slice instead of a blind "smaller scope".
+                reslice = ""
+                if "[active_slice:" in last_failure:
+                    reslice = (
+                        " The failure names the active slice — re-slice IT in "
+                        "its specs/*/tasks.md into strictly smaller slices "
+                        "before re-implementing."
+                    )
                 self._store.mark_failed(
                     task_id,
                     f"{last_failure} — the worker conversation overflowed the "
@@ -1353,7 +1363,7 @@ class SettleMixin:
                     "deterministic and a retry replays the same task plus its "
                     "failure history, so it overflows again. Re-dispatch this "
                     "task with a smaller scope — slice the work into smaller "
-                    "pieces touching fewer files.",
+                    f"pieces touching fewer files.{reslice}",
                 )
                 self._check_and_trip_breaker(workspace_dir, task_id)
                 return None

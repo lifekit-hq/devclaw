@@ -228,3 +228,96 @@ async def test_thin_trigger_not_suppressed_by_worker_free_text_gate_failed(tmp_p
     assert out is Outcome.VERIFYING
     assert evaluator.calls == 0
     assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
+
+
+# ─── spec 021: chunk-plan integrity + context-budget brief framing ───────────
+
+
+@pytest.mark.asyncio
+async def test_corrupt_chunk_plan_blocks_loud_with_zero_llm_calls(tmp_path):
+    """FR-004: a continuation whose current feature's tasks.md cannot be read
+    blocks mechanical:corrupt_doc with zero cognition and zero dispatch —
+    never a session that silently re-plans over prior work."""
+    ws = tmp_path / "ws-corrupt"
+    (ws / "specs" / "001-f").mkdir(parents=True)
+    (ws / "specs" / "001-f" / "tasks.md").write_bytes(b"\xff\xfe\x00 not utf-8")
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", cadence="1d", workspace_dir=str(ws))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    store.append_delivery("g", "increment 1", "PR: https://x/1\n", ref_id="r1")
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.BLOCKED
+    assert evaluator.calls == 0          # zero-token guard holds on the block
+    assert engine.dispatched == []
+    status = store.load_status("g")
+    assert status.phase == "blocked"
+    assert status.blocked_kind == "mechanical:corrupt_doc"
+    assert "tasks.md" in status.blocked_on
+
+
+@pytest.mark.asyncio
+async def test_first_increment_never_runs_the_chunk_plan_check(tmp_path):
+    """The corrupt-artifact gate is continuation-only: a first dispatch with
+    no settled increments must not consult the workspace at all (FR-004 scope;
+    a fresh goal legitimately has no speckit tree yet)."""
+    ws = tmp_path / "ws-fresh"
+    (ws / "specs" / "001-f").mkdir(parents=True)
+    (ws / "specs" / "001-f" / "tasks.md").write_bytes(b"\xff\xfe\x00 not utf-8")
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", cadence="1d", workspace_dir=str(ws))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+
+    out = await _thin_tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.DISPATCHED     # no increments yet → gate not armed
+    assert len(engine.dispatched) == 1
+
+
+def test_oversized_slice_failure_context_demands_reslice(tmp_path):
+    """FR-008: a runner-named oversized slice makes the next brief demand a
+    re-slice of THAT slice — an identical re-attempt is refused by the brief."""
+    from devclaw.goal.tick import _advance_brief
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    goal = store.load_goal("g")
+    fc = (
+        "Conversation run failed for id=x: Internal error: Prompt is too long "
+        "[active_slice: 001-f US2] — the worker conversation overflowed"
+    )
+    brief = _advance_brief(goal, "", failure_context=fc)
+    assert "re-slice that slice" in brief
+    assert "Do not re-attempt the oversized slice unchanged" in brief
+    assert "[active_slice: 001-f US2]" in brief
+
+
+def test_continuation_brief_is_bounded_regardless_of_prior_chunk_count(tmp_path):
+    """FR-003: the continuation brief's prior-increments section is tail-kept
+    under a fixed cap, so worker input stays flat as the arc grows."""
+    from devclaw.goal import prior_increments as pi
+    from devclaw.goal.prompt_budget import PRIOR_INCREMENTS_KEEP
+    from devclaw.goal.tick import _advance_brief
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    goal = store.load_goal("g")
+
+    def rendered(n):
+        recs = [
+            pi.parse_record(
+                f"increment {i}: do a thing in module {i}",
+                f"PR: https://example.com/pr/{i}\nVerify gate `pytest -q`: PASSED\n",
+                "done",
+            )
+            for i in range(n)
+        ]
+        return pi.render(recs)
+
+    assert len(rendered(300)) <= PRIOR_INCREMENTS_KEEP + 1000
+    brief_small = _advance_brief(goal, "", prior_increments=rendered(3))
+    brief_large = _advance_brief(goal, "", prior_increments=rendered(300))
+    assert len(brief_large) <= len(brief_small) + PRIOR_INCREMENTS_KEEP
