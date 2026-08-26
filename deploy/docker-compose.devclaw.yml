@@ -72,6 +72,14 @@ services:
       # The per-task sandbox image, pulled from ghcr by tag (built from the same
       # source as this MCP image — no md5-verify crutch; both are this commit).
       DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}
+      # Sandbox sizing — operator knobs from /srv/devclaw/.env. Without these
+      # substitution lines the knobs never reach the container and setting them
+      # in the env file is a silent no-op (2026-08-26 OOM incident: a 2g cap
+      # cannot hold the in-sandbox agent plus an Angular test run). Defaults
+      # mirror devclaw/config.py.
+      DEVCLAW_SANDBOX_MEMORY: ${DEVCLAW_SANDBOX_MEMORY:-2g}
+      DEVCLAW_SANDBOX_CPUS: ${DEVCLAW_SANDBOX_CPUS:-2.0}
+      DEVCLAW_COGNITION_MEM_RESERVE: ${DEVCLAW_COGNITION_MEM_RESERVE:-1536m}
       DEVCLAW_GOAL_DECOMPOSE: ${DEVCLAW_GOAL_DECOMPOSE:-1}
       DEVCLAW_GOAL_FIRMING: ${DEVCLAW_GOAL_FIRMING:-0}
       DEVCLAW_TRACE_RETENTION_DAYS: ${DEVCLAW_TRACE_RETENTION_DAYS:-7}
