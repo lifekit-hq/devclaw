@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { fetchUsage, type InstanceUsage, type UsageBucket } from "../api";
+import React, { useEffect, useState } from "react";
+import { fetchUsage, type InstanceUsage, type ProjectUsageBucket, type UsageBucket } from "../api";
 import { relativeTime } from "../util/time";
 import { EmptyState, ErrorNote, Loading, SectionLabel } from "../ui";
 
@@ -93,6 +93,39 @@ function TotalsGrid({ b }: { b: UsageBucket & { cost_is_estimate?: true } }) {
   );
 }
 
+function ProjectDetail({ p }: { p: ProjectUsageBucket }) {
+  return (
+    <div
+      style={{
+        padding: "10px 14px",
+        background: "var(--surface-2, var(--surface))",
+        fontSize: 12,
+        display: "flex",
+        gap: 24,
+        flexWrap: "wrap",
+        alignItems: "flex-start",
+      }}
+    >
+      <div>
+        <div className="eyebrow" style={{ fontSize: 10 }}>Tasks reporting usage</div>
+        <div className="mono" style={{ marginTop: 3 }}>{p.worker_tasks_with_usage}</div>
+      </div>
+      <div>
+        <div className="eyebrow" style={{ fontSize: 10 }}>Cognition cost est.</div>
+        <div className="mono" style={{ marginTop: 3 }}>{fmtCost(p.cognition_cost_usd)}</div>
+      </div>
+      <div>
+        <div className="eyebrow" style={{ fontSize: 10 }}>Worker cost est.</div>
+        <div className="mono" style={{ marginTop: 3 }}>{fmtCost(p.worker_cost_usd)}</div>
+      </div>
+      <div>
+        <div className="eyebrow" style={{ fontSize: 10 }}>project_id</div>
+        <div className="mono muted" style={{ marginTop: 3, fontSize: 11 }}>{p.project_id}</div>
+      </div>
+    </div>
+  );
+}
+
 const CAP_LABEL: Record<string, string> = {
   rate_limit: "Rate limit",
   quota: "Quota",
@@ -107,6 +140,7 @@ const CAP_COLOR: Record<string, string> = {
 export function Usage() {
   const [data, setData] = useState<InstanceUsage | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [expandedProject, setExpandedProject] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -172,41 +206,77 @@ export function Usage() {
                 </thead>
                 <tbody>
                   {data.by_project.map((p) => (
-                    <tr key={p.project_id} style={{ borderBottom: "1px solid var(--border)" }}>
-                      <td
+                    <React.Fragment key={p.project_id}>
+                      <tr
+                        onClick={() =>
+                          setExpandedProject(
+                            expandedProject === p.project_id ? null : p.project_id,
+                          )
+                        }
                         style={{
-                          padding: "8px 14px",
-                          fontWeight: 500,
-                          whiteSpace: "nowrap",
-                          textAlign: "left",
+                          borderBottom:
+                            expandedProject === p.project_id
+                              ? "none"
+                              : "1px solid var(--border)",
+                          cursor: "pointer",
                         }}
                       >
-                        {p.project_name}
-                      </td>
-                      {[
-                        p.cognition_tokens_in,
-                        p.cognition_tokens_out,
-                        p.cognition_rows_real,
-                        p.cognition_rows_estimated,
-                        p.worker_input_tokens,
-                        p.worker_output_tokens,
-                        p.worker_cache_read_tokens,
-                      ].map((v, i) => (
                         <td
-                          key={i}
-                          className={v === 0 ? "muted" : undefined}
-                          style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}
+                          style={{
+                            padding: "8px 14px",
+                            fontWeight: 500,
+                            whiteSpace: "nowrap",
+                            textAlign: "left",
+                          }}
                         >
-                          {fmtK(v)}
+                          {p.project_name}
+                          <span
+                            className="mono muted"
+                            style={{ marginLeft: 6, fontSize: 10 }}
+                          >
+                            {expandedProject === p.project_id ? "▲" : "▼"}
+                          </span>
                         </td>
-                      ))}
-                      <td
-                        className={p.cost_estimate_usd === 0 ? "muted" : undefined}
-                        style={{ padding: "8px 14px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}
-                      >
-                        {fmtCost(p.cost_estimate_usd)}
-                      </td>
-                    </tr>
+                        {[
+                          p.cognition_tokens_in,
+                          p.cognition_tokens_out,
+                          p.cognition_rows_real,
+                          p.cognition_rows_estimated,
+                          p.worker_input_tokens,
+                          p.worker_output_tokens,
+                          p.worker_cache_read_tokens,
+                        ].map((v, i) => (
+                          <td
+                            key={i}
+                            className={v === 0 ? "muted" : undefined}
+                            style={{
+                              padding: "8px 14px",
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {fmtK(v)}
+                          </td>
+                        ))}
+                        <td
+                          className={p.cost_estimate_usd === 0 ? "muted" : undefined}
+                          style={{
+                            padding: "8px 14px",
+                            textAlign: "right",
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {fmtCost(p.cost_estimate_usd)}
+                        </td>
+                      </tr>
+                      {expandedProject === p.project_id && (
+                        <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                          <td colSpan={9} style={{ padding: 0 }}>
+                            <ProjectDetail p={p} />
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   ))}
                   {/* Unattributed row — only shown when there is unattributed usage */}
                   {(data.unattributed.cognition_tokens_in +

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { fetchProblems, type ProblemRow, type ProblemStage, type ProblemsResponse } from "../api";
+import { Link, useNavigate } from "react-router-dom";
+import { fetchProblems, tokenQueryString, type ProblemRow, type ProblemStage, type ProblemsResponse } from "../api";
 import { relativeTime } from "../util/time";
 import { IconExternal } from "../icons";
 import { EmptyState, ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
@@ -11,6 +11,9 @@ import { EmptyState, ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
 // HONEST (§5.5): `fixing` means a self-fix goal is running and a PR opens for
 // YOUR review — it is propose-only/human-merges, never autonomous auto-fix, so
 // the UI never implies autonomy that isn't there.
+// Every card is click-to-expand (issue #682, increment 2), showing all stored
+// fields the list row doesn't surface: fingerprint, sample_message, first_seen_ms,
+// last_goal_id / last_task_id (linked to existing drill-ins), issue_state.
 
 const STAGE_COLOR: Record<ProblemStage, string> = {
   identified: "var(--amber)",
@@ -30,6 +33,7 @@ export function Problems() {
   const [data, setData] = useState<ProblemsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [stage, setStage] = useState<ProblemStage | "all">("all");
+  const [expanded, setExpanded] = useState<string | null>(null); // fingerprint
 
   useEffect(() => {
     let alive = true;
@@ -98,7 +102,15 @@ export function Problems() {
             <div className="card"><EmptyState title="Nothing here" hint="No problems at this lifecycle stage." /></div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {shown.map((p) => <ProblemCard key={p.fingerprint} p={p} selfRepo={data.selfRepo} />)}
+              {shown.map((p) => (
+                <ProblemCard
+                  key={p.fingerprint}
+                  p={p}
+                  selfRepo={data.selfRepo}
+                  expanded={expanded === p.fingerprint}
+                  onToggle={() => setExpanded((e) => e === p.fingerprint ? null : p.fingerprint)}
+                />
+              ))}
             </div>
           )}
 
@@ -113,42 +125,146 @@ export function Problems() {
   );
 }
 
-function ProblemCard({ p, selfRepo }: { p: ProblemRow; selfRepo: string | null }) {
+function ProblemCard({
+  p,
+  selfRepo,
+  expanded,
+  onToggle,
+}: {
+  p: ProblemRow;
+  selfRepo: string | null;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const nav = useNavigate();
   const issueUrl = selfRepo && p.issue_number ? `https://github.com/${selfRepo}/issues/${p.issue_number}` : null;
   return (
-    <div className="card" style={{ padding: "12px 16px", borderLeft: `2px solid ${STAGE_COLOR[p.lifecycle]}` }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-        <StatusDot color={STAGE_COLOR[p.lifecycle]} />
-        <span style={{ fontSize: 12.5, fontWeight: 600 }}>{STAGE_LABEL[p.lifecycle]}</span>
-        <span className="mono muted" style={{ fontSize: 11 }}>{p.category} · {p.kind}</span>
-        <span className="mono muted" style={{ marginLeft: "auto", fontSize: 11 }}>×{p.count}</span>
+    <div
+      className="card"
+      style={{ padding: 0, borderLeft: `2px solid ${STAGE_COLOR[p.lifecycle]}`, cursor: "pointer" }}
+      onClick={onToggle}
+      title="Click to expand detail"
+    >
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+          <StatusDot color={STAGE_COLOR[p.lifecycle]} />
+          <span style={{ fontSize: 12.5, fontWeight: 600 }}>{STAGE_LABEL[p.lifecycle]}</span>
+          <span className="mono muted" style={{ fontSize: 11 }}>{p.category} · {p.kind}</span>
+          <span className="mono muted" style={{ marginLeft: "auto", fontSize: 11 }}>×{p.count}</span>
+        </div>
+        <div className="secondary" style={{ fontSize: 12.5, whiteSpace: "pre-wrap", wordBreak: "break-word", marginBottom: 8 }}>
+          {p.summary}
+        </div>
+        {p.lifecycle === "fixing" && p.fix_goal_id && (
+          <button
+            className="btn ghost sm"
+            onClick={(e) => { e.stopPropagation(); nav(`/goals/${p.fix_goal_id}`); }}
+            style={{ color: "var(--violet)", marginBottom: 8, display: "inline-flex", alignItems: "center", gap: 5 }}
+          >
+            ▸ fix goal running — open PR for your review
+          </button>
+        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <Stat label="terminal" value={p.terminal_count} tone={p.terminal_count ? "var(--red)" : undefined} />
+          <Stat label="recovered" value={p.recovered_count} tone={p.recovered_count ? "var(--green)" : undefined} />
+          <span className="mono muted" style={{ fontSize: 11 }}>last {relativeTime(p.last_seen_ms)}</span>
+          {issueUrl ? (
+            <a
+              href={issueUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ marginLeft: "auto", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              issue #{p.issue_number} <IconExternal size={12} />
+            </a>
+          ) : p.issue_number ? (
+            <span className="mono muted" style={{ marginLeft: "auto", fontSize: 11 }}>issue #{p.issue_number}</span>
+          ) : null}
+        </div>
       </div>
-      <div className="secondary" style={{ fontSize: 12.5, whiteSpace: "pre-wrap", wordBreak: "break-word", marginBottom: 8 }}>
-        {p.summary}
+
+      {expanded && <ProblemDetail p={p} />}
+    </div>
+  );
+}
+
+function ProblemDetail({ p }: { p: ProblemRow }) {
+  const qs = tokenQueryString();
+  return (
+    <div
+      style={{
+        padding: "12px 16px",
+        borderTop: "1px solid var(--border)",
+        background: "var(--surface-raised, var(--bg-alt))",
+        fontSize: 12.5,
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <DField label="fingerprint" value={p.fingerprint} mono />
+        <DField label="first_seen" value={relativeTime(p.first_seen_ms)} mono />
+        {p.issue_state && <DField label="issue_state" value={p.issue_state} />}
       </div>
-      {p.lifecycle === "fixing" && p.fix_goal_id && (
-        <button
-          className="btn ghost sm"
-          onClick={() => nav(`/goals/${p.fix_goal_id}`)}
-          style={{ color: "var(--violet)", marginBottom: 8, display: "inline-flex", alignItems: "center", gap: 5 }}
-        >
-          ▸ fix goal running — open PR for your review
-        </button>
+
+      {p.sample_message && (
+        <div>
+          <span className="muted" style={{ fontSize: 11 }}>sample_message</span>
+          <pre
+            className="mono"
+            style={{
+              fontSize: 11.5,
+              whiteSpace: "pre-wrap",
+              margin: "4px 0 0",
+              maxHeight: 100,
+              overflow: "auto",
+            }}
+          >
+            {p.sample_message}
+          </pre>
+        </div>
       )}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-        <Stat label="terminal" value={p.terminal_count} tone={p.terminal_count ? "var(--red)" : undefined} />
-        <Stat label="recovered" value={p.recovered_count} tone={p.recovered_count ? "var(--green)" : undefined} />
-        <span className="mono muted" style={{ fontSize: 11 }}>last {relativeTime(p.last_seen_ms)}</span>
-        {issueUrl ? (
-          <a href={issueUrl} target="_blank" rel="noreferrer" style={{ marginLeft: "auto", fontSize: 12, display: "inline-flex", alignItems: "center", gap: 4 }}>
-            issue #{p.issue_number} <IconExternal size={12} />
-          </a>
-        ) : p.issue_number ? (
-          <span className="mono muted" style={{ marginLeft: "auto", fontSize: 11 }}>issue #{p.issue_number}</span>
-        ) : null}
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        {p.last_goal_id && (
+          <span className="secondary" style={{ fontSize: 12 }}>
+            Last goal:{" "}
+            <Link
+              to={`/goals/${p.last_goal_id}${qs}`}
+              className="mono"
+              style={{ fontSize: 12 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {p.last_goal_id.slice(0, 12)}
+            </Link>
+          </span>
+        )}
+        {p.last_task_id && (
+          <span className="secondary" style={{ fontSize: 12 }}>
+            Last task:{" "}
+            <Link
+              to={`/tasks/${p.last_task_id}${qs}`}
+              className="mono"
+              style={{ fontSize: 12 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              {p.last_task_id.slice(0, 12)}
+            </Link>
+          </span>
+        )}
       </div>
     </div>
+  );
+}
+
+function DField({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <span style={{ whiteSpace: "nowrap" }}>
+      <span className="muted" style={{ fontSize: 11 }}>{label}: </span>
+      <span className={mono ? "mono" : undefined} style={{ fontSize: 12 }}>{value}</span>
+    </span>
   );
 }
 
