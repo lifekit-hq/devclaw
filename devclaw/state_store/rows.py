@@ -353,6 +353,10 @@ _FAILURE_CLASS_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # session may legitimately take a smaller bite — named so telemetry and the
     # advance brief's failure context can speak about the class.
     ("context_overflow", ("prompt is too long",)),
+    # The sandbox memory cap killed the agent (runner-stamped kernel evidence,
+    # spec 020). Deterministic at the queue level like the overflow above; the
+    # goal layer keys its ONE adapted re-dispatch (FR-002a) on this class.
+    ("sandbox_oom", ("sandbox oom-killed",)),
     ("delivery_failed", ("gate passed but delivery failed",)),
     ("no_result_line", ("no result line",)),
     # AUTH before the rate/quota bucket, mirroring loom.limits' priority: an

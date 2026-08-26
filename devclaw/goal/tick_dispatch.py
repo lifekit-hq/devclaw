@@ -87,9 +87,29 @@ async def _dispatch_action(
     cap = len(goal.backlog) + 2
     if base.actions_dispatched >= cap:
         store.append_log(goal_id, f"dispatch cap {cap} reached — blocking for review")
+        # Honesty rule (spec 020 FR-003): "review the open PRs" is only true
+        # advice when at least one dispatched action actually DELIVERED.
+        # When every increment failed there is nothing to review — say what
+        # actually happened (the dominant terminal failure) so the 2026-08-26
+        # shape (two OOM deaths, zero PRs, "review the open PRs") can't recur.
+        reason = f"dispatch cap {cap} reached — review the open PRs"
+        try:
+            recs = store.increment_records(goal_id)
+            if recs and all(r.status == "failed" for r in recs if r.status):
+                last_err = next(
+                    (r.error for r in reversed(recs) if getattr(r, "error", None)),
+                    None,
+                )
+                tail = f"; last failure: {last_err[:200]}" if last_err else ""
+                reason = (
+                    f"dispatch cap {cap} reached with NO delivered increment — "
+                    f"every dispatched action failed{tail}"
+                )
+        except Exception:  # noqa: BLE001 — the honest reason is best-effort,
+            pass  # the block itself must never be lost to a store hiccup
         store.transition(
             goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=f"dispatch cap {cap} reached — review the open PRs",
+            replace(base, phase="blocked", blocked_on=reason,
                     blocked_kind="mechanical:dispatch_cap"),
             expect=base, consume_steering=consume_steering,
         )

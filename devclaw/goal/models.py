@@ -243,6 +243,14 @@ class GoalStatus:
     #: and when a HUMAN vouches (steer_goal / resume_goal) — never on a
     #: productive settle: every treadmill round settles productively.
     donegate_rounds: int = 0
+    #: adapted re-dispatches spent on the sandbox-OOM environment-cap class
+    #: (spec 020 FR-002a). The class is deterministic per environment, so the
+    #: goal earns exactly ONE re-dispatch whose brief names the cap and
+    #: directs bounded tooling; a recurrence past this budget blocks the goal
+    #: (``mechanical:env_cap``) instead of grinding. Reset to 0 on a
+    #: productive settle (a shipped increment proves the environment now
+    #: fits), alongside ``heal_attempts``.
+    envcap_redispatches: int = 0
     #: human note of the intended next step
     next: str = ""
     #: ISO ts of the last time the plan step (LLM) ran

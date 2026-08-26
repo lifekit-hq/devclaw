@@ -262,6 +262,9 @@ async def _resolve_polling_action(
         # stable, so a later mechanical block starts with a fresh heal budget
         # instead of a stale flap count from a long-resolved incident.
         heal_attempts=(0 if productive else status.heal_attempts),
+        # spec 020: a shipped increment proves the environment now fits its
+        # workload — the env-cap adapted-re-dispatch budget resets with it.
+        envcap_redispatches=(0 if productive else status.envcap_redispatches),
         # a delivery is forward progress → reset the no-progress watchdog.
         last_progress_at=(ctx.store.now_iso() if delivered else status.last_progress_at),
         no_progress_notified=(False if delivered else status.no_progress_notified),

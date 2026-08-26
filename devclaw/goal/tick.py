@@ -23,6 +23,8 @@ claude — and the quota assertion is just "FakeClaude.calls == 0" on idle paths
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Callable, Protocol
@@ -38,7 +40,12 @@ from . import triage as _triage
 # it: tests monkeypatch ``devclaw.goal.tick._deploy.deploy_project`` and both
 # modules bind the SAME ..delivery.deploy module object, so patching it here is
 # what makes the deploy stub visible to the moved _auto_deploy.
-from ..advance_brief import ADVANCE_BRIEF_MARKER, FAILURE_CONTEXT_MARKER, STEERING_MARKER
+from ..advance_brief import (
+    ADVANCE_BRIEF_MARKER,
+    ENVCAP_FAILURE_MARKER,
+    FAILURE_CONTEXT_MARKER,
+    STEERING_MARKER,
+)
 from ..delivery import deploy as _deploy  # noqa: F401 (re-export/monkeypatch anchor)
 from .engine import GoalEngine
 from .models import Action, Goal, GoalStatus
@@ -406,12 +413,31 @@ def _advance_brief(
     if prior_increments.strip():
         parts += ["", prior_increments.strip()]
     if failure_context.strip():
+        # Spec 020 FR-002a: an environment-cap (sandbox OOM) failure gets
+        # cap-aware bounding advice — the generic "smaller slice" directive is
+        # WRONG for this class (a smaller slice does not shrink the test
+        # suite; bounding the tooling does).
+        if ENVCAP_FAILURE_MARKER in failure_context:
+            adapt = (
+                " (failed task or failed gate) — its terminal reason, "
+                "verbatim. The sandbox hit its MEMORY CAP and the kernel "
+                "killed the previous session. ADAPT this session: bound your "
+                "tooling to the declared allocation (DEVCLAW_SANDBOX_MEMORY/"
+                "DEVCLAW_SANDBOX_CPUS in your environment) — cap test-runner "
+                "workers, run suites serially, limit node heap. Prefer a "
+                "slower bounded run over a faster parallel one; do NOT "
+                "re-run the previous attempt's commands unchanged:"
+            )
+        else:
+            adapt = (
+                " (failed task or failed gate) — its "
+                "terminal reason, verbatim. Read it and ADAPT this session (a "
+                "context overflow or timeout means: take a strictly smaller "
+                "slice); do not repeat the attempt unchanged:"
+            )
         parts += [
             "",
-            FAILURE_CONTEXT_MARKER + " (failed task or failed gate) — its "
-            "terminal reason, verbatim. Read it and ADAPT this session (a "
-            "context overflow or timeout means: take a strictly smaller "
-            "slice); do not repeat the attempt unchanged:",
+            FAILURE_CONTEXT_MARKER + adapt,
             failure_context.strip()[:800],
         ]
     if steering.strip():
@@ -580,6 +606,38 @@ async def _handle_long_lived_advance(
     # context-overflow and the 1h wall-clock burns of 2026-08-19 were each
     # followed by a byte-identical brief).
     failure_context = finished_detail if finished_detail else ""
+    # Spec 020 FR-002a: the sandbox-OOM environment-cap class is deterministic
+    # for a given environment, so it earns exactly ONE adapted re-dispatch
+    # (the brief below carries cap-aware bounding advice). A recurrence past
+    # that budget parks the goal with the cap in the reason — raising sizing
+    # (or shrinking the verify workload) and resume_goal is the recovery path.
+    # The counter resets on a productive settle (tick_settle), mirroring
+    # heal_attempts.
+    if failure_context and ENVCAP_FAILURE_MARKER in failure_context:
+        if base.envcap_redispatches >= 1:
+            cap_m = re.search(r"sandbox OOM-killed \(cap=([^,)]+)", failure_context)
+            cap_txt = cap_m.group(1).strip() if cap_m else "the configured cap"
+            q = (
+                f"sandbox OOM at cap {cap_txt} after an adapted retry — the "
+                "container memory limit was exhausted and the kernel killed "
+                "the agent again. Raise sizing for this project (per-project "
+                "override or DEVCLAW_SANDBOX_MEMORY) or shrink its verify "
+                "workload, then resume_goal."
+            )
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=q,
+                        blocked_kind="mechanical:env_cap", next=""),
+                expect=status, consume_steering=consume_ids,
+            )
+            await _notify(ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {q[:400]}")
+            return Outcome.BLOCKED
+        base = replace(base, envcap_redispatches=base.envcap_redispatches + 1)
+        store.append_log(
+            goal_id,
+            "sandbox OOM on the previous increment — dispatching the one "
+            "adapted (bounded-tooling) retry this class earns (spec 020)",
+        )
     # Saga feed-forward (spec 012 US1) — read BELOW the should_plan gate so an
     # idle or blocked tick performs no delivery read at all (constitution III;
     # the zero-token idle guard covers I/O, not just cognition). Pure mechanism:

@@ -126,6 +126,17 @@ _WORKER_BLOCKED_MARKER = "worker reported BLOCKED:"
 #: again. Fails FAST + CLOSED like the review-crash path: never done, never
 #: paused, no retry — the task must be re-dispatched with smaller scope.
 _PROMPT_TOO_LONG_MARKER = "Internal error: Prompt is too long"
+#: Marker the in-sandbox runner PREFIXES on its terminal error when the agent
+#: process died and the container cgroup's ``oom_kill`` counter increased —
+#: positive kernel evidence that the sandbox hit its memory cap (spec 020;
+#: contract: specs/020-sandbox-oom-legibility/contracts/runner-oom-marker.md).
+#: Matched with ``in``: the queue's own attempt/context framing can wrap the
+#: runner's string. Deterministic for this environment — an identical retry
+#: re-fills the same cgroup and the killer fires again — so it fails FAST +
+#: CLOSED like the overflow class above. The ONE adapted (non-identical)
+#: re-dispatch this class earns is owned by the goal layer (FR-002a), never by
+#: this loop.
+_SANDBOX_OOM_MARKER = "sandbox OOM-killed"
 #: The reasoned escape valve for the browser gate's one false positive (a UI
 #: change not rendered in the running app — see quality/reachability.py). Always
 #: ON: it is strictly safe (can only RELAX a would-be block, and only on an
@@ -1336,6 +1347,28 @@ class SettleMixin:
                     "failure history, so it overflows again. Re-dispatch this "
                     "task with a smaller scope — slice the work into smaller "
                     "pieces touching fewer files.",
+                )
+                self._check_and_trip_breaker(workspace_dir, task_id)
+                return None
+            # Sandbox OOM: the runner stamped kernel evidence (cgroup oom_kill
+            # increased) that the container's memory cap killed the agent.
+            # Deterministic for this environment — the identical attempt
+            # re-fills the same cgroup — so retrying here only burns quota
+            # reproducing the kill (the 2026-08-26 incident burned two
+            # dispatches this way). Fail FAST + CLOSED with the cap and both
+            # remedies; the goal layer owns the single ADAPTED re-dispatch
+            # (spec 020 FR-002a). Sits after the quota classification above so
+            # a quota-shaped error mentioning OOM still pauses, mirroring the
+            # prompt-too-long ordering shield.
+            if _SANDBOX_OOM_MARKER in last_failure:
+                self._store.mark_failed(
+                    task_id,
+                    f"{last_failure} — the sandbox memory cap was exhausted and "
+                    "the kernel OOM killer took the agent. Not auto-retried: "
+                    "the same attempt reproduces the kill. Remedies: raise "
+                    "sizing (per-project override or DEVCLAW_SANDBOX_MEMORY) "
+                    "or bound the verify workload (capped workers, serial "
+                    "runs).",
                 )
                 self._check_and_trip_breaker(workspace_dir, task_id)
                 return None
