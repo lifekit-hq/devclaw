@@ -148,6 +148,18 @@ def goal_text_budget() -> int:
     return int(os.environ.get("DEVCLAW_GOAL_TEXT_BUDGET", "1000"))
 
 
+def context_tripwire_pct() -> int:
+    """``DEVCLAW_CONTEXT_TRIPWIRE_PCT`` — the worker context-usage percentage
+    at which the in-sandbox runner ends the turn and lands a coherent partial
+    increment instead of running into the model's context wall (spec 021 US2).
+    ``0`` disables. Forwarded into the sandbox env by the engine; the runner
+    reads its own copy (the runner/ doorway exception above)."""
+    try:
+        return int(os.environ.get("DEVCLAW_CONTEXT_TRIPWIRE_PCT", "75"))
+    except ValueError:
+        return 75
+
+
 def ratchet_first_pass() -> float:
     """``DEVCLAW_RATCHET_FIRST_PASS`` — per-goal first-pass rate threshold."""
     return float(os.environ.get("DEVCLAW_RATCHET_FIRST_PASS", "0.70"))

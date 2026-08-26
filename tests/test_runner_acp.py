@@ -288,3 +288,66 @@ def test_worker_wrapup_does_not_trigger_stop(tmp_path):
     assert result["status"] == "ok"
     assert result["chunk"]["stopped_by_watcher"] is False
     assert result["chunk"]["advanced_slices"] == ["US1"]
+
+
+# ─── spec 021 US2: the context tripwire ──────────────────────────────────────
+
+
+def test_tripwire_fires_once_and_lands_a_normal_delivery(tmp_path):
+    """Crossing the threshold cancels the turn once and the land-now follow-up
+    turn's hand-back becomes the result — a delivery, not a lost session."""
+    proc, events, result, _ = _run_runner(
+        tmp_path, "usage_window",
+        env_extra={"DEVCLAW_CONTEXT_TRIPWIRE_PCT": "75"},
+    )
+    assert proc.returncode == 0
+    assert result["status"] == "ok"
+    assert result["tripwire"]["landed"] is True
+    assert result["tripwire"]["threshold_pct"] == 75
+    assert result["tripwire"]["used"] == 800
+    assert result["tripwire"]["size"] == 1000
+    assert result["context"] == {"used": 800, "size": 1000}
+    assert result["agent_output"].startswith("LANDED-BUDGET")
+    fires = [e for e in events if e["type"] == "ContextTripwire"]
+    assert len(fires) == 1
+    assert fires[0]["payload"]["threshold_pct"] == 75
+
+
+def test_below_threshold_behavior_is_byte_identical(tmp_path):
+    """Under the threshold nothing changes: no tripwire field, no event —
+    only the last observed context usage is reported."""
+    _proc, events, result, _ = _run_runner(
+        tmp_path, "usage_high_no_stop",
+        env_extra={"DEVCLAW_CONTEXT_TRIPWIRE_PCT": "90"},
+    )
+    assert result["status"] == "ok"
+    assert "tripwire" not in result
+    assert "usage_absent_note" not in result
+    assert result["context"] == {"used": 800, "size": 1000}
+    assert [e for e in events if e["type"] == "ContextTripwire"] == []
+
+
+def test_absent_usage_stream_is_inert_and_loud(tmp_path):
+    """FR-007: an agent that reports no usage leaves the tripwire inert, and
+    the result says so once — bounded coverage is named, never silent."""
+    _proc, _events, result, _ = _run_runner(
+        tmp_path, "ok",
+        env_extra={"DEVCLAW_CONTEXT_TRIPWIRE_PCT": "75"},
+    )
+    assert result["status"] == "ok"
+    assert "tripwire" not in result
+    assert "context" not in result
+    assert "tripwire configured at 75%" in result["usage_absent_note"]
+
+
+def test_tripwire_disabled_at_zero(tmp_path):
+    """DEVCLAW_CONTEXT_TRIPWIRE_PCT=0 disables the tripwire entirely — no
+    firing, no inert note, context still reported."""
+    _proc, events, result, _ = _run_runner(
+        tmp_path, "usage_high_no_stop",
+        env_extra={"DEVCLAW_CONTEXT_TRIPWIRE_PCT": "0"},
+    )
+    assert result["status"] == "ok"
+    assert "tripwire" not in result
+    assert "usage_absent_note" not in result
+    assert [e for e in events if e["type"] == "ContextTripwire"] == []
