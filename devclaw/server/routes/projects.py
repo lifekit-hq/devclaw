@@ -30,6 +30,10 @@ _OVR_STR = {"browser_gate_mode": ("flexible", "strict")}
 #: at the registry write choke point, which also enforces it as the backstop)
 #: blocks flag-shaped/whitespace junk here with a friendly 400.
 _OVR_FREE_STR = ("sandbox_image",)
+#: per-project sandbox sizing (spec 020 US4): grammar checked here for a
+#: friendly 400; the registry's write choke point re-validates AND enforces
+#: host admittability (its ValueError comes back as a 400 below).
+_OVR_SIZING = ("sandbox_memory", "sandbox_cpus")
 
 
 def _project_overrides(p) -> dict:
@@ -39,6 +43,8 @@ def _project_overrides(p) -> dict:
         "verify_done": p.verify_done,
         "browser_gate_mode": p.browser_gate_mode,
         "sandbox_image": p.sandbox_image,
+        "sandbox_memory": p.sandbox_memory,
+        "sandbox_cpus": p.sandbox_cpus,
     }
 
 
@@ -81,9 +87,18 @@ async def project_config_set(request: Request) -> Response:
             if v is not None and (not isinstance(v, str) or not _OVR_IMAGE_RE.fullmatch(v)):
                 return JSONResponse({"error": "bad_value", "field": k, "hint": "docker image ref|null"}, status_code=400)
             patch[k] = v
+        elif k in _OVR_SIZING:
+            if v is not None and not isinstance(v, str):
+                return JSONResponse({"error": "bad_value", "field": k, "hint": "docker mem/cpus string|null"}, status_code=400)
+            patch[k] = v
         else:
             return JSONResponse({"error": "unknown_field", "field": k}, status_code=400)
-    registry.update(pid, **patch)
+    try:
+        registry.update(pid, **patch)
+    except ValueError as exc:
+        # the registry write choke point's verdict (grammar or write-time
+        # admittability, spec 020) — a client error, never a 500
+        return JSONResponse({"error": "bad_value", "detail": str(exc)}, status_code=400)
     return JSONResponse({"overrides": _project_overrides(registry.get(pid))})
 
 

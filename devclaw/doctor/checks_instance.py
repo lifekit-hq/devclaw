@@ -373,6 +373,39 @@ def check_pr_ledger(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "pr_ledger present" + (" and refreshed" if n else " (empty)"))]
 
 
+def check_project_sandbox_sizing(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 020 US4 (per the spec-016 FR-014 convention: a registry schema
+    change ships its doctor check): every stored per-project sizing override
+    must still parse AND remain admittable against THIS host's MemTotal — a
+    host shrink after a valid write is exactly the drift class doctor exists
+    to catch (write-time validation saw a bigger machine)."""
+    cid = "instance.sandbox.project_sizing"
+    from ..host_resources import _parse_mem, host_mem_total_bytes
+
+    reserve = _parse_mem(_config.COGNITION_MEM_RESERVE)
+    total = host_mem_total_bytes()
+    findings: list[Finding] = []
+    for proj in ctx.registry.list():
+        mem = getattr(proj, "sandbox_memory", None)
+        if not mem:
+            continue
+        want = _parse_mem(mem)
+        if total is not None and want + reserve > total:
+            findings.append(Finding(
+                cid, Verdict.FAIL,
+                f"project {proj.id!r}: sandbox_memory {mem!r} is no longer "
+                f"admittable on this host ({want} + reserve {reserve} > "
+                f"MemTotal {total}) — its dispatches will defer forever",
+                remedy=(
+                    "lower the override (update_project sandbox_memory) or "
+                    "grow the host"
+                ),
+            ))
+    if findings:
+        return findings
+    return [Finding(cid, Verdict.OK, "per-project sandbox sizing overrides admittable")]
+
+
 INSTANCE_CHECKS: tuple = (
     check_migration_meta_keys,
     check_legacy_goal_status_lifecycle,
@@ -387,4 +420,5 @@ INSTANCE_CHECKS: tuple = (
     check_schedule_dispatch,
     check_goal_convergence_table,
     check_pr_ledger,
+    check_project_sandbox_sizing,
 )

@@ -137,3 +137,38 @@ def test_host_mem_available_is_positive_int_or_none():
     # Contract is only "a positive byte count, or None (the fail-open path)".
     v = task_queue.host_mem_available_bytes()
     assert v is None or (isinstance(v, int) and v > 0)
+
+
+async def test_admission_accounts_the_project_sizing_override(store, monkeypatch, tmp_path):
+    """Spec 020 US4 (FR-010): a per-project sandbox_memory override is what
+    admission debits — a 3x-sized project cannot slip in at default-size and
+    overcommit the host."""
+    from devclaw.project_registry import ProjectRegistry
+    import devclaw.host_resources as host_resources
+
+    monkeypatch.setattr(host_resources, "host_mem_total_bytes", lambda: 64 << 30)
+    from devclaw.queue.admission import COGNITION_MEM_RESERVE_BYTES
+
+    reg = ProjectRegistry(str(tmp_path / "registry.db"))
+    calls: list = []
+    q = _gate_queue(store, calls)
+    q._registry = reg
+    big_mem = SANDBOX_MEMORY_BYTES * 3
+    reg.create(id="heavy", name="H", workspace_dir="/ws-heavy",
+               sandbox_memory=f"{big_mem}")
+    # Budget fits one DEFAULT sandbox above the floor — but the heavy
+    # project's task needs 3x, so it must defer.
+    monkeypatch.setattr(task_queue, "host_mem_available_bytes",
+                        lambda: MEM_LAUNCH_FLOOR_BYTES)
+    q.submit(kind="implement_feature", workspace_dir="/ws-heavy",
+             goal="heavy-goal", pump=False, project_id="heavy")
+    q._pump()
+    assert store.count_running() == 0  # 3x task deferred at default-sized budget
+    assert calls == []
+
+    # With a budget sized for the override, it launches.
+    monkeypatch.setattr(task_queue, "host_mem_available_bytes",
+                        lambda: big_mem + COGNITION_MEM_RESERVE_BYTES)
+    q._pump()
+    await q.drain()
+    assert calls == ["heavy-goal"]

@@ -59,7 +59,8 @@ _UNSET: Any = object()
 #: non-null value pins this project's behaviour regardless of the env default.
 #: ``bool`` fields persist as INTEGER (0/1), ``str`` fields as TEXT.
 _OVERRIDE_BOOL_FIELDS = ("autodeploy", "review_gate", "verify_done")
-_OVERRIDE_STR_FIELDS = ("browser_gate_mode", "sandbox_image")
+_OVERRIDE_STR_FIELDS = ("browser_gate_mode", "sandbox_image",
+                        "sandbox_memory", "sandbox_cpus")
 _OVERRIDE_FIELDS = _OVERRIDE_BOOL_FIELDS + _OVERRIDE_STR_FIELDS
 
 #: docker image-ref grammar for the ``sandbox_image`` override, enforced at
@@ -79,6 +80,57 @@ def _validate_sandbox_image(value: Optional[str]) -> None:
         raise ValueError(
             f"sandbox_image must be a docker image ref "
             f"([a-zA-Z0-9][a-zA-Z0-9._/:@-]*), got: {value!r}"
+        )
+
+
+#: docker memory-string grammar for the ``sandbox_memory`` override — digits
+#: plus an optional b/k/m/g suffix, the exact shape ``--memory`` accepts and
+#: ``host_resources._parse_mem`` parses. Enforced at the same single write
+#: choke point as ``_validate_sandbox_image`` (spec 020 US4).
+_MEM_STR_RE = re.compile(r"^[0-9]+(\.[0-9]+)?[bkmg]?$", re.IGNORECASE)
+
+
+def _validate_sandbox_memory(value: Optional[str]) -> None:
+    """Grammar AND write-time admittability (spec 020, clarified with Denys:
+    reject loudly, never store a value dispatch can only defer on forever).
+    A value is unadmittable when it plus the cognition reserve exceeds host
+    MemTotal — the stable budget, not the fluctuating MemAvailable. On a host
+    where MemTotal is unreadable the admittability half is skipped (grammar
+    still enforced) — fail-open mirrors the admission brake itself."""
+    if value is None:
+        return
+    if not isinstance(value, str) or not _MEM_STR_RE.fullmatch(value.strip()):
+        raise ValueError(
+            f"sandbox_memory must be a docker memory string "
+            f"(digits + optional b/k/m/g, e.g. '4g'), got: {value!r}"
+        )
+    # local imports: host_resources imports this module at import time — the
+    # lazy import here is what keeps the pair acyclic.
+    from .host_resources import _parse_mem, host_mem_total_bytes
+    from . import config as _config
+
+    want = _parse_mem(value)
+    reserve = _parse_mem(_config.COGNITION_MEM_RESERVE)
+    total = host_mem_total_bytes()
+    if total is not None and want + reserve > total:
+        raise ValueError(
+            f"sandbox_memory {value!r} can never be admitted on this host: "
+            f"{want} bytes + cognition reserve {reserve} bytes exceeds host "
+            f"MemTotal {total} bytes. Lower the override or grow the host."
+        )
+
+
+def _validate_sandbox_cpus(value: Optional[str]) -> None:
+    if value is None:
+        return
+    try:
+        ok = isinstance(value, str) and float(value.strip()) > 0
+    except (ValueError, TypeError):
+        ok = False
+    if not ok:
+        raise ValueError(
+            f"sandbox_cpus must be a positive number string (e.g. '2.0'), "
+            f"got: {value!r}"
         )
 
 
@@ -139,6 +191,13 @@ class Project:
     #: until the mise path passes its live gate). None = the engine's
     #: DEVCLAW_SANDBOX_IMAGE default.
     sandbox_image: Optional[str] = None
+    #: per-project sandbox sizing (spec 020 US4, ADR 0005's sibling): a heavy
+    #: frontend repo declares e.g. "6g" while python repos inherit the
+    #: instance default. Validated (grammar + write-time admittability) at
+    #: the create/update choke point; resolved at launch beside
+    #: sandbox_image; accounted by launch admission.
+    sandbox_memory: Optional[str] = None
+    sandbox_cpus: Optional[str] = None
     #: evidence/shakedown project (spec 018 US2): excluded from every
     #: ratchet-facing scorecard rate, reported separately. Plain bool —
     #: a project either is bench or isn't; there is no global default to
@@ -162,6 +221,8 @@ class Project:
             "verifyDone": self.verify_done,
             "browserGateMode": self.browser_gate_mode,
             "sandboxImage": self.sandbox_image,
+            "sandboxMemory": self.sandbox_memory,
+            "sandboxCpus": self.sandbox_cpus,
             "bench": self.bench,
             "createdAt": self.created_at,
             "updatedAt": self.updated_at,
@@ -202,6 +263,8 @@ def _row_to_project(r: sqlite3.Row) -> Project:
         verify_done=_bool_col("verify_done"),
         browser_gate_mode=_str_col("browser_gate_mode"),
         sandbox_image=_str_col("sandbox_image"),
+        sandbox_memory=_str_col("sandbox_memory"),
+        sandbox_cpus=_str_col("sandbox_cpus"),
         bench=bool(_bool_col("bench")),
         created_at=r["created_at"],
         updated_at=r["updated_at"],
@@ -325,9 +388,13 @@ class ProjectRegistry:
         verify_done: Optional[bool] = None,
         browser_gate_mode: Optional[str] = None,
         sandbox_image: Optional[str] = None,
+        sandbox_memory: Optional[str] = None,
+        sandbox_cpus: Optional[str] = None,
         bench: bool = False,
     ) -> Project:
         _validate_sandbox_image(sandbox_image)
+        _validate_sandbox_memory(sandbox_memory)
+        _validate_sandbox_cpus(sandbox_cpus)
         _validate_workspace_path(workspace_dir)
         p = Project(
             id=id, name=name, repo_url=repo_url, workspace_dir=workspace_dir,
@@ -335,6 +402,7 @@ class ProjectRegistry:
             autodeploy=autodeploy,
             review_gate=review_gate, verify_done=verify_done,
             browser_gate_mode=browser_gate_mode, sandbox_image=sandbox_image,
+            sandbox_memory=sandbox_memory, sandbox_cpus=sandbox_cpus,
             bench=bool(bench),
         )
         with self._lock:
@@ -344,14 +412,16 @@ class ProjectRegistry:
                          (id, name, repo_url, workspace_dir, preview_url, status,
                           goal_ids, notes, autodeploy,
                           review_gate, verify_done, browser_gate_mode, sandbox_image,
+                          sandbox_memory, sandbox_cpus,
                           bench, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         p.id, p.name, p.repo_url, p.workspace_dir, p.preview_url,
                         p.status, json.dumps(p.goal_ids), p.notes,
                         _bool_db(p.autodeploy),
                         _bool_db(p.review_gate), _bool_db(p.verify_done),
                         p.browser_gate_mode, p.sandbox_image,
+                        p.sandbox_memory, p.sandbox_cpus,
                         1 if p.bench else 0, p.created_at, p.updated_at,
                     ),
                 )
@@ -401,6 +471,8 @@ class ProjectRegistry:
         verify_done: Optional[bool] = _UNSET,
         browser_gate_mode: Optional[str] = _UNSET,
         sandbox_image: Optional[str] = _UNSET,
+        sandbox_memory: Optional[str] = _UNSET,
+        sandbox_cpus: Optional[str] = _UNSET,
         bench: Optional[bool] = None,
     ) -> Project:
         """Partial update — only the supplied fields change. Returns the updated
@@ -440,6 +512,12 @@ class ProjectRegistry:
         if sandbox_image is not _UNSET:
             _validate_sandbox_image(sandbox_image)
             p.sandbox_image = sandbox_image
+        if sandbox_memory is not _UNSET:
+            _validate_sandbox_memory(sandbox_memory)
+            p.sandbox_memory = sandbox_memory
+        if sandbox_cpus is not _UNSET:
+            _validate_sandbox_cpus(sandbox_cpus)
+            p.sandbox_cpus = sandbox_cpus
         if bench is not None:
             p.bench = bool(bench)
         p.updated_at = _now_ms()
@@ -480,6 +558,7 @@ class ProjectRegistry:
                      name=?, repo_url=?, workspace_dir=?, preview_url=?, status=?,
                      goal_ids=?, notes=?, autodeploy=?,
                      review_gate=?, verify_done=?, browser_gate_mode=?, sandbox_image=?,
+                     sandbox_memory=?, sandbox_cpus=?,
                      bench=?, updated_at=?
                    WHERE id=?""",
                 (
@@ -488,6 +567,7 @@ class ProjectRegistry:
                     _bool_db(p.autodeploy),
                     _bool_db(p.review_gate), _bool_db(p.verify_done),
                     p.browser_gate_mode, p.sandbox_image,
+                    p.sandbox_memory, p.sandbox_cpus,
                     1 if p.bench else 0, p.updated_at, p.id,
                 ),
             )

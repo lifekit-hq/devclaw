@@ -395,3 +395,32 @@ def test_populated_never_refreshed_ledger_is_a_warn(env):
     db.commit()
     (f,) = _findings(_run(env), "instance.scorecard.pr_ledger")
     assert f.verdict is Verdict.WARN and "stale" in f.evidence
+
+
+# ---- instance: per-project sandbox sizing (spec 020 US4) -------------------
+
+
+def test_project_sizing_check_passes_with_admittable_overrides(env, monkeypatch):
+    import devclaw.host_resources as host_resources
+    monkeypatch.setattr(host_resources, "host_mem_total_bytes", lambda: 64 << 30)
+    env["registry"].create(id="fe", name="FE", workspace_dir="/ws/fe",
+                           sandbox_memory="6g")
+    report = _run(env)
+    fs = _findings(report, "instance.sandbox.project_sizing")
+    assert fs and all(f.verdict is Verdict.OK for f in fs)
+
+
+def test_project_sizing_check_fails_when_the_host_shrank(env, monkeypatch):
+    """Seeded fault (spec 016 FR-014): the override was admittable at write
+    time on a bigger host; after a host shrink the stored value can never be
+    admitted and dispatch would defer forever — doctor names it."""
+    import devclaw.host_resources as host_resources
+    monkeypatch.setattr(host_resources, "host_mem_total_bytes", lambda: 64 << 30)
+    env["registry"].create(id="fe", name="FE", workspace_dir="/ws/fe",
+                           sandbox_memory="32g")
+    # the "shrink": doctor now sees an 8 GiB host
+    monkeypatch.setattr(host_resources, "host_mem_total_bytes", lambda: 8 << 30)
+    report = _run(env)
+    fs = _findings(report, "instance.sandbox.project_sizing")
+    assert fs and any(f.verdict is Verdict.FAIL for f in fs)
+    assert any("no longer admittable" in f.evidence for f in fs)

@@ -121,29 +121,33 @@ class AdmissionMixin:
             f"holding dispatch {WORKSPACE_BREAK_HOLD_S:.0f}s\n"
         )
 
-    def _mem_can_launch(self) -> bool:
+    def _mem_can_launch(self, need_bytes: "int | None" = None) -> bool:
         """True if there's host RAM for one more sandbox — or if memory can't be
         measured (fail OPEN: an unmeasurable host must never wedge the queue). On
         denial, log ONCE per pump (loud, not a silent throttle), mirroring the
         operator-hold logging pattern so a memory hold is visible in the logs."""
         budget = self._mem_budget
-        if budget is None or budget >= MEM_LAUNCH_FLOOR_BYTES:
+        need = SANDBOX_MEMORY_BYTES if need_bytes is None else int(need_bytes)
+        floor = need + COGNITION_MEM_RESERVE_BYTES
+        if budget is None or budget >= floor:
             return True
         if not getattr(self, "_mem_deny_logged", False):
             sys.stderr.write(
                 f"task-queue: dispatch held — host MemAvailable {budget >> 20}MB "
-                f"< floor {MEM_LAUNCH_FLOOR_BYTES >> 20}MB (sandbox "
-                f"{SANDBOX_MEMORY_BYTES >> 20}MB + reserve "
+                f"< floor {floor >> 20}MB (sandbox "
+                f"{need >> 20}MB + reserve "
                 f"{COGNITION_MEM_RESERVE_BYTES >> 20}MB); deferring launches so the "
                 f"host claude --print isn't OOM-killed\n"
             )
             self._mem_deny_logged = True
         return False
 
-    def _mem_commit_launch(self) -> None:
+    def _mem_commit_launch(self, need_bytes: "int | None" = None) -> None:
         """Optimistically debit one sandbox's ceiling from this pump's budget so N
         pending tasks can't all launch into RAM that only fits one (a fresh
         container's RSS lags its start). The budget is re-measured from /proc each
         pump, so a finished container's memory returns on the next tick."""
         if self._mem_budget is not None:
-            self._mem_budget -= SANDBOX_MEMORY_BYTES
+            self._mem_budget -= (
+                SANDBOX_MEMORY_BYTES if need_bytes is None else int(need_bytes)
+            )

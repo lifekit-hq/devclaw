@@ -420,6 +420,9 @@ class SettleMixin:
         def _pump(self) -> None: ...
         def _fire_settle(self) -> None: ...
         def _sandbox_image(self, project_id: Optional[str]): ...
+        def _sandbox_sizing(
+            self, project_id: Optional[str]
+        ) -> "tuple[Optional[str], Optional[str]]": ...
         def _browser_gate_mode(self, project_id: Optional[str]) -> str: ...
         def _check_and_trip_breaker(self, workspace_dir: str, task_id: str) -> None: ...
         async def _notify_task(self, task: Task) -> None: ...
@@ -573,6 +576,8 @@ class SettleMixin:
             goal=goal,
             verify_cmd=None,
             sandbox_image=self._sandbox_image(project_id),
+            sandbox_memory=self._sandbox_sizing(project_id)[0],
+            sandbox_cpus=self._sandbox_sizing(project_id)[1],
             owner_id=self._sandbox_owner,
             validation={"boot": contract.boot, "suites": contract.suites},
         )
@@ -1100,6 +1105,8 @@ class SettleMixin:
                 on_event=on_event,
                 verify_cmd=verify_cmd,
                 sandbox_image=self._sandbox_image(project_id),
+                sandbox_memory=self._sandbox_sizing(project_id)[0],
+                sandbox_cpus=self._sandbox_sizing(project_id)[1],
                 owner_id=self._sandbox_owner,
             )
             try:

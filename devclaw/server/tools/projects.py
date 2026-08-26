@@ -99,6 +99,8 @@ async def update_project(
     review_gate: Optional[Literal["on", "off", "inherit"]] = None,
     verify_done: Optional[Literal["on", "off", "inherit"]] = None,
     sandbox_image: Optional[str] = None,
+    sandbox_memory: Optional[str] = None,
+    sandbox_cpus: Optional[str] = None,
     bench: Optional[bool] = None,
 ) -> str:
     """Update a registered project's facts — only the fields you pass change. Use to
@@ -110,7 +112,11 @@ async def update_project(
     env default), 'inherit' to CLEAR a prior override back to that default, or
     omit to leave whatever is currently set untouched. (bool knobs take
     'on'/'off'; sandbox_image takes a docker image ref — ADR 0005's escape hatch, e.g. pin
-    'devclaw-sandbox-dotnet:local' until the mise path passes its gate.)"""
+    'devclaw-sandbox-dotnet:local' until the mise path passes its gate;
+    sandbox_memory takes a docker memory string like '6g' and sandbox_cpus a
+    number string like '4.0' — spec 020's per-project sizing, validated at
+    write time incl. host admittability, so an impossible value errors HERE
+    instead of wedging dispatch later.)"""
     override_kwargs: dict = {}
     _onoff = {"on": True, "off": False, "inherit": None}
     for field, val in (("autodeploy", autodeploy),
@@ -119,6 +125,10 @@ async def update_project(
             override_kwargs[field] = _onoff[val]
     if sandbox_image is not None:
         override_kwargs["sandbox_image"] = None if sandbox_image == "inherit" else sandbox_image
+    if sandbox_memory is not None:
+        override_kwargs["sandbox_memory"] = None if sandbox_memory == "inherit" else sandbox_memory
+    if sandbox_cpus is not None:
+        override_kwargs["sandbox_cpus"] = None if sandbox_cpus == "inherit" else sandbox_cpus
     if bench is not None:
         # bench (spec 018 US2): evidence/shakedown marker — excluded from every
         # ratchet-facing scorecard rate. Plain bool, no inherit state.

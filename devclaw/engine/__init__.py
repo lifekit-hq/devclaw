@@ -53,6 +53,13 @@ class EngineRequest:
     #: None → the engine's own DEVCLAW_SANDBOX_IMAGE default. Docker-less
     #: engines (host, stub) ignore it.
     sandbox_image: Optional[str] = None
+    #: optional per-task sandbox sizing (spec 020 US4) — the owning project's
+    #: ``sandbox_memory``/``sandbox_cpus`` overrides, resolved by the task
+    #: queue at dispatch beside ``sandbox_image``. None → the engine's own
+    #: DEVCLAW_SANDBOX_MEMORY / DEVCLAW_SANDBOX_CPUS defaults. Docker-less
+    #: engines (host, stub) ignore both.
+    sandbox_memory: Optional[str] = None
+    sandbox_cpus: Optional[str] = None
     #: optional owner-instance id — stamps the sandbox's ``devclaw.owner``
     #: label so the startup orphan sweep only ever reaps THIS instance's
     #: leftovers, never a concurrent devclaw process's live sandboxes on the

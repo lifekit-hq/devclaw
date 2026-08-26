@@ -476,6 +476,8 @@ def _build_docker_args(
     claude_dir: str,
     payload: str,
     allowlist: tuple[str, ...] = SANDBOX_CLAUDE_ALLOWLIST,
+    sandbox_memory: "str | None" = None,
+    sandbox_cpus: "str | None" = None,
     sandbox_image: str | None = None,
     owner_id: str | None = None,
     claude_json_src: str | None = None,
@@ -509,8 +511,9 @@ def _build_docker_args(
         "--network",
         "host",  # claude OAuth refresh needs egress; tighten later via allowlist.
         # Per-build resource ceiling so N concurrent sandboxes can't OOM the VPS.
-        "--memory", SANDBOX_MEMORY, "--memory-swap", SANDBOX_MEMORY,
-        "--cpus", SANDBOX_CPUS,
+        "--memory", (sandbox_memory or SANDBOX_MEMORY),
+        "--memory-swap", (sandbox_memory or SANDBOX_MEMORY),
+        "--cpus", (sandbox_cpus or SANDBOX_CPUS),
         "-v",
         f"{host_bind_path}:{CONTAINER_WORKSPACE}",
         # Shadow the repo's OWN vendor agent config with an empty tmpfs. Since
@@ -581,8 +584,8 @@ def _build_docker_args(
         # /proc/meminfo and nproc inside a cgroup report the HOST, which sent
         # the 2026-08-26 incident's agent down a false "memory is fine" path;
         # these are the numbers it can actually trust.
-        "-e", f"DEVCLAW_SANDBOX_MEMORY={SANDBOX_MEMORY}",
-        "-e", f"DEVCLAW_SANDBOX_CPUS={SANDBOX_CPUS}",
+        "-e", f"DEVCLAW_SANDBOX_MEMORY={sandbox_memory or SANDBOX_MEMORY}",
+        "-e", f"DEVCLAW_SANDBOX_CPUS={sandbox_cpus or SANDBOX_CPUS}",
         sandbox_image or SANDBOX_IMAGE,
         payload,
     ]
@@ -671,6 +674,8 @@ async def run_sandcastle(req: EngineRequest) -> EngineResult:
         claude_dir=claude_dir,
         payload=payload,
         sandbox_image=req.sandbox_image,
+        sandbox_memory=req.sandbox_memory,
+        sandbox_cpus=req.sandbox_cpus,
         owner_id=req.owner_id,
         claude_json_src=trusted_claude_json.host if trusted_claude_json else None,
         credentials_src=disposable_credentials.host if disposable_credentials else None,
