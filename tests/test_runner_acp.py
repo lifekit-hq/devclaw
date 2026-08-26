@@ -210,3 +210,22 @@ def test_runner_agent_env_stays_lean_without_a_token(tmp_path):
     _, _, result, _ = _run_runner(tmp_path, "echo_oauth")
     assert result["status"] == "ok"
     assert result["agent_output"] == "OAUTH-TOKEN-ABSENT"
+
+
+def test_runner_sets_bash_env_shield_when_image_ships_the_script(tmp_path):
+    """Spec 020 US2: BASH_ENV points at the baked oom-shield script so every
+    bash the agent spawns self-raises its OOM score. The runner keys on the
+    script's presence, which only the sandbox image guarantees — this test
+    can't create /opt/devclaw/oom-shield.sh, so the positive arm is proven by
+    the negative arm's inversion: absent script ⇒ BASH_ENV absent (host-engine
+    posture), and the presence-keyed line is pinned by test_runner_wrappers'
+    source assertion."""
+    _, _, result, _ = _run_runner(tmp_path, "echo_bash_env")
+    assert result["status"] == "ok"
+    # On dev/CI hosts /opt/devclaw/oom-shield.sh does not exist — the
+    # allowlist must NOT invent a BASH_ENV pointing at a missing file.
+    import os as _os
+    if not _os.path.exists("/opt/devclaw/oom-shield.sh"):
+        assert result["agent_output"] == "BASH-ENV-ABSENT"
+    else:  # pragma: no cover — sandbox-image host
+        assert result["agent_output"] == "/opt/devclaw/oom-shield.sh"

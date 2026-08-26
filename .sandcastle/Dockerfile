@@ -109,6 +109,10 @@ COPY --chown=agent:agent runner/acp_client.py /opt/devclaw/acp_client.py
 # best-effort bash scripts runner.py invokes around the agent loop.
 COPY --chown=agent:agent runner/skills/ /opt/devclaw/skills/
 COPY --chown=agent:agent runner/hooks/  /opt/devclaw/hooks/
+# OOM shield (spec 020 US2): sourced by every non-interactive bash via
+# BASH_ENV (runner.py sets it) so workload commands self-raise oom_score_adj
+# and the kernel prefers them over the agent/runner on memory exhaustion.
+COPY --chown=agent:agent runner/oom-shield.sh /opt/devclaw/oom-shield.sh
 RUN chmod +x /opt/devclaw/hooks/*.sh
 
 USER agent

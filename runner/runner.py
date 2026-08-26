@@ -143,6 +143,7 @@ def _run_one_hook(path: str, args: tuple[str, ...]) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=_HOOK_TIMEOUT_S,
+            preexec_fn=_raise_own_oom_score,  # workload, not supervisor (spec 020)
         )
         return True, ((proc.stdout or "") + (proc.stderr or "")).strip()
     except subprocess.TimeoutExpired:
@@ -263,6 +264,7 @@ def _run_verify(cmd: str, workspace_dir: str, timeout: int = _VERIFY_TIMEOUT_S) 
             capture_output=True,
             text=True,
             timeout=timeout,
+            preexec_fn=_raise_own_oom_score,  # workload, not supervisor (spec 020)
         )
     except subprocess.TimeoutExpired as exc:
         out_part = exc.output if isinstance(exc.output, str) else ""
@@ -599,6 +601,38 @@ def _oom_annotate(error_text: str, baseline: "int | None") -> str:
         f"sandbox OOM-killed (cap={_sandbox_mem_cap_label()}, "
         f"oom_kill={now - baseline}): {error_text}"
     )
+
+
+# ─── OOM-killer shield (spec 020, US2) ───────────────────────────────────────
+# The runner, the agent, and the workload share ONE cgroup, so on memory
+# exhaustion the kernel picks a victim among all three — and it took the
+# supervisor twice on 2026-08-26. The container runs non-root, so scores can
+# only be RAISED: every WORKLOAD process the runner spawns marks ITSELF as the
+# preferred victim pre-exec, leaving the runner and agent at the default. A
+# workload kill then surfaces as ordinary failed-command output the agent can
+# read and adapt to, instead of a dead session. The agent's own bash children
+# get the same self-raise via BASH_ENV (see _OOM_SHIELD_SCRIPT below).
+
+#: oom_score_adj written by workload processes — ≈ +80% of total memory in the
+#: kernel's badness score, dominating any realistic RSS difference.
+_OOM_SCORE_WORKLOAD = "800"
+
+#: The self-raise script baked into the sandbox image; sourced by every
+#: non-interactive bash the agent spawns (BASH_ENV). Absent outside the image
+#: (host-engine runs) — the env entry is then simply not set.
+_OOM_SHIELD_SCRIPT = "/opt/devclaw/oom-shield.sh"
+
+
+def _raise_own_oom_score() -> None:  # pragma: no cover — exercised pre-exec
+    """preexec_fn: mark THIS (child) process as the preferred OOM victim.
+    Raising is unprivileged; every failure is swallowed — the shield must
+    never be the reason a workload fails to start."""
+    try:
+        with open("/proc/self/oom_score_adj", "w") as fh:
+            fh.write(_OOM_SCORE_WORKLOAD)
+    except OSError:
+        pass
+
 
 
 # The engineer's return-contract (_RETURN_CONTRACT) tells it to end its final
@@ -996,6 +1030,7 @@ def _mise_run(args: list, workspace_dir: str, timeout: float) -> "subprocess.Com
         cwd=workspace_dir,
         env=env,
         capture_output=True,
+        preexec_fn=_raise_own_oom_score,  # workload, not supervisor (spec 020)
         text=True,
         timeout=timeout,
     )
@@ -1374,6 +1409,13 @@ def main() -> None:
     oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
     if oauth_token:
         acp_env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    # OOM shield for the agent's OWN bash children (spec 020 US2): every
+    # non-interactive bash sources $BASH_ENV, so each tool child self-raises
+    # its oom_score_adj and the kernel prefers the workload over the agent.
+    # Agent-agnostic (plain bash mechanism, no vendor wiring); set only when
+    # the sandbox image ships the script — host-engine runs stay untouched.
+    if os.path.exists(_OOM_SHIELD_SCRIPT):
+        acp_env["BASH_ENV"] = _OOM_SHIELD_SCRIPT
     if acp_model:
         acp_env["ANTHROPIC_MODEL"] = acp_model
 
