@@ -418,3 +418,74 @@ class GoalStateContentMixin:
             inserted = cur.rowcount == 1
             self._store._commit()
         return inserted
+
+    # ---- goal_issue_identity (spec 022 US1) --------------------------------
+    #
+    # The store-level enforcement of (project_id, issue_key) uniqueness for
+    # one_shot companion goals. PRIMARY KEY on (project_id, issue_key) implies
+    # NOT NULL on both — the spec 012 lesson: a nullable ref silently disables
+    # its own uniqueness constraint.
+
+    def _claim_issue_identity(
+        self, project_id: str, issue_key: str, goal_id: str, now_ms: int
+    ) -> "tuple[bool, str]":
+        """Try to register (project_id, issue_key) → goal_id.
+
+        Returns ``(True, goal_id)`` when this call wins the race and creates
+        the row. Returns ``(False, existing_goal_id)`` when the row already
+        exists — another caller won the race or there's an active goal. The
+        PRIMARY KEY constraint makes this atomic: two concurrent callers cannot
+        both return True.
+        """
+        with self._store._lock:
+            try:
+                self._store._db.execute(
+                    "INSERT INTO goal_issue_identity"
+                    "(project_id, issue_key, goal_id, created_at) VALUES(?,?,?,?)",
+                    (project_id, issue_key, goal_id, now_ms),
+                )
+                self._store._commit()
+                return (True, goal_id)
+            except sqlite3.IntegrityError:
+                row = self._store._db.execute(
+                    "SELECT goal_id FROM goal_issue_identity "
+                    "WHERE project_id=? AND issue_key=?",
+                    (project_id, issue_key),
+                ).fetchone()
+                existing = row[0] if row else goal_id
+                return (False, existing)
+
+    def _rearm_issue_identity(
+        self,
+        project_id: str,
+        issue_key: str,
+        old_goal_id: str,
+        new_goal_id: str,
+        now_ms: int,
+    ) -> bool:
+        """CAS-update the identity row from a completed goal to a fresh one.
+
+        The UPDATE only fires when the row still points at ``old_goal_id`` — so
+        at most one concurrent re-arm caller updates and returns True; any
+        other concurrent caller gets rowcount==0 and returns False (must then
+        re-read the winner's goal_id and return "attached").
+        """
+        with self._store._lock:
+            cur = self._store._db.execute(
+                "UPDATE goal_issue_identity SET goal_id=?, created_at=? "
+                "WHERE project_id=? AND issue_key=? AND goal_id=?",
+                (new_goal_id, now_ms, project_id, issue_key, old_goal_id),
+            )
+            updated = cur.rowcount == 1
+            self._store._commit()
+        return updated
+
+    def _lookup_issue_identity(self, project_id: str, issue_key: str) -> "str | None":
+        """Return the goal_id for (project_id, issue_key), or None."""
+        with self._store._lock:
+            row = self._store._db.execute(
+                "SELECT goal_id FROM goal_issue_identity "
+                "WHERE project_id=? AND issue_key=?",
+                (project_id, issue_key),
+            ).fetchone()
+        return row[0] if row else None

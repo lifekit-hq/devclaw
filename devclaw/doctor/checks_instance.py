@@ -406,6 +406,30 @@ def check_project_sandbox_sizing(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "per-project sandbox sizing overrides admittable")]
 
 
+def check_goal_issue_identity_table(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 022 US1 (per spec-016 FR-014: a store-shape change ships its
+    doctor check): the goal_issue_identity table enforces (project, issue)
+    uniqueness for one_shot companion goals. An instance whose DB predates it
+    can still dispatch, but the store-level uniqueness constraint is absent —
+    a racing duplicate dispatch would create two goals. A server restart
+    bootstraps the table idempotently."""
+    cid = "instance.dispatch.goal_issue_identity"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "goal_status" not in tables:
+        return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
+    if "goal_issue_identity" not in tables:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal_issue_identity table absent while goal tables exist — the DB "
+            "predates spec 022; the store-level (project, issue) uniqueness "
+            "constraint is not in place and a racing duplicate dispatch could "
+            "create two goals for the same issue",
+            remedy="restart devclaw (GoalState bootstraps tables at construction)",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_issue_identity uniqueness table present")]
+
+
 INSTANCE_CHECKS: tuple = (
     check_migration_meta_keys,
     check_legacy_goal_status_lifecycle,
@@ -421,4 +445,5 @@ INSTANCE_CHECKS: tuple = (
     check_goal_convergence_table,
     check_pr_ledger,
     check_project_sandbox_sizing,
+    check_goal_issue_identity_table,
 )

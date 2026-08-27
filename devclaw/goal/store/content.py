@@ -341,3 +341,38 @@ class GoalContentMixin:
         with path.open("a") as fh:
             for ln in formatted:
                 fh.write(f"{ln}\n")
+
+    # ---- goal_issue_identity (spec 022 US1) ---------------------------------
+
+    def claim_issue_identity(
+        self, project_id: str, issue_key: str, goal_id: str, now_ms: int
+    ) -> "tuple[bool, str]":
+        """Try to register (project_id, issue_key) → goal_id atomically.
+
+        Returns ``(True, goal_id)`` when this call wins; ``(False, existing_goal_id)``
+        when another caller already holds the row. Delegates to the raw SQLite
+        method so the PRIMARY KEY constraint is the only enforcement mechanism —
+        no read-then-write race.
+        """
+        return self._goal_state._claim_issue_identity(project_id, issue_key, goal_id, now_ms)
+
+    def rearm_issue_identity(
+        self,
+        project_id: str,
+        issue_key: str,
+        old_goal_id: str,
+        new_goal_id: str,
+        now_ms: int,
+    ) -> bool:
+        """CAS-replace the identity row when the prior goal is complete.
+
+        Returns True iff this call performed the update (one concurrent re-arm
+        wins; others get False and must re-read the winner's goal_id).
+        """
+        return self._goal_state._rearm_issue_identity(
+            project_id, issue_key, old_goal_id, new_goal_id, now_ms
+        )
+
+    def lookup_issue_identity(self, project_id: str, issue_key: str) -> "str | None":
+        """Return the goal_id registered for (project_id, issue_key), or None."""
+        return self._goal_state._lookup_issue_identity(project_id, issue_key)

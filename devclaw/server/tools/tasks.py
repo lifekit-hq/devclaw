@@ -82,6 +82,7 @@ async def dispatch_task(
     kind: Literal["implement_feature", "fix_bug", "review_repository", "validate_product"],
     project_id: str,
     goal: str,
+    issue_ref: Optional[int] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -146,6 +147,29 @@ async def dispatch_task(
         # Feature work is gated on a merged speckit install: a repo whose
         # install PR is still open is not run (US2, no half-installed state).
         await _block_if_speckit_pending(resolved, "dispatch_task")
+    # FR-002/FR-003: issue_ref routes through the goal lane — create-or-attach
+    # a one_shot goal keyed to (project, issue) with a store-level uniqueness
+    # constraint. Read-only kinds are byte-unaffected (FR-008).
+    if issue_ref is not None and not read_only:
+        if not resolved.project_id:
+            raise ToolError(
+                f"project {project_id!r} resolved without a project_id — "
+                "issue-keyed dispatch requires a registered project_id"
+            )
+        try:
+            result = await goals.dispatch_issue(
+                project_id=resolved.project_id,
+                workspace_dir=resolved.workspace_dir,
+                repo_url=resolved.repo_url,
+                issue_ref=issue_ref,
+                kind=kind,
+                objective=goal,
+                verify_cmd=verify_cmd,
+                open_pr=open_pr,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc))
+        return json.dumps(result, indent=2)
     task_id = queue.submit(
         kind=kind,
         workspace_dir=resolved.workspace_dir,
@@ -173,6 +197,7 @@ async def dispatch_task(
 async def implement_feature(
     project_id: str,
     goal: str,
+    issue_ref: Optional[int] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -180,12 +205,17 @@ async def implement_feature(
     """Dispatch feature work — the kind-specific companion verb, a thin
     forwarder to ``dispatch_task(kind="implement_feature")``. Supported, not
     deprecated: this is the shape the waiter agent drives the companion path
-    with. Use ``dispatch_task`` directly when you need ``base_branch`` /
-    ``target_branch``. See ``dispatch_task`` for full docs."""
+    with. Pass ``issue_ref`` (a GitHub issue number on the project's repo) to
+    key the dispatch on that issue — the call is then idempotent: a duplicate
+    dispatch for the same issue attaches to the existing work rather than
+    starting a new one (spec 022 US1). Use ``dispatch_task`` directly when you
+    need ``base_branch`` / ``target_branch``. See ``dispatch_task`` for full
+    docs."""
     return await dispatch_task(
         kind="implement_feature",
         project_id=project_id,
         goal=goal,
+        issue_ref=issue_ref,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
         open_pr=open_pr,
@@ -196,21 +226,26 @@ async def implement_feature(
 async def fix_bug(
     project_id: str,
     description: str,
+    issue_ref: Optional[int] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
 ) -> str:
     """Dispatch a bug fix — the kind-specific companion verb, a thin forwarder
     to ``dispatch_task(kind="fix_bug")``. Supported, not deprecated: this is the
-    shape the waiter agent drives the companion path with. Use ``dispatch_task``
-    directly when you need ``base_branch`` / ``target_branch``. See
-    ``dispatch_task`` for full docs."""
+    shape the waiter agent drives the companion path with. Pass ``issue_ref`` (a
+    GitHub issue number on the project's repo) to key the dispatch on that issue
+    — the call is then idempotent: a duplicate dispatch for the same issue
+    attaches to the existing work (spec 022 US1). Use ``dispatch_task`` directly
+    when you need ``base_branch`` / ``target_branch``. See ``dispatch_task`` for
+    full docs."""
     if not description:
         raise ToolError("fix_bug requires project_id and description")
     return await dispatch_task(
         kind="fix_bug",
         project_id=project_id,
         goal=description,
+        issue_ref=issue_ref,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
         open_pr=open_pr,

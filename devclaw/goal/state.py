@@ -223,6 +223,19 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                   PRIMARY KEY(scope_key, kind)
                 );
 
+                -- Issue-keyed identity for one_shot companion goals (spec 022 US1).
+                -- PRIMARY KEY on (project_id, issue_key) implies NOT NULL on both
+                -- columns — spec 012's lesson: a nullable ref silently disables its
+                -- own constraint. Racing creation attempts hit an IntegrityError;
+                -- only one caller wins the row (and thus the goal creation).
+                CREATE TABLE IF NOT EXISTS goal_issue_identity (
+                  project_id  TEXT NOT NULL,
+                  issue_key   TEXT NOT NULL,
+                  goal_id     TEXT NOT NULL,
+                  created_at  INTEGER NOT NULL,
+                  PRIMARY KEY (project_id, issue_key)
+                );
+
                 -- goal_id lookups on the append-only / multi-row tables.
                 CREATE INDEX IF NOT EXISTS idx_goal_phase_history_goal
                   ON goal_phase_history(goal_id, id);
