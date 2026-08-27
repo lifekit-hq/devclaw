@@ -293,6 +293,30 @@ that mapping rather than keep homegrown variants — nothing invented:
   model is live and trusted. Removal of the dead code rides this spec's US3
   demolition scope.
 
+### Demolition scope: tests that die with the code (symmetric ratchet, ruled 2026-08-27)
+
+Per the symmetric-ratchet rule, the demolition names its test casualties up
+front — the implementing PRs delete these alongside the behavior they pin
+(exact survivorship decided at plan time; a file listed here may keep
+individual tests that pin retained behavior, e.g. `cancel`'s task-level
+verbs):
+
+- **Program/DAG machinery**: `tests/test_program_plan.py`,
+  `tests/test_queue_dag.py`, `tests/test_start_program_alias.py`,
+  `tests/test_cancel_program_guard.py`, `tests/test_fanout_plan.py`,
+  `tests/test_fanout_integration.py`, and the program/fanout cases inside
+  `tests/test_goal_tick.py`, `tests/test_cancel.py`, `tests/test_goal_engine.py`,
+  `tests/goal_fakes.py`.
+- **Freeform direct dispatch**: the prose-path admission cases in
+  `tests/test_dispatch_task.py` and the single-writer-exemption warning cases
+  around `_project_hold_warning` (`tests/test_task_parent_goal_id.py`,
+  `tests/test_scope_gate.py`) — replaced by named regressions for the new
+  create-or-attach admission, the repealed exemption, and the auto-filed
+  receipt path.
+
+This spec's implementation is expected to land **net-negative in both the code
+and test columns** — the first since the 008 shrink.
+
 ## Rejected alternatives (direction memory)
 
 - **Dedup/idempotency key patched onto the existing direct-dispatch lane** — rejected
