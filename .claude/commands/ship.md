@@ -31,5 +31,9 @@ and report it instead of proceeding:
    covers what/why, the named regression test, the suite counts, and any
    constitution-check notes; ends with
    `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
-8. Report the PR URL, diffstat, and suite counts. Do NOT merge — merging is
-   the owner's call unless already authorized this session.
+8. Report the PR URL, diffstat, suite counts, AND the net-LOC line:
+   `code Δ: +A/−B · tests Δ: +C/−D` (from `git diff origin/main --numstat`,
+   split devclaw/+runner/ vs tests/). Informational, never a gate — the
+   number exists so growth is a choice, not a drift (ruled 2026-08-27).
+   Do NOT merge — merging is the owner's call unless already authorized this
+   session.

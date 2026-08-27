@@ -34,6 +34,16 @@ pytest.
 
 - **Every behavior-change PR ships a named regression test** — named after the
   behavior, not the function (`test_resume_goal_unblocks_without_steering_and_replans_next_tick`).
+- **The ratchet is symmetric** (ruled by Denys 2026-08-27): a PR that REMOVES
+  behavior removes that behavior's tests in the same PR, and a spec's
+  demolition scope lists the tests that die with it. Tests pin living
+  behavior; a test for deleted behavior is dead weight wearing a green badge.
+  (Load-bearing guards — zero-token, fail-closed — pin invariants, not
+  instances; they stay until the invariant itself is repealed.)
+- **Prefer strengthening an existing named test over adding a new one** when
+  the behavior CLASS is already pinned — extend the existing test's cases
+  instead of minting a sibling. Test per class, not per instance; the suite
+  measures covered behavior, not accumulated diligence.
 - Fixture map: `tests/goal_fakes.py` has `FakeClaude` (its `.calls` count IS the
   zero-token quota assertion), `FakeEngine`, `RecordingNotifier`, `seed_goal`.
   Goal-tick behavior → `tests/test_goal_tick.py`; transitions/CAS in isolation →
