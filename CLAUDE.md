@@ -211,6 +211,10 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 - **Conventional-commit messages** (`fix(queue): …`, `feat(cognition): …`).
 - **Every behavior-change PR adds a named regression test** — the T0 fixes each
   shipped with one (`test_integrity_gate.py`, `test_delivery.py`, `test_goal_tick.py`, …).
+  **The ratchet is symmetric** (2026-08-27): a PR that removes behavior removes
+  that behavior's tests in the same PR; prefer strengthening an existing named
+  test over minting a sibling when the class is already pinned. Net-LOC is
+  reported on every `/ship` — informational, never a gate.
 - **A PR that changes persisted state shape or in-repo boilerplate ships its
   doctor check** (spec 016 FR-014) — the deployed-instance sibling of the
   named-regression-test rule: the stubbed suite guards the code, doctor guards
