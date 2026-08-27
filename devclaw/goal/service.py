@@ -285,32 +285,10 @@ class GoalService:
                 _trend_detector_mod.TREND_MODEL, role="trend-detector",
             )
 
-            # Fire-and-forget notify shim: TrendDetector calls notifier_send
-            # synchronously, but Notifier.send is async. asyncio.create_task
-            # detaches the send so the detector doesn't have to await; payload
-            # is rendered into a single owner-readable line.
-            notifier_inst = self._notifier
-
-            def _notify_send(payload: dict) -> None:
-                action = payload.get("proposed_action") or "(none)"
-                text = (
-                    f"📈 trend: {payload['signal']} ({payload['scope']}) — "
-                    f"{payload['observation']}\n"
-                    f"proposed action: {action}\n"
-                    f"see: {payload['path']}"
-                )
-                try:
-                    asyncio.create_task(notifier_inst.send(text))
-                except RuntimeError:
-                    # No running loop (e.g. called from sync context in tests).
-                    # Drop silently — trends.md still has the entry.
-                    pass
-
             self._trend_detector_inst = _trend_detector_mod.TrendDetector(
                 state_store=self._store,
                 goals_dir=self._cfg.goals_dir,
                 claude_caller=claude_caller,
-                notifier_send=_notify_send,
             )
         return self._trend_detector_inst
 

@@ -63,7 +63,6 @@ def _signal_description(signal: Signal) -> str:
     return "(no description)"
 
 ClaudeCaller = Callable[[str], Awaitable[str]]
-NotifierSend = Callable[[dict], None]
 
 # ---- env vars (read inline; matches the rest of devclaw) -------------------
 
@@ -159,7 +158,6 @@ class TrendDetector:
         state_store: StateStore,
         goals_dir: Path,
         claude_caller: ClaudeCaller,
-        notifier_send: NotifierSend,
         signals: Optional[list[Signal]] = None,
         harness_self_trends_path: Path = HARNESS_SELF_TRENDS_PATH,
         now_ms: Callable[[], int] = _default_now_ms,
@@ -167,7 +165,6 @@ class TrendDetector:
         self._store = state_store
         self._goals_dir = Path(goals_dir)
         self._caller = claude_caller
-        self._notify = notifier_send
         self._signals = signals if signals is not None else all_signals()
         self._harness_self_path = harness_self_trends_path
         self._now_ms = now_ms
@@ -380,13 +377,13 @@ class TrendDetector:
         scope_key: str,
         scope_label: Scope,
     ) -> None:
-        """Build payload → LLM retrospective → parse → write entry → cooldown →
-        notify (actionable verdicts only — a benign ``proposed_action: null``
-        entry is recorded without an owner ping).
-        Failures of cognition or parse are recorded and skipped (no
-        cooldown set so the next heartbeat retries); failures of write or
-        notify are recorded but still set the cooldown (we don't want a write
-        glitch to trigger the same fire every tick)."""
+        """Build payload → LLM retrospective → parse → write entry → cooldown.
+        Trends never ping the owner — trends.md is the machine-side record and
+        the status digest is the one human surface (2026-08-24 ruling, made
+        total 2026-08-27). Failures of cognition or parse are recorded and
+        skipped (no cooldown set so the next heartbeat retries); write failures
+        are recorded but still set the cooldown (we don't want a write glitch
+        to trigger the same fire every tick)."""
         trends_path = self._trends_path_for(ctx)
         recent_excerpt = self._read_recent_trends_excerpt(trends_path)
         prompt = self._build_prompt(signal, result, ctx, scope_label, recent_excerpt)
@@ -430,23 +427,6 @@ class TrendDetector:
             if head is not None:
                 self._store.set_trend_bookmark(ctx.workspace_dir, head)
 
-        # The verdict owns the notification altitude: a benign fire
-        # (proposed_action null per the prompt contract) stays in trends.md
-        # for machine consumption but never pings the owner.
-        if not entry.get("proposed_action"):
-            return
-        try:
-            self._notify({
-                "kind": "trend_observed",
-                "signal": entry["signal"],
-                "category": entry["category"],
-                "observation": entry["observation"],
-                "proposed_action": entry.get("proposed_action"),
-                "scope": scope_label,
-                "path": str(trends_path),
-            })
-        except Exception as exc:  # noqa: BLE001
-            _trace.record_note(f"trend_detector: notify failed for {signal.id}: {exc}")
 
     # ---- persistence + prompt helpers -------------------------------------
 

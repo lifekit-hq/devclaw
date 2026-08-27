@@ -75,33 +75,22 @@ class _CountingCaller:
         return json.dumps(self.payload)
 
 
-def _notifier():
-    sent: list[dict] = []
-
-    def send(payload: dict) -> None:
-        sent.append(payload)
-
-    return send, sent
-
-
 def _detector_for(
     *, tmp_path: Path, signals: list[Signal], caller: _CountingCaller,
-) -> tuple[TrendDetector, StateStore, list[dict], Path]:
+) -> tuple[TrendDetector, StateStore, Path]:
     """Build a fresh detector with isolated state-store + harness-self file."""
     db = tmp_path / "test.db"
     store = StateStore(str(db))
     harness_file = tmp_path / "harness-trends.md"
-    notify, sent = _notifier()
     detector = TrendDetector(
         state_store=store,
         goals_dir=tmp_path / "goals",
         claude_caller=caller,
-        notifier_send=notify,
         signals=signals,
         harness_self_trends_path=harness_file,
         now_ms=lambda: 1750000000000,
     )
-    return detector, store, sent, harness_file
+    return detector, store, harness_file
 
 
 # ---- per-goal fire path ---------------------------------------------------
@@ -112,7 +101,7 @@ async def test_per_goal_fire_writes_entry_and_sets_cooldown(tmp_path):
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project")],
         caller=caller,
@@ -138,11 +127,6 @@ async def test_per_goal_fire_writes_entry_and_sets_cooldown(tmp_path):
     assert cooldown_raw is not None
     assert int(cooldown_raw) > 1750000000000
 
-    # Notifier received the structured payload.
-    assert len(sent) == 1
-    assert sent[0]["kind"] == "trend_observed"
-    assert sent[0]["signal"] == "S1"
-
     # Exactly one LLM call.
     assert caller.calls == 1
     store.close()
@@ -151,9 +135,10 @@ async def test_per_goal_fire_writes_entry_and_sets_cooldown(tmp_path):
 @pytest.mark.asyncio
 async def test_benign_verdict_writes_entry_but_does_not_notify(tmp_path):
     """2026-08-24 live evidence: 2 of 3 owner pings were self-declared-benign
-    "(none)" reports. The verdict owns the notification altitude — a benign
-    fire (proposed_action null) records its trends.md entry and sets
-    cooldown + fingerprint as usual, but never pings the owner."""
+    "(none)" reports; 2026-08-27 Denys ruled trends never ping the owner at
+    all — trends.md is machine-side, the status digest is the one human
+    surface. A benign fire records its entry and sets cooldown + fingerprint
+    as usual."""
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller(payload={
@@ -164,7 +149,7 @@ async def test_benign_verdict_writes_entry_but_does_not_notify(tmp_path):
         "evidence_refs": [],
         "proposed_action": None,
     })
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project")],
         caller=caller,
@@ -179,8 +164,34 @@ async def test_benign_verdict_writes_entry_but_does_not_notify(tmp_path):
     # …dedup state set as usual (a benign fire still mutes identical re-fires)…
     assert store.get_trend_cooldown(f"project:{workspace}", "S1") is not None
     assert store.get_trend_fingerprint(f"project:{workspace}", "S1") is not None
-    # …but the owner was NOT pinged.
-    assert sent == []
+    store.close()
+
+
+@pytest.mark.asyncio
+async def test_actionable_trend_is_recorded_but_owner_is_never_pinged(tmp_path):
+    """Named regression (2026-08-27 ruling): trends have NO owner-notification
+    channel at any altitude — an ACTIONABLE verdict is recorded to trends.md
+    for the status digest to surface, and the detector exposes no notifier to
+    ping through (PR #678 had only gated benign verdicts; the Telegram pings
+    for actionable ones kept firing)."""
+    import inspect
+
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    caller = _CountingCaller()  # default payload is actionable ("do the thing")
+    detector, store, _ = _detector_for(
+        tmp_path=tmp_path,
+        signals=[_StubSignal("S1", scope="per_project")],
+        caller=caller,
+    )
+
+    await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
+
+    # The actionable entry IS recorded…
+    content = (workspace / ".devclaw" / "trends.md").read_text()
+    assert "do the thing" in content
+    # …and there is structurally no notification channel to ping through.
+    assert "notifier_send" not in inspect.signature(TrendDetector.__init__).parameters
     store.close()
 
 
@@ -189,7 +200,7 @@ async def test_cooldown_silences_repeated_fires(tmp_path):
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project")],
         caller=caller,
@@ -203,7 +214,6 @@ async def test_cooldown_silences_repeated_fires(tmp_path):
     await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
     assert caller.calls == 1
     assert (workspace / ".devclaw" / "trends.md").read_text() == first_content
-    assert len(sent) == 1
     store.close()
 
 
@@ -217,13 +227,13 @@ async def test_fingerprint_silences_re_fires_even_after_cooldown_expires(tmp_pat
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project")],
         caller=caller,
     )
 
-    # First tick: signal fires, LLM is called, entry + notify + fingerprint land.
+    # First tick: signal fires, LLM is called, entry + fingerprint land.
     await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
     assert caller.calls == 1
     fp_after_first = store.get_trend_fingerprint("project:" + str(workspace), "S1")
@@ -240,7 +250,6 @@ async def test_fingerprint_silences_re_fires_even_after_cooldown_expires(tmp_pat
     await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
     assert caller.calls == 1, "LLM was called a second time on identical evidence"
     assert (workspace / ".devclaw" / "trends.md").read_text() == initial_content
-    assert len(sent) == 1, "owner was pinged a second time on identical evidence"
     store.close()
 
 
@@ -268,7 +277,7 @@ async def test_fingerprint_lets_fresh_evidence_refire(tmp_path):
                 evidence={"tick": self._tick, "note": "changed each tick"},
             )
 
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_MutatingSignal("S1")],
         caller=caller,
@@ -279,7 +288,6 @@ async def test_fingerprint_lets_fresh_evidence_refire(tmp_path):
     await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
     # Fresh evidence (tick=2 vs tick=1) → fingerprint differs → fires fresh.
     assert caller.calls == 2
-    assert len(sent) == 2
     store.close()
 
 
@@ -288,7 +296,7 @@ async def test_no_fire_when_signal_does_not_fire(tmp_path):
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project", will_fire=False)],
         caller=caller,
@@ -296,10 +304,9 @@ async def test_no_fire_when_signal_does_not_fire(tmp_path):
 
     await detector.run_per_goal(goal_id="g1", workspace_dir=str(workspace))
 
-    # No entry, no LLM call, no notification, no cooldown.
+    # No entry, no LLM call, no cooldown.
     assert not (workspace / ".devclaw" / "trends.md").exists()
     assert caller.calls == 0
-    assert sent == []
     assert store.get_trend_cooldown(f"project:{workspace}", "S1") is None
     store.close()
 
@@ -317,7 +324,7 @@ async def test_harness_self_fire_writes_to_configured_path(tmp_path):
         "evidence_refs": ["~/memory/goals"],
         "proposed_action": None,  # explicit null — no action needed
     })
-    detector, store, sent, harness_file = _detector_for(
+    detector, store, harness_file = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("HSELF", scope="harness_self", category="harness_self")],
         caller=caller,
@@ -331,8 +338,6 @@ async def test_harness_self_fire_writes_to_configured_path(tmp_path):
     assert "harness-self stub fired" in content
     # proposed_action=null renders as "(none — pattern noted, no action recommended)"
     assert "no action recommended" in content
-    # …and a benign verdict never pings the owner (the notify gate).
-    assert sent == []
     store.close()
 
 
@@ -347,7 +352,7 @@ async def test_per_signal_disable_silences_named_signals(tmp_path, monkeypatch):
     workspace.mkdir()
     monkeypatch.setattr(_td_mod, "TREND_DISABLE", {"S1"})
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project")],
         caller=caller,
@@ -357,7 +362,6 @@ async def test_per_signal_disable_silences_named_signals(tmp_path, monkeypatch):
 
     assert caller.calls == 0
     assert not (workspace / ".devclaw" / "trends.md").exists()
-    assert sent == []
     store.close()
 
 
@@ -368,7 +372,7 @@ async def test_master_kill_switch_silences_all_signals(tmp_path, monkeypatch):
     workspace.mkdir()
     monkeypatch.setattr(_td_mod, "TREND_ENABLED", False)
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project"), _StubSignal("S2", scope="per_project")],
         caller=caller,
@@ -393,7 +397,7 @@ async def test_per_heartbeat_fire_cap_takes_highest_priority(tmp_path, monkeypat
     workspace.mkdir()
     caller = _CountingCaller()
     # Both fire; priority order should pick D4 (idx 2) over R2 (idx 3).
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[
             _StubSignal("R2", scope="per_project"),
@@ -406,8 +410,10 @@ async def test_per_heartbeat_fire_cap_takes_highest_priority(tmp_path, monkeypat
 
     # Exactly ONE LLM call — the fire cap held.
     assert caller.calls == 1
-    # The winner was D4 (higher priority).
-    assert sent[0]["signal"] == "D4"
+    # The winner was D4 (higher priority) — its entry, and only its, was written.
+    cap_content = (workspace / ".devclaw" / "trends.md").read_text()
+    assert "D4" in cap_content
+    assert "R2" not in cap_content
     # D4 cooldown was set; R2 cooldown was NOT — so R2 can fire next heartbeat.
     assert store.get_trend_cooldown(f"project:{workspace}", "D4") is not None
     assert store.get_trend_cooldown(f"project:{workspace}", "R2") is None
@@ -433,7 +439,7 @@ async def test_llm_garbage_skips_entry_and_does_not_set_cooldown(tmp_path):
             return "not json at all, just prose"
 
     garbage = _GarbageCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project")],
         caller=garbage,  # type: ignore[arg-type]
@@ -443,7 +449,6 @@ async def test_llm_garbage_skips_entry_and_does_not_set_cooldown(tmp_path):
 
     assert garbage.calls == 1
     assert not (workspace / ".devclaw" / "trends.md").exists()
-    assert sent == []
     assert store.get_trend_cooldown(f"project:{workspace}", "S1") is None
     store.close()
 
@@ -464,7 +469,7 @@ async def test_signal_check_exception_is_isolated(tmp_path):
             raise RuntimeError("kaboom")
 
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_ExplodingSignal(), _StubSignal("OK", scope="per_project")],
         caller=caller,
@@ -475,7 +480,7 @@ async def test_signal_check_exception_is_isolated(tmp_path):
 
     # The non-exploding signal still fired.
     assert caller.calls == 1
-    assert sent[0]["signal"] == "OK"
+    assert "OK" in (workspace / ".devclaw" / "trends.md").read_text()
     store.close()
 
 
@@ -515,7 +520,7 @@ async def test_detector_seeds_bookmark_on_first_observation(tmp_path, monkeypatc
     monkeypatch.setattr("devclaw.bookmark.git_head_sha", lambda wd: "f" * 40)
     sig = _BookmarkAwareSignal(will_fire=False)  # no fire, just verify seed
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path, signals=[sig], caller=caller,
     )
 
@@ -537,7 +542,7 @@ async def test_detector_advances_bookmark_after_fire_by_bookmark_aware_signal(tm
     monkeypatch.setattr("devclaw.bookmark.git_head_sha", lambda wd: next(heads))
     sig = _BookmarkAwareSignal(will_fire=True)
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path, signals=[sig], caller=caller,
     )
 
@@ -565,7 +570,7 @@ async def test_detector_does_not_advance_bookmark_for_non_bookmark_signal(tmp_pa
             return SignalResult(fired=True, actual_value=1, threshold_value=0)
 
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path, signals=[_PlainSig()], caller=caller,
     )
 
@@ -624,7 +629,7 @@ async def test_diverged_bookmark_reseeds_instead_of_refiring(tmp_path):
     head = _commit_file(workspace, "backend/app.py", "app\n", "add backend")
 
     caller = _CountingCaller()
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path, signals=[D3NewArchitecturalSurface()], caller=caller,
     )
     store.set_trend_bookmark(str(workspace), stale)
@@ -634,7 +639,6 @@ async def test_diverged_bookmark_reseeds_instead_of_refiring(tmp_path):
     # Re-seeded to HEAD; D3 saw bookmark == HEAD → no fire, zero LLM calls.
     assert store.get_trend_bookmark(str(workspace)) == head
     assert caller.calls == 0
-    assert sent == []
     store.close()
 
 
@@ -650,7 +654,7 @@ async def test_valid_ancestor_bookmark_is_not_reseeded(tmp_path):
 
     sig = _BookmarkAwareSignal(will_fire=False)
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path, signals=[sig], caller=caller,
     )
     store.set_trend_bookmark(str(workspace), old)
@@ -674,7 +678,7 @@ async def test_unknown_sha_bookmark_reseeds_without_raising(tmp_path):
 
     sig = _BookmarkAwareSignal(will_fire=False)
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path, signals=[sig], caller=caller,
     )
     store.set_trend_bookmark(str(workspace), "e" * 40)
@@ -710,9 +714,9 @@ async def test_entry_signal_category_and_date_are_pinned_not_trusted_from_model(
         "category": "wrong_cat", # model lies
         "observation": "obs",
         "evidence_refs": [],
-        "proposed_action": "do the thing",  # actionable, so the notify fires
+        "proposed_action": "do the thing",  # actionable — recorded, never pinged
     })
-    detector, store, sent, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", scope="per_project", category="drift")],
         caller=caller,
@@ -728,7 +732,6 @@ async def test_entry_signal_category_and_date_are_pinned_not_trusted_from_model(
     # Date pin: the model's 2099 fabrication does NOT appear; the detector's
     # harness-supplied now_ms (lambda: 1750000000000) wins.
     assert "2099" not in content
-    assert sent[0]["signal"] == "S1"
     store.close()
 
 
@@ -790,7 +793,7 @@ async def test_below_threshold_checks_collapse_to_single_sweep_summary_row(tmp_p
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[
             _StubSignal("S1", will_fire=False),
@@ -823,7 +826,7 @@ async def test_fired_check_still_records_individual_trend_check_row(tmp_path):
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[
             _StubSignal("S1", will_fire=True),
@@ -855,7 +858,7 @@ async def test_cooldown_and_error_reasons_land_in_sweep_summary_not_rows(tmp_pat
     workspace = tmp_path / "repo"
     workspace.mkdir()
     caller = _CountingCaller()
-    detector, store, _, _ = _detector_for(
+    detector, store, _ = _detector_for(
         tmp_path=tmp_path,
         signals=[_StubSignal("S1", will_fire=True), _ErroringSignal()],
         caller=caller,
