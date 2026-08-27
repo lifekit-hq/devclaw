@@ -23,6 +23,9 @@ Scripts (what happens on ``session/prompt``):
   slice_flip   completes slice US1 then touches a US2 row → the watcher's
                stop condition; answers the land-now follow-up prompt (spec 021)
   wrapup_only  completes ONE slice then only wraps up — must NOT be stopped
+  usage_window     streams rising usage_update past the tripwire threshold,
+                   awaits the cancel, answers the land-now prompt (spec 021)
+  usage_high_no_stop  reports high usage but ends the turn normally
 
 Every script first checks the environment: if an Anthropic API key leaked
 into the agent env, the final message is ``LEAKED-API-KEY`` — the named
@@ -305,6 +308,31 @@ class FakeAgent:
         )
         self._tool_step("tc-flip-2")
         self._await_cancel_then_end(prompt_id)
+
+    def script_usage_window(self, prompt_id: int) -> None:
+        """Streams rising usage_update {used, size} past a 75% threshold —
+        the context tripwire's stop condition (spec 021 US2). Awaits the
+        runner's cancel, then answers the land-now follow-up prompt."""
+        if self.prompt_count > 1:
+            self.message("LANDED-BUDGET: partial increment committed.\n\nSTATUS: DONE")
+            _send(
+                {"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}}
+            )
+            return
+        self.message("working under a budget")
+        self.update({"sessionUpdate": "usage_update", "used": 500, "size": 1000})
+        self._tool_step("tc-bud-1")
+        self.update({"sessionUpdate": "usage_update", "used": 800, "size": 1000})
+        self._await_cancel_then_end(prompt_id)
+
+    def script_usage_high_no_stop(self, prompt_id: int) -> None:
+        """Reports high usage but the turn ends normally — for the
+        below-threshold and tripwire-disabled cases (behavior must be
+        byte-identical to an ordinary run apart from the context field)."""
+        self.update({"sessionUpdate": "usage_update", "used": 800, "size": 1000})
+        self._tool_step("tc-high-1")
+        self.message("finished fine.\n\nSTATUS: DONE")
+        _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
 
     def script_wrapup_only(self, prompt_id: int) -> None:
         """Completes slice US1 and then only wraps up (no rows outside the

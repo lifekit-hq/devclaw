@@ -1130,6 +1130,27 @@ class SettleMixin:
             except Exception as err:
                 last_failure = str(err)  # unexpected runner error — retryable
             else:
+                # Context-tripwire firing (spec 021 US2): the runner landed
+                # (or tried to land) the session before a context overflow.
+                # One problems-catalog row per root cause — the SC-005
+                # ratchet metric — regardless of how the task then settled.
+                trip = result.get("tripwire")
+                if isinstance(trip, dict):
+                    self._store.record_problem(
+                        category="limit",
+                        kind="context_tripwire",
+                        message=(
+                            f"context tripwire at {trip.get('threshold_pct')}% — "
+                            f"used {trip.get('used')}/{trip.get('size')}"
+                            + (
+                                f" (slice {trip.get('active_slice')})"
+                                if trip.get("active_slice")
+                                else ""
+                            )
+                        ),
+                        recovered=bool(trip.get("landed")),
+                        task_id=task_id,
+                    )
                 if result.get("status") != "ok":
                     last_failure = result.get("error", "unknown error")
                     if result.get("status") == "rate_limited" and result.get("retry_after"):
