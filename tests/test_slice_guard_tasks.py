@@ -19,6 +19,7 @@ import subprocess
 from devclaw.goal.slice_guard import (
     count_slice_advances,
     current_feature_dir_sync,
+    speckit_feature_state_sync,
     tasks_flips_sync,
 )
 
@@ -300,3 +301,104 @@ def test_current_feature_dir_empty_when_no_specs(tmp_path):
     repo.mkdir()
     assert current_feature_dir_sync(str(repo)) == ""
     assert current_feature_dir_sync(str(tmp_path / "nope")) == ""
+
+
+# ---- speckit_feature_state_sync: dispatch-boundary enforcement gate --------
+# Tests for the dispatch-gate detector (issue #679): reports (total, graded,
+# active) so the dispatch gate can enforce single-feature and graded-spec rules.
+
+
+def test_speckit_feature_state_returns_zeros_when_no_specs_dir(tmp_path):
+    """No specs/ at all — first dispatch scenario, gate sails through."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    assert speckit_feature_state_sync(str(repo)) == (0, 0, 0)
+    assert speckit_feature_state_sync(str(tmp_path / "nope")) == (0, 0, 0)
+
+
+def test_speckit_feature_state_skips_non_feature_dirs(tmp_path):
+    """specs/tiny/ has no spec.md/tasks.md — not a feature dir, not counted."""
+    repo = tmp_path / "repo"
+    (repo / "specs" / "tiny").mkdir(parents=True)
+    (repo / "specs" / "tiny" / "some-fix.md").write_text("# Tiny spec\n")
+    assert speckit_feature_state_sync(str(repo)) == (0, 0, 0)
+
+
+def test_speckit_feature_state_reports_ungraded_spec(tmp_path):
+    """spec.md exists but no tasks.md — spec is not graded (plan step missing).
+    (a) dispatch must block without a graded spec."""
+    repo = tmp_path / "repo"
+    (repo / "specs" / "001-feat").mkdir(parents=True)
+    (repo / "specs" / "001-feat" / "spec.md").write_text("# Spec\n")
+    total, graded, active = speckit_feature_state_sync(str(repo))
+    assert total == 1
+    assert graded == 0   # no tasks.md — not graded
+    assert active == 0
+
+
+def test_speckit_feature_state_reports_graded_with_pending_tasks(tmp_path):
+    """One feature with pending tasks — the single-feature happy path."""
+    repo = tmp_path / "repo"
+    (repo / "specs" / "001-feat").mkdir(parents=True)
+    (repo / "specs" / "001-feat" / "spec.md").write_text("# Spec\n")
+    (repo / "specs" / "001-feat" / "tasks.md").write_text(_TASKS)
+    total, graded, active = speckit_feature_state_sync(str(repo))
+    assert total == 1
+    assert graded == 1
+    assert active == 1   # _TASKS has unchecked items
+
+
+def test_speckit_feature_state_reports_graded_all_done(tmp_path):
+    """All tasks checked — feature is complete, active count is 0."""
+    repo = tmp_path / "repo"
+    (repo / "specs" / "001-feat").mkdir(parents=True)
+    all_done = _flip(
+        _TASKS,
+        "T000 scaffold the repo skeleton",
+        "T001 [P] [US1] scaffold the module",
+        "T002 [US1] wire the endpoint",
+        "T003 [P] [US2] add the second story",
+    )
+    (repo / "specs" / "001-feat" / "tasks.md").write_text(all_done)
+    total, graded, active = speckit_feature_state_sync(str(repo))
+    assert total == 1
+    assert graded == 1
+    assert active == 0   # all checked, no pending work
+
+
+def test_speckit_feature_state_three_active_features(tmp_path):
+    """(b)/(c) Three features each with pending tasks — dispatch must be blocked."""
+    repo = tmp_path / "repo"
+    for feat in ("001-a", "002-b", "003-c"):
+        (repo / "specs" / feat).mkdir(parents=True)
+        (repo / "specs" / feat / "tasks.md").write_text(_TASKS)
+    total, graded, active = speckit_feature_state_sync(str(repo))
+    assert total == 3
+    assert graded == 3
+    assert active == 3
+
+
+def test_speckit_feature_state_tasks_md_only_no_spec_md(tmp_path):
+    """tasks.md alone (no spec.md) counts as graded — both presence indicators
+    are accepted; tasks.md is the stronger signal (pipeline completed)."""
+    repo = tmp_path / "repo"
+    (repo / "specs" / "001-feat").mkdir(parents=True)
+    (repo / "specs" / "001-feat" / "tasks.md").write_text(_TASKS)
+    total, graded, active = speckit_feature_state_sync(str(repo))
+    assert total == 1
+    assert graded == 1
+    assert active == 1
+
+
+def test_speckit_feature_state_mixed_graded_and_ungraded(tmp_path):
+    """One feature graded (has tasks.md), one ungraded (spec.md only) — total
+    is 2, graded is 1. Gate should still report total>0 and graded<total."""
+    repo = tmp_path / "repo"
+    (repo / "specs" / "001-done").mkdir(parents=True)
+    (repo / "specs" / "001-done" / "tasks.md").write_text(_TASKS)
+    (repo / "specs" / "002-plan").mkdir(parents=True)
+    (repo / "specs" / "002-plan" / "spec.md").write_text("# Spec\n")
+    total, graded, active = speckit_feature_state_sync(str(repo))
+    assert total == 2
+    assert graded == 1
+    assert active == 1
