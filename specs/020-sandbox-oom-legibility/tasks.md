@@ -87,8 +87,8 @@ cases; doctor seeded fault.
 ## Phase 7: Polish & cross-cutting
 
 - [x] T028 Docs honesty pass: update `docs/reference/env-vars.md` (declared-into-sandbox semantics of the sizing vars; per-project override resolution), `docs/architecture.md`/`docs/flows/task-execution.md` where the settle classes or sandbox env are described, and `docs/INDEX.md` currency tags — in the same PRs as the changes that stale them
-- [ ] T029 Verify each increment against `quickstart.md`'s stubbed matrix before its PR; run the live-shakedown steps once after US2 and once after US4 land and deploy
-- [ ] T030 Close the loop: comment on devclaw#702 with the landed PR list; mark spec 020 status; re-enable the run window if still disabled (operator note from 2026-08-26)
+- [x] T029 Verify each increment against `quickstart.md`'s stubbed matrix before its PR — done per-PR (#703–#706); the post-deploy live-shakedown half is owned by issue #717 (the VPS has not been redeployed since 020 landed)
+- [x] T030 Close the loop: devclaw#702 closed with the landed PR list (#703–#706, 2026-08-26); the run-window re-enable is an operator step owned by issue #717
 
 ## Dependencies
 
