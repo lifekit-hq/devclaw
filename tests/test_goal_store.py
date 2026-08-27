@@ -107,6 +107,34 @@ def test_load_goal_defaults_strictness_to_trust_when_absent(tmp_path):
     assert GoalStore(tmp_path).load_goal("legacy-strict").strictness == "trust"
 
 
+def test_set_verify_cmd_mutates_one_field_and_preserves_the_rest(tmp_path):
+    # Issue #711: set_verify_cmd is a narrow single-field override — it must
+    # update verify_cmd and leave every other goal.yaml key byte-identical.
+    store = GoalStore(tmp_path)
+    store.create_goal(
+        "g", objective="keep me", workspace_dir="/ws", cadence="6h",
+        backlog=["a", "b"], done_when="dw", verify_cmd="pytest -x",
+    )
+    g = store.set_verify_cmd("g", "pytest -x --timeout=60")
+    assert g.verify_cmd == "pytest -x --timeout=60"
+    reloaded = store.load_goal("g")
+    assert reloaded.verify_cmd == "pytest -x --timeout=60"
+    assert reloaded.objective == "keep me"
+    assert reloaded.cadence == "6h"
+    assert reloaded.backlog == ["a", "b"]
+    assert reloaded.done_when == "dw"
+
+
+def test_set_verify_cmd_accepts_none_to_clear(tmp_path):
+    # Clearing verify_cmd lets the manifest tier take effect on next dispatch.
+    store = GoalStore(tmp_path)
+    store.create_goal("g", objective="x", workspace_dir="/ws", verify_cmd="pytest")
+    assert store.load_goal("g").verify_cmd == "pytest"
+    g = store.set_verify_cmd("g", None)
+    assert g.verify_cmd is None
+    assert store.load_goal("g").verify_cmd is None
+
+
 def test_create_goal_persists_stub_acceptable(tmp_path):
     # The owner's explicit opt-in for which tools may ship as stubs must
     # survive a round-trip through yaml — the done-gate reads it on every

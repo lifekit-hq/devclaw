@@ -36,11 +36,13 @@ def _req(path_params, body=None):
 class _FakeGoals:
     """Minimal GoalService stand-in — records calls, raises injected errors."""
 
-    def __init__(self, resume=None, strictness=None):
+    def __init__(self, resume=None, strictness=None, verify_cmd=None):
         self._resume = resume
         self._strictness = strictness
+        self._verify_cmd = verify_cmd
         self.resume_calls: list = []
         self.strictness_calls: list = []
+        self.verify_cmd_calls: list = []
 
     def resume_goal(self, goal_id):
         self.resume_calls.append(goal_id)
@@ -53,6 +55,12 @@ class _FakeGoals:
         if isinstance(self._strictness, Exception):
             raise self._strictness
         return self._strictness
+
+    def set_verify_cmd(self, goal_id, verify_cmd):
+        self.verify_cmd_calls.append((goal_id, verify_cmd))
+        if isinstance(self._verify_cmd, Exception):
+            raise self._verify_cmd
+        return self._verify_cmd
 
 
 def _call(fn, req):
@@ -102,4 +110,51 @@ def test_strictness_unknown_goal_is_404(monkeypatch):
     from devclaw.server.routes import goals as http_mod
     monkeypatch.setattr(http_mod, "goals", _FakeGoals(strictness=KeyError("g")))
     status, body = _call(http_mod.goal_strictness, _req({"goal_id": "g"}, {"strictness": "strict"}))
+    assert status == 404 and body["error"] == "not_found"
+
+
+# ── verify_cmd (issue #711) ─────────────────────────────────────────────────
+
+def test_verify_cmd_update_forwarded_to_service(monkeypatch):
+    # Named regression test: the HTTP route wires straight to the service and
+    # reflects the returned dict — the operator can override verify_cmd without
+    # cancelling + recreating the goal.
+    from devclaw.server.routes import goals as http_mod
+    ret = {"goal_id": "g", "verify_cmd": "pytest -x --timeout=60"}
+    fake = _FakeGoals(verify_cmd=ret)
+    monkeypatch.setattr(http_mod, "goals", fake)
+    status, body = _call(
+        http_mod.goal_verify_cmd,
+        _req({"goal_id": "g"}, {"verify_cmd": "pytest -x --timeout=60"}),
+    )
+    assert status == 200 and body["verify_cmd"] == "pytest -x --timeout=60"
+    assert fake.verify_cmd_calls == [("g", "pytest -x --timeout=60")]
+
+
+def test_verify_cmd_clear_passes_none_to_service(monkeypatch):
+    from devclaw.server.routes import goals as http_mod
+    ret = {"goal_id": "g", "verify_cmd": None}
+    fake = _FakeGoals(verify_cmd=ret)
+    monkeypatch.setattr(http_mod, "goals", fake)
+    status, body = _call(
+        http_mod.goal_verify_cmd,
+        _req({"goal_id": "g"}, {"verify_cmd": None}),
+    )
+    assert status == 200 and body["verify_cmd"] is None
+    assert fake.verify_cmd_calls == [("g", None)]
+
+
+def test_verify_cmd_missing_key_is_400(monkeypatch):
+    from devclaw.server.routes import goals as http_mod
+    fake = _FakeGoals(verify_cmd={"goal_id": "g", "verify_cmd": "x"})
+    monkeypatch.setattr(http_mod, "goals", fake)
+    status, body = _call(http_mod.goal_verify_cmd, _req({"goal_id": "g"}, {"wrong_key": "x"}))
+    assert status == 400 and body["error"] == "verify_cmd_required"
+    assert fake.verify_cmd_calls == []  # rejected before the service is touched
+
+
+def test_verify_cmd_unknown_goal_is_404(monkeypatch):
+    from devclaw.server.routes import goals as http_mod
+    monkeypatch.setattr(http_mod, "goals", _FakeGoals(verify_cmd=KeyError("g")))
+    status, body = _call(http_mod.goal_verify_cmd, _req({"goal_id": "g"}, {"verify_cmd": "x"}))
     assert status == 404 and body["error"] == "not_found"

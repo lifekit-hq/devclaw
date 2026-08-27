@@ -3,7 +3,7 @@
 **Issue**: #711
 **Branch**: goal/devclaw-auth-ping-path-2026-08-25
 **Date**: 2026-08-27
-**Status**: in-progress
+**Status**: done
 **Complexity**: small
 
 ## What
@@ -61,17 +61,17 @@ update the goal's value short of cancel + recreate.
 ## Tasks
 
 - [x] Write tinyspec
-- [ ] Add `GoalStore.set_verify_cmd()`
-- [ ] Add `GoalService.set_verify_cmd()`
-- [ ] Add `set_goal_verify_cmd` MCP tool
-- [ ] Add `POST /goals/{id}/verify_cmd` HTTP route
-- [ ] Add regression tests (store + HTTP route)
-- [ ] Full suite + `ruff check .` + `mypy` green
+- [x] Add `GoalStore.set_verify_cmd()`
+- [x] Add `GoalService.set_verify_cmd()`
+- [x] Add `set_goal_verify_cmd` MCP tool
+- [x] Add `POST /goals/{id}/verify_cmd` HTTP route
+- [x] Add regression tests (store + HTTP route)
+- [x] Full suite + `ruff check .` + `mypy` green
 
 ## Done When
 
-- [ ] All tasks checked off
-- [ ] `set_verify_cmd` changes `verify_cmd` in goal.yaml, preserving all other fields
-- [ ] Clearing with `None` falls back to manifest tier on next dispatch
-- [ ] Named regression tests present and green
-- [ ] Full suite green, ruff + mypy clean
+- [x] All tasks checked off
+- [x] `set_verify_cmd` changes `verify_cmd` in goal.yaml, preserving all other fields
+- [x] Clearing with `None` falls back to manifest tier on next dispatch
+- [x] Named regression tests present and green
+- [x] Full suite green, ruff + mypy clean
