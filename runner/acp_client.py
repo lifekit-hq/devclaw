@@ -171,6 +171,7 @@ class AcpClient:
         env: dict[str, str],
         idle_timeout_s: int | None = None,
         on_event=None,
+        on_update=None,
     ) -> None:
         self.argv = list(argv)
         self.env = dict(env)
@@ -183,11 +184,21 @@ class AcpClient:
                 idle_timeout_s = DEFAULT_IDLE_TIMEOUT_S
         self.idle_timeout_s = idle_timeout_s
         self._on_event = on_event or (lambda ev: None)
+        #: Raw-params observer for every ``session/update`` (spec 021): the
+        #: runner's slice watcher / context tripwire read the stream here.
+        #: Guarded like ``on_event`` — an observer failure never breaks a turn.
+        self._on_update = on_update or (lambda params: None)
         self.proc: subprocess.Popen | None = None
         self.session_id: str | None = None
         #: Last COMPLETE agent message flushed this turn — feeds `agent_output`
         #: and the BLOCKED/REPO NOTES parsing. Readable mid-turn (except path).
         self.last_agent_message: str = ""
+        #: True while the CURRENT turn's cancel was requested by the runner
+        #: itself (slice watcher / tripwire — spec 021). The runner uses this
+        #: to tell a deliberate landing from an external cancel: a
+        #: ``cancelled`` stopReason with this flag False is a failure, never
+        #: an ok result. Reset by each new prompt() turn.
+        self.turn_cancel_requested = False
         self._buf = bytearray()
         self._stderr = bytearray()
         self._next_id = 0
@@ -201,6 +212,14 @@ class AcpClient:
     def run(self, workspace_dir: str, prompt_text: str) -> PromptOutcome:
         """spawn → initialize → session/new → one prompt turn. Raises AcpError
         on any protocol failure; the caller owns close()."""
+        self.start(workspace_dir)
+        return self.prompt(prompt_text)
+
+    def start(self, workspace_dir: str) -> None:
+        """spawn → initialize → session/new, without prompting. Split out of
+        run() (spec 021) so the runner can send a FOLLOW-UP prompt turn in the
+        same session — the land-now sequence after a runner-initiated turn
+        cancel. Raises AcpError on any protocol failure."""
         self._spawn(cwd=workspace_dir)
         self._request(
             "initialize",
@@ -221,10 +240,18 @@ class AcpClient:
         if not session_id:
             raise AcpError(f"session/new returned no sessionId: {new_sess!r}")
         self.session_id = session_id
+
+    def prompt(self, prompt_text: str) -> PromptOutcome:
+        """One ``session/prompt`` turn on the started session. There is no
+        mid-turn message injection in ACP — a follow-up instruction is a NEW
+        turn, sent after cancel_turn() ended the current one (spec 021)."""
+        if not self.session_id:
+            raise AcpError("prompt() before start(): no session")
+        self.turn_cancel_requested = False
         result = self._request(
             "session/prompt",
             {
-                "sessionId": session_id,
+                "sessionId": self.session_id,
                 "prompt": [{"type": "text", "text": prompt_text}],
             },
         )
@@ -237,6 +264,22 @@ class AcpClient:
             usage=finalize_usage(self._usage_acc),
             stderr_tail=self.stderr_tail(),
         )
+
+    def cancel_turn(self) -> None:
+        """Runner-initiated cancel of the CURRENT prompt turn (spec 021):
+        sends ``session/cancel`` and marks the cancel as deliberate, so the
+        turn's ``cancelled`` stopReason reads as a landing step, not a
+        failure. Safe to call from inside an on_event/on_update observer (the
+        pump keeps running until the prompt response arrives). Never raises —
+        if the notify fails the turn ends via the normal error path anyway."""
+        if self.turn_cancel_requested:
+            return
+        self.turn_cancel_requested = True
+        try:
+            if self.session_id:
+                self._notify("session/cancel", {"sessionId": self.session_id})
+        except Exception:
+            pass
 
     def close(self) -> None:
         """Teardown escalation: session/cancel → SIGTERM → SIGKILL. Never
@@ -444,6 +487,12 @@ class AcpClient:
             self._emit("ACPUpdateEvent", "agent", {"method": method, "params": params})
             return
         accumulate_usage(self._usage_acc, params)
+        try:
+            self._on_update(params)
+        except Exception:
+            # An observer failure must never crash the agent turn (same
+            # contract as the on_event sink).
+            pass
         raw_update = params.get("update")
         update = raw_update if isinstance(raw_update, dict) else {}
         kind = update.get("sessionUpdate")

@@ -635,6 +635,171 @@ def _raise_own_oom_score() -> None:  # pragma: no cover — exercised pre-exec
 
 
 
+# ─── Chunk-slice watcher (spec 021, US1) ─────────────────────────────────────
+# One worker session executes ONE story-slice of the speckit plan, and the
+# limit is harness-enforced (clarified 2026-08-26): the watcher reads the
+# worker's own specs/*/tasks.md (never writes it — the worker stays the single
+# writer) and ends the turn when a full slice has flipped complete AND the
+# agent then touches task rows OUTSIDE every advanced slice. The grammar
+# mirrors devclaw/goal/slice_guard.py and is frozen in
+# specs/021-worker-context-budget/contracts/chunk-grammar.md — the runner is a
+# zero-dep standalone file and cannot import the host module, so the shared
+# fixtures in tests/ hold the two parsers together.
+
+_CHUNK_TASK_LINE = re.compile(r"^\s*[-*]\s+\[(?P<mark>[ xX])\]\s+(?P<rest>.+?)\s*$")
+_CHUNK_TASK_ID = re.compile(r"\bT\d+\b")
+_CHUNK_STORY_TAG = re.compile(r"\bUS\d+\b")
+
+#: The follow-up prompt of the watcher's landing sequence (an ACP-level
+#: message, not vendor wiring): the agent keeps all in-flight file state
+#: because the session survives the turn cancel.
+_LAND_SLICE_PROMPT = (
+    "STOP — the story-slice you completed is this session's whole scope "
+    "(one slice per session; the harness enforces the stop). Do not start "
+    "any further slice. Land what you have now: make tasks.md honest about "
+    "exactly what is done, run the relevant checks, commit the work with the "
+    "specs/ artifacts, and end with the structured hand-back."
+)
+
+
+def _chunk_task_rows(text: str) -> "list[tuple[str, str | None, bool]]":
+    """Mirror of slice_guard._task_rows: (key, story, checked) per checkbox
+    line — key is the stable ``T<id>`` when present, else the trimmed label;
+    story is the ``US<n>`` tag or None. Pure and total."""
+    rows: "list[tuple[str, str | None, bool]]" = []
+    for line in (text or "").splitlines():
+        m = _CHUNK_TASK_LINE.match(line)
+        if not m:
+            continue
+        rest = m.group("rest").strip()
+        idm = _CHUNK_TASK_ID.search(rest)
+        sm = _CHUNK_STORY_TAG.search(rest)
+        key = idm.group(0) if idm else rest
+        rows.append((key, sm.group(0) if sm else None, m.group("mark") in ("x", "X")))
+    return rows
+
+
+class _SliceWatcher:
+    """Session-stop enforcement for one-chunk-per-session (spec 021 FR-001).
+
+    Armed only when the workspace carries ≥2 incomplete story-slices at
+    session start (FR-005: a single-chunk ask has zero ceremony). Re-reads
+    each ``specs/*/tasks.md`` at tool-call boundaries (small files; a
+    stat-gate provably misses same-size flips). Untagged (setup/polish) rows
+    never trigger the stop
+    — they ride whatever slice ships — so the worker's own wrap-up is never
+    truncated. Everything is best-effort: an unreadable file during the
+    session disarms detection for that file, never crashes the turn."""
+
+    def __init__(self, workspace_dir: str) -> None:
+        self.workspace_dir = workspace_dir
+        self.armed = False
+        self.stop_requested = False
+        self.feature = ""
+        self._start: "dict[tuple[str, str | None, str], bool]" = {}
+        self._post_advance: "dict[tuple[str, str | None, str], bool] | None" = None
+        self._advanced: "set[tuple[str, str]]" = set()
+
+    def _tasks_paths(self) -> "list[str]":
+        try:
+            return sorted(
+                _glob.glob(os.path.join(self.workspace_dir, "specs", "*", "tasks.md"))
+            )
+        except Exception:
+            return []
+
+    def _read_rows(self) -> "dict[tuple[str, str | None, str], bool]":
+        """Current checkbox state across every tasks.md, keyed
+        (feature, story, task-key) → checked. Re-read on every observation —
+        the files are small, observations happen at tool-call boundaries, and
+        an mtime/size gate provably misses a same-size flip inside one
+        timestamp granule (`[ ]`→`[x]` is byte-length-neutral). An unreadable
+        file contributes nothing."""
+        rows: "dict[tuple[str, str | None, str], bool]" = {}
+        for path in self._tasks_paths():
+            feature = os.path.basename(os.path.dirname(path))
+            try:
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    parsed = _chunk_task_rows(fh.read())
+            except OSError:
+                continue
+            for key, story, checked in parsed:
+                rows[(feature, story, key)] = checked
+        return rows
+
+    def arm(self) -> None:
+        """Snapshot session-start state; arm iff ≥2 incomplete slices exist."""
+        self._start = self._read_rows()
+        incomplete: "set[tuple[str, str]]" = set()
+        latest: "tuple[float, str] | None" = None
+        for path in self._tasks_paths():
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            cand = (mtime, os.path.basename(os.path.dirname(path)))
+            if latest is None or cand > latest:
+                latest = cand
+        self.feature = latest[1] if latest else ""
+        for (feature, story, _key), checked in self._start.items():
+            if story is not None and not checked:
+                incomplete.add((feature, story))
+        self.armed = len(incomplete) >= 2
+
+    def _complete_slices(
+        self, rows: "dict[tuple[str, str | None, str], bool]"
+    ) -> "set[tuple[str, str]]":
+        by_slice: "dict[tuple[str, str], bool]" = {}
+        for (feature, story, _key), checked in rows.items():
+            if story is None:
+                continue
+            slice_id = (feature, story)
+            by_slice[slice_id] = by_slice.get(slice_id, True) and checked
+        return {s for s, complete in by_slice.items() if complete}
+
+    def advanced_slices(self) -> "list[str]":
+        return sorted(story for (_f, story) in self._advanced)
+
+    def active_slice(self) -> str:
+        """The smallest incomplete slice of the current feature at session
+        start — best-effort naming for the oversized-slice mark (FR-008)."""
+        stories = sorted(
+            story
+            for (feature, story, _key), checked in self._start.items()
+            if story is not None and feature == self.feature and not checked
+        )
+        return stories[0] if stories else ""
+
+    def check(self) -> bool:
+        """Advance the watcher one observation. True exactly once, at the
+        moment the stop condition is first met."""
+        if not self.armed or self.stop_requested:
+            return False
+        rows = self._read_rows()
+        start_complete = self._complete_slices(self._start)
+        now_complete = self._complete_slices(rows)
+        advanced = {
+            s for s in now_complete - start_complete
+            # a slice with no rows at start (brand-new) still counts: it went
+            # from not-complete (absent) to complete — build-ahead either way
+        }
+        if not advanced:
+            return False
+        if self._post_advance is None:
+            self._advanced = advanced
+            self._post_advance = rows
+            return False
+        # Stop when a STORY-tagged row outside every advanced slice changed
+        # (flip either way, or a new row) since the slice completed.
+        for (feature, story, key), checked in rows.items():
+            if story is None or (feature, story) in self._advanced:
+                continue
+            if self._post_advance.get((feature, story, key)) != checked:
+                self.stop_requested = True
+                return True
+        return False
+
+
 # The engineer's return-contract (_RETURN_CONTRACT) tells it to end its final
 # message with a STATUS field whose value is either ``DONE`` or
 # ``BLOCKED: <one-line reason>`` when it genuinely cannot finish (a missing
@@ -1426,7 +1591,25 @@ def main() -> None:
     if acp_model:
         acp_env["ANTHROPIC_MODEL"] = acp_model
 
-    client = acp.AcpClient(acp_command, acp_env, on_event=_emit_event)
+    # Chunk-slice watcher (spec 021 US1): armed only for a multi-slice
+    # workspace; observes tool-call boundaries via the event stream and ends
+    # the turn mechanically when a completed slice is left behind for the
+    # next one. `client` is assigned below — the closure reads it at call
+    # time, after construction.
+    watcher = _SliceWatcher(workspace_dir)
+    watcher.arm()
+
+    def _emit_and_watch(ev: dict) -> None:
+        _emit_event(ev)
+        if (
+            watcher.armed
+            and not watcher.stop_requested
+            and ev.get("type") == "ACPToolCallEvent"
+        ):
+            if watcher.check():
+                client.cancel_turn()
+
+    client = acp.AcpClient(acp_command, acp_env, on_event=_emit_and_watch)
 
     usage: dict | None = None
     # Snapshot the cgroup OOM counter before the agent runs so a kill DURING
@@ -1435,6 +1618,25 @@ def main() -> None:
     try:
         try:
             outcome = client.run(workspace_dir, wrapped_goal)
+            if (
+                watcher.stop_requested
+                and client.turn_cancel_requested
+                and outcome.stop_reason == "cancelled"
+            ):
+                # The landing sequence (spec 021): the session survives the
+                # turn cancel with all file state intact; the follow-up turn
+                # commits and hands back, then the normal verify/result path
+                # runs on ITS outcome.
+                outcome = client.prompt(_LAND_SLICE_PROMPT)
+            if outcome.stop_reason == "cancelled" and not client.turn_cancel_requested:
+                # Fail CLOSED: an externally-cancelled turn used to leak
+                # through as status="ok" on whatever half-finished state the
+                # agent left behind (the pre-021 hole). Only the runner's own
+                # landing sequence may ride a cancelled stopReason.
+                raise acp.AcpError(
+                    "agent turn was cancelled without a runner-initiated "
+                    "landing — treating as a failure, never an ok result"
+                )
         finally:
             client.close()
         usage = outcome.usage
@@ -1452,8 +1654,22 @@ def main() -> None:
         # OOM evidence check (spec 020): if the cgroup recorded a kill during
         # this session, stamp the marker so the queue classifies the failure
         # as a deterministic environment cap instead of retrying it.
+        # Oversized-slice mark (spec 021 FR-008): a context overflow while the
+        # watcher was armed names the slice being worked, so the goal layer's
+        # next brief demands a re-slice of THAT slice instead of a blind
+        # "smaller scope". Appended into the error text — the settle path
+        # matches its markers with `in`, so a suffix is safe.
+        err_text = str(exc)
+        if (
+            watcher.armed
+            and "Prompt is too long" in err_text
+            and watcher.active_slice()
+        ):
+            err_text += (
+                f" [active_slice: {watcher.feature} {watcher.active_slice()}]"
+            )
         err_payload = _failure_result(
-            _oom_annotate(str(exc), oom_baseline),
+            _oom_annotate(err_text, oom_baseline),
             trace=traceback.format_exc(),
             agent_output=_agent_last_words(
                 client.last_agent_message, client.stderr_tail()
@@ -1508,6 +1724,15 @@ def main() -> None:
             client.last_agent_message, client.stderr_tail()
         ),
     }
+    if watcher.armed:
+        # Optional field per contracts/runner-result.md (spec 021): absent
+        # means the watcher never armed (single-chunk fast path, FR-005).
+        watcher.check()  # final observation — catch a flip after the last tool call
+        result_payload["chunk"] = {
+            "feature": watcher.feature,
+            "advanced_slices": watcher.advanced_slices(),
+            "stopped_by_watcher": watcher.stop_requested,
+        }
     if usage:
         result_payload["usage"] = usage
     if repo_notes:
