@@ -117,7 +117,9 @@ def test_craft_stays_out_of_the_always_on_brief(runner, skill_dir):
     repo-gate-conflict skill grew it to ~9.4k, then the demolition-P2 PLAN.md
     skill to ~12.2k, both on purpose)."""
     brief = runner._load_skills("implement_feature")
-    assert len(brief) < 13000  # craft re-concatenation would push it to ~17k
+    # ~12.9k after spec 021's doctrine additions; craft re-concatenation
+    # (≈ +4.8k) would push it past this ceiling.
+    assert len(brief) < 13_600
 
 
 def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
@@ -128,9 +130,12 @@ def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
     durable-memory skill — PLAN.md then, speckit artifacts now — commit) stayed. A regression above this ceiling means the spoon-feeding prose
     crept back — recompress it, don't raise the bar. (Ceiling lifted 11.4k →
     12.6k for the #508 doctrine additions — judgment-call return contract,
-    precedent rule, one-shot scope bound — genuine doctrine, not prose creep.)"""
+    precedent rule, one-shot scope bound — genuine doctrine, not prose creep.
+    Lifted again 12.6k → 13.2k for spec 021: the harness-enforced one-slice
+    contract (US1) and the per-slice read budget (US3) — the context-budget
+    invariant's worker-facing half, genuine doctrine.)"""
     brief = runner._load_skills("implement_feature")
-    assert len(brief) < 12_600
+    assert len(brief) < 13_200
     # the guardrails the compression must never drop (the anti-#358 rules + the
     # pull-doctrine live on regardless of how tight the prose gets)
     assert "Never weaken or delete an existing test" in brief
