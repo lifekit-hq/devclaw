@@ -173,6 +173,34 @@ async def _dispatch_action(
         if hold_reason:
             store.append_log(goal_id, f"dispatch held: {hold_reason}")
             return Outcome.SLEPT
+    # ---- speckit contract enforcement at the dispatch boundary (issue #679) --
+    # (a) block when spec dirs exist but none are graded (no tasks.md — the plan
+    #     step hasn't run); (b)/(c) block when 2+ features have pending tasks —
+    #     the single-feature-slice rule. Zero-token (pure working-tree fs read),
+    #     best-effort: a probe hiccup MUST NOT wedge dispatch. First dispatch on a
+    #     fresh goal returns (0, 0, 0) and sails through. Read-only reviews are
+    #     exempt — they don't advance features.
+    if action.tool != "review_repository":
+        try:
+            _total, _graded, _active = await asyncio.to_thread(
+                _slice_guard.speckit_feature_state_sync, goal.workspace_dir
+            )
+            if _total > 0 and _graded == 0:
+                store.append_log(
+                    goal_id,
+                    f"dispatch held: {_total} spec dir(s) present but none graded "
+                    f"(no tasks.md) — complete the speckit plan step before dispatch",
+                )
+                return Outcome.SLEPT
+            if _active > 1:
+                store.append_log(
+                    goal_id,
+                    f"dispatch held: {_active} features have pending tasks — "
+                    f"single-feature enforcement: narrow to one feature before dispatch",
+                )
+                return Outcome.SLEPT
+        except Exception:  # noqa: BLE001 — a probe hiccup must never wedge dispatch
+            pass
     # ---- planned fan-out (spec 010 US3, FR-101) -----------------------------
     # Read the plan for a group of tasks it already declared topologically
     # independent — consecutive `[P]` rows with disjoint declared file scopes —
@@ -315,7 +343,7 @@ async def _dispatch_action(
                 _slice_guard.current_feature_dir_sync, goal.workspace_dir
             )
             store.write_executing_feature(goal_id, feature_dir)
-        except Exception:  # noqa: BLE001 — recording is a bonus, never a dispatch gate
+        except Exception:  # noqa: BLE001 — recording is best-effort, never a gate
             pass
     _engine_kick(engine)
     _trace.record_dispatch(goal_id=goal_id, tool=action.tool, ref_id=ref.id, engine=getattr(engine, "kind", ""))

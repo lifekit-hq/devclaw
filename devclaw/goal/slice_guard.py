@@ -187,6 +187,54 @@ def tasks_flips_sync(workspace_dir: str) -> int:
     return total
 
 
+def speckit_feature_state_sync(workspace_dir: str) -> "tuple[int, int, int]":
+    """Working-tree speckit feature state: ``(total_dirs, graded, active)``.
+
+    * ``total_dirs`` — count of ``specs/*/`` directories that carry a
+      ``spec.md`` or a ``tasks.md`` (i.e. they look like speckit feature dirs,
+      not incidental subdirs like ``specs/tiny/``).
+    * ``graded`` — subset that have a ``tasks.md`` (the speckit plan step has
+      run; the spec is ready for implementation).
+    * ``active`` — subset of graded dirs whose ``tasks.md`` contains at least
+      one unchecked task (work is still pending in this feature).
+
+    Zero-token (pure working-tree fs read), best-effort / never-raises.
+    Returns ``(0, 0, 0)`` on any failure or when no feature dirs exist.
+    Used as the dispatch-boundary enforcement gate (issue #679):
+    a dispatch is gated on ``total_dirs == 0`` (first dispatch, allow) OR
+    ``active == 1`` (exactly one active feature, allow); everything else
+    is a speckit contract violation."""
+    try:
+        base = os.path.join(workspace_dir, "specs")
+        if not os.path.isdir(base):
+            return 0, 0, 0
+        entries = [d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d))]
+    except Exception:  # noqa: BLE001 — best-effort, never raises
+        return 0, 0, 0
+
+    total = 0
+    graded = 0
+    active = 0
+    for entry in entries:
+        dir_path = os.path.join(base, entry)
+        has_spec = os.path.isfile(os.path.join(dir_path, "spec.md"))
+        has_tasks = os.path.isfile(os.path.join(dir_path, "tasks.md"))
+        if not has_spec and not has_tasks:
+            continue  # not a speckit feature dir (e.g. specs/tiny/)
+        total += 1
+        if not has_tasks:
+            continue  # spec.md only — not yet graded (no tasks.md)
+        graded += 1
+        try:
+            content = open(os.path.join(dir_path, "tasks.md"),  # noqa: WPS515
+                           encoding="utf-8", errors="replace").read()
+            if any(not checked for (_k, _s, checked) in _task_rows(content)):
+                active += 1
+        except Exception:  # noqa: BLE001 — best-effort
+            pass
+    return total, graded, active
+
+
 def current_feature_dir_sync(workspace_dir: str) -> str:
     """The speckit feature directory the goal is currently executing — the
     ``specs/NNN-*/`` whose ``tasks.md`` was **most recently modified** (the file

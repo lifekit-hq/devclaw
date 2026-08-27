@@ -122,6 +122,31 @@ async def goal_strictness(request: Request) -> Response:
     return JSONResponse(result)
 
 
+@mcp.custom_route("/goals/{goal_id}/verify_cmd", methods=["POST"])
+async def goal_verify_cmd(request: Request) -> Response:
+    """Console-facing verify_cmd override (issue #711). Body is JSON
+    `{"verify_cmd": "..."}` or `{"verify_cmd": null}` to clear.
+    Wraps goal_service.set_verify_cmd — the same entrypoint the MCP tool uses.
+    A missing ``verify_cmd`` key returns 400. Unknown goal returns 404."""
+    goal_id = request.path_params["goal_id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_json"}, status_code=400)
+    if not isinstance(body, dict) or "verify_cmd" not in body:
+        return JSONResponse(
+            {"error": "verify_cmd_required",
+             "hint": "POST {\"verify_cmd\": \"<command>\"} or {\"verify_cmd\": null} to clear"},
+            status_code=400,
+        )
+    value = body.get("verify_cmd") or None
+    try:
+        result = goals.set_verify_cmd(goal_id, value)
+    except KeyError:
+        return JSONResponse({"error": "not_found", "id": goal_id}, status_code=404)
+    return JSONResponse(result)
+
+
 # ── configuration surfaces ─────────────────────────────────────────────────
 # A: a READ-ONLY catalog of the runtime env vars, parsed live from the enforced
 #    single-source-of-truth doc (docs/reference/env-vars.md) so the table never

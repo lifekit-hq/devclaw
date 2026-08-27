@@ -1127,6 +1127,27 @@ class GoalService:
         self.poke()
         return {"goal_id": goal_id, "strictness": g.strictness}
 
+    def set_verify_cmd(self, goal_id: str, verify_cmd: Optional[str]) -> dict:
+        """Override the goal's verification command (issue #711) — the verb
+        behind the console control, the HTTP API, and the MCP tool. A narrow
+        single-field mutation (not a contract patch): ``verify_cmd`` is an
+        operational parameter (how to verify), not a direction term. Pass
+        ``None`` or empty string to clear the goal-level value, letting the
+        manifest tier take effect on the next dispatch. Applies to future
+        dispatches; in-flight work keeps the value it was dispatched with.
+        Raises KeyError on unknown goal.
+        """
+        if not self._goal_store.exists(goal_id):
+            raise KeyError(goal_id)
+        cmd = verify_cmd if verify_cmd and verify_cmd.strip() else None
+        g = self._goal_store.set_verify_cmd(goal_id, cmd)
+        self._goal_store.append_log(
+            goal_id,
+            f"verify_cmd set to {cmd!r}" if cmd else "verify_cmd cleared (falls back to manifest)",
+        )
+        self.poke()
+        return {"goal_id": goal_id, "verify_cmd": g.verify_cmd}
+
     def resume_goal(self, goal_id: str) -> dict:
         """Recovery verb: "the blocker is cleared — re-attempt the SAME
         contract." Fires the existing UNBLOCK edge (BLOCKED → EXECUTING_IDLE)

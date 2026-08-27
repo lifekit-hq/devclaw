@@ -451,6 +451,25 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         self._write_atomic(goal_id, "goal.yaml", yaml.safe_dump(raw, sort_keys=False))
         return self.load_goal(goal_id)
 
+    def set_verify_cmd(self, goal_id: str, verify_cmd: str | None) -> Goal:
+        """Override a goal's verification command (issue #711).
+
+        A narrow, single-field mutation — NOT a contract patch. ``verify_cmd`` is
+        an operational parameter (how to verify the work), not a direction term
+        (objective / done_when). Applies to FUTURE dispatches; in-flight work
+        keeps the value it was dispatched with. Pass ``None`` to clear the
+        goal-level override, falling back to the manifest tier on next dispatch.
+        Every other key in goal.yaml is preserved (raw load → update one key →
+        atomic rewrite).
+        """
+        path = self._dir(goal_id) / "goal.yaml"
+        if not path.exists():
+            raise FileNotFoundError(f"goal {goal_id!r} has no goal.yaml")
+        raw = yaml.safe_load(path.read_text()) or {}
+        raw["verify_cmd"] = verify_cmd if verify_cmd and verify_cmd.strip() else None
+        self._write_atomic(goal_id, "goal.yaml", yaml.safe_dump(raw, sort_keys=False))
+        return self.load_goal(goal_id)
+
     def set_project_id(self, goal_id: str, project_id: str) -> None:
         """Stamp a goal's owning project reference key (#524 P3). Used ONLY by
         the one-time startup backfill that migrates goals written before the

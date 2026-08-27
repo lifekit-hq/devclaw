@@ -1051,6 +1051,127 @@ async def test_slice_guardrail_fails_open_when_detection_finds_no_megadump(tmp_p
     assert "slice guardrail" not in (tmp_path / "g" / "log.md").read_text()
 
 
+# ---- speckit contract enforcement at the DISPATCH boundary (issue #679) -----
+# These three tests cover the gate added to tick_dispatch._dispatch_action:
+# (a) no graded spec → held, (b) single feature → allowed, (c) 3 features → held.
+# All use monkeypatch on speckit_feature_state_sync (zero-token pure-fs) so no
+# real workspace is needed. The goal status must be idle (not in-flight) so the
+# tick reaches the dispatch path.
+
+
+@pytest.mark.asyncio
+async def test_dispatch_held_without_graded_spec(tmp_path, monkeypatch):
+    """(a) Spec dirs exist but none are graded (no tasks.md) — dispatch is held
+    on the next tick. Named regression for issue #679: the gate was missing and
+    the goal would dispatch into an unplanned session."""
+    # total=1 spec dir, graded=0 (no tasks.md), active=0
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (1, 0, 0)
+    )
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    evaluator = FakeClaude()
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.SLEPT          # held, not dispatched
+    assert engine.dispatched == []       # no worker launched
+    assert evaluator.calls == 0          # zero-token enforcement
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "no tasks.md" in log or "not graded" in log or "spec dir(s) present but none graded" in log
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_with_single_graded_active_feature(tmp_path, monkeypatch):
+    """(b) Exactly one feature with pending tasks — the single-feature happy path.
+    Gate must not block a legitimately-sliced goal."""
+    # total=1, graded=1, active=1
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (1, 1, 1)
+    )
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_held_with_three_active_features(tmp_path, monkeypatch):
+    """(c) 3-feature attempt is rejected at the gate — named regression for
+    issue #679. Before this fix the system was fail-open and dispatched anyway."""
+    # total=3, graded=3, active=3
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (3, 3, 3)
+    )
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    evaluator = FakeClaude()
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.SLEPT          # held, not dispatched
+    assert engine.dispatched == []
+    assert evaluator.calls == 0
+    log = (tmp_path / "g" / "log.md").read_text()
+    assert "3 features" in log or "3 feature" in log
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_when_no_specs_yet(tmp_path, monkeypatch):
+    """First dispatch on a fresh goal has no specs at all (0, 0, 0) — gate
+    must sail through and allow the worker to create the spec."""
+    # total=0 — no specs directory yet
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (0, 0, 0)
+    )
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_speckit_dispatch_gate_is_zero_token(tmp_path, monkeypatch):
+    """The gate is pure fs, never an LLM call — zero-token invariant."""
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (2, 2, 2)
+    )
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    evaluator = FakeClaude()
+
+    await _tick(store, "g", evaluator, FakeEngine(), RecordingNotifier())
+
+    assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_speckit_dispatch_gate_fails_open_on_probe_error(tmp_path, monkeypatch):
+    """A probe hiccup (exception from speckit_feature_state_sync) must never
+    wedge dispatch — the gate fails OPEN so a fs error doesn't stall a goal."""
+    def _raise(ws: str):
+        raise OSError("simulated fs error")
+    monkeypatch.setattr("devclaw.goal.slice_guard.speckit_feature_state_sync", _raise)
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED     # sailed through despite the probe error
+    assert len(engine.dispatched) == 1
+
+
 # ---- #394: total merge-policy resolution + settle-time mergeability --------
 
 

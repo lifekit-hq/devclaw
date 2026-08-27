@@ -478,6 +478,25 @@ async def set_goal_strictness(goal_id: str, strictness: str) -> str:
 
 
 @mcp.tool
+async def set_goal_verify_cmd(goal_id: str, verify_cmd: str) -> str:
+    """Override the goal's verification command (issue #711). The verify_cmd is
+    the shell command the sandbox gate runs after the worker finishes; its exit
+    code decides done-vs-failed. Pass an empty string to CLEAR the goal-level
+    value, letting the project manifest's ``verifyCmd`` (if any) take effect on
+    the next dispatch.
+
+    A narrow single-field override, NOT a contract patch — objective/done_when/
+    backlog are untouched. Applies to future dispatches; in-flight work keeps the
+    value it was dispatched with."""
+    if not goal_id:
+        raise ToolError("set_goal_verify_cmd requires goal_id")
+    try:
+        return json.dumps(goals.set_verify_cmd(goal_id, verify_cmd or None), indent=2)
+    except KeyError:
+        raise ToolError(f"unknown goal_id: {goal_id}")
+
+
+@mcp.tool
 async def evaluate_goal(goal_id: str) -> str:
     """Force an on-demand direction evaluation NOW, grounded in the goal's
     artifacts. Reads recent deliveries + log + spec, runs the evaluator, and
