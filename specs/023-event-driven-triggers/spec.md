@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-27
 
-**Status**: Draft — direction ratified by Denys 2026-08-27 (the one-lane arc, with spec 022); run `/speckit-clarify` before implementation.
+**Status**: PARKED — direction memory only, not scheduled. Owner: Denys. Resume condition: spec 022 has landed AND the convergence class (first-pass rate, currently 0.0 against a 0.70 ratchet threshold) has been decided — whichever of those settles the dispatch boundary first. Review by 2026-09-15 even if neither has: a draft with no live resume condition is the "SPECIFIED, NOT IMPLEMENTED" failure this repo already hit on specs 007/008/010/012. Run `/speckit-clarify` with Denys before any implementation.
 
 **Input**: Ruled direction from the 2026-08-27 architecture session: devclaw's storage is already event-sourced (append-only StateStore + projections) but its *triggering* is polled — a ~15-minute heartbeat scans goals, grading waits for manual verbs, completion evidence is re-derived on a timer. The established shape is GitHub-native webhooks driving the state machine, with the heartbeat demoted to what workflow engines call a fallback timer. Nothing invented: this is standard event-driven architecture over the tracker the work already lives in.
 
