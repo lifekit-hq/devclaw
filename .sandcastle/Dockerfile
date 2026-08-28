@@ -115,6 +115,14 @@ COPY --chown=agent:agent runner/hooks/  /opt/devclaw/hooks/
 COPY --chown=agent:agent runner/oom-shield.sh /opt/devclaw/oom-shield.sh
 RUN chmod +x /opt/devclaw/hooks/*.sh
 
+# Chromium's SYSTEM libraries (apt), root stage — the browser binary below is
+# useless without them: a Playwright run in the sandbox could not launch
+# Chromium (fs-479's worker hand-extracted libXfixes.so.3 into /tmp and the
+# LD_LIBRARY_PATH hack ended up committed in a project's playwright config).
+# Debian base is guaranteed above, so install-deps' apt path always applies.
+RUN npx -y playwright@latest install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 USER agent
 
 # Pre-fetch the Playwright Chromium build into the agent user's cache so the
