@@ -17,15 +17,17 @@ from .._state import goals, mcp, queue, store
 from ._common import _preflight_or_prep, _resolve_project_or_reject
 
 
-def _project_hold_warning(project_id: "str | None", workspace_dir: str) -> "str | None":
-    """The FR-009 loud warning: name the goal currently working this project, or
-    ``None`` when nothing holds it.
+def _project_hold_check(project_id: "str | None", workspace_dir: str) -> "str | None":
+    """Return a blocking reason if a goal currently holds this project, or
+    ``None`` when the project is free to dispatch.
 
-    Direct dispatches are deliberately EXEMPT from the single-writer hold (the
-    clarify ruling: an operator-present task is the human judgement call, and
-    the hold exists to stop unattended concurrent planners) — so this only
-    warns, never blocks. Best-effort: a lookup hiccup must not fail a dispatch
-    the operator explicitly asked for."""
+    Spec 010 FR-009 single-writer exemption is REPEALED by spec 022 US2: a
+    non-issue-keyed direct dispatch to a project held by an in-flight goal is
+    now a hard block, not an advisory warning. Issue-keyed dispatches ride the
+    goal lane and are serialized by the tick's project-hold machinery instead.
+
+    Best-effort: a lookup hiccup returns None (allow-through) rather than
+    wedging a dispatch the operator may urgently need."""
     try:
         from ...goal import project_hold as _project_hold
 
@@ -34,12 +36,13 @@ def _project_hold_warning(project_id: "str | None", workspace_dir: str) -> "str 
         if not holder:
             return None
         return (
-            f"goal {holder} is actively working this project. This dispatch is "
-            "exempt from the one-goal-per-project rule because you are driving "
-            "it, but the two of you are now writing to the same repository — "
-            "expect to reconcile."
+            f"goal {holder!r} is actively working this project — "
+            "wait for it to finish before dispatching another task. "
+            f"To cancel it: cancel_goal({holder!r}). "
+            "To dispatch work on a specific issue alongside the goal, "
+            "pass issue_ref= to route via the goal lane instead."
         )
-    except Exception:  # noqa: BLE001 — advisory only; never fail an explicit dispatch
+    except Exception:  # noqa: BLE001 — best-effort; a lookup hiccup allows through
         return None
 
 
@@ -170,6 +173,13 @@ async def dispatch_task(
         except ValueError as exc:
             raise ToolError(str(exc))
         return json.dumps(result, indent=2)
+    # Spec 022 US2 — spec 010 FR-009 single-writer exemption REPEALED: a
+    # non-issue-keyed direct dispatch to a project held by an in-flight goal
+    # is now a hard block. Read-only kinds are unaffected (FR-008).
+    if not read_only:
+        hold_msg = _project_hold_check(resolved.project_id, resolved.workspace_dir)
+        if hold_msg:
+            raise ToolError(hold_msg)
     task_id = queue.submit(
         kind=kind,
         workspace_dir=resolved.workspace_dir,
@@ -181,16 +191,7 @@ async def dispatch_task(
         target_branch=None if kind == "validate_product" else target_branch,
         project_id=resolved.project_id,
     )
-    out = {"task_id": task_id, "status": "pending"}
-    # Spec 010 FR-009: a goal-less direct dispatch is EXEMPT from the
-    # single-writer project hold — an operator-present task IS the human
-    # judgement call, and the hold exists to stop UNATTENDED concurrent
-    # planners. Exempt, but never silent: say loudly that a goal is working
-    # this project, then proceed (constitution VI).
-    warning = _project_hold_warning(resolved.project_id, resolved.workspace_dir)
-    if warning:
-        out["warning"] = warning
-    return json.dumps(out, indent=2)
+    return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
 
 
 @mcp.tool

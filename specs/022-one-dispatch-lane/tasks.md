@@ -22,9 +22,9 @@ Covers FR-001 through FR-003, FR-005 through FR-009, FR-011, FR-012.
 
 Covers FR-004 (repeal single-writer exemption + workspace prep).
 
-- [ ] T008 Repeal `_project_hold_warning` advisory-only; replace with hard block for issue-keyed dispatch in `devclaw/server/tools/tasks.py`
-- [ ] T009 Workspace-prep-to-default-branch-head before each run in `dispatch_issue()` in `devclaw/goal/service.py`
-- [ ] T010 Write named regression tests for serialization and workspace prep
+- [x] T008 Repeal `_project_hold_warning` advisory-only; replace with hard block for issue-keyed dispatch in `devclaw/server/tools/tasks.py`
+- [x] T009 Workspace-prep-to-default-branch-head before each run in `dispatch_issue()` in `devclaw/goal/service.py`
+- [x] T010 Write named regression tests for serialization and workspace prep
 
 ---
 

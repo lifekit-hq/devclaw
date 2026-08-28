@@ -493,3 +493,213 @@ def test_doctor_check_fails_when_identity_table_missing(tmp_path):
     findings = check_goal_issue_identity_table(ctx)
     assert any(f.verdict == Verdict.FAIL for f in findings)
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# Spec 022 US2 — companion dispatches ride the full goal lane
+# ---------------------------------------------------------------------------
+
+
+# --- T008: single-writer hold (FR-009 exemption repealed) -------------------
+
+
+@pytest.mark.asyncio
+async def test_direct_dispatch_hard_blocks_when_goal_holds_project(monkeypatch, tmp_path):
+    """T008 / spec 022 US2: a non-issue-keyed direct dispatch to a project held
+    by an in-flight goal raises ToolError — the spec 010 FR-009 single-writer
+    exemption is repealed."""
+    from fastmcp.exceptions import ToolError
+
+    from devclaw.project_registry import ProjectRegistry
+    from devclaw.server import _state
+    from devclaw.server import tools as _tools
+    from tests.goal_fakes import register_tmp_project
+
+    queue_calls: list[dict] = []
+    monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
+
+    # Seed a goal that holds the project so holder_map returns it.
+    from devclaw.goal.store import GoalStore
+    from devclaw.state_store import StateStore as SS
+
+    gs_db = SS(str(tmp_path / "gs.db"))
+    goals_dir = tmp_path / "gdir"
+    gs = GoalStore(goals_dir, state=gs_db)
+    gs.create_goal(
+        "holder-goal",
+        objective="hold the fort",
+        workspace_dir=str(tmp_path / "ws"),
+        project_id="proj",
+        cadence="1d",
+        done_when="something useful is done",
+        out_of_scope=[], invariants=[], established=[],
+    )
+    from devclaw.goal.models import GoalStatus
+    gs.save_status("holder-goal", GoalStatus(phase="idle", lifecycle="executing"))
+
+    # Patch goals._goal_store so the tool's _project_hold_check sees the seeded goal.
+    monkeypatch.setattr(_state.goals, "_goal_store", gs)
+
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "ws"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/org/repo.git")
+    monkeypatch.setattr(_tools._common, "registry", reg)
+
+    with pytest.raises(ToolError) as exc:
+        await _tools.dispatch_task(
+            kind="implement_feature", project_id="proj", goal="add feature",
+        )
+    msg = str(exc.value)
+    assert "holder-goal" in msg, f"expected goal id in error, got: {msg}"
+    assert queue_calls == [], "blocked dispatch must never reach queue.submit"
+
+    gs_db.close()
+
+
+@pytest.mark.asyncio
+async def test_read_only_dispatch_not_blocked_by_project_hold(monkeypatch, tmp_path):
+    """T008: read-only kinds (review_repository) are unaffected by the project
+    hold — FR-008 and spec 022 US2 both say read-only kinds are out of scope."""
+    from devclaw.project_registry import ProjectRegistry
+    from devclaw.server import _state
+    from devclaw.server import tools as _tools
+    from tests.goal_fakes import register_tmp_project
+
+    queue_calls: list[dict] = []
+    monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
+
+    from devclaw.goal.store import GoalStore
+    from devclaw.state_store import StateStore as SS
+
+    gs_db = SS(str(tmp_path / "gs.db"))
+    gs = GoalStore(tmp_path / "gdir", state=gs_db)
+    gs.create_goal(
+        "holder-goal",
+        objective="hold the fort",
+        workspace_dir=str(tmp_path / "ws"),
+        project_id="proj",
+        cadence="1d",
+        done_when="something useful is done",
+        out_of_scope=[], invariants=[], established=[],
+    )
+    from devclaw.goal.models import GoalStatus
+    gs.save_status("holder-goal", GoalStatus(phase="idle", lifecycle="executing"))
+    monkeypatch.setattr(_state.goals, "_goal_store", gs)
+
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "ws"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/org/repo.git")
+    monkeypatch.setattr(_tools._common, "registry", reg)
+
+    # review_repository should succeed even though a goal holds the project.
+    raw = await _tools.review_repository(project_id="proj", focus="check security")
+    result = json.loads(raw)
+    assert "task_id" in result, "read-only dispatch must not be blocked"
+    assert queue_calls, "read-only dispatch must reach queue.submit"
+
+    gs_db.close()
+
+
+# --- T009: workspace prep at dispatch_issue() time --------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_issue_preps_workspace_on_new_goal_creation(monkeypatch, tmp_path):
+    """T009 / spec 022 US2: dispatch_issue calls prepare_workspace (default
+    branch reset) before creating the new goal — ensures the workspace is on
+    the default-branch head when the first action fires."""
+    from devclaw.goal import service as svc_mod
+
+    prep_calls: list[tuple] = []
+
+    async def _fake_prep(workspace_dir, repo_url=None, branch=None):
+        prep_calls.append((workspace_dir, repo_url, branch))
+        return branch or "main"
+
+    monkeypatch.setattr(svc_mod, "prepare_workspace", _fake_prep)
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({5: _open(5)})
+        ws = str(tmp_path / "ws")
+        # Create a real git workspace so the Path.exists() guard passes.
+        import subprocess
+        (tmp_path / "ws").mkdir()
+        subprocess.run(["git", "init", "-q", str(tmp_path / "ws")], check=True)
+
+        result = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=5,
+        )
+        assert result["result"] == "created"
+        # prepare_workspace must have been called for the workspace at default branch.
+        assert any(
+            call[0] == ws and call[2] is None  # default branch (no branch arg)
+            for call in prep_calls
+        ), f"expected prepare_workspace(ws, repo_url) call; got {prep_calls}"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_issue_skips_prep_for_nonexistent_workspace(monkeypatch, tmp_path):
+    """T009: dispatch_issue skips workspace prep when the workspace does not yet
+    exist — the tick's prepare_ws handles the clone-and-prep at first run."""
+    from devclaw.goal import service as svc_mod
+
+    prep_calls: list = []
+
+    async def _fake_prep(workspace_dir, repo_url=None, branch=None):
+        prep_calls.append(workspace_dir)
+        return branch or "main"
+
+    monkeypatch.setattr(svc_mod, "prepare_workspace", _fake_prep)
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({9: _open(9)})
+        ws = str(tmp_path / "ws")  # does NOT exist
+
+        result = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=9,
+        )
+        assert result["result"] == "created"
+        # prepare_workspace must NOT have been called (workspace absent).
+        assert not prep_calls, "prep must not run for a non-existent workspace"
+    finally:
+        db.close()
+
+
+# --- Serialization: two dispatches to same project → second queued ----------
+
+
+@pytest.mark.asyncio
+async def test_two_issue_dispatches_to_same_project_serialized_by_project_hold(tmp_path):
+    """Spec 022 US2 serialization: two one_shot goals on the same project are
+    serialized by the project hold — the second goal shows queued_behind the first."""
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({1: _open(1), 2: _open(2)})
+        ws = str(tmp_path / "ws")
+
+        r1 = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=1,
+        )
+        r2 = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=2,
+        )
+        assert r1["result"] == "created"
+        assert r2["result"] == "created"
+        assert r1["goal_id"] != r2["goal_id"]
+
+        # The first goal holds the project; the second is queued behind it.
+        g1 = svc.get_goal(r1["goal_id"])
+        g2 = svc.get_goal(r2["goal_id"])
+        assert g1["queued_behind"] is None, "first goal holds the project"
+        assert g2["queued_behind"] == r1["goal_id"], (
+            f"second goal should be queued behind {r1['goal_id']!r}, "
+            f"got queued_behind={g2['queued_behind']!r}"
+        )
+    finally:
+        db.close()
