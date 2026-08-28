@@ -90,4 +90,7 @@ jobs:
         # loudly and the instance falls back to the mounted ~/.claude credential.
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # read:packages-scoped registry token for in-sandbox `npm ci` on
+          # @lifekit-hq-consuming repos — same never-touches-disk contract.
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: bash deploy/deploy-devclaw.sh "${{ steps.id.outputs.deploy_tag }}"

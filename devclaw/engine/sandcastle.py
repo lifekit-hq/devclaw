@@ -158,6 +158,22 @@ def _oauth_token_env() -> tuple[str, ...]:
     return ("-e", f"{OAUTH_TOKEN_VAR}={token}") if token else ()
 
 
+# The one REGISTRY credential that crosses the boundary: a read:packages-scoped
+# token so `npm ci` on an @lifekit-hq-consuming repo (frontend/.npmrc:
+# `_authToken=${NODE_AUTH_TOKEN}`) can resolve GitHub Packages inside the
+# sandbox — without it no real frontend build (and so no real-app e2e proof)
+# is possible in there. Read-only by scope: the sandbox still holds no
+# credential that can push, merge, or touch issues/PRs — delivery ceremony
+# stays host-side. Absent/blank ⇒ no `-e` at all, byte-identical behavior.
+REGISTRY_TOKEN_VAR = "NODE_AUTH_TOKEN"
+
+
+def _registry_token_env() -> tuple[str, ...]:
+    """``-e NODE_AUTH_TOKEN=…`` when the host carries a registry-read token."""
+    token = os.environ.get(REGISTRY_TOKEN_VAR, "").strip()
+    return ("-e", f"{REGISTRY_TOKEN_VAR}={token}") if token else ()
+
+
 def _strip_api_keys(env: dict[str, str]) -> dict[str, str]:
     clean = dict(env)
     clean.pop("ANTHROPIC_API_KEY", None)
@@ -577,6 +593,9 @@ def _build_docker_args(
         # OAUTH_TOKEN_VAR. A metered key never rides along: _strip_api_keys
         # governs the docker CLI's own env and the runner refuses one outright.
         *_oauth_token_env(),
+        # The registry-read token, when the host carries one — see
+        # REGISTRY_TOKEN_VAR.
+        *_registry_token_env(),
         # The THIRD env-forward family (the _build_payload docstring makes
         # adding one a decision — this is spec 020 US3's): declare the
         # ENFORCED resource allocation to the worker, sourced from the SAME
@@ -597,13 +616,14 @@ def _build_docker_args(
 def _build_payload(req: EngineRequest) -> dict:
     """The runner JSON payload for one task. Pure (no I/O) so the host→sandbox
     contract — the only channel carrying WORK across the container boundary — is
-    unit-testable without docker. The host env does not cross wholesale; the two
+    unit-testable without docker. The host env does not cross wholesale; the
     deliberate exceptions are credentials the sandbox cannot function without,
     forwarded one variable at a time in :func:`_build_docker_args`: the git
     identity (:func:`git_identity_env`), the subscription OAuth token
-    (:data:`OAUTH_TOKEN_VAR`), and the enforced sandbox sizing declaration
-    (spec 020 US3 — the decision the previous sentence demanded). Adding a
-    fourth is a decision, not a convenience."""
+    (:data:`OAUTH_TOKEN_VAR`), the enforced sandbox sizing declaration
+    (spec 020 US3 — the decision the previous sentence demanded), and the
+    registry-read token (:data:`REGISTRY_TOKEN_VAR`). Adding another is a
+    decision, not a convenience."""
     payload: dict = {
         "kind": req.kind,
         "workspace_dir": CONTAINER_WORKSPACE,
