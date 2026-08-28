@@ -823,6 +823,191 @@ class GoalService:
             result["warnings"] = [c.message for c in admission.warnings]
         return result
 
+    async def dispatch_issue(
+        self,
+        *,
+        project_id: str,
+        workspace_dir: str,
+        repo_url: Optional[str],
+        issue_ref: int,
+        kind: str = "implement_feature",
+        objective: str = "",
+        verify_cmd: Optional[str] = None,
+        open_pr: bool = True,
+    ) -> dict:
+        """Create-or-attach a one_shot goal keyed to (project_id, issue_ref).
+
+        FR-002: if no active work exists for (project, issue), a one_shot goal
+        is created and started; if active work exists, a receipt is returned and
+        nothing starts. FR-003: the (project, issue) uniqueness is enforced at
+        the SQLite level — a racing second caller cannot win even running
+        simultaneously. FR-005: the issue is fetched live; closed or unreachable
+        issues block the dispatch. FR-011: if the issue is already in a live
+        long-lived goal's scope the dispatch is rejected, naming the goal and
+        the exact steer invocation. FR-012: a completed identity re-arms iff the
+        issue is open on the tracker at dispatch time.
+        """
+        from ..state_store import _now_ms as _now_ms_fn
+
+        issue_key = str(issue_ref)
+
+        # FR-005 + FR-012: fetch live — load-bearing, fail loud, never degrade.
+        if not repo_url:
+            raise ValueError(
+                f"project {project_id!r} has no repo_url — issue-keyed dispatch "
+                "requires a registered repository URL to fetch and identify the issue. "
+                "Update the project registration with repo_url."
+            )
+        try:
+            snap = await self._issue_fetcher(repo_url, issue_ref)
+        except _issue_ref.IssueRefError as exc:
+            raise ValueError(
+                f"cannot dispatch issue #{issue_ref}: {exc} — "
+                "check that the repo_url is correct and gh is authenticated, then retry"
+            ) from exc
+        if snap.state != "open":
+            raise ValueError(
+                f"issue #{issue_ref} is {snap.state!r} on the tracker — "
+                "devclaw only dispatches open issues. Reopen it on the tracker "
+                "if this work is still wanted, then dispatch again."
+            )
+
+        # FR-011: reject if the issue is already in a live long-lived goal's scope.
+        # Long-lived goals reference issues in their issue_refs (spec 019); steering
+        # stays a deliberate human verb — a dispatch must never silently mutate a
+        # long-lived goal's direction.
+        for other_id in self._goal_store.list_goal_ids():
+            try:
+                other = self._goal_store.load_goal(other_id)
+            except Exception:  # noqa: BLE001 — unreadable goal cannot hold a claim
+                continue
+            if other.mode != "long_lived":
+                continue
+            if not other.issue_refs or other.repo_url != repo_url:
+                continue
+            if self._goal_store.load_status(other_id).phase in ("done", "cancelled"):
+                continue
+            if issue_ref in other.issue_refs:
+                raise ValueError(
+                    f"issue #{issue_ref} is already in the scope of long-lived "
+                    f"goal {other_id!r} — companion dispatch is not allowed while "
+                    f"a long-lived goal owns this issue (steering stays a deliberate "
+                    f"human verb, no override exists). To prioritize this issue "
+                    f"inside that goal, steer it: "
+                    f'steer_goal("{other_id}", "prioritize issue #{issue_ref}")'
+                )
+
+        # Fast path: look up existing identity before allocating a goal_id.
+        existing_goal_id = self._goal_store.lookup_issue_identity(project_id, issue_key)
+        if existing_goal_id:
+            existing_status = self._goal_store.load_status(existing_goal_id)
+            if existing_status.phase not in ("done", "cancelled"):
+                # FR-002: active — return "attached" receipt and log the dedup.
+                self._goal_store.append_log(
+                    existing_goal_id,
+                    f"duplicate dispatch for issue #{issue_ref} — "
+                    "already active, no second execution started",
+                )
+                return {
+                    "result": "attached",
+                    "goal_id": existing_goal_id,
+                    "issue_ref": issue_ref,
+                    "message": (
+                        f"issue #{issue_ref} already has active work in goal "
+                        f"{existing_goal_id!r} — attached to it, no duplicate "
+                        f"started. Poll get_goal({existing_goal_id!r}) for status."
+                    ),
+                }
+            # FR-012: completed/cancelled — issue is open (checked above).
+            # Re-arm: CAS-replace the identity row.
+            new_goal_id = self._make_issue_goal_id(issue_ref, objective)
+            now_ms = _now_ms_fn()
+            if not self._goal_store.rearm_issue_identity(
+                project_id, issue_key, existing_goal_id, new_goal_id, now_ms
+            ):
+                # Concurrent re-arm won — re-read and return "attached".
+                winner_id = (
+                    self._goal_store.lookup_issue_identity(project_id, issue_key)
+                    or existing_goal_id
+                )
+                return {
+                    "result": "attached",
+                    "goal_id": winner_id,
+                    "issue_ref": issue_ref,
+                    "message": (
+                        f"concurrent re-dispatch for issue #{issue_ref}: "
+                        f"another caller won the re-arm. Attached to goal "
+                        f"{winner_id!r}."
+                    ),
+                }
+            goal_id = new_goal_id
+        else:
+            # No existing identity — try to claim it.
+            goal_id = self._make_issue_goal_id(issue_ref, objective)
+            now_ms = _now_ms_fn()
+            claimed, owner_id = self._goal_store.claim_issue_identity(
+                project_id, issue_key, goal_id, now_ms
+            )
+            if not claimed:
+                # FR-003: race loss — PRIMARY KEY constraint fired, another caller won.
+                self._goal_store.append_log(
+                    owner_id,
+                    f"duplicate dispatch for issue #{issue_ref} — "
+                    "identity race lost, attached to winning goal",
+                )
+                return {
+                    "result": "attached",
+                    "goal_id": owner_id,
+                    "issue_ref": issue_ref,
+                    "message": (
+                        f"issue #{issue_ref} dispatch race: another caller won. "
+                        f"Attached to goal {owner_id!r}."
+                    ),
+                }
+
+        # We own the identity. Create the one_shot goal.
+        issue_objective = objective or f"Work issue #{issue_ref}: {snap.title}"
+        self.create_goal(
+            goal_id,
+            objective=issue_objective,
+            workspace_dir=workspace_dir,
+            repo_url=repo_url,
+            verify_cmd=verify_cmd,
+            open_pr=open_pr,
+            done_when="",  # has_issue_refs=True bypasses done_when admission check
+            mode="one_shot",
+            project_id=project_id,
+            spec=issue_objective,
+            issues=[issue_ref],
+            # The issue IS the spec (spec 024 direction); slots declared empty
+            # — a deliberate declaration, not an omission.
+            out_of_scope=[],
+            invariants=[],
+            established=[],
+        )
+        return {
+            "result": "created",
+            "goal_id": goal_id,
+            "issue_ref": issue_ref,
+            "message": (
+                f"created one_shot goal {goal_id!r} for issue #{issue_ref} "
+                f"({snap.title!r}). Poll get_goal({goal_id!r}) for status."
+            ),
+        }
+
+    @staticmethod
+    def _make_issue_goal_id(issue_ref: int, objective: str = "") -> str:
+        """Stable-ish readable slug for an issue-keyed one_shot goal."""
+        import re as _re
+
+        slug = f"issue-{issue_ref}"
+        if objective:
+            words = _re.findall(r"[a-z0-9]+", objective.lower())[:3]
+            if words:
+                slug = f"{slug}-{'-'.join(words)}"
+        slug = slug[:48].rstrip("-")
+        return f"{slug}-{uuid.uuid4().hex[:6]}"
+
     def verify_goal(
         self, *, objective: str, workspace_dir: str,
         repo_url: Optional[str] = None, verify_cmd: Optional[str] = None,
