@@ -61,6 +61,7 @@ from ..loom.limits import FailureKind, classify_failure, pause_seconds
 from ..state_store import _now_ms
 from ..engine.workspace import prepare_workspace
 from .. import config as _config
+from .prompt_budget import cap_steering as _cap_steering
 
 # ---- extracted-module re-export facade (behavior-preserving split) --------
 # Every symbol MOVED out of this file is re-exported here so
@@ -486,7 +487,7 @@ def _advance_brief(
             failure_context.strip()[:800],
         ]
     if steering.strip():
-        parts += ["", STEERING_MARKER, steering.strip()]
+        parts += ["", STEERING_MARKER, _cap_steering(steering.strip())]
     return "\n".join(parts)
 
 
