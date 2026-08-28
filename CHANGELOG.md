@@ -2,6 +2,64 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [0.6.0](https://github.com/lifekit-hq/devclaw/compare/v0.5.2...v0.6.0) (2026-08-28)
+
+
+### Features
+
+* [Repo notes — observations handed back by previous devclaw runs… ([#684](https://github.com/lifekit-hq/devclaw/issues/684)) ([e0a4943](https://github.com/lifekit-hq/devclaw/commit/e0a4943ec2c0a65696eaacc6a13da4ac2de87451))
+* **console:** eval-outcome + cycle-report row drill-ins (issue [#682](https://github.com/lifekit-hq/devclaw/issues/682) inc 1) ([#696](https://github.com/lifekit-hq/devclaw/issues/696)) ([ab8b49a](https://github.com/lifekit-hq/devclaw/commit/ab8b49a7d200b8dc5b43b1368abec7f787b3aa59))
+* **control:** clear_usage_pause — the operator's "I fixed the cause" verb ([#663](https://github.com/lifekit-hq/devclaw/issues/663)) ([533e1a1](https://github.com/lifekit-hq/devclaw/commit/533e1a186109af06430814108b222c4045fefc12))
+* **dispatch:** issue-keyed companion dispatch — spec 022 US1 ([#723](https://github.com/lifekit-hq/devclaw/issues/723)) ([4db3df5](https://github.com/lifekit-hq/devclaw/commit/4db3df57b4704d8a22340efed8192275839ad873))
+* **doctor:** manifest drift detection + guided migration (spec 016 US3) ([#676](https://github.com/lifekit-hq/devclaw/issues/676)) ([af2759b](https://github.com/lifekit-hq/devclaw/commit/af2759b633d7a53e261288c32c63e3ac03c8186c))
+* **doctor:** read-only zero-LLM instance + project diagnostics (spec 016 US1) ([#674](https://github.com/lifekit-hq/devclaw/issues/674)) ([73b6d30](https://github.com/lifekit-hq/devclaw/commit/73b6d307aed5576a0e613162a96a80e91eaf022f))
+* **engine:** declare the enforced sandbox sizing to the worker — spec 020 US3 ([#705](https://github.com/lifekit-hq/devclaw/issues/705)) ([afbd1fa](https://github.com/lifekit-hq/devclaw/commit/afbd1fa72a33514d056cd648993115e7dc833758))
+* **engine:** registry-read token crosses into the sandbox for npm ci ([#724](https://github.com/lifekit-hq/devclaw/issues/724)) ([fb9a9bc](https://github.com/lifekit-hq/devclaw/commit/fb9a9bc158561822900f585cb4095d99f64abf0f))
+* **goal:** done_when defaults to the referenced issues' live acceptance scenarios (spec 019 US2) ([#691](https://github.com/lifekit-hq/devclaw/issues/691)) ([96bb61b](https://github.com/lifekit-hq/devclaw/commit/96bb61bc3ac0c7a5cf7eaaf2ad47759551f1306b))
+* **goal:** goal-as-pointer — first-class issue refs, fetched live at dispatch (spec 019 US1) ([#687](https://github.com/lifekit-hq/devclaw/issues/687)) ([d95c7dc](https://github.com/lifekit-hq/devclaw/commit/d95c7dc3333f02450e43457182e13dcc5502e7b8))
+* **goal:** readiness-gated references + one issue, one live goal (spec 019 US4) ([#693](https://github.com/lifekit-hq/devclaw/issues/693)) ([85037c5](https://github.com/lifekit-hq/devclaw/commit/85037c502be01fc0b57deabea70d30f4f679bf78))
+* **goal:** sandbox OOM legibility — spec 020 (US1) + full spec artifacts ([#703](https://github.com/lifekit-hq/devclaw/issues/703)) ([074c218](https://github.com/lifekit-hq/devclaw/commit/074c218ab26658ace9a9a32b76dfe12a497a7411))
+* **goal:** the issue-less lane pinned + docs — spec 019 built in full (US5 + polish) ([#694](https://github.com/lifekit-hq/devclaw/issues/694)) ([1143c17](https://github.com/lifekit-hq/devclaw/commit/1143c17379ce5e15be9d8e87ef2d1b30e4df6894))
+* **goal:** the length budget — essays with refs are refused at the doorway (spec 019 US3) ([#692](https://github.com/lifekit-hq/devclaw/issues/692)) ([4028e93](https://github.com/lifekit-hq/devclaw/commit/4028e93c87b9935c2f38fe969802f516914788e1))
+* **goal:** verify_cmd overridable after goal creation — issue [#711](https://github.com/lifekit-hq/devclaw/issues/711) ([#715](https://github.com/lifekit-hq/devclaw/issues/715)) ([ff62fd9](https://github.com/lifekit-hq/devclaw/commit/ff62fd9d9d5f9dd590c88fafa07cf9b61dfa0e2d))
+* **harness:** adopt the tinyspec small-task lane (issue [#668](https://github.com/lifekit-hq/devclaw/issues/668), harness side) ([#669](https://github.com/lifekit-hq/devclaw/issues/669)) ([e8fae42](https://github.com/lifekit-hq/devclaw/commit/e8fae42f5894391a133110c7a53b76c58ce0b99f))
+* **harness:** adopt verify-tasks + trace extensions (vetted, pinned) ([#671](https://github.com/lifekit-hq/devclaw/issues/671)) ([7d17320](https://github.com/lifekit-hq/devclaw/commit/7d1732092fc116c75451b1a4f607fd23dc3f6864))
+* **harness:** register the tiny lane as a workflow — the registry now lists both lanes ([#670](https://github.com/lifekit-hq/devclaw/issues/670)) ([101e8cd](https://github.com/lifekit-hq/devclaw/commit/101e8cd83bafaf4a57e17f4c44cf7734dc4e0452))
+* **intake:** acceptance scenarios become executable ground truth (spec 015 US1) ([#680](https://github.com/lifekit-hq/devclaw/issues/680)) ([4f0f76e](https://github.com/lifekit-hq/devclaw/commit/4f0f76e0e2247aa9f7ea93b9d22e55b18151ef19))
+* **issues:** one schema, one doorway for machine-filed issues (spec 014) ([#677](https://github.com/lifekit-hq/devclaw/issues/677)) ([6a01359](https://github.com/lifekit-hq/devclaw/commit/6a01359f4ffec32bced0bb274fc0cd4d7768b382)), closes [#666](https://github.com/lifekit-hq/devclaw/issues/666)
+* **manifest:** devclaw.json per-project manifest + consumption seams (spec 016 US2) ([#675](https://github.com/lifekit-hq/devclaw/issues/675)) ([7bf9b65](https://github.com/lifekit-hq/devclaw/commit/7bf9b6519c5a2fc0c3dcd7479115dbe38fc01f05))
+* **queue:** per-project sandbox sizing — spec 020 US4 ([#706](https://github.com/lifekit-hq/devclaw/issues/706)) ([8e106b0](https://github.com/lifekit-hq/devclaw/commit/8e106b05b2b20a1c6a860fde22f9bd2ed1e2439a))
+* **runner:** context tripwire — land the session before the wall (spec 021 US2) ([#712](https://github.com/lifekit-hq/devclaw/issues/712)) ([6e9e7c8](https://github.com/lifekit-hq/devclaw/commit/6e9e7c830472a396aa826eabadac8e1d5224856e))
+* **runner:** OOM-killer shield — spec 020 US2 ([#704](https://github.com/lifekit-hq/devclaw/issues/704)) ([956e23c](https://github.com/lifekit-hq/devclaw/commit/956e23ce023e8fcebaef7f78325f709d9761f95c))
+* **runner:** read-side diet + spec-021 polish (US3) ([#713](https://github.com/lifekit-hq/devclaw/issues/713)) ([ffc8c4d](https://github.com/lifekit-hq/devclaw/commit/ffc8c4dc80626aa5947512d4a94f298e7095c36c))
+* **runner:** worker context-budget US1 — harness-enforced one-slice sessions (spec 021) ([#708](https://github.com/lifekit-hq/devclaw/issues/708)) ([ed971fb](https://github.com/lifekit-hq/devclaw/commit/ed971fbf74c89db2b60643cc2225a3fd9ed0a2bc))
+* **telemetry:** ground-truth distinct-PR merge state via the pr_ledger (spec 018 US2) ([#688](https://github.com/lifekit-hq/devclaw/issues/688)) ([3f47d55](https://github.com/lifekit-hq/devclaw/commit/3f47d55ee9d2bfd73ac2e912f963ed7ae6fa0901))
+* **telemetry:** per-goal convergence replaces the verdict-weighted first-pass rate (spec 018 US1) ([#686](https://github.com/lifekit-hq/devclaw/issues/686)) ([a9b9ef1](https://github.com/lifekit-hq/devclaw/commit/a9b9ef1ea949bd35d52e5b3b4b5dbd9f205063f0))
+* **telemetry:** steering split + the final scorecard wire shape (spec 018 US3 + polish) ([#690](https://github.com/lifekit-hq/devclaw/issues/690)) ([21763ad](https://github.com/lifekit-hq/devclaw/commit/21763ad7d98c2406dd9e5516091824e416facdcd))
+* **telemetry:** the finish line, machine-checked — ratchet thresholds as config (spec 018 US4) ([#689](https://github.com/lifekit-hq/devclaw/issues/689)) ([f237e3e](https://github.com/lifekit-hq/devclaw/commit/f237e3ec9cf66c82b30a6a0ae6bbeae608dc93b3))
+* **validation:** the live-validation loop — validate_product, qa goals, deploy trigger (spec 015 US2+US3) ([#683](https://github.com/lifekit-hq/devclaw/issues/683)) ([75580b9](https://github.com/lifekit-hq/devclaw/commit/75580b961b593f4dff6a876d0c409449317ab9af)), closes [#667](https://github.com/lifekit-hq/devclaw/issues/667)
+
+
+### Bug Fixes
+
+* **console:** the bundle path is one directory too deep since the [#625](https://github.com/lifekit-hq/devclaw/issues/625) split ([#672](https://github.com/lifekit-hq/devclaw/issues/672)) ([9e47e2a](https://github.com/lifekit-hq/devclaw/commit/9e47e2a3434ed9610a6cb53f267bd566b2db7557))
+* **deploy:** sandbox sizing knobs actually reach the devclaw-mcp container ([#701](https://github.com/lifekit-hq/devclaw/issues/701)) ([364fddd](https://github.com/lifekit-hq/devclaw/commit/364fdddf39c673cbebc2f24c3a75b24940b3ac14))
+* **goal:** auth-pause ping names the exact credential path and verification step ([#698](https://github.com/lifekit-hq/devclaw/issues/698)) ([95be86d](https://github.com/lifekit-hq/devclaw/commit/95be86d0c75c081ed03c02b6eadd27186cf50594))
+* **goal:** done-gate existence-only flip yields to mechanical verify evidence; downgrades say why ([#699](https://github.com/lifekit-hq/devclaw/issues/699)) ([c1ce317](https://github.com/lifekit-hq/devclaw/commit/c1ce3173cae2940620c49d5ebd112d347725e3ae))
+* **goal:** the donegate churn brake holds — machine steering never unblocks a parked goal ([#685](https://github.com/lifekit-hq/devclaw/issues/685)) ([1de089f](https://github.com/lifekit-hq/devclaw/commit/1de089f8c6c3226782567e7233292f12ada4b058))
+* **sandbox:** bake Chromium system deps into the sandbox image ([#725](https://github.com/lifekit-hq/devclaw/issues/725)) ([158efe3](https://github.com/lifekit-hq/devclaw/commit/158efe37dfb1b2fd6d4ff586009708f6ff4e5101))
+* **server:** route registration order is a contract — console redirects last ([#673](https://github.com/lifekit-hq/devclaw/issues/673)) ([b32fc00](https://github.com/lifekit-hq/devclaw/commit/b32fc003ca34a71443c1274bd2647cee114953da))
+* **tests:** main-branch-guard test reads the committed hook when the working tree can't serve it ([#681](https://github.com/lifekit-hq/devclaw/issues/681)) ([d347070](https://github.com/lifekit-hq/devclaw/commit/d347070606ec53b9b62e7b9d0386077c6654a1d3))
+* **trend:** gate owner notification on the retrospective verdict ([#678](https://github.com/lifekit-hq/devclaw/issues/678)) ([bd74e55](https://github.com/lifekit-hq/devclaw/commit/bd74e554dd99563bb2faead311d60989341b484c))
+* **trend:** remove the owner-notification channel — trends surface in the digest only ([#720](https://github.com/lifekit-hq/devclaw/issues/720)) ([d43ab12](https://github.com/lifekit-hq/devclaw/commit/d43ab12b180b30ffe32ffb9ab0990bc9431e3adb))
+
+
+### Documentation
+
+* **specs:** specs 014 (error-issue doorway) + 015 (live-validation loop) from the 2026-08-24 grill ([#664](https://github.com/lifekit-hq/devclaw/issues/664)) ([2d7daed](https://github.com/lifekit-hq/devclaw/commit/2d7daed4c91da2e42bf141f927466156bf66144e))
+* **spec:** the one-lane arc — specs 022 (clarified) + 023/024 (direction drafts) ([#719](https://github.com/lifekit-hq/devclaw/issues/719)) ([c4e8295](https://github.com/lifekit-hq/devclaw/commit/c4e829554b954e857282a39f38ade234e7ae95b2))
+* symmetric test ratchet + net-LOC visibility — ruled by Denys 2026-08-27 ([#721](https://github.com/lifekit-hq/devclaw/issues/721)) ([400da06](https://github.com/lifekit-hq/devclaw/commit/400da06769f078c1f71382db99162b7619ccac4b))
+
 ## [0.5.2](https://github.com/lifekit-hq/devclaw/compare/v0.5.1...v0.5.2) (2026-08-24)
 
 
