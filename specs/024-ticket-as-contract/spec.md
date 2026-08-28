@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-27
 
-**Status**: Draft — direction ratified by Denys 2026-08-27 (the one-lane arc, with spec 022); run `/speckit-clarify` before implementation.
+**Status**: PARKED — direction memory only, not scheduled. Owner: Denys. Resume condition: spec 022 has landed AND the convergence class (first-pass rate, currently 0.0 against a 0.70 ratchet threshold) has been decided — whichever of those settles the dispatch boundary first. Review by 2026-09-15 even if neither has: a draft with no live resume condition is the "SPECIFIED, NOT IMPLEMENTED" failure this repo already hit on specs 007/008/010/012. Run `/speckit-clarify` with Denys before any implementation.
 
 **Input**: Ruled direction from the 2026-08-27 architecture session: devclaw's entity triple (issue / goal / task) is the canonical ticket / workflow / job shape — the smell is not the count but the **duplication of content** across them. The goal carries freeform `objective` + `done_when` prose restating the issue; the task carries `goal` prose restating both; the saga slots (`out_of_scope` / `invariants` / `established`) are demanded at goal-creation time as API arguments instead of living on the ticket. End state: for issue-backed work the **issue is the contract**; the goal is pure orchestration state; the task is pure execution state. Nothing invented — this is ordinary normalization: one home per fact, and the tracker is the home for intent.
 
