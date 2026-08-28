@@ -584,6 +584,41 @@ def test_sandbox_forwards_the_oauth_token_but_never_a_metered_key(monkeypatch):
     assert "ANTHROPIC_API_KEY" not in clean
 
 
+def test_registry_read_token_crosses_into_the_sandbox_absent_when_unset(monkeypatch):
+    # The registry-read forward (NODE_AUTH_TOKEN, read:packages only) obeys the
+    # same contract as the OAuth token: present ⇒ exactly one `-e`, absent or
+    # blank ⇒ byte-identical argv with no trace of the var, and it never turns
+    # the forward into a general env bridge (metered keys stay stripped).
+    monkeypatch.setenv(sc.REGISTRY_TOKEN_VAR, "ghp-registry-read")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-metered")
+    args = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    joined = " ".join(args)
+    assert f"{sc.REGISTRY_TOKEN_VAR}=ghp-registry-read" in args
+    assert "sk-ant-metered" not in joined
+
+    monkeypatch.delenv(sc.REGISTRY_TOKEN_VAR, raising=False)
+    absent = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    monkeypatch.setenv(sc.REGISTRY_TOKEN_VAR, "   ")
+    blank = sc._build_docker_args(
+        container_name="c",
+        host_bind_path="/host/ws",
+        claude_dir=CLAUDE_DIR,
+        payload="{}",
+    )
+    assert blank == absent
+    assert not any(sc.REGISTRY_TOKEN_VAR in a for a in absent)
+
+
 def test_docker_args_declare_the_enforced_sizing_to_the_worker():
     """Spec 020 US3 (FR-007): the sandbox env carries the SAME memory/cpus
     values the engine enforces with --memory/--cpus — single source, never a

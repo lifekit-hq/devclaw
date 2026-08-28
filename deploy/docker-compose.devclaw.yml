@@ -69,6 +69,12 @@ services:
       # OAuth, still the Pro/Max subscription: not a metered key. Blank/unset
       # ⇒ the mounted ~/.claude credential stays the only auth path.
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # Registry-read token (read:packages ONLY — no push/PR capability),
+      # forwarded into each sandbox so `npm ci` on @lifekit-hq-consuming repos
+      # can resolve GitHub Packages. Same home as the OAuth token: the repo's
+      # NODE_AUTH_TOKEN Actions secret via the deploy step env; an env-file
+      # line is the operator fallback. Blank/unset ⇒ no forward at all.
+      NODE_AUTH_TOKEN: ${NODE_AUTH_TOKEN:-}
       # The per-task sandbox image, pulled from ghcr by tag (built from the same
       # source as this MCP image — no md5-verify crutch; both are this commit).
       DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}
