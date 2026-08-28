@@ -11,39 +11,32 @@ from typing import Literal, Optional
 
 from fastmcp.exceptions import ToolError
 
+from ... import intake as _intake
 from ... import speckit_setup as _speckit
 from ...project_registry import ResolvedDispatch
+from ...state_store import _now_ms
 from .._state import goals, mcp, queue, store
+from . import _common
 from ._common import _preflight_or_prep, _resolve_project_or_reject
 
 
-def _project_hold_check(project_id: "str | None", workspace_dir: str) -> "str | None":
-    """Return a blocking reason if a goal currently holds this project, or
-    ``None`` when the project is free to dispatch.
+async def _auto_file_intake(registry, *, project_id: str, goal: str) -> int:
+    """Auto-file an intake issue for a prose-only dispatch (spec 022 US3 FR-010).
 
-    Spec 010 FR-009 single-writer exemption is REPEALED by spec 022 US2: a
-    non-issue-keyed direct dispatch to a project held by an in-flight goal is
-    now a hard block, not an advisory warning. Issue-keyed dispatches ride the
-    goal lane and are serialized by the tick's project-hold machinery instead.
-
-    Best-effort: a lookup hiccup returns None (allow-through) rather than
-    wedging a dispatch the operator may urgently need."""
-    try:
-        from ...goal import project_hold as _project_hold
-
-        holders = _project_hold.holder_map(goals._goal_store)
-        holder = holders.get((project_id or "").strip() or (workspace_dir or "").strip().rstrip("/"))
-        if not holder:
-            return None
-        return (
-            f"goal {holder!r} is actively working this project — "
-            "wait for it to finish before dispatching another task. "
-            f"To cancel it: cancel_goal({holder!r}). "
-            "To dispatch work on a specific issue alongside the goal, "
-            "pass issue_ref= to route via the goal lane instead."
-        )
-    except Exception:  # noqa: BLE001 — best-effort; a lookup hiccup allows through
-        return None
+    Returns the GitHub issue number. Raises ``_intake.IntakeError`` on failure
+    so callers can wrap it into an actionable ToolError."""
+    done_when = goal if len(goal) >= 20 else f"{goal} — implemented and verified"
+    result = await _intake.file_intake(
+        registry,
+        project_id=project_id,
+        what=goal,
+        done_when=done_when,
+        asker="devclaw",
+        channel="a2a",
+        now_ms=_now_ms(),
+    )
+    url: str = result["issue_url"]
+    return int(url.rstrip("/").split("/")[-1])
 
 
 async def _block_if_speckit_pending(resolved: ResolvedDispatch, tool: str) -> None:
@@ -150,15 +143,27 @@ async def dispatch_task(
         # Feature work is gated on a merged speckit install: a repo whose
         # install PR is still open is not run (US2, no half-installed state).
         await _block_if_speckit_pending(resolved, "dispatch_task")
-    # FR-002/FR-003: issue_ref routes through the goal lane — create-or-attach
-    # a one_shot goal keyed to (project, issue) with a store-level uniqueness
-    # constraint. Read-only kinds are byte-unaffected (FR-008).
-    if issue_ref is not None and not read_only:
+    # All mutating dispatch routes through the goal lane (spec 022 US1/US3).
+    # Read-only kinds are byte-unaffected (FR-008).
+    if not read_only:
         if not resolved.project_id:
             raise ToolError(
                 f"project {project_id!r} resolved without a project_id — "
-                "issue-keyed dispatch requires a registered project_id"
+                "dispatch requires a registered project_id"
             )
+        auto_filed: int | None = None
+        if issue_ref is None:
+            # FR-010: no issue_ref → auto-file intake issue and proceed keyed
+            # to it (spec 022 US3). Every mutating ask names an issue.
+            try:
+                auto_filed = await _auto_file_intake(
+                    _common.registry, project_id=resolved.project_id, goal=goal
+                )
+            except _intake.IntakeError as exc:
+                raise ToolError(
+                    f"prose-only dispatch: auto-filing intake issue failed — {exc}"
+                ) from exc
+            issue_ref = auto_filed
         try:
             result = await goals.dispatch_issue(
                 project_id=resolved.project_id,
@@ -172,21 +177,17 @@ async def dispatch_task(
             )
         except ValueError as exc:
             raise ToolError(str(exc))
+        if auto_filed is not None:
+            result["auto_filed_issue"] = auto_filed
         return json.dumps(result, indent=2)
-    # Spec 022 US2 — spec 010 FR-009 single-writer exemption REPEALED: a
-    # non-issue-keyed direct dispatch to a project held by an in-flight goal
-    # is now a hard block. Read-only kinds are unaffected (FR-008).
-    if not read_only:
-        hold_msg = _project_hold_check(resolved.project_id, resolved.workspace_dir)
-        if hold_msg:
-            raise ToolError(hold_msg)
+    # Read-only kinds: direct queue submit, unaffected by spec 022 (FR-008).
     task_id = queue.submit(
         kind=kind,
         workspace_dir=resolved.workspace_dir,
         goal=goal,
         notify_url=notify_url,
-        verify_cmd=None if read_only else verify_cmd,
-        deliver=False if read_only else open_pr,
+        verify_cmd=None,
+        deliver=False,
         base_branch=None if kind == "validate_product" else base_branch,
         target_branch=None if kind == "validate_product" else target_branch,
         project_id=resolved.project_id,

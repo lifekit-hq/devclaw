@@ -200,18 +200,33 @@ async def test_absent_manifest_does_not_reject_dispatch(tmp_path, monkeypatch):
     from devclaw.project_registry import ProjectRegistry
     from devclaw.server import _state
     from devclaw.server import tools as _tools
+    from devclaw.server.tools import tasks as tasks_mod
     from tests.goal_fakes import register_tmp_project
 
-    calls: list[dict] = []
-    monkeypatch.setattr(_state.queue, "submit",
-                        lambda **kw: (calls.append(kw), "task_1")[1])
+    # After spec 022 US3, mutating dispatch auto-files an issue and routes via
+    # the goal lane. Stub both seams so the manifest-absence check is isolated.
+    async def _fake_auto_file(registry, *, project_id, goal):
+        return 7
+
+    monkeypatch.setattr(tasks_mod, "_auto_file_intake", _fake_auto_file)
+    dispatch_calls: list = []
+
+    async def _fake_dispatch_issue(**kw):
+        dispatch_calls.append(kw)
+        return {"goal_id": "g-1", "result": "created", "issue_ref": 7}
+
+    monkeypatch.setattr(_state.goals, "dispatch_issue", _fake_dispatch_issue)
+
     reg = ProjectRegistry(str(tmp_path / "reg.db"))
     ws = tmp_path / "wsp"
     register_tmp_project(reg, ws, project_id="proj")
     monkeypatch.setattr(_tools._common, "registry", reg)
+    # An absent manifest must not raise — the manifest absence is never a gate.
     raw = await _tools.dispatch_task(kind="implement_feature", project_id="proj",
-                                     goal="x")
-    assert json.loads(raw)["task_id"] == "task_1"
+                                     goal="add feature x")
+    assert dispatch_calls, "dispatch must reach dispatch_issue (goal lane)"
+    result = json.loads(raw)
+    assert result.get("auto_filed_issue") == 7
 
 
 # ---- zero-token guard -----------------------------------------------------
