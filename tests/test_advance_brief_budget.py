@@ -46,19 +46,15 @@ def test_steering_section_bounded_and_newest_line_survives():
     """The steering section is tail-kept under STEERING_KEEP: adversarial
     many-steer input stays within budget, and the NEWEST steering line is
     always byte-present in the capped output (the active correction must
-    never be the content dropped — R5)."""
-    # Build 6 steering entries of 500 chars each = 3 000 chars total (~under budget)
-    lines = [f"- [denys 2026-08-{i:02d}] correction {i}: " + "x" * 460 for i in range(1, 7)]
+    never be the content dropped — R5).
+
+    Input is deliberately sized to exceed STEERING_KEEP so that compaction
+    is forced and every assertion below is non-vacuous."""
+    # 6 steering entries of ~740 chars each ≈ 4 440 chars > STEERING_KEEP (4 000).
+    lines = [f"- [denys 2026-08-{i:02d}] correction {i}: " + "x" * 700 for i in range(1, 7)]
     steering = "\n".join(lines)
+    assert len(steering) > STEERING_KEEP, "test input must exceed STEERING_KEEP to exercise compaction"
 
-    # Under budget: passes through byte-identical.
-    if len(steering) <= STEERING_KEEP:
-        result = cap_steering(steering)
-        assert result == steering
-        assert lines[-1] in result
-        return
-
-    # Over budget: marker is inserted, newest line survives.
     result = cap_steering(steering)
     assert STEERING_TRUNCATION_MARKER in result
     assert len(result) <= STEERING_KEEP + len(STEERING_TRUNCATION_MARKER) + 1
@@ -98,17 +94,22 @@ def test_brief_bounded_with_large_accumulated_history(tmp_path):
     """The devclaw-022 live shape: 6 steering lines + 6 prior increments.
     The rendered advance brief must stay under the combined section caps +
     a reasonable fixed-overhead allowance — it must NOT grow monotonically
-    regardless of how many steering lines or increments accumulate."""
+    regardless of how many steering lines or increments accumulate.
+
+    Steering input deliberately exceeds STEERING_KEEP so that compaction is
+    forced and the "newest line survives" assertion is non-vacuous."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     goal = store.load_goal("g")
 
-    # 6 steering lines of 400 chars each (realistic correction length).
+    # 6 steering lines of ~710 chars each ≈ 4 260 chars > STEERING_KEEP (4 000)
+    # — compaction is forced, so the R5 assertion below is non-vacuous.
     steering_lines = [
-        f"- [denys 2026-08-{i:02d}] correction {i}: please make sure the " + "y" * 340
+        f"- [denys 2026-08-{i:02d}] correction {i}: please make sure the " + "y" * 650
         for i in range(1, 7)
     ]
     steering = "\n".join(steering_lines)
+    assert len(steering) > STEERING_KEEP, "test input must exceed STEERING_KEEP to force compaction"
 
     # 6 prior increments (the shape that caused the failure).
     prior_increments = _make_prior_increments(6)
@@ -122,6 +123,12 @@ def test_brief_bounded_with_large_accumulated_history(tmp_path):
     assert len(brief) <= max_expected, (
         f"brief is {len(brief)} chars — exceeds {max_expected} "
         f"(STEERING_KEEP={STEERING_KEEP} + PRIOR_INCREMENTS_KEEP={PRIOR_INCREMENTS_KEEP} + overhead)"
+    )
+    # The most-recent steering line must survive compaction intact (R5 / done_when):
+    # correction must never be the content dropped.
+    assert steering_lines[-1] in brief, (
+        "newest steering line must be byte-present in the rendered brief — "
+        "correction must never be the content dropped (R5)"
     )
 
 
