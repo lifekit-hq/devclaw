@@ -128,3 +128,46 @@ async def clear_usage_pause() -> str:
         {"cleared": bool(until), "was_until_ms": until, "was_reason": reason},
         indent=2,
     )
+
+
+@mcp.tool
+async def set_quiet_mode(on: bool, until: "Optional[str]" = None, reason: str = "") -> str:
+    """Arm (``on=true``) or disarm quiet mode (spec 025 US3). While armed,
+    ONLY instance-dead pings reach the owner (an auth pause a re-probe can't
+    heal; a failed self-deploy rollback) — every other ping class is recorded
+    and readable on return via ``list_suppressed_pings``. ``until`` (ISO
+    date/datetime, UTC assumed when naive) sets a self-disarm expiry —
+    RECOMMENDED for a holiday window so a forgotten toggle can't mute the
+    instance forever. Disarming keeps the suppressed backlog."""
+    until_ms: "int | None" = None
+    if on and until:
+        from datetime import datetime, timezone
+
+        try:
+            dt = datetime.fromisoformat(until)
+        except ValueError:
+            raise ToolError(
+                f"until must be an ISO date/datetime, got {until!r}"
+            ) from None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        until_ms = int(dt.timestamp() * 1000)
+    store.set_quiet_mode(bool(on), until_ms=until_ms, armed_at_ms=_now_ms())
+    armed, until_out = store.quiet_mode()
+    return json.dumps({
+        "quiet": armed,
+        "until_ms": until_out,
+        "suppressed_so_far": store.suppressed_ping_count(),
+    }, indent=2)
+
+
+@mcp.tool
+async def list_suppressed_pings(limit: int = 200) -> str:
+    """The quiet-mode catch-up surface (spec 025 FR-014): every owner ping
+    withheld while quiet mode was armed, oldest first, LIMIT-bounded. A
+    record, not state — reading it changes nothing."""
+    return json.dumps({
+        "count": store.suppressed_ping_count(),
+        "quiet": store.quiet_mode()[0],
+        "pings": store.list_suppressed_pings(limit),
+    }, indent=2, default=str)

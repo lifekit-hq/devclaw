@@ -83,16 +83,16 @@ recorded and readable on return.
 
 ### Tests first (red)
 
-- [ ] T026 [P] [US3] `test_quiet_mode_suppresses_and_records_all_noncritical_pings` — one event per ping class INCLUDING the cycle report (the service.py:510 direct-send path); only send_critical reaches the wire — in tests/test_quiet_mode.py (new file)
-- [ ] T027 [P] [US3] `test_auth_pause_ping_pierces_quiet_mode` + `test_quiet_mode_expiry_self_disarms` + `test_suppressed_backlog_reads_back_in_order` — in tests/test_quiet_mode.py
+- [X] T026 [P] [US3] `test_quiet_mode_suppresses_and_records_all_noncritical_pings` — one event per ping class INCLUDING the cycle report (the service.py:510 direct-send path); only send_critical reaches the wire — in tests/test_quiet_mode.py (new file)
+- [X] T027 [P] [US3] `test_auth_pause_ping_pierces_quiet_mode` + `test_quiet_mode_expiry_self_disarms` + `test_suppressed_backlog_reads_back_in_order` — in tests/test_quiet_mode.py
 
 ### Implementation
 
-- [ ] T028 [US3] `suppressed_pings` table in devclaw/state_store/schema.py + insert/read in a state_store mixin + doctor check in devclaw/doctor/checks_instance.py (+ seeded-fault test)
-- [ ] T029 [US3] `QuietNotifier` decorator (send suppress+record while armed w/ lazy expiry; send_critical always delegates) in devclaw/goal/notify.py; quiet_mode meta verbs in devclaw/state_store/control.py; bind the wrapper at the notifier binding in devclaw/goal/service.py (:132-134)
-- [ ] T030 [US3] Route the instance-dead class through send_critical: the auth-pause owner ping in devclaw/goal/tick.py (:887-909) — narrow change, the episode-classification logic untouched
-- [ ] T031 [US3] MCP verb `set_quiet_mode(on, until?, reason?)` in devclaw/server/tools/control.py + export in devclaw/server/tools/__init__.py + `get_status` gains the quiet_mode block + backlog read surface per contracts/operator-surface.md — named test `test_set_quiet_mode_tool_roundtrip` in tests/test_run_schedule_tool.py's module or a sibling
-- [ ] T032 [US3] Docs (env-vars if any knob, INDEX tags); full gate; open PR 3
+- [X] T028 [US3] `suppressed_pings` table in devclaw/state_store/schema.py + insert/read in a state_store mixin + doctor check in devclaw/doctor/checks_instance.py (+ seeded-fault test)
+- [X] T029 [US3] `QuietNotifier` decorator (send suppress+record while armed w/ lazy expiry; send_critical always delegates) in devclaw/goal/notify.py; quiet_mode meta verbs in devclaw/state_store/control.py; bind the wrapper at the notifier binding in devclaw/goal/service.py (:132-134)
+- [X] T030 [US3] Route the instance-dead class through send_critical: the auth-pause owner ping in devclaw/goal/tick.py (:887-909) — narrow change, the episode-classification logic untouched
+- [X] T031 [US3] MCP verb `set_quiet_mode(on, until?, reason?)` in devclaw/server/tools/control.py + export in devclaw/server/tools/__init__.py + `get_status` gains the quiet_mode block + backlog read surface per contracts/operator-surface.md — named test `test_set_quiet_mode_tool_roundtrip` in tests/test_run_schedule_tool.py's module or a sibling
+- [X] T032 [US3] Docs (env-vars if any knob, INDEX tags); full gate; open PR 3
 
 ## Phase 6: Polish
 

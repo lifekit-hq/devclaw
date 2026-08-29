@@ -117,19 +117,29 @@ def _action_label(ref) -> str:
 
 async def _notify(
     notifier: Notifier, level: NotifyLevel, text: str,
-    *, summarize: "ClaudeCaller | None" = None,
+    *, summarize: "ClaudeCaller | None" = None, critical: bool = False,
 ) -> None:
     """Send a notification only if it's at/above the configured altitude floor.
     When a ``summarize`` caller is supplied, OWNER-level messages are first
     rewritten into plain language for a non-technical owner (best-effort — the
     summarizer never loses or blocks a notification). The altitude gate itself
     is mechanism (zero tokens); cognition runs only for owner-facing sends that
-    actually clear the gate, never on the idle path."""
+    actually clear the gate, never on the idle path.
+
+    ``critical`` marks the instance-dead class (spec 025 US3): it pierces
+    quiet mode via the notifier's ``send_critical`` when one exists (the
+    QuietNotifier binding); adding a critical call site is a spec-level
+    decision, not a convenience. A plain notifier (tests) just sends."""
     if level < _notify_floor():
         return
     if summarize is not None and level >= NotifyLevel.OWNER:
         text = await _goal_summary.plain_summary(text, caller=summarize)
     _trace.record_notify(level=level.name, text=text)
+    if critical:
+        send_critical = getattr(notifier, "send_critical", None)
+        if send_critical is not None:
+            await send_critical(text)
+            return
     await notifier.send(text)
 
 

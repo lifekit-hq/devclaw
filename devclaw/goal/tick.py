@@ -918,9 +918,14 @@ async def tick_all(
                     f"auto-resumes on the next probe ~{resume_hhmm} UTC; "
                     f"I'll re-ping if still broken."
                 )
+                # The instance-dead class (spec 025 US3): an auth failure only
+                # a human re-login fixes must pierce quiet mode — an unsent
+                # auth ping silently kills an unattended week.
+                await _notify(notifier, NotifyLevel.OWNER, msg,
+                              summarize=summary_caller, critical=True)
             else:
                 msg = f"⏸️ paused on a usage limit — {reason}; resuming ~{resume_hhmm} UTC"
-            await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summary_caller)
+                await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summary_caller)
             kind = (
                 FailureKind.AUTH.value
                 if reason.startswith(FailureKind.AUTH.value) else "limit"

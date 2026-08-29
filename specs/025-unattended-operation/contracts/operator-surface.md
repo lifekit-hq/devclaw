@@ -17,16 +17,15 @@ set_quiet_mode(on: bool, until: str | None = None, reason: str = "") -> {
 
 ## MCP read: suppressed-ping backlog
 
-Exposed through the existing observability surface (one addition):
+*(Amended at implement time: `get_status` turned out to be task-scoped, not
+an instance surface — the quiet state lives on the two verbs instead.)*
 
 ```
-get_status() gains: "quiet_mode": {"armed": bool, "until": str|null,
-                                   "suppressed": int}
+list_suppressed_pings(limit=200) -> {count, quiet, pings: [{ts_ms, text}...]}
 ```
 
-plus a bounded read returning the backlog rows in `ts_ms` order for the
-catch-up digest (FR-014) — surfaced via `get_events`-style pagination, not a
-new tool, if a natural fit exists; else one `list_suppressed_pings(limit)`.
+oldest first, LIMIT-bounded — the catch-up digest read (FR-014). The
+`set_quiet_mode` response carries `{quiet, until_ms, suppressed_so_far}`.
 
 ## Notifier contract (internal, `devclaw/goal/notify.py`)
 
