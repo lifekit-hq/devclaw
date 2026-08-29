@@ -30,6 +30,7 @@ from . import issue_ref as _issue_ref
 from . import project_hold as _project_hold
 from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
+from . import self_deploy as _self_deploy
 from . import summary as goal_summary
 from . import triage as goal_triage
 from ..engine.workspace import prepare_workspace
@@ -372,6 +373,14 @@ class GoalService:
                 await self._maybe_emit_cycle_report()
             except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
                 sys.stderr.write(f"goal-layer: cycle-report edge crashed: {exc}\n")
+            # Self-deploy edge (spec 025 US2) — mechanical, zero-LLM: a free
+            # meta read when nothing is owed; when a devclaw-repo merge left a
+            # deploy pending it waits for task quiescence then fires the
+            # workflow. Own try for the same never-kill-the-loop reason.
+            try:
+                await _self_deploy.maybe_trigger(self._store, now_ms=_now_ms())
+            except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
+                sys.stderr.write(f"goal-layer: self-deploy edge crashed: {exc}\n")
 
     def _make_tracer(self, goal_id: str) -> "Optional[_trace.PersistentTracer]":
         """Per-goal-tick PersistentTracer that writes into the sqlite traces

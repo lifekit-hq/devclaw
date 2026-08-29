@@ -62,17 +62,17 @@ probe-checked, one auto-rollback.
 
 ### Tests first (red)
 
-- [ ] T018 [P] [US2] `test_devclaw_repo_merge_records_deploy_pending_and_waits_for_quiescence` — trigger fires only at `count_running() == 0` (running-only, NOT `has_active_work`); running task defers — in tests/test_self_deploy_trigger.py (new file)
-- [ ] T019 [P] [US2] `test_deploy_pending_expires_loudly_after_bounded_wait` + `test_non_devclaw_merge_never_triggers_deploy` — in tests/test_self_deploy_trigger.py
-- [ ] T020 [P] [US2] `test_deploy_trigger_is_zero_token_on_idle_ticks` — `FakeClaude.calls == 0` with `deploy_pending` set — in tests/test_self_deploy_trigger.py
+- [X] T018 [P] [US2] `test_devclaw_repo_merge_records_deploy_pending_and_waits_for_quiescence` — trigger fires only at `count_running() == 0` (running-only, NOT `has_active_work`); running task defers — in tests/test_self_deploy_trigger.py (new file)
+- [X] T019 [P] [US2] `test_deploy_pending_expires_loudly_after_bounded_wait` + `test_non_devclaw_merge_never_triggers_deploy` — in tests/test_self_deploy_trigger.py
+- [X] T020 [P] [US2] `test_deploy_trigger_is_zero_token_on_idle_ticks` — `FakeClaude.calls == 0` with `deploy_pending` set — in tests/test_self_deploy_trigger.py
 
 ### Implementation
 
-- [ ] T021 [US2] Meta verbs `set_deploy_pending`/`deploy_pending`/`record_deploy_last` in devclaw/state_store/control.py (operator_hold shape: absence==off, corrupt==off) + config knob `DEVCLAW_DEPLOY_QUIESCENCE_S` (default 21600) in devclaw/config.py + docs/reference/env-vars.md row
-- [ ] T022 [US2] Close-path hook (devclaw-repo match on project repo_url) records `deploy_pending` in devclaw/goal/tick_donegate.py; tick-path mechanical quiescence check + `gh workflow run deploy.yml` trigger + expiry in devclaw/goal/tick.py (after the cheap guards, before any cognition)
-- [ ] T023 [P] [US2] deploy/deploy-devclaw-auto.sh (new): capture running sha from /health, run deploy-devclaw.sh with the new tag, on health-gate failure re-run once with the captured sha, fire the notify-relay ping on rollback failure, exit codes per contracts/operator-surface.md; `bash -n` clean
-- [ ] T024 [P] [US2] .github/workflows/deploy.yml: add the auto lane input calling the wrapper; keep `workflow_dispatch` manual lane byte-compatible
-- [ ] T025 [US2] Docs: docs/runbooks/ self-deploy section + env-vars + INDEX currency tags; full gate; open PR 2
+- [X] T021 [US2] Meta verbs `set_deploy_pending`/`deploy_pending`/`record_deploy_last` in devclaw/state_store/control.py (operator_hold shape: absence==off, corrupt==off) + config knob `DEVCLAW_DEPLOY_QUIESCENCE_S` (default 21600) in devclaw/config.py + docs/reference/env-vars.md row
+- [X] T022 [US2] Close-path hook (devclaw-repo match on project repo_url) records `deploy_pending` in devclaw/goal/tick_donegate.py; tick-path mechanical quiescence check + `gh workflow run deploy.yml` trigger + expiry in devclaw/goal/tick.py (after the cheap guards, before any cognition)
+- [X] T023 [P] [US2] deploy/deploy-devclaw-auto.sh (new): capture running sha from /health, run deploy-devclaw.sh with the new tag, on health-gate failure re-run once with the captured sha, fire the notify-relay ping on rollback failure, exit codes per contracts/operator-surface.md; `bash -n` clean
+- [X] T024 [P] [US2] .github/workflows/deploy.yml: add the auto lane input calling the wrapper; keep `workflow_dispatch` manual lane byte-compatible
+- [X] T025 [US2] Docs: docs/runbooks/ self-deploy section + env-vars + INDEX currency tags; full gate; open PR 2
 
 ## Phase 5: US3 — quiet mode (P3)
 

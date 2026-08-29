@@ -32,6 +32,7 @@ from . import evaluator as _evaluator
 from . import issue_ref as _issue_ref
 from . import merge_on_close as _merge
 from . import remote_checks as _remote_checks
+from . import self_deploy as _self_deploy
 from .. import project_manifest as _manifest
 from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
@@ -552,6 +553,18 @@ async def _resolve_done_gate(
                 # FR-005 belt-and-braces; the next goal's prepare_ws is the
                 # guarantee. Safe here: this goal holds its project lane.
                 await _sync_workspace(goal.workspace_dir)
+            if (
+                merge.outcome is not _merge.MergeOutcome.NO_PR
+                and _self_deploy.is_self_repo(goal.repo_url)
+            ):
+                # Spec 025 US2: a merged devclaw-repo goal owes the instance a
+                # redeploy — recorded here, fired by the heartbeat once
+                # quiescent (self_deploy.maybe_trigger).
+                store.mark_self_deploy_pending(merge.merged_sha, goal_id)
+                store.append_log(
+                    goal_id, "self-deploy pending — the instance redeploys "
+                             "onto the merged main once no task is running",
+                )
         store.transition(
             goal_id, Event.ACHIEVE,
             replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,
@@ -775,6 +788,12 @@ async def _finalize_pending_merge(
             expect=status,
         )
         store.record_convergence(goal_id, "achieved", goal.workspace_dir)
+        if _self_deploy.is_self_repo(goal.repo_url):
+            store.mark_self_deploy_pending(merge.merged_sha, goal_id)
+            store.append_log(
+                goal_id, "self-deploy pending — the instance redeploys "
+                         "onto the merged main once no task is running",
+            )
         merged = merge.merged_sha[:12] or merge.pr_url
         await _notify(
             notifier, NotifyLevel.OWNER,

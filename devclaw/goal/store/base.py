@@ -201,6 +201,13 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         or one rollback at the outermost exit."""
         return self._state.transaction()
 
+    def mark_self_deploy_pending(self, sha: str, goal_id: str) -> None:
+        """Spec 025 US2: a devclaw-repo goal just merged — record the owed
+        self-deploy on the shared control plane (the heartbeat's
+        ``self_deploy.maybe_trigger`` consumes it once quiescent). Thin public
+        passthrough so the close path never reaches into ``_state``."""
+        self._state.set_deploy_pending(sha, goal_id, _now_ms())
+
     def render_mirrors(self, goal_id: str) -> None:
         """Flush every mirror write deferred for ``goal_id`` (in the order
         recorded) to disk, then clear the pending list. Idempotent — a no-op
