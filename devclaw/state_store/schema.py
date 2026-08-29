@@ -208,6 +208,16 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                   PRIMARY KEY (fingerprint, cycle_key)
                 );
 
+                -- Quiet-mode suppressed pings (spec 025 US3): every owner ping
+                -- withheld while quiet mode is armed, in order, for the
+                -- catch-up read on the operator's return. A record, never
+                -- state — nothing reads it back for decisions.
+                CREATE TABLE IF NOT EXISTS suppressed_pings (
+                  id    INTEGER PRIMARY KEY AUTOINCREMENT,
+                  ts_ms INTEGER NOT NULL,
+                  text  TEXT NOT NULL
+                );
+
                 -- Machine-filed issue ledger (spec 014) — the issue doorway's
                 -- dedup source of truth: one row per (repo, fingerprint) a
                 -- machine finding has ever been filed for. Local SQLite, not

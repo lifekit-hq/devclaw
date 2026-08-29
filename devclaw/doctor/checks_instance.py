@@ -470,6 +470,24 @@ def check_merge_on_close_columns(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "merge-on-close columns present; no done goal owes a merge")]
 
 
+def check_suppressed_pings_table(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 025 US3 (per spec-016 FR-014): quiet mode records withheld pings
+    into ``suppressed_pings``. A DB predating the table would make arming
+    quiet mode silently DROP pings instead of recording them — the exact
+    silent-degradation class quiet mode must never have."""
+    cid = "instance.quiet.suppressed_pings"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "suppressed_pings" not in tables:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "suppressed_pings table absent — the DB predates spec 025; arming "
+            "quiet mode would drop pings instead of recording them",
+            remedy="restart devclaw (StateStore bootstraps tables at construction)",
+        )]
+    return [Finding(cid, Verdict.OK, "suppressed_pings table present")]
+
+
 INSTANCE_CHECKS: tuple = (
     check_migration_meta_keys,
     check_legacy_goal_status_lifecycle,
@@ -487,4 +505,5 @@ INSTANCE_CHECKS: tuple = (
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
     check_merge_on_close_columns,
+    check_suppressed_pings_table,
 )

@@ -377,6 +377,17 @@ def test_missing_merge_columns_detected(env):
     assert "pending_merge_pr" in f.evidence and "restart" in f.remedy
 
 
+def test_missing_suppressed_pings_table_detected(env):
+    """Seeded fault: a DB predating spec 025 US3 — arming quiet mode would
+    DROP pings instead of recording them."""
+    db = env["store"]._db
+    db.execute("DROP TABLE suppressed_pings")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.quiet.suppressed_pings")
+    assert f.verdict is Verdict.FAIL
+    assert "suppressed_pings" in f.evidence and "restart" in f.remedy
+
+
 def test_done_goal_with_owed_merge_is_a_fail(env):
     """Seeded fault: a goal reads done while pending_merge_pr is set — a state
     the close path must never produce (merge fires BEFORE the ACHIEVE

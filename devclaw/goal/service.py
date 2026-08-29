@@ -37,7 +37,7 @@ from ..engine.workspace import prepare_workspace
 from .engine import InProcessEngine
 from .evaluator import ClaudeCaller
 from .models import Goal, GoalStatus
-from .notify import HttpNotifier, Notifier, NullNotifier
+from .notify import HttpNotifier, Notifier, NullNotifier, QuietNotifier
 from .store import GoalStore
 from .tick import AUTODEPLOY_ENABLED, VERIFY_DONE, sweep_orphaned_refs, tick_all, tick_goal
 from .transitions import Event
@@ -130,8 +130,15 @@ class GoalService:
         #: used to resolve per-project overrides (verify_done, autodeploy).
         #: None is fine — each falls back to its devclaw-wide default.
         self._project_registry = project_registry
-        self._notifier: Notifier = notifier or (
-            HttpNotifier(self._cfg.notify_url) if self._cfg.notify_url else NullNotifier()
+        # Quiet mode (spec 025 US3) wraps the notifier HERE — the one binding
+        # both send paths share (_notify AND the cycle report's direct send).
+        # Injected test notifiers are wrapped too: disarmed quiet mode is a
+        # pure passthrough, so nothing changes until an operator arms it.
+        self._notifier: Notifier = QuietNotifier(
+            notifier or (
+                HttpNotifier(self._cfg.notify_url) if self._cfg.notify_url else NullNotifier()
+            ),
+            store,
         )
         #: the goal heartbeat task + its in-process wake event
         self._loop_task: Optional[asyncio.Task] = None
