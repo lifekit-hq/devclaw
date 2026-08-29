@@ -102,6 +102,7 @@ from .tick_donegate import (  # noqa: F401 (re-exported)
     _project_owns_its_deploy,
     _resolve_done_gate,
 )
+from .tick_donegate import _finalize_pending_merge as _donegate_finalize_pending_merge
 from .tick_dispatch import (  # noqa: F401 (re-exported)
     _dispatch_action,
 )
@@ -594,6 +595,19 @@ async def _handle_long_lived_advance(
             autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
         )
 
+    # Pending merge (spec 025 FR-003): a done-gate `achieved` verdict already
+    # stands and only the MERGE is owed — the goal parked mechanical:merge_failed
+    # and a human resumed it. Retry the merge, never the gate: zero cognition.
+    # Placed BEFORE the project hold on purpose: merging is not a dispatch and
+    # touches no workspace, and under lane skip-over a successor goal may hold
+    # the lane while this goal finishes its merge.
+    if status.pending_merge_pr and status.phase != "blocked":
+        return await _donegate_finalize_pending_merge(
+            goal_id, goal, status,
+            store=store, notifier=ctx.notifier, summarize=ctx.summary_caller,
+            autodeploy=ctx.autodeploy,
+        )
+
     # Single-writer project hold (spec 010 P1). THE dispatch choke point: a
     # goal that is not its project's holder dispatches nothing, so two
     # independent plans can never run against one repository (the #553 class,
@@ -904,9 +918,14 @@ async def tick_all(
                     f"auto-resumes on the next probe ~{resume_hhmm} UTC; "
                     f"I'll re-ping if still broken."
                 )
+                # The instance-dead class (spec 025 US3): an auth failure only
+                # a human re-login fixes must pierce quiet mode — an unsent
+                # auth ping silently kills an unattended week.
+                await _notify(notifier, NotifyLevel.OWNER, msg,
+                              summarize=summary_caller, critical=True)
             else:
                 msg = f"⏸️ paused on a usage limit — {reason}; resuming ~{resume_hhmm} UTC"
-            await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summary_caller)
+                await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summary_caller)
             kind = (
                 FailureKind.AUTH.value
                 if reason.startswith(FailureKind.AUTH.value) else "limit"

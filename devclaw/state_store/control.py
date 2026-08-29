@@ -152,6 +152,102 @@ class ControlPlaneMixin:
         except (ValueError, TypeError):
             return False, ""
 
+    # ---- quiet mode (spec 025 US3) ---------------------------------------
+    # One instance-wide switch: while armed, only instance-dead pings go out;
+    # everything else is recorded into suppressed_pings. operator_hold
+    # conventions: absence == off, corrupt JSON degrades to off.
+
+    def set_quiet_mode(self, on: bool, *, until_ms: "int | None" = None,
+                       armed_at_ms: int = 0) -> None:
+        if on:
+            self.set_meta("quiet_mode", json.dumps(
+                {"until_ms": until_ms, "armed_at": int(armed_at_ms)}
+            ))
+        else:
+            self.delete_meta("quiet_mode")
+
+    def quiet_mode(self) -> "tuple[bool, int | None]":
+        """``(armed, until_ms)``. ``(False, None)`` when off/corrupt. Expiry is
+        the READER's job (QuietNotifier disarms lazily) — this is a plain read."""
+        raw = self.get_meta("quiet_mode")
+        if not raw:
+            return False, None
+        try:
+            data = json.loads(raw)
+            until = data.get("until_ms")
+            return True, (int(until) if until is not None else None)
+        except (ValueError, TypeError):
+            return False, None
+
+    def record_suppressed_ping(self, text: str, ts_ms: int) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO suppressed_pings (ts_ms, text) VALUES (?, ?)",
+                (int(ts_ms), text),
+            )
+            self._commit()
+
+    def list_suppressed_pings(self, limit: int = 200) -> "list[dict]":
+        """The catch-up surface (FR-014): oldest first, LIMIT-bounded."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT ts_ms, text FROM suppressed_pings ORDER BY id ASC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [{"ts_ms": r["ts_ms"], "text": r["text"]} for r in rows]
+
+    def suppressed_ping_count(self) -> int:
+        with self._lock:
+            row = self._db.execute("SELECT COUNT(*) AS n FROM suppressed_pings").fetchone()
+        return int(row["n"] or 0)
+
+    # ---- self-deploy intent (spec 025 US2) -------------------------------
+    # One pending self-deploy at a time (a newer merge simply overwrites the
+    # sha — deploying the latest main covers both). Same conventions as
+    # operator_hold: absence == none, corrupt JSON degrades to none.
+
+    def set_deploy_pending(self, sha: str, goal_id: str, since_ms: int) -> None:
+        """Record that a devclaw-repo goal merged and the instance owes itself
+        a redeploy once quiescent."""
+        self.set_meta("deploy_pending", json.dumps(
+            {"sha": sha or "", "goal_id": goal_id, "since_ms": int(since_ms)}
+        ))
+
+    def deploy_pending(self) -> "tuple[str, str, int] | None":
+        """``(sha, goal_id, since_ms)`` or ``None`` when nothing is owed."""
+        raw = self.get_meta("deploy_pending")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            return (str(data.get("sha") or ""), str(data.get("goal_id") or ""),
+                    int(data.get("since_ms") or 0))
+        except (ValueError, TypeError):
+            return None
+
+    def clear_deploy_pending(self) -> None:
+        self.delete_meta("deploy_pending")
+
+    def record_deploy_last(self, *, sha: str, goal_id: str, outcome: str,
+                           at_ms: int, detail: str = "") -> None:
+        """The last self-deploy edge (``triggered`` / ``expired`` /
+        ``trigger_failed``) — the operator-visible record that survives the
+        deploy itself (the workflow owns probe/rollback truth beyond this)."""
+        self.set_meta("deploy_last", json.dumps({
+            "sha": sha or "", "goal_id": goal_id, "outcome": outcome,
+            "at_ms": int(at_ms), "detail": (detail or "")[:400],
+        }))
+
+    def deploy_last(self) -> "dict | None":
+        raw = self.get_meta("deploy_last")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else None
+        except (ValueError, TypeError):
+            return None
+
     #: meta-key prefix for a per-goal run-window. The global window keeps the bare
     #: ``run_schedule`` key; a goal's own window is ``run_schedule:<goal_id>``.
     _GOAL_SCHEDULE_PREFIX = "run_schedule:"

@@ -451,6 +451,62 @@ def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
             remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
         )]
     return [Finding(cid, Verdict.OK, "goal_status.slice_hold_count column present")]
+def check_merge_on_close_columns(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 025 US1 (per spec-016 FR-014: a store-shape change ships its
+    doctor check): merge-on-close persists ``pending_merge_pr`` /
+    ``merge_heal_attempted`` on goal_status. Two invariants: the columns
+    exist (a DB predating spec 025 silently loses the owed-merge marker on
+    restart), and no goal reads ``done`` while a merge is still owed —
+    merge-on-close fires BEFORE the ACHIEVE transition, so that pair is a
+    state the code must never produce."""
+    cid = "instance.merge.close_columns"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
+        missing = {"pending_merge_pr", "merge_heal_attempted"} - cols
+        if missing:
+            return [Finding(
+                cid, Verdict.FAIL,
+                f"goal_status column(s) absent: {', '.join(sorted(missing))} — the DB "
+                "predates spec 025; an owed merge-on-close would be forgotten across "
+                "a restart",
+                remedy="restart devclaw (GoalState bootstraps columns at construction)",
+            )]
+        done_with_debt = [
+            r["goal_id"] for r in db.execute(
+                "SELECT goal_id FROM goal_status "
+                "WHERE phase = 'done' AND COALESCE(pending_merge_pr, '') != ''"
+            )
+        ]
+    if done_with_debt:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal(s) read done with a merge still owed (pending_merge_pr set): "
+            + ", ".join(sorted(done_with_debt)),
+            remedy="the goal branch was never merged — merge the PR by hand and "
+                   "clear pending_merge_pr, then file the close-path bug",
+        )]
+    return [Finding(cid, Verdict.OK, "merge-on-close columns present; no done goal owes a merge")]
+
+
+def check_suppressed_pings_table(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 025 US3 (per spec-016 FR-014): quiet mode records withheld pings
+    into ``suppressed_pings``. A DB predating the table would make arming
+    quiet mode silently DROP pings instead of recording them — the exact
+    silent-degradation class quiet mode must never have."""
+    cid = "instance.quiet.suppressed_pings"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "suppressed_pings" not in tables:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "suppressed_pings table absent — the DB predates spec 025; arming "
+            "quiet mode would drop pings instead of recording them",
+            remedy="restart devclaw (StateStore bootstraps tables at construction)",
+        )]
+    return [Finding(cid, Verdict.OK, "suppressed_pings table present")]
 
 
 INSTANCE_CHECKS: tuple = (
@@ -470,4 +526,6 @@ INSTANCE_CHECKS: tuple = (
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
     check_goal_status_slice_hold_count,
+    check_merge_on_close_columns,
+    check_suppressed_pings_table,
 )

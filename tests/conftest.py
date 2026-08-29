@@ -42,6 +42,27 @@ from devclaw.engine import sandcastle as _sandcastle_mod
 
 
 @pytest.fixture(autouse=True)
+def _no_real_merges_by_default(monkeypatch):
+    """Merge-on-close (spec 025) runs on every achieved done-gate close and
+    shells the real ``gh`` CLI. A unit test driving a close must never reach
+    the network (or a developer's authenticated gh) — default the seam to
+    NO_PR, the nothing-to-merge success outcome, so every pre-025 close test
+    keeps its exact behavior. Merge tests patch ``tick_donegate._attempt_merge``
+    themselves with recording fakes."""
+    from devclaw.goal import merge_on_close as _moc
+    from devclaw.goal import tick_donegate as _tdg
+
+    async def _no_pr(workspace_dir, branch):
+        return _moc.MergeResult(_moc.MergeOutcome.NO_PR, detail="stubbed (conftest)")
+
+    async def _no_sync(workspace_dir):
+        return None
+
+    monkeypatch.setattr(_tdg, "_attempt_merge", _no_pr)
+    monkeypatch.setattr(_tdg, "_sync_workspace", _no_sync)
+
+
+@pytest.fixture(autouse=True)
 def _disable_review_gate_by_default(monkeypatch):
     """The pre-PR review gate's default reviewer shells out to the real `claude`
     CLI. On a developer machine that's authenticated, an un-injected TaskQueue in

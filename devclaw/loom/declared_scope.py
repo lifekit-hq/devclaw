@@ -1,10 +1,11 @@
 """Declared file scopes — the hermetic-I/O contract a `[P]` task signs.
 
-Spec 010 US3 (FR-101/FR-103). Two increments may run at the same time on one
-project ONLY when the plan marked them topologically independent (`[P]`) **and**
-each declared the file paths it will touch. This module is the mechanism that
-makes the declaration mean something: given the increment's own unified diff, it
-answers "did this change stay inside what its task declared?".
+Spec 010 US3 (FR-101/FR-103); the concurrent fan-out lane it once served was
+demolished by spec 022 US3, but the contract survives it: an increment that
+checks off a scoped `[P]` row has declared the file paths it will touch. This
+module is the mechanism that makes the declaration mean something: given the
+increment's own unified diff, it answers "did this change stay inside what its
+task declared?".
 
 Mechanism, not prompt. A declared scope that nothing checks is a soft constraint,
 and workers route around soft constraints (#358) — so the contract is enforced
@@ -159,48 +160,6 @@ def path_in_scope(path: str, globs: "tuple[str, ...] | list[str]") -> bool:
     return False
 
 
-# ---- reading a task graph directly -----------------------------------------
-
-
-@dataclass(frozen=True)
-class PlanRow:
-    """One checkbox row of a ``tasks.md``, as the fan-out planner reads it."""
-
-    task_id: str
-    label: str
-    checked: bool
-    parallel: bool
-    scopes: "tuple[str, ...]"
-
-
-def parse_plan_rows(text: str) -> "list[PlanRow]":
-    """Every identified task row of a ``tasks.md``, in file order.
-
-    The same row grammar the claim detector uses, exposed for the planner that
-    reads the graph from the WORKING TREE rather than from a diff. Rows without
-    a ``T<id>`` are skipped: they are prose or a checklist of something else, and
-    a fan-out lane must be nameable. Pure; never raises."""
-    rows: "list[PlanRow]" = []
-    for line in (text or "").splitlines():
-        m = _TASK_LINE.match(line)
-        if not m:
-            continue
-        rest = m.group("rest")
-        idm = _TASK_ID.search(rest)
-        if not idm:
-            continue
-        rows.append(
-            PlanRow(
-                task_id=idm.group(0),
-                label=rest.strip(),
-                checked=m.group("mark") in ("x", "X"),
-                parallel=bool(_PARALLEL.search(rest)),
-                scopes=parse_scopes(rest),
-            )
-        )
-    return rows
-
-
 # ---- diff parsing ----------------------------------------------------------
 
 
@@ -335,17 +294,13 @@ def _implicitly_allowed(diff: str) -> "set[str]":
     return allowed
 
 
-def scope_check(
-    diff: str,
-    declared: "tuple[str, ...] | list[str] | None" = None,
-) -> ScopeCheck:
+def scope_check(diff: str) -> ScopeCheck:
     """Judge one increment's diff against its declared scope.
 
-    ``declared`` is the scope the DISPATCHER pinned on this increment (the
-    fan-out lane case): the host chose the task, so it knows the contract
-    first-hand and does not have to infer it. Without it the contract is read
-    from the increment's own claim on the task graph — which is what a
-    single-lane increment that checks off a scoped `[P]` row is doing.
+    The contract is read
+    from the increment's own claim on the task graph — which is what an
+    increment that checks off a scoped `[P]` row is doing. (The
+    dispatcher-pinned ``declared`` scope died with the fan-out lane, spec 022.)
 
     ``diff`` is the MATERIALIZED span (spec 013): everything the agent changed,
     including what it chose not to record. This function briefly took an
@@ -359,13 +314,6 @@ def scope_check(
     Never raises."""
     try:
         claims = claimed_scopes(diff)
-        if declared:
-            globs = tuple(g for g in declared if str(g).strip())
-            if globs:
-                # The pinned contract wins, and it applies whether or not the
-                # worker got round to checking its row off — a lane that skips
-                # the bookkeeping must not thereby escape its declared I/O.
-                claims = {"(dispatched)": globs, **claims}
         touched = changed_paths(diff)
         if not claims:
             return ScopeCheck(claims={}, violations=(), touched=touched)
@@ -392,56 +340,7 @@ def violation_summary(check: ScopeCheck) -> str:
         f"declared-scope violation: this increment touched {len(check.violations)} "
         f"path(s) outside the file scope its plan declared — {paths}. "
         f"Claimed task(s): {tasks}; declared scope: {scopes}. "
-        f"A [P] task's declared scope is the contract that makes concurrent "
-        f"execution safe; keep the change inside it, or widen the declaration in "
+        f"A [P] task's declared scope is a contract; keep the change inside "
+        f"it, or widen the declaration in "
         f"the task graph first (planning time), never at runtime."
     )
-
-
-# ---- disjointness ----------------------------------------------------------
-
-
-def literal_prefix(pattern: str) -> str:
-    """The wildcard-free head of a declared glob — everything before the first
-    ``*`` or ``?``. ``src/widget/**`` ⇒ ``src/widget/``; ``**/x`` ⇒ ``""``."""
-    pat = _normalise(pattern)
-    cut = len(pat)
-    for i, ch in enumerate(pat):
-        if ch in "*?":
-            cut = i
-            break
-    return pat[:cut]
-
-
-def _prefix_covers(a: str, b: str) -> bool:
-    """Whether path-prefix ``a`` could contain anything under prefix ``b``."""
-    if a == "":
-        return True  # a wildcard-leading glob can reach anywhere
-    a_dir = a if a.endswith("/") else a + "/"
-    return b == a or b.startswith(a_dir) or b.startswith(a)
-
-
-def scopes_disjoint(
-    a: "tuple[str, ...] | list[str]", b: "tuple[str, ...] | list[str]"
-) -> bool:
-    """Whether two declared scopes can be run at the same time (spec 010 FR-101).
-
-    Decided SYNTACTICALLY, on the literal head of each glob, and deliberately
-    conservatively: two scopes are called disjoint only when no glob of one has a
-    literal head that could reach into the other's. The test can therefore
-    decline a fan-out that would in fact have been safe, but it can never permit
-    one that is not — and declining costs a night of sequential execution while
-    permitting costs a corrupted integration.
-
-    Empty on either side is NOT disjoint: a scope that declares nothing has
-    declared no boundary, and an undeclared boundary is exactly what FR-101
-    refuses to run concurrently."""
-    left = [literal_prefix(g) for g in a if str(g).strip()]
-    right = [literal_prefix(g) for g in b if str(g).strip()]
-    if not left or not right:
-        return False
-    for x in left:
-        for y in right:
-            if _prefix_covers(x, y) or _prefix_covers(y, x):
-                return False
-    return True

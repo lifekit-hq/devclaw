@@ -3,7 +3,7 @@
 When the goal layer lived in a separate service it dispatched to devclaw over
 streamable-http MCP and polled task rows back as a camelCase JSON blob. Folded
 in, the seam collapses to a direct call into :class:`TaskQueue` /
-:class:`StateStore`: ``dispatch`` submits a task/program and ``poll`` reads the
+:class:`StateStore`: ``dispatch`` submits a task and ``poll`` reads the
 row straight from SQLite. This deletes the HTTP transport, the bearer token, the
 ``/wake`` endpoint, AND the whole "polled `done` before `pr_url` was written"
 timing race — in-process there is no over-the-wire window.
@@ -30,7 +30,6 @@ _WORKSPACE_SWEEP_META_KEY = "workspace_sweep_last_ms"
 from ..task_queue import TaskQueue
 
 _TASK_TERMINAL = {"done", "failed", "cancelled"}
-_PROGRAM_TERMINAL = {"done", "failed", "cancelled"}
 
 
 class GoalEngineError(RuntimeError):
@@ -97,24 +96,6 @@ class InProcessEngine:
         # coroutines re-enter the held store lock mid-unit. A malformed
         # manifest blocks dispatch loudly (FR-010), never a silent default.
         strictness, manifest_verify_cmd = _manifest_tiers(goal)
-        if action.tool == "start_program":
-            # Program-child tasks inherit ``open_pr`` and ``verify_cmd`` — the
-            # standing-goal / reviewable-slice contract. Under a mission goal
-            # (``open_pr: true``), each child task delivers as a PR instead of
-            # committing straight to the workspace branch.
-            # Closes the 2026-07-03 closeloop-mission-v2 defect where the
-            # activity-timeline program pushed direct-to-main because the
-            # flags stopped at ``submit_program``.
-            program_id = self._queue.submit_program(
-                workspace_dir=ws, goal=action.goal, notify_url=nu,
-                open_pr=action.open_pr,
-                verify_cmd=action.verify_cmd or goal.verify_cmd or manifest_verify_cmd,
-                parent_goal_id=goal.id,
-                strictness=strictness,
-                project_id=goal.project_id,
-                pump=False,
-            )
-            return InFlight("devclaw", "start_program", program_id, "program", action.goal)
         if action.tool in (
             "implement_feature", "fix_bug", "review_repository", "validate_product"
         ):
@@ -143,60 +124,6 @@ class InProcessEngine:
             return InFlight("devclaw", action.tool, task_id, "task", action.goal)
         raise GoalEngineError(f"unknown engine tool: {action.tool}")
 
-    async def dispatch_fanout(
-        self, action: Action, goal: Goal, notify_url: str, lanes: "list" 
-    ) -> InFlight:
-        """Dispatch a PLANNED PARALLEL GROUP — several increments of one plan at
-        once (spec 010 US3, FR-101).
-
-        The lanes come from the task graph, so there is nothing to decide here
-        and nothing to ask a model: this hands the queue an already-planned DAG
-        with no dependency edges, which is precisely what
-        :meth:`TaskQueue.start_planned_program` exists for (zero LLM — the
-        planner is never invoked). The queue then runs the children concurrently
-        up to its OWN caps, which is where FR-105's "the plan and the host's
-        caps, nothing else" is actually enforced.
-
-        A program, not N goal actions, on purpose: the goal keeps ONE in-flight
-        ref, so every settle, poll, and observability surface downstream is
-        unchanged. ``pump=False`` for the same reason :meth:`dispatch` uses it —
-        this runs inside the tick's atomic dispatch transaction.
-        """
-        from ..program_plan import PlannedTask
-        from . import fanout as _fanout
-
-        planned = [
-            PlannedTask(
-                key=lane.key,
-                goal=_fanout.lane_brief(lane, action.goal, lanes),
-                kind="implement_feature",
-                workspace_dir=lane.workspace_dir,
-                lane={
-                    "position": lane.position,
-                    "key": lane.key,
-                    "label": lane.label,
-                    "scopes": list(lane.scopes),
-                    "integrate_into": goal.workspace_dir,
-                },
-            )
-            for lane in lanes
-        ]
-        # Same manifest tiers as dispatch() — sync on purpose (atomic tick unit).
-        strictness, manifest_verify_cmd = _manifest_tiers(goal)
-        program_id = self._queue.start_planned_program(
-            goal=action.goal,
-            workspace_dir=goal.workspace_dir,
-            planned=planned,
-            notify_url=notify_url or None,
-            open_pr=action.open_pr,
-            verify_cmd=action.verify_cmd or goal.verify_cmd or manifest_verify_cmd,
-            parent_goal_id=goal.id,
-            strictness=strictness,
-            project_id=goal.project_id,
-            pump=False,
-        )
-        return InFlight("devclaw", "fanout", program_id, "program", action.goal)
-
     def kick(self) -> None:
         """Nudge the task queue to claim + launch any pending row NOW, rather
         than wait for its periodic pump (``TaskQueue.start_ticking``'s
@@ -208,24 +135,23 @@ class InProcessEngine:
 
     async def poll(self, ref: InFlight) -> PollResult:
         if ref.ref_kind == "program":
-            return self._poll_program(ref.id)
+            # The program/DAG dispatch lane was retired (spec 022 US3). A live
+            # program ref should be impossible — only a legacy row from a
+            # pre-022 build could still carry one. Fail LOUD so the tick's
+            # lost-ref path blocks the goal with an actionable reason instead
+            # of silently wedging or crashing the loop.
+            raise GoalEngineError(
+                f"in-flight ref {ref.id} is a legacy 'program' ref — the "
+                "program/DAG lane was retired (spec 022 US3) and can no longer "
+                "be polled. Inspect it with get_program, then resume or cancel "
+                "the goal to move on."
+            )
         return self._poll_task(ref.id)
-
-    def latest_program_for_goal(self, goal_id: str) -> Optional[tuple[str, str]]:
-        """(program_id, program_goal) of the goal's most recent program, or
-        None. The orphan sweep (``tick.sweep_orphaned_refs``) uses this to
-        rediscover a program whose in-flight ref was lost from STATUS.md —
-        without it a crash mid-status-write silently divorces a goal from
-        its own running (or already-failed) program and the goal waits
-        forever."""
-        p = self._store.latest_program_for_goal(goal_id)
-        return (p.id, p.goal) if p is not None else None
 
     def latest_task_for_goal(self, goal_id: str) -> Optional[tuple[str, str, str]]:
         """(task_id, task_goal, task_kind) of the goal's most recent task, or
-        None. Mirrors :meth:`latest_program_for_goal` — the orphan sweep's
-        finder for the TASK half of a lost in-flight ref (PR7 extends
-        re-adoption from programs-only to both). ``task_kind`` (e.g.
+        None. The orphan sweep's
+        finder for a lost in-flight ref. ``task_kind`` (e.g.
         ``implement_feature``) is what the sweep uses to rebuild the
         InFlight's ``tool`` field."""
         t = self._store.latest_task_for_goal(goal_id)
@@ -370,49 +296,6 @@ class InProcessEngine:
             diff_stats=_diff_stats(t.result_json),
             repo_notes=_repo_notes(t.result_json) if terminal else None,
             no_change=_no_change(t.result_json) if terminal else False,
-        )
-
-    def _poll_program(self, program_id: str) -> PollResult:
-        p = self._store.get_program(program_id)
-        if p is None:
-            raise GoalEngineError(f"unknown program_id: {program_id}")
-        terminal = p.status in _PROGRAM_TERMINAL
-        tasks = self._store.list_program_tasks(program_id)
-        pr_urls = [t.pr_url for t in tasks if t.pr_url]
-        detail = ""
-        tasks_out: "list[dict] | None" = None
-        if terminal:
-            parts = [f"program {p.status}" + (f" — {p.error}" if p.error else "")]
-            for t in tasks:
-                parts.append(f"- [{t.status}] {t.goal[:120]}" + (f"  PR {t.pr_url}" if t.pr_url else ""))
-            detail = "\n".join(parts)[:4000]
-            # Per-child breakdown: callers can grade each child task by its
-            # own plan_key. (The goal layer no longer consumes this — the
-            # checklist settle died with the shrink — kept for observability.)
-            tasks_out = [
-                {
-                    "plan_key": t.plan_key,
-                    "status": t.status,
-                    "gate_passed": _gate_passed(t.result_json),
-                    "pr_url": t.pr_url,
-                    "error": t.error,
-                }
-                for t in tasks
-            ]
-        # A program's repo notes are its children's, joined — the merge layer
-        # dedupes line-by-line, so a simple concatenation is safe.
-        notes_parts = (
-            [n for n in (_repo_notes(t.result_json) for t in tasks) if n]
-            if terminal else []
-        )
-        return PollResult(
-            terminal=terminal,
-            status=p.status,
-            detail=detail,
-            pr_url=("; ".join(pr_urls) if pr_urls else None),
-            gate_passed=None,  # a program aggregates many gates — no single verdict
-            tasks=tasks_out,
-            repo_notes=("\n".join(notes_parts) or None) if terminal else None,
         )
 
 

@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 from devclaw.engine import EngineRequest
-from devclaw.engine.stub import stub_engine, stub_goal_planner
+from devclaw.engine.stub import stub_engine
 
 
 async def test_stub_engine_builds_jyq_for_golden_goal():
@@ -26,8 +26,3 @@ async def test_stub_engine_placeholder_for_unknown_goal():
     assert res["status"] == "ok"
     assert (Path(ws) / "STUB_BUILD.txt").exists()
     assert not (Path(ws) / "jyq").exists()
-
-
-async def test_stub_goal_planner_returns_one_task():
-    tasks = await stub_goal_planner("fix the thing", "/ws")
-    assert tasks[0].goal == "fix the thing"

@@ -30,13 +30,14 @@ from . import issue_ref as _issue_ref
 from . import project_hold as _project_hold
 from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
+from . import self_deploy as _self_deploy
 from . import summary as goal_summary
 from . import triage as goal_triage
 from ..engine.workspace import prepare_workspace
 from .engine import InProcessEngine
 from .evaluator import ClaudeCaller
 from .models import Goal, GoalStatus
-from .notify import HttpNotifier, Notifier, NullNotifier
+from .notify import HttpNotifier, Notifier, NullNotifier, QuietNotifier
 from .store import GoalStore
 from .tick import AUTODEPLOY_ENABLED, VERIFY_DONE, sweep_orphaned_refs, tick_all, tick_goal
 from .transitions import Event
@@ -129,8 +130,15 @@ class GoalService:
         #: used to resolve per-project overrides (verify_done, autodeploy).
         #: None is fine — each falls back to its devclaw-wide default.
         self._project_registry = project_registry
-        self._notifier: Notifier = notifier or (
-            HttpNotifier(self._cfg.notify_url) if self._cfg.notify_url else NullNotifier()
+        # Quiet mode (spec 025 US3) wraps the notifier HERE — the one binding
+        # both send paths share (_notify AND the cycle report's direct send).
+        # Injected test notifiers are wrapped too: disarmed quiet mode is a
+        # pure passthrough, so nothing changes until an operator arms it.
+        self._notifier: Notifier = QuietNotifier(
+            notifier or (
+                HttpNotifier(self._cfg.notify_url) if self._cfg.notify_url else NullNotifier()
+            ),
+            store,
         )
         #: the goal heartbeat task + its in-process wake event
         self._loop_task: Optional[asyncio.Task] = None
@@ -372,6 +380,14 @@ class GoalService:
                 await self._maybe_emit_cycle_report()
             except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
                 sys.stderr.write(f"goal-layer: cycle-report edge crashed: {exc}\n")
+            # Self-deploy edge (spec 025 US2) — mechanical, zero-LLM: a free
+            # meta read when nothing is owed; when a devclaw-repo merge left a
+            # deploy pending it waits for task quiescence then fires the
+            # workflow. Own try for the same never-kill-the-loop reason.
+            try:
+                await _self_deploy.maybe_trigger(self._store, now_ms=_now_ms())
+            except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
+                sys.stderr.write(f"goal-layer: self-deploy edge crashed: {exc}\n")
 
     def _make_tracer(self, goal_id: str) -> "Optional[_trace.PersistentTracer]":
         """Per-goal-tick PersistentTracer that writes into the sqlite traces
@@ -760,6 +776,16 @@ class GoalService:
         # written, so the repo manifest's strictnessDefault applies live.
         if strictness is not None and strictness not in ("trust", "strict"):
             raise ValueError(f"unknown strictness {strictness!r} — expected 'trust' or 'strict'")
+        # Spec 024 US2: for ISSUE-BACKED goals the ticket is the authoring home
+        # — the saga sections live in the issue template and travel to grading
+        # and the worker brief as live issue content, so an omitted slot
+        # argument is "authored on the ticket", not an unfilled slot. Coalesce
+        # to declared-empty for storage; admission skips the slot checks on
+        # this lane (the issue-less lane keeps spec 012's rejection).
+        if issue_refs:
+            out_of_scope = out_of_scope if out_of_scope is not None else []
+            invariants = invariants if invariants is not None else []
+            established = established if established is not None else []
 
         admission = _verify(
             objective=objective, workspace_dir=workspace_dir, done_when=done_when,
@@ -945,6 +971,17 @@ class GoalService:
 
         # We own the identity. Create the one_shot goal.
         issue_objective = objective or f"Work issue #{issue_ref}: {snap.title}"
+        # Spec 022 US2 FR-004: workspace prep to default-branch head before
+        # the first run. The tick's prepare_ws is the load-bearing mechanism
+        # for each subsequent action; this early prep ensures the workspace is
+        # on the default branch even if there is a delay before the tick fires.
+        # Best-effort: a prep hiccup at dispatch time is fine — the tick's
+        # _block_on_prep_failure handles persistent failures.
+        if workspace_dir and Path(workspace_dir).exists():
+            try:
+                await prepare_workspace(workspace_dir, repo_url)
+            except Exception:  # noqa: BLE001 — best-effort; tick is the backstop
+                pass
         self.create_goal(
             goal_id,
             objective=issue_objective,
@@ -1267,11 +1304,16 @@ class GoalService:
             # the reason exactly as a resume does). blocked_kind is cleared by
             # the store's non-blocked-write normalization; blocked_on is not, so
             # it must be cleared here explicitly.
+            # merge_heal_attempted=False: a human re-direction restarts the
+            # spec-025 conflict-heal budget (pending_merge_pr is deliberately
+            # KEPT — an owed merge survives a steer; only a successful merge
+            # clears it).
             self._goal_store.transition(
                 goal_id, Event.UNBLOCK,
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
                         heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                        slice_hold_count=0),
+                        slice_hold_count=0,
+                        merge_heal_attempted=False),
                 expect=s,
             )
         self.poke()
@@ -1396,7 +1438,7 @@ class GoalService:
 
     def cancel_goal(self, goal_id: str) -> dict:
         """Abort a durable goal. Sets phase to 'cancelled' (terminal — skipped on
-        every future tick) and tears down any in-flight task or program. Returns
+        every future tick) and tears down any in-flight task. Returns
         a graceful no-op response if the goal is already in a terminal phase."""
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
@@ -1413,7 +1455,15 @@ class GoalService:
             if ref.ref_kind == "task":
                 self._queue.cancel_task(ref.id)
             else:
-                self._queue.cancel_program(ref.id)
+                # Legacy 'program' ref (pre-spec-022 row): the program/DAG lane
+                # was retired, nothing can still be running behind it — record
+                # loudly instead of crashing the cancel.
+                self._goal_store.append_log(
+                    goal_id,
+                    f"cancel: in-flight ref {ref.id} is a legacy 'program' ref — "
+                    "the program lane was retired (spec 022 US3); nothing live "
+                    "to tear down",
+                )
         self._goal_store.transition(
             goal_id, Event.CANCEL, replace(s, phase="cancelled", in_flight=None), expect=s,
         )

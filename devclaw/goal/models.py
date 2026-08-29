@@ -6,11 +6,11 @@ Folded in from goalclaw. A :class:`Goal` is the durable objective (read from
 single engine call the tick dispatches. :class:`EvalResult` is the direction evaluator's verdict —
 the layer that asks "is this going the right way?" not just "did it ship?".
 
-These are deliberately separate from the task/program types in
-``state_store.py``: a ``program`` is a bounded, one-shot DAG that runs to
-completion; a ``goal`` is an open-ended standing intent advanced across days via
+These are deliberately separate from the task types in
+``state_store.py``: a ``task`` is one bounded engine run; a ``goal`` is an
+open-ended standing intent advanced across days via
 the heartbeat + steering. Different time-scales, different lifecycles — the goal
-layer sits *above* the program/task engine and dispatches into it.
+layer sits *above* the task engine and dispatches into it.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from typing import Literal, Optional
 # would extend it), but code is the only engine today and dispatch is in-process.
 Engine = Literal["devclaw"]
 #: the engine verbs the goal layer can dispatch — a subset of devclaw's task
-#: kinds plus the program decomposer.
+#: kinds.
 GoalTool = Literal[
-    "start_program", "implement_feature", "fix_bug", "review_repository",
+    "implement_feature", "fix_bug", "review_repository",
     "validate_product",
 ]
 Phase = Literal["idle", "in_flight", "verifying", "blocked", "done", "cancelled"]
@@ -179,13 +179,16 @@ class InFlight:
     """A reference to an action the engine is currently running for this goal."""
 
     engine: Engine
-    #: the dispatching tool's label — a :data:`GoalTool`, or ``"fanout"`` for a
-    #: planned-parallelism program ref (kept ``str``: re-adoption rebuilds refs
-    #: from task/program rows, whose kind is not statically constrained).
+    #: the dispatching tool's label — a :data:`GoalTool` (kept ``str``:
+    #: re-adoption rebuilds refs from task rows, whose kind is not statically
+    #: constrained).
     tool: str
-    #: the task_id or program_id the engine returned
+    #: the task_id the engine returned
     id: str
-    #: "task" | "program" — which kind of row to poll
+    #: which kind of row to poll. "program" is LEGACY-ONLY: the program/DAG
+    #: lane was retired (spec 022 US3) — a persisted pre-022 ref may still
+    #: carry it, and polling one now fails loud (the goal blocks with an
+    #: actionable reason) rather than crashing the tick.
     ref_kind: Literal["task", "program"]
     goal: str = ""
     #: True when this is the read-only review dispatched by the done-gate (its
@@ -258,6 +261,17 @@ class GoalStatus:
     #: ``blocked`` with ``blocked_kind="mechanical:slice_hold"`` — loud failure
     #: over silent indefinite sleep.
     slice_hold_count: int = 0
+    #: spec 025 merge-on-close: PR URL whose squash-merge is still owed after
+    #: an ``achieved`` done-gate verdict. Non-empty ⇒ the advance path retries
+    #: the MERGE (zero cognition) instead of planning — the verdict already
+    #: stands, so resume must never re-run the done-gate (FR-003). Only legal
+    #: outside ``done``; cleared on a successful merge and on cancel.
+    pending_merge_pr: str = ""
+    #: spec 025 FR-017: the ONE bounded conflict-resolution increment for the
+    #: current close attempt has been spent. A second CONFLICT parks the goal
+    #: (``mechanical:merge_failed``) instead of dispatching again. Reset on a
+    #: successful merge and on steer_goal (a re-direction restarts the budget).
+    merge_heal_attempted: bool = False
     #: human note of the intended next step
     next: str = ""
     #: ISO ts of the last time the plan step (LLM) ran
@@ -376,16 +390,9 @@ class PollResult:
     #: gate-time diff stats the queue captured (files/insertions/deletions),
     #: None when absent — a stats hiccup never blocks a settle
     diff_stats: Optional[dict] = None
-    #: PER-CHILD breakdown for a terminal PROGRAM ref (one-shot mode): each
-    #: entry is ``{"plan_key", "status", "gate_passed", "pr_url", "error"}`` so
-    #: the settle path can grade each checklist item by ITS OWN child task's
-    #: verdict instead of painting every item with the aggregate program
-    #: status (a one-child failure must not mark the succeeded items failed).
-    #: None for task refs, non-terminal polls, and engines that predate it.
-    tasks: Optional[list] = None
     #: the worker's REPO NOTES hand-back — durable repo-level facts for future
     #: tasks on the same repo (MC borrow item 3). None when the worker
-    #: reported none; for program refs, the children's notes joined.
+    #: reported none.
     repo_notes: Optional[str] = None
     #: the code-writing task finished successfully having changed NOTHING
     #: (spec 013 FR-014). A settle carrying this is not a delivered increment:

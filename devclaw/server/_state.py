@@ -45,13 +45,13 @@ _engine = _config.ENGINE
 if _engine == "stub":
     # Harness-validation mode: deterministic stub engine + cognition, no docker,
     # no claude. Proves the plumbing around the agent; never use in production.
-    from ..engine.stub import stub_engine, stub_goal_planner
+    from ..engine.stub import stub_engine
 
     sys.stderr.write(
         "⚠ DEVCLAW_ENGINE=stub — deterministic stub engine + cognition "
         "(NO sandbox, NO claude). For harness validation only.\n"
     )
-    queue = TaskQueue(store, planner=stub_goal_planner, runner=stub_engine)
+    queue = TaskQueue(store, runner=stub_engine)
 elif _engine == "host":
     # Real cognition + the real worker runner, but on the HOST with NO sandbox.
     from ..engine.host import run_host

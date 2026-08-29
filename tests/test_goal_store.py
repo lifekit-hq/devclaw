@@ -215,6 +215,28 @@ def test_missing_status_is_default(tmp_path):
     assert s.in_flight is None
 
 
+def test_goal_status_merge_fields_roundtrip(tmp_path):
+    # spec 025: pending_merge_pr / merge_heal_attempted persist through the
+    # store, and a row that never set them reads back the defaults.
+    store = GoalStore(tmp_path, now=Clock())
+    s = GoalStatus(
+        phase="blocked",
+        blocked_on="merge failed: conflict after heal",
+        blocked_kind="mechanical:merge_failed",
+        pending_merge_pr="https://github.com/o/r/pull/7",
+        merge_heal_attempted=True,
+    )
+    store.save_status("g1", s)
+    back = store.load_status("g1")
+    assert back.pending_merge_pr == "https://github.com/o/r/pull/7"
+    assert back.merge_heal_attempted is True
+    assert back.blocked_kind == "mechanical:merge_failed"
+    # defaults on an untouched goal
+    fresh = store.load_status("never")
+    assert fresh.pending_merge_pr == ""
+    assert fresh.merge_heal_attempted is False
+
+
 def test_log_append_and_recent(tmp_path):
     store = GoalStore(tmp_path, now=Clock())
     store.append_log("g1", "first")

@@ -37,6 +37,13 @@ def _fake_cgroup(tmp_path, monkeypatch, runner, *, oom_kill, mem_max="2147483648
 
 
 def test_oom_annotate_stamps_marker_on_new_kill(tmp_path, monkeypatch, runner):
+    # This case pins the CGROUP-derived cap — the fallback when the engine
+    # declared no cap. The env MUST be cleared: inside a real devclaw sandbox
+    # the engine always declares DEVCLAW_SANDBOX_MEMORY (FR-007, next test),
+    # so without this the test fails in any sandbox running a per-project
+    # memory override (found 2026-08-29: the first 6g devclaw sandbox failed
+    # its verify gate on exactly this line, and the failure text containing
+    # "sandbox OOM-killed" then got the settle misread as a real OOM).
     monkeypatch.delenv("DEVCLAW_SANDBOX_MEMORY", raising=False)
     events = _fake_cgroup(tmp_path, monkeypatch, runner, oom_kill=0)
     baseline = runner._read_oom_kill_count()

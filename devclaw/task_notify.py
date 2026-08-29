@@ -1,9 +1,8 @@
-"""Terminal-state notification for tasks and programs.
+"""Terminal-state notification for tasks.
 
 Split out of :mod:`devclaw.task_queue` as a mixin so the ~950-line single-writer
 core stays focused. Standalone tasks fire their own ``notify_url`` on a terminal
-state (bounded retries); program-child tasks don't — only the program-level
-notify fires once the program terminates (one program in, one notify out).
+state (bounded retries).
 
 ``NOTIFY_BACKOFF_MS`` stays a module-level constant in :mod:`devclaw.task_queue`
 (the queue's constants are pinned to that namespace by tests); the mixin reads it
@@ -18,7 +17,7 @@ import sys
 import httpx
 
 from . import task_queue
-from .state_store import Program, Task
+from .state_store import Task
 
 
 class _NotifyMixin:
@@ -39,31 +38,6 @@ class _NotifyMixin:
             "terminated_at": task.completed_at,
         }
         await self._post_with_retries(task.notify_url, payload, f"task={task.id}")
-
-    async def _notify_program(self, program: Program, tasks: list[Task]) -> None:
-        if not program.notify_url:
-            return
-        payload = {
-            "program_id": program.id,
-            "status": program.status,
-            "goal": program.goal,
-            "workspace_dir": program.workspace_dir,
-            "error": program.error,
-            "terminated_at": program.completed_at,
-            "tasks": [
-                {
-                    "task_id": t.id,
-                    "kind": t.kind,
-                    "status": t.status,
-                    "goal": t.goal,
-                    "depends_on": t.depends_on,
-                    "result_json": t.result_json,
-                    "error": t.error,
-                }
-                for t in tasks
-            ],
-        }
-        await self._post_with_retries(program.notify_url, payload, f"program={program.id}")
 
     async def _post_with_retries(self, url: str, payload: dict, tag: str) -> None:
         backoff_ms = task_queue.NOTIFY_BACKOFF_MS

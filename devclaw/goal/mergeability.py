@@ -10,15 +10,20 @@ because a future reader will otherwise reinvent them:
   the branch and forces the next run to re-fork from main, which is how a goal
   loses its accumulated work.
 * The reconciler existed to shepherd a STACK of per-action PRs to main and close
-  the superseded ones. Goal-branch delivery never makes a stack, and neither does
-  spec 010 fan-out — lanes integrate locally onto the goal branch and delivery is
-  still one push, one PR (``devclaw/delivery/integrate.py``).
+  the superseded ones. Goal-branch delivery never makes a stack — delivery is
+  still one push, one PR.
 * In companion mode a human reviews and merges. Machinery that merges without one
   is compensating for an absent reviewer, not adding a capability.
 
 What survives is the advisory: a delivered PR that has gone CONFLICTING with its
 base is worth saying out loud, because the next increment will stack on top of a
 branch that can no longer land. Saying it is all this does.
+
+Spec 025 (2026-08-29) later reversed the merge doctrine at EXACTLY ONE seam —
+the confirmed-achieved close squash-merges the cumulative PR
+(``merge_on_close.py``, wired in ``tick_donegate``). That reversal does not
+touch this module or the settle path: nothing merges mid-flight, #486 stands,
+and this probe stays read-only.
 
 The gh call lives here rather than in ``tick_settle`` so the tick stays a pure,
 subprocess-free unit under test; ``GoalService`` binds the real probe and tests

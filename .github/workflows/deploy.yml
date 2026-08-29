@@ -1,9 +1,16 @@
 name: Deploy devclaw
 
-# Operator-triggered ONLY (spec 005, FR-008). A merge to main runs tests/lint
-# (ci.yml) but NEVER auto-deploys the live VPS — that was the doctrine violation
-# where a routine merge SIGKILLed in-flight overnight goal sandboxes. Shipping
-# is a deliberate button-press here.
+# Two lanes since spec 025 (ruled by Denys 2026-08-29, amending spec 005
+# FR-008's "operator-triggered ONLY"):
+#   manual (auto=false, the default): the operator's deliberate button-press,
+#     byte-compatible with the original behavior — no rollback magic.
+#   auto (auto=true): devclaw triggers this itself after a devclaw-repo
+#     merge-on-close, once the instance is task-quiescent (the quiescence gate
+#     lives instance-side — self_deploy.maybe_trigger — so a routine merge can
+#     never SIGKILL an in-flight sandbox, which was FR-008's original point).
+#     The deploy runs through deploy-devclaw-auto.sh: probe-checked, ONE
+#     automatic rollback to the previously running SHA, instance-dead relay
+#     ping if even the rollback fails.
 on:
   workflow_dispatch:
     inputs:
@@ -11,6 +18,10 @@ on:
         description: 'Image tag to deploy (blank = build this commit and deploy its SHA)'
         required: false
         default: ''
+      auto:
+        description: 'Unattended lane: probe + one automatic rollback (set by devclaw self-deploy)'
+        required: false
+        default: 'false'
 
 permissions:
   contents: read
@@ -93,4 +104,12 @@ jobs:
           # read:packages-scoped registry token for in-sandbox `npm ci` on
           # @lifekit-hq-consuming repos — same never-touches-disk contract.
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
-        run: bash deploy/deploy-devclaw.sh "${{ steps.id.outputs.deploy_tag }}"
+          # the auto lane's instance-dead relay ping target (optional secret;
+          # unset ⇒ the wrapper skips the ping, everything else unchanged)
+          DEVCLAW_NOTIFY_URL: ${{ secrets.DEVCLAW_NOTIFY_URL }}
+        run: |
+          if [ "${{ github.event.inputs.auto }}" = "true" ]; then
+            bash deploy/deploy-devclaw-auto.sh "${{ steps.id.outputs.deploy_tag }}"
+          else
+            bash deploy/deploy-devclaw.sh "${{ steps.id.outputs.deploy_tag }}"
+          fi

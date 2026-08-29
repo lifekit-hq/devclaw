@@ -348,15 +348,20 @@ def verify_goal(
     # 2b. the authored saga slots — one rejection per unfilled slot, naming it
     #     (spec 012 US2, FR-008). All three surface in ONE pass so an author
     #     fixes the whole schema in one re-file rather than one slot per round.
-    slot_values = {
-        "out_of_scope": out_of_scope,
-        "invariants": invariants,
-        "established": established,
-    }
-    for field_name, code, what in _SAGA_SLOTS:
-        c = _check_saga_slot(field_name, code, what, slot_values[field_name])
-        if c is not None:
-            conditions.append(c)
+    #     ISSUE-BACKED goals are exempt (spec 024 US2): the ticket is the
+    #     authoring home — the template's sections travel to grading and the
+    #     worker brief as live issue content, so demanding them again as API
+    #     arguments would re-create the second contract home 024 removes.
+    if not has_issue_refs:
+        slot_values = {
+            "out_of_scope": out_of_scope,
+            "invariants": invariants,
+            "established": established,
+        }
+        for field_name, code, what in _SAGA_SLOTS:
+            c = _check_saga_slot(field_name, code, what, slot_values[field_name])
+            if c is not None:
+                conditions.append(c)
 
     # 3. cross-cutting shape — from-scratch needs SOME anchor.
     anchor = _check_scope_anchor_for_from_scratch(

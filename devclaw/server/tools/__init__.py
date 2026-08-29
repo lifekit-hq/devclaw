@@ -38,7 +38,9 @@ from .doctor import (  # noqa: F401
 from .control import (  # noqa: F401
     get_run_schedule,
     clear_usage_pause,
+    list_suppressed_pings,
     set_operator_hold,
+    set_quiet_mode,
     set_run_schedule,
 )
 from .delivery import (  # noqa: F401
@@ -60,7 +62,6 @@ from .goals import (  # noqa: F401
     resume_goal,
     scope_grill,
     set_goal_strictness,
-    start_program,
     steer_goal,
     tail_goal,
     verify_goal,
@@ -90,7 +91,6 @@ from .projects import (  # noqa: F401
     update_project,
 )
 from .tasks import (  # noqa: F401
-    cancel_program,
     cancel_task,
     dispatch_task,
     fix_bug,

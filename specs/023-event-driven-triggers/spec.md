@@ -4,7 +4,22 @@
 
 **Created**: 2026-08-27
 
-**Status**: PARKED — direction memory only, not scheduled. Owner: Denys. Resume condition: spec 022 has landed AND the convergence class (first-pass rate, currently 0.0 against a 0.70 ratchet threshold) has been decided — whichever of those settles the dispatch boundary first. Review by 2026-09-15 even if neither has: a draft with no live resume condition is the "SPECIFIED, NOT IMPLEMENTED" failure this repo already hit on specs 007/008/010/012. Run `/speckit-clarify` with Denys before any implementation.
+**Status**: ACTIVE — un-parked by Denys 2026-08-29 (the resume condition was
+explicitly overridden alongside the unattended-week arc; spec 022's US1/US2/US3
+core landed via #723/#727 the same day, with only the demolition scope
+trailing as a pure-removal PR). Clarify session held 2026-08-29:
+
+- Q: Ingress shape (the VPS is Tailscale-internal — GitHub can't reach it)?
+  → A: **Public HTTPS endpoint** — one signature-verified webhook route,
+  exposed via Tailscale Funnel scoped to the webhook path only; the rest of
+  the HTTP surface stays internal. Relay-polling and fast-poll alternatives
+  rejected.
+- Design ruling recorded at plan time: events are a WAKE for the existing
+  machinery (poke + trigger-named log), never a second transition path —
+  the strongest possible form of FR-002's "the heartbeat is a complete
+  fallback": both paths run literally the same code. Grading (US2) is the
+  one place an event does direct work, spending exactly the cognition the
+  manual verb spends (FR-007).
 
 **Input**: Ruled direction from the 2026-08-27 architecture session: devclaw's storage is already event-sourced (append-only StateStore + projections) but its *triggering* is polled — a ~15-minute heartbeat scans goals, grading waits for manual verbs, completion evidence is re-derived on a timer. The established shape is GitHub-native webhooks driving the state machine, with the heartbeat demoted to what workflow engines call a fallback timer. Nothing invented: this is standard event-driven architecture over the tracker the work already lives in.
 

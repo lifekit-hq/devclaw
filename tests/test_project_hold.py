@@ -83,15 +83,37 @@ def test_terminal_goals_never_hold_a_project(tmp_path):
     assert "/repos/alpha" not in project_hold.holder_map(store)
 
 
-def test_blocked_holder_keeps_the_project(tmp_path):
-    """FR-008 (clarify ruling): blocked is not terminal. Releasing here would
-    let a second goal plan against a repo whose unmerged spec directories are
-    invisible on the holder's branch — the #553 class, reopened."""
+def test_blocked_goal_is_skipped_in_holder_derivation(tmp_path):
+    """Spec 025 FR-015 (skip-over) — REPLACES spec 010 FR-008's
+    blocked-holder ruling and its test (symmetric ratchet): a blocked goal is
+    not a holder candidate, so the queued successor takes the lane instead of
+    idling behind a park only a human can clear. A scope whose every goal is
+    blocked simply has no holder."""
     store = _store(tmp_path)
     _seed(store, tmp_path, "first", phase="blocked", created_at_ms=1_000)
     _seed(store, tmp_path, "second", created_at_ms=2_000)
 
-    assert project_hold.holder_map(store)["/repos/alpha"] == "first"
+    assert project_hold.holder_map(store)["/repos/alpha"] == "second"
+
+    store.save_status("second", GoalStatus(phase="blocked"))
+    assert "/repos/alpha" not in project_hold.holder_map(store)
+
+
+def test_in_flight_goal_outranks_age_as_holder(tmp_path):
+    """The skip-over trap (spec 025): a resumed older predecessor must not
+    reclaim the lane from a successor whose task is LIVE — in-flight work
+    outranks age, so the second writer is impossible by derivation."""
+    from devclaw.goal.models import InFlight
+
+    store = _store(tmp_path)
+    _seed(store, tmp_path, "older-resumed", created_at_ms=1_000)
+    _seed(store, tmp_path, "younger-running", created_at_ms=2_000)
+    store.save_status("younger-running", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "work"),
+    ))
+
+    assert project_hold.holder_map(store)["/repos/alpha"] == "younger-running"
 
 
 def test_goals_on_distinct_projects_each_hold_their_own(tmp_path):

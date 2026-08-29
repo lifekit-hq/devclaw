@@ -2,7 +2,11 @@
 
 **Branch**: fix/donegate-churn-brake-holds
 **Date**: 2026-08-25
-**Status**: draft
+**Status**: done
+
+> Bookkeeping reconciled 2026-08-29: shipped in #685 (commit 1de089f) but the
+> file was never flipped from draft — verified: `has_unread_human_steering`
+> (store/content.py), the tick.py:637 gate, and all three named tests exist.
 **Complexity**: small
 
 ## What
@@ -59,17 +63,17 @@ steering or an explicit `resume_goal`/`steer_goal` does.
 
 ## Tasks
 
-- [ ] Add `has_unread_human_steering` to the store content mixin (+ state layer query)
-- [ ] Gate the blocked branch of `_handle_long_lived_advance` on it
-- [ ] `test_donegate_churn_park_survives_auto_eval_steering` — parked goal +
+- [x] Add `has_unread_human_steering` to the store content mixin (+ state layer query)
+- [x] Gate the blocked branch of `_handle_long_lived_advance` on it
+- [x] `test_donegate_churn_park_survives_auto_eval_steering` — parked goal +
       unread auto-eval rows → still blocked, zero cognition, rows unread
-- [ ] `test_blocked_goal_unblocks_on_human_steering_and_consumes_parked_corrections` —
+- [x] `test_blocked_goal_unblocks_on_human_steering_and_consumes_parked_corrections` —
       human row added → dispatches; brief carries BOTH rows; both consumed
-- [ ] `test_idle_goal_still_advances_on_auto_eval_corrections` — ralph-loop intact
-- [ ] Full suite + `ruff check .` + `mypy` green
+- [x] `test_idle_goal_still_advances_on_auto_eval_corrections` — ralph-loop intact
+- [x] Full suite + `ruff check .` + `mypy` green
 
 ## Done When
 
-- [ ] All tasks checked off; named regression tests pass
-- [ ] A goal parked by the churn brake stays parked across ticks until a human acts
-- [ ] Existing zero-token guard tests (`FakeClaude.calls == 0`) untouched and green
+- [x] All tasks checked off; named regression tests pass
+- [x] A goal parked by the churn brake stays parked across ticks until a human acts
+- [x] Existing zero-token guard tests (`FakeClaude.calls == 0`) untouched and green

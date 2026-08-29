@@ -84,6 +84,22 @@ def self_repo() -> str:
     return (os.environ.get("DEVCLAW_SELF_REPO") or "").strip()
 
 
+def webhook_secret() -> str:
+    """Spec 023: the GitHub webhook HMAC secret. Empty ⇒ the webhook route is
+    OFF (answers 404) — no unauthenticated surface ever exists."""
+    return (os.environ.get("DEVCLAW_WEBHOOK_SECRET") or "").strip()
+
+
+def deploy_quiescence_s() -> int:
+    """Spec 025 US2: how long a pending self-deploy may wait for task
+    quiescence before it expires loudly (re-armed by the next devclaw-repo
+    close or operator resume). Invalid/unset ⇒ 6h."""
+    try:
+        return int(os.environ.get("DEVCLAW_DEPLOY_QUIESCENCE_S", "21600"))
+    except ValueError:
+        return 21600
+
+
 # ---- server (MCP surface) ------------------------------------------------
 
 HTTP_PORT = int(os.environ.get("DEVCLAW_PORT", "8000"))
@@ -112,7 +128,6 @@ def built_at() -> "str | None":
 
 # ---- task queue ----------------------------------------------------------
 
-MAX_CONCURRENT_PER_PROGRAM = int(os.environ.get("DEVCLAW_MAX_CONCURRENT_PER_PROGRAM", "2"))
 GLOBAL_MAX_CONCURRENT = int(os.environ.get("DEVCLAW_MAX_CONCURRENT", "4"))
 #: raw docker mem string; the queue parses it with its ``_parse_mem``.
 COGNITION_MEM_RESERVE = os.environ.get("DEVCLAW_COGNITION_MEM_RESERVE", "1536m")
@@ -200,12 +215,6 @@ def notify_altitude_raw() -> str:
     """``DEVCLAW_NOTIFY_ALTITUDE`` normalized (default owner) — read each call
     so it's overridable per process / in tests."""
     return os.environ.get("DEVCLAW_NOTIFY_ALTITUDE", "owner").strip().lower()
-
-
-def fanout_raw() -> str:
-    """``DEVCLAW_FANOUT`` as-is; :mod:`devclaw.goal.fanout` owns the truthiness
-    parse (its docstring documents the accepted spellings)."""
-    return os.environ.get("DEVCLAW_FANOUT", "") or ""
 
 
 # ---- cognition (host claude) ---------------------------------------------

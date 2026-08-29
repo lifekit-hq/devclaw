@@ -18,15 +18,12 @@ import pytest
 from devclaw.goal.engine import GoalEngineError
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore, view_migration
-from devclaw.goal.tick import Outcome, sweep_orphaned_refs, tick_all, tick_goal
+from devclaw.goal.tick import Outcome, tick_all, tick_goal
 from devclaw.goal.tick_donegate import DONEGATE_ROUND_CAP
 from tests.goal_fakes import (
     Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal, seed_marker_repo,
 )
 
-ACT = json.dumps(
-    {"decision": "act", "note": "ship next", "actions": [{"tool": "start_program", "goal": "build /health"}]}
-)
 ACT_FEATURE = json.dumps(
     {"decision": "act", "note": "feat", "actions": [{"tool": "implement_feature", "goal": "add /health", "open_pr": True}]}
 )
@@ -116,7 +113,7 @@ async def test_in_flight_running_spends_zero_tokens(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status(
-        "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "start_program", "p1", "program")),
+        "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "implement_feature", "t1", "task")),
     )
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
@@ -1975,121 +1972,9 @@ async def test_standing_goal_done_gate_blocks_instead_of_closing(tmp_path):
 
 # ---- orphaned-ref sweep (2026-07-09 lost-in-flight-ref incident) -----------
 #
-# PR7 demoted the per-tick reconcile (which lived HERE, inside tick_goal) to
-# a once-per-service-start sweep (sweep_orphaned_refs) — atomic dispatch
-# makes losing a ref mid-flight structurally impossible on THIS build going
-# forward, so a per-tick check is no longer load-bearing; the sweep still
-# catches a ref lost by an older build or something outside the dispatch
-# path. These three tests are MECHANICALLY re-pointed at the sweep: same
-# scenarios, same assertions, split across an explicit sweep_orphaned_refs()
-# call (what used to happen silently inside the one tick_goal call) followed
-# by an ordinary tick (which now finds the ref already restored and proceeds
-# exactly as it always has for an in-flight action).
-
-
-class OrphanAwareEngine(FakeEngine):
-    """FakeEngine + the latest_program_for_goal finder the sweep probes."""
-
-    def __init__(self, *, program: "tuple[str, str] | None" = None, **kw):
-        super().__init__(**kw)
-        self.program = program
-
-    def latest_program_for_goal(self, goal_id: str):
-        return self.program
-
-
-@pytest.mark.asyncio
-async def test_orphaned_failed_program_readopted_and_settled(tmp_path):
-    """A goal whose in_flight ref was lost (STATUS.md truncated by a crash
-    mid-write) must have the SWEEP rediscover its own already-failed program
-    via parent_goal_id and re-adopt it; the NEXT ordinary tick then settles
-    it and dispatches a fresh advance session — instead of idling forever on
-    a result that will never arrive."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="1d")
-    # cadence not due + no steering → without the sweep this tick is IDLE
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    store.append_log("g", "dispatched start_program: Program: reporting & dashboards")
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = OrphanAwareEngine(
-        program=("p_lost", "Program: reporting & dashboards"),
-        poll_result=PollResult(
-            terminal=True, status="failed",
-            detail="program failed — task exceeded the 1800s wall-clock timeout",
-        ),
-    )
-
-    swept = await sweep_orphaned_refs(store, engine)
-
-    assert swept == {"g": "program p_lost"}
-    log = store.recent_log("g")
-    assert "re-adopted orphaned program p_lost" in log
-    s = store.load_status("g")
-    assert s.in_flight is not None and s.in_flight.id == "p_lost"
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.DISPATCHED
-    action, _, _ = engine.dispatched[-1]
-    assert action.tool == "implement_feature"           # a fresh advance session
-    log = store.recent_log("g")
-    assert "start_program p_lost → failed" in log       # the failure is on the durable record
-
-
-@pytest.mark.asyncio
-async def test_settled_program_is_not_readopted(tmp_path):
-    """A program whose result already reached the durable record must NOT be
-    re-adopted — the sweep only rescues lost refs, it never replays settled
-    work. The settle line is planted in log.md BEFORE construction, so this
-    also pins that the one-shot view migration's settlement seed (#617) still
-    protects a goal whose only evidence of settling is its pre-migration log."""
-    seed_goal(tmp_path, "g", cadence="1d")
-    (tmp_path / "g" / "log.md").write_text(
-        "# g — log\n\n- [2026-07-01T00:00:00] start_program p_seen → failed\n"
-    )
-    store = _store(tmp_path, Clock())
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = OrphanAwareEngine(program=("p_seen", "Program: reporting"))
-
-    swept = await sweep_orphaned_refs(store, engine)
-
-    assert swept == {}
-    assert engine.polls == 0
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.IDLE
-    assert engine.polls == 0
-
-
-@pytest.mark.asyncio
-async def test_orphaned_running_program_readopted_as_in_flight(tmp_path):
-    """A lost ref to a STILL-RUNNING program is restored by the sweep; the
-    next tick then reports IN_FLIGHT — zero cognition spent, and the
-    following settle works normally."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="1d")
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = OrphanAwareEngine(
-        program=("p_run", "Program: reporting"),
-        poll_result=PollResult(terminal=False, status="running"),
-    )
-
-    swept = await sweep_orphaned_refs(store, engine)
-
-    assert swept == {"g": "program p_run"}
-    s = store.load_status("g")
-    assert s.in_flight is not None and s.in_flight.id == "p_run"
-    assert s.in_flight.ref_kind == "program"
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.IN_FLIGHT
-    s = store.load_status("g")
-    assert s.in_flight is not None and s.in_flight.id == "p_run"
-    assert s.in_flight.ref_kind == "program"
+# The program-ref sweep cases that lived here died with the program/DAG lane
+# (spec 022 US3) — the sweep now probes only the task finder, pinned in
+# test_goal_transactional.py (sweep-extends-to-tasks + legacy-log seeding).
 
 
 @pytest.mark.asyncio
@@ -3232,6 +3117,56 @@ async def test_goal_on_another_project_dispatches_while_one_project_is_held(tmp_
 
 
 @pytest.mark.asyncio
+async def test_blocked_goal_releases_project_lane_for_queued_successor(tmp_path):
+    """Spec 025 FR-015 (skip-over, reversing spec 010 FR-008's blocked-holder
+    ruling): a parked goal must not idle its project lane — the queued
+    successor starts, the parked goal waits for the operator. The 2026-08-28
+    night pinned the cost of the old behavior: one OOM-blocked goal idled the
+    devclaw lane for 14 hours with a healthy successor queued behind it."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "parked", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "waiter", created_at_ms=2_000)
+    store.save_status("parked", GoalStatus(
+        phase="blocked", lifecycle="executing",
+        blocked_on="sandbox OOM at cap", blocked_kind="mechanical:env_cap",
+    ))
+    engine = FakeEngine()
+    evaluator = FakeClaude()
+
+    out = await _tick(store, "waiter", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+    # the parked goal stays parked at zero cognition (its tick reads QUEUED —
+    # the successor now holds the lane — and its status stays blocked)
+    assert await _tick(store, "parked", evaluator, engine, RecordingNotifier()) is Outcome.QUEUED
+    assert store.load_status("parked").phase == "blocked"
+    assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_resumed_predecessor_waits_while_successor_task_is_in_flight(tmp_path):
+    """The skip-over trap: resuming a parked predecessor while its skip-over
+    successor is MID-TASK must not hand the lane back by age — that would
+    dispatch a second writer against a workspace with a live task in it
+    (the #553/#722 class). In-flight work outranks age in the holder
+    derivation."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "resumed", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "successor", created_at_ms=2_000)
+    store.save_status("successor", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "work"),
+    ))
+    engine = FakeEngine()
+
+    out = await _tick(store, "resumed", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.QUEUED
+    assert engine.dispatched == []
+
+
+@pytest.mark.asyncio
 async def test_queued_goal_starts_automatically_after_the_holder_goes_terminal(tmp_path):
     """Acceptance 3 / SC-003: no operator action, no cognition spent on the
     handover — the derivation simply names a different goal once the holder is
@@ -3431,10 +3366,27 @@ def test_green_mechanical_verification_alone_never_closes_a_goal():
     )
     assert emitters == ["devclaw/goal/tick_donegate.py"]
 
-    # 3. that emitter is guarded by the evaluator's verdict
+    # 3. that emitter is guarded by the evaluator's verdict. Since spec 025
+    #    there are exactly TWO ACHIEVE transitions in the file, both
+    #    verdict-owned: the primary close inside the `achieved` block (now
+    #    additionally gated on merge-on-close succeeding — the merge is a
+    #    consequence of the verdict, never a bypass of it), and the
+    #    pending-merge retry (_finalize_pending_merge), reachable only via
+    #    `pending_merge_pr`, which is only ever set on the primary path after
+    #    an achieved verdict — the verdict still stands, only the merge is
+    #    re-attempted (FR-003).
     src = (root / "devclaw/goal/tick_donegate.py").read_text(encoding="utf-8")
-    guard = 'if ev.verdict == "achieved":\n        store.transition(\n            goal_id, Event.ACHIEVE,'
-    assert guard in src, "the ACHIEVE transition is no longer gated on the verdict"
+    assert src.count("Event.ACHIEVE,") == 2, "unexpected ACHIEVE emitter count"
+    assert 'if ev.verdict == "achieved":' in src, "the close lost its verdict guard"
+    guard = (
+        'store.transition(\n            goal_id, Event.ACHIEVE,\n'
+        '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,\n'
+        '                    pending_merge_pr="", merge_heal_attempted=False),'
+    )
+    assert guard in src, "the primary ACHIEVE no longer clears the merge marker inside the verdict block"
+    assert "async def _finalize_pending_merge" in src and "status.pending_merge_pr" in src, (
+        "the retry ACHIEVE lost its pending-merge guard"
+    )
 
     # 4. the US3-specific shortcut: nothing on the execution path may read the
     #    work item's expected increment count. The count is intake-only — it

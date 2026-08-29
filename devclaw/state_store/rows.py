@@ -120,26 +120,10 @@ class Task:
     #: resolve BY this id, not by a workspace-path scan. None for the goal path
     #: (goals carry their own project_id) and for a task with no owning project.
     project_id: Optional[str] = None
-    #: fan-out lane metadata (spec 010 US3), as JSON: ``position`` (merge-queue
-    #: order), ``scopes`` (the declared file scope the settle gate holds this
-    #: increment to) and ``integrate_into`` (the shared goal workspace its work
-    #: is merged onto and delivered from). None for every ordinary task — which
-    #: is what keeps the non-fan-out path byte-identical.
+    #: LEGACY fan-out lane metadata (spec 010 US3; the lane was retired by
+    #: spec 022 US3). Nothing writes or reads it anymore — the column survives
+    #: only on historical rows.
     lane_json: Optional[str] = None
-
-    def lane(self) -> Optional[dict]:
-        """The parsed lane metadata, or None when this task is not a fan-out
-        lane. Defensive: unparseable or wrongly-shaped JSON reads as "not a
-        lane" rather than crashing the settle path — a lane that loses its
-        metadata integrates nowhere and delivers from its own workspace, which
-        is the pre-fan-out behaviour."""
-        if not self.lane_json:
-            return None
-        try:
-            data = json.loads(self.lane_json)
-        except (TypeError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
 
     def to_dict(self) -> dict:
         return {

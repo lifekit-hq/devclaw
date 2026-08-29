@@ -342,6 +342,8 @@ class GoalStatusMixin:
             "blocked_kind": status.blocked_kind,
             "heal_attempts": status.heal_attempts,
             "envcap_redispatches": status.envcap_redispatches,
+            "pending_merge_pr": status.pending_merge_pr,
+            "merge_heal_attempted": status.merge_heal_attempted,
             "next_heal_at": status.next_heal_at,
             "next": status.next,
             "last_plan_at": status.last_plan_at,

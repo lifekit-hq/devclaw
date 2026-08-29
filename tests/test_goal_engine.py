@@ -6,14 +6,12 @@ driven by a stub runner."""
 from __future__ import annotations
 
 import json
-import subprocess
 
 import pytest
 
 from devclaw.engine import EngineRequest
-from devclaw.goal.engine import InProcessEngine, _gate_passed, _task_detail
-from devclaw.goal.models import Action, Goal
-from devclaw.program_plan import PlannedTask
+from devclaw.goal.engine import GoalEngineError, InProcessEngine, _gate_passed, _task_detail
+from devclaw.goal.models import Action, Goal, InFlight
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 
@@ -35,14 +33,10 @@ async def _ok_runner(request: EngineRequest) -> dict:
 @pytest.fixture()
 def wired(tmp_path):
     store = StateStore(str(tmp_path / "t.db"))
-    queue = TaskQueue(store, planner=lambda g, w: _stub_plan(g, w), runner=_ok_runner)
+    queue = TaskQueue(store, runner=_ok_runner)
     engine = InProcessEngine(queue, store)
     yield engine, queue, store
     store.close()
-
-
-async def _stub_plan(goal, workspace_dir):
-    return [PlannedTask(key="t1", goal=goal, kind="implement_feature")]
 
 
 @pytest.mark.asyncio
@@ -109,31 +103,16 @@ async def test_dispatch_review_is_never_scaffold(wired):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_program_then_poll(wired, tmp_path):
+async def test_poll_of_legacy_program_ref_fails_loud_not_silent(wired):
+    """Spec 022 US3 demolition: the program/DAG lane is retired, so a persisted
+    pre-022 'program' in-flight ref cannot be polled anymore. Polling one must
+    raise GoalEngineError (which the tick's lost-ref path turns into a loud
+    goal block with an actionable reason) — never a silent crash of the tick
+    loop or a quiet re-adoption."""
     engine, queue, store = wired
-    # open_pr=True → the program's children inherit deliver=True, so they need a
-    # real git workspace (prepare_workspace guarantees one in production; a
-    # broken delivery now settles the task 'failed' instead of a silent
-    # done-without-PR). The stub runner writes nothing, so delivery is the
-    # benign "no changes to deliver" and the program settles done.
-    repo = tmp_path / "ws"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "--allow-empty", "-q", "-m", "init"],
-        check=True,
-    )
-    action = Action(engine="devclaw", tool="start_program", goal="build the thing", open_pr=True)
-    ref = await engine.dispatch(action, _goal(str(repo)), notify_url="")
-    assert ref.ref_kind == "program"
-    # PR7: dispatch() no longer auto-kicks off planning (submit_program(pump=
-    # False)) — see the note in test_dispatch_feature_then_poll_terminal above.
-    engine.kick()
-    await queue.drain()
-    poll = await engine.poll(ref)
-    assert poll.status == "done"
-    assert poll.terminal is True
+    ref = InFlight("devclaw", "start_program", "legacy-prog-1", "program", "old goal")
+    with pytest.raises(GoalEngineError, match="retired"):
+        await engine.poll(ref)
 
 
 def test_gate_passed_and_detail_helpers():

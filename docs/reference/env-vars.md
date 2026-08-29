@@ -42,10 +42,8 @@ default; copy it to `.env` and uncomment what you want to change.
 | Var | Default | Purpose |
 |---|---|---|
 | `DEVCLAW_DB` | `./devclaw.db` | SQLite path. Holds the task-queue tables (programs, tasks, events) AND, since Tranche 1, the goal-state tables (`goal_status`, `goal_steering`, `goal_log`, `goal_deliveries`, `goal_docs`, `goal_phase_history`) — `GoalStore` is wired onto this same `StateStore` in production. |
-| `DEVCLAW_TICK_SECONDS` | `10` | Task-queue heartbeat interval. Advances DAGs + resumes recovered work. |
+| `DEVCLAW_TICK_SECONDS` | `10` | Task-queue heartbeat interval. Resumes recovered work + launches pending tasks. |
 | `DEVCLAW_MAX_CONCURRENT` | `4` | Global cap on concurrently-running tasks — size to the host. |
-| `DEVCLAW_MAX_CONCURRENT_PER_PROGRAM` | `2` | Per-program concurrency cap. Also the ceiling on a goal's planned fan-out: the number of `[P]` lanes dispatched at once is `min(what the plan declared, this, `DEVCLAW_MAX_CONCURRENT`)` — spec 010 FR-105, the plan and the host's caps decide the degree, nothing else. |
-| `DEVCLAW_FANOUT` | unset (**off**) | Planned fan-out (spec 010 US3): when set (`1`/`true`/`yes`/`on`), a goal whose task graph declares consecutive `[P]` tasks with disjoint declared file scopes dispatches them as concurrent lanes that integrate serially onto the goal branch. Off by default: US3 is the spec's earned exception, and two lanes are two sandboxes against one OAuth account. With it off — and with it on for a plan that declares no `[P]` scopes — dispatch is unchanged. |
 | `DEVCLAW_MAX_HOST_COGNITION` | `2` | Cap on concurrent **host-side** `claude --print` cognition subprocesses (review gate, evaluator, planner, done-gate) — an `asyncio.Semaphore` at the spawn chokepoint in `llm_call.py`. These processes are invisible to `DEVCLAW_MAX_CONCURRENT` (which counts sandboxed tasks); unbounded, 4 review gates + goal cognition ran at once and the kernel OOM-killed them (`exited -9`). Queued calls just wait (the per-call cognition timeout starts after the wait, not during). Invalid / `<1` / unset → 2 (`0` is not honored — it would deadlock every call). |
 | `DEVCLAW_MAX_RETRIES` | `1` | Re-runs of a gate-failing task before escalation. Each retry feeds the failure back as steering. Timeouts are never retried. `0` disables. |
 | `DEVCLAW_TASK_TIMEOUT_S` | `3600` | Per-task wall-clock cap. Exceeded → cancelled, sandbox torn down, task `failed`. `<=0` disables. |
@@ -162,6 +160,8 @@ pure library gets no preview container unless its project pins `autodeploy=on`.
 | `DEVCLAW_DEPLOY_PORT_BASE` | `8200` | Lower bound of the per-slug deterministic deploy port range. |
 | `DEVCLAW_DEPLOY_PORT_SPAN` | `200` | Number of slots in the deploy port range (so `8200`–`8399` by default). |
 | `DEVCLAW_DEPLOY_MEMORY` | `512m` | Per-deploy memory ceiling. |
+| `DEVCLAW_WEBHOOK_SECRET` | *(unset)* | Spec 023: HMAC secret for `POST /webhooks/github`. **Unset ⇒ the route answers 404** (feature off, no unauthenticated surface). Set it in the compose env file and in each repo's GitHub webhook config; deliveries are verified with `X-Hub-Signature-256` and a bad signature is a counted 401. |
+| `DEVCLAW_DEPLOY_QUIESCENCE_S` | `21600` | Spec 025 US2 (self-deploy on merge): how long a pending instance self-deploy may wait for task quiescence (`count_running() == 0`) before it expires loudly (`deploy_last.outcome = expired`; re-armed by the next devclaw-repo close or operator resume). The trigger fires `gh workflow run deploy.yml -f auto=true`; the workflow's auto lane (`deploy/deploy-devclaw-auto.sh`) owns the health probe and the ONE automatic rollback. |
 | `DEVCLAW_DEPLOY_CPUS` | `1.0` | Per-deploy CPU limit. |
 | `DEVCLAW_DEPLOY_MAX` | `5` | Max concurrent durable deploys on the VPS. |
 

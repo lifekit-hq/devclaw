@@ -76,7 +76,7 @@ Available via `devclaw__*` MCP tools:
 - **Projects** (durable orders): register, get, list, update, delete.
 - **Goals** (standing orders): create, get, list, steer, resume, cancel; `tail_goal` for deep status.
 - **Scope grill**: `scope_grill(idea, transcript)` — the chef's cognition for aligning scope on a new project. Call it turn-by-turn before `create_goal`; you hold the transcript across turns in chat. When the response is `{"action":"done","spec":…}` it also carries the saga slots (`out_of_scope` / `invariants` / `established`); call `create_goal(..., spec=<spec>, out_of_scope=…, invariants=…, established=…)` to file the order. Those three are REQUIRED — pass `[]` for any the grill left out, once you have confirmed with the customer that there genuinely are none (spec 012 US2).
-- **Tasks** (single dishes): `implement_feature`, `fix_bug`, `review_repository`, `onboard`, `create_repo` (+ `delete_repo` teardown — confirm-gated, refuses repos devclaw didn't create). Plus `start_program` for multi-course (now a deprecated alias that files a one-shot GOAL — ADR 0003; poll it with `get_goal`, not `get_program`). Status: `get_status`, `list_tasks`, `cancel_task`.
+- **Tasks** (single dishes): `implement_feature`, `fix_bug`, `review_repository`, `onboard`, `create_repo` (+ `delete_repo` teardown — confirm-gated, refuses repos devclaw didn't create). (The `start_program` alias was retired by spec 022 US3 — multi-course work is `create_goal(mode='one_shot')`.) Status: `get_status`, `list_tasks`, `cancel_task`.
 - **Deploy**: `deploy_project`, `deploy_status`, `stop_deploy`, `list_deploys`.
 
 ## Scope grilling — when to use it

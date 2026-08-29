@@ -493,3 +493,329 @@ def test_doctor_check_fails_when_identity_table_missing(tmp_path):
     findings = check_goal_issue_identity_table(ctx)
     assert any(f.verdict == Verdict.FAIL for f in findings)
     db.close()
+
+
+# ---------------------------------------------------------------------------
+# Spec 022 US2 — companion dispatches ride the full goal lane
+# ---------------------------------------------------------------------------
+
+
+# --- T008: read-only kinds bypass any project hold (FR-008 pin) -------------
+
+
+@pytest.mark.asyncio
+async def test_read_only_dispatch_not_blocked_by_project_hold(monkeypatch, tmp_path):
+    """T008: read-only kinds (review_repository) are unaffected by the project
+    hold — FR-008 and spec 022 US2 both say read-only kinds are out of scope."""
+    from devclaw.project_registry import ProjectRegistry
+    from devclaw.server import _state
+    from devclaw.server import tools as _tools
+    from tests.goal_fakes import register_tmp_project
+
+    queue_calls: list[dict] = []
+    monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
+
+    from devclaw.goal.store import GoalStore
+    from devclaw.state_store import StateStore as SS
+
+    gs_db = SS(str(tmp_path / "gs.db"))
+    gs = GoalStore(tmp_path / "gdir", state=gs_db)
+    gs.create_goal(
+        "holder-goal",
+        objective="hold the fort",
+        workspace_dir=str(tmp_path / "ws"),
+        project_id="proj",
+        cadence="1d",
+        done_when="something useful is done",
+        out_of_scope=[], invariants=[], established=[],
+    )
+    from devclaw.goal.models import GoalStatus
+    gs.save_status("holder-goal", GoalStatus(phase="idle", lifecycle="executing"))
+    monkeypatch.setattr(_state.goals, "_goal_store", gs)
+
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "ws"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/org/repo.git")
+    monkeypatch.setattr(_tools._common, "registry", reg)
+
+    # review_repository should succeed even though a goal holds the project.
+    raw = await _tools.review_repository(project_id="proj", focus="check security")
+    result = json.loads(raw)
+    assert "task_id" in result, "read-only dispatch must not be blocked"
+    assert queue_calls, "read-only dispatch must reach queue.submit"
+
+    gs_db.close()
+
+
+# --- T009: workspace prep at dispatch_issue() time --------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_issue_preps_workspace_on_new_goal_creation(monkeypatch, tmp_path):
+    """T009 / spec 022 US2: dispatch_issue calls prepare_workspace (default
+    branch reset) before creating the new goal — ensures the workspace is on
+    the default-branch head when the first action fires."""
+    from devclaw.goal import service as svc_mod
+
+    prep_calls: list[tuple] = []
+
+    async def _fake_prep(workspace_dir, repo_url=None, branch=None):
+        prep_calls.append((workspace_dir, repo_url, branch))
+        return branch or "main"
+
+    monkeypatch.setattr(svc_mod, "prepare_workspace", _fake_prep)
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({5: _open(5)})
+        ws = str(tmp_path / "ws")
+        # Create a real git workspace so the Path.exists() guard passes.
+        import subprocess
+        (tmp_path / "ws").mkdir()
+        subprocess.run(["git", "init", "-q", str(tmp_path / "ws")], check=True)
+
+        result = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=5,
+        )
+        assert result["result"] == "created"
+        # prepare_workspace must have been called for the workspace at default branch.
+        assert any(
+            call[0] == ws and call[2] is None  # default branch (no branch arg)
+            for call in prep_calls
+        ), f"expected prepare_workspace(ws, repo_url) call; got {prep_calls}"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_issue_skips_prep_for_nonexistent_workspace(monkeypatch, tmp_path):
+    """T009: dispatch_issue skips workspace prep when the workspace does not yet
+    exist — the tick's prepare_ws handles the clone-and-prep at first run."""
+    from devclaw.goal import service as svc_mod
+
+    prep_calls: list = []
+
+    async def _fake_prep(workspace_dir, repo_url=None, branch=None):
+        prep_calls.append(workspace_dir)
+        return branch or "main"
+
+    monkeypatch.setattr(svc_mod, "prepare_workspace", _fake_prep)
+
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({9: _open(9)})
+        ws = str(tmp_path / "ws")  # does NOT exist
+
+        result = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=9,
+        )
+        assert result["result"] == "created"
+        # prepare_workspace must NOT have been called (workspace absent).
+        assert not prep_calls, "prep must not run for a non-existent workspace"
+    finally:
+        db.close()
+
+
+# --- Serialization: two dispatches to same project → second queued ----------
+
+
+@pytest.mark.asyncio
+async def test_two_issue_dispatches_to_same_project_serialized_by_project_hold(tmp_path):
+    """Spec 022 US2 serialization: two one_shot goals on the same project are
+    serialized by the project hold — the second goal shows queued_behind the first."""
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({1: _open(1), 2: _open(2)})
+        ws = str(tmp_path / "ws")
+
+        r1 = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=1,
+        )
+        r2 = await svc.dispatch_issue(
+            project_id="proj", workspace_dir=ws, repo_url=_REPO, issue_ref=2,
+        )
+        assert r1["result"] == "created"
+        assert r2["result"] == "created"
+        assert r1["goal_id"] != r2["goal_id"]
+
+        # The first goal holds the project; the second is queued behind it.
+        g1 = svc.get_goal(r1["goal_id"])
+        g2 = svc.get_goal(r2["goal_id"])
+        assert g1["queued_behind"] is None, "first goal holds the project"
+        assert g2["queued_behind"] == r1["goal_id"], (
+            f"second goal should be queued behind {r1['goal_id']!r}, "
+            f"got queued_behind={g2['queued_behind']!r}"
+        )
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Spec 022 US3 — freeform-prose path retired; auto-file intake + proceed
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prose_only_dispatch_auto_files_issue_and_routes_goal_lane(monkeypatch, tmp_path):
+    """T011 / spec 022 US3 FR-010: dispatch_task called without issue_ref for a
+    mutating kind auto-files an intake issue via _auto_file_intake and routes to
+    dispatch_issue (the goal lane) — queue.submit is never called."""
+    from devclaw.project_registry import ProjectRegistry
+    from devclaw.server import _state
+    from devclaw.server import tools as _tools
+    from devclaw.server.tools import tasks as tasks_mod
+    from tests.goal_fakes import register_tmp_project
+
+    queue_calls: list = []
+    intake_calls: list[dict] = []
+    dispatch_calls: list[dict] = []
+
+    monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
+
+    async def _fake_auto_file(registry, *, project_id, goal, done_when=None):
+        intake_calls.append({"project_id": project_id, "goal": goal})
+        return 99
+
+    monkeypatch.setattr(tasks_mod, "_auto_file_intake", _fake_auto_file)
+
+    async def _fake_dispatch_issue(*, project_id, workspace_dir, repo_url,
+                                   issue_ref, kind, objective, verify_cmd, open_pr):
+        dispatch_calls.append({"project_id": project_id, "issue_ref": issue_ref, "kind": kind})
+        return {"goal_id": "g-abc", "result": "created", "issue_ref": issue_ref}
+
+    monkeypatch.setattr(_state.goals, "dispatch_issue", _fake_dispatch_issue)
+
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "ws"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/org/repo.git")
+    monkeypatch.setattr(_tools._common, "registry", reg)
+
+    raw = await _tools.dispatch_task(
+        kind="implement_feature",
+        project_id="proj",
+        goal="add dark mode to the user dashboard",
+    )
+    result = json.loads(raw)
+
+    assert intake_calls, "auto-file must have been called for prose-only dispatch"
+    assert intake_calls[0]["goal"] == "add dark mode to the user dashboard"
+    assert dispatch_calls, "dispatch_issue must have been called after auto-file"
+    assert dispatch_calls[0]["issue_ref"] == 99, "goal lane keyed to auto-filed issue number"
+    assert dispatch_calls[0]["kind"] == "implement_feature"
+    assert result.get("auto_filed_issue") == 99, "response must include auto_filed_issue"
+    assert queue_calls == [], "prose dispatch must NOT reach queue.submit directly"
+
+
+@pytest.mark.asyncio
+async def test_prose_only_dispatch_intake_failure_raises_tool_error(monkeypatch, tmp_path):
+    """T011: if auto-filing the intake issue fails, dispatch raises ToolError and
+    no work is submitted — the error message names the intake failure."""
+    from fastmcp.exceptions import ToolError
+    from devclaw.intake import IntakeError
+    from devclaw.project_registry import ProjectRegistry
+    from devclaw.server import _state
+    from devclaw.server import tools as _tools
+    from devclaw.server.tools import tasks as tasks_mod
+    from tests.goal_fakes import register_tmp_project
+
+    queue_calls: list = []
+    monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
+
+    async def _failing_auto_file(registry, *, project_id, goal, done_when=None):
+        raise IntakeError("gh could not create the issue — not authenticated")
+
+    monkeypatch.setattr(tasks_mod, "_auto_file_intake", _failing_auto_file)
+
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "ws"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/org/repo.git")
+    monkeypatch.setattr(_tools._common, "registry", reg)
+
+    with pytest.raises(ToolError, match="auto-filing"):
+        await _tools.dispatch_task(
+            kind="implement_feature",
+            project_id="proj",
+            goal="add feature",
+        )
+    assert queue_calls == [], "failed intake must not reach queue.submit"
+
+
+@pytest.mark.asyncio
+async def test_implement_feature_alias_auto_files_issue_without_issue_ref(monkeypatch, tmp_path):
+    """T011 / FR-008: implement_feature (thin sugar over dispatch_task) auto-files
+    an intake issue when called without issue_ref — the alias is not deprecated."""
+    from devclaw.project_registry import ProjectRegistry
+    from devclaw.server import _state
+    from devclaw.server import tools as _tools
+    from devclaw.server.tools import tasks as tasks_mod
+    from tests.goal_fakes import register_tmp_project
+
+    intake_calls: list = []
+    dispatch_calls: list = []
+
+    async def _fake_auto_file(registry, *, project_id, goal, done_when=None):
+        intake_calls.append(goal)
+        return 42
+
+    monkeypatch.setattr(tasks_mod, "_auto_file_intake", _fake_auto_file)
+
+    async def _fake_dispatch_issue(*, project_id, workspace_dir, repo_url,
+                                   issue_ref, kind, objective, verify_cmd, open_pr):
+        dispatch_calls.append({"issue_ref": issue_ref, "kind": kind})
+        return {"goal_id": "g-x", "result": "created", "issue_ref": issue_ref}
+
+    monkeypatch.setattr(_state.goals, "dispatch_issue", _fake_dispatch_issue)
+
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "ws"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/org/repo.git")
+    monkeypatch.setattr(_tools._common, "registry", reg)
+
+    raw = await _tools.implement_feature(
+        project_id="proj", goal="add dark mode", open_pr=True
+    )
+    result = json.loads(raw)
+
+    assert intake_calls == ["add dark mode"], "alias must trigger auto-file"
+    assert dispatch_calls[0]["kind"] == "implement_feature"
+    assert result.get("auto_filed_issue") == 42
+
+
+@pytest.mark.asyncio
+async def test_read_only_dispatch_with_no_issue_ref_reaches_queue_submit(monkeypatch, tmp_path):
+    """T011 / FR-008: review_repository without issue_ref goes directly to
+    queue.submit — read-only kinds are byte-unaffected by spec 022 US3."""
+    from devclaw.project_registry import ProjectRegistry
+    from devclaw.server import _state
+    from devclaw.server import tools as _tools
+    from devclaw.server.tools import tasks as tasks_mod
+    from tests.goal_fakes import register_tmp_project
+
+    queue_calls: list = []
+    intake_calls: list = []
+    monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
+
+    async def _should_not_be_called(registry, *, project_id, goal):
+        intake_calls.append(goal)
+        return 1
+
+    monkeypatch.setattr(tasks_mod, "_auto_file_intake", _should_not_be_called)
+
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    ws = tmp_path / "ws"
+    register_tmp_project(reg, ws, project_id="proj",
+                         repo_url="https://github.com/org/repo.git")
+    monkeypatch.setattr(_tools._common, "registry", reg)
+
+    raw = await _tools.dispatch_task(
+        kind="review_repository", project_id="proj", goal="check auth"
+    )
+    result = json.loads(raw)
+
+    assert "task_id" in result, "read-only dispatch must succeed"
+    assert queue_calls, "read-only dispatch must reach queue.submit"
+    assert intake_calls == [], "auto-file must NOT be called for read-only kinds"

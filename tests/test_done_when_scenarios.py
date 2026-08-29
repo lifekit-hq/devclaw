@@ -222,3 +222,29 @@ async def test_creation_with_explicit_done_when_skips_the_scenario_check(tmp_pat
         assert fetcher.calls == 1
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_done_gate_logs_the_judged_issue_revision(tmp_path):
+    """Spec 024 FR-005: the ticket is live-editable, so every gate round
+    records WHICH revision it judged — a content hash in the goal log, so
+    contract edits are auditable from the goal side (the tracker's own
+    history holds the diff)."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", issue_refs=[7], done_when="")
+    _verifying(store)
+    fetcher = FakeIssueFetcher({7: _snap(7, body=BODY_V1)})
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review"))
+
+    out = await _tick(store, "g", FakeClaude(ACHIEVED), engine, RecordingNotifier(), fetcher)
+
+    assert out is Outcome.DONE
+    log = store.recent_log("g")
+    assert "done-gate contract from live issue(s) #7 — revision " in log
+    # the hash is deterministic per contract text: re-derive and compare
+    import hashlib
+
+    from devclaw.goal import issue_ref as _ir
+
+    contract = await _ir.scenarios_contract("", [7], FakeIssueFetcher({7: _snap(7, body=BODY_V1)}))
+    assert hashlib.sha256(contract.encode()).hexdigest()[:12] in log

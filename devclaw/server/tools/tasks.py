@@ -1,7 +1,7 @@
 """Direct dispatch + deliberate abort — the one-shot task surface.
 
-``dispatch_task`` and its kind-specific companion verbs, plus cancel_task /
-cancel_program (the teardown counterparts).
+``dispatch_task`` and its kind-specific companion verbs, plus cancel_task
+(the teardown counterpart).
 """
 
 from __future__ import annotations
@@ -11,36 +11,51 @@ from typing import Literal, Optional
 
 from fastmcp.exceptions import ToolError
 
+from ... import intake as _intake
 from ... import speckit_setup as _speckit
 from ...project_registry import ResolvedDispatch
+from ...state_store import _now_ms
 from .._state import goals, mcp, queue, store
+from . import _common
 from ._common import _preflight_or_prep, _resolve_project_or_reject
 
 
-def _project_hold_warning(project_id: "str | None", workspace_dir: str) -> "str | None":
-    """The FR-009 loud warning: name the goal currently working this project, or
-    ``None`` when nothing holds it.
+async def _auto_file_intake(registry, *, project_id: str, goal: str,
+                            done_when: "str | None") -> int:
+    """Auto-file an intake issue for a prose-only dispatch (spec 022 US3 FR-010).
 
-    Direct dispatches are deliberately EXEMPT from the single-writer hold (the
-    clarify ruling: an operator-present task is the human judgement call, and
-    the hold exists to stop unattended concurrent planners) — so this only
-    warns, never blocks. Best-effort: a lookup hiccup must not fail a dispatch
-    the operator explicitly asked for."""
-    try:
-        from ...goal import project_hold as _project_hold
+    ``done_when`` MUST be the caller's real completion criteria: under spec 019
+    it becomes the goal's contract, so fabricating one here (restating the ask
+    verbatim, or padding a short ask to clear the doorway minimum — the #727
+    review finding) silently weakens the done-gate. A prose ask that arrives
+    without criteria is refused with what is missing named.
 
-        holders = _project_hold.holder_map(goals._goal_store)
-        holder = holders.get((project_id or "").strip() or (workspace_dir or "").strip().rstrip("/"))
-        if not holder:
-            return None
-        return (
-            f"goal {holder} is actively working this project. This dispatch is "
-            "exempt from the one-goal-per-project rule because you are driving "
-            "it, but the two of you are now writing to the same repository — "
-            "expect to reconcile."
+    Returns the GitHub issue number. Raises ``_intake.IntakeError`` on failure
+    so callers can wrap it into an actionable ToolError."""
+    if not done_when or not done_when.strip() or len(done_when.strip()) < 20:
+        raise ToolError(
+            "a prose-only mutating dispatch needs real completion criteria: pass "
+            "done_when='what must be TRUE in the repository when this is done' "
+            "(at least one concrete, checkable statement — not a restatement of "
+            "the ask), or file a templated issue yourself and pass issue_ref"
         )
-    except Exception:  # noqa: BLE001 — advisory only; never fail an explicit dispatch
-        return None
+    if done_when.strip() == goal.strip():
+        raise ToolError(
+            "done_when restates the ask verbatim — that gives the done-gate "
+            "nothing to judge. State what must be TRUE when the work is done "
+            "(behavior, tests, observable outcomes), not what to do"
+        )
+    result = await _intake.file_intake(
+        registry,
+        project_id=project_id,
+        what=goal,
+        done_when=done_when.strip(),
+        asker="devclaw",
+        channel="a2a",
+        now_ms=_now_ms(),
+    )
+    url: str = result["issue_url"]
+    return int(url.rstrip("/").split("/")[-1])
 
 
 async def _block_if_speckit_pending(resolved: ResolvedDispatch, tool: str) -> None:
@@ -83,6 +98,7 @@ async def dispatch_task(
     project_id: str,
     goal: str,
     issue_ref: Optional[int] = None,
+    done_when: Optional[str] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -121,17 +137,18 @@ async def dispatch_task(
     ``done``, DevClaw commits it to a branch, pushes, and opens a PR (best-effort;
     needs git push auth + a GitHub remote), recording the PR URL on the task.
 
-    Branch targeting (both optional; defaults = today's behavior — a fresh
-    auto-named branch, PR to the repo's default branch):
-      - ``target_branch`` — CONTINUE this branch: before the agent runs, the
-        workspace is force-checked-out to it (fetched to its origin tip if it
-        exists, else created off ``base_branch``; uncommitted local changes are
-        discarded), and the delivery must land on it — reusing its single open
-        PR when one exists. Delivery landing anywhere else fails the task.
-        Also selects the branch a ``review_repository`` task reviews.
-      - ``base_branch`` — the PR base and diff range (e.g. "develop"). It must
-        resolve on the workspace's origin; a base that doesn't fails the task
-        up front with an actionable message.
+    Branch targeting (``base_branch`` / ``target_branch``) applies to the
+    READ-ONLY kinds only — ``target_branch`` selects the branch a
+    ``review_repository`` task reviews, ``base_branch`` its diff range. A
+    MUTATING dispatch rides the goal lane (spec 022), whose delivery owns its
+    branch (the goal's own ``goal/<id>`` branch, merged at the close) — passing
+    either branch target with a mutating kind is REJECTED with an actionable
+    error rather than silently ignored.
+
+    ``done_when`` (mutating kinds, no ``issue_ref``): the completion criteria
+    for the auto-filed intake issue — what must be TRUE in the repository when
+    this is done. Required for a prose-only mutating ask: devclaw refuses to
+    fabricate criteria by restating the ask.
 
     The kind-specific companion verbs ``implement_feature`` / ``fix_bug`` /
     ``review_repository`` forward here. Reach for this one when you need the
@@ -147,15 +164,41 @@ async def dispatch_task(
         # Feature work is gated on a merged speckit install: a repo whose
         # install PR is still open is not run (US2, no half-installed state).
         await _block_if_speckit_pending(resolved, "dispatch_task")
-    # FR-002/FR-003: issue_ref routes through the goal lane — create-or-attach
-    # a one_shot goal keyed to (project, issue) with a store-level uniqueness
-    # constraint. Read-only kinds are byte-unaffected (FR-008).
-    if issue_ref is not None and not read_only:
+    # All mutating dispatch routes through the goal lane (spec 022 US1/US3).
+    # Read-only kinds are byte-unaffected (FR-008).
+    if not read_only:
+        if base_branch or target_branch:
+            # #727 review finding 1: dispatch_issue carries neither parameter,
+            # so these used to be silently DISCARDED for mutating kinds — a
+            # documented parameter must be threaded or rejected loudly, never
+            # eaten. The goal lane's delivery owns its branch (goal/<id>,
+            # merged at the close); branch continuation for goal work is the
+            # ADR-0011 seam (issue #491), not a dispatch argument.
+            raise ToolError(
+                "base_branch/target_branch do not apply to mutating dispatch: "
+                "the goal lane delivers on the goal's own branch and merges it "
+                "at the confirmed-done close. They select the review target "
+                "for read-only kinds only. Drop them, or use review_repository."
+            )
         if not resolved.project_id:
             raise ToolError(
                 f"project {project_id!r} resolved without a project_id — "
-                "issue-keyed dispatch requires a registered project_id"
+                "dispatch requires a registered project_id"
             )
+        auto_filed: int | None = None
+        if issue_ref is None:
+            # FR-010: no issue_ref → auto-file intake issue and proceed keyed
+            # to it (spec 022 US3). Every mutating ask names an issue.
+            try:
+                auto_filed = await _auto_file_intake(
+                    _common.registry, project_id=resolved.project_id,
+                    goal=goal, done_when=done_when,
+                )
+            except _intake.IntakeError as exc:
+                raise ToolError(
+                    f"prose-only dispatch: auto-filing intake issue failed — {exc}"
+                ) from exc
+            issue_ref = auto_filed
         try:
             result = await goals.dispatch_issue(
                 project_id=resolved.project_id,
@@ -169,28 +212,22 @@ async def dispatch_task(
             )
         except ValueError as exc:
             raise ToolError(str(exc))
+        if auto_filed is not None:
+            result["auto_filed_issue"] = auto_filed
         return json.dumps(result, indent=2)
+    # Read-only kinds: direct queue submit, unaffected by spec 022 (FR-008).
     task_id = queue.submit(
         kind=kind,
         workspace_dir=resolved.workspace_dir,
         goal=goal,
         notify_url=notify_url,
-        verify_cmd=None if read_only else verify_cmd,
-        deliver=False if read_only else open_pr,
+        verify_cmd=None,
+        deliver=False,
         base_branch=None if kind == "validate_product" else base_branch,
         target_branch=None if kind == "validate_product" else target_branch,
         project_id=resolved.project_id,
     )
-    out = {"task_id": task_id, "status": "pending"}
-    # Spec 010 FR-009: a goal-less direct dispatch is EXEMPT from the
-    # single-writer project hold — an operator-present task IS the human
-    # judgement call, and the hold exists to stop UNATTENDED concurrent
-    # planners. Exempt, but never silent: say loudly that a goal is working
-    # this project, then proceed (constitution VI).
-    warning = _project_hold_warning(resolved.project_id, resolved.workspace_dir)
-    if warning:
-        out["warning"] = warning
-    return json.dumps(out, indent=2)
+    return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
 
 
 @mcp.tool
@@ -198,6 +235,7 @@ async def implement_feature(
     project_id: str,
     goal: str,
     issue_ref: Optional[int] = None,
+    done_when: Optional[str] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -208,14 +246,16 @@ async def implement_feature(
     with. Pass ``issue_ref`` (a GitHub issue number on the project's repo) to
     key the dispatch on that issue — the call is then idempotent: a duplicate
     dispatch for the same issue attaches to the existing work rather than
-    starting a new one (spec 022 US1). Use ``dispatch_task`` directly when you
-    need ``base_branch`` / ``target_branch``. See ``dispatch_task`` for full
+    starting a new one (spec 022 US1). Without ``issue_ref``, ``done_when``
+    (real completion criteria) is required — devclaw auto-files the intake
+    issue and refuses to fabricate criteria. See ``dispatch_task`` for full
     docs."""
     return await dispatch_task(
         kind="implement_feature",
         project_id=project_id,
         goal=goal,
         issue_ref=issue_ref,
+        done_when=done_when,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
         open_pr=open_pr,
@@ -227,6 +267,7 @@ async def fix_bug(
     project_id: str,
     description: str,
     issue_ref: Optional[int] = None,
+    done_when: Optional[str] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -236,9 +277,10 @@ async def fix_bug(
     shape the waiter agent drives the companion path with. Pass ``issue_ref`` (a
     GitHub issue number on the project's repo) to key the dispatch on that issue
     — the call is then idempotent: a duplicate dispatch for the same issue
-    attaches to the existing work (spec 022 US1). Use ``dispatch_task`` directly
-    when you need ``base_branch`` / ``target_branch``. See ``dispatch_task`` for
-    full docs."""
+    attaches to the existing work (spec 022 US1). Without ``issue_ref``,
+    ``done_when`` (real completion criteria) is required — devclaw auto-files
+    the intake issue and refuses to fabricate criteria. See ``dispatch_task``
+    for full docs."""
     if not description:
         raise ToolError("fix_bug requires project_id and description")
     return await dispatch_task(
@@ -246,6 +288,7 @@ async def fix_bug(
         project_id=project_id,
         goal=description,
         issue_ref=issue_ref,
+        done_when=done_when,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
         open_pr=open_pr,
@@ -275,9 +318,8 @@ async def review_repository(
 async def cancel_task(task_id: str) -> str:
     """Abort a running or pending task. Tears down its sandbox and marks it
     'cancelled' (a terminal state distinct from 'failed' — it won't be retried or
-    resurrected on restart). Cancelling a task that belongs to a program also
-    stops that program. No-op if the task already finished. Returns whether an
-    abort actually happened."""
+    resurrected on restart). No-op if the task already finished. Returns whether
+    an abort actually happened."""
     if not task_id:
         raise ToolError("cancel_task requires task_id")
     if not store.get_task(task_id):
@@ -289,34 +331,3 @@ async def cancel_task(task_id: str) -> str:
     )
 
 
-@mcp.tool
-async def cancel_program(program_id: str) -> str:
-    """Abort a whole standalone program: stop scheduling new tasks, tear down
-    every running task's sandbox, and mark the program 'cancelled'. No-op if the
-    program already terminated. Returns whether an abort happened.
-
-    Program-level plumbing, not the operator's primary kill switch. A program
-    dispatched by a goal (``parent_goal_id`` set — every one_shot goal, every
-    start_program) is OWNED by that goal: cancel it with ``cancel_goal``, which
-    cascades DOWN and tears this program down as part of stopping the goal. This
-    tool therefore REJECTS a goal-owned program — cancelling it directly does not
-    cascade UP, and would leave the goal executing and desynced from its dead
-    program (the tick then has to reconcile a program it never chose to lose)."""
-    if not program_id:
-        raise ToolError("cancel_program requires program_id")
-    program = store.get_program(program_id)
-    if not program:
-        raise ToolError(f"unknown program_id: {program_id}")
-    if program.parent_goal_id:
-        raise ToolError(
-            f"program {program_id} is owned by goal '{program.parent_goal_id}' — "
-            f"cancel the goal instead: cancel_goal('{program.parent_goal_id}') "
-            f"stops the goal and cascades down to tear this program down. "
-            f"Cancelling the program directly does not cascade up and would leave "
-            f"the goal executing and desynced from its dead program."
-        )
-    cancelled = queue.cancel_program(program_id)
-    return json.dumps(
-        {"program_id": program_id, "cancelled": cancelled, "status": "cancelled" if cancelled else None},
-        indent=2,
-    )

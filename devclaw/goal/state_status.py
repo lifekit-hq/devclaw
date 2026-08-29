@@ -104,10 +104,11 @@ class GoalStateStatusMixin:
                   heal_attempts, next_heal_at, "next",
                   last_plan_at, last_tick_at, actions_dispatched,
                   donegate_rounds, envcap_redispatches, slice_hold_count,
+                  pending_merge_pr, merge_heal_attempted,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, in_flight_ref_id, in_flight_kind,
                   in_flight_json, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -124,6 +125,8 @@ class GoalStateStatusMixin:
                   donegate_rounds       = excluded.donegate_rounds,
                   envcap_redispatches   = excluded.envcap_redispatches,
                   slice_hold_count      = excluded.slice_hold_count,
+                  pending_merge_pr      = excluded.pending_merge_pr,
+                  merge_heal_attempted  = excluded.merge_heal_attempted,
                   last_eval_verdict     = excluded.last_eval_verdict,
                   last_eval_at          = excluded.last_eval_at,
                   last_eval_note        = excluded.last_eval_note,
@@ -150,6 +153,8 @@ class GoalStateStatusMixin:
                     status.donegate_rounds,
                     status.envcap_redispatches,
                     status.slice_hold_count,
+                    status.pending_merge_pr,
+                    1 if status.merge_heal_attempted else 0,
                     status.last_eval_verdict,
                     status.last_eval_at,
                     status.last_eval_note,
@@ -335,6 +340,9 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         blocked_kind=row["blocked_kind"] or "",
         heal_attempts=int(row["heal_attempts"] or 0),
         envcap_redispatches=int(row["envcap_redispatches"] or 0),
+        # NULL on a pre-spec-025 row (lazily ALTERed) reads as the defaults.
+        pending_merge_pr=row["pending_merge_pr"] or "",
+        merge_heal_attempted=bool(row["merge_heal_attempted"]),
         next_heal_at=row["next_heal_at"] or None,
         next=row["next"] or "",
         last_plan_at=row["last_plan_at"] or None,

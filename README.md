@@ -133,7 +133,7 @@ devclaw/
 ├── elicitation.py      # scope-grill cognition (called via the scope_grill MCP tool)
 ├── state_store/       # SQLite: programs, tasks, append-only events (rows · control · core)
 ├── task_queue.py       # async task lifecycle, concurrency, on-settle hook → goal poke
-├── queue/              # TaskQueue's mixins: settle (execute/settle path), programs (DAGs), admission (memory + breaker)
+├── queue/              # TaskQueue's mixins: settle (execute/settle path), admission (memory + breaker)
 ├── project_registry.py # control plane: repos → driving goals → live status rollup
 └── cli.py              # devclaw projects/trace/scorecard/schedule/cognition … (terminal face of the control plane)
 runner/runner.py  # worker harness inside the sandbox; emits event/result lines
@@ -155,12 +155,11 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 | `onboard(project_id, …)` | Analyze a repo and deliver the draft onboarding doc set as a reviewable PR — a thin `AGENTS.md` pointer (marker-delimited), `README.md`, `ARCHITECTURE.md`, plus `.devcontainer/Dockerfile` when absent |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
-| `start_program(project_id, goal, …)` | DEPRECATED sugar for `create_goal(mode='one_shot')` — files a one-shot goal that rides the same speckit advance loop with a plan-once cadence |
-| `get_program(program_id)` / `list_programs()` | Program status + task DAG |
+| `get_program(program_id)` / `list_programs()` | Read-only HISTORICAL program rows (the program/DAG lane was retired by spec 022 US3) |
 | `get_status(task_id)` / `list_tasks(...)` / `get_events(...)` | Task history + replayable event feed (live SSE over HTTP) |
 | `get_scorecard_metrics(window_hours?)` | Rolling scorecard over the last N hours (default 1 week): merge rate, evaluator-verdict distribution, steer rate, first-pass hit rate, workspace breaks — a cheap SQLite read, callable from Telegram/dashboards |
 | `review_trends(scope?)` | Tail of the cross-session trend detector's `trends.md` — `harness_self` (devclaw's own self-observability) or a workspace path for that project's trends |
-| `cancel_task(task_id)` / `cancel_program(program_id)` | Abort in-flight work — tears down the sandbox |
+| `cancel_task(task_id)` | Abort an in-flight task — tears down the sandbox |
 
 Async by default: a tool call returns a `task_id` immediately and the work runs in the background. Pass a `notify_url` to get a callback on completion/block instead of polling.
 
@@ -171,7 +170,7 @@ Async by default: a tool call returns a `task_id` immediately and the work runs 
 - **`long_lived`** (default) — the **drip**: each heartbeat dispatches the next advance, judges *direction* periodically (not just shipped PRs), and stays steerable mid-flight. For fog-of-war objectives where the path reveals itself as work lands.
 - **`one_shot`** — the **sprint**: the same advance loop, but done is proposed as soon as an advance session lands — for work that's fully specified up front. The proposal is still gated on the grounded done-gate review.
 
-In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts committed to the repo (spec 008); the host dispatches a mechanical, zero-LLM advance brief. Both modes share every gate, the delivery contract, and the close discipline. `start_program` survives as a deprecated alias for `create_goal(mode='one_shot')`; raw queue programs survive underneath only for explicitly pre-planned DAG submissions — no host code produces plans anymore.
+In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts committed to the repo (spec 008); the host dispatches a mechanical, zero-LLM advance brief. Both modes share every gate, the delivery contract, and the close discipline. The `start_program` alias and the raw program/DAG queue lane beneath it were retired by spec 022 US3 — one dispatch lane; historical `programs` rows stay readable via `get_program`/`list_programs`.
 
 | Tool | Does |
 |---|---|
