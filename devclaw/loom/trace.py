@@ -106,6 +106,7 @@ class DispatchEvent:
     ref_id: str = ""
     engine: str = ""           # stub | sandcastle | host
     is_done_check: bool = False
+    brief_chars: int = 0       # spec 025: rendered brief size for ramp visibility
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -441,14 +442,14 @@ def record_tick(*, goal_id: str, lifecycle: str, phase: str, outcome: str) -> No
 
 def record_dispatch(
     *, goal_id: str, tool: str, ref_id: str,
-    engine: str = "", is_done_check: bool = False,
+    engine: str = "", is_done_check: bool = False, brief_chars: int = 0,
 ) -> None:
     t = _current.get()
     if t is None:
         return
     t.append(DispatchEvent(
         goal_id=goal_id, tool=tool, ref_id=ref_id, engine=engine,
-        is_done_check=is_done_check,
+        is_done_check=is_done_check, brief_chars=brief_chars,
     ))
 
 

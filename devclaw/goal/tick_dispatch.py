@@ -325,6 +325,10 @@ async def _dispatch_action(
     # row (pump=False left it merely 'pending'), then trace/notify — all
     # post-commit, per the mirror-discipline + dispatch/pump-split rules.
     store.render_mirrors(goal_id)
+    # Spec 025: record the rendered brief's character count in the goal log so
+    # the ramp is visible in telemetry instead of inferred from failures.
+    brief_chars = len(dispatch_action.goal)
+    store.append_log(goal_id, f"dispatch brief: {brief_chars} chars", mirror=False)
     # Record which speckit feature this dispatch is advancing (spec 008 US1, D6)
     # so the done-gate can ground on the right specs/NNN/spec.md. Best-effort,
     # AFTER the settle transaction committed (a plain file doc, never inside the
@@ -340,7 +344,7 @@ async def _dispatch_action(
         except Exception:  # noqa: BLE001 — recording is best-effort, never a gate
             pass
     _engine_kick(engine)
-    _trace.record_dispatch(goal_id=goal_id, tool=action.tool, ref_id=ref.id, engine=getattr(engine, "kind", ""))
+    _trace.record_dispatch(goal_id=goal_id, tool=action.tool, ref_id=ref.id, engine=getattr(engine, "kind", ""), brief_chars=brief_chars)
     # Notify uses the short label of the DISPLAY form, not the full prompt
     # body — the raw `action.goal` is a multi-paragraph executor instruction
     # (often 500-1500 chars) and dumping it to Telegram floods the owner with
