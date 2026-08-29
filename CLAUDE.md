@@ -203,7 +203,7 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~2200 tests, all stubbed — no docker, no claude; ~27s (-n auto)
+pytest        # ~1150 tripwire tests, all stubbed — no docker, no claude; ~23s (-n auto)
 ruff check .  # pyflakes + syntax errors only; CI gates it
 mypy          # type check (config in pyproject [tool.mypy]); CI gates it too
 ```
@@ -217,12 +217,17 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 ## Conventions
 
 - **Conventional-commit messages** (`fix(queue): …`, `feat(cognition): …`).
-- **Every behavior-change PR adds a named regression test** — the T0 fixes each
-  shipped with one (`test_integrity_gate.py`, `test_delivery.py`, `test_goal_tick.py`, …).
+- **The suite is a tripwire net, not a coverage instrument** (ruled 2026-08-29,
+  tests-to-tripwires prune): a PR ships a test ONLY when it touches an
+  autonomous-operation invariant — zero-token idle, fail-closed gates,
+  CAS/single-writer, OAuth strip + sandbox fence, pause/brake machinery, the
+  materialize span, doctor seeded-faults, structural guards. Ordinary behavior
+  changes ship NO test; the live instance + done-gate + post-merge review are
+  their regression surface, and cognition quality is measured by evals.
   **The ratchet is symmetric** (2026-08-27): a PR that removes behavior removes
-  that behavior's tests in the same PR; prefer strengthening an existing named
-  test over minting a sibling when the class is already pinned. Net-LOC is
-  reported on every `/ship` — informational, never a gate.
+  that behavior's tests in the same PR; never mint an instance-test — extend
+  the class test. Net-LOC is reported on every `/ship` — informational, never
+  a gate.
 - **A PR that changes persisted state shape or in-repo boilerplate ships its
   doctor check** (spec 016 FR-014) — the deployed-instance sibling of the
   named-regression-test rule: the stubbed suite guards the code, doctor guards

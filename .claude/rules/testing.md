@@ -1,9 +1,21 @@
 # Testing — how to run and write tests in this repo
 
-The suite is **fully stubbed** — no docker, no `claude` binary, ~2100 tests in
-~27s (pytest-xdist, `-n auto` in `addopts`; ~113s if you force `-n0`). Anything
-needing real docker/claude is an integration concern: `/live-shakedown`, never
-pytest.
+The suite is **fully stubbed** — no docker, no `claude` binary, ~1150 tests in
+~23s (pytest-xdist, `-n auto` in `addopts`). Anything needing real
+docker/claude is an integration concern: `/live-shakedown`, never pytest.
+
+**The suite is a TRIPWIRE NET, not a coverage instrument** (ruled by Denys
+2026-08-29, the tests-to-tripwires prune). It exists to pin the invariants
+that keep an *unattended autonomous loop* safe — not to pin every behavior.
+The tripwire classes are: zero-token idle guards, fail-closed gates, the
+CAS/single-writer state machine, OAuth stripping + the sandbox fence, the
+pause-and-resume brakes (quota/auth pause, retry caps, watchdogs, admission,
+resource release), the one-definition-of-change (materialize span), doctor
+seeded-faults, and cheap structural guards (docs map, env-doc sync, tool
+re-export, route shadowing, no-docker-in-tests). Ordinary feature behavior is
+NOT unit-tested — the live instance, the done-gate, and post-merge review are
+its regression surface, and cognition quality is measured by evals
+(`tests/cognition/`, `evals/`), never by stubs.
 
 ## Running
 
@@ -32,23 +44,24 @@ pytest.
 
 ## Writing
 
-- **Every behavior-change PR ships a named regression test** — named after the
-  behavior, not the function (`test_resume_goal_unblocks_without_steering_and_replans_next_tick`).
+- **A PR ships a test ONLY when it touches a tripwire class** (the list in the
+  header) or introduces a new invariant of that kind — then the test is named
+  after the invariant, not the function. A PR changing ordinary behavior ships
+  NO test; do not re-grow the suite out of diligence. (This replaces the
+  pre-2026-08-29 "every behavior-change PR ships a named regression test"
+  rule — ruled by Denys, tests-to-tripwires prune.)
 - **The ratchet is symmetric** (ruled by Denys 2026-08-27): a PR that REMOVES
-  behavior removes that behavior's tests in the same PR, and a spec's
-  demolition scope lists the tests that die with it. Tests pin living
-  behavior; a test for deleted behavior is dead weight wearing a green badge.
+  behavior removes that behavior's tests in the same PR.
   (Load-bearing guards — zero-token, fail-closed — pin invariants, not
   instances; they stay until the invariant itself is repealed.)
-- **Prefer strengthening an existing named test over adding a new one** when
-  the behavior CLASS is already pinned — extend the existing test's cases
-  instead of minting a sibling. Test per class, not per instance; the suite
-  measures covered behavior, not accumulated diligence.
+- **Never mint an instance-test; strengthen the class test.** When a tripwire
+  class is already pinned, extend the existing named test's cases (parametrize)
+  instead of adding a sibling.
 - Fixture map: `tests/goal_fakes.py` has `FakeClaude` (its `.calls` count IS the
   zero-token quota assertion), `FakeEngine`, `RecordingNotifier`, `seed_goal`.
   Goal-tick behavior → `tests/test_goal_tick.py`; transitions/CAS in isolation →
-  `test_goal_transitions.py`; store row/view behavior → `test_goal_store*.py`;
-  queue/gate → `test_review_gate*.py`, `test_task_retry.py`.
+  `test_goal_transitions.py`; queue/gate → `test_review_gate*.py`,
+  `test_task_retry.py`.
 - Tests that build a "realistic repo" fixture copy the shape in
   `tests/test_review_gate.py` (real `git init` + .NET/Angular marker files) —
   don't invent a new fixture style.
