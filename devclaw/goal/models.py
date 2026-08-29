@@ -251,6 +251,13 @@ class GoalStatus:
     #: productive settle (a shipped increment proves the environment now
     #: fits), alongside ``heal_attempts``.
     envcap_redispatches: int = 0
+    #: consecutive ticks the dispatch-boundary single-feature-slice guard held
+    #: (issue #728). Incremented each tick the scoped check finds offending
+    #: feature dirs; reset to 0 when the guard passes or a human steers/resumes.
+    #: At ``_SLICE_HOLD_CAP`` consecutive holds the goal transitions to
+    #: ``blocked`` with ``blocked_kind="mechanical:slice_hold"`` — loud failure
+    #: over silent indefinite sleep.
+    slice_hold_count: int = 0
     #: human note of the intended next step
     next: str = ""
     #: ISO ts of the last time the plan step (LLM) ran

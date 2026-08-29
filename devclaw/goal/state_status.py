@@ -103,11 +103,11 @@ class GoalStateStatusMixin:
                   goal_id, version, state, phase, lifecycle, blocked_on, blocked_kind,
                   heal_attempts, next_heal_at, "next",
                   last_plan_at, last_tick_at, actions_dispatched,
-                  donegate_rounds, envcap_redispatches,
+                  donegate_rounds, envcap_redispatches, slice_hold_count,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, in_flight_ref_id, in_flight_kind,
                   in_flight_json, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -123,6 +123,7 @@ class GoalStateStatusMixin:
                   actions_dispatched    = excluded.actions_dispatched,
                   donegate_rounds       = excluded.donegate_rounds,
                   envcap_redispatches   = excluded.envcap_redispatches,
+                  slice_hold_count      = excluded.slice_hold_count,
                   last_eval_verdict     = excluded.last_eval_verdict,
                   last_eval_at          = excluded.last_eval_at,
                   last_eval_note        = excluded.last_eval_note,
@@ -148,6 +149,7 @@ class GoalStateStatusMixin:
                     status.actions_dispatched,
                     status.donegate_rounds,
                     status.envcap_redispatches,
+                    status.slice_hold_count,
                     status.last_eval_verdict,
                     status.last_eval_at,
                     status.last_eval_note,
@@ -180,6 +182,9 @@ class GoalStateStatusMixin:
         # spec 020: the env-cap adapted-re-dispatch budget — bookkeeping the
         # goal loop stamps beside heal_attempts, never read by derive_state.
         "envcap_redispatches": "envcap_redispatches",
+        # issue #728: consecutive dispatch-gate hold ticks (slice guard) —
+        # bookkeeping stamped by the tick, never read by derive_state.
+        "slice_hold_count": "slice_hold_count",
         # heal_attempts / next_heal_at are damping bookkeeping (never read by
         # derive_state) — the column-only path exists so the auto-heal's
         # gave-up marker and the prep-recheck backoff window can be stamped
@@ -336,6 +341,7 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         last_tick_at=row["last_tick_at"] or None,
         actions_dispatched=int(row["actions_dispatched"] or 0),
         donegate_rounds=int(row["donegate_rounds"] or 0),
+        slice_hold_count=int(row["slice_hold_count"] or 0),
         last_eval_verdict=row["last_eval_verdict"] or None,
         last_eval_at=row["last_eval_at"] or None,
         last_eval_note=row["last_eval_note"] or "",

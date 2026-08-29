@@ -37,6 +37,7 @@ def _fake_cgroup(tmp_path, monkeypatch, runner, *, oom_kill, mem_max="2147483648
 
 
 def test_oom_annotate_stamps_marker_on_new_kill(tmp_path, monkeypatch, runner):
+    monkeypatch.delenv("DEVCLAW_SANDBOX_MEMORY", raising=False)
     events = _fake_cgroup(tmp_path, monkeypatch, runner, oom_kill=0)
     baseline = runner._read_oom_kill_count()
     assert baseline == 0

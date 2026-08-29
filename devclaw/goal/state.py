@@ -121,6 +121,7 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                   last_tick_at          TEXT,
                   actions_dispatched    INTEGER,
                   donegate_rounds       INTEGER NOT NULL DEFAULT 0,
+                  slice_hold_count      INTEGER NOT NULL DEFAULT 0,
                   last_eval_verdict     TEXT,
                   last_eval_at          TEXT,
                   last_eval_note        TEXT,
@@ -265,6 +266,7 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                 "ALTER TABLE goal_status ADD COLUMN next_heal_at TEXT",
                 "ALTER TABLE goal_status ADD COLUMN donegate_rounds INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN envcap_redispatches INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE goal_status ADD COLUMN slice_hold_count INTEGER NOT NULL DEFAULT 0",
             ):
                 try:
                     self._store._db.execute(sql)

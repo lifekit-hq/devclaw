@@ -1101,12 +1101,19 @@ async def test_dispatch_proceeds_with_single_graded_active_feature(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_dispatch_held_with_three_active_features(tmp_path, monkeypatch):
-    """(c) 3-feature attempt is rejected at the gate — named regression for
-    issue #679. Before this fix the system was fail-open and dispatched anyway."""
-    # total=3, graded=3, active=3
+async def test_dispatch_held_with_concurrent_build_ahead(tmp_path, monkeypatch):
+    """(c) Genuine concurrent build-ahead is rejected — named regression for
+    issue #679 (updated by #728 denominator fix). The guard holds only when
+    speckit_offending_dirs_sync returns dirs, meaning 2+ features were advanced
+    in the same session (same mtime window, not historical leftovers)."""
     monkeypatch.setattr(
         "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (3, 3, 3)
+    )
+    # Simulate two genuinely concurrent (same-session) active features beyond
+    # the current one — the build-ahead signal the scoped guard still catches.
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_offending_dirs_sync",
+        lambda ws, cur: ["specs/002-b", "specs/003-c"],
     )
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -1119,7 +1126,33 @@ async def test_dispatch_held_with_three_active_features(tmp_path, monkeypatch):
     assert engine.dispatched == []
     assert evaluator.calls == 0
     log = (tmp_path / "g" / "log.md").read_text()
-    assert "3 features" in log or "3 feature" in log
+    assert "specs/002-b" in log or "pending tasks" in log
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_with_historical_active_features(tmp_path, monkeypatch):
+    """Named regression for issue #728 (finance-sentry workspace shape):
+    40 dirs total, 32 graded, 5 with unchecked tasks — all historical.
+    The scoped guard finds no offending dirs (historical mtimes) so dispatch
+    PROCEEDS instead of being permanently held.
+
+    Fixture shape matches the live finance-sentry workspace measured 2026-08-28:
+    total=40, graded=32, active=5 (001-bank-account-sync, 011-connect-providers,
+    021-market-regime, 037-structured-data-sources, 039-ips-risk-boundary)."""
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (40, 32, 5)
+    )
+    # speckit_offending_dirs_sync is NOT patched: the tmp_path has no specs/ dir,
+    # so current_feature_dir_sync returns "" → speckit_offending_dirs_sync
+    # returns [] (no baseline, all dirs treated as historical) → gate allows.
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED     # historical features must not block
+    assert len(engine.dispatched) == 1
 
 
 @pytest.mark.asyncio

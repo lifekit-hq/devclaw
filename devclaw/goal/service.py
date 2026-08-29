@@ -1270,7 +1270,8 @@ class GoalService:
             self._goal_store.transition(
                 goal_id, Event.UNBLOCK,
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
-                        heal_attempts=0, next_heal_at=None, donegate_rounds=0),
+                        heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                        slice_hold_count=0),
                 expect=s,
             )
         self.poke()
@@ -1348,7 +1349,8 @@ class GoalService:
         self._goal_store.transition(
             goal_id, Event.UNBLOCK,
             replace(s, phase="idle", blocked_on="", actions_dispatched=0, last_plan_at=None,
-                    heal_attempts=0, next_heal_at=None, donegate_rounds=0),
+                    heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                    slice_hold_count=0),
             expect=s,
         )
         self._goal_store.append_log(
