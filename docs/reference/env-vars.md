@@ -162,6 +162,7 @@ pure library gets no preview container unless its project pins `autodeploy=on`.
 | `DEVCLAW_DEPLOY_PORT_BASE` | `8200` | Lower bound of the per-slug deterministic deploy port range. |
 | `DEVCLAW_DEPLOY_PORT_SPAN` | `200` | Number of slots in the deploy port range (so `8200`–`8399` by default). |
 | `DEVCLAW_DEPLOY_MEMORY` | `512m` | Per-deploy memory ceiling. |
+| `DEVCLAW_DEPLOY_QUIESCENCE_S` | `21600` | Spec 025 US2 (self-deploy on merge): how long a pending instance self-deploy may wait for task quiescence (`count_running() == 0`) before it expires loudly (`deploy_last.outcome = expired`; re-armed by the next devclaw-repo close or operator resume). The trigger fires `gh workflow run deploy.yml -f auto=true`; the workflow's auto lane (`deploy/deploy-devclaw-auto.sh`) owns the health probe and the ONE automatic rollback. |
 | `DEVCLAW_DEPLOY_CPUS` | `1.0` | Per-deploy CPU limit. |
 | `DEVCLAW_DEPLOY_MAX` | `5` | Max concurrent durable deploys on the VPS. |
 

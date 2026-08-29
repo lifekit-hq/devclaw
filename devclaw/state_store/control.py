@@ -152,6 +152,53 @@ class ControlPlaneMixin:
         except (ValueError, TypeError):
             return False, ""
 
+    # ---- self-deploy intent (spec 025 US2) -------------------------------
+    # One pending self-deploy at a time (a newer merge simply overwrites the
+    # sha — deploying the latest main covers both). Same conventions as
+    # operator_hold: absence == none, corrupt JSON degrades to none.
+
+    def set_deploy_pending(self, sha: str, goal_id: str, since_ms: int) -> None:
+        """Record that a devclaw-repo goal merged and the instance owes itself
+        a redeploy once quiescent."""
+        self.set_meta("deploy_pending", json.dumps(
+            {"sha": sha or "", "goal_id": goal_id, "since_ms": int(since_ms)}
+        ))
+
+    def deploy_pending(self) -> "tuple[str, str, int] | None":
+        """``(sha, goal_id, since_ms)`` or ``None`` when nothing is owed."""
+        raw = self.get_meta("deploy_pending")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            return (str(data.get("sha") or ""), str(data.get("goal_id") or ""),
+                    int(data.get("since_ms") or 0))
+        except (ValueError, TypeError):
+            return None
+
+    def clear_deploy_pending(self) -> None:
+        self.delete_meta("deploy_pending")
+
+    def record_deploy_last(self, *, sha: str, goal_id: str, outcome: str,
+                           at_ms: int, detail: str = "") -> None:
+        """The last self-deploy edge (``triggered`` / ``expired`` /
+        ``trigger_failed``) — the operator-visible record that survives the
+        deploy itself (the workflow owns probe/rollback truth beyond this)."""
+        self.set_meta("deploy_last", json.dumps({
+            "sha": sha or "", "goal_id": goal_id, "outcome": outcome,
+            "at_ms": int(at_ms), "detail": (detail or "")[:400],
+        }))
+
+    def deploy_last(self) -> "dict | None":
+        raw = self.get_meta("deploy_last")
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+            return data if isinstance(data, dict) else None
+        except (ValueError, TypeError):
+            return None
+
     #: meta-key prefix for a per-goal run-window. The global window keeps the bare
     #: ``run_schedule`` key; a goal's own window is ``run_schedule:<goal_id>``.
     _GOAL_SCHEDULE_PREFIX = "run_schedule:"

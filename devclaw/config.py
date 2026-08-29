@@ -84,6 +84,16 @@ def self_repo() -> str:
     return (os.environ.get("DEVCLAW_SELF_REPO") or "").strip()
 
 
+def deploy_quiescence_s() -> int:
+    """Spec 025 US2: how long a pending self-deploy may wait for task
+    quiescence before it expires loudly (re-armed by the next devclaw-repo
+    close or operator resume). Invalid/unset ⇒ 6h."""
+    try:
+        return int(os.environ.get("DEVCLAW_DEPLOY_QUIESCENCE_S", "21600"))
+    except ValueError:
+        return 21600
+
+
 # ---- server (MCP surface) ------------------------------------------------
 
 HTTP_PORT = int(os.environ.get("DEVCLAW_PORT", "8000"))
