@@ -129,8 +129,9 @@ async def regrade_intake(project_id: str, issue_url: str) -> str:
     adoption). Intake-format issues keep their structured sections; any other
     format is read as-is: title + body become the ask, and an issue with no
     verifiable completion intent grades ``needs-refinement`` with the missing
-    element named. Re-reads the issue on demand — devclaw does NOT auto-watch
-    issue edits. Grading is admission to *grading*, never execution: it does not
+    element named. Re-reads the issue on demand; with webhooks configured (spec 023,
+    `DEVCLAW_WEBHOOK_SECRET`) issue opened/edited events trigger this same
+    grade automatically. Grading is admission to *grading*, never execution: it does not
     dispatch, does not edit the issue, and does not alter provenance.
 
     - ``project_id`` — the registered project the issue lives on.

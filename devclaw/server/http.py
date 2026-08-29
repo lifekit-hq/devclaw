@@ -25,4 +25,5 @@ from .routes import goals as _routes_goals  # noqa: F401
 from .routes import observability as _routes_observability  # noqa: F401
 from .routes import projects as _routes_projects  # noqa: F401
 from .routes import tasks as _routes_tasks  # noqa: F401
+from .routes import webhooks as _routes_webhooks  # noqa: F401
 from .routes import console as _routes_console  # noqa: F401
