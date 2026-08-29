@@ -17,10 +17,6 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from .. import claude_trust
 from .. import config as _config
-from ..goal.project_id_cutoff import CUTOFF_META_KEY as _PID_BACKFILL_KEY
-from ..goal.store.legacy_cutoff import CUTOFF_META_KEY as _LEGACY_CUTOFF_KEY
-from ..goal.store.view_migration import MIGRATION_META_KEY as _VIEW_MIGRATION_KEY
-from ..state_store.trace_migration import MIGRATION_META_KEY as _TRACE_MIGRATION_KEY
 from .model import Finding, Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -41,35 +37,11 @@ def _ro_db(db_path: str) -> sqlite3.Connection:
     return conn
 
 
-# ---- migrations / legacy shapes ------------------------------------------
-
-
-def check_migration_meta_keys(ctx: "InstanceContext") -> list[Finding]:
-    cid = "instance.migrations.meta_keys"
-    hard = {
-        _VIEW_MIGRATION_KEY: "goal view migration",
-        _LEGACY_CUTOFF_KEY: "goal legacy cutoff (#616)",
-        _TRACE_MIGRATION_KEY: "trace response_text migration",
-    }
-    missing = [name for key, name in hard.items() if not ctx.store.get_meta(key)]
-    findings: list[Finding] = []
-    if missing:
-        findings.append(Finding(
-            cid, Verdict.FAIL,
-            f"one-shot migration marker(s) absent: {', '.join(sorted(missing))} — "
-            "the DB predates its code or was replaced without a boot",
-            remedy="restart devclaw (migrations stamp at boot)",
-        ))
-    else:
-        findings.append(Finding(cid, Verdict.OK, "all construction-stamped migration markers present"))
-    if not ctx.store.get_meta(_PID_BACKFILL_KEY):
-        findings.append(Finding(
-            cid, Verdict.WARN,
-            "project_id backfill marker absent — this DB has never been booted "
-            "by the server since the P3 re-key (pre-P3 goals stay unstamped)",
-            remedy="start the devclaw server once against this DB",
-        ))
-    return findings
+# ---- legacy shapes --------------------------------------------------------
+# (The one-shot migration modules that used to stamp meta markers — view
+# ingest #617, legacy cutoff #616, trace response_text, project_id backfill —
+# ran on the one production DB and were deleted by the 2026-08-29 prune. The
+# checks below guard the resulting SHAPES directly, not the markers.)
 
 
 def check_legacy_goal_status_lifecycle(ctx: "InstanceContext") -> list[Finding]:
@@ -510,7 +482,6 @@ def check_suppressed_pings_table(ctx: "InstanceContext") -> list[Finding]:
 
 
 INSTANCE_CHECKS: tuple = (
-    check_migration_meta_keys,
     check_legacy_goal_status_lifecycle,
     check_legacy_deliveries_ref_id,
     check_legacy_dropped_shapes,

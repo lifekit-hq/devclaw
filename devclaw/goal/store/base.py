@@ -24,9 +24,7 @@ docs and the ``goal_docs`` table behind them died with the host-cognition
 chain in the spec 008 shrink; the #616 cutoff dropped the table.) ``spec.md`` /
 ``discovery.md`` are still plain files (display/prompt inputs, not
 consumed-state). **Every ``.md`` above is a write-only projection (#617)** —
-the markdown written before that rule was enforced is parsed exactly once, by
-:func:`~devclaw.goal.store.view_migration.migrate_views_once` at construction,
-and never again. A clock is injected (``now``) so ticks are deterministic
+never read back. A clock is injected (``now``) so ticks are deterministic
 under test.
 
 The class was split into a package for legibility (behavior-preserving):
@@ -36,11 +34,6 @@ The class was split into a package for legibility (behavior-preserving):
   the transaction/mirror discipline, goal facts, clock helpers).
 - :mod:`.status` — :class:`GoalStatusMixin`, the single-writer/CAS choke point
   (``load_status`` / ``transition`` / ``force_block`` / the STATUS.md view).
-- :mod:`.view_migration` — the one-shot, one-cutoff ingest of the pre-#617
-  views, and the only code in the package allowed to read one.
-- :mod:`.legacy_cutoff` — the other half of that cutoff (#616): the one-shot
-  migration of every pre-cutoff ROW SHAPE, after which the branches that
-  read them are deleted rather than kept.
 - :mod:`.content` — :class:`GoalContentMixin`, the
   log / settlements / deliveries / inbox surfaces.
 
@@ -62,8 +55,6 @@ import yaml
 from ..models import Goal, GoalMode, GoalStatus
 from ..state import GoalState
 from ...state_store import _now_ms
-from .legacy_cutoff import apply_legacy_cutoff
-from .view_migration import migrate_views_once
 
 _DURATION = re.compile(r"^\s*(\d+)\s*([smhd])\s*$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -126,18 +117,11 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
             state = StateStore(str(self._root / ".goal-state.db"))
         self._state = state
         self._goal_state = GoalState(self._state)
-        # One migration, one cutoff (#617). Every generated view still on disk
-        # is parsed into rows HERE, once per database, before any read path can
-        # observe the tables — and never again. This is the only place in the
-        # package that reads a view; deleting it without replacement would
-        # strand the pre-#617 markdown, and re-adding a lazy read anywhere else
-        # re-opens the second-writer hole it closes.
-        _now = _now_ms()
-        migrate_views_once(self._state, self._goal_state, self._root, _now)
-        # ...and the other half of the same cutoff (#616): the pre-cutoff row
-        # SHAPES those views were ingested into. Strictly after the ingest —
-        # it is what gives the migrated delivery rows their ref_id.
-        apply_legacy_cutoff(self._state, self._goal_state, _now)
+        # (The one-shot #617 view ingest + #616 legacy cutoff that used to run
+        # here were deleted by the 2026-08-29 prune — they ran on the one
+        # production DB and stamped their markers. Views stay write-only:
+        # nothing in the package reads one back; re-adding a lazy view read
+        # anywhere re-opens the second-writer hole #617 closed.)
         #: PR7 mirror discipline — file mirrors deferred by a mirror=False /
         #: render_view=False write (or a transition()/save_status() call
         #: that finds itself nested inside a caller-opened transaction())

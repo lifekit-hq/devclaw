@@ -25,16 +25,15 @@ steering enters exclusively through ``steer_goal``.
 ``deliveries.md`` as generated mirrors; ``goal_deliveries`` inserts are
 idempotent, keyed on ``ref_id`` (``UNIQUE(goal_id, ref_id)`` + INSERT OR
 IGNORE), closing a PR4-review nuance where a settle landing in a
-``TransitionConflict`` retry window could append the same delivery twice. The
-views these tables were seeded from are read exactly once, by
-:func:`devclaw.goal.store.view_migration.migrate_views_once` (#617); after
-that they are write-only projections.
+``TransitionConflict`` retry window could append the same delivery twice.
+The views are write-only projections (#617) — never read back.
 
 **The #616 cutoff (2026-08-22) left exactly one shape per row.** ``lifecycle``
 is non-optional, ``ref_id`` is NOT NULL, and ``goal_docs`` — whose every kind
-died with the host-cognition chain in the spec 008 shrink — is dropped. See
-:mod:`devclaw.goal.store.legacy_cutoff`; the compat branches that used to read
-those shapes are deleted, not disabled.
+died with the host-cognition chain in the spec 008 shrink — is dropped. (The
+one-shot cutoff/ingest modules themselves were deleted by the 2026-08-29
+prune, having run on the one production DB.) The compat branches that used to
+read those shapes are deleted, not disabled.
 
 The class was split into status/content mixins for legibility
 (behavior-preserving), mirroring the exact seam its wrapper ``GoalStore``

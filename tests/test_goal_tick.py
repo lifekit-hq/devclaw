@@ -17,7 +17,7 @@ import pytest
 
 from devclaw.goal.engine import GoalEngineError
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
-from devclaw.goal.store import GoalStore, view_migration
+from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import Outcome, tick_all, tick_goal
 from devclaw.goal.tick_donegate import DONEGATE_ROUND_CAP
 from tests.goal_fakes import (
@@ -1545,26 +1545,6 @@ async def test_the_tick_no_longer_heals_a_lifecycle_because_none_can_be_stale(tm
     assert engine.dispatched == []
 
 
-def test_the_cutoff_heals_a_pre_shrink_lifecycle_at_construction(tmp_path):
-    """The first half: a row planted with a pre-shrink lifecycle is
-    ``executing`` by the time anything can read it, without the tick being
-    involved at all."""
-    seed_goal(tmp_path, "g", cadence="1d")
-    store = _store(tmp_path, Clock())
-    with store._state._lock:
-        store._state._db.execute(
-            "INSERT INTO goal_status (goal_id, lifecycle) VALUES ('legacy', 'investigating')"
-        )
-        store._state._db.execute(
-            "DELETE FROM meta WHERE key = 'goal_legacy_cutoff_done_at_ms'"
-        )
-        store._state._commit()
-
-    reopened = _store(tmp_path, Clock())   # construction runs the cutoff
-
-    assert reopened.load_status("legacy").lifecycle == "executing"
-
-
 @pytest.mark.asyncio
 async def test_legacy_goal_skips_investigation_and_dispatches(tmp_path):
     """A goal with no lifecycle (created before the front-end existed) behaves as
@@ -2146,9 +2126,8 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path, monkeypatch):
     assert await _tick_prep(store, "gc", engine, notifier, prepare_ws=_failing_prepare) is Outcome.BLOCKED
     s = store.load_status("gc")
     assert s.phase == "blocked" and s.blocked_kind == "mechanical:prep"
-    # the STATUS.md view surfaces the kind next to blocked_on (frontmatter + body)
+    # the STATUS.md view surfaces the kind next to blocked_on
     text = (tmp_path / "gc" / "STATUS.md").read_text()
-    assert view_migration.read_frontmatter(text)["blocked_kind"] == "mechanical:prep"
     assert "blocked [mechanical:prep] —" in text
 
     # mechanical:dispatch_cap — the runaway backstop (backlog 2 → cap 4)
