@@ -13,6 +13,7 @@ from tick.py.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import sys
 
 from dataclasses import replace
@@ -310,6 +311,16 @@ async def _live_contract(
     try:
         contract = await _issue_ref.scenarios_contract(
             goal.repo_url or "", goal.issue_refs, fetcher
+        )
+        # FR-005 (spec 024): record WHICH revision of the ticket this round
+        # judged — the contract is live-editable on the tracker, so the goal
+        # side must be auditable against edits. A content hash is revision
+        # identity enough (the tracker's own history holds the diff).
+        digest = hashlib.sha256(contract.encode()).hexdigest()[:12]
+        store.append_log(
+            goal_id,
+            f"done-gate contract from live issue(s) "
+            f"{','.join(f'#{n}' for n in goal.issue_refs)} — revision {digest}",
         )
     except _issue_ref.MissingAcceptance as exc:
         q = (
