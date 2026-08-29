@@ -235,6 +235,17 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 - **Keep `docs/` honest.** If a change makes a doc wrong, fix the doc in the same PR
   and update its currency tag in [`docs/INDEX.md`](./docs/INDEX.md). A stale doc that
   looks current is worse than no doc.
+- **Repo gold standard** ([REPO-STANDARD.md](https://github.com/lifekit-hq/.github/blob/main/REPO-STANDARD.md),
+  adopted 2026-08-29, #695): squash-only merges, delete-branch-on-merge, the
+  `P1`/`P2`/`needs-refinement`/`devclaw-ready` labels, plus the conventions above.
+  Deliberate divergences: branches are `<type>/<slug>` with no issue number
+  (speckit-driven work isn't always issue-backed); no husky-style pre-commit hook —
+  the same gates run in CI plus the `/ship` ritual and `.claude/hooks`; milestones
+  aren't used — the speckit spec is the unit of direction and issues carry priority
+  labels; PR bodies state verification via the `/ship` ritual (suite result + the
+  named regression test) rather than a titled Validation section; the root
+  carries `AGENTS.md`/`ARCHITECTURE.md` — devclaw's own machine-maintained
+  onboarding doc set, which the standard explicitly accepts.
 
 ## The dev harness (`.claude/`)
 
