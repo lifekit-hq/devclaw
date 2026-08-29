@@ -282,7 +282,10 @@ async def create_goal(
     finalized spec.md here and the evaluator judges done against it.
 
     THE SAGA SLOTS (spec 012 US2) — ``out_of_scope``, ``invariants`` and
-    ``established`` are REQUIRED alongside objective/done_when. A saga is
+    ``established`` are REQUIRED alongside objective/done_when for the
+    ISSUE-LESS lane. With ``issues`` set they may be omitted (spec 024 US2):
+    the ticket is the authoring home — the issue template's sections travel
+    to grading and the worker brief as live issue content. A saga is
     authored from named slots, not prose, so that two people describing the
     same work file the same saga. Pass a list of short statements, or an EMPTY
     LIST to declare explicitly that there are none — omitting a slot is

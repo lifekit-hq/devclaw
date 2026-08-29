@@ -776,6 +776,16 @@ class GoalService:
         # written, so the repo manifest's strictnessDefault applies live.
         if strictness is not None and strictness not in ("trust", "strict"):
             raise ValueError(f"unknown strictness {strictness!r} — expected 'trust' or 'strict'")
+        # Spec 024 US2: for ISSUE-BACKED goals the ticket is the authoring home
+        # — the saga sections live in the issue template and travel to grading
+        # and the worker brief as live issue content, so an omitted slot
+        # argument is "authored on the ticket", not an unfilled slot. Coalesce
+        # to declared-empty for storage; admission skips the slot checks on
+        # this lane (the issue-less lane keeps spec 012's rejection).
+        if issue_refs:
+            out_of_scope = out_of_scope if out_of_scope is not None else []
+            invariants = invariants if invariants is not None else []
+            established = established if established is not None else []
 
         admission = _verify(
             objective=objective, workspace_dir=workspace_dir, done_when=done_when,
