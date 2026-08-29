@@ -84,6 +84,12 @@ def self_repo() -> str:
     return (os.environ.get("DEVCLAW_SELF_REPO") or "").strip()
 
 
+def webhook_secret() -> str:
+    """Spec 023: the GitHub webhook HMAC secret. Empty ⇒ the webhook route is
+    OFF (answers 404) — no unauthenticated surface ever exists."""
+    return (os.environ.get("DEVCLAW_WEBHOOK_SECRET") or "").strip()
+
+
 def deploy_quiescence_s() -> int:
     """Spec 025 US2: how long a pending self-deploy may wait for task
     quiescence before it expires loudly (re-armed by the next devclaw-repo
