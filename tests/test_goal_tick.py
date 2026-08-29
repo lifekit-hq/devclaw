@@ -1205,6 +1205,102 @@ async def test_speckit_dispatch_gate_fails_open_on_probe_error(tmp_path, monkeyp
     assert len(engine.dispatched) == 1
 
 
+@pytest.mark.asyncio
+async def test_slice_hold_cap_transitions_to_blocked_with_offending_dirs(
+    tmp_path, monkeypatch
+):
+    """N consecutive holds escalate to blocked with blocked_kind='mechanical:slice_hold'
+    and a reason naming the offending dirs — named regression for issue #728 Part B.
+    Seeds a goal at slice_hold_count == _SLICE_HOLD_CAP - 1, patches both probe
+    functions to return one offending dir, ticks once, and asserts the goal reaches
+    blocked (not idle), blocked_kind names the mechanism, and the offending dir
+    appears in the blocked reason."""
+    from devclaw.goal.tick_dispatch import _SLICE_HOLD_CAP
+
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (3, 3, 3)
+    )
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_offending_dirs_sync",
+        lambda ws, cur: ["specs/001-a"],
+    )
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(slice_hold_count=_SLICE_HOLD_CAP - 1))
+    evaluator = FakeClaude()
+    engine = FakeEngine()
+    notifier = RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.BLOCKED
+    assert engine.dispatched == []
+    assert evaluator.calls == 0          # zero-token: pure fs probe, no LLM
+    saved = store.load_status("g")
+    assert saved.phase == "blocked"
+    assert saved.blocked_kind == "mechanical:slice_hold"
+    assert "specs/001-a" in (saved.blocked_on or ""), (
+        f"offending dir not in blocked_on: {saved.blocked_on!r}"
+    )
+    assert saved.slice_hold_count == 0   # reset on transition to blocked
+    owner_pings = [m for m in notifier.sent if "specs/001-a" in m]
+    assert owner_pings, f"expected an owner ping naming the offending dir; got {notifier.sent}"
+
+
+def test_slice_hold_count_resets_on_steer_and_resume(tmp_path):
+    """steer_goal and resume_goal must zero slice_hold_count so a human who
+    resolves a mechanical:slice_hold block doesn't re-trigger the cap on the
+    very next hold (issue #728 Part B)."""
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+    from devclaw.goal.tick_dispatch import _SLICE_HOLD_CAP
+
+    goals_dir = tmp_path / "goals"
+    seed_goal(goals_dir, "g")
+
+    db = StateStore(str(tmp_path / "state.db"))
+    try:
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
+        svc = GoalService(TaskQueue(db), db, config=cfg)
+
+        # steer_goal: unblock a mechanical:slice_hold → slice_hold_count must be 0
+        svc._goal_store.save_status(
+            "g",
+            GoalStatus(
+                phase="blocked",
+                blocked_on="specs/001-a has pending tasks",
+                blocked_kind="mechanical:slice_hold",
+                slice_hold_count=_SLICE_HOLD_CAP,
+            ),
+        )
+        svc.steer_goal("g", "narrowed to one feature — carry on")
+        saved = svc._goal_store.load_status("g")
+        assert saved.phase == "idle"
+        assert saved.slice_hold_count == 0, (
+            f"steer_goal must zero slice_hold_count; got {saved.slice_hold_count}"
+        )
+
+        # resume_goal: same contract
+        svc._goal_store.save_status(
+            "g",
+            GoalStatus(
+                phase="blocked",
+                blocked_on="specs/001-a has pending tasks",
+                blocked_kind="mechanical:slice_hold",
+                slice_hold_count=_SLICE_HOLD_CAP,
+            ),
+        )
+        svc.resume_goal("g")
+        saved = svc._goal_store.load_status("g")
+        assert saved.phase == "idle"
+        assert saved.slice_hold_count == 0, (
+            f"resume_goal must zero slice_hold_count; got {saved.slice_hold_count}"
+        )
+    finally:
+        db.close()
+
+
 # ---- #394: total merge-policy resolution + settle-time mergeability --------
 
 

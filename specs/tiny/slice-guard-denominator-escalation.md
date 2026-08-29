@@ -42,8 +42,9 @@ are historical — not part of the current goal's work.
   (`test_dispatch_held_with_concurrent_build_ahead`).
 - [x] Named regression: `speckit_offending_dirs_sync` unit tests including the
   finance-sentry fixture with mtime-based historical exclusion.
-- [ ] Named regression: N consecutive holds → `blocked` with `blocked_kind` and
-  reason naming the offending dirs. **FOLLOW-UP** (ran out of session budget).
+- [x] Named regression: N consecutive holds → `blocked` with `blocked_kind` and
+  reason naming the offending dirs (`test_slice_hold_cap_transitions_to_blocked_with_offending_dirs`;
+  `test_slice_hold_count_resets_on_steer_and_resume`).
 
 ## Plan
 - `devclaw/goal/slice_guard.py` — add `speckit_offending_dirs_sync`
