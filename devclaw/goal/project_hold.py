@@ -30,11 +30,18 @@ from __future__ import annotations
 
 from .models import Goal
 
-#: A goal is a candidate holder unless it has reached a terminal phase. Blocked,
-#: idle, in-flight and verifying goals ALL still hold their project: a blocked
-#: holder keeping the project is the clarify ruling behind FR-008 — releasing it
-#: would let a second goal plan against a repo whose unmerged spec directories
-#: are invisible on the holder's branch, re-opening the #553 class.
+#: A goal is a candidate holder unless it has reached a terminal phase.
+#:
+#: BLOCKED goals are additionally skipped as candidates (spec 025 FR-015,
+#: ruled by Denys 2026-08-29 — reversing spec 010 FR-008's blocked-holder
+#: ruling): a parked goal must not idle its whole project lane, the queued
+#: successor starts instead ("skip-over"). The risk FR-008 named — a
+#: successor planning against a repo missing the parked goal's unmerged work
+#: — is accepted deliberately: goals are filed independent of one another,
+#: and a successor that did depend on the parked work fails its own
+#: done-gate loudly rather than shipping wrong. (The 2026-08-28 night was
+#: the evidence: one OOM-blocked goal idled the devclaw lane for 14 hours
+#: while a healthy successor sat queued behind it.)
 TERMINAL_PHASES = frozenset({"done", "cancelled"})
 
 
@@ -91,21 +98,35 @@ def holder_map(store) -> "dict[str, str]":
     read of a core table is a bug to surface, never a reason to ship the
     unguarded behaviour (constitution VI)."""
     created = store.goal_created_at_map()
-    candidates: "dict[str, list[tuple[int, str]]]" = {}
+    candidates: "dict[str, list[tuple[int, int, str]]]" = {}
     for goal_id in store.list_goal_ids():
         try:
             status = store.load_status(goal_id)
             if is_terminal(status):
+                continue
+            # Skip-over (spec 025 FR-015): a blocked goal is not a candidate —
+            # the queued successor takes the lane instead of idling behind a
+            # park that only a human can clear.
+            if str(getattr(status, "phase", "") or "") == "blocked":
                 continue
             scope = scope_key(store.load_goal(goal_id))
         except Exception:  # noqa: BLE001 — a bad goal.yaml must not sink the sweep
             continue
         if scope is None:
             continue
+        # A goal with WORK IN FLIGHT outranks age: when a parked predecessor
+        # is resumed while its skip-over successor is mid-task, the successor
+        # keeps the lane until its task settles — otherwise the older resumed
+        # goal would reclaim holdership and dispatch a second writer against
+        # a workspace with a live task in it (the #553/#722 class).
         # Absent creation time sorts LAST, not first: a goal we cannot date must
         # never displace one we can as holder.
-        candidates.setdefault(scope, []).append((created.get(goal_id, 1 << 62), goal_id))
-    return {scope: min(entries)[1] for scope, entries in candidates.items()}
+        candidates.setdefault(scope, []).append((
+            0 if status.in_flight else 1,
+            created.get(goal_id, 1 << 62),
+            goal_id,
+        ))
+    return {scope: min(entries)[2] for scope, entries in candidates.items()}
 
 
 def waiting_reason(holder_id: str) -> str:

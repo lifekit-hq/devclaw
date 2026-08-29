@@ -251,6 +251,17 @@ class GoalStatus:
     #: productive settle (a shipped increment proves the environment now
     #: fits), alongside ``heal_attempts``.
     envcap_redispatches: int = 0
+    #: spec 025 merge-on-close: PR URL whose squash-merge is still owed after
+    #: an ``achieved`` done-gate verdict. Non-empty ⇒ the advance path retries
+    #: the MERGE (zero cognition) instead of planning — the verdict already
+    #: stands, so resume must never re-run the done-gate (FR-003). Only legal
+    #: outside ``done``; cleared on a successful merge and on cancel.
+    pending_merge_pr: str = ""
+    #: spec 025 FR-017: the ONE bounded conflict-resolution increment for the
+    #: current close attempt has been spent. A second CONFLICT parks the goal
+    #: (``mechanical:merge_failed``) instead of dispatching again. Reset on a
+    #: successful merge and on steer_goal (a re-direction restarts the budget).
+    merge_heal_attempted: bool = False
     #: human note of the intended next step
     next: str = ""
     #: ISO ts of the last time the plan step (LLM) ran

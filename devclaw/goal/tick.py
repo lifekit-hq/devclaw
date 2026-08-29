@@ -102,6 +102,7 @@ from .tick_donegate import (  # noqa: F401 (re-exported)
     _project_owns_its_deploy,
     _resolve_done_gate,
 )
+from .tick_donegate import _finalize_pending_merge as _donegate_finalize_pending_merge
 from .tick_dispatch import (  # noqa: F401 (re-exported)
     _dispatch_action,
 )
@@ -592,6 +593,19 @@ async def _handle_long_lived_advance(
             verify_done=ctx.verify_done, note="thin: advance session settled",
             summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
             autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
+        )
+
+    # Pending merge (spec 025 FR-003): a done-gate `achieved` verdict already
+    # stands and only the MERGE is owed — the goal parked mechanical:merge_failed
+    # and a human resumed it. Retry the merge, never the gate: zero cognition.
+    # Placed BEFORE the project hold on purpose: merging is not a dispatch and
+    # touches no workspace, and under lane skip-over a successor goal may hold
+    # the lane while this goal finishes its merge.
+    if status.pending_merge_pr and status.phase != "blocked":
+        return await _donegate_finalize_pending_merge(
+            goal_id, goal, status,
+            store=store, notifier=ctx.notifier, summarize=ctx.summary_caller,
+            autodeploy=ctx.autodeploy,
         )
 
     # Single-writer project hold (spec 010 P1). THE dispatch choke point: a

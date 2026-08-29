@@ -195,8 +195,9 @@ When the tick decides to *do* something (not just think):
    strictness they fail closed as above; under `trust` (the default) a finding
    that survives every retry (including a browser suite that *ran and failed*)
    **advises-and-ships** — recorded loud in the log + problems catalog and
-   surfaced in the PR body, with the human merge as the backstop — rather than
-   wedging. The verify gate, test-integrity gate, the declared-scope gate
+   surfaced in the PR body, with post-merge human review as the backstop
+   (spec 025: the done-gate owns the close-and-merge; revert is the remedy) —
+   rather than wedging. The verify gate, test-integrity gate, the declared-scope gate
    (below), and the done-gate stay **always-hard** in both modes — for the done-gate that means its
    `done_when` clause grading: an unmet clause holds the goal open under
    either dial. The done-gate's *structural* axis (the review's code-shape
@@ -262,9 +263,12 @@ When the tick decides to *do* something (not just think):
    without a PR". A delivery that can't push/PR settles `failed`, never a silent
    success.
 7. **Settle atomically** — settlement row + delivery row + log + the
-   `ACTION_SETTLED` transition, as one unit (`tick_settle`).
-   Auto-merge and program-stack reconcile run strictly *after* the settle
-   commits.
+   `ACTION_SETTLED` transition, as one unit (`tick_settle`). Nothing on the
+   settle path merges (#641/#486); the ONE merge in the system is
+   **merge-on-close** (spec 025): a confirmed-achieved done-gate close
+   squash-merges the goal's cumulative PR (`goal/merge_on_close.py`), with
+   one bounded conflict-resolution self-heal, and a goal that cannot merge
+   parks `mechanical:merge_failed` instead of closing.
 
 The full temporal trace of one task, every hop, lives in
 [`flows/task-execution.md`](./flows/task-execution.md); how dispatches become
@@ -682,7 +686,7 @@ devclaw/
 │   ├── tick.py + tick_{context,guards,dispatch,donegate,settle}.py   the loop
 │   ├── store/       GoalStore package (base · status[CAS] · content)
 │   ├── evaluator.py · transitions.py                                cognition + the LEGAL table
-│   └── delivery_strategy.py · merge.py · engine.py                   dispatch seams
+│   └── delivery_strategy.py · mergeability.py · merge_on_close.py · engine.py  dispatch seams
 ├── engine/          layer 4 — sandcastle.py (docker run --rm), host.py, stub.py
 ├── delivery/        commit → branch → push → PR; deploy.py; repo.py
 ├── quality/         gates past green tests — pre-PR review, browser_gate, reachability

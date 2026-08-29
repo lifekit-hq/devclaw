@@ -20,6 +20,12 @@ What survives is the advisory: a delivered PR that has gone CONFLICTING with its
 base is worth saying out loud, because the next increment will stack on top of a
 branch that can no longer land. Saying it is all this does.
 
+Spec 025 (2026-08-29) later reversed the merge doctrine at EXACTLY ONE seam —
+the confirmed-achieved close squash-merges the cumulative PR
+(``merge_on_close.py``, wired in ``tick_donegate``). That reversal does not
+touch this module or the settle path: nothing merges mid-flight, #486 stands,
+and this probe stays read-only.
+
 The gh call lives here rather than in ``tick_settle`` so the tick stays a pure,
 subprocess-free unit under test; ``GoalService`` binds the real probe and tests
 inject a fake.
