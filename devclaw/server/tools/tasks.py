@@ -1,7 +1,7 @@
 """Direct dispatch + deliberate abort — the one-shot task surface.
 
-``dispatch_task`` and its kind-specific companion verbs, plus cancel_task /
-cancel_program (the teardown counterparts).
+``dispatch_task`` and its kind-specific companion verbs, plus cancel_task
+(the teardown counterpart).
 """
 
 from __future__ import annotations
@@ -318,9 +318,8 @@ async def review_repository(
 async def cancel_task(task_id: str) -> str:
     """Abort a running or pending task. Tears down its sandbox and marks it
     'cancelled' (a terminal state distinct from 'failed' — it won't be retried or
-    resurrected on restart). Cancelling a task that belongs to a program also
-    stops that program. No-op if the task already finished. Returns whether an
-    abort actually happened."""
+    resurrected on restart). No-op if the task already finished. Returns whether
+    an abort actually happened."""
     if not task_id:
         raise ToolError("cancel_task requires task_id")
     if not store.get_task(task_id):
@@ -332,34 +331,3 @@ async def cancel_task(task_id: str) -> str:
     )
 
 
-@mcp.tool
-async def cancel_program(program_id: str) -> str:
-    """Abort a whole standalone program: stop scheduling new tasks, tear down
-    every running task's sandbox, and mark the program 'cancelled'. No-op if the
-    program already terminated. Returns whether an abort happened.
-
-    Program-level plumbing, not the operator's primary kill switch. A program
-    dispatched by a goal (``parent_goal_id`` set — every one_shot goal, every
-    start_program) is OWNED by that goal: cancel it with ``cancel_goal``, which
-    cascades DOWN and tears this program down as part of stopping the goal. This
-    tool therefore REJECTS a goal-owned program — cancelling it directly does not
-    cascade UP, and would leave the goal executing and desynced from its dead
-    program (the tick then has to reconcile a program it never chose to lose)."""
-    if not program_id:
-        raise ToolError("cancel_program requires program_id")
-    program = store.get_program(program_id)
-    if not program:
-        raise ToolError(f"unknown program_id: {program_id}")
-    if program.parent_goal_id:
-        raise ToolError(
-            f"program {program_id} is owned by goal '{program.parent_goal_id}' — "
-            f"cancel the goal instead: cancel_goal('{program.parent_goal_id}') "
-            f"stops the goal and cascades down to tear this program down. "
-            f"Cancelling the program directly does not cascade up and would leave "
-            f"the goal executing and desynced from its dead program."
-        )
-    cancelled = queue.cancel_program(program_id)
-    return json.dumps(
-        {"program_id": program_id, "cancelled": cancelled, "status": "cancelled" if cancelled else None},
-        indent=2,
-    )

@@ -405,8 +405,8 @@ async def _run_goal_mode(scenario: Scenario, env: dict) -> dict:
     # honoured by server/_state.py, which the sandbox bypasses. A wrong default
     # here silently runs scenarios against the production engine; the sanity
     # check below also fails the run if the resolved engine isn't 'stub'.
-    from devclaw.engine.stub import stub_engine, stub_goal_planner
-    queue = TaskQueue(store, planner=stub_goal_planner, runner=stub_engine)
+    from devclaw.engine.stub import stub_engine
+    queue = TaskQueue(store, runner=stub_engine)
     if queue.engine_kind != "stub":
         raise SystemExit(
             f"sandbox runner refused to start: queue.engine_kind={queue.engine_kind!r}, "

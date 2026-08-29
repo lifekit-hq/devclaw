@@ -1436,7 +1436,7 @@ class GoalService:
 
     def cancel_goal(self, goal_id: str) -> dict:
         """Abort a durable goal. Sets phase to 'cancelled' (terminal — skipped on
-        every future tick) and tears down any in-flight task or program. Returns
+        every future tick) and tears down any in-flight task. Returns
         a graceful no-op response if the goal is already in a terminal phase."""
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
@@ -1453,7 +1453,15 @@ class GoalService:
             if ref.ref_kind == "task":
                 self._queue.cancel_task(ref.id)
             else:
-                self._queue.cancel_program(ref.id)
+                # Legacy 'program' ref (pre-spec-022 row): the program/DAG lane
+                # was retired, nothing can still be running behind it — record
+                # loudly instead of crashing the cancel.
+                self._goal_store.append_log(
+                    goal_id,
+                    f"cancel: in-flight ref {ref.id} is a legacy 'program' ref — "
+                    "the program lane was retired (spec 022 US3); nothing live "
+                    "to tear down",
+                )
         self._goal_store.transition(
             goal_id, Event.CANCEL, replace(s, phase="cancelled", in_flight=None), expect=s,
         )

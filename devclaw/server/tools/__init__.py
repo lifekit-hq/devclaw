@@ -62,7 +62,6 @@ from .goals import (  # noqa: F401
     resume_goal,
     scope_grill,
     set_goal_strictness,
-    start_program,
     steer_goal,
     tail_goal,
     verify_goal,
@@ -92,7 +91,6 @@ from .projects import (  # noqa: F401
     update_project,
 )
 from .tasks import (  # noqa: F401
-    cancel_program,
     cancel_task,
     dispatch_task,
     fix_bug,

@@ -79,8 +79,8 @@ async def _resolve_polling_done_gate(
 def _readopt_orphaned_ref(
     goal_id: str, status: GoalStatus, store: GoalStore, engine: GoalEngine,
 ) -> "str | None":
-    """Rediscover + re-adopt ONE goal's lost in-flight ref — a TASK or a
-    PROGRAM this goal dispatched whose in-flight ref was lost (STATUS.md
+    """Rediscover + re-adopt ONE goal's lost in-flight ref — a TASK this goal
+    dispatched whose in-flight ref was lost (STATUS.md
     truncated by a crash mid-write, a restart racing the status write).
     Formerly the per-tick ``_readopt_orphaned_program`` (2026-07-09
     incident); PR7 extends it to tasks and demotes it to a once-per-service-
@@ -88,25 +88,18 @@ def _readopt_orphaned_ref(
     ref can no longer be lost MID-FLIGHT, so a per-tick check is no longer
     load-bearing; a startup sweep still catches refs lost by an OLDER build,
     or a restart landing in the (now much narrower) commit-to-kick window.
+    (The PROGRAM half of the sweep died with the program/DAG lane, spec 022
+    US3.)
 
-    "Orphan" = the goal's most recent task/program by ``parent_goal_id``
+    "Orphan" = the goal's most recent task by ``parent_goal_id``
     with no recorded settlement (:meth:`GoalStore.is_settled`, PR7's
     replacement for the old ``log_contains(f" {id} → ")`` string match) —
     running OR already-terminal both qualify; the normal POLLING_ACTION path
     then polls/settles it exactly as if the ref had never been lost.
+    Engines without a finder (fakes, remote) opt out silently via getattr.
 
-    Checks the TASK finder first, then the PROGRAM finder: in a healthy
-    system ``in_flight`` is a single slot, so a goal essentially never has
-    BOTH an orphaned task and an orphaned program at once. When it
-    theoretically does, task-first is a pragmatic simplification — comparing
-    ``created_at`` precisely would need both finders to expose it, for a
-    benefit that in practice never matters (the brief this PR implements
-    sanctions this choice explicitly). Engines without a finder (fakes,
-    remote) opt out silently via getattr, same as the pre-PR7 program-only
-    version.
-
-    Returns a short description of what was re-adopted (``"task <id>"`` /
-    ``"program <id>"``), or None if nothing needed re-adopting."""
+    Returns a short description of what was re-adopted (``"task <id>"``),
+    or None if nothing needed re-adopting."""
     task_finder = getattr(engine, "latest_task_for_goal", None)
     if task_finder is not None:
         found_task = task_finder(goal_id)
@@ -115,14 +108,6 @@ def _readopt_orphaned_ref(
             if not store.is_settled(goal_id, task_id):
                 _readopt_ref(store, goal_id, status, ref_id=task_id, ref_kind="task", tool=task_kind, ref_goal=task_goal)
                 return f"task {task_id}"
-    program_finder = getattr(engine, "latest_program_for_goal", None)
-    if program_finder is not None:
-        found_program = program_finder(goal_id)
-        if found_program is not None:
-            program_id, program_goal = found_program
-            if not store.is_settled(goal_id, program_id):
-                _readopt_ref(store, goal_id, status, ref_id=program_id, ref_kind="program", tool="start_program", ref_goal=program_goal)
-                return f"program {program_id}"
     return None
 
 
@@ -134,7 +119,7 @@ def _readopt_ref(
     + a log line, as ONE transaction; mirrors flush after commit. A lost
     done-check ref is deliberately re-adopted as a PLAIN action ref —
     WITHOUT its ``is_done_check`` flag, since that flag lived only on the
-    lost ref and cannot be recovered from the task/program row alone. This
+    lost ref and cannot be recovered from the task row alone. This
     is conservative by construction: the settle just records a delivery
     (instead of re-entering the done-gate resolution path directly), and
     the worker naturally re-proposes done on its own next advance if
@@ -244,7 +229,7 @@ async def _resolve_polling_action(
     delivered = 1 if (poll.status == "done" and not poll.no_change) else 0
     # Any SUCCESSFUL settle hands back its dispatch-cap budget: the cap exists
     # to stop a planner that spins without producing, not to ration healthy
-    # throughput. That includes gateless settles (reviews, programs) — a
+    # throughput. That includes gateless settles (reviews) — a
     # mission goal that grounds every delivery in a read-only verification
     # review was structurally re-tripping the cap every ~6 cycles while every
     # verdict was on_track (live-found 2026-07-09, closeloop-mission-v2, one
@@ -427,12 +412,6 @@ async def _resolve_polling_action(
     # CONFLICTING at open and reported success anyway). One cheap gh read per
     # settled PR; best-effort — an unknown verdict (probe None, gh hiccup)
     # stays silent rather than crying wolf.
-    #
-    # Programs are no longer excluded. That exclusion existed because their PR
-    # stacks "were just reconciled above, per-PR, with reasons"; with the
-    # reconciler gone its premise is gone too, and a fan-out program delivers
-    # ONE cumulative PR exactly like a sequential increment
-    # (devclaw/delivery/integrate.py), so it deserves the same advisory.
     conflicting: "bool | None" = None
     if ctx.mergeability_probe is not None and poll.status == "done" and poll.pr_url:
         conflicting = await ctx.mergeability_probe(poll.pr_url)
