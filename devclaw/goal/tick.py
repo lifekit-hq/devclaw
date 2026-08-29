@@ -915,7 +915,7 @@ async def tick_all(
                     f"instance reads — a login elsewhere changes nothing). "
                     f"Fastest fix: `claude setup-token` via the container, or "
                     f"copy a fresh `.credentials.json` into that path. "
-                    f"Verify with a `dry_evaluate` probe — the pause "
+                    f"Verify with a probe call — the pause "
                     f"auto-resumes on the next probe ~{resume_hhmm} UTC; "
                     f"I'll re-ping if still broken."
                 )

@@ -159,31 +159,19 @@ should self-`--rm`; `docker rm -f` stragglers.)
 
 ---
 
-## 6. L4 — scope grill cognition (chef craft, waiter-orchestrated)
+## 6. L4 — goal filed against a ticket (the issue is the contract)
 
-The OpenClaw waiter on the VPS calls `scope_grill` turn-by-turn over the
-Telegram conversation. To dry-run the same cognition locally:
-
-```bash
-python drive.py scope_grill \
-  '{"idea":"a tiny CLI that converts between JSON and YAML","transcript":[]}'
-# → {"action":"ask","question":"…","recommended":"…"}
-```
-
-Append the user's answer to the last turn and call again until the response is
-`{"action":"done","spec":"…"}` — then file the goal with the spec attached:
+The prose scope-grill porch was removed by the 2026-08-29 prune (spec 024:
+the ticket is the contract). To exercise L4, file an issue on the project's
+repo (the issue template carries the acceptance criteria and saga sections),
+then file the goal against it:
 
 ```bash
 python drive.py register_project \
   '{"project_id":"sc-l4","name":"L4 shakedown","workspace_dir":"/tmp/sc-l4"}'
 python drive.py create_goal \
-  '{"goal_id":"jyq","objective":"ship the cli","project_id":"sc-l4","spec":"<the finalized spec>",
-    "out_of_scope":[],"invariants":[],"established":[]}'
+  '{"goal_id":"jyq","objective":"ship the cli","project_id":"sc-l4","issues":[1]}'
 ```
-
-The three saga slots are required (spec 012 US2) — `[]` declares one
-explicitly empty; omitting one comes back as an admission rejection naming it.
-Fill them from the grill's `done` response when it supplied them.
 
 The build is now a durable goal — watch it on the console / `get_goal` /
 `tail_goal`. It may run a while; that's the point.

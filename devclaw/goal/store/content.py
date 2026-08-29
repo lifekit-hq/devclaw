@@ -169,7 +169,7 @@ class GoalContentMixin:
 
     def write_spec(self, goal_id: str, spec: str) -> None:
         """Persist the agreed scope spec — what to build, what's out, constraints.
-        Produced by the OpenClaw waiter's scope_grill conversation BEFORE the goal
+        Produced by a pre-goal scoping conversation (the retired scope_grill porch) BEFORE the goal
         is created, passed in through create_goal, and read by the evaluator so
         done is judged against the shared contract."""
         ts = self._now().isoformat(timespec="seconds")

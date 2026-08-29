@@ -130,7 +130,6 @@ devclaw/
 │   └── trace.py        #   run-trace recorder (cognition, ticks, dispatches, deliveries)
 ├── advance_brief.py    # the mechanical (zero-LLM) brief each advance dispatch carries — the worker plans in-sandbox
 ├── cognition.py        # the LLM seam — Cognition protocol + Claude/Stub impls
-├── elicitation.py      # scope-grill cognition (called via the scope_grill MCP tool)
 ├── state_store/       # SQLite: programs, tasks, append-only events (rows · control · core)
 ├── task_queue.py       # async task lifecycle, concurrency, on-settle hook → goal poke
 ├── queue/              # TaskQueue's mixins: settle (execute/settle path), admission (memory + breaker)
@@ -149,9 +148,6 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 | Tool | Does |
 |---|---|
 | `dispatch_task(kind, project_id, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository`. `project_id` names a registered project — devclaw resolves its workspace/repo from the registry (never a raw path), rejects an unknown project, and preflights the workspace before dispatch: a real git checkout runs; an absent one is auto-cloned from the project's `repo_url`; anything else is rejected loud (#520 P1 + #523 P2) |
-| `implement_feature(project_id, goal, …)` | Deprecated alias — forwards to `dispatch_task(kind="implement_feature")` |
-| `fix_bug(project_id, description, …)` | Deprecated alias — forwards to `dispatch_task(kind="fix_bug")` |
-| `review_repository(project_id, …)` | Deprecated alias — forwards to `dispatch_task(kind="review_repository")` (read-only) |
 | `onboard(project_id, …)` | Analyze a repo and deliver the draft onboarding doc set as a reviewable PR — a thin `AGENTS.md` pointer (marker-delimited), `README.md`, `ARCHITECTURE.md`, plus `.devcontainer/Dockerfile` when absent |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
@@ -173,9 +169,7 @@ In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts c
 
 | Tool | Does |
 |---|---|
-| `scope_grill(idea, transcript?)` | One turn of the pre-goal scope interview with the waiter: given a rough idea + the transcript so far, returns the next question (with a reasoned default) or the final agreed spec plus the saga slots (`out_of_scope` / `invariants` / `established`) — the input `create_goal` deserves |
-| `create_goal(goal_id, objective, project_id, done_when, out_of_scope, invariants, established, backlog, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick cadence) or `'one_shot'` (same advance loop, done proposed once an advance lands). `project_id` resolves the workspace + repo from the registry (#520). A saga is authored from **named slots, not prose** (spec 012 US2): beyond objective/done_when, `out_of_scope`, `invariants` and `established` are required — pass `[]` to declare one explicitly empty; omitting one is rejected at creation naming the slot, rather than discovered by a worker mid-run |
-| `verify_goal(objective, project_id, …)` | Pre-flight check — same admission validations as `create_goal`, no side effects; previews reject/warn conditions |
+| `create_goal(goal_id, objective, project_id, issues, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick cadence), `'one_shot'` (same advance loop, done proposed once an advance lands), or `'qa'`. **The issue is the contract** (spec 024): `issues` is required for every mode but `qa`; the ask, acceptance criteria and saga sections live in the referenced issue and are fetched live per dispatch. `objective` is display identity only. (The prose lane — `scope_grill`, `dry_evaluate`, `verify_goal`, saga-slot arguments — was removed by the 2026-08-29 prune) |
 | `get_goal(goal_id)` | Objective, phase, what's in flight, the latest direction verdict, recent log |
 | `list_goals()` | All goals + phase + direction |
 | `steer_goal(goal_id, message)` | Correct/redirect — recorded as steering, honored on the next tick |
@@ -206,8 +200,6 @@ previewing what the loop *would* think before committing a goal.
 
 | Tool | Does |
 |---|---|
-| `dry_evaluate(objective, done_when, review_report, …)` | The direction/done evaluator against a supplied review report |
-
 ### The project registry (control plane)
 
 The single source of truth for **"which repos is devclaw working on, and what's the status of each"** — one entity above the tasks/programs/goals primitives, drivable from chat, API, *and* CLI. A `Project` is a thin record (repo · workspace · status · the goal(s) driving it); it links goals **by id** and joins their live status on read, so it never caches phase and never rots.

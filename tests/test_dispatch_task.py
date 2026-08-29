@@ -77,21 +77,6 @@ async def test_dispatch_task_rejects_empty_project_or_goal(env):
     assert env.calls == [], "a rejected dispatch submits no task"
 
 
-async def test_review_repository_alias_still_submits_same_kind(env):
-    await _tools.review_repository(project_id=env.pid, focus="auth")
-    (call,) = env.calls
-    assert call["kind"] == "review_repository"
-    assert call["goal"] == "auth"
-    assert call["verify_cmd"] is None
-    assert call["deliver"] is False
-
-
-async def test_review_repository_alias_defaults_goal_when_no_focus(env):
-    await _tools.review_repository(project_id=env.pid)
-    (call,) = env.calls
-    assert call["goal"] == "general code review"
-
-
 # ---- spec 003 / #520 regression tests (quickstart scenarios) ----------------
 
 
@@ -305,8 +290,8 @@ async def test_mutating_dispatch_never_reaches_direct_queue_submit(goal_lane):
     await _tools.dispatch_task(
         kind="implement_feature", project_id=goal_lane.pid, goal="x", issue_ref=1,
     )
-    await _tools.fix_bug(
-        project_id=goal_lane.pid, description="broken thing", issue_ref=2,
+    await _tools.dispatch_task(
+        kind="fix_bug", project_id=goal_lane.pid, goal="broken thing", issue_ref=2,
     )
     assert len(goal_lane.dispatched) == 2
     assert goal_lane.calls == [], "no mutating kind may reach queue.submit directly"
