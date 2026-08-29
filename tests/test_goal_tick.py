@@ -3022,6 +3022,56 @@ async def test_goal_on_another_project_dispatches_while_one_project_is_held(tmp_
 
 
 @pytest.mark.asyncio
+async def test_blocked_goal_releases_project_lane_for_queued_successor(tmp_path):
+    """Spec 025 FR-015 (skip-over, reversing spec 010 FR-008's blocked-holder
+    ruling): a parked goal must not idle its project lane — the queued
+    successor starts, the parked goal waits for the operator. The 2026-08-28
+    night pinned the cost of the old behavior: one OOM-blocked goal idled the
+    devclaw lane for 14 hours with a healthy successor queued behind it."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "parked", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "waiter", created_at_ms=2_000)
+    store.save_status("parked", GoalStatus(
+        phase="blocked", lifecycle="executing",
+        blocked_on="sandbox OOM at cap", blocked_kind="mechanical:env_cap",
+    ))
+    engine = FakeEngine()
+    evaluator = FakeClaude()
+
+    out = await _tick(store, "waiter", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+    # the parked goal stays parked at zero cognition (its tick reads QUEUED —
+    # the successor now holds the lane — and its status stays blocked)
+    assert await _tick(store, "parked", evaluator, engine, RecordingNotifier()) is Outcome.QUEUED
+    assert store.load_status("parked").phase == "blocked"
+    assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_resumed_predecessor_waits_while_successor_task_is_in_flight(tmp_path):
+    """The skip-over trap: resuming a parked predecessor while its skip-over
+    successor is MID-TASK must not hand the lane back by age — that would
+    dispatch a second writer against a workspace with a live task in it
+    (the #553/#722 class). In-flight work outranks age in the holder
+    derivation."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "resumed", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "successor", created_at_ms=2_000)
+    store.save_status("successor", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "work"),
+    ))
+    engine = FakeEngine()
+
+    out = await _tick(store, "resumed", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.QUEUED
+    assert engine.dispatched == []
+
+
+@pytest.mark.asyncio
 async def test_queued_goal_starts_automatically_after_the_holder_goes_terminal(tmp_path):
     """Acceptance 3 / SC-003: no operator action, no cognition spent on the
     handover — the derivation simply names a different goal once the holder is
@@ -3221,10 +3271,27 @@ def test_green_mechanical_verification_alone_never_closes_a_goal():
     )
     assert emitters == ["devclaw/goal/tick_donegate.py"]
 
-    # 3. that emitter is guarded by the evaluator's verdict
+    # 3. that emitter is guarded by the evaluator's verdict. Since spec 025
+    #    there are exactly TWO ACHIEVE transitions in the file, both
+    #    verdict-owned: the primary close inside the `achieved` block (now
+    #    additionally gated on merge-on-close succeeding — the merge is a
+    #    consequence of the verdict, never a bypass of it), and the
+    #    pending-merge retry (_finalize_pending_merge), reachable only via
+    #    `pending_merge_pr`, which is only ever set on the primary path after
+    #    an achieved verdict — the verdict still stands, only the merge is
+    #    re-attempted (FR-003).
     src = (root / "devclaw/goal/tick_donegate.py").read_text(encoding="utf-8")
-    guard = 'if ev.verdict == "achieved":\n        store.transition(\n            goal_id, Event.ACHIEVE,'
-    assert guard in src, "the ACHIEVE transition is no longer gated on the verdict"
+    assert src.count("Event.ACHIEVE,") == 2, "unexpected ACHIEVE emitter count"
+    assert 'if ev.verdict == "achieved":' in src, "the close lost its verdict guard"
+    guard = (
+        'store.transition(\n            goal_id, Event.ACHIEVE,\n'
+        '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,\n'
+        '                    pending_merge_pr="", merge_heal_attempted=False),'
+    )
+    assert guard in src, "the primary ACHIEVE no longer clears the merge marker inside the verdict block"
+    assert "async def _finalize_pending_merge" in src and "status.pending_merge_pr" in src, (
+        "the retry ACHIEVE lost its pending-merge guard"
+    )
 
     # 4. the US3-specific shortcut: nothing on the execution path may read the
     #    work item's expected increment count. The count is intake-only — it

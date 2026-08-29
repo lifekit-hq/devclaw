@@ -356,6 +356,40 @@ def test_missing_goal_convergence_table_detected(env):
 def test_goal_convergence_table_present_is_ok(env):
     (f,) = _findings(_run(env), "instance.scorecard.goal_convergence")
     assert f.verdict is Verdict.OK
+
+
+# ---- instance: merge-on-close state shape (spec 025 US1) ------------------
+
+
+def test_merge_on_close_columns_present_is_ok(env):
+    (f,) = _findings(_run(env), "instance.merge.close_columns")
+    assert f.verdict is Verdict.OK
+
+
+def test_missing_merge_columns_detected(env):
+    """Seeded fault: a DB predating spec 025 — the owed-merge marker columns
+    are absent, so a pending merge would be forgotten across a restart."""
+    db = env["store"]._db
+    db.execute("ALTER TABLE goal_status DROP COLUMN pending_merge_pr")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.merge.close_columns")
+    assert f.verdict is Verdict.FAIL
+    assert "pending_merge_pr" in f.evidence and "restart" in f.remedy
+
+
+def test_done_goal_with_owed_merge_is_a_fail(env):
+    """Seeded fault: a goal reads done while pending_merge_pr is set — a state
+    the close path must never produce (merge fires BEFORE the ACHIEVE
+    transition)."""
+    db = env["store"]._db
+    db.execute(
+        "INSERT INTO goal_status (goal_id, version, phase, pending_merge_pr) "
+        "VALUES ('g-owed', 1, 'done', 'https://github.com/o/r/pull/9')"
+    )
+    db.commit()
+    (f,) = _findings(_run(env), "instance.merge.close_columns")
+    assert f.verdict is Verdict.FAIL
+    assert "g-owed" in f.evidence
 # ---- project: referenced-goal record shape (spec 019 US1) -----------------
 
 

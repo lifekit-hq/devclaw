@@ -93,7 +93,13 @@ spawn containers itself — it goes through the engine).
 - **"Done" is a proposal, gated on grounded evaluation.** The planner's `done` triggers
   a read-only `review_repository` against the firmed `done_when` + `stub_acceptable`; the
   goal closes **only if the evaluator confirms `achieved`**. Never gate completion on
-  counting PRs or backlog items.
+  counting PRs or backlog items. Since spec 025 (merge-on-close, ruled 2026-08-29) a
+  confirmed-achieved close also **squash-merges the goal's cumulative PR** — the one
+  deliberate reversal of the #641 "a human merges" doctrine, at exactly one seam: a goal
+  that cannot merge parks `mechanical:merge_failed` (with ONE bounded, pipeline-dispatched
+  conflict-resolution self-heal first) instead of closing, nothing merges mid-flight
+  (#486 intact), and a parked goal releases its project lane to the queued successor
+  (skip-over, reversing spec 010 FR-008).
 - **`done_when` is repository behavior, never delivery ceremony.** How the work ships,
   how many PRs it takes, which branch it lands on, whether/who merges it, and which
   issues or PRs get closed are NOT completion criteria — the evaluator drops them at
@@ -113,11 +119,12 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   *consulted*, not only their consequence. Under a goal's default `trust` the
   **per-increment adversarial diff review is dropped from the task gate chain
   entirely** (spec `001-review-gate-repositioning`) — it was the #1 mechanism-wedge
-  source, and the human reviews every PR while the goal-level done-gate re-catches
-  its findings; under `strict` it is consulted and fails closed exactly as before.
+  source; the goal-level done-gate re-catches its findings and owns the
+  close-and-merge (spec 025), with the human reviewing merged work post-merge and
+  revert as the remedy; under `strict` it is consulted and fails closed exactly as before.
   The browser-E2E gate stays dial-able — under `trust` a surviving finding
-  advises-and-ships (loud + surfaced in the PR, human merge is the backstop)
-  instead of wedging; under `strict` it fails closed. The done-gate's verdict is owned by the
+  advises-and-ships (loud + surfaced in the PR, post-merge human review is the
+  backstop) instead of wedging; under `strict` it fails closed. The done-gate's verdict is owned by the
   ``done_when`` contract in both modes; its *structural* axis rides the same
   dial (under ``trust`` reported concerns advise-and-ship as follow-ups on the
   close, under ``strict`` they hold it open), and a done-gate that refuses to

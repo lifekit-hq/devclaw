@@ -1267,10 +1267,15 @@ class GoalService:
             # the reason exactly as a resume does). blocked_kind is cleared by
             # the store's non-blocked-write normalization; blocked_on is not, so
             # it must be cleared here explicitly.
+            # merge_heal_attempted=False: a human re-direction restarts the
+            # spec-025 conflict-heal budget (pending_merge_pr is deliberately
+            # KEPT — an owed merge survives a steer; only a successful merge
+            # clears it).
             self._goal_store.transition(
                 goal_id, Event.UNBLOCK,
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
-                        heal_attempts=0, next_heal_at=None, donegate_rounds=0),
+                        heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                        merge_heal_attempted=False),
                 expect=s,
             )
         self.poke()

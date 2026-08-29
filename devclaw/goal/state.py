@@ -116,6 +116,8 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                   heal_attempts         INTEGER NOT NULL DEFAULT 0,
                   next_heal_at          TEXT,
                   envcap_redispatches   INTEGER NOT NULL DEFAULT 0,
+                  pending_merge_pr      TEXT NOT NULL DEFAULT '',
+                  merge_heal_attempted  INTEGER NOT NULL DEFAULT 0,
                   next                  TEXT,
                   last_plan_at          TEXT,
                   last_tick_at          TEXT,
@@ -265,6 +267,8 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                 "ALTER TABLE goal_status ADD COLUMN next_heal_at TEXT",
                 "ALTER TABLE goal_status ADD COLUMN donegate_rounds INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN envcap_redispatches INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE goal_status ADD COLUMN pending_merge_pr TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE goal_status ADD COLUMN merge_heal_attempted INTEGER NOT NULL DEFAULT 0",
             ):
                 try:
                     self._store._db.execute(sql)

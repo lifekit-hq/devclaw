@@ -46,7 +46,11 @@ counting PRs or backlog items. Fail-closed-on-crash governs every gate that is
 own silence (#186). The strictness dial sets which gates are *consulted*, not
 just their consequence: under `trust` (the default) the per-increment
 adversarial diff review is **not part of the task gate chain at all** — the
-human reviews every PR and the goal-level done-gate re-catches its findings —
+goal-level done-gate's grounded evaluation is the close-and-merge authority
+(spec 025 merge-on-close: an achieved goal's cumulative PR squash-merges at
+the close, and a goal that cannot merge does not close), the human reviews
+merged work after the fact with revert as the remedy, and the done-gate
+re-catches the review gate's findings —
 while under `strict` it is consulted and fail-closed exactly as before. A gate
 that is by policy not consulted produces no silence to ship on, so removing it
 from the `trust` chain does not repeal #186. The verify, test-integrity, and
@@ -94,8 +98,14 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.4.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-22
-(2.4.0 — the Development Workflow slicing clause: an increment is the unit of
+**Version**: 2.5.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-29
+(2.5.0 — Principle V's trust rationale updated for spec 025 merge-on-close:
+"the human reviews every PR" (pre-merge) becomes "the done-gate is the
+close-and-merge authority; the human reviews merged work post-merge, revert
+is the remedy". Ruled by Denys 2026-08-29 for unattended operation — the #641
+merge doctrine is reversed at exactly one seam, the confirmed-achieved close;
+nothing merges mid-flight (#486 intact) and nothing else on the settle path
+may merge. Prior: 2.4.0 — the Development Workflow slicing clause: an increment is the unit of
 REVIEW, not of commitment; the whole spec is the commitment and P1 landing is
 not a stopping point. Ruled by Denys 2026-08-22 on the evidence that specs 007,
 008, 010 and 012 each stopped after their first story with nothing tracking the

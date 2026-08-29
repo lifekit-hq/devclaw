@@ -30,6 +30,7 @@ from .tick_context import (
 )
 from . import evaluator as _evaluator
 from . import issue_ref as _issue_ref
+from . import merge_on_close as _merge
 from . import remote_checks as _remote_checks
 from .. import project_manifest as _manifest
 from . import slice_guard as _slice_guard
@@ -41,8 +42,15 @@ from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
 from ..delivery import deploy as _deploy
+
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
+
+#: module globals so tests patch the CALLER's module (the snapshot-collector
+#: convention): both the primary close path and the resume-retry path
+#: (_finalize_pending_merge) go through these two names.
+_attempt_merge = _merge.attempt_merge
+_sync_workspace = _merge.sync_workspace_to_default
 
 
 #: Done-gate treadmill brake: consecutive done-proposal rounds the gate refused
@@ -472,9 +480,82 @@ async def _resolve_done_gate(
     )
     store.append_log(goal_id, f"done-gate: {ev.verdict} — {ev.rationale[:500]}")
     if ev.verdict == "achieved":
+        # Merge-on-close (spec 025 US1): the goal closes MERGED or it does not
+        # close. This is the one seam where devclaw merges a PR — the #641
+        # doctrine ("nothing on the settle path merges") holds everywhere
+        # else, and #486 is intact: nothing merges mid-flight, only at the
+        # confirmed-achieved close.
+        branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
+        merge = None
+        if branch is not None:
+            merge = await _attempt_merge(goal.workspace_dir, branch)
+            store.append_log(
+                goal_id,
+                f"merge-on-close: {merge.outcome.value}"
+                + (f" {merge.pr_url}" if merge.pr_url else "")
+                + (f" — {merge.detail[:200]}" if merge.detail else ""),
+            )
+        if (
+            merge is not None
+            and merge.outcome is _merge.MergeOutcome.CONFLICT
+            and not status.merge_heal_attempted
+        ):
+            # FR-017: ONE bounded self-heal — back to idle with a machine
+            # steering row; the next tick's advance dispatches the resolution
+            # increment through the normal pipeline (verify gate and a fresh
+            # done-gate round included), then this close re-runs and
+            # re-attempts the merge with the budget spent.
+            store.transition(
+                goal_id, Event.RESUME_IDLE,
+                replace(base, phase="idle", merge_heal_attempted=True,
+                        next="merge conflict — resolution increment queued",
+                        donegate_rounds=0),
+                expect=status, consume_steering=consume_steering,
+            )
+            store.append_steering(goal_id, [
+                f"[merge-conflict] the goal is done but its cumulative PR "
+                f"{merge.pr_url} cannot merge: the branch conflicts with the "
+                f"default branch. Update {branch} onto the current default-"
+                f"branch head, resolve the conflicts preserving both sides' "
+                f"intent, and make the verify gate pass. Change nothing else.",
+            ], source="auto-conflict")
+            await _notify(
+                notifier, NotifyLevel.TASK,
+                f"🔀 [{goal_id}] achieved, but the PR conflicts with its base — "
+                f"dispatching the one bounded resolution increment",
+            )
+            return Outcome.SLEPT
+        if merge is not None and merge.outcome not in _merge.SUCCESS_OUTCOMES:
+            q = (
+                f"merge-on-close failed ({merge.outcome.value}): {merge.detail[:300]} — "
+                f"PR {merge.pr_url or '(unknown)'}. The done-gate confirmed achieved, "
+                f"but the goal must not close with its work unmerged. Resolve the "
+                f"cause (merge by hand, or fix the branch), then resume_goal — "
+                f"resume re-attempts the MERGE only, never the done-gate."
+            )
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=q,
+                        blocked_kind="mechanical:merge_failed",
+                        pending_merge_pr=merge.pr_url or "", next=""),
+                expect=status, consume_steering=consume_steering,
+            )
+            await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}", summarize=summarize)
+            return Outcome.BLOCKED
+        merged_note = ""
+        if merge is not None and merge.outcome in _merge.SUCCESS_OUTCOMES:
+            if merge.outcome is _merge.MergeOutcome.NO_PR:
+                merged_note = " — no PR to merge (no-change goal)"
+            else:
+                merged_note = f" — merged {merge.merged_sha[:12] or merge.pr_url}"
+            if merge.outcome is _merge.MergeOutcome.MERGED:
+                # FR-005 belt-and-braces; the next goal's prepare_ws is the
+                # guarantee. Safe here: this goal holds its project lane.
+                await _sync_workspace(goal.workspace_dir)
         store.transition(
             goal_id, Event.ACHIEVE,
-            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0),
+            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,
+                    pending_merge_pr="", merge_heal_attempted=False),
             expect=status, consume_steering=consume_steering,
         )
         # Convergence ledger (spec 018 US1) — after the CAS'd close, so a
@@ -529,7 +610,7 @@ async def _resolve_done_gate(
             f" — {len(ev.structural_concerns)} advisory follow-up(s) in the goal log"
             if ev.structural_concerns else ""
         )
-        await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label} — {ev.rationale[:200]}{followups}{live}{summary_suffix}", summarize=summarize)
+        await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label}{merged_note} — {ev.rationale[:200]}{followups}{live}{summary_suffix}", summarize=summarize)
         return Outcome.DONE
     if ev.verdict in ("stalled", "needs_human"):
         q = ev.question or ev.rationale or "done-gate flagged a problem"
@@ -662,3 +743,58 @@ async def _open_done_gate(
         summarize=summarize, remote_checker=remote_checker, autodeploy=autodeploy,
         consume_steering=consume_steering, issue_fetcher=issue_fetcher,
     )
+
+
+async def _finalize_pending_merge(
+    goal_id: str, goal: Goal, status: GoalStatus, *,
+    store: GoalStore, notifier: Notifier,
+    summarize: "ClaudeCaller | None" = None,
+    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
+) -> Outcome:
+    """A goal carries ``pending_merge_pr`` — a done-gate ``achieved`` verdict
+    already stands and only the MERGE is owed (the goal parked
+    ``mechanical:merge_failed`` and a human resumed it, FR-003). Re-attempt
+    the merge and close on success; re-park on failure. ZERO cognition on
+    this path — the verdict is never re-derived."""
+    branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
+    merge = await _attempt_merge(goal.workspace_dir, branch or f"goal/{goal_id}")
+    store.append_log(
+        goal_id,
+        f"pending-merge retry: {merge.outcome.value}"
+        + (f" {merge.pr_url}" if merge.pr_url else "")
+        + (f" — {merge.detail[:200]}" if merge.detail else ""),
+    )
+    now = store.now_iso()
+    base = replace(status, last_tick_at=now)
+    if merge.outcome in _merge.SUCCESS_OUTCOMES and merge.outcome is not _merge.MergeOutcome.NO_PR:
+        rationale = status.last_eval_note or "achieved (merge completed on retry)"
+        store.transition(
+            goal_id, Event.ACHIEVE,
+            replace(base, phase="done", next=rationale[:200], donegate_rounds=0,
+                    pending_merge_pr="", merge_heal_attempted=False),
+            expect=status,
+        )
+        store.record_convergence(goal_id, "achieved", goal.workspace_dir)
+        merged = merge.merged_sha[:12] or merge.pr_url
+        await _notify(
+            notifier, NotifyLevel.OWNER,
+            f"✅ [{goal_id}] goal complete — merge completed on retry ({merged}). "
+            f"{rationale[:200]}",
+            summarize=summarize,
+        )
+        return Outcome.DONE
+    # NO_PR here is NOT success: the marker says a PR existed when we parked.
+    q = (
+        f"pending-merge retry failed ({merge.outcome.value}): {merge.detail[:300]} — "
+        f"PR {merge.pr_url or status.pending_merge_pr}. Resolve by hand, then "
+        f"resume_goal to retry the merge."
+    )
+    store.transition(
+        goal_id, Event.BLOCK,
+        replace(base, phase="blocked", blocked_on=q,
+                blocked_kind="mechanical:merge_failed",
+                pending_merge_pr=status.pending_merge_pr or merge.pr_url, next=""),
+        expect=status,
+    )
+    await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}", summarize=summarize)
+    return Outcome.BLOCKED
