@@ -15,7 +15,7 @@ Usage:
 
   .venv/bin/python evals/run_all.py
   .venv/bin/python evals/run_all.py --cognition claude
-  .venv/bin/python evals/run_all.py --only blocked_planner,scope_grill_happy
+  .venv/bin/python evals/run_all.py --only blocked_planner
 """
 
 from __future__ import annotations

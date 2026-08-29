@@ -1,9 +1,10 @@
-"""The durable goal layer's steer/observe surface + its front porch.
+"""The durable goal layer's steer/observe surface.
 
-Everything from the scope grill and the dry-cognition previews through
-create/verify and the full steer/resume/evaluate/cancel verbs. (The
-deprecated ``start_program`` alias was retired by spec 022 US3 — file a goal
-with ``create_goal(mode='one_shot')`` instead.)
+Create through the full steer/resume/evaluate/cancel verbs. (The deprecated
+``start_program`` alias was retired by spec 022 US3; the prose authoring
+porch — ``scope_grill``, ``dry_evaluate``, ``verify_goal``, the saga-slot
+arguments — was deleted by the 2026-08-29 prune: the ticket is the contract,
+so authoring happens in the issue, not in tool arguments.)
 """
 
 from __future__ import annotations
@@ -14,140 +15,8 @@ from typing import Annotated, Optional
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
-from ... import elicitation as _elicitation
 from .._state import goals, mcp, store
 from ._common import _resolve_project_or_reject
-
-
-# ===== scope grill (waiter-side conversation, chef-side craft) ===============
-# The OpenClaw devclaw waiter holds the Telegram conversation; this tool gives it
-# the chef's craft — *which* questions matter for a software scope and what 'good'
-# looks like. The waiter calls scope_grill each turn with the running transcript;
-# the chef returns the next question (with a recommended answer) or, when enough
-# is shared, the finalized spec. Stateless: the waiter owns the transcript and,
-# once 'done' lands, calls create_goal(spec=...) to file the order.
-
-
-@mcp.tool
-async def scope_grill(
-    idea: str,
-    transcript: Optional[list[dict]] = None,
-) -> str:
-    """Take one turn of a scope-alignment grill with the OpenClaw waiter. Given a
-    rough project ``idea`` and the ``transcript`` so far (a list of turns each
-    with question/recommended/answer), return either the next question to ask
-    the customer or the finalized spec when enough is shared.
-
-    The waiter is expected to keep the transcript across turns (it lives in the
-    Telegram chat), pass it back unchanged on each call, and append the user's
-    reply to the last turn before the next call. This is a stateless cognition
-    call — the chef stores nothing here. When the response is ``{"action":
-    "done", "spec": ...}``, the waiter calls ``create_goal(..., spec=<spec>)``
-    to file the order.
-
-    Response shape:
-      {"action": "ask", "question": "<next q>", "recommended": "<your default>"}
-      {"action": "done", "spec": "<full spec.md markdown>"}
-    """
-    if not idea or not idea.strip():
-        raise ToolError("scope_grill requires a non-empty idea")
-    transcript = transcript or []
-    try:
-        step = await _elicitation.next_step(idea, transcript)
-    except Exception as err:  # noqa: BLE001 — surface as a tool error, not a crash
-        raise ToolError(f"scope_grill failed: {err}")
-    return json.dumps(step, indent=2)
-
-
-# ===== dry cognition (test the rail without filing a goal) ===================
-# The customer wants to *think about* a project — grill it, see the world-research
-# brief, see the decomposition, see how the evaluator would grade the finished
-# thing — WITHOUT committing to workspace_dir / repo_url / a persisted goal. These
-# tools expose the exact cognition modules the chef runs during a real goal's
-# lifecycle, but each one is one-shot and pure: it constructs a throwaway in-memory
-# ``Goal``, runs the module's ``default_caller`` (same model tier as production),
-# and returns the artifact. Zero writes to /var/lib/devclaw/goals/. Zero admission.
-
-
-def _dry_goal(
-    *,
-    objective: str,
-    done_when: str = "",
-    backlog: Optional[list[str]] = None,
-    stub_acceptable: Optional[list[str]] = None,
-):
-    """Build a throwaway :class:`Goal` for the dry-cognition tools. Persistence
-    fields (``workspace_dir``, ``repo_url``, ``verify_cmd``) get harmless
-    placeholders — the dry tools NEVER touch disk or clone, and the cognition
-    modules only read the fields the prompts actually reference."""
-    from ...goal.models import Goal
-
-    return Goal(
-        id="dry-run",
-        objective=objective,
-        cadence="1d",
-        engine="devclaw",
-        workspace_dir="/dev/null",
-        repo_url=None,
-        verify_cmd=None,
-        open_pr=False,
-        done_when=done_when,
-        backlog=backlog or [],
-        stub_acceptable=stub_acceptable or [],
-    )
-
-
-@mcp.tool
-async def dry_evaluate(
-    objective: str,
-    done_when: str,
-    review_report: str,
-    spec: str = "",
-    backlog: Optional[list[str]] = None,
-    stub_acceptable: Optional[list[str]] = None,
-    deliveries: str = "",
-    recent_log: str = "",
-    at_done_gate: bool = True,
-) -> str:
-    """PURE COGNITION — no goal filed, no workspace, no side effects.
-
-    Runs the direction evaluator (the cognition that grades a goal at the
-    done-gate) against hypothetical inputs and returns the JSON verdict:
-    ``{verdict, rationale, corrections, question, clauses}``. Use this to
-    sanity-check the harness's judgement on "here's what shipped vs. what was
-    asked" — including whether it would refuse stub-disguise on a specific
-    review — without touching a real goal.
-
-    Defaults to ``at_done_gate=True`` (strict per-clause grading, the mode the
-    real done-gate runs). Pass a ``review_report`` shaped like a
-    ``review_repository`` task's output (``## Per-clause evidence`` +
-    ``## Structural health`` sections) to exercise the full done-gate path.
-    """
-    if not objective or not objective.strip():
-        raise ToolError("dry_evaluate requires a non-empty objective")
-    if not done_when or not done_when.strip():
-        raise ToolError("dry_evaluate requires done_when (the completion contract)")
-    from dataclasses import asdict
-
-    from ...goal import evaluator as _eval
-    from ...goal.models import GoalStatus
-
-    goal = _dry_goal(
-        objective=objective, done_when=done_when, backlog=backlog,
-        stub_acceptable=stub_acceptable,
-    )
-    status = GoalStatus(phase="done" if at_done_gate else "in_flight")
-    try:
-        result = await _eval.evaluate(
-            goal, status, recent_log, deliveries,
-            claude_caller=_eval.default_caller(),
-            review_report=review_report or None,
-            at_done_gate=at_done_gate,
-            spec=spec,
-        )
-    except Exception as err:  # noqa: BLE001
-        raise ToolError(f"dry_evaluate failed: {err}")
-    return json.dumps(asdict(result), indent=2)
 
 
 # ===== goal layer (durable, steerable, evaluated goals) ======================
@@ -163,69 +32,52 @@ async def create_goal(
     goal_id: str,
     objective: str,
     project_id: str,
-    done_when: str = "",
-    backlog: Optional[list[str]] = None,
+    issues: Optional[list[int]] = None,
     cadence: str = "1d",
     verify_cmd: Optional[str] = None,
     open_pr: bool = True,
-    spec: str = "",
     mode: str = "long_lived",
     strictness: Optional[str] = None,
-    out_of_scope: Optional[list[str]] = None,
-    invariants: Optional[list[str]] = None,
-    established: Optional[list[str]] = None,
-    issues: Optional[list[int]] = None,
 ) -> str:
     """Register a goal that DevClaw drives: on each heartbeat it plans, dispatches
     to the engine, records what shipped, and only closes when a grounded review
-    confirms done_when is met. Steer it any time with steer_goal; inspect it with
-    get_goal.
+    confirms the contract is met. Steer it any time with steer_goal; inspect it
+    with get_goal.
 
-    issues (spec 019, the referenced lane): ordered issue NUMBERS on the
-    project's own repository. Each dispatch fetches their LIVE state into the
-    worker brief — never a creation-time copy — a closed issue drops out of
-    the remaining scope, and when every referenced issue is closed the goal
-    proposes done without spending a worker session. Omit for the issue-less
-    lane (bench/greenfield), which behaves exactly as before.
+    THE ISSUE IS THE CONTRACT (spec 024): ``issues`` — ordered issue NUMBERS on
+    the project's own repository — is REQUIRED for every mode except ``qa``.
+    Each dispatch fetches their LIVE state into the worker brief (never a
+    creation-time copy), a closed issue drops out of the remaining scope, and
+    when every referenced issue is closed the goal proposes done. The ask, the
+    completion criteria, and the saga sections (out-of-scope / invariants /
+    established) are authored IN the issue via the template; there is no prose
+    lane. For a greenfield repo: create_repo, file the issue, then this.
 
     mode selects the execution dial (ADR 0003): 'long_lived' (default) is the
     per-tick loop — plan the single next action each heartbeat, steerable
     mid-flight. 'one_shot' rides the SAME advance loop and proposes done as
     soon as an advance session lands — same gates; the worker owns the plan
-    (speckit, spec 008). Use one_shot for a fully-specified batch of work;
-    long_lived for a direction driven over time. 'qa' (spec 015) is the
-    per-repo live-validation owner: it never plans feature work and never
-    terminates (standing done_when supplied automatically); validation runs
-    fire on completed deploys, and a periodic cadence exists but SHIPS OFF —
-    arm it by passing an explicit cadence (e.g. '24h'); saga slots and
-    done_when may be omitted for this mode.
+    (speckit, spec 008). 'qa' (spec 015) is the per-repo live-validation
+    owner: it never plans feature work and never terminates (standing contract
+    supplied automatically); validation runs fire on completed deploys, and a
+    periodic cadence exists but SHIPS OFF — arm it by passing an explicit
+    cadence (e.g. '24h'). ``qa`` is the one mode that takes no issues.
 
-    goal_id: a short stable slug (the on-disk folder name). objective: the durable
-    aim. done_when: the prose completion test the evaluator judges against. backlog:
-    a starting work-list. project_id: the registered project (see list_projects)
-    whose workspace + repo devclaw resolves and keeps fresh per action — an unknown
-    project is rejected synchronously. verify_cmd: the gate (e.g. 'dotnet test').
-    spec: optional pre-aligned scope contract — when the OpenClaw waiter has
-    grilled the customer (via scope_grill) before filing the order, pass the
-    finalized spec.md here and the evaluator judges done against it.
-
-    THE SAGA SLOTS (spec 012 US2) — ``out_of_scope``, ``invariants`` and
-    ``established`` are REQUIRED alongside objective/done_when for the
-    ISSUE-LESS lane. With ``issues`` set they may be omitted (spec 024 US2):
-    the ticket is the authoring home — the issue template's sections travel
-    to grading and the worker brief as live issue content. A saga is
-    authored from named slots, not prose, so that two people describing the
-    same work file the same saga. Pass a list of short statements, or an EMPTY
-    LIST to declare explicitly that there are none — omitting a slot is
-    rejected here, naming it, rather than discovered by a worker mid-run.
-    out_of_scope: what this goal deliberately does NOT include (the worker will
-    not build into it). invariants: what must still hold after every increment
-    (a change that breaks one is not shippable). established: settled decisions
-    the worker must build on instead of re-deriving."""
+    goal_id: a short stable slug (the on-disk folder name). objective: the
+    display identity (list surfaces need a name — typically the lead issue's
+    title; never gate input). project_id: the registered project (see
+    list_projects). verify_cmd: the gate (e.g. 'dotnet test')."""
     if not goal_id:
         raise ToolError("create_goal requires goal_id")
     if mode not in ("long_lived", "one_shot", "qa"):
         raise ToolError("create_goal mode must be 'long_lived', 'one_shot' or 'qa'")
+    if mode != "qa" and not issues:
+        raise ToolError(
+            "create_goal requires issues — the ticket is the contract (spec "
+            "024): author the ask, acceptance criteria, and saga sections in "
+            "a GitHub issue on the project's repo and pass its number. "
+            "(dispatch_task auto-files an intake issue for a prose ask.)"
+        )
     # Omitted strictness = "not explicitly chosen": the repo's devclaw.json
     # strictnessDefault (if any) applies live; passing a value pins the goal.
     if strictness is not None and strictness not in ("trust", "strict"):
@@ -243,11 +95,10 @@ async def create_goal(
         return json.dumps(
             await goals.create_goal_async(
                 goal_id, objective=objective, workspace_dir=resolved.workspace_dir,
-                done_when=done_when, backlog=backlog, cadence=cadence,
+                cadence=cadence,
                 repo_url=resolved.repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
-                spec=spec, mode=mode, strictness=strictness,
-                project_id=resolved.project_id, out_of_scope=out_of_scope,
-                invariants=invariants, established=established,
+                mode=mode, strictness=strictness,
+                project_id=resolved.project_id,
                 issues=issues,
             ),
             indent=2,
@@ -259,50 +110,9 @@ async def create_goal(
     except FileExistsError:
         raise ToolError(f"goal {goal_id!r} already exists")
     except GoalAdmissionRejected as exc:
-        # Structured rejection: surface the full condition list so the waiter
+        # Structured rejection: surface the full condition list so the caller
         # can render fixable items to the customer and route on the codes.
         raise ToolError(json.dumps(exc.result.to_dict(), indent=2))
-
-
-@mcp.tool
-async def verify_goal(
-    objective: str,
-    project_id: str,
-    done_when: str = "",
-    backlog: Optional[list[str]] = None,
-    verify_cmd: Optional[str] = None,
-    spec: str = "",
-    out_of_scope: Optional[list[str]] = None,
-    invariants: Optional[list[str]] = None,
-    established: Optional[list[str]] = None,
-) -> str:
-    """Pre-flight check for a goal BEFORE you call create_goal. Runs the same
-    structural validations the chef applies at goal-creation time and returns
-    a list of conditions (severity ``reject`` or ``warn``) with machine-readable
-    codes the waiter can route on.
-
-    Use this to preview rejections so the customer sees fixable conditions
-    before they think the order was filed. ``admitted: false`` means
-    create_goal would reject; ``admitted: true`` with warnings means
-    create_goal would accept but flag. ``project_id`` names the registered
-    project whose workspace + repo the goal would run in (same reference key as
-    create_goal); an unknown project is rejected synchronously.
-
-    Response shape:
-      {"admitted": bool,
-       "conditions": [{"code": "...", "severity": "reject"|"warn",
-                       "message": "...", "field": "..."}, ...]}
-    """
-    resolved = _resolve_project_or_reject(project_id, "verify_goal")
-    return json.dumps(
-        goals.verify_goal(
-            objective=objective, workspace_dir=resolved.workspace_dir,
-            done_when=done_when, backlog=backlog, repo_url=resolved.repo_url,
-            verify_cmd=verify_cmd, spec=spec, out_of_scope=out_of_scope,
-            invariants=invariants, established=established,
-        ),
-        indent=2,
-    )
 
 
 @mcp.tool

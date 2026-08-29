@@ -30,7 +30,6 @@ _ROLE_TIER: dict[str, str | None] = {
     "goal_eval": MODEL_STANDARD,    # direction evaluator
     "intake_readiness": MODEL_STANDARD,  # intake gate — is an ask groundable enough to firm?
     "triage": MODEL_STANDARD,       # self-triage propose step (dedupe + one-line fix)
-    "grill": MODEL_STANDARD,        # scope_grill conversation turns
     "review": MODEL_STANDARD,       # pre-PR adversarial review gate
     "reachability": MODEL_STANDARD, # browser-gate reachability escape-valve judge
     "trend": MODEL_STANDARD,        # trend-signal summarize/classify

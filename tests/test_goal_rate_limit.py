@@ -335,7 +335,7 @@ async def test_quota_resume_ping_survives_the_same_lazy_clear(tmp_path):
 async def test_auth_pause_ping_names_the_credential_path(tmp_path, monkeypatch):
     """The auth-pause ping contains the configured DEVCLAW_HOST_CLAUDE_DIR
     value, the .credentials.json filename, the fix verb (setup-token), the
-    verification step (dry_evaluate), and the wrong-home trap statement."""
+    verification step (the auto-resume probe), and the wrong-home trap statement."""
     monkeypatch.setenv("DEVCLAW_HOST_CLAUDE_DIR", "/home/lifekit/.claude")
     store = GoalStore(tmp_path, now=Clock())
     eng = FlaggedPausableEngine()
@@ -352,5 +352,5 @@ async def test_auth_pause_ping_names_the_credential_path(tmp_path, monkeypatch):
     ping = pings[0]
     assert "/home/lifekit/.claude/.credentials.json" in ping  # the configured path
     assert "setup-token" in ping                              # the fix verb
-    assert "dry_evaluate" in ping                             # the verification step
+    assert "auto-resumes on the next probe" in ping   # the verification step
     assert "elsewhere changes nothing" in ping                # the wrong-home trap

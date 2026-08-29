@@ -150,9 +150,8 @@ async def dispatch_task(
     this is done. Required for a prose-only mutating ask: devclaw refuses to
     fabricate criteria by restating the ask.
 
-    The kind-specific companion verbs ``implement_feature`` / ``fix_bug`` /
-    ``review_repository`` forward here. Reach for this one when you need the
-    branch targets or an explicit ``kind``; either surface is supported."""
+    This is the ONE task doorway (the kind-specific companion verbs that used
+    to forward here were removed by the 2026-08-29 prune — pass ``kind``)."""
     if not goal:
         raise ToolError("dispatch_task requires project_id and goal")
     resolved = _resolve_project_or_reject(project_id, "dispatch_task")
@@ -240,87 +239,6 @@ async def dispatch_task(
         project_id=resolved.project_id,
     )
     return json.dumps({"task_id": task_id, "status": "pending"}, indent=2)
-
-
-@mcp.tool
-async def implement_feature(
-    project_id: str,
-    goal: str,
-    issue_ref: Optional[int] = None,
-    done_when: Optional[str] = None,
-    notify_url: Optional[str] = None,
-    verify_cmd: Optional[str] = None,
-    open_pr: bool = False,
-) -> str:
-    """Dispatch feature work — the kind-specific companion verb, a thin
-    forwarder to ``dispatch_task(kind="implement_feature")``. Supported, not
-    deprecated: this is the shape the waiter agent drives the companion path
-    with. Pass ``issue_ref`` (a GitHub issue number on the project's repo) to
-    key the dispatch on that issue — the call is then idempotent: a duplicate
-    dispatch for the same issue attaches to the existing work rather than
-    starting a new one (spec 022 US1). Without ``issue_ref``, ``done_when``
-    (real completion criteria) is required — devclaw auto-files the intake
-    issue and refuses to fabricate criteria. See ``dispatch_task`` for full
-    docs."""
-    return await dispatch_task(
-        kind="implement_feature",
-        project_id=project_id,
-        goal=goal,
-        issue_ref=issue_ref,
-        done_when=done_when,
-        notify_url=notify_url,
-        verify_cmd=verify_cmd,
-        open_pr=open_pr,
-    )
-
-
-@mcp.tool
-async def fix_bug(
-    project_id: str,
-    description: str,
-    issue_ref: Optional[int] = None,
-    done_when: Optional[str] = None,
-    notify_url: Optional[str] = None,
-    verify_cmd: Optional[str] = None,
-    open_pr: bool = False,
-) -> str:
-    """Dispatch a bug fix — the kind-specific companion verb, a thin forwarder
-    to ``dispatch_task(kind="fix_bug")``. Supported, not deprecated: this is the
-    shape the waiter agent drives the companion path with. Pass ``issue_ref`` (a
-    GitHub issue number on the project's repo) to key the dispatch on that issue
-    — the call is then idempotent: a duplicate dispatch for the same issue
-    attaches to the existing work (spec 022 US1). Without ``issue_ref``,
-    ``done_when`` (real completion criteria) is required — devclaw auto-files
-    the intake issue and refuses to fabricate criteria. See ``dispatch_task``
-    for full docs."""
-    if not description:
-        raise ToolError("fix_bug requires project_id and description")
-    return await dispatch_task(
-        kind="fix_bug",
-        project_id=project_id,
-        goal=description,
-        issue_ref=issue_ref,
-        done_when=done_when,
-        notify_url=notify_url,
-        verify_cmd=verify_cmd,
-        open_pr=open_pr,
-    )
-
-
-@mcp.tool
-async def review_repository(
-    project_id: str, focus: str = "", notify_url: Optional[str] = None
-) -> str:
-    """Dispatch a read-only repository review — the kind-specific companion
-    verb, a thin forwarder to ``dispatch_task(kind="review_repository")``.
-    Supported, not deprecated: this is the shape the waiter agent drives the
-    companion path with. See ``dispatch_task`` for full docs."""
-    return await dispatch_task(
-        kind="review_repository",
-        project_id=project_id,
-        goal=focus or "general code review",
-        notify_url=notify_url,
-    )
 
 
 # ===== cancellation (deliberate abort) =======================================

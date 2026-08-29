@@ -2,7 +2,7 @@
 """Sandbox E2E — the scenario test suite.
 
 A library of named scenarios that exercise every real path the chef supports —
-single tasks, full goal lifecycles, scope-grill turns, blocked planners, steered
+single tasks, full goal lifecycles, blocked planners, steered
 goals, failing gates, no-progress watchdogs, quota pauses, off-track done-gates.
 Each scenario is a YAML fixture under ``evals/sandbox/scenarios/<id>.yaml`` and
 declares its expected outcome; the runner drives the chef accordingly, captures
@@ -124,12 +124,11 @@ class ScenarioCognition:
 class Scenario:
     id: str
     description: str = ""
-    mode: str = "goal"  # goal | mcp | grill
+    mode: str = "goal"  # goal | mcp
     cognition_responses: dict[str, Any] = field(default_factory=dict)
     engine_responses: dict[str, Any] = field(default_factory=dict)
     goal: dict[str, Any] = field(default_factory=dict)
     mcp_call: dict[str, Any] = field(default_factory=dict)
-    grill: dict[str, Any] = field(default_factory=dict)
     ticks: int = 3
     advance_clock_s: int = 0
     steering: list[dict] = field(default_factory=list)
@@ -151,7 +150,6 @@ def _load_scenario(slug: str) -> Scenario:
         engine_responses=raw.get("engine_responses", {}),
         goal=raw.get("setup", {}).get("goal", {}),
         mcp_call=raw.get("setup", {}).get("mcp_call", {}),
-        grill=raw.get("setup", {}).get("grill", {}),
         ticks=int(raw.get("ticks", 3)),
         advance_clock_s=int(raw.get("advance_clock_s", 0)),
         steering=raw.get("steering", []) or [],
@@ -316,28 +314,12 @@ def _evaluate_expect(expect: dict, tracer: Tracer, goal_dir: Optional[Path], ext
         if needle not in owner_blob:
             failures.append(f"notify_owner_contains: {needle!r} not found in owner notifications")
 
-    # ---- mode-specific extras (mcp_result, grill_result) ----
+    # ---- mode-specific extras (mcp_result) ----
     for key, want in (expect.get("mcp_result_contains") or {}).items():
         got = extra.get("mcp_result", {}).get(key)
         if want not in str(got):
             failures.append(f"mcp_result_contains[{key}]: {want!r} not in {got!r}")
 
-    if "grill_final_action" in expect:
-        got = (extra.get("grill_final") or {}).get("action")
-        if got != expect["grill_final_action"]:
-            failures.append(f"grill_final_action: expected {expect['grill_final_action']!r}, got {got!r}")
-    if "grill_questions_min" in expect:
-        got = len(extra.get("grill_questions") or [])
-        if got < expect["grill_questions_min"]:
-            failures.append(f"grill_questions_min: expected ≥{expect['grill_questions_min']}, got {got}")
-    if "grill_questions_eq" in expect:
-        got = len(extra.get("grill_questions") or [])
-        if got != expect["grill_questions_eq"]:
-            failures.append(f"grill_questions_eq: expected {expect['grill_questions_eq']}, got {got}")
-    if "grill_questions_max" in expect:
-        got = len(extra.get("grill_questions") or [])
-        if got > expect["grill_questions_max"]:
-            failures.append(f"grill_questions_max: expected ≤{expect['grill_questions_max']}, got {got}")
 
     return failures
 
@@ -508,57 +490,6 @@ async def _run_mcp_mode(scenario: Scenario, env: dict) -> dict:
     return {"errors": [], "mcp_result": parsed}
 
 
-async def _run_grill_mode(scenario: Scenario, env: dict) -> dict:
-    """Drive a scope_grill scenario turn by turn. The scenario supplies the
-    idea + a list of user answers; the runner feeds each answer back into the
-    transcript and calls scope_grill again until it returns ``done`` (or the
-    answer list is exhausted)."""
-    from devclaw.elicitation import next_step
-
-    idea = scenario.grill.get("idea", "demo")
-    answers = list(scenario.grill.get("user_answers", []))
-    transcript: list[dict] = []
-    questions: list[str] = []
-    final: dict | None = None
-    errors: list[str] = []
-
-    for i in range(len(answers) + 1):
-        record_note(f"grill turn {i + 1}")
-        try:
-            step = await next_step(idea, transcript)
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"grill turn {i + 1} raised: {type(exc).__name__}: {exc}")
-            break
-        if step.get("action") == "ask":
-            q = step.get("question", "")
-            questions.append(q)
-            record_note(f"ask: {q[:120]}")
-            if not answers:
-                final = step
-                break
-            answer = answers.pop(0)
-            transcript.append({
-                "question": q,
-                "recommended": step.get("recommended", ""),
-                "answer": answer,
-            })
-            record_note(f"answer: {answer[:120]}")
-        else:  # done
-            final = step
-            record_note("grill: done")
-            break
-
-    return {
-        "errors": errors,
-        "grill_final": final,
-        "grill_questions": questions,
-        "grill_transcript_len": len(transcript),
-    }
-
-
-# ---- top-level runner -----------------------------------------------------
-
-
 async def _run(scenario: Scenario, cognition_mode: str, out_dir: Path) -> dict:
     goals_dir = out_dir / "goals"
     workspace_dir = out_dir / "workspace"
@@ -592,11 +523,6 @@ async def _run(scenario: Scenario, cognition_mode: str, out_dir: Path) -> dict:
             out = await _run_mcp_mode(scenario, env)
             errors = out.get("errors", [])
             extra["mcp_result"] = out.get("mcp_result")
-        elif scenario.mode == "grill":
-            out = await _run_grill_mode(scenario, env)
-            errors = out.get("errors", [])
-            extra["grill_final"] = out.get("grill_final")
-            extra["grill_questions"] = out.get("grill_questions")
         else:
             errors.append(f"unknown mode: {scenario.mode}")
     finally:
@@ -627,8 +553,6 @@ async def _run(scenario: Scenario, cognition_mode: str, out_dir: Path) -> dict:
         "deliveries": len(tracer.by_kind("delivery")),
         "notifications": len(tracer.by_kind("notify")),
         "mcp_result": extra.get("mcp_result"),
-        "grill_final": extra.get("grill_final"),
-        "grill_questions_count": len(extra.get("grill_questions") or []),
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     return summary
