@@ -1,13 +1,12 @@
-"""Cancellation (deliberate abort) tests — the kill switch for tasks + programs.
+"""Cancellation (deliberate abort) tests — the kill switch for tasks.
 
 Distinct from crash recovery (test_durability): here a client *intentionally*
 aborts in-flight work. The invariants under test:
   - a pending task can be cancelled before it ever runs (engine never invoked);
   - a running task's live execution is torn down (the runner sees CancelledError);
   - 'cancelled' is terminal — a late settle can't override it, and crash
-    recovery never resurrects it;
-  - cancelling a program stops scheduling and tears down every running child;
-  - cancelling one child sticky-cancels its program (a hole blocks dependents).
+    recovery never resurrects it.
+(The program-cancellation cases died with the program/DAG lane, spec 022 US3.)
 """
 
 import asyncio
@@ -15,7 +14,6 @@ import asyncio
 import pytest
 
 from devclaw.engine import EngineRequest
-from devclaw.program_plan import PlannedTask
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 
@@ -110,78 +108,3 @@ async def test_recover_does_not_resurrect_cancelled(store):
     q = TaskQueue(store)
     assert q.recover() == 0  # only 'running' rows get reaped — cancelled is terminal
     assert store.get_task("t1").status == "cancelled"
-
-
-# ---- program cancellation ----
-
-
-async def test_cancel_program_aborts_running_and_pending(store):
-    runner, started, release, state = _gated_runner()
-    q = TaskQueue(store, runner=runner)
-    pid = q.start_planned_program(
-        goal="big",
-        workspace_dir="/ws",
-        planned=[
-            PlannedTask(key="x", goal="x", kind="implement_feature", depends_on_keys=[]),
-            PlannedTask(key="y", goal="y", kind="implement_feature", depends_on_keys=["x"]),
-        ],
-    )
-
-    await asyncio.wait_for(started.wait(), timeout=1.0)
-    by_goal = {t.goal: t for t in store.list_program_tasks(pid)}
-    assert by_goal["x"].status == "running"
-    assert by_goal["y"].status == "pending"  # gated on x
-
-    assert q.cancel_program(pid) is True
-    release.set()
-    await q.drain()
-
-    assert store.get_program(pid).status == "cancelled"
-    statuses = {t.goal: t.status for t in store.list_program_tasks(pid)}
-    assert statuses == {"x": "cancelled", "y": "cancelled"}
-    assert "y" not in state["seen"]  # y never launched
-
-
-async def test_cancel_program_is_noop_when_terminal(store):
-    async def ok_runner(req: EngineRequest):
-        return {"status": "ok", "workspaceDir": req.workspace_dir, "message": "done"}
-
-    q = TaskQueue(store, runner=ok_runner)
-    pid = q.start_planned_program(
-        goal="g",
-        workspace_dir="/ws",
-        planned=[PlannedTask(key="a", goal="a", kind="implement_feature", depends_on_keys=[])],
-    )
-    await q.drain()
-    assert store.get_program(pid).status == "done"
-    assert q.cancel_program(pid) is False
-
-
-async def test_cancel_child_task_sticky_cancels_program(store, monkeypatch):
-    # program-child scheduling reads the cap in queue/programs (_schedule_program)
-    monkeypatch.setattr("devclaw.queue.programs.GLOBAL_MAX_CONCURRENT", 1)
-    runner, started, release, _state = _gated_runner()
-    q = TaskQueue(store, runner=runner)
-    pid = q.start_planned_program(
-        goal="g",
-        workspace_dir="/ws",
-        planned=[  # independent tasks; cap=1 means only x runs, y held pending
-            PlannedTask(key="x", goal="x", kind="implement_feature", depends_on_keys=[]),
-            PlannedTask(key="y", goal="y", kind="implement_feature", depends_on_keys=[]),
-        ],
-    )
-    await asyncio.wait_for(started.wait(), timeout=1.0)
-    xid = next(t.id for t in store.list_program_tasks(pid) if t.goal == "x")
-    assert store.get_task(xid).status == "running"
-
-    # Cancel just the child — the program should sticky-cancel on the pump that
-    # cancel_task triggers (a hole in the DAG blocks the rest).
-    assert q.cancel_task(xid) is True
-    assert store.get_program(pid).status == "cancelled"
-
-    release.set()
-    await q.drain()
-
-    statuses = {t.goal: t.status for t in store.list_program_tasks(pid)}
-    assert statuses == {"x": "cancelled", "y": "cancelled"}  # y swept too
-    assert store.has_active_work() is False  # nothing left dangling

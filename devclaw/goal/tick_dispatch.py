@@ -25,7 +25,6 @@ from .tick_context import (
     _run_atomic,
 )
 from .tick_guards import _block_on_prep_failure
-from . import fanout as _fanout
 from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
 from . import repo_brief as _repo_brief
@@ -201,56 +200,7 @@ async def _dispatch_action(
                 return Outcome.SLEPT
         except Exception:  # noqa: BLE001 — a probe hiccup must never wedge dispatch
             pass
-    # ---- planned fan-out (spec 010 US3, FR-101) -----------------------------
-    # Read the plan for a group of tasks it already declared topologically
-    # independent — consecutive `[P]` rows with disjoint declared file scopes —
-    # and dispatch them as ONE program of concurrent lanes instead of one
-    # increment. The decision is the PLAN's; this code only obeys it (the
-    # 2026-08-18 ruling: parallelism is data, never executor control flow).
-    #
-    # Off unless the operator opted in, never for read-only reviews, and never
-    # outside goal-branch mode (per-action delivery has no shared branch to
-    # integrate onto). Zero-token: a glob, a file read, a string parse — and it
-    # sits AFTER the phase/hold gates, so no idle or blocked tick gains work.
-    #
-    # Every failure here degrades to ordinary single-increment dispatch, which is
-    # always correct and merely slower.
-    lanes: list = []
-    fanout_dispatch = getattr(engine, "dispatch_fanout", None)
-    if (
-        action.tool != "review_repository"
-        and branch_for_dispatch is not None
-        and fanout_dispatch is not None
-        and _fanout.enabled()
-    ):
-        try:
-            lanes = await asyncio.to_thread(_fanout.plan_lanes_sync, goal.workspace_dir)
-        except Exception:  # noqa: BLE001 — a planning hiccup must never wedge dispatch
-            lanes = []
-        for lane in list(lanes):
-            # Each lane needs its OWN checkout of the goal branch: two agents
-            # cannot share a working tree. A prep failure abandons the whole
-            # group rather than fanning out a half-prepared one.
-            try:
-                await prepare_ws(lane.workspace_dir, goal.repo_url, branch_for_dispatch)
-            except Exception as exc:  # noqa: BLE001
-                store.append_log(
-                    goal_id,
-                    f"fan-out abandoned: could not prepare lane workspace for "
-                    f"{lane.key} ({exc}) — dispatching one increment instead",
-                )
-                lanes = []
-                break
-        if lanes:
-            store.append_log(
-                goal_id,
-                "fan-out: dispatching "
-                + str(len(lanes))
-                + " planned parallel lanes — "
-                + "; ".join(f"{ln.key} [{', '.join(ln.scopes)}]" for ln in lanes),
-            )
-
-    # Atomic dispatch (PR7): task/program row creation + the DISPATCH
+    # Atomic dispatch (PR7): task row creation + the DISPATCH
     # transition + the log row, as ONE transaction. A crash or CAS conflict
     # anywhere inside rolls the whole unit back — the single-task-orphan
     # class (task dispatched, ref write lost) becomes structurally
@@ -286,9 +236,7 @@ async def _dispatch_action(
                     if brief_prefix else action
                 )
                 ref = _run_atomic(
-                    fanout_dispatch(dispatch_action, goal, notify_url, lanes)
-                    if lanes and fanout_dispatch is not None  # lanes ⇒ fanout (guard above)
-                    else engine.dispatch(dispatch_action, goal, notify_url)
+                    engine.dispatch(dispatch_action, goal, notify_url)
                 )
             except Exception as exc:  # noqa: BLE001 — caught again below, outside the txn
                 dispatch_exc = exc

@@ -212,7 +212,6 @@ class StateStore(
         base_branch: Optional[str] = None,
         target_branch: Optional[str] = None,
         project_id: Optional[str] = None,
-        lane_json: Optional[str] = None,
     ) -> None:
         with self._lock:
             self._db.execute(
@@ -220,8 +219,8 @@ class StateStore(
                      (id, kind, status, workspace_dir, goal, notify_url, created_at,
                       program_id, depends_on, order_idx, milestone, verify_cmd, deliver,
                       title, parent_goal_id, scaffold, plan_key, strictness,
-                      base_branch, target_branch, project_id, lane_json)
-                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                      base_branch, target_branch, project_id)
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     id,
                     kind,
@@ -243,7 +242,6 @@ class StateStore(
                     base_branch,
                     target_branch,
                     project_id,
-                    lane_json,
                 ),
             )
             self._commit()
@@ -328,27 +326,6 @@ class StateStore(
             self._commit()
             return cur.rowcount == 1
 
-    def cancel_program_pending_tasks(self, program_id: str) -> list[str]:
-        """Bulk-cancel every PENDING task of a program (work not yet handed to
-        the engine) so nothing new starts. Running tasks are torn down live by
-        the queue, not here. Returns the cancelled task ids (for the audit log)."""
-        with self._lock:
-            ids = [
-                r["id"]
-                for r in self._db.execute(
-                    "SELECT id FROM tasks WHERE program_id = ? AND status = 'pending'",
-                    (program_id,),
-                ).fetchall()
-            ]
-            if ids:
-                self._db.execute(
-                    "UPDATE tasks SET status = 'cancelled', completed_at = ? "
-                    "WHERE program_id = ? AND status = 'pending'",
-                    (_now_ms(), program_id),
-                )
-                self._commit()
-        return ids
-
     def get_task(self, task_id: str) -> Optional[Task]:
         with self._lock:
             row = self._db.execute(
@@ -404,7 +381,7 @@ class StateStore(
 
     def latest_task_for_goal(self, goal_id: str) -> Optional[Task]:
         """The most recent task dispatched by ``goal_id`` (any status), or None.
-        Mirrors :meth:`latest_program_for_goal`; a later orphan-recovery pass
+        The startup orphan-recovery sweep
         reads it to re-adopt a task whose goal-side in_flight ref was lost."""
         with self._lock:
             row = self._db.execute(
@@ -489,18 +466,6 @@ class StateStore(
                 "SELECT * FROM programs ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()
         return [_row_to_program(r) for r in rows]
-
-    def latest_program_for_goal(self, goal_id: str) -> Optional[Program]:
-        """The most recent program dispatched by ``goal_id`` (any status).
-        Read by the goal layer's startup orphan sweep: if this program's
-        result never made it into the goal's log, the goal re-adopts it."""
-        with self._lock:
-            row = self._db.execute(
-                "SELECT * FROM programs WHERE parent_goal_id = ? "
-                "ORDER BY created_at DESC LIMIT 1",
-                (goal_id,),
-            ).fetchone()
-        return _row_to_program(row) if row else None
 
     def get_program(self, program_id: str) -> Optional[Program]:
         with self._lock:
@@ -641,25 +606,10 @@ class StateStore(
             ).fetchall()
         return [_row_to_task(r) for r in rows]
 
-    def list_nonterminal_programs(self) -> list[Program]:
-        """Programs still in flight ('planning' or 'running') — what the
-        reconcile pass and startup recovery walk."""
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT * FROM programs WHERE status IN ('planning', 'running') "
-                "ORDER BY created_at ASC"
-            ).fetchall()
-        return [_row_to_program(r) for r in rows]
-
     def has_active_work(self) -> bool:
-        """Cheap-idle guard: True iff anything needs scheduling. One COUNT each
+        """Cheap-idle guard: True iff anything needs scheduling. One COUNT
         so an idle tick costs ~nothing (don't spend the engine on empty ticks)."""
         with self._lock:
-            prog = self._db.execute(
-                "SELECT 1 FROM programs WHERE status IN ('planning', 'running') LIMIT 1"
-            ).fetchone()
-            if prog:
-                return True
             task = self._db.execute(
                 "SELECT 1 FROM tasks WHERE status IN ('pending', 'running') LIMIT 1"
             ).fetchone()

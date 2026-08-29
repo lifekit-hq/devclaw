@@ -243,21 +243,6 @@ def test_work_smuggled_under_an_unscoped_task_still_violates_the_claim():
     assert scope_check(diff).violations == ("src/core/db.py",)
 
 
-def test_a_dispatched_scope_binds_even_when_the_worker_never_checks_its_row():
-    """The fan-out lane case: the host pinned the contract, so skipping the plan
-    bookkeeping cannot be a way out of it."""
-    diff = _file_diff("src/widget/render.py") + _file_diff("src/core/db.py")
-    check = scope_check(diff, ("src/widget/**",))
-    assert check.consulted
-    assert check.violations == ("src/core/db.py",)
-
-
-def test_an_empty_dispatched_scope_leaves_the_increment_unconsulted():
-    diff = _file_diff("src/core/db.py")
-    assert not scope_check(diff, ()).consulted
-    assert not scope_check(diff, None).consulted
-
-
 def test_scope_check_never_raises_on_hostile_input():
     for junk in (None, 12345, object()):
         assert isinstance(scope_check(junk), ScopeCheck)  # type: ignore[arg-type]

@@ -18,15 +18,12 @@ import pytest
 from devclaw.goal.engine import GoalEngineError
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore, view_migration
-from devclaw.goal.tick import Outcome, sweep_orphaned_refs, tick_all, tick_goal
+from devclaw.goal.tick import Outcome, tick_all, tick_goal
 from devclaw.goal.tick_donegate import DONEGATE_ROUND_CAP
 from tests.goal_fakes import (
     Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal, seed_marker_repo,
 )
 
-ACT = json.dumps(
-    {"decision": "act", "note": "ship next", "actions": [{"tool": "start_program", "goal": "build /health"}]}
-)
 ACT_FEATURE = json.dumps(
     {"decision": "act", "note": "feat", "actions": [{"tool": "implement_feature", "goal": "add /health", "open_pr": True}]}
 )
@@ -116,7 +113,7 @@ async def test_in_flight_running_spends_zero_tokens(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status(
-        "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "start_program", "p1", "program")),
+        "g", GoalStatus(phase="in_flight", in_flight=InFlight("devclaw", "implement_feature", "t1", "task")),
     )
     evaluator = FakeClaude()
     engine = FakeEngine(poll_result=PollResult(terminal=False, status="running"))
@@ -1765,121 +1762,9 @@ async def test_standing_goal_done_gate_blocks_instead_of_closing(tmp_path):
 
 # ---- orphaned-ref sweep (2026-07-09 lost-in-flight-ref incident) -----------
 #
-# PR7 demoted the per-tick reconcile (which lived HERE, inside tick_goal) to
-# a once-per-service-start sweep (sweep_orphaned_refs) — atomic dispatch
-# makes losing a ref mid-flight structurally impossible on THIS build going
-# forward, so a per-tick check is no longer load-bearing; the sweep still
-# catches a ref lost by an older build or something outside the dispatch
-# path. These three tests are MECHANICALLY re-pointed at the sweep: same
-# scenarios, same assertions, split across an explicit sweep_orphaned_refs()
-# call (what used to happen silently inside the one tick_goal call) followed
-# by an ordinary tick (which now finds the ref already restored and proceeds
-# exactly as it always has for an in-flight action).
-
-
-class OrphanAwareEngine(FakeEngine):
-    """FakeEngine + the latest_program_for_goal finder the sweep probes."""
-
-    def __init__(self, *, program: "tuple[str, str] | None" = None, **kw):
-        super().__init__(**kw)
-        self.program = program
-
-    def latest_program_for_goal(self, goal_id: str):
-        return self.program
-
-
-@pytest.mark.asyncio
-async def test_orphaned_failed_program_readopted_and_settled(tmp_path):
-    """A goal whose in_flight ref was lost (STATUS.md truncated by a crash
-    mid-write) must have the SWEEP rediscover its own already-failed program
-    via parent_goal_id and re-adopt it; the NEXT ordinary tick then settles
-    it and dispatches a fresh advance session — instead of idling forever on
-    a result that will never arrive."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="1d")
-    # cadence not due + no steering → without the sweep this tick is IDLE
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    store.append_log("g", "dispatched start_program: Program: reporting & dashboards")
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = OrphanAwareEngine(
-        program=("p_lost", "Program: reporting & dashboards"),
-        poll_result=PollResult(
-            terminal=True, status="failed",
-            detail="program failed — task exceeded the 1800s wall-clock timeout",
-        ),
-    )
-
-    swept = await sweep_orphaned_refs(store, engine)
-
-    assert swept == {"g": "program p_lost"}
-    log = store.recent_log("g")
-    assert "re-adopted orphaned program p_lost" in log
-    s = store.load_status("g")
-    assert s.in_flight is not None and s.in_flight.id == "p_lost"
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.DISPATCHED
-    action, _, _ = engine.dispatched[-1]
-    assert action.tool == "implement_feature"           # a fresh advance session
-    log = store.recent_log("g")
-    assert "start_program p_lost → failed" in log       # the failure is on the durable record
-
-
-@pytest.mark.asyncio
-async def test_settled_program_is_not_readopted(tmp_path):
-    """A program whose result already reached the durable record must NOT be
-    re-adopted — the sweep only rescues lost refs, it never replays settled
-    work. The settle line is planted in log.md BEFORE construction, so this
-    also pins that the one-shot view migration's settlement seed (#617) still
-    protects a goal whose only evidence of settling is its pre-migration log."""
-    seed_goal(tmp_path, "g", cadence="1d")
-    (tmp_path / "g" / "log.md").write_text(
-        "# g — log\n\n- [2026-07-01T00:00:00] start_program p_seen → failed\n"
-    )
-    store = _store(tmp_path, Clock())
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = OrphanAwareEngine(program=("p_seen", "Program: reporting"))
-
-    swept = await sweep_orphaned_refs(store, engine)
-
-    assert swept == {}
-    assert engine.polls == 0
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.IDLE
-    assert engine.polls == 0
-
-
-@pytest.mark.asyncio
-async def test_orphaned_running_program_readopted_as_in_flight(tmp_path):
-    """A lost ref to a STILL-RUNNING program is restored by the sweep; the
-    next tick then reports IN_FLIGHT — zero cognition spent, and the
-    following settle works normally."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="1d")
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    evaluator, notifier = FakeClaude(), RecordingNotifier()
-    engine = OrphanAwareEngine(
-        program=("p_run", "Program: reporting"),
-        poll_result=PollResult(terminal=False, status="running"),
-    )
-
-    swept = await sweep_orphaned_refs(store, engine)
-
-    assert swept == {"g": "program p_run"}
-    s = store.load_status("g")
-    assert s.in_flight is not None and s.in_flight.id == "p_run"
-    assert s.in_flight.ref_kind == "program"
-
-    out = await _tick(store, "g", evaluator, engine, notifier)
-
-    assert out is Outcome.IN_FLIGHT
-    s = store.load_status("g")
-    assert s.in_flight is not None and s.in_flight.id == "p_run"
-    assert s.in_flight.ref_kind == "program"
+# The program-ref sweep cases that lived here died with the program/DAG lane
+# (spec 022 US3) — the sweep now probes only the task finder, pinned in
+# test_goal_transactional.py (sweep-extends-to-tasks + legacy-log seeding).
 
 
 @pytest.mark.asyncio

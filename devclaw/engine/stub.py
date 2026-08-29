@@ -18,7 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import EngineEvent, EngineRequest, EngineResult
-from ..program_plan import PlannedTask
 
 # ---- engine ----------------------------------------------------------------
 
@@ -76,10 +75,3 @@ async def stub_engine(req: EngineRequest) -> EngineResult:
         (ws / "STUB_BUILD.txt").write_text(f"stub build for goal: {req.goal}\n")
         message = "stub: wrote a placeholder (no recipe for this goal)"
     return {"status": "ok", "workspaceDir": req.workspace_dir, "message": message}
-
-
-# ---- cognition (planner) ----------------------------------------------------
-
-
-async def stub_goal_planner(goal: str, workspace_dir: str) -> list[PlannedTask]:
-    return [PlannedTask(key="t1", goal=goal, kind="implement_feature", depends_on_keys=[])]

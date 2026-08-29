@@ -1,8 +1,9 @@
 """The durable goal layer's steer/observe surface + its front porch.
 
 Everything from the scope grill and the dry-cognition previews through
-create/verify and the full steer/resume/evaluate/cancel verbs, plus the
-deprecated ``start_program`` alias (ADR 0003).
+create/verify and the full steer/resume/evaluate/cancel verbs. (The
+deprecated ``start_program`` alias was retired by spec 022 US3 — file a goal
+with ``create_goal(mode='one_shot')`` instead.)
 """
 
 from __future__ import annotations
@@ -16,79 +17,6 @@ from pydantic import Field
 from ... import elicitation as _elicitation
 from .._state import goals, mcp, store
 from ._common import _resolve_project_or_reject
-
-
-def _one_shot_goal_id(goal: str) -> str:
-    """A stable-ish readable slug for a start_program-sugar goal: the first
-    few words of the brief + a uuid suffix (collision-proof without a retry
-    loop)."""
-    import re as _re
-    import uuid as _uuid
-
-    words = _re.findall(r"[a-z0-9]+", goal.lower())[:5]
-    slug = "-".join(words)[:40].strip("-") or "program"
-    return f"{slug}-{_uuid.uuid4().hex[:6]}"
-
-
-@mcp.tool
-async def start_program(
-    project_id: str, goal: str, notify_url: Optional[str] = None
-) -> str:
-    """DEPRECATED sugar for create_goal(mode='one_shot') — ADR 0003 stage 2b:
-    a program and a goal are the same thing, differing only in the
-    re-evaluation dial. This tool now files a ONE-SHOT GOAL: the worker plans
-    and executes via speckit in-sandbox (spec 008), with PR-per-slice
-    delivery and a grounded done-gate close — plus steering, resume, and
-    console visibility that raw programs never had.
-
-    Returns {goal_id, mode, ...}; poll get_goal(goal_id) / tail_goal. The child
-    program appears in list_programs once the goal dispatches it. Prefer
-    calling create_goal(mode='one_shot') directly — this alias exists for
-    existing waiter flows and will be retired."""
-    if not goal:
-        raise ToolError("start_program requires project_id and goal")
-    from ...goal.admission import GoalAdmissionRejected
-
-    resolved = _resolve_project_or_reject(project_id, "start_program")
-    goal_id = _one_shot_goal_id(goal)
-    try:
-        # The brief rides as the SPEC (the scope contract the done-gate
-        # evaluator judges against) — the same acceptance parity the old
-        # direct-queue path had: there is no separate done_when.
-        result = goals.create_goal(
-            goal_id, objective=goal, workspace_dir=resolved.workspace_dir,
-            repo_url=resolved.repo_url, spec=goal, mode="one_shot",
-            project_id=resolved.project_id,
-            # The saga slots are declared EMPTY on this deprecated alias, not
-            # demanded from it. It is the FR-012b class: an operator is present
-            # at the call and can correct a bad prompt immediately, so a
-            # required-slot tax buys nothing on the one path that already has a
-            # reviewer in the loop. Schemas earn their cost on unattended work —
-            # which is why the self-fix pickup DOES fill them for real.
-            out_of_scope=[], invariants=[], established=[],
-        )
-    except GoalAdmissionRejected as exc:
-        raise ToolError(json.dumps(exc.result.to_dict(), indent=2))
-    out = {
-        "goal_id": goal_id,
-        "mode": "one_shot",
-        "lifecycle": result.get("lifecycle", "executing"),
-        "phase": result.get("phase", "idle"),
-        "note": (
-            "start_program now files a one-shot GOAL (ADR 0003). Poll "
-            "get_goal/tail_goal with goal_id; the child program appears in "
-            "list_programs once dispatched. Deliveries arrive as reviewable "
-            "PRs and the close is gated on a grounded done_when review."
-        ),
-    }
-    if notify_url:
-        # Goals notify through the configured goal-layer notifier, not a
-        # per-call URL — say so instead of silently dropping the contract.
-        out["notify_url_ignored"] = (
-            "goal-backed programs notify via the goal layer's configured "
-            "notifier; per-call notify_url is not supported"
-        )
-    return json.dumps(out, indent=2)
 
 
 # ===== scope grill (waiter-side conversation, chef-side craft) ===============

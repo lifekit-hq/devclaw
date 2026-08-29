@@ -494,7 +494,7 @@ def self_fix_done_when(number: int, slug: str) -> str:
 
 #: The authored saga slots (spec 012 US2) for a self-fix goal. This creator is
 #: UNATTENDED — no operator is present to correct a sprawling prompt mid-run —
-#: so unlike the deprecated ``start_program`` alias it fills the slots for real.
+#: so it fills the slots for real.
 #: Each is re-sent in the framing of every increment, so each earns its tokens
 #: by changing what the worker does (FR-009).
 SELF_FIX_INVARIANTS = [

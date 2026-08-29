@@ -117,9 +117,9 @@ whole engine seam (host → docker → runner → ACP agent → claude → back)
 mkdir -p /tmp/sc-l2 && cd /tmp/sc-l2 && git init -q && cd -
 python drive.py register_project \
   '{"project_id":"sc-l2","name":"L2 shakedown","workspace_dir":"/tmp/sc-l2"}'
-python drive.py start_program \
-  '{"project_id":"sc-l2","goal":"create a Python package mathx with an add() and a mul() function, each in its own module, plus a tests/ file that imports both"}'
-# → {"goal_id":"…","mode":"one_shot",…}   (ADR 0003: start_program files a ONE-SHOT GOAL)
+python drive.py create_goal \
+  '{"goal_id":"sc-l2-mathx","project_id":"sc-l2","mode":"one_shot","objective":"create a Python package mathx with an add() and a mul() function, each in its own module, plus a tests/ file that imports both","done_when":"mathx exposes add() and mul() in separate modules with a tests/ file importing both"}'
+# → {"goal_id":"…","mode":"one_shot",…}   (the start_program alias was retired by spec 022 US3)
 ```
 
 ```bash

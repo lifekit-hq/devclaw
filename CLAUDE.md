@@ -14,7 +14,8 @@ the void. **One primitive, one dial** (ADR 0003): goal and program are the same
 thing; `create_goal(mode=long_lived|one_shot)` selects the re-evaluation cadence over
 ONE identical execution path — the worker plans and executes via speckit
 in-sandbox (spec 008; the host-cognition chain was removed by the 008 shrink) —
-(`start_program` is a deprecated alias for one_shot). It sits **behind MCP** and is driven by an **OpenClaw waiter agent** that
+(the `start_program` alias, and the whole program/DAG dispatch lane behind it,
+were retired by spec 022 US3). It sits **behind MCP** and is driven by an **OpenClaw waiter agent** that
 translates chat into tool calls; devclaw never talks to the user. Cognition is
 always `claude` over Pro/Max **OAuth — no API key, no metered billing**.
 
@@ -189,8 +190,8 @@ devclaw/
 ├── prompts/         system prompts as .md files (load_prompt(slug)); the 3 gate prompts live in quality/prompts/
 ├── task_change.py   ONE mechanical answer to "what did the agent change?" (spec 013)
 ├── config.py        the single doorway for DEVCLAW_* env config (one home, one default, one parse)
-├── queue/           TaskQueue's mixin modules — settle.py (execute/settle path), programs.py (DAG programs), admission.py (memory + breaker brakes)
-├── program_plan.py · cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
+├── queue/           TaskQueue's mixin modules — settle.py (execute/settle path), admission.py (memory + breaker brakes)
+├── cognition.py · llm_call.py · state_store/ · task_queue.py · project_registry.py · cli.py · …
 runner/runner.py   the in-sandbox worker harness — drives the ACP agent via acp_client.py; line-delimited JSON on stdout
 .sandcastle/Dockerfile       per-task sandbox image
 docs/                        architecture + flows + env + runbooks (start at docs/INDEX.md)

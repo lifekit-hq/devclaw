@@ -105,20 +105,8 @@ class _MidPollConflictEngine(FakeEngine):
         return result
 
 
-class _ProgramFinderEngine(FakeEngine):
-    """FakeEngine + the latest_program_for_goal finder the sweep probes."""
-
-    def __init__(self, *, program: "tuple[str, str] | None" = None, **kw):
-        super().__init__(**kw)
-        self.program = program
-
-    def latest_program_for_goal(self, goal_id: str):
-        return self.program
-
-
 class _TaskFinderEngine(FakeEngine):
-    """FakeEngine + the latest_task_for_goal finder the sweep probes (PR7 —
-    extends re-adoption from programs-only to tasks)."""
+    """FakeEngine + the latest_task_for_goal finder the sweep probes."""
 
     def __init__(self, *, task: "tuple[str, str, str] | None" = None, **kw):
         super().__init__(**kw)
@@ -354,8 +342,10 @@ async def test_settlement_seeding_from_legacy_log(tmp_path):
     """A pre-PR7 goal with a settle line only in its log and zero settlement
     rows must answer is_settled(...) True from the one-shot migration's seed
     alone (no re-adoption needed) — matching exactly what the old
-    log_contains(f" {id} → ") guard used to answer True for. A DIFFERENT,
-    unlogged ref on the SAME goal is still re-adopted normally.
+    log_contains(f" {id} → ") guard used to answer True for. An already-settled
+    ref is left alone by the sweep. (The program-ref re-adoption halves of this
+    test died with the program/DAG lane, spec 022 US3 — the sweep now probes
+    only the task finder.)
 
     The log.md is planted BEFORE the store is constructed: #617 moved the
     seed out of ``is_settled`` and into the construction-time migration, so
@@ -364,18 +354,17 @@ async def test_settlement_seeding_from_legacy_log(tmp_path):
     d = tmp_path / "g"
     d.mkdir(parents=True, exist_ok=True)
     (d / "log.md").write_text(
-        "# g — log\n\n- [2026-07-01T00:00:00] start_program p-1 → done\n"
+        "# g — log\n\n- [2026-07-01T00:00:00] implement_feature t-1 → done\n"
     )
     store = GoalStore(tmp_path, now=Clock())   # the one-shot migration runs HERE
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
 
-    assert store.is_settled("g", "p-1") is True  # seeded by the migration
+    assert store.is_settled("g", "t-1") is True  # seeded by the migration
 
-    swept = await sweep_orphaned_refs(store, _ProgramFinderEngine(program=("p-1", "some program")))
+    swept = await sweep_orphaned_refs(
+        store, _TaskFinderEngine(task=("t-1", "some task", "implement_feature"))
+    )
     assert swept == {}  # already settled — sweep leaves it alone
-
-    swept2 = await sweep_orphaned_refs(store, _ProgramFinderEngine(program=("p-2", "unlogged program")))
-    assert swept2 == {"g": "program p-2"}  # a different, unlogged program IS re-adopted
 
 
 # ---- 7. sweep extends to tasks ----------------------------------------------

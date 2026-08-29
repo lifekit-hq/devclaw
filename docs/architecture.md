@@ -33,9 +33,9 @@ knows the paradigm already knows the contract.
 | The milestone-level objective | **Saga** / long-running process | a goal — authored from five named slots, never prose (spec 012 US2: objective · done_when · out_of_scope · invariants · established) |
 | The execution atom | **Unit of Work** (Fowler) | one sandbox run → one atomic, verified, PR-able change-set |
 | The plan | **Task graph (DAG)** | `tasks.md`; `[P]` marks topological independence — parallelism is *data in the plan*, never executor control flow |
-| Parallel safety | **Hermetic action with declared I/O** (Bazel) | a fan-out increment's declared file scope, checked at settle — always-hard, zero-LLM (`loom/declared_scope.py`) |
+| Parallel safety | **Hermetic action with declared I/O** (Bazel) | a claimed `[P]` task's declared file scope, checked at settle — always-hard, zero-LLM (`loom/declared_scope.py`) |
 | Concurrency default | **Single-writer / actor-per-project** | at most one goal actively dispatching per project |
-| Integration | **Merge queue** (Bors) | serial integration of concurrently-executed increments, in plan order (`loom/merge_queue.py`; fan-out is behind `DEVCLAW_FANOUT`, default off) |
+| Integration | ~~**Merge queue** (Bors)~~ | *removed by spec 022 US3* — the dormant fan-out lane and its serial merge queue (`loom/merge_queue.py`, `DEVCLAW_FANOUT`) were demolished; every increment integrates sequentially on the goal branch |
 
 ### A saga is authored against a schema
 
@@ -243,21 +243,12 @@ When the tick decides to *do* something (not just think):
    because the base is pinned and every attempt is judged in full against it, a
    retry now KEEPS the workspace and iterates on its own output instead of being
    rewound to a clean base.
-   **Planned fan-out (spec 010 US3, `DEVCLAW_FANOUT`, off by default)** is what
-   that gate makes safe. When a goal's task graph declares consecutive `[P]`
-   tasks with pairwise-disjoint declared scopes, the dispatch choke point reads
-   that group out of the plan (`goal/fanout.py`, zero LLM) and dispatches it as
-   ONE program of concurrent lanes — so the goal still carries a single
-   in-flight ref and every settle/observability surface is unchanged. Each lane
-   runs in its own checkout (two agents cannot share a working tree). They
-   INTEGRATE serially: `loom/merge_queue.py` admits one lane at a time, strictly
-   in plan order, and `delivery/integrate.py` merges it into the shared goal
-   workspace locally (no remote contention, no force-push) before the one
-   delivery to the goal branch. A lane that fails — its gates, or its merge —
-   fails alone and releases its slot. Concurrency degree is
-   `min(plan, DEVCLAW_MAX_CONCURRENT_PER_PROGRAM, DEVCLAW_MAX_CONCURRENT)`: a
-   worker never spawns a worker, and the sandbox carries no devclaw MCP surface
-   it could ask through.
+   *(Planned fan-out — spec 010 US3, the `DEVCLAW_FANOUT`-gated dispatch of a
+   `[P]` group as one program of concurrent lanes — was removed by spec 022
+   US3 along with the whole program/DAG lane: it never left its
+   off-by-default dormancy. The declared-scope gate survives it, enforcing an
+   increment's own claimed `[P]` scope; a worker still never spawns a worker —
+   the sandbox carries no devclaw MCP surface it could ask through.)*
 6. **Deliver, then settle** — for `deliver=True` tasks the change becomes a
    branch/PR *before* `done` is observable, so a poller never reads "done
    without a PR". A delivery that can't push/PR settles `failed`, never a silent
@@ -529,7 +520,8 @@ and `tests/test_self_triage.py`.
 1. **No cross-layer reach-through.** The chain is strict: `1 → 2 → 3`
    (cognition) or `1 → 2 → 4 → 5` (execution).
 2. **Single source of truth per state.** Goal state in `GoalStore`
-   (SQLite-backed), task/program state in the same `StateStore`. Each owned by
+   (SQLite-backed), task state in the same `StateStore` (plus historical
+   `programs` rows from the lane spec 022 retired). Each owned by
    layer 2; no caching in upstream layers; generated `.md`/`.yaml` files are
    views, never read back for decisions.
 3. **Engines are pure async callables.** An engine may not assume which
@@ -692,7 +684,7 @@ devclaw/
 ├── quality/         gates past green tests — pre-PR review, browser_gate, reachability
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
 ├── state_store/     StateStore package (rows · control · problems · observability · evals · core) — the append-only log
-├── task_queue.py + queue/ + task_{git,notify}.py    layer 4 — dispatch, concurrency, settle (queue/ = the settle/programs/admission mixins)
+├── task_queue.py + queue/ + task_{git,notify}.py    layer 4 — dispatch, concurrency, settle (queue/ = the settle/admission mixins)
 └── prompts/         system prompts as .md files (load_prompt(slug)); gate prompts live in quality/prompts/
 runner/runner.py    layer 5 — the in-sandbox harness
 ```

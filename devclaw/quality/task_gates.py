@@ -254,13 +254,13 @@ class _MaterializeGate:
 class _ScopeGate:
     """Declared-file-scope gate (spec 010 FR-103) — always-hard, zero-LLM.
 
-    A `[P]` task earns the right to run concurrently by declaring the paths it
-    will touch; this is where that declaration stops being a promise. It reads
+    A `[P]` task declares the paths it will touch; this is where that
+    declaration stops being a promise. It reads
     the SAME shared diff test-integrity just consumed and asks one question: did
     the change stay inside what its plan declared?
 
-    Self-skipping by design. An increment that neither was dispatched with a
-    pinned scope nor claimed a scoped `[P]` task has no contract, so the gate is
+    Self-skipping by design. An increment that
+    claimed no scoped `[P]` task has no contract, so the gate is
     *not consulted* — it produces no verdict to ship on and leaves every ordinary
     increment byte-unaffected. When it IS consulted it fails CLOSED: a violation
     blocks, and so does a check that cannot decide (a crash is not an approval,
@@ -285,7 +285,7 @@ class _ScopeGate:
         # third component owning its definition — the defect, not a fix.
         diff = await gi.diff()
         try:
-            check = scope_check(diff, gi.declared_scope)
+            check = scope_check(diff)
         except Exception as err:  # noqa: BLE001 — unreviewable ⇒ fail closed (#186)
             return GateVerdict.failed(
                 self.gate_id,

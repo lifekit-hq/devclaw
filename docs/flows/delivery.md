@@ -43,18 +43,14 @@ whether the PR has gone CONFLICTING with its base
 the owner — the next increment would otherwise stack onto a branch that can no
 longer land. An unknown verdict says nothing; it never reads as "all clear".
 
-## Programs (the DAG substrate)
+## Programs (removed by spec 022 US3)
 
-Programs are the queue's DAG substrate, and `ref_kind="program"` still exists.
-In production the only producer is spec 010's `[P]` fan-out, and it does **not**
-make a PR stack: lanes run in their own workspaces and integrate **locally**
-onto the shared goal branch (`delivery/integrate.py`, serialized by
-`loom/merge_queue.py`), so delivery is still one push and one cumulative PR,
-exactly as for a sequential increment.
-
-A caller that submits an explicitly pre-planned DAG can still have each task
-open its own PR. Since #641 nothing reconciles such a stack — the owner reviews
-and lands those PRs by hand.
+The program/DAG dispatch lane — and the dormant `[P]` fan-out that was its
+last producer — was demolished by spec 022 US3. Nothing creates program rows
+anymore; `ref_kind="program"` survives only on legacy persisted refs (polling
+one now blocks the goal loudly), and the `programs` table stays readable via
+`get_program`/`list_programs` as history. Delivery has exactly one shape: one
+increment at a time on the goal branch, one push, one cumulative PR.
 
 ## Why nothing merges (#641)
 
@@ -65,9 +61,9 @@ that reached it by seeding a goal shape production had stopped writing.
 
 The program PR-stack reconciler went with it. It existed to shepherd a stack of
 per-action PRs to main and close the superseded ones; goal-branch delivery
-never makes a stack, and neither does fan-out. What was left was a hazard
-rather than a capability: the only PR a fan-out program has is the cumulative
-goal-branch PR, so a reconcile that merged it would have re-created the amnesia
+never makes a stack. What was left was a hazard
+rather than a capability: a reconcile that merged the cumulative
+goal-branch PR would have re-created the amnesia
 bug through a path that bypassed the goal-branch skip.
 
 The through-line: in companion mode a human reviews and merges every PR.

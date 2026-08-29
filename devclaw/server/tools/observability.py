@@ -41,11 +41,11 @@ async def get_status(task_id: str) -> str:
 
 @mcp.tool
 async def get_program(program_id: str) -> str:
-    """Return a program row and all its tasks in dependency order. Program-level
-    observability one layer below the goal: for a goal-dispatched program the goal
-    (get_goal / tail_goal) is the unit you own and steer — this is its internal
-    task DAG. Use to poll a program submitted via start_program, or to inspect a
-    goal's child program at per-task detail."""
+    """Return a HISTORICAL program row and all its tasks in dependency order.
+    The program/DAG dispatch lane was retired (spec 022 US3): nothing creates
+    program rows anymore, but rows written before the retirement survive in the
+    ``programs`` table — this read-only surface inspects one at per-task
+    detail."""
     program = store.get_program(program_id)
     if not program:
         raise ToolError(f"unknown program_id: {program_id}")
@@ -57,11 +57,10 @@ async def get_program(program_id: str) -> str:
 
 @mcp.tool
 async def list_programs(limit: Annotated[int, Field(ge=1, le=1000)] = 50) -> str:
-    """List recent programs (parallel task DAGs), most-recent first. Program-level
-    plumbing one layer below the goal: goals dispatch programs, and the
-    start_program alias files a one-shot GOAL whose child program lands here once
-    dispatched — steer and cancel via the goal, not the program. Use to discover
-    program_ids for get_program or get_events."""
+    """List HISTORICAL program rows (the retired program/DAG lane, spec 022
+    US3), most-recent first. Nothing creates program rows anymore; use this to
+    discover program_ids for get_program or get_events on pre-retirement
+    history."""
     programs = store.list_programs(limit=limit)
     return json.dumps([p.to_dict() for p in programs], indent=2)
 

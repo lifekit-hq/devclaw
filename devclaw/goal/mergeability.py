@@ -10,9 +10,8 @@ because a future reader will otherwise reinvent them:
   the branch and forces the next run to re-fork from main, which is how a goal
   loses its accumulated work.
 * The reconciler existed to shepherd a STACK of per-action PRs to main and close
-  the superseded ones. Goal-branch delivery never makes a stack, and neither does
-  spec 010 fan-out — lanes integrate locally onto the goal branch and delivery is
-  still one push, one PR (``devclaw/delivery/integrate.py``).
+  the superseded ones. Goal-branch delivery never makes a stack — delivery is
+  still one push, one PR.
 * In companion mode a human reviews and merges. Machinery that merges without one
   is compensating for an absent reviewer, not adding a capability.
 

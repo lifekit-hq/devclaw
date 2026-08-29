@@ -1,6 +1,6 @@
 """Async task executor — DB-driven, crash-safe, heartbeat-paced.
 
-The MCP handler calls ``submit()`` / ``submit_program()`` and gets an id back
+The MCP handler calls ``submit()`` and gets an id back
 immediately; engine runs happen in the background and the state store is flipped
 when they settle. Single-writer-to-state by design — only this queue mutates rows.
 
@@ -18,14 +18,10 @@ build survives restarts.
 COUNT) and returns immediately if not — an idle tick costs ~nothing, so we never
 burn the engine on empty ticks.
 
-Programs (DAGs): a program is planned (the planner → tasks with deps), then each
-pump schedules ready tasks (deps all ``done``) up to the per-program + global
-caps. A single sibling failure makes the program "sticky failed" — pending
-siblings don't start, in-flight ones run to completion, then the program fails.
-
 Notifications: standalone tasks fire their own ``notify_url`` on terminal state
-(bounded retries); program-child tasks don't — only the program-level notify
-fires once the program terminates (one program in, one notify out).
+(bounded retries). (The program/DAG lane and its program-level notify were
+retired by spec 022 US3; the ``programs`` table survives as historical rows
+behind the read-only get_program/list_programs surfaces.)
 """
 
 from __future__ import annotations
@@ -38,24 +34,6 @@ import uuid
 from typing import Awaitable, Callable, Optional, Protocol
 
 from .engine import Engine
-from .loom.merge_queue import MergeQueue
-from .llm_call import PlannerError
-from .program_plan import PlannedTask
-
-
-async def _no_host_planner(goal: str, workspace_dir: str) -> "list[PlannedTask]":
-    """The queue's default program planner since the host-cognition chain was
-    removed (spec 008 shrink, #539): planning lives in the worker's speckit
-    run, so an un-planned program submission is REFUSED loudly — the existing
-    mark-program-failed + notify path carries the reason to the owner instead
-    of a silent hang. Callers with a real plan pass ``planned=`` (or inject a
-    planner, as tests do); everything else files a goal via ``create_goal``."""
-    raise PlannerError(
-        "host program planning was removed (spec 008 shrink): submit_program "
-        "without pre-planned tasks is no longer supported — pass planned tasks "
-        "explicitly, or file a goal (create_goal) and let the worker plan via "
-        "speckit"
-    )
 from .quality import format_feedback, review_gate
 from .quality.reachability import judge_reachability
 from . import config as _config
@@ -99,7 +77,6 @@ from .queue.admission import (  # noqa: F401 — constants re-exported for calle
     MEM_LAUNCH_FLOOR_BYTES,
     SANDBOX_MEMORY_BYTES,
 )
-from .queue.programs import ProgramsMixin
 from .queue.settle import (  # noqa: F401 — helpers re-exported for callers/tests
     SettleMixin,
     _PAUSED,
@@ -111,8 +88,7 @@ from .queue.settle import (  # noqa: F401 — helpers re-exported for callers/te
 )
 
 NOTIFY_BACKOFF_MS = (1000, 2000, 4000)
-MAX_CONCURRENT_PER_PROGRAM = _config.MAX_CONCURRENT_PER_PROGRAM
-#: global cap on concurrently-running tasks across all programs — backpressure
+#: global cap on concurrently-running tasks — backpressure
 GLOBAL_MAX_CONCURRENT = _config.GLOBAL_MAX_CONCURRENT
 
 
@@ -150,12 +126,11 @@ class _ProjectOverrides(Protocol):
 
     def resolve_override(self, project_id: "str | None", key: str, default): ...
 
-PlannerFn = Callable[[str, str], Awaitable[list[PlannedTask]]]
 #: the execution engine — orchestration depends on this seam, not on the agent
 RunnerFn = Engine
 
 
-class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
+class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
     @staticmethod
     def _derive_engine_kind(runner: "RunnerFn") -> str:
         """Map a runner function to a short label for the trace ("stub" /
@@ -177,19 +152,12 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
     def __init__(
         self,
         store: StateStore,
-        planner: Optional[PlannerFn] = None,
         runner: Optional[RunnerFn] = None,
         on_settle: Optional[Callable[[], None]] = None,
         reviewer: Optional[Callable[..., Awaitable[dict]]] = None,
         reachability_judge: Optional[Callable[..., Awaitable[dict]]] = None,
     ) -> None:
         self._store = store
-        # Serial integration of concurrently-executed fan-out lanes (spec 010
-        # FR-102). In-memory and per-process on purpose: it orders work that is
-        # running in THIS process, and a restart re-runs the whole group from the
-        # plan via the existing recover() path rather than resuming an ordering
-        # for lanes that no longer exist.
-        self._merge_queue = MergeQueue()
         # This queue's sandbox-owner id (derived from its state-DB path): stamps
         # every launched sandbox and scopes the startup sweep, so two devclaw
         # processes sharing one docker daemon (live service + a measure/eval
@@ -200,9 +168,7 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
         #: per-pump host-RAM budget for sandbox launches (None off the sandcastle
         #: path) — set fresh by every _pump; declared here so the type is honest.
         self._mem_budget: "int | None" = None
-        # Injectable for tests — the default REFUSES loudly (host planning was
-        # removed; see _no_host_planner). The runner defaults to sandcastle.
-        self._planner: PlannerFn = planner or _no_host_planner
+        # Injectable for tests; defaults to the real sandbox engine.
         self._runner: RunnerFn = runner or run_sandcastle
         # A short engine-kind label for trace events ("stub" / "sandcastle" /
         # "host") — derived from the runner's qualified name so
@@ -221,7 +187,7 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
         self._reachability_judge: Callable[..., Awaitable[dict]] = (
             reachability_judge or judge_reachability
         )
-        # Optional in-process hook fired whenever a task/program reaches a
+        # Optional in-process hook fired whenever a task reaches a
         # terminal state — the goal layer wires its heartbeat-wake here so a
         # finished engine run triggers an immediate goal tick (replacing the old
         # cross-service HTTP /wake). Must be cheap + non-throwing.
@@ -232,8 +198,6 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
         #: reach in and tear a specific run down (the docker subprocess dies via
         #: the runner's finally). Only ever holds genuinely in-flight tasks.
         self._running_tasks: dict[str, asyncio.Task] = {}
-        #: program_ids whose planner is in flight — guards against double-plan
-        self._planning: set[str] = set()
         #: the heartbeat tick task (started by the server, not in tests)
         self._tick_task: Optional[asyncio.Task] = None
         #: optional project registry, wired post-construction (see set_registry) —
@@ -280,9 +244,8 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
 
     def cancel_task(self, task_id: str) -> bool:
         """Abort one task. Marks it 'cancelled' (no-op if already terminal), then
-        tears down its live run. If the task belongs to a program, the program is
-        sticky-cancelled on the next pump (a hole in the DAG blocks its dependents).
-        Returns True iff the task was actually pending/running (i.e. abortable)."""
+        tears down its live run. Returns True iff the task was actually
+        pending/running (i.e. abortable)."""
         moved = self._store.mark_task_cancelled(task_id)
         if not moved:
             return False  # already done/failed/cancelled — nothing to abort
@@ -295,8 +258,7 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
             payload_json=json.dumps({"reason": "cancelled by client"}),
         )
         self._abort_live_task(task_id)
-        # A slot may have freed (standalone) or the program now needs to
-        # terminalize as cancelled — reconcile.
+        # A slot may have freed — reconcile.
         self._pump()
         return True
 
@@ -389,9 +351,8 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
         """One-time crash recovery — call at startup, BEFORE ticking/serving.
 
         A task left ``running`` by a dead process has no live execution behind
-        it, so reset it to ``pending`` to be re-run; log each reap. Programs left
-        non-terminal are picked up by the next pump (re-planned if they never got
-        tasks). Returns the number of tasks reaped.
+        it, so reset it to ``pending`` to be re-run; log each reap. Returns the
+        number of tasks reaped.
 
         Also reaps the dead process's leaked sandbox CONTAINERS: the row reset
         below re-runs the task in a new container, but the original keeps
@@ -449,7 +410,7 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
 
     def _pump(self) -> None:
         """Reconcile execution against DB state: launch what's runnable up to the
-        global + per-program caps, and terminalize finished programs. Synchronous
+        global cap. Synchronous
         and atomic (no awaits between reading counts and claiming), so concurrent
         callers can't over-launch; ``claim_pending`` is the final guard. Returns
         fast when there's no work (cheap-idle guard)."""
@@ -515,20 +476,6 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
                     self._mem_commit_launch(need)
                     running += 1
                     self._launch(t.id, t.kind, t.workspace_dir, t.goal, None)
-
-        # Programs: re-plan stalled ones, terminalize complete ones, schedule ready.
-        for p in self._store.list_nonterminal_programs():
-            tasks = self._store.list_program_tasks(p.id)
-            if p.status == "planning" and not tasks:
-                if p.id not in self._planning:  # planner died before persisting → re-plan
-                    self._planning.add(p.id)
-                    self._spawn(self._plan_and_start(p.id, p.workspace_dir, p.goal))
-                continue
-            if self._maybe_terminalize(p, tasks):
-                continue
-            if self._workspace_break_active(p.workspace_dir):
-                continue  # break holds new launches; in-flight tasks run to completion
-            running = self._schedule_program(p, tasks, running)
 
     def _launch(
         self,
@@ -675,5 +622,5 @@ class TaskQueue(_NotifyMixin, SettleMixin, ProgramsMixin, AdmissionMixin):
         return None
 
     # ---- notify ---------------------------------------------------------
-    # _notify_task / _notify_program / _post_with_retries live in
+    # _notify_task / _post_with_retries live in
     # devclaw.task_notify._NotifyMixin (mixed into this class above).

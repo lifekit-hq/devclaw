@@ -66,7 +66,7 @@ class _RecordingCognitionGate:
         return GateVerdict.passed(self.gate_id)
 
 
-def _gate_input(diff: str, *, declared=(), diff_calls=None) -> GateInput:
+def _gate_input(diff: str, *, diff_calls=None) -> GateInput:
     async def diff_fn() -> str:
         if diff_calls is not None:
             diff_calls.append(1)
@@ -80,7 +80,6 @@ def _gate_input(diff: str, *, declared=(), diff_calls=None) -> GateInput:
         scaffold=False,
         browser_mode="flexible",
         diff_fn=diff_fn,
-        declared_scope=declared,
     )
 
 
@@ -100,15 +99,6 @@ async def test_in_scope_increment_passes_the_gate_untouched():
     gi = _gate_input(CLAIM_DIFF + _file_diff("src/widget/a.py") + _file_diff("src/widget/deep/b.py"))
     verdict = await tg._ScopeGate().check(gi)
     assert verdict.ok is True
-
-
-@pytest.mark.asyncio
-async def test_a_dispatched_lane_scope_is_enforced_without_any_plan_bookkeeping():
-    """The fan-out lane case: the host pinned the scope at dispatch, so the
-    contract holds even if the worker never checked its task row off."""
-    gi = _gate_input(_file_diff("src/core/db.py"), declared=("src/widget/**",))
-    verdict = await tg._ScopeGate().check(gi)
-    assert verdict.ok is False and "src/core/db.py" in (verdict.reason or "")
 
 
 def test_scope_violation_blocks_under_trust_as_well_as_strict():
@@ -151,7 +141,7 @@ async def test_an_unreviewable_scope_check_fails_closed(monkeypatch):
     silence (#186) — even though the parser is total so this should be
     unreachable."""
 
-    def _boom(diff, declared=None):
+    def _boom(diff):
         raise RuntimeError("parser exploded")
 
     monkeypatch.setattr(tg, "scope_check", _boom)
@@ -220,7 +210,7 @@ def _real_repo(tmp_path):
     return d, base
 
 
-def _materialized_input(workspace, base, *, declared=()) -> GateInput:
+def _materialized_input(workspace, base) -> GateInput:
     return GateInput(
         kind="implement_feature",
         goal="g",
@@ -231,7 +221,6 @@ def _materialized_input(workspace, base, *, declared=()) -> GateInput:
         change_fn=lambda: tq._capture_change(
             str(workspace), base, task_id="t1", message="chore: capture",
         ),
-        declared_scope=declared,
     )
 
 
@@ -242,17 +231,19 @@ async def test_an_unrecorded_out_of_scope_file_still_fails_the_gate(tmp_path):
     in the workspace (#630). An increment escaped its declared scope by simply
     not committing the offending file. The span the gate reads is materialized
     now (spec 013), so the file is in it — and the gate needs no probe of its
-    own to see it."""
+    own to see it. (The scope rides the increment's own claim on the task
+    graph — the dispatcher-pinned lane scope died with fan-out, spec 022.)"""
     ws, base = _real_repo(tmp_path)
+    (ws / "specs" / "010-feat" / "tasks.md").write_text(
+        "- [x] T012 [P] [US1] Renderer (scope: src/widget/**)\n"
+    )
     (ws / "src" / "widget").mkdir(parents=True)
     (ws / "src" / "widget" / "a.py").write_text("W = 1\n")
     (ws / "src" / "core").mkdir(parents=True)
     (ws / "src" / "core" / "db.py").write_text("D = 1\n")  # never recorded
     (ws / "notes.txt").write_text("scratch\n")             # never recorded
 
-    verdict = await tg._ScopeGate().check(
-        _materialized_input(ws, base, declared=("src/widget/**",))
-    )
+    verdict = await tg._ScopeGate().check(_materialized_input(ws, base))
     assert verdict.ok is False
     assert "src/core/db.py" in (verdict.reason or "")
     assert "notes.txt" in (verdict.reason or "")

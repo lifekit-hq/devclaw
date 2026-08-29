@@ -101,8 +101,7 @@ class FakeEngine:
 
     async def dispatch(self, action: Action, goal: Goal, notify_url: str) -> InFlight:
         self.dispatched.append((action, goal, notify_url))
-        ref_kind = "program" if action.tool == "start_program" else "task"
-        return self.dispatch_ref or InFlight("devclaw", action.tool, "task_x", ref_kind, action.goal)
+        return self.dispatch_ref or InFlight("devclaw", action.tool, "task_x", "task", action.goal)
 
     async def poll(self, ref: InFlight) -> PollResult:
         self.polls += 1
