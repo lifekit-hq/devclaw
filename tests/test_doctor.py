@@ -424,3 +424,22 @@ def test_project_sizing_check_fails_when_the_host_shrank(env, monkeypatch):
     fs = _findings(report, "instance.sandbox.project_sizing")
     assert fs and any(f.verdict is Verdict.FAIL for f in fs)
     assert any("no longer admittable" in f.evidence for f in fs)
+
+
+# ---- instance: goal_status.slice_hold_count column (issue #728) -----------
+
+
+def test_slice_hold_count_column_absent_detected(env):
+    """Seeded fault (spec-016 FR-014): slice_hold_count dropped → DB predates
+    issue #728; persistent dispatch holds will never escalate to blocked."""
+    db = env["store"]._db
+    db.execute("ALTER TABLE goal_status DROP COLUMN slice_hold_count")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.dispatch.goal_status_slice_hold_count")
+    assert f.verdict is Verdict.FAIL
+    assert "slice_hold_count" in f.evidence and "restart" in f.remedy
+
+
+def test_slice_hold_count_column_present_is_ok(env):
+    (f,) = _findings(_run(env), "instance.dispatch.goal_status_slice_hold_count")
+    assert f.verdict is Verdict.OK

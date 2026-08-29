@@ -45,6 +45,10 @@ are historical — not part of the current goal's work.
 - [x] Named regression: N consecutive holds → `blocked` with `blocked_kind` and
   reason naming the offending dirs (`test_slice_hold_cap_transitions_to_blocked_with_offending_dirs`;
   `test_slice_hold_count_resets_on_steer_and_resume`).
+- [x] Doctor check: `check_goal_status_slice_hold_count` verifies the
+  `slice_hold_count` column exists on a deployed instance (spec-016 FR-014:
+  a persisted state shape change ships its doctor check); seeded-fault test
+  `test_slice_hold_count_column_absent_detected` pins the drift class.
 
 ## Plan
 - `devclaw/goal/slice_guard.py` — add `speckit_offending_dirs_sync`
