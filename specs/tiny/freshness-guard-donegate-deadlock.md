@@ -41,9 +41,9 @@ Regression test in `tests/test_issue_ref_freshness.py`.
 
 ## Tasks
 - [x] Write tinyspec
-- [ ] Fix `devclaw/goal/tick.py`
-- [ ] Add regression test in `tests/test_issue_ref_freshness.py`
-- [ ] Run ruff + mypy + pytest
+- [x] Fix `devclaw/goal/tick.py`
+- [x] Add regression test in `tests/test_issue_ref_freshness.py`
+- [x] Run ruff + mypy + pytest
 
 ## Done-When
 - `test_all_refs_closed_after_gate_refusal_dispatches_worker` passes green.
