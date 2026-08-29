@@ -254,6 +254,13 @@ class GoalStatus:
     #: productive settle (a shipped increment proves the environment now
     #: fits), alongside ``heal_attempts``.
     envcap_redispatches: int = 0
+    #: consecutive ticks the dispatch-boundary single-feature-slice guard held
+    #: (issue #728). Incremented each tick the scoped check finds offending
+    #: feature dirs; reset to 0 when the guard passes or a human steers/resumes.
+    #: At ``_SLICE_HOLD_CAP`` consecutive holds the goal transitions to
+    #: ``blocked`` with ``blocked_kind="mechanical:slice_hold"`` — loud failure
+    #: over silent indefinite sleep.
+    slice_hold_count: int = 0
     #: spec 025 merge-on-close: PR URL whose squash-merge is still owed after
     #: an ``achieved`` done-gate verdict. Non-empty ⇒ the advance path retries
     #: the MERGE (zero cognition) instead of planning — the verdict already

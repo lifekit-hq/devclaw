@@ -1098,12 +1098,19 @@ async def test_dispatch_proceeds_with_single_graded_active_feature(tmp_path, mon
 
 
 @pytest.mark.asyncio
-async def test_dispatch_held_with_three_active_features(tmp_path, monkeypatch):
-    """(c) 3-feature attempt is rejected at the gate — named regression for
-    issue #679. Before this fix the system was fail-open and dispatched anyway."""
-    # total=3, graded=3, active=3
+async def test_dispatch_held_with_concurrent_build_ahead(tmp_path, monkeypatch):
+    """(c) Genuine concurrent build-ahead is rejected — named regression for
+    issue #679 (updated by #728 denominator fix). The guard holds only when
+    speckit_offending_dirs_sync returns dirs, meaning 2+ features were advanced
+    in the same session (same mtime window, not historical leftovers)."""
     monkeypatch.setattr(
         "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (3, 3, 3)
+    )
+    # Simulate two genuinely concurrent (same-session) active features beyond
+    # the current one — the build-ahead signal the scoped guard still catches.
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_offending_dirs_sync",
+        lambda ws, cur: ["specs/002-b", "specs/003-c"],
     )
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
@@ -1116,7 +1123,114 @@ async def test_dispatch_held_with_three_active_features(tmp_path, monkeypatch):
     assert engine.dispatched == []
     assert evaluator.calls == 0
     log = (tmp_path / "g" / "log.md").read_text()
-    assert "3 features" in log or "3 feature" in log
+    assert "specs/002-b" in log or "pending tasks" in log
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_with_historical_active_features(tmp_path, monkeypatch):
+    """Named regression for issue #728 (finance-sentry workspace shape):
+    40 dirs total, 32 graded, 5 with unchecked tasks — all historical.
+    The scoped guard finds no offending dirs (historical mtimes) so dispatch
+    PROCEEDS instead of being permanently held.
+
+    Fixture shape matches the live finance-sentry workspace measured 2026-08-28:
+    total=40, graded=32, active=5 (001-bank-account-sync, 011-connect-providers,
+    021-market-regime, 037-structured-data-sources, 039-ips-risk-boundary)."""
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (40, 32, 5)
+    )
+    # speckit_offending_dirs_sync is NOT patched: the tmp_path has no specs/ dir,
+    # so current_feature_dir_sync returns "" → speckit_offending_dirs_sync
+    # returns [] (no baseline, all dirs treated as historical) → gate allows.
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED     # historical features must not block
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_proceeds_with_real_finance_sentry_fixture(tmp_path):
+    """Named regression for issue #728 — real on-disk fixture, no guard mocks.
+
+    Constructs a workspace shaped exactly like the live finance-sentry measurement
+    (2026-08-28): 40 feature dirs, 32 with all tasks.md rows checked, 5 with
+    unchecked rows and mtimes older than the current in-flight feature dir (the
+    historical offenders), plus 1 current in-flight dir with the NEWEST mtime and
+    2 ungraded dirs (spec.md only, no tasks.md).
+
+    Unlike test_dispatch_proceeds_with_historical_active_features (which patches
+    speckit_feature_state_sync directly and uses a no-specs workspace), this test
+    drives the real guard functions against the on-disk structure so the mtime-
+    scoping logic in speckit_offending_dirs_sync is proven end-to-end. Dispatch
+    must proceed: DISPATCHED, not SLEPT."""
+    import os as _os
+
+    _CHECKED_TASKS = (
+        "# Tasks\n"
+        "- [x] T001 [US1] scaffold the module\n"
+        "- [x] T002 [US1] wire the endpoint\n"
+        "- [x] T003 [US2] add the second story\n"
+    )
+    _PENDING_TASKS = (
+        "# Tasks\n"
+        "- [ ] T001 [US1] scaffold the module\n"
+        "- [x] T002 [US1] wire the endpoint\n"
+    )
+
+    workspace = tmp_path / "workspace"
+    specs = workspace / "specs"
+
+    # 32 completed feature dirs — all tasks checked, very old mtime
+    for i in range(1, 33):
+        feat = specs / f"{i:03d}-completed-{i}"
+        feat.mkdir(parents=True)
+        (feat / "tasks.md").write_text(_CHECKED_TASKS)
+        _os.utime(feat / "tasks.md", (1_000, 1_000))
+
+    # 5 historical active dirs — unchecked tasks, OLD mtime
+    historical = [
+        "001-bank-account-sync",
+        "011-connect-providers",
+        "021-market-regime",
+        "037-structured-data-sources",
+        "039-ips-risk-boundary",
+    ]
+    for feat_name in historical:
+        feat = specs / feat_name
+        feat.mkdir(parents=True)
+        (feat / "tasks.md").write_text(_PENDING_TASKS)
+        _os.utime(feat / "tasks.md", (2_000, 2_000))  # old — historical
+
+    # 1 current in-flight feature — unchecked tasks, NEWEST mtime
+    current_feat = specs / "040-outflow-honesty"
+    current_feat.mkdir(parents=True)
+    (current_feat / "tasks.md").write_text(_PENDING_TASKS)
+    _os.utime(current_feat / "tasks.md", (9_000, 9_000))  # newest → current
+
+    # 2 ungraded dirs (spec.md only, no tasks.md) to reach 40 total
+    for uname in ("050-ungraded-a", "051-ungraded-b"):
+        ufeat = specs / uname
+        ufeat.mkdir(parents=True)
+        (ufeat / "spec.md").write_text("# Spec\n")
+
+    # Seed the goal pointing at the workspace with the real specs structure
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", workspace_dir=str(workspace))
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    # The 5 historical dirs have mtime < current dir's mtime → not offending.
+    # speckit_offending_dirs_sync returns [] → dispatch PROCEEDS.
+    assert out is Outcome.DISPATCHED, (
+        f"expected DISPATCHED but got {out}; "
+        "historical feature dirs with old mtimes must not block dispatch"
+    )
+    assert len(engine.dispatched) == 1
 
 
 @pytest.mark.asyncio
@@ -1167,6 +1281,102 @@ async def test_speckit_dispatch_gate_fails_open_on_probe_error(tmp_path, monkeyp
 
     assert out is Outcome.DISPATCHED     # sailed through despite the probe error
     assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_slice_hold_cap_transitions_to_blocked_with_offending_dirs(
+    tmp_path, monkeypatch
+):
+    """N consecutive holds escalate to blocked with blocked_kind='mechanical:slice_hold'
+    and a reason naming the offending dirs — named regression for issue #728 Part B.
+    Seeds a goal at slice_hold_count == _SLICE_HOLD_CAP - 1, patches both probe
+    functions to return one offending dir, ticks once, and asserts the goal reaches
+    blocked (not idle), blocked_kind names the mechanism, and the offending dir
+    appears in the blocked reason."""
+    from devclaw.goal.tick_dispatch import _SLICE_HOLD_CAP
+
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_feature_state_sync", lambda ws: (3, 3, 3)
+    )
+    monkeypatch.setattr(
+        "devclaw.goal.slice_guard.speckit_offending_dirs_sync",
+        lambda ws, cur: ["specs/001-a"],
+    )
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(slice_hold_count=_SLICE_HOLD_CAP - 1))
+    evaluator = FakeClaude()
+    engine = FakeEngine()
+    notifier = RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.BLOCKED
+    assert engine.dispatched == []
+    assert evaluator.calls == 0          # zero-token: pure fs probe, no LLM
+    saved = store.load_status("g")
+    assert saved.phase == "blocked"
+    assert saved.blocked_kind == "mechanical:slice_hold"
+    assert "specs/001-a" in (saved.blocked_on or ""), (
+        f"offending dir not in blocked_on: {saved.blocked_on!r}"
+    )
+    assert saved.slice_hold_count == 0   # reset on transition to blocked
+    owner_pings = [m for m in notifier.sent if "specs/001-a" in m]
+    assert owner_pings, f"expected an owner ping naming the offending dir; got {notifier.sent}"
+
+
+def test_slice_hold_count_resets_on_steer_and_resume(tmp_path):
+    """steer_goal and resume_goal must zero slice_hold_count so a human who
+    resolves a mechanical:slice_hold block doesn't re-trigger the cap on the
+    very next hold (issue #728 Part B)."""
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+    from devclaw.goal.tick_dispatch import _SLICE_HOLD_CAP
+
+    goals_dir = tmp_path / "goals"
+    seed_goal(goals_dir, "g")
+
+    db = StateStore(str(tmp_path / "state.db"))
+    try:
+        cfg = GoalConfig(goals_dir=goals_dir, notify_url="", tick_seconds=900, verify_done=False)
+        svc = GoalService(TaskQueue(db), db, config=cfg)
+
+        # steer_goal: unblock a mechanical:slice_hold → slice_hold_count must be 0
+        svc._goal_store.save_status(
+            "g",
+            GoalStatus(
+                phase="blocked",
+                blocked_on="specs/001-a has pending tasks",
+                blocked_kind="mechanical:slice_hold",
+                slice_hold_count=_SLICE_HOLD_CAP,
+            ),
+        )
+        svc.steer_goal("g", "narrowed to one feature — carry on")
+        saved = svc._goal_store.load_status("g")
+        assert saved.phase == "idle"
+        assert saved.slice_hold_count == 0, (
+            f"steer_goal must zero slice_hold_count; got {saved.slice_hold_count}"
+        )
+
+        # resume_goal: same contract
+        svc._goal_store.save_status(
+            "g",
+            GoalStatus(
+                phase="blocked",
+                blocked_on="specs/001-a has pending tasks",
+                blocked_kind="mechanical:slice_hold",
+                slice_hold_count=_SLICE_HOLD_CAP,
+            ),
+        )
+        svc.resume_goal("g")
+        saved = svc._goal_store.load_status("g")
+        assert saved.phase == "idle"
+        assert saved.slice_hold_count == 0, (
+            f"resume_goal must zero slice_hold_count; got {saved.slice_hold_count}"
+        )
+    finally:
+        db.close()
 
 
 # ---- #394: total merge-policy resolution + settle-time mergeability --------

@@ -20,6 +20,7 @@ from devclaw.goal.slice_guard import (
     count_slice_advances,
     current_feature_dir_sync,
     speckit_feature_state_sync,
+    speckit_offending_dirs_sync,
     tasks_flips_sync,
 )
 
@@ -402,3 +403,110 @@ def test_speckit_feature_state_mixed_graded_and_ungraded(tmp_path):
     assert total == 2
     assert graded == 1
     assert active == 1
+
+
+# ---- speckit_offending_dirs_sync: scoped dispatch-gate enforcement ----------
+# Tests for the issue #728 denominator fix: historical feature dirs (older
+# mtime) must not block dispatch of the current goal's next increment.
+
+
+def test_offending_dirs_empty_when_no_current_dir(tmp_path):
+    """No current_dir means no baseline — all other active dirs are historical.
+    Returns [] so a fresh goal (no prior increments) is never held."""
+    repo = tmp_path / "repo"
+    for feat in ("001-a", "002-b", "003-c"):
+        (repo / "specs" / feat).mkdir(parents=True)
+        (repo / "specs" / feat / "tasks.md").write_text(_TASKS)
+    assert speckit_offending_dirs_sync(str(repo), "") == []
+    assert speckit_offending_dirs_sync(str(repo)) == []  # default arg
+
+
+def test_offending_dirs_empty_when_others_are_historical(tmp_path):
+    """Named regression for issue #728 — finance-sentry workspace shape:
+    40 dirs total, 32 graded, 5 with unchecked tasks (historical), 1 current.
+    The 5 historical dirs have OLD mtimes; the current dir has a NEWER mtime.
+    speckit_offending_dirs_sync must return [] so dispatch is not blocked."""
+    repo = tmp_path / "repo"
+    # 35 completed feature dirs (no unchecked tasks)
+    for i in range(1, 36):
+        feat = f"{i:03d}-completed-{i}"
+        (repo / "specs" / feat).mkdir(parents=True)
+        all_done = _flip(
+            _TASKS,
+            "T000 scaffold the repo skeleton",
+            "T001 [P] [US1] scaffold the module",
+            "T002 [US1] wire the endpoint",
+            "T003 [P] [US2] add the second story",
+        )
+        (repo / "specs" / feat / "tasks.md").write_text(all_done)
+        os.utime(repo / "specs" / feat / "tasks.md", (1_000, 1_000))  # very old
+
+    # 5 active historical features (unchecked tasks, OLD mtime)
+    historical_active = [
+        "001-bank-account-sync",
+        "011-connect-providers",
+        "021-market-regime",
+        "037-structured-data-sources",
+        "039-ips-risk-boundary",
+    ]
+    for feat in historical_active:
+        (repo / "specs" / feat).mkdir(parents=True)
+        (repo / "specs" / feat / "tasks.md").write_text(_TASKS)
+        os.utime(repo / "specs" / feat / "tasks.md", (2_000, 2_000))  # old
+
+    # Current feature: the one the goal is actively working on (NEWEST mtime)
+    current_feat = "040-outflow-honesty"
+    (repo / "specs" / current_feat).mkdir(parents=True)
+    (repo / "specs" / current_feat / "tasks.md").write_text(_TASKS)
+    os.utime(repo / "specs" / current_feat / "tasks.md", (9_000, 9_000))  # newest
+
+    current_dir = f"specs/{current_feat}"
+    offending = speckit_offending_dirs_sync(str(repo), current_dir)
+    # The 5 historical features are OLDER than the current dir → not offending
+    assert offending == [], f"expected no offending dirs, got {offending}"
+
+
+def test_offending_dirs_catches_concurrent_build_ahead(tmp_path):
+    """Two features modified at the SAME time (same session) are both concurrent.
+    The second one (not current) is returned as offending — the build-ahead
+    signal the scoped guard still catches."""
+    repo = tmp_path / "repo"
+    (repo / "specs" / "001-feature-a").mkdir(parents=True)
+    (repo / "specs" / "001-feature-a" / "tasks.md").write_text(_TASKS)
+    (repo / "specs" / "002-feature-b").mkdir(parents=True)
+    (repo / "specs" / "002-feature-b" / "tasks.md").write_text(_TASKS)
+    # Both have the SAME mtime — same worker session
+    same_time = 5_000.0
+    os.utime(repo / "specs" / "001-feature-a" / "tasks.md", (same_time, same_time))
+    os.utime(repo / "specs" / "002-feature-b" / "tasks.md", (same_time, same_time))
+
+    # current_dir = 002-feature-b (lexical-last wins the mtime tie)
+    offending = speckit_offending_dirs_sync(str(repo), "specs/002-feature-b")
+    assert offending == ["specs/001-feature-a"]
+
+
+def test_offending_dirs_fails_open_on_bad_path(tmp_path):
+    """A non-existent workspace returns [] (fail-open, never raises)."""
+    assert speckit_offending_dirs_sync(str(tmp_path / "nope"), "specs/anything") == []
+
+
+def test_offending_dirs_ignores_done_features(tmp_path):
+    """A historical feature with ALL tasks checked is not active — never returned."""
+    repo = tmp_path / "repo"
+    all_done = _flip(
+        _TASKS,
+        "T000 scaffold the repo skeleton",
+        "T001 [P] [US1] scaffold the module",
+        "T002 [US1] wire the endpoint",
+        "T003 [P] [US2] add the second story",
+    )
+    (repo / "specs" / "001-old-done").mkdir(parents=True)
+    (repo / "specs" / "001-old-done" / "tasks.md").write_text(all_done)
+    os.utime(repo / "specs" / "001-old-done" / "tasks.md", (9_999, 9_999))  # even newer
+    (repo / "specs" / "002-current").mkdir(parents=True)
+    (repo / "specs" / "002-current" / "tasks.md").write_text(_TASKS)
+    os.utime(repo / "specs" / "002-current" / "tasks.md", (1_000, 1_000))
+
+    offending = speckit_offending_dirs_sync(str(repo), "specs/002-current")
+    # 001-old-done has a newer mtime but NO unchecked tasks → not offending
+    assert offending == []

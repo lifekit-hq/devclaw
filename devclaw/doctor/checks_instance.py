@@ -430,6 +430,27 @@ def check_goal_issue_identity_table(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "goal_issue_identity uniqueness table present")]
 
 
+def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
+    """Issue #728 (per spec-016 FR-014: a goal_status column change ships its
+    doctor check): the slice_hold_count column tracks consecutive dispatch holds
+    so the escalation-to-blocked logic can fire. An instance whose DB predates
+    the ALTER TABLE migration reads the column as absent; every dispatch hold
+    silently resets to 0 and the goal never escalates. A server restart runs the
+    ALTER TABLE idempotently."""
+    cid = "instance.dispatch.goal_status_slice_hold_count"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
+    if "slice_hold_count" not in cols:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal_status.slice_hold_count column absent — the DB predates issue #728; "
+            "persistent dispatch holds will never escalate to blocked",
+            remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_status.slice_hold_count column present")]
 def check_merge_on_close_columns(ctx: "InstanceContext") -> list[Finding]:
     """Spec 025 US1 (per spec-016 FR-014: a store-shape change ships its
     doctor check): merge-on-close persists ``pending_merge_pr`` /
@@ -504,6 +525,7 @@ INSTANCE_CHECKS: tuple = (
     check_pr_ledger,
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
+    check_goal_status_slice_hold_count,
     check_merge_on_close_columns,
     check_suppressed_pings_table,
 )

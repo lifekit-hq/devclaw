@@ -39,6 +39,10 @@ from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
 
+#: consecutive dispatch-boundary holds before the goal escalates to ``blocked``
+#: with ``blocked_kind="mechanical:slice_hold"`` (issue #728 Part B).
+_SLICE_HOLD_CAP = 5
+
 
 async def _branch_staleness(workspace_dir: str, goal_id: str) -> "dict | None":
     """Best-effort commits-ahead/behind probe for ``goal/<goal_id>`` vs the
@@ -174,11 +178,14 @@ async def _dispatch_action(
             return Outcome.SLEPT
     # ---- speckit contract enforcement at the dispatch boundary (issue #679) --
     # (a) block when spec dirs exist but none are graded (no tasks.md — the plan
-    #     step hasn't run); (b)/(c) block when 2+ features have pending tasks —
-    #     the single-feature-slice rule. Zero-token (pure working-tree fs read),
-    #     best-effort: a probe hiccup MUST NOT wedge dispatch. First dispatch on a
-    #     fresh goal returns (0, 0, 0) and sails through. Read-only reviews are
-    #     exempt — they don't advance features.
+    #     step hasn't run); (b) block when 2+ features have pending tasks BEYOND
+    #     the goal's current work (issue #728 denominator fix: historical feature
+    #     dirs with leftover unchecked tasks must not make a repo permanently
+    #     undispatchable). Zero-token (pure working-tree fs read), best-effort:
+    #     a probe hiccup MUST NOT wedge dispatch. First dispatch on a fresh goal
+    #     returns (0, 0, 0) and sails through. Read-only reviews are exempt.
+    #     A hold that persists for _SLICE_HOLD_CAP consecutive ticks escalates to
+    #     blocked (loud failure over silent indefinite sleep — issue #728 Part B).
     if action.tool != "review_repository":
         try:
             _total, _graded, _active = await asyncio.to_thread(
@@ -192,14 +199,53 @@ async def _dispatch_action(
                 )
                 return Outcome.SLEPT
             if _active > 1:
-                store.append_log(
-                    goal_id,
-                    f"dispatch held: {_active} features have pending tasks — "
-                    f"single-feature enforcement: narrow to one feature before dispatch",
+                # Scope the check to the goal's current work: features modified
+                # BEFORE the current feature dir are historical (prior goal runs)
+                # and must not block new dispatch. Only concurrent dirs (same or
+                # newer mtime as the current one) indicate genuine build-ahead.
+                _current = await asyncio.to_thread(
+                    _slice_guard.current_feature_dir_sync, goal.workspace_dir
                 )
-                return Outcome.SLEPT
+                _offending = await asyncio.to_thread(
+                    _slice_guard.speckit_offending_dirs_sync,
+                    goal.workspace_dir, _current,
+                )
+                if _offending:
+                    _dirs_str = ", ".join(_offending)
+                    _hold_msg = (
+                        f"dispatch held: features with pending tasks beyond current "
+                        f"work ({_dirs_str}) — narrow to one feature before dispatch"
+                    )
+                    store.append_log(goal_id, _hold_msg)
+                    _hold_count = base.slice_hold_count + 1
+                    if _hold_count >= _SLICE_HOLD_CAP:
+                        _block_reason = (
+                            f"dispatch held {_SLICE_HOLD_CAP} consecutive ticks — "
+                            f"features with pending tasks block new work: {_dirs_str}"
+                        )
+                        store.transition(
+                            goal_id, Event.BLOCK,
+                            replace(base, phase="blocked", blocked_on=_block_reason,
+                                    blocked_kind="mechanical:slice_hold",
+                                    slice_hold_count=0),
+                            expect=base, consume_steering=consume_steering,
+                        )
+                        await _notify(
+                            notifier, NotifyLevel.OWNER,
+                            f"🛑 [{goal_id}] dispatch permanently held"
+                            f" ({_SLICE_HOLD_CAP} ticks) — features with pending"
+                            f" tasks: {_dirs_str}",
+                            summarize=summarize,
+                        )
+                        return Outcome.BLOCKED
+                    store.update_status_fields(goal_id, slice_hold_count=_hold_count)
+                    return Outcome.SLEPT
         except Exception:  # noqa: BLE001 — a probe hiccup must never wedge dispatch
             pass
+    # Guard passed — reset any accumulated slice hold counter so a later hold
+    # starts from 0, not from a stale accumulated value.
+    if base.slice_hold_count != 0:
+        base = store.update_status_fields(goal_id, slice_hold_count=0)
     # Atomic dispatch (PR7): task row creation + the DISPATCH
     # transition + the log row, as ONE transaction. A crash or CAS conflict
     # anywhere inside rolls the whole unit back — the single-task-orphan
