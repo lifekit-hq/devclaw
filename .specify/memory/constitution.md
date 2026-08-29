@@ -76,9 +76,13 @@ so layers 1–4 remain domain-agnostic.
   clarify step is done. The spec records rejected alternatives — it is the
   direction memory; the retired proposal→ADR pipeline
   (`docs/proposals/` + `docs/decisions/`) is frozen history.
-- Every behavior-change PR ships a named regression test; zero-token guard
-  tests (`FakeClaude.calls == 0`) are load-bearing — if one fails, the change
-  is wrong, never the test.
+- The test suite is a tripwire net, not a coverage instrument (ruled by Denys
+  2026-08-29): a PR ships a test only when it touches an autonomous-operation
+  invariant (zero-token idle, fail-closed gates, CAS/single-writer, OAuth
+  strip/fence, pause-and-resume brakes, the materialize span, doctor
+  seeded-faults, structural guards); ordinary behavior changes ship no test.
+  Zero-token guard tests (`FakeClaude.calls == 0`) are load-bearing — if one
+  fails, the change is wrong, never the test.
 - Branch per change; squash merges; docs made stale by a diff are fixed in
   the same PR.
 - Slice novel work into independently-shippable P1/P2/P3 increments so each
