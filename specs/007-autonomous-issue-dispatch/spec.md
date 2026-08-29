@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-15
 
-**Status**: PARTIAL — `select_for_pickup()` exists in `devclaw/goal/self_issue.py` but autonomous claim stays gated OFF pending the compounding scorecard. Do not treat as unbuilt
+**Status**: PARKED — direction memory only, not scheduled (parking block added 2026-08-29 by the spec-gap audit; the prior PARTIAL line over-claimed: `select_for_pickup()` in `devclaw/goal/self_issue.py` is the SELF-FIX pickup path, not this spec's claim mechanism — none of the load-bearing machinery here (operator flag, CAS'd claim marker, provenance wall, human promotion) exists in the tree, and no tasks.md was ever generated). Owner: Denys. Resume condition: the compounding scorecard's autonomy gate (`DEVCLAW_RATCHET_*`, spec 018) reads ready AND Denys rules the week-scale unattended runs (spec 025, first week starting 2026-09-01) earned the trust for self-selected work. Review by 2026-10-01 even if neither has. Run `/speckit-clarify` with Denys before any implementation
 
 **Input**: User description: "P2 of the autonomous issue-driven pipeline arc — the heartbeat claims devclaw-ready issues and dispatches them via the existing create_goal path, but only behind a manually-flipped flag, with a hard provenance wall keeping self-filed work from self-executing and a human as the merge backstop. This is where autonomy turns on."
 
