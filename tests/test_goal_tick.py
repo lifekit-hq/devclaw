@@ -1156,6 +1156,87 @@ async def test_dispatch_proceeds_with_historical_active_features(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_dispatch_proceeds_with_real_finance_sentry_fixture(tmp_path):
+    """Named regression for issue #728 — real on-disk fixture, no guard mocks.
+
+    Constructs a workspace shaped exactly like the live finance-sentry measurement
+    (2026-08-28): 40 feature dirs, 32 with all tasks.md rows checked, 5 with
+    unchecked rows and mtimes older than the current in-flight feature dir (the
+    historical offenders), plus 1 current in-flight dir with the NEWEST mtime and
+    2 ungraded dirs (spec.md only, no tasks.md).
+
+    Unlike test_dispatch_proceeds_with_historical_active_features (which patches
+    speckit_feature_state_sync directly and uses a no-specs workspace), this test
+    drives the real guard functions against the on-disk structure so the mtime-
+    scoping logic in speckit_offending_dirs_sync is proven end-to-end. Dispatch
+    must proceed: DISPATCHED, not SLEPT."""
+    import os as _os
+
+    _CHECKED_TASKS = (
+        "# Tasks\n"
+        "- [x] T001 [US1] scaffold the module\n"
+        "- [x] T002 [US1] wire the endpoint\n"
+        "- [x] T003 [US2] add the second story\n"
+    )
+    _PENDING_TASKS = (
+        "# Tasks\n"
+        "- [ ] T001 [US1] scaffold the module\n"
+        "- [x] T002 [US1] wire the endpoint\n"
+    )
+
+    workspace = tmp_path / "workspace"
+    specs = workspace / "specs"
+
+    # 32 completed feature dirs — all tasks checked, very old mtime
+    for i in range(1, 33):
+        feat = specs / f"{i:03d}-completed-{i}"
+        feat.mkdir(parents=True)
+        (feat / "tasks.md").write_text(_CHECKED_TASKS)
+        _os.utime(feat / "tasks.md", (1_000, 1_000))
+
+    # 5 historical active dirs — unchecked tasks, OLD mtime
+    historical = [
+        "001-bank-account-sync",
+        "011-connect-providers",
+        "021-market-regime",
+        "037-structured-data-sources",
+        "039-ips-risk-boundary",
+    ]
+    for feat_name in historical:
+        feat = specs / feat_name
+        feat.mkdir(parents=True)
+        (feat / "tasks.md").write_text(_PENDING_TASKS)
+        _os.utime(feat / "tasks.md", (2_000, 2_000))  # old — historical
+
+    # 1 current in-flight feature — unchecked tasks, NEWEST mtime
+    current_feat = specs / "040-outflow-honesty"
+    current_feat.mkdir(parents=True)
+    (current_feat / "tasks.md").write_text(_PENDING_TASKS)
+    _os.utime(current_feat / "tasks.md", (9_000, 9_000))  # newest → current
+
+    # 2 ungraded dirs (spec.md only, no tasks.md) to reach 40 total
+    for uname in ("050-ungraded-a", "051-ungraded-b"):
+        ufeat = specs / uname
+        ufeat.mkdir(parents=True)
+        (ufeat / "spec.md").write_text("# Spec\n")
+
+    # Seed the goal pointing at the workspace with the real specs structure
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", workspace_dir=str(workspace))
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    # The 5 historical dirs have mtime < current dir's mtime → not offending.
+    # speckit_offending_dirs_sync returns [] → dispatch PROCEEDS.
+    assert out is Outcome.DISPATCHED, (
+        f"expected DISPATCHED but got {out}; "
+        "historical feature dirs with old mtimes must not block dispatch"
+    )
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
 async def test_dispatch_proceeds_when_no_specs_yet(tmp_path, monkeypatch):
     """First dispatch on a fresh goal has no specs at all (0, 0, 0) — gate
     must sail through and allow the worker to create the spec."""
