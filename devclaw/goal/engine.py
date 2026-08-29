@@ -134,16 +134,14 @@ class InProcessEngine:
         self._queue.pump()
 
     async def poll(self, ref: InFlight) -> PollResult:
-        if ref.ref_kind == "program":
-            # The program/DAG dispatch lane was retired (spec 022 US3). A live
-            # program ref should be impossible — only a legacy row from a
-            # pre-022 build could still carry one. Fail LOUD so the tick's
-            # lost-ref path blocks the goal with an actionable reason instead
-            # of silently wedging or crashing the loop.
+        if ref.ref_kind != "task":
+            # Only a legacy row from a pre-022 build could still carry a
+            # 'program' ref. Fail LOUD so the tick's lost-ref path blocks the
+            # goal with an actionable reason instead of silently wedging.
             raise GoalEngineError(
-                f"in-flight ref {ref.id} is a legacy 'program' ref — the "
-                "program/DAG lane was retired (spec 022 US3) and can no longer "
-                "be polled. Inspect it with get_program, then resume or cancel "
+                f"in-flight ref {ref.id} has retired ref_kind "
+                f"'{ref.ref_kind}' — the program/DAG lane was retired "
+                "(spec 022 US3) and can no longer be polled. Resume or cancel "
                 "the goal to move on."
             )
         return self._poll_task(ref.id)

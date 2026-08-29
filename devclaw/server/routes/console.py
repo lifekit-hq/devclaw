@@ -11,8 +11,6 @@ package wherever it is installed — never from the working directory.
 
 from __future__ import annotations
 
-import asyncio
-import json
 import mimetypes
 from pathlib import Path
 from urllib.parse import quote as _quote
@@ -25,8 +23,7 @@ from starlette.responses import (
     Response,
 )
 
-from .._state import mcp, store
-from ._projections import _safe_parse
+from .._state import mcp
 
 # ---- Retired dashboard → console redirects (#549, one operator surface) ----
 # The server-rendered dashboard pages are retired behind 302s onto their
@@ -44,72 +41,6 @@ def _console_redirect(request: Request, to: str) -> Response:
 @mcp.custom_route("/dashboard", methods=["GET"])
 async def dashboard_index(request: Request) -> Response:
     return _console_redirect(request, "/console/goals")
-
-
-@mcp.custom_route("/dashboard/{program_id}", methods=["GET"])
-async def dashboard_program(request: Request) -> Response:
-    """A program's operator view is the goal that dispatched it — GoalDetail
-    carries the live event tail and per-task drill-ins the old program page
-    showed. A parent-less program falls back to the goals list; the
-    raw SSE feed at /programs/{id}/events is unchanged for scripts."""
-    program = store.get_program(request.path_params["program_id"])
-    parent = getattr(program, "parent_goal_id", None) if program else None
-    to = f"/console/goals/{_quote(parent)}" if parent else "/console/goals"
-    return _console_redirect(request, to)
-
-
-@mcp.custom_route("/programs/{program_id}/events", methods=["GET"])
-async def program_events(request: Request) -> Response:
-    """Resumable SSE stream of one program's events.
-
-    Resume protocol: the EventSource Last-Event-Id header (sent by the browser
-    on auto-reconnect) is the cursor; each frame's id is the event row's PK.
-    Live tail: SQLite has no LISTEN/NOTIFY, so we poll every 750ms after the
-    initial backlog (cheap, indexed). Termination: when the program is terminal
-    AND the last poll returned nothing new, emit a final `done` frame and close.
-    """
-    from sse_starlette.sse import EventSourceResponse  # local import: http-only dep path
-
-    program_id = request.path_params["program_id"]
-    if not store.get_program(program_id):
-        return PlainTextResponse(f"unknown program: {program_id}", status_code=404)
-
-    leh = request.headers.get("last-event-id")
-    cursor = int(leh) if (leh and leh.isdigit() and int(leh) > 0) else 0
-
-    async def gen():
-        nonlocal cursor
-        yield {"comment": "ok"}  # forces EventSource onopen even with zero events
-        while True:
-            if await request.is_disconnected():
-                return
-            try:
-                drained = store.list_events(program_id=program_id, since_id=cursor, limit=200)
-            except Exception as err:
-                yield {"event": "error", "data": json.dumps({"message": str(err)})}
-                return
-            for ev in drained:
-                yield {
-                    "id": str(ev.id),
-                    "data": json.dumps(
-                        {
-                            "id": ev.id,
-                            "type": ev.type,
-                            "source": ev.source,
-                            "ts": ev.ts,
-                            "payload": _safe_parse(ev.payload_json),
-                        }
-                    ),
-                }
-                cursor = ev.id
-            current = store.get_program(program_id)
-            terminal = current is not None and current.status in ("done", "failed")
-            if terminal and not drained:
-                yield {"event": "done", "data": json.dumps({"status": current.status})}
-                return
-            await asyncio.sleep(0.75)
-
-    return EventSourceResponse(gen())
 
 
 @mcp.custom_route("/goals", methods=["GET"])

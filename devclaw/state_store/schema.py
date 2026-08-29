@@ -44,21 +44,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                   scaffold        INTEGER NOT NULL DEFAULT 0
                 );
 
-                CREATE TABLE IF NOT EXISTS programs (
-                  id              TEXT PRIMARY KEY,
-                  goal            TEXT NOT NULL,
-                  workspace_dir   TEXT NOT NULL,
-                  notify_url      TEXT,
-                  status          TEXT NOT NULL,
-                  error           TEXT,
-                  created_at      INTEGER NOT NULL,
-                  completed_at    INTEGER,
-                  open_pr         INTEGER NOT NULL DEFAULT 0,
-                  verify_cmd      TEXT,
-                  parent_goal_id  TEXT,
-                  strictness      TEXT NOT NULL DEFAULT 'trust'
-                );
-
                 -- Raw runner SDK events (one row per agent action inside every
                 -- task) — the highest-volume append-only log after traces. Rows
                 -- are never mutated (append + a daily retention DELETE of rows
@@ -256,19 +241,10 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 "ALTER TABLE tasks ADD COLUMN deliver INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE tasks ADD COLUMN pr_url TEXT",
                 "ALTER TABLE tasks ADD COLUMN title TEXT",
-                # Program-level PR discipline (2026-07-03) — inherited by
-                # child tasks so start_program under a standing goal ships
-                # reviewable-slice PRs, not direct-to-main commits.
-                "ALTER TABLE programs ADD COLUMN open_pr INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE programs ADD COLUMN verify_cmd TEXT",
                 # Durable goal-owner pointer (2026-07-04) — set by the goal
                 # heartbeat when it dispatches a task; null for standalone
                 # dispatch_task calls. Orthogonal to program_id.
                 "ALTER TABLE tasks ADD COLUMN parent_goal_id TEXT",
-                # Durable goal-owner pointer on PROGRAMS too (2026-07-10) —
-                # the only recovery path when the goal-side in_flight ref is
-                # lost (STATUS.md truncated by a crash mid-write).
-                "ALTER TABLE programs ADD COLUMN parent_goal_id TEXT",
                 # Usage-limit requeue counter (2026-07-10) — bounds the
                 # pause→requeue→re-run loop (see Task.pause_count).
                 "ALTER TABLE tasks ADD COLUMN pause_count INTEGER NOT NULL DEFAULT 0",
@@ -294,9 +270,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 # consequence (strict blocks / trust advises-and-ships).
                 # Defaulted so pre-existing rows read as advisory ("trust").
                 "ALTER TABLE tasks ADD COLUMN strictness TEXT NOT NULL DEFAULT 'trust'",
-                # Same dial on PROGRAMS — child tasks inherit it (ADR 0007),
-                # mirroring open_pr / verify_cmd inheritance.
-                "ALTER TABLE programs ADD COLUMN strictness TEXT NOT NULL DEFAULT 'trust'",
                 # Self-issue-filing Stage 1 (proposal self-issue-filing.md O2):
                 # the GitHub issue this problem was filed as, so filing is
                 # idempotent (one issue per fingerprint) and the age-out pass can
@@ -318,11 +291,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 # carry their own project_id) and on a task with no owning
                 # project → knobs fall to the devclaw-wide defaults.
                 "ALTER TABLE tasks ADD COLUMN project_id TEXT",
-                # Same reference key on the program row (#524 P3) — child tasks
-                # inherit it via _persist_plan, so a program's slices resolve
-                # their knobs by id too. NULL on a standalone program with no
-                # registered project.
-                "ALTER TABLE programs ADD COLUMN project_id TEXT",
                 # Idle cycle flag (2026-08-07) — 1 iff the loop did no work in
                 # the window (off/held/all-cancelled): excluded from the
                 # clean-cycle rate so empty nights of an OFF devclaw don't drift
@@ -371,11 +339,7 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status);
                 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
                 CREATE INDEX IF NOT EXISTS idx_tasks_kind       ON tasks(kind);
-                CREATE INDEX IF NOT EXISTS idx_tasks_program    ON tasks(program_id);
                 CREATE INDEX IF NOT EXISTS idx_tasks_parent_goal ON tasks(parent_goal_id);
-                CREATE INDEX IF NOT EXISTS idx_programs_status  ON programs(status);
-                CREATE INDEX IF NOT EXISTS idx_programs_parent_goal ON programs(parent_goal_id);
-                CREATE INDEX IF NOT EXISTS idx_events_program   ON events(program_id, id);
                 CREATE INDEX IF NOT EXISTS idx_events_task      ON events(task_id, id);
                 CREATE INDEX IF NOT EXISTS idx_events_ts        ON events(ts);
                 CREATE INDEX IF NOT EXISTS idx_traces_goal      ON traces(goal_id, id);

@@ -29,9 +29,15 @@ def test_task_row_surfaces_plan_key_and_milestone_for_grouping(store):
         workspace_dir="/w",
         goal="build the thing",
         parent_goal_id="g1",
-        milestone="M2 — API layer",
-        plan_key="checklist-item-7",
     )
+    # Nothing writes plan_key/milestone anymore (the program/DAG lane is
+    # retired, spec 022 US3) — the wire keeps surfacing them for HISTORICAL
+    # rows, so seed one the way history left it: directly in the column.
+    store._db.execute(
+        "UPDATE tasks SET milestone = ?, plan_key = ? WHERE id = 't-grouped'",
+        ("M2 — API layer", "checklist-item-7"),
+    )
+    store._db.commit()
     row = _task_row(store.get_task("t-grouped"))
 
     assert row["planKey"] == "checklist-item-7"

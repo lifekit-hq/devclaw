@@ -1206,10 +1206,12 @@ class GoalService:
             ref = s.in_flight
             # list_events is ASC + LIMIT (first N); pull a wide window and tail it
             # in Python so we get the MOST RECENT events of a long-running task.
-            if ref.ref_kind == "task":
-                evs = self._store.list_events(limit=10000, task_id=ref.id)
-            else:
-                evs = self._store.list_events(limit=10000, program_id=ref.id)
+            # A legacy pre-022 'program' ref has no live event stream to tail.
+            evs = (
+                self._store.list_events(limit=10000, task_id=ref.id)
+                if ref.ref_kind == "task"
+                else []
+            )
             for e in evs[-event_limit:]:
                 preview = (e.payload_json or "")[:200]
                 live_events.append(

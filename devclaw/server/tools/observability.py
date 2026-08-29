@@ -40,47 +40,15 @@ async def get_status(task_id: str) -> str:
 
 
 @mcp.tool
-async def get_program(program_id: str) -> str:
-    """Return a HISTORICAL program row and all its tasks in dependency order.
-    The program/DAG dispatch lane was retired (spec 022 US3): nothing creates
-    program rows anymore, but rows written before the retirement survive in the
-    ``programs`` table — this read-only surface inspects one at per-task
-    detail."""
-    program = store.get_program(program_id)
-    if not program:
-        raise ToolError(f"unknown program_id: {program_id}")
-    tasks = store.list_program_tasks(program_id)
-    return json.dumps(
-        {"program": program.to_dict(), "tasks": [t.to_dict() for t in tasks]}, indent=2
-    )
-
-
-@mcp.tool
-async def list_programs(limit: Annotated[int, Field(ge=1, le=1000)] = 50) -> str:
-    """List HISTORICAL program rows (the retired program/DAG lane, spec 022
-    US3), most-recent first. Nothing creates program rows anymore; use this to
-    discover program_ids for get_program or get_events on pre-retirement
-    history."""
-    programs = store.list_programs(limit=limit)
-    return json.dumps([p.to_dict() for p in programs], indent=2)
-
-
-@mcp.tool
 async def get_events(
-    program_id: Optional[str] = None,
-    task_id: Optional[str] = None,
+    task_id: str,
     since_id: Optional[int] = None,
     limit: Annotated[int, Field(ge=1, le=5000)] = 500,
 ) -> str:
-    """Return events emitted by the worker runner for one program or one
-    task, in emission order. Each event has an id (monotonic cursor), type,
-    source, payload_json (the raw SDK Event), and ts. Pass since_id to resume —
-    same semantics as the /programs/:id/events SSE Last-Event-Id."""
-    if not program_id and not task_id:
-        raise ToolError("get_events requires program_id or task_id")
-    events = store.list_events(
-        program_id=program_id, task_id=task_id, since_id=since_id, limit=limit
-    )
+    """Return events emitted by the worker runner for one task, in emission
+    order. Each event has an id (monotonic cursor), type, source, payload_json
+    (the raw SDK Event), and ts. Pass since_id to resume."""
+    events = store.list_events(task_id=task_id, since_id=since_id, limit=limit)
     return json.dumps([e.to_dict() for e in events], indent=2)
 
 
