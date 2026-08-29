@@ -62,6 +62,7 @@ from .goals import (  # noqa: F401
     resume_goal,
     scope_grill,
     set_goal_strictness,
+    set_goal_verify_cmd,
     steer_goal,
     tail_goal,
     verify_goal,
@@ -74,11 +75,9 @@ from .intake import (  # noqa: F401
 )
 from .observability import (  # noqa: F401
     get_events,
-    get_program,
     get_scorecard_metrics,
     get_status,
     list_problems,
-    list_programs,
     list_tasks,
     review_trends,
 )

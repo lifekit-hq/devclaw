@@ -180,6 +180,18 @@ async def dispatch_task(
                 "at the confirmed-done close. They select the review target "
                 "for read-only kinds only. Drop them, or use review_repository."
             )
+        if notify_url:
+            # Same class as the base_branch rejection above: dispatch_issue
+            # carries no notify_url, so it used to be silently DISCARDED for
+            # mutating kinds. The goal lane notifies through the goal's own
+            # owner-notification path; a documented parameter is threaded or
+            # rejected loudly, never eaten.
+            raise ToolError(
+                "notify_url does not apply to mutating dispatch: the goal lane "
+                "reports through the goal's own notifications (tail_goal / "
+                "get_goal). It fires for read-only kinds only. Drop it, or "
+                "poll get_goal."
+            )
         if not resolved.project_id:
             raise ToolError(
                 f"project {project_id!r} resolved without a project_id — "

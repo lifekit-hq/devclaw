@@ -202,12 +202,17 @@ async def goal_events(request: Request) -> Response:
 
         return EventSourceResponse(empty_gen())
 
-    # Pin the ref at connect time. list_events wants program_id OR task_id.
+    # Pin the ref at connect time. A legacy pre-022 'program' ref has no live
+    # event stream — close immediately like the no-in-flight case.
     ref_kind = in_flight.get("ref_kind") or ("task" if in_flight.get("id") else "program")
     ref_id = in_flight.get("id")
-    list_kwargs = (
-        {"task_id": ref_id} if ref_kind == "task" else {"program_id": ref_id}
-    )
+    if ref_kind != "task":
+        async def legacy_gen():
+            yield {"comment": "legacy program ref"}
+            yield {"event": "done", "data": json.dumps({"reason": "legacy_program_ref"})}
+
+        return EventSourceResponse(legacy_gen())
+    list_kwargs = {"task_id": ref_id}
 
     leh = request.headers.get("last-event-id")
     cursor = int(leh) if (leh and leh.isdigit() and int(leh) > 0) else 0

@@ -20,8 +20,8 @@ burn the engine on empty ticks.
 
 Notifications: standalone tasks fire their own ``notify_url`` on terminal state
 (bounded retries). (The program/DAG lane and its program-level notify were
-retired by spec 022 US3; the ``programs`` table survives as historical rows
-behind the read-only get_program/list_programs surfaces.)
+retired by spec 022 US3; a pre-retirement ``programs`` table may survive on an
+old instance as unread historical rows.)
 """
 
 from __future__ import annotations

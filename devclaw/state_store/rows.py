@@ -22,15 +22,6 @@ TaskKind = Literal[
     "implement_feature", "fix_bug", "review_repository", "onboard", "validate_product"
 ]
 # Programs hold a DAG of tasks decomposed from a single high-level goal.
-#   planning  — planner still decomposing (claude subprocess in flight)
-#   running   — tasks exist, none failed/cancelled, not all terminal yet
-#   done      — every task is 'done'
-#   failed    — planner failed OR any task failed (sticky; siblings are not
-#               scheduled after a failure — see TaskQueue for the policy)
-#   cancelled — aborted by a client; a cancelled child is sticky like a failure
-ProgramStatus = Literal["planning", "running", "done", "failed", "cancelled"]
-
-
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -155,55 +146,6 @@ class Task:
 
 
 @dataclass
-class Program:
-    id: str
-    goal: str
-    workspace_dir: str
-    notify_url: Optional[str]
-    status: ProgramStatus
-    error: Optional[str]
-    created_at: int
-    completed_at: Optional[int]
-    #: When True, every task the decomposer creates for this program inherits
-    #: ``deliver=True`` — the standing-goal / reviewable-slice contract. When
-    #: False (the default), program tasks commit directly and never open a PR.
-    #: NOT NULL DEFAULT 0 in SQL, so every row carries a value.
-    open_pr: bool = False
-    #: Gate command the decomposer's tasks inherit. None → no gate; when set,
-    #: child tasks run this after the agent finishes and only succeed on
-    #: exit 0.
-    verify_cmd: Optional[str] = None
-    #: Gate strictness dial the decomposer's child tasks inherit (ADR 0007),
-    #: snapshotted from Goal.strictness at dispatch. NOT NULL DEFAULT 'trust'
-    #: in SQL, so every row carries a value; the default is advisory.
-    strictness: str = "trust"
-    #: Durable goal-owner pointer (2026-07-10), mirroring tasks.parent_goal_id.
-    #: Without it a goal whose STATUS.md in_flight ref is lost (crash mid-write)
-    #: has NO way to rediscover its own running/failed program — the 2026-07-09
-    #: closeloop-mission-v2 dead night. Null for standalone start_program calls.
-    parent_goal_id: Optional[str] = None
-    #: Owning project's reference key (#524 P3); child tasks inherit it via
-    #: _persist_plan so their per-project knobs resolve by id. Null on a
-    #: standalone program with no registered project.
-    project_id: Optional[str] = None
-
-    def to_dict(self) -> dict:
-        return {
-            "id": self.id,
-            "goal": self.goal,
-            "workspaceDir": self.workspace_dir,
-            "notifyUrl": self.notify_url,
-            "status": self.status,
-            "error": self.error,
-            "createdAt": self.created_at,
-            "completedAt": self.completed_at,
-            "openPr": self.open_pr,
-            "verifyCmd": self.verify_cmd,
-            "parentGoalId": self.parent_goal_id,
-        }
-
-
-@dataclass
 class TaskEvent:
     id: int
     task_id: str
@@ -276,26 +218,6 @@ def _row_to_task(r: sqlite3.Row) -> Task:
     )
 
 
-def _row_to_program(r: sqlite3.Row) -> Program:
-    return Program(
-        id=r["id"],
-        goal=r["goal"],
-        workspace_dir=r["workspace_dir"],
-        notify_url=r["notify_url"],
-        status=r["status"],
-        error=r["error"],
-        created_at=r["created_at"],
-        completed_at=r["completed_at"],
-        open_pr=bool(r["open_pr"]) if "open_pr" in r.keys() else False,
-        verify_cmd=r["verify_cmd"] if "verify_cmd" in r.keys() else None,
-        parent_goal_id=(
-            r["parent_goal_id"] if "parent_goal_id" in r.keys() else None
-        ),
-        strictness=(
-            r["strictness"] if "strictness" in r.keys() and r["strictness"] else "trust"
-        ),
-        project_id=r["project_id"] if "project_id" in r.keys() else None,
-    )
 
 
 # ---- failure-class bucketing (eval_outcomes projection, ADR 0006) -----------

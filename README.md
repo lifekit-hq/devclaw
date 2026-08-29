@@ -155,7 +155,6 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 | `onboard(project_id, …)` | Analyze a repo and deliver the draft onboarding doc set as a reviewable PR — a thin `AGENTS.md` pointer (marker-delimited), `README.md`, `ARCHITECTURE.md`, plus `.devcontainer/Dockerfile` when absent |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
-| `get_program(program_id)` / `list_programs()` | Read-only HISTORICAL program rows (the program/DAG lane was retired by spec 022 US3) |
 | `get_status(task_id)` / `list_tasks(...)` / `get_events(...)` | Task history + replayable event feed (live SSE over HTTP) |
 | `get_scorecard_metrics(window_hours?)` | Rolling scorecard over the last N hours (default 1 week): merge rate, evaluator-verdict distribution, steer rate, first-pass hit rate, workspace breaks — a cheap SQLite read, callable from Telegram/dashboards |
 | `review_trends(scope?)` | Tail of the cross-session trend detector's `trends.md` — `harness_self` (devclaw's own self-observability) or a workspace path for that project's trends |
@@ -170,7 +169,7 @@ Async by default: a tool call returns a `task_id` immediately and the work runs 
 - **`long_lived`** (default) — the **drip**: each heartbeat dispatches the next advance, judges *direction* periodically (not just shipped PRs), and stays steerable mid-flight. For fog-of-war objectives where the path reveals itself as work lands.
 - **`one_shot`** — the **sprint**: the same advance loop, but done is proposed as soon as an advance session lands — for work that's fully specified up front. The proposal is still gated on the grounded done-gate review.
 
-In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts committed to the repo (spec 008); the host dispatches a mechanical, zero-LLM advance brief. Both modes share every gate, the delivery contract, and the close discipline. The `start_program` alias and the raw program/DAG queue lane beneath it were retired by spec 022 US3 — one dispatch lane; historical `programs` rows stay readable via `get_program`/`list_programs`.
+In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts committed to the repo (spec 008); the host dispatches a mechanical, zero-LLM advance brief. Both modes share every gate, the delivery contract, and the close discipline. The `start_program` alias and the raw program/DAG queue lane beneath it were retired by spec 022 US3 — one dispatch lane (the lane's read-only remnants — `get_program`/`list_programs`, the program SSE route, the store's program CRUD — were pruned once nothing could write a program row).
 
 | Tool | Does |
 |---|---|
@@ -298,7 +297,7 @@ DEVCLAW_TRANSPORT=stdio devclaw-mcp        # local dev (MCP over stdio)
 # or HTTP for a long-running service:
 DEVCLAW_TRANSPORT=http DEVCLAW_PORT=8000 devclaw-mcp
 #   → MCP at /mcp, the operator console at /console (/ redirects there; the
-#     legacy /dashboard · /goals · /projects pages 302 to it), SSE at /programs/:id/events
+#     legacy /dashboard · /goals · /projects pages 302 to it)
 ```
 
 (`devclaw-mcp` is the console script for the server; `devclaw` is the control-plane CLI; `python -m devclaw.server` / `python -m devclaw.cli` work too.)

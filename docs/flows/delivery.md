@@ -48,8 +48,11 @@ longer land. An unknown verdict says nothing; it never reads as "all clear".
 The program/DAG dispatch lane — and the dormant `[P]` fan-out that was its
 last producer — was demolished by spec 022 US3. Nothing creates program rows
 anymore; `ref_kind="program"` survives only on legacy persisted refs (polling
-one now blocks the goal loudly), and the `programs` table stays readable via
-`get_program`/`list_programs` as history. Delivery has exactly one shape: one
+one now blocks the goal loudly). The lane's read-only remnants
+(`get_program`/`list_programs`, the program SSE route, the store's program
+CRUD) were pruned once nothing could write a row — a pre-retirement
+`programs` table may survive on an old instance as unread history. Delivery
+has exactly one shape: one
 increment at a time on the goal branch, one push, one cumulative PR.
 
 ## Why nothing merges (#641)

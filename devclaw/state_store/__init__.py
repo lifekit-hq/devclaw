@@ -24,8 +24,6 @@ from __future__ import annotations
 from .core import StateStore
 from .rows import (
     SQLITE_BUSY_TIMEOUT_MS,
-    Program,
-    ProgramStatus,
     Task,
     TaskEvent,
     TaskKind,
@@ -38,11 +36,9 @@ __all__ = [
     "StateStore",
     "derive_failure_class",
     "Task",
-    "Program",
     "TaskEvent",
     "TaskStatus",
     "TaskKind",
-    "ProgramStatus",
     "SQLITE_BUSY_TIMEOUT_MS",
     "_now_ms",
 ]
