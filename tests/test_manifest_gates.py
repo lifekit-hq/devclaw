@@ -205,7 +205,7 @@ async def test_absent_manifest_does_not_reject_dispatch(tmp_path, monkeypatch):
 
     # After spec 022 US3, mutating dispatch auto-files an issue and routes via
     # the goal lane. Stub both seams so the manifest-absence check is isolated.
-    async def _fake_auto_file(registry, *, project_id, goal):
+    async def _fake_auto_file(registry, *, project_id, goal, done_when=None):
         return 7
 
     monkeypatch.setattr(tasks_mod, "_auto_file_intake", _fake_auto_file)

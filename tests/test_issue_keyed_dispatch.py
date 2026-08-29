@@ -673,7 +673,7 @@ async def test_prose_only_dispatch_auto_files_issue_and_routes_goal_lane(monkeyp
 
     monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
 
-    async def _fake_auto_file(registry, *, project_id, goal):
+    async def _fake_auto_file(registry, *, project_id, goal, done_when=None):
         intake_calls.append({"project_id": project_id, "goal": goal})
         return 99
 
@@ -723,7 +723,7 @@ async def test_prose_only_dispatch_intake_failure_raises_tool_error(monkeypatch,
     queue_calls: list = []
     monkeypatch.setattr(_state.queue, "submit", lambda **kw: (queue_calls.append(kw) or "t1"))
 
-    async def _failing_auto_file(registry, *, project_id, goal):
+    async def _failing_auto_file(registry, *, project_id, goal, done_when=None):
         raise IntakeError("gh could not create the issue — not authenticated")
 
     monkeypatch.setattr(tasks_mod, "_auto_file_intake", _failing_auto_file)
@@ -756,7 +756,7 @@ async def test_implement_feature_alias_auto_files_issue_without_issue_ref(monkey
     intake_calls: list = []
     dispatch_calls: list = []
 
-    async def _fake_auto_file(registry, *, project_id, goal):
+    async def _fake_auto_file(registry, *, project_id, goal, done_when=None):
         intake_calls.append(goal)
         return 42
 

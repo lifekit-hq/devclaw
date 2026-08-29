@@ -20,17 +20,36 @@ from . import _common
 from ._common import _preflight_or_prep, _resolve_project_or_reject
 
 
-async def _auto_file_intake(registry, *, project_id: str, goal: str) -> int:
+async def _auto_file_intake(registry, *, project_id: str, goal: str,
+                            done_when: "str | None") -> int:
     """Auto-file an intake issue for a prose-only dispatch (spec 022 US3 FR-010).
+
+    ``done_when`` MUST be the caller's real completion criteria: under spec 019
+    it becomes the goal's contract, so fabricating one here (restating the ask
+    verbatim, or padding a short ask to clear the doorway minimum — the #727
+    review finding) silently weakens the done-gate. A prose ask that arrives
+    without criteria is refused with what is missing named.
 
     Returns the GitHub issue number. Raises ``_intake.IntakeError`` on failure
     so callers can wrap it into an actionable ToolError."""
-    done_when = goal if len(goal) >= 20 else f"{goal} — implemented and verified"
+    if not done_when or not done_when.strip() or len(done_when.strip()) < 20:
+        raise ToolError(
+            "a prose-only mutating dispatch needs real completion criteria: pass "
+            "done_when='what must be TRUE in the repository when this is done' "
+            "(at least one concrete, checkable statement — not a restatement of "
+            "the ask), or file a templated issue yourself and pass issue_ref"
+        )
+    if done_when.strip() == goal.strip():
+        raise ToolError(
+            "done_when restates the ask verbatim — that gives the done-gate "
+            "nothing to judge. State what must be TRUE when the work is done "
+            "(behavior, tests, observable outcomes), not what to do"
+        )
     result = await _intake.file_intake(
         registry,
         project_id=project_id,
         what=goal,
-        done_when=done_when,
+        done_when=done_when.strip(),
         asker="devclaw",
         channel="a2a",
         now_ms=_now_ms(),
@@ -79,6 +98,7 @@ async def dispatch_task(
     project_id: str,
     goal: str,
     issue_ref: Optional[int] = None,
+    done_when: Optional[str] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -117,17 +137,18 @@ async def dispatch_task(
     ``done``, DevClaw commits it to a branch, pushes, and opens a PR (best-effort;
     needs git push auth + a GitHub remote), recording the PR URL on the task.
 
-    Branch targeting (both optional; defaults = today's behavior — a fresh
-    auto-named branch, PR to the repo's default branch):
-      - ``target_branch`` — CONTINUE this branch: before the agent runs, the
-        workspace is force-checked-out to it (fetched to its origin tip if it
-        exists, else created off ``base_branch``; uncommitted local changes are
-        discarded), and the delivery must land on it — reusing its single open
-        PR when one exists. Delivery landing anywhere else fails the task.
-        Also selects the branch a ``review_repository`` task reviews.
-      - ``base_branch`` — the PR base and diff range (e.g. "develop"). It must
-        resolve on the workspace's origin; a base that doesn't fails the task
-        up front with an actionable message.
+    Branch targeting (``base_branch`` / ``target_branch``) applies to the
+    READ-ONLY kinds only — ``target_branch`` selects the branch a
+    ``review_repository`` task reviews, ``base_branch`` its diff range. A
+    MUTATING dispatch rides the goal lane (spec 022), whose delivery owns its
+    branch (the goal's own ``goal/<id>`` branch, merged at the close) — passing
+    either branch target with a mutating kind is REJECTED with an actionable
+    error rather than silently ignored.
+
+    ``done_when`` (mutating kinds, no ``issue_ref``): the completion criteria
+    for the auto-filed intake issue — what must be TRUE in the repository when
+    this is done. Required for a prose-only mutating ask: devclaw refuses to
+    fabricate criteria by restating the ask.
 
     The kind-specific companion verbs ``implement_feature`` / ``fix_bug`` /
     ``review_repository`` forward here. Reach for this one when you need the
@@ -146,6 +167,19 @@ async def dispatch_task(
     # All mutating dispatch routes through the goal lane (spec 022 US1/US3).
     # Read-only kinds are byte-unaffected (FR-008).
     if not read_only:
+        if base_branch or target_branch:
+            # #727 review finding 1: dispatch_issue carries neither parameter,
+            # so these used to be silently DISCARDED for mutating kinds — a
+            # documented parameter must be threaded or rejected loudly, never
+            # eaten. The goal lane's delivery owns its branch (goal/<id>,
+            # merged at the close); branch continuation for goal work is the
+            # ADR-0011 seam (issue #491), not a dispatch argument.
+            raise ToolError(
+                "base_branch/target_branch do not apply to mutating dispatch: "
+                "the goal lane delivers on the goal's own branch and merges it "
+                "at the confirmed-done close. They select the review target "
+                "for read-only kinds only. Drop them, or use review_repository."
+            )
         if not resolved.project_id:
             raise ToolError(
                 f"project {project_id!r} resolved without a project_id — "
@@ -157,7 +191,8 @@ async def dispatch_task(
             # to it (spec 022 US3). Every mutating ask names an issue.
             try:
                 auto_filed = await _auto_file_intake(
-                    _common.registry, project_id=resolved.project_id, goal=goal
+                    _common.registry, project_id=resolved.project_id,
+                    goal=goal, done_when=done_when,
                 )
             except _intake.IntakeError as exc:
                 raise ToolError(
@@ -200,6 +235,7 @@ async def implement_feature(
     project_id: str,
     goal: str,
     issue_ref: Optional[int] = None,
+    done_when: Optional[str] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -210,14 +246,16 @@ async def implement_feature(
     with. Pass ``issue_ref`` (a GitHub issue number on the project's repo) to
     key the dispatch on that issue — the call is then idempotent: a duplicate
     dispatch for the same issue attaches to the existing work rather than
-    starting a new one (spec 022 US1). Use ``dispatch_task`` directly when you
-    need ``base_branch`` / ``target_branch``. See ``dispatch_task`` for full
+    starting a new one (spec 022 US1). Without ``issue_ref``, ``done_when``
+    (real completion criteria) is required — devclaw auto-files the intake
+    issue and refuses to fabricate criteria. See ``dispatch_task`` for full
     docs."""
     return await dispatch_task(
         kind="implement_feature",
         project_id=project_id,
         goal=goal,
         issue_ref=issue_ref,
+        done_when=done_when,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
         open_pr=open_pr,
@@ -229,6 +267,7 @@ async def fix_bug(
     project_id: str,
     description: str,
     issue_ref: Optional[int] = None,
+    done_when: Optional[str] = None,
     notify_url: Optional[str] = None,
     verify_cmd: Optional[str] = None,
     open_pr: bool = False,
@@ -238,9 +277,10 @@ async def fix_bug(
     shape the waiter agent drives the companion path with. Pass ``issue_ref`` (a
     GitHub issue number on the project's repo) to key the dispatch on that issue
     — the call is then idempotent: a duplicate dispatch for the same issue
-    attaches to the existing work (spec 022 US1). Use ``dispatch_task`` directly
-    when you need ``base_branch`` / ``target_branch``. See ``dispatch_task`` for
-    full docs."""
+    attaches to the existing work (spec 022 US1). Without ``issue_ref``,
+    ``done_when`` (real completion criteria) is required — devclaw auto-files
+    the intake issue and refuses to fabricate criteria. See ``dispatch_task``
+    for full docs."""
     if not description:
         raise ToolError("fix_bug requires project_id and description")
     return await dispatch_task(
@@ -248,6 +288,7 @@ async def fix_bug(
         project_id=project_id,
         goal=description,
         issue_ref=issue_ref,
+        done_when=done_when,
         notify_url=notify_url,
         verify_cmd=verify_cmd,
         open_pr=open_pr,

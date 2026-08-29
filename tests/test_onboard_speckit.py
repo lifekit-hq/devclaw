@@ -252,7 +252,7 @@ async def test_feature_dispatch_allowed_for_legacy_repo_without_install_pr(
     from devclaw.server import _state
     from devclaw.server.tools import tasks as tasks_mod
 
-    async def _fake_auto_file(registry, *, project_id, goal):
+    async def _fake_auto_file(registry, *, project_id, goal, done_when=None):
         return 11
 
     monkeypatch.setattr(tasks_mod, "_auto_file_intake", _fake_auto_file)
