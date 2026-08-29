@@ -241,20 +241,35 @@ async def test_feature_dispatch_allowed_for_legacy_repo_without_install_pr(
 
     registry.create(id="legacy", name="legacy", workspace_dir=str(ws))
     monkeypatch.setattr(_tools._common, "registry", registry)
-    fake_q = _FakeQueue()
-    monkeypatch.setattr(_tools.intake, "queue", fake_q)
-    monkeypatch.setattr(_tools.tasks, "queue", fake_q)
 
     async def _no_pr(workspace_dir):
         return None
 
     monkeypatch.setattr(_speckit, "open_install_pr", _no_pr)
 
+    # After spec 022 US3, mutating dispatch auto-files an issue and routes via
+    # the goal lane. Stub both seams so the speckit-install check is isolated.
+    from devclaw.server import _state
+    from devclaw.server.tools import tasks as tasks_mod
+
+    async def _fake_auto_file(registry, *, project_id, goal, done_when=None):
+        return 11
+
+    monkeypatch.setattr(tasks_mod, "_auto_file_intake", _fake_auto_file)
+    dispatch_calls: list = []
+
+    async def _fake_dispatch_issue(**kw):
+        dispatch_calls.append(kw)
+        return {"goal_id": "g-2", "result": "created", "issue_ref": 11}
+
+    monkeypatch.setattr(_state.goals, "dispatch_issue", _fake_dispatch_issue)
+
     out = json.loads(await _tools.dispatch_task(
         kind="implement_feature", project_id="legacy", goal="do a thing"
     ))
-    assert out["status"] == "pending"
-    assert fake_q.submitted and fake_q.submitted[0]["kind"] == "implement_feature"
+    # Legacy repo is not blocked; dispatch reaches the goal lane.
+    assert dispatch_calls, "dispatch must reach dispatch_issue (goal lane)"
+    assert out.get("auto_filed_issue") == 11
 
 
 # ---- (d) F7: fail CLOSED on gh-uncertainty when a pending install exists ----

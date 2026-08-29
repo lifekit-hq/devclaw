@@ -961,6 +961,17 @@ class GoalService:
 
         # We own the identity. Create the one_shot goal.
         issue_objective = objective or f"Work issue #{issue_ref}: {snap.title}"
+        # Spec 022 US2 FR-004: workspace prep to default-branch head before
+        # the first run. The tick's prepare_ws is the load-bearing mechanism
+        # for each subsequent action; this early prep ensures the workspace is
+        # on the default branch even if there is a delay before the tick fires.
+        # Best-effort: a prep hiccup at dispatch time is fine — the tick's
+        # _block_on_prep_failure handles persistent failures.
+        if workspace_dir and Path(workspace_dir).exists():
+            try:
+                await prepare_workspace(workspace_dir, repo_url)
+            except Exception:  # noqa: BLE001 — best-effort; tick is the backstop
+                pass
         self.create_goal(
             goal_id,
             objective=issue_objective,

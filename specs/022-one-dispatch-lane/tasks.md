@@ -22,9 +22,9 @@ Covers FR-001 through FR-003, FR-005 through FR-009, FR-011, FR-012.
 
 Covers FR-004 (repeal single-writer exemption + workspace prep).
 
-- [ ] T008 Repeal `_project_hold_warning` advisory-only; replace with hard block for issue-keyed dispatch in `devclaw/server/tools/tasks.py`
-- [ ] T009 Workspace-prep-to-default-branch-head before each run in `dispatch_issue()` in `devclaw/goal/service.py`
-- [ ] T010 Write named regression tests for serialization and workspace prep
+- [x] T008 Repeal `_project_hold_warning` advisory-only; replace with hard block for issue-keyed dispatch in `devclaw/server/tools/tasks.py`
+- [x] T009 Workspace-prep-to-default-branch-head before each run in `dispatch_issue()` in `devclaw/goal/service.py`
+- [x] T010 Write named regression tests for serialization and workspace prep
 
 ---
 
@@ -32,8 +32,8 @@ Covers FR-004 (repeal single-writer exemption + workspace prep).
 
 Covers FR-010, FR-008 (read-only kinds unaffected). Demolition scope.
 
-- [ ] T011 `dispatch_task` without `issue_ref` for mutating kinds → auto-file issue + proceed
+- [x] T011 `dispatch_task` without `issue_ref` for mutating kinds → auto-file issue + proceed
 - [ ] T012 Delete `devclaw/queue/programs.py` DAG machinery + `devclaw/goal/fanout.py`
 - [ ] T013 Delete `tests/test_program_plan.py`, `tests/test_queue_dag.py`, `tests/test_start_program_alias.py`, `tests/test_cancel_program_guard.py`, `tests/test_fanout_plan.py`, `tests/test_fanout_integration.py`
 - [ ] T014 Remove program/fanout cases from `tests/test_goal_tick.py`, `tests/test_cancel.py`, `tests/test_goal_engine.py`, `tests/goal_fakes.py`
-- [ ] T015 Remove prose-path admission cases from `tests/test_dispatch_task.py` and single-writer-exemption warning cases from `tests/test_task_parent_goal_id.py`, `tests/test_scope_gate.py`
+- [x] T015 Remove prose-path admission cases from `tests/test_dispatch_task.py` and single-writer-exemption warning cases from `tests/test_task_parent_goal_id.py`, `tests/test_scope_gate.py`
