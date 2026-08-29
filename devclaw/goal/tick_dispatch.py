@@ -325,7 +325,7 @@ async def _dispatch_action(
     # row (pump=False left it merely 'pending'), then trace/notify — all
     # post-commit, per the mirror-discipline + dispatch/pump-split rules.
     store.render_mirrors(goal_id)
-    # Spec 025: record the rendered brief's character count in the goal log so
+    # Spec 026 (dispatch-brief-budget): record the rendered brief's character count in the goal log so
     # the ramp is visible in telemetry instead of inferred from failures.
     brief_chars = len(dispatch_action.goal)
     store.append_log(goal_id, f"dispatch brief: {brief_chars} chars", mirror=False)

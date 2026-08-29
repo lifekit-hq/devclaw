@@ -1,4 +1,4 @@
-# Tasks — spec 025 dispatch brief budget
+# Tasks — spec 026 dispatch brief budget
 
 ## US1 — Brief steering budget + telemetry [P1]
 

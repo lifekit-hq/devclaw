@@ -1,4 +1,4 @@
-# Plan — spec 025 dispatch brief budget
+# Plan — spec 026 dispatch brief budget
 
 ## Files / areas this slice touches
 

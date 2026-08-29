@@ -1,4 +1,4 @@
-# Spec 025 — Dispatch brief budget
+# Spec 026 — Dispatch brief budget
 
 **Issue:** lifekit-hq/devclaw#729  
 **Parent class:** #707 (worker-context overflow)
