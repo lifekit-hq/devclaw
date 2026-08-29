@@ -102,6 +102,36 @@ async def test_all_refs_closed_proposes_done_with_zero_worker_sessions(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_all_refs_closed_after_gate_refusal_dispatches_worker(tmp_path):
+    """SC-002b (issue #726): when the done-gate has already refused once
+    (donegate_rounds > 0), all-closed must NOT re-propose done — an issue can
+    be closed by a partial implementation while the full contract remains unmet.
+    The goal must dispatch a worker to complete the remaining work instead of
+    burning another review call and eventually hitting the churn brake."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", issue_refs=[7])
+    # Simulate state after one done-gate refusal (the 'off_track' path
+    # increments donegate_rounds and returns RESUME_IDLE).
+    store.save_status("g", GoalStatus(phase="idle", donegate_rounds=1))
+    fetcher = FakeIssueFetcher({7: _snap(7, state="closed")})
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier(), fetcher)
+
+    # Must dispatch an implement_feature worker, NOT a review_repository
+    assert out is Outcome.DISPATCHED
+    tools = [a.tool for a, _g, _u in engine.dispatched]
+    assert tools == ["implement_feature"]
+    assert store.load_status("g").phase == "in_flight"
+    log = store.recent_log("g")
+    assert "previously refused" in log
+    assert "dispatching" in log
+    # The issue context must tell the worker the issue is closed (do NOT re-work)
+    action, _, _ = engine.dispatched[0]
+    assert "Issue #7 is closed" in action.goal
+
+
+@pytest.mark.asyncio
 async def test_unfetchable_ref_blocks_human_gated(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", issue_refs=[7])

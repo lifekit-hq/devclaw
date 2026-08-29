@@ -797,29 +797,46 @@ async def _handle_long_lived_advance(
                 )
                 await _notify(ctx.notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
                 return Outcome.BLOCKED
-            # Every referenced issue is resolved out-of-band: spend ZERO
-            # worker sessions — propose done directly and let the grounded
-            # gate judge done_when (BLOCKED→OPEN_DONE_GATE is legal, so a
-            # steered-while-parked goal takes this path too).
+            if base.donegate_rounds == 0:
+                # First pass: all issues closed, no prior done-gate refusal.
+                # Out-of-band work may have fully satisfied the contract —
+                # propose done and let the grounded gate decide.
+                # If the gate refuses (donegate_rounds becomes > 0), the next
+                # tick dispatches a worker instead of re-proposing (issue #726).
+                store.append_log(
+                    goal_id,
+                    "all referenced issues are closed — proposing done without "
+                    "dispatching a worker",
+                )
+                return await _open_done_gate(
+                    goal_id, goal, base,
+                    store=store, engine=ctx.engine,
+                    evaluator_caller=ctx.evaluator_caller,
+                    notifier=ctx.notifier, notify_url=ctx.notify_url,
+                    prepare_ws=ctx.prepare_ws, verify_done=ctx.verify_done,
+                    note="all referenced issues closed",
+                    summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+                    autodeploy=ctx.autodeploy, consume_steering=consume_ids,
+                    issue_fetcher=ctx.issue_fetcher,
+                )
+            # donegate_rounds > 0: the done-gate already refused — the contract
+            # is unmet even with all issues closed. An issue can be closed by a
+            # partial implementation (e.g. a PR with Closes #N on an
+            # intermediate increment while the full spec remains unbuilt).
+            # Dispatch a worker to complete the remaining contract; the closed
+            # issues tell it not to re-open or re-work them. The issue closure
+            # is an input to the evaluation, not the verdict (spec 019 US2).
             store.append_log(
                 goal_id,
-                "all referenced issues are closed — proposing done without "
-                "dispatching a worker",
+                f"all referenced issues are closed but done-gate previously "
+                f"refused ({base.donegate_rounds} round(s)) — dispatching "
+                "worker to complete the remaining contract",
             )
-            return await _open_done_gate(
-                goal_id, goal, base,
-                store=store, engine=ctx.engine,
-                evaluator_caller=ctx.evaluator_caller,
-                notifier=ctx.notifier, notify_url=ctx.notify_url,
-                prepare_ws=ctx.prepare_ws, verify_done=ctx.verify_done,
-                note="all referenced issues closed",
-                summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
-                autodeploy=ctx.autodeploy, consume_steering=consume_ids,
-                issue_fetcher=ctx.issue_fetcher,
+            issue_context = _issue_ref.render_issue_context([], snaps)
+        else:
+            issue_context = _issue_ref.render_issue_context(
+                open_snaps, [s for s in snaps if s.state != "open"]
             )
-        issue_context = _issue_ref.render_issue_context(
-            open_snaps, [s for s in snaps if s.state != "open"]
-        )
     action = Action(
         engine="devclaw",
         tool="implement_feature",
