@@ -106,7 +106,7 @@ class DispatchEvent:
     ref_id: str = ""
     engine: str = ""           # stub | sandcastle | host
     is_done_check: bool = False
-    brief_chars: int = 0       # spec 025: rendered brief size for ramp visibility
+    brief_chars: int = 0       # spec 026 (dispatch-brief-budget): rendered brief size for ramp visibility
 
     def to_dict(self) -> dict:
         return asdict(self)
