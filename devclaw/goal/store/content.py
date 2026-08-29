@@ -7,10 +7,8 @@ checklist/firmed-draft/discovery contract docs died with the host-cognition
 chain, spec 008 shrink.)
 
 **Nothing here reads a view back (#617).** Every ``.md`` this module writes is
-a write-only projection; the rows are the only input to a decision. The
-markdown that existed before that rule was enforced is ingested exactly once,
-by :func:`~devclaw.goal.store.view_migration.migrate_views_once` at store
-construction. Re-adding a read of ``log.md`` / ``deliveries.md`` /
+a write-only projection; the rows are the only input to a decision.
+Re-adding a read of ``log.md`` / ``deliveries.md`` /
 ``inbox.md`` / ``STATUS.md`` re-opens a second writer to goal state that
 ``GoalStore.transition()``'s CAS choke point does not cover — see
 ``tests/test_views_never_read_back.py``.

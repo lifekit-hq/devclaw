@@ -49,7 +49,6 @@ from .rows import (
     _now_ms,
     _row_to_task,
 )
-from .trace_migration import migrate_cognition_response_text_once
 
 # ---- VACUUM (reclaim disk the prunes free, 2026-07-18) ----------------------
 # The retention prunes DELETE rows but SQLite never returns freed pages to the
@@ -123,11 +122,6 @@ class StateStore(
         #: exception was caught between nested levels.
         self._txn_failed = False
         self._bootstrap()
-        # One-shot, crash-safe: fold pre-T0.5 ``response_preview`` payloads
-        # into ``response_text`` so telemetry has exactly one field to read
-        # (#616). Stamps a meta marker; every later construction is a no-op
-        # lookup. See ``trace_migration`` for the cutoff.
-        migrate_cognition_response_text_once(self, now_ms=_now_ms())
 
     @property
     def db_path(self) -> str:

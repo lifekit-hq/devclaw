@@ -56,9 +56,9 @@ def check_dangling_links(ctx: "InstanceContext", project: "Project") -> list[Fin
 def check_unstamped_goals(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     """Goals whose workspace maps onto this project but carry no project_id.
 
-    The one-shot backfill (goal/project_id_cutoff.py) never re-runs, so a goal
-    created in a gap stays unstamped forever and silently drops out of every
-    project rollup.
+    The one-shot #524 P3 backfill ran once and was deleted (2026-08-29 prune),
+    so a goal created in a gap stays unstamped forever and silently drops out
+    of every project rollup.
     """
     cid = "project.links.unstamped_goals"
     unstamped = sorted(

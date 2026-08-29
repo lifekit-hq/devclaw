@@ -603,26 +603,6 @@ class ProjectRegistry:
             )
             self._db.commit()
 
-    def find_by_workspace_dir(self, workspace_dir: Optional[str]) -> Optional[Project]:
-        """Reverse workspace→project lookup by normalized path.
-
-        **Migration/backfill ONLY (#524 P3).** The runtime project↔goal/task
-        joins are all keyed on ``project_id`` now; this normalized-path scan
-        survives solely for ``GoalService.backfill_project_ids`` to stamp
-        ``project_id`` onto goals written before the field. Do NOT reintroduce it
-        on a runtime path — that is the fragile join P3 deleted (a workspace
-        rename or a shared path silently unbinds a project). Returns ``None`` if
-        the workspace is empty or no project claims it."""
-        target = _normalize_workspace(workspace_dir)
-        if target is None:
-            return None
-        with self._lock:
-            rows = self._db.execute("SELECT * FROM projects").fetchall()
-        for r in rows:
-            if _normalize_workspace(r["workspace_dir"]) == target:
-                return _row_to_project(r)
-        return None
-
     def resolve_override(self, project_id: Optional[str], field: str, default: Any) -> Any:
         """Resolve one per-project override for a goal/task belonging to
         ``project_id``: the owning project's value for ``field`` if it pins one

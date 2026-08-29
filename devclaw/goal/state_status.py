@@ -229,27 +229,6 @@ class GoalStateStatusMixin:
             )
             self._store._commit()
 
-    def read_inbox_ingest_cursor(self, goal_id: str) -> int:
-        """How many ``inbox.md`` lines this goal had already turned into
-        ``goal_steering`` rows before #617 deleted the ingest. READ-ONLY, with
-        exactly one caller: :func:`~devclaw.goal.store.view_migration
-        .migrate_views_once`, to tell historical (already-acted-on) steering
-        from steering that was still unread at the cutoff.
-
-        The column is dropped by the #616 cutoff, which runs immediately after
-        that migration — and never exists at all on a database bootstrapped
-        after it. Both cases mean the same thing (there is no pre-#617 ingest
-        boundary to respect), so both answer 0, checked against the schema
-        rather than guessed from an exception."""
-        with self._store._lock:
-            info = self._store._db.execute("PRAGMA table_info(goal_status)").fetchall()
-            if not any(r["name"] == "inbox_ingest_cursor" for r in info):
-                return 0
-            row = self._store._db.execute(
-                "SELECT inbox_ingest_cursor FROM goal_status WHERE goal_id = ?", (goal_id,)
-            ).fetchone()
-        return int(row["inbox_ingest_cursor"] or 0) if row else 0
-
     # ---- goal_phase_history (append-only phase transitions) ----------------
 
     def read_phase_history(self, goal_id: str) -> "tuple[dict, ...]":

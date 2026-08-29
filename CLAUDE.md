@@ -83,10 +83,9 @@ spawn containers itself — it goes through the engine).
   are generated **views** — human- and rollback-readable, never read back for
   decisions. That last clause was aspiration until #617: the store parsed those
   views back into rows on eight read paths, which made whoever last touched a
-  markdown file a second writer the CAS below does not cover. The pre-#617
-  markdown is now ingested exactly once, at store construction
-  (`goal/store/view_migration.py`), and `tests/test_views_never_read_back.py`
-  holds the line structurally. Mutation is NOT heartbeat-exclusive: `steer_goal`/`resume_goal`/`cancel_goal` write from
+  markdown file a second writer the CAS below does not cover. The one-shot
+  pre-#617 ingest ran on the production DB and was deleted (2026-08-29 prune);
+  `tests/test_views_never_read_back.py` holds the line structurally. Mutation is NOT heartbeat-exclusive: `steer_goal`/`resume_goal`/`cancel_goal` write from
   the MCP-tool call path too, concurrently with the heartbeat — `GoalStore.transition()`
   is the CAS'd choke point (`devclaw/goal/transitions.py`'s `LEGAL` table) that makes
   that safe: a stale-snapshot write raises `TransitionConflict` and is abandoned rather

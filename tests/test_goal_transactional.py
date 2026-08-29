@@ -337,36 +337,6 @@ async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
 # ---- 6. settlement seeding ---------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_settlement_seeding_from_legacy_log(tmp_path):
-    """A pre-PR7 goal with a settle line only in its log and zero settlement
-    rows must answer is_settled(...) True from the one-shot migration's seed
-    alone (no re-adoption needed) — matching exactly what the old
-    log_contains(f" {id} → ") guard used to answer True for. An already-settled
-    ref is left alone by the sweep. (The program-ref re-adoption halves of this
-    test died with the program/DAG lane, spec 022 US3 — the sweep now probes
-    only the task finder.)
-
-    The log.md is planted BEFORE the store is constructed: #617 moved the
-    seed out of ``is_settled`` and into the construction-time migration, so
-    that is the only moment it can be read."""
-    seed_goal(tmp_path, "g", cadence="1d")
-    d = tmp_path / "g"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "log.md").write_text(
-        "# g — log\n\n- [2026-07-01T00:00:00] implement_feature t-1 → done\n"
-    )
-    store = GoalStore(tmp_path, now=Clock())   # the one-shot migration runs HERE
-    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
-
-    assert store.is_settled("g", "t-1") is True  # seeded by the migration
-
-    swept = await sweep_orphaned_refs(
-        store, _TaskFinderEngine(task=("t-1", "some task", "implement_feature"))
-    )
-    assert swept == {}  # already settled — sweep leaves it alone
-
-
 # ---- 7. sweep extends to tasks ----------------------------------------------
 
 

@@ -14,9 +14,7 @@ import time
 import pytest
 
 from devclaw.doctor import Verdict, run_doctor
-from devclaw.goal.project_id_cutoff import CUTOFF_META_KEY as PID_KEY
 from devclaw.goal.store import GoalStore
-from devclaw.goal.store.view_migration import MIGRATION_META_KEY as VIEW_KEY
 from devclaw.project_registry import ProjectRegistry
 from devclaw.state_store import StateStore
 
@@ -62,19 +60,6 @@ def _findings(report, check_id):
 # ---- instance: migrations / legacy shapes --------------------------------
 
 
-def test_missing_migration_marker_is_a_fail(env):
-    env["store"].delete_meta(VIEW_KEY)
-    (f,) = [x for x in _findings(_run(env), "instance.migrations.meta_keys")
-            if x.verdict is Verdict.FAIL]
-    assert "goal view migration" in f.evidence
-    assert "restart" in f.remedy
-
-
-def test_pid_backfill_marker_missing_is_warn_not_fail(env):
-    report = _run(env)  # fresh DB: server-boot backfill never ran
-    warns = [x for x in _findings(report, "instance.migrations.meta_keys")
-             if x.verdict is Verdict.WARN]
-    assert warns and "backfill" in warns[0].evidence
 
 
 def test_legacy_lifecycle_row_detected(env):
@@ -255,8 +240,7 @@ def test_doctor_is_deterministic_for_unchanged_state(env, tmp_path):
 
 
 def test_doctor_reports_healthy_affirmatively(env):
-    # green everything the fixture doesn't already: backfill marker + window
-    env["store"].set_meta(PID_KEY, str(NOW_MS))
+    # green everything the fixture doesn't already: the run window
     env["store"].set_run_schedule(True, "22:00", "05:00", "Europe/Kyiv")
     report = _run(env)
     assert report.healthy, [f for f in report.findings if f.verdict is not Verdict.OK]
