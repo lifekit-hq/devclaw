@@ -554,7 +554,7 @@ class AcpClient:
                     "id": None,
                     "type": etype,
                     "source": source,
-                    "ts": time.time(),
+                    "ts": int(time.time() * 1000),
                     "payload": payload,
                 }
             )

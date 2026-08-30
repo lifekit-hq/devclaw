@@ -1537,7 +1537,7 @@ def main() -> None:
                 "id": None,
                 "type": "ToolchainProvision",
                 "source": "runner",
-                "ts": time.time(),
+                "ts": int(time.time() * 1000),
                 "payload": provisioned,
             }
         )
@@ -1685,7 +1685,7 @@ def main() -> None:
                     "id": None,
                     "type": "ContextTripwire",
                     "source": "runner",
-                    "ts": time.time(),
+                    "ts": int(time.time() * 1000),
                     "payload": {
                         "used": tripwire.used,
                         "size": tripwire.size,
@@ -1892,7 +1892,7 @@ def main() -> None:
                 "id": "verify",
                 "type": "VerifyResult",
                 "source": "devclaw",
-                "ts": time.time(),
+                "ts": int(time.time() * 1000),
                 "payload": {
                     "cmd": verify["cmd"],
                     "passed": verify["passed"],
