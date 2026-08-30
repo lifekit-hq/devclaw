@@ -156,6 +156,18 @@ _NOW = datetime(2026, 7, 10, 18, 0, 0, tzinfo=timezone.utc)  # 18:00 UTC
     ("usage limit reached · resets 6pm", 24 * 3600 + 120),
     # non-UTC zone name is treated as UTC (self-correcting on the next probe)
     ("You've hit your session limit · resets 12:20am (Europe/Dublin)", 6 * 3600 + 20 * 60 + 120),
+    # DATED wording — used when the reset is >1 day out (live 2026-08-29; the
+    # exact string that fell to the 30-min re-probe churn). Aug 31 06:00 UTC
+    # from Jul 10 18:00 = 51d12h ahead.
+    ("session/prompt failed: Internal error: You're out of extra usage · resets Aug 31, 6am (UTC)",
+     51 * 86400 + 12 * 3600 + 120),
+    # full month name, no comma, "at" between date and time
+    ("You're out of extra usage · resets August 31 at 6am", 51 * 86400 + 12 * 3600 + 120),
+    # stated date already passed → rolls across the year boundary (Jan 2 < Jul 10)
+    ("out of usage · resets Jan 2, 6am (UTC)",
+     int((datetime(2027, 1, 2, 6, tzinfo=timezone.utc) - _NOW).total_seconds()) + 120),
+    ("out of usage · resets Feb 30, 6am", None),      # impossible date → degrade, don't raise
+    ("out of usage · resets Blursday 31, 6am", None),  # unknown month word → degrade
     ("usage limit reached", None),                    # no absolute time stated
     ("rate limit; try again in 5 minutes", None),     # relative-only → not ours
 ])
@@ -163,13 +175,17 @@ def test_seconds_until_reset(text, secs):
     assert _seconds_until_reset(text, _NOW) == secs
 
 
-def test_classify_parses_absolute_reset_when_clock_injected():
-    c = classify_failure(
-        "Internal error: You're out of extra usage · resets 10pm (UTC)", now_utc=_NOW
-    )
+@pytest.mark.parametrize("text,secs", [
+    ("Internal error: You're out of extra usage · resets 10pm (UTC)", 4 * 3600 + 120),
+    # the dated wording, end-to-end through classify (live 2026-08-29)
+    ("session/prompt failed: Internal error: You're out of extra usage · resets Aug 31, 6am (UTC)",
+     51 * 86400 + 12 * 3600 + 120),
+])
+def test_classify_parses_absolute_reset_when_clock_injected(text, secs):
+    c = classify_failure(text, now_utc=_NOW)
     assert c.kind is FailureKind.QUOTA
     assert c.stated is True
-    assert c.retry_after_s == 4 * 3600 + 120
+    assert c.retry_after_s == secs
 
 
 def test_classify_without_clock_keeps_old_behavior():
@@ -202,6 +218,10 @@ def test_stated_hint_survives_past_default_cap():
     # a 10h stated reset must NOT be clobbered to the 3600s re-probe cap — that
     # made devclaw re-probe a multi-hour cap hourly, each probe a doomed dispatch
     assert pause_seconds(36000, stated=True) == 36000
+    # …and a multi-DAY stated reset (weekly cap, ~35h out live 2026-08-29) must
+    # not be clamped to 24h either — STATED_MAX is 7d, the weekly-cycle bound
+    assert pause_seconds(35 * 3600, stated=True) == 35 * 3600
+    assert pause_seconds(3 * 86_400, stated=True) == 3 * 86_400
 
 
 def test_stated_hint_still_bounded():
