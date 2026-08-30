@@ -26,15 +26,14 @@ def _ok_runner(seen: list[str]):
 # ---- lifted on_event bound method (#407 PR-1) ----
 
 
-async def test_on_event_lifted_still_tags_task_and_program_id(store):
-    """The per-attempt event sink is now the bound method ``_append_task_event``
-    pre-bound via ``functools.partial(self._append_task_event, task_id,
-    program_id)`` (lifted from an inline closure, #407 PR-1). Byte-for-byte the
-    same behavior must hold: an engine event streamed during the run lands on the
-    append-only log carrying BOTH the correct ``task_id`` and ``program_id``."""
+async def test_on_event_lifted_still_tags_task_id(store):
+    """The per-attempt event sink is the bound method ``_append_task_event``
+    pre-bound via ``functools.partial(self._append_task_event, task_id)``
+    (lifted from an inline closure, #407 PR-1; the program_id it also carried
+    died with the 022 lane demolition). An engine event streamed during the
+    run must land on the append-only log carrying the correct ``task_id``."""
     store.create_task(
         id="t1", kind="implement_feature", workspace_dir="/ws", goal="g",
-        program_id="prog_42",
     )
     store.claim_pending("t1")  # running — the state _run_and_settle settles from
 
@@ -50,7 +49,6 @@ async def test_on_event_lifted_still_tags_task_and_program_id(store):
     logged = [e for e in store.list_events(task_id="t1") if e.type == "log"]
     assert logged, "the streamed engine event was not persisted"
     assert logged[0].task_id == "t1"
-    assert logged[0].program_id == "prog_42"
 
 
 # ---- crash recovery ----

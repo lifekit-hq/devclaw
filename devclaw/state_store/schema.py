@@ -31,9 +31,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                   created_at      INTEGER NOT NULL,
                   started_at      INTEGER,
                   completed_at    INTEGER,
-                  program_id      TEXT,
-                  depends_on      TEXT,
-                  order_idx       INTEGER,
                   milestone       TEXT,
                   verify_cmd      TEXT,
                   deliver         INTEGER NOT NULL DEFAULT 0,
@@ -53,7 +50,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 CREATE TABLE IF NOT EXISTS events (
                   id              INTEGER PRIMARY KEY AUTOINCREMENT,
                   task_id         TEXT NOT NULL,
-                  program_id      TEXT,
                   type            TEXT NOT NULL,
                   source          TEXT NOT NULL DEFAULT '',
                   payload_json    TEXT NOT NULL,
@@ -108,7 +104,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                     task_id      TEXT,              -- live: task uuid; basket: NULL ok
                     ticket       TEXT,              -- basket: basket ticket id; live: NULL
                     goal_id      TEXT,
-                    program_id   TEXT,
                     kind         TEXT,              -- fix_bug | implement_feature | ...
                     workspace_dir TEXT,
                     status       TEXT NOT NULL,     -- done | failed | cancelled
@@ -233,9 +228,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
             for sql in (
                 "ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'implement_feature'",
                 "ALTER TABLE tasks ADD COLUMN notify_url TEXT",
-                "ALTER TABLE tasks ADD COLUMN program_id TEXT",
-                "ALTER TABLE tasks ADD COLUMN depends_on TEXT",
-                "ALTER TABLE tasks ADD COLUMN order_idx INTEGER",
                 "ALTER TABLE tasks ADD COLUMN milestone TEXT",
                 "ALTER TABLE tasks ADD COLUMN verify_cmd TEXT",
                 "ALTER TABLE tasks ADD COLUMN deliver INTEGER NOT NULL DEFAULT 0",
@@ -243,7 +235,7 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 "ALTER TABLE tasks ADD COLUMN title TEXT",
                 # Durable goal-owner pointer (2026-07-04) — set by the goal
                 # heartbeat when it dispatches a task; null for standalone
-                # dispatch_task calls. Orthogonal to program_id.
+                # dispatch_task calls.
                 "ALTER TABLE tasks ADD COLUMN parent_goal_id TEXT",
                 # Usage-limit requeue counter (2026-07-10) — bounds the
                 # pause→requeue→re-run loop (see Task.pause_count).
@@ -297,14 +289,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 # it toward a meaningless 100%. Defaulted 0 so pre-existing rows
                 # read as non-idle (their `clean` value is unchanged).
                 "ALTER TABLE cycle_reports ADD COLUMN idle INTEGER NOT NULL DEFAULT 0",
-                # Fan-out lane metadata (spec 010 US3, FR-101/FR-102): the JSON
-                # {"position", "scopes", "integrate_into"} for a task dispatched
-                # as one lane of a planned parallel group — its merge-queue
-                # order, the file scope the settle gate holds it to, and the
-                # shared goal workspace its work is integrated into. NULL for
-                # every ordinary task and every pre-existing row, which is what
-                # keeps the non-fan-out path byte-identical.
-                "ALTER TABLE tasks ADD COLUMN lane_json TEXT",
             ):
                 try:
                     db.execute(sql)
@@ -370,6 +354,43 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
             # straggler written by a lagging sandbox image. 10**12 ms is
             # 2001-09 — below every real ms value, above every seconds value.
             db.execute("UPDATE events SET ts = ts * 1000 WHERE ts > 0 AND ts < 1000000000000")
+            # (5) Program-lane demolition (spec 022 US3's store tail). ORDER IS
+            # LOAD-BEARING: the lane's zombie pending rows must be DELETED
+            # while tasks.program_id still exists — that column was the only
+            # thing the pending scan filtered them out by; drop the column
+            # first and they become dispatchable. Indexes drop before their
+            # columns (SQLite refuses to drop an indexed column). Every step
+            # is idempotent: the DELETE matches nothing once the column is
+            # gone (guarded by the try), IF EXISTS covers table/indexes, and
+            # a DROP COLUMN on an absent column raises OperationalError which
+            # is swallowed like the add-column idiom above.
+            try:
+                db.execute(
+                    "DELETE FROM tasks WHERE status = 'pending' AND program_id IS NOT NULL"
+                )
+            except sqlite3.OperationalError:
+                pass  # program_id already dropped — zombies already gone
+            db.executescript(
+                """
+                DROP INDEX IF EXISTS idx_tasks_program;
+                DROP INDEX IF EXISTS idx_events_program;
+                DROP INDEX IF EXISTS idx_programs_status;
+                DROP INDEX IF EXISTS idx_programs_parent_goal;
+                DROP TABLE IF EXISTS programs;
+                """
+            )
+            for sql in (
+                "ALTER TABLE tasks DROP COLUMN program_id",
+                "ALTER TABLE tasks DROP COLUMN depends_on",
+                "ALTER TABLE tasks DROP COLUMN order_idx",
+                "ALTER TABLE tasks DROP COLUMN lane_json",
+                "ALTER TABLE events DROP COLUMN program_id",
+                "ALTER TABLE eval_outcomes DROP COLUMN program_id",
+            ):
+                try:
+                    db.execute(sql)
+                except sqlite3.OperationalError:
+                    pass  # column already dropped (or never existed on this DB)
             commit()
 
     # ---- tasks ----------------------------------------------------------

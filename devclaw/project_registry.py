@@ -358,6 +358,15 @@ class ProjectRegistry:
                 self._add_column(name, "INTEGER")
             for name in _OVERRIDE_STR_FIELDS:
                 self._add_column(name, "TEXT")
+            # Demolition (auto-merge deleted, #641): older DBs still carry the
+            # feature's override columns; nothing reads or writes them anymore.
+            # Same idempotent idiom as _add_column — an absent column is the
+            # success case.
+            for name in ("automerge", "merge_strategy"):
+                try:
+                    self._db.execute(f"ALTER TABLE projects DROP COLUMN {name}")
+                except sqlite3.OperationalError:
+                    pass  # column already dropped (or never existed)
             # bench (spec 018 US2): plain bool, NULL-on-old-rows reads False.
             self._add_column("bench", "INTEGER")
             self._db.commit()

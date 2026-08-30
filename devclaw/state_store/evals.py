@@ -101,14 +101,13 @@ class EvalOutcomesMixin:
             wall_ms = (completed - started) if (completed and started) else None
             self._db.execute(
                 "INSERT OR IGNORE INTO eval_outcomes "
-                "(source, task_id, goal_id, program_id, kind, workspace_dir, "
+                "(source, task_id, goal_id, kind, workspace_dir, "
                 " status, verify_passed, pr_url, attempts, wall_ms, "
                 " failure_class, error, settled_at) "
-                "VALUES ('live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES ('live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     task_id,
                     row["parent_goal_id"],
-                    row["program_id"],
                     row["kind"],
                     row["workspace_dir"],
                     status,

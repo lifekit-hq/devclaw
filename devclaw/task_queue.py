@@ -249,10 +249,8 @@ class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
         moved = self._store.mark_task_cancelled(task_id)
         if not moved:
             return False  # already done/failed/cancelled — nothing to abort
-        task = self._store.get_task(task_id)
         self._store.append_event(
             task_id=task_id,
-            program_id=task.program_id if task else None,
             type="cancelled",
             source="devclaw",
             payload_json=json.dumps({"reason": "cancelled by client"}),
@@ -369,10 +367,8 @@ class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
             )
         reaped = self._store.reset_running_to_pending()
         for tid in reaped:
-            t = self._store.get_task(tid)
             self._store.append_event(
                 task_id=tid,
-                program_id=t.program_id if t else None,
                 type="reaped",
                 source="devclaw",
                 payload_json=json.dumps(
@@ -475,7 +471,7 @@ class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
                 if self._store.claim_pending(t.id):
                     self._mem_commit_launch(need)
                     running += 1
-                    self._launch(t.id, t.kind, t.workspace_dir, t.goal, None)
+                    self._launch(t.id, t.kind, t.workspace_dir, t.goal)
 
     def _launch(
         self,
@@ -483,9 +479,8 @@ class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
         kind: TaskKind,
         workspace_dir: str,
         goal: str,
-        program_id: Optional[str],
     ) -> None:
-        task = self._spawn(self._execute(task_id, kind, workspace_dir, goal, program_id))
+        task = self._spawn(self._execute(task_id, kind, workspace_dir, goal))
         # Index it for cancel(); drop the ref the moment it settles so the map
         # only ever names genuinely in-flight runs.
         self._running_tasks[task_id] = task

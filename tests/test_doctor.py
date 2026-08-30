@@ -86,11 +86,28 @@ def test_dropped_shapes_still_present_detected(env):
     db = env["store"]._db
     db.execute("CREATE TABLE goal_docs (goal_id TEXT)")
     db.execute("ALTER TABLE goal_status ADD COLUMN inbox_ingest_cursor TEXT")
+    # program-lane remnants (022 demolition tail): table + column + the
+    # load-bearing zombie — a pending row the dead lane left behind, which
+    # with the column dropped nothing filters out of the pending scan.
+    db.execute("CREATE TABLE programs (id TEXT PRIMARY KEY)")
+    db.execute("ALTER TABLE tasks ADD COLUMN program_id TEXT")
+    db.execute(
+        "INSERT INTO tasks (id, kind, status, workspace_dir, goal, created_at, program_id) "
+        "VALUES ('z1', 'implement_feature', 'pending', '/ws', 'g', 0, 'prog-1')"
+    )
     db.commit()
     report = _run(env)
     (docs,) = _findings(report, "instance.legacy.goal_docs_table")
     (cursor,) = _findings(report, "instance.legacy.inbox_cursor_column")
+    (lane,) = _findings(report, "instance.legacy.program_lane")
     assert docs.verdict is Verdict.FAIL and cursor.verdict is Verdict.FAIL
+    assert lane.verdict is Verdict.FAIL
+    assert "zombie pending" in lane.evidence and "programs" in lane.evidence
+
+
+def test_program_lane_dropped_reports_ok(env):
+    (lane,) = _findings(_run(env), "instance.legacy.program_lane")
+    assert lane.verdict is Verdict.OK
 
 
 # ---- instance: auth (mechanical, never invokes claude) -------------------

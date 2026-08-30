@@ -103,7 +103,6 @@ class AdmissionMixin:
         self._store.set_workspace_break(workspace_dir, until_ms, reason)
         self._store.append_event(
             task_id=task_id,
-            program_id=None,
             type="workspace_break_tripped",
             source="devclaw",
             payload_json=json.dumps({

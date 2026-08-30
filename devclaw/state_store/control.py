@@ -373,6 +373,34 @@ class ControlPlaneMixin:
         when the signal has never fired at that scope (fresh fire allowed)."""
         return self.get_meta(f"trend_fingerprint:{scope}:{signal_id}")
 
+    def prune_stale_trend_meta(self, live_workspaces: "set[str]") -> int:
+        """Delete trend cooldown/fingerprint/bookmark meta keys whose project
+        workspace is no longer registered — trend state expires WITH the
+        project instead of accreting forever (the 2026-08-30 DB audit found
+        215 keys pinned to workspaces deleted weeks earlier). Harness-self
+        scope keys are never project-keyed and are never touched. Returns the
+        number of keys deleted. Pure SQLite — zero LLM, safe on the idle
+        path."""
+        stale: list[str] = []
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT key FROM meta WHERE key LIKE 'trend_%'"
+            ).fetchall()
+        for (key,) in rows:
+            if key.startswith(("trend_cooldown:project:", "trend_fingerprint:project:")):
+                # trend_<kind>:project:<workspace>:<signal_id> — the signal id
+                # is the last :-segment; the workspace is everything between.
+                ws = key.split(":project:", 1)[1].rsplit(":", 1)[0]
+            elif key.startswith("trend_bookmark:"):
+                ws = key.split(":", 1)[1]
+            else:
+                continue  # harness-self or unknown shape — leave it alone
+            if ws not in live_workspaces:
+                stale.append(key)
+        for key in stale:
+            self.delete_meta(key)
+        return len(stale)
+
     def set_trend_bookmark(self, workspace_dir: str, sha: str) -> None:
         """Persist the trend detector's last-seen SHA for one workspace. This
         is the DETECTOR'S OWN namespace — distinct from any future
