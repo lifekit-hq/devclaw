@@ -242,6 +242,14 @@ class InProcessEngine:
         traces (raw runner SDK events)."""
         return self._store.maybe_prune_events()
 
+    def compact_task_results(self) -> int:
+        """Daily settled-task ``result_json`` compaction (volume hygiene,
+        2026-08-30 DB audit — transcripts were the DB's biggest payload with
+        no retention). Delegates to
+        :meth:`StateStore.maybe_compact_task_results` — same seam as
+        :meth:`prune_events`."""
+        return self._store.maybe_compact_task_results()
+
     def vacuum(self) -> bool:
         """Weekly VACUUM that reclaims the disk the retention prunes free
         (volume hygiene, 2026-07-18). Delegates to :meth:`StateStore.maybe_vacuum`

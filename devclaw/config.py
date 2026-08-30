@@ -307,6 +307,10 @@ def events_retention_days_raw() -> "str | None":
     return os.environ.get("DEVCLAW_EVENTS_RETENTION_DAYS")
 
 
+def task_result_retention_days_raw() -> "str | None":
+    return os.environ.get("DEVCLAW_TASK_RESULT_RETENTION_DAYS")
+
+
 def db_size_alert_mb_raw() -> "str | None":
     return os.environ.get("DEVCLAW_DB_SIZE_ALERT_MB")
 
