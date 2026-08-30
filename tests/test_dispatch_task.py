@@ -77,21 +77,6 @@ async def test_dispatch_task_rejects_empty_project_or_goal(env):
     assert env.calls == [], "a rejected dispatch submits no task"
 
 
-async def test_review_repository_alias_still_submits_same_kind(env):
-    await _tools.review_repository(project_id=env.pid, focus="auth")
-    (call,) = env.calls
-    assert call["kind"] == "review_repository"
-    assert call["goal"] == "auth"
-    assert call["verify_cmd"] is None
-    assert call["deliver"] is False
-
-
-async def test_review_repository_alias_defaults_goal_when_no_focus(env):
-    await _tools.review_repository(project_id=env.pid)
-    (call,) = env.calls
-    assert call["goal"] == "general code review"
-
-
 # ---- spec 003 / #520 regression tests (quickstart scenarios) ----------------
 
 
@@ -183,8 +168,9 @@ def goal_lane(monkeypatch, env):
 async def test_mutating_dispatch_rejects_branch_targets_loudly(goal_lane):
     """#727 finding 1: base_branch/target_branch used to be silently DISCARDED
     for mutating kinds (dispatch_issue carries neither) — a documented
-    parameter is threaded or rejected, never eaten. Read-only review keeps
-    them (they select the review target)."""
+    parameter is threaded or rejected, never eaten. Same class: notify_url
+    (dispatch_issue carries no notify seam either — the goal lane notifies
+    through the goal's own path). Read-only review keeps all of them."""
     for kwargs in (dict(base_branch="develop"), dict(target_branch="feat/x"),
                    dict(base_branch="develop", target_branch="feat/x")):
         with pytest.raises(ToolError, match="goal lane"):
@@ -192,14 +178,22 @@ async def test_mutating_dispatch_rejects_branch_targets_loudly(goal_lane):
                 kind="implement_feature", project_id=goal_lane.pid,
                 goal="continue the work", issue_ref=7, **kwargs,
             )
+    with pytest.raises(ToolError, match="notify_url does not apply"):
+        await _tools.dispatch_task(
+            kind="implement_feature", project_id=goal_lane.pid,
+            goal="continue the work", issue_ref=7,
+            notify_url="http://waiter/notify",
+        )
     assert goal_lane.dispatched == [] and goal_lane.calls == []
     # read-only still threads them into the queue submit
     await _tools.dispatch_task(
         kind="review_repository", project_id=goal_lane.pid, goal="review it",
         base_branch="develop", target_branch="feat/x",
+        notify_url="http://waiter/notify",
     )
     (call,) = goal_lane.calls
     assert call["base_branch"] == "develop" and call["target_branch"] == "feat/x"
+    assert call["notify_url"] == "http://waiter/notify"
 
 
 async def test_prose_dispatch_requires_real_done_when(goal_lane, monkeypatch):
@@ -296,8 +290,8 @@ async def test_mutating_dispatch_never_reaches_direct_queue_submit(goal_lane):
     await _tools.dispatch_task(
         kind="implement_feature", project_id=goal_lane.pid, goal="x", issue_ref=1,
     )
-    await _tools.fix_bug(
-        project_id=goal_lane.pid, description="broken thing", issue_ref=2,
+    await _tools.dispatch_task(
+        kind="fix_bug", project_id=goal_lane.pid, goal="broken thing", issue_ref=2,
     )
     assert len(goal_lane.dispatched) == 2
     assert goal_lane.calls == [], "no mutating kind may reach queue.submit directly"

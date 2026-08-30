@@ -54,17 +54,15 @@ from .delivery import (  # noqa: F401
 from .goals import (  # noqa: F401
     cancel_goal,
     create_goal,
-    dry_evaluate,
     evaluate_goal,
     get_goal,
     get_trace,
     list_goals,
     resume_goal,
-    scope_grill,
     set_goal_strictness,
+    set_goal_verify_cmd,
     steer_goal,
     tail_goal,
-    verify_goal,
 )
 from .intake import (  # noqa: F401
     file_intake,
@@ -74,11 +72,9 @@ from .intake import (  # noqa: F401
 )
 from .observability import (  # noqa: F401
     get_events,
-    get_program,
     get_scorecard_metrics,
     get_status,
     list_problems,
-    list_programs,
     list_tasks,
     review_trends,
 )
@@ -93,7 +89,4 @@ from .projects import (  # noqa: F401
 from .tasks import (  # noqa: F401
     cancel_task,
     dispatch_task,
-    fix_bug,
-    implement_feature,
-    review_repository,
 )

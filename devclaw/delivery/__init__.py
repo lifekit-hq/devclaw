@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 
-from ..advance_brief import is_advance_brief, objective_from_brief
+from ..advance_brief import is_advance_brief
 from ..git_identity import git_identity_env
 from ..procutil import run as _run
 from ..task_change import MACHINE_COMMIT_SUBJECT
@@ -180,13 +180,6 @@ def _is_advance_brief(goal: str) -> bool:
     :mod:`devclaw.advance_brief` (shared with the display half, #550) so the
     generator and every detector stay in lockstep."""
     return is_advance_brief(goal)
-
-
-def _objective_from_brief(goal: str) -> str:
-    """Pull the ``Goal: <objective>`` line out of the advance-brief — a usable
-    title basis when the worker committed nothing to derive one from. Shared
-    implementation: :mod:`devclaw.advance_brief`."""
-    return objective_from_brief(goal)
 
 
 def _link_title_branch(title: str, branch: str, issues: list[int]) -> tuple[str, str]:
@@ -397,21 +390,6 @@ def _goal_pr_body(
         parts += [""]
     parts += [_PR_SIGNATURE]
     return "\n".join(parts)
-
-
-def devclaw_commit_title(
-    *, planner_title: str | None, goal: str, kind: str | None, task_id: str
-) -> str:
-    """The PR/commit title devclaw uses when the WORKER wrote no commit of its
-    own — the same resolution delivery has always applied at its commit site,
-    exposed so materialization (spec 013) can author that commit *before* the
-    gates run without the title changing. Keeping one resolver is the point:
-    two would be a second definition of what the change is called."""
-    title, _branch, _changes = _resolve_title(
-        planner_title=planner_title, agent_msg=None,
-        goal=goal, kind=kind, task_id=task_id,
-    )
-    return title
 
 
 

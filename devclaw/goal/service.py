@@ -28,7 +28,6 @@ from . import evaluator as goal_evaluator
 from . import mergeability as goal_mergeability
 from . import issue_ref as _issue_ref
 from . import project_hold as _project_hold
-from . import project_id_cutoff as _project_id_cutoff
 from . import remote_checks as goal_remote_checks
 from . import self_deploy as _self_deploy
 from . import summary as goal_summary
@@ -261,17 +260,6 @@ class GoalService:
         """Per-goal ``autodeploy`` for tick_all's sweep (same reason as
         :meth:`_verify_done_resolver`)."""
         return self._autodeploy
-
-    def backfill_project_ids(self) -> int:
-        """Run the #524 P3 ``project_id`` backfill ONCE per database.
-
-        Thin delegation to :func:`devclaw.goal.project_id_cutoff
-        .backfill_project_ids_once`, which owns the marker, the cutoff date, and
-        the reason this used to re-run on every boot. Returns the count stamped.
-        """
-        return _project_id_cutoff.backfill_project_ids_once(
-            self._store, self._goal_store, self._project_registry, _now_ms()
-        )
 
     def _trend_detector(self) -> "Optional[_trend_detector_mod.TrendDetector]":
         """The cross-session trend detector. ``None`` when disabled via
@@ -1206,10 +1194,12 @@ class GoalService:
             ref = s.in_flight
             # list_events is ASC + LIMIT (first N); pull a wide window and tail it
             # in Python so we get the MOST RECENT events of a long-running task.
-            if ref.ref_kind == "task":
-                evs = self._store.list_events(limit=10000, task_id=ref.id)
-            else:
-                evs = self._store.list_events(limit=10000, program_id=ref.id)
+            # A legacy pre-022 'program' ref has no live event stream to tail.
+            evs = (
+                self._store.list_events(limit=10000, task_id=ref.id)
+                if ref.ref_kind == "task"
+                else []
+            )
             for e in evs[-event_limit:]:
                 preview = (e.payload_json or "")[:200]
                 live_events.append(

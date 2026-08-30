@@ -25,7 +25,6 @@ from pathlib import Path
 
 from devclaw.goal.models import GoalStatus
 from devclaw.goal.store import GoalStore
-from devclaw.goal.store.view_migration import MIGRATION_META_KEY
 from tests.goal_fakes import Clock, seed_goal
 
 #: Every generated view. A read of one of these, anywhere but the one-shot
@@ -99,18 +98,6 @@ def test_a_second_store_on_the_same_db_does_not_re_ingest_a_hand_edited_view(tmp
     assert any("the real steer" in line for line in lines)
 
 
-def test_the_migration_marker_is_stamped_once_and_never_recomputed(tmp_path):
-    """One migration, one cutoff: the marker is written on the first
-    construction and is not rewritten by later ones."""
-    seed_goal(tmp_path, "g")
-    store = GoalStore(tmp_path, now=Clock())
-    stamp = store._state.get_meta(MIGRATION_META_KEY)
-    assert stamp is not None
-
-    GoalStore(tmp_path, state=store._state, now=Clock())
-    assert store._state.get_meta(MIGRATION_META_KEY) == stamp
-
-
 def test_deleting_every_view_leaves_every_decision_intact(tmp_path):
     """Views are projections, so losing them must cost nothing but legibility.
     Before #617 this was false: deleting STATUS.md was survivable only because
@@ -139,8 +126,6 @@ def _production_modules() -> "list[Path]":
     root = Path(__file__).resolve().parent.parent
     return [
         p for p in sorted((root / "devclaw").rglob("*.py")) + sorted((root / "runner").rglob("*.py"))
-        # the one-shot migration is the single sanctioned reader
-        if p.name != "view_migration.py"
     ]
 
 

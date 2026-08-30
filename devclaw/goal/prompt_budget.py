@@ -131,3 +131,25 @@ def cap_saga_slot(text: str) -> str:
 #: left implicit) because FR-009b's bound is on the FRAMING, not on any one
 #: slot, and a test asserts adversarial input renders under it.
 SAGA_FRAMING_MAX = 5 * (SAGA_SLOT_KEEP + len(SAGA_SLOT_TRUNCATION_MARKER)) + 2_000
+
+
+#: The steering section of the advance brief (spec 025). Unlike log/deliveries
+#: (read once per cognition call), this section is re-sent with EVERY dispatch
+#: for the life of the goal — its cost multiplies by dispatch count. A later
+#: steering line typically corrects an earlier one, so tail-keep is the right
+#: policy: the newest line always survives, older ones compact when the budget
+#: is exceeded. 4 KB ≈ 20 typical corrections (~200 chars each).
+STEERING_KEEP = 4_000
+
+STEERING_TRUNCATION_MARKER = (
+    "[…older steering lines compacted to fit the dispatch budget: "
+    "the most-recent line is kept — review the goal inbox for the full history]"
+)
+
+
+def cap_steering(text: str) -> str:
+    """Bound the steering section of the advance brief. Tail-kept: the newest
+    steering line is at the tail and always survives; older lines are compacted
+    behind ``STEERING_TRUNCATION_MARKER`` when the budget is exceeded. Small or
+    empty input passes through byte-identical."""
+    return cap_section(text, keep=STEERING_KEEP, marker=STEERING_TRUNCATION_MARKER)

@@ -15,13 +15,12 @@ their retention prunes on
 :class:`ObservabilityMixin` in ``observability.py``; the continuous-eval
 projections on :class:`EvalOutcomesMixin` in ``evals.py``; the pure data
 (dataclasses + row mappers + literals) lives in ``rows.py``. This module holds
-the connection, the transaction machinery, the task/program CRUD,
+the connection, the transaction machinery, the task CRUD,
 scheduling/recovery, and the whole-file maintenance (VACUUM + DB-size alarm).
 """
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import threading
@@ -44,15 +43,12 @@ from .problems import ProblemsMixin
 from .schema import bootstrap as _schema_bootstrap
 from .rows import (
     SQLITE_BUSY_TIMEOUT_MS,
-    Program,
     Task,
     TaskKind,
     TaskStatus,
     _now_ms,
-    _row_to_program,
     _row_to_task,
 )
-from .trace_migration import migrate_cognition_response_text_once
 
 # ---- VACUUM (reclaim disk the prunes free, 2026-07-18) ----------------------
 # The retention prunes DELETE rows but SQLite never returns freed pages to the
@@ -126,11 +122,6 @@ class StateStore(
         #: exception was caught between nested levels.
         self._txn_failed = False
         self._bootstrap()
-        # One-shot, crash-safe: fold pre-T0.5 ``response_preview`` payloads
-        # into ``response_text`` so telemetry has exactly one field to read
-        # (#616). Stamps a meta marker; every later construction is a no-op
-        # lookup. See ``trace_migration`` for the cutoff.
-        migrate_cognition_response_text_once(self, now_ms=_now_ms())
 
     @property
     def db_path(self) -> str:
@@ -199,15 +190,11 @@ class StateStore(
         goal: str,
         notify_url: Optional[str] = None,
         program_id: Optional[str] = None,
-        depends_on: Optional[list[str]] = None,
-        order_idx: Optional[int] = None,
-        milestone: Optional[str] = None,
         verify_cmd: Optional[str] = None,
         deliver: bool = False,
         title: Optional[str] = None,
         parent_goal_id: Optional[str] = None,
         scaffold: bool = False,
-        plan_key: Optional[str] = None,
         strictness: str = "trust",
         base_branch: Optional[str] = None,
         target_branch: Optional[str] = None,
@@ -217,10 +204,10 @@ class StateStore(
             self._db.execute(
                 """INSERT INTO tasks
                      (id, kind, status, workspace_dir, goal, notify_url, created_at,
-                      program_id, depends_on, order_idx, milestone, verify_cmd, deliver,
-                      title, parent_goal_id, scaffold, plan_key, strictness,
+                      program_id, verify_cmd, deliver,
+                      title, parent_goal_id, scaffold, strictness,
                       base_branch, target_branch, project_id)
-                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     id,
                     kind,
@@ -229,15 +216,11 @@ class StateStore(
                     notify_url,
                     _now_ms(),
                     program_id,
-                    json.dumps(depends_on) if depends_on else None,
-                    order_idx,
-                    milestone,
                     verify_cmd,
                     1 if deliver else 0,
                     title,
                     parent_goal_id,
                     1 if scaffold else 0,
-                    plan_key,
                     strictness if strictness in ("trust", "strict") else "trust",
                     base_branch,
                     target_branch,
@@ -390,98 +373,6 @@ class StateStore(
                 (goal_id,),
             ).fetchone()
         return _row_to_task(row) if row else None
-
-    # ---- programs -------------------------------------------------------
-
-    def create_program(
-        self,
-        *,
-        id: str,
-        goal: str,
-        workspace_dir: str,
-        notify_url: Optional[str] = None,
-        open_pr: bool = False,
-        verify_cmd: Optional[str] = None,
-        parent_goal_id: Optional[str] = None,
-        strictness: str = "trust",
-        project_id: Optional[str] = None,
-    ) -> None:
-        with self._lock:
-            self._db.execute(
-                "INSERT INTO programs "
-                "(id, goal, workspace_dir, notify_url, status, created_at, open_pr, "
-                " verify_cmd, parent_goal_id, strictness, project_id) "
-                "VALUES (?, ?, ?, ?, 'planning', ?, ?, ?, ?, ?, ?)",
-                (
-                    id, goal, workspace_dir, notify_url, _now_ms(),
-                    1 if open_pr else 0, verify_cmd, parent_goal_id,
-                    strictness if strictness in ("trust", "strict") else "trust",
-                    project_id,
-                ),
-            )
-            self._commit()
-
-    def mark_program_running(self, program_id: str) -> None:
-        with self._lock:
-            self._db.execute(
-                "UPDATE programs SET status = 'running' "
-                "WHERE id = ? AND status = 'planning'",
-                (program_id,),
-            )
-            self._commit()
-
-    def mark_program_done(self, program_id: str) -> None:
-        with self._lock:
-            self._db.execute(
-                "UPDATE programs SET status = 'done', completed_at = ? "
-                "WHERE id = ? AND status IN ('planning', 'running')",
-                (_now_ms(), program_id),
-            )
-            self._commit()
-
-    def mark_program_failed(self, program_id: str, error: str) -> None:
-        with self._lock:
-            self._db.execute(
-                "UPDATE programs SET status = 'failed', error = ?, completed_at = ? "
-                "WHERE id = ? AND status IN ('planning', 'running')",
-                (error, _now_ms(), program_id),
-            )
-            self._commit()
-
-    def mark_program_cancelled(self, program_id: str, error: Optional[str] = None) -> None:
-        """Abort a program. Transitions planning/running -> cancelled (terminal).
-        ``error`` carries a human reason (e.g. which task triggered it); it lands
-        in the same column failures use, so notify payloads stay uniform."""
-        with self._lock:
-            self._db.execute(
-                "UPDATE programs SET status = 'cancelled', error = ?, completed_at = ? "
-                "WHERE id = ? AND status IN ('planning', 'running')",
-                (error, _now_ms(), program_id),
-            )
-            self._commit()
-
-    def list_programs(self, *, limit: int = 100) -> list[Program]:
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT * FROM programs ORDER BY created_at DESC LIMIT ?", (limit,)
-            ).fetchall()
-        return [_row_to_program(r) for r in rows]
-
-    def get_program(self, program_id: str) -> Optional[Program]:
-        with self._lock:
-            row = self._db.execute(
-                "SELECT * FROM programs WHERE id = ?", (program_id,)
-            ).fetchone()
-        return _row_to_program(row) if row else None
-
-    def list_program_tasks(self, program_id: str) -> list[Task]:
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT * FROM tasks WHERE program_id = ? "
-                "ORDER BY order_idx IS NULL, order_idx ASC, created_at ASC",
-                (program_id,),
-            ).fetchall()
-        return [_row_to_task(r) for r in rows]
 
     def maybe_vacuum(
         self,

@@ -28,7 +28,7 @@ Only layer 5 is an agent harness in the technical sense.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`executing` only since the 008 shrink), the ~15-min tick |
-| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/elicitation.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, scope-grill, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink) |
+| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink; the scope-grill porch died with the prose lane, 2026-08-29 prune) |
 | 4 | **TaskQueue + engine** | `devclaw/task_queue.py` (+ its `devclaw/queue/` mixins), `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
 
@@ -83,10 +83,9 @@ spawn containers itself — it goes through the engine).
   are generated **views** — human- and rollback-readable, never read back for
   decisions. That last clause was aspiration until #617: the store parsed those
   views back into rows on eight read paths, which made whoever last touched a
-  markdown file a second writer the CAS below does not cover. The pre-#617
-  markdown is now ingested exactly once, at store construction
-  (`goal/store/view_migration.py`), and `tests/test_views_never_read_back.py`
-  holds the line structurally. Mutation is NOT heartbeat-exclusive: `steer_goal`/`resume_goal`/`cancel_goal` write from
+  markdown file a second writer the CAS below does not cover. The one-shot
+  pre-#617 ingest ran on the production DB and was deleted (2026-08-29 prune);
+  `tests/test_views_never_read_back.py` holds the line structurally. Mutation is NOT heartbeat-exclusive: `steer_goal`/`resume_goal`/`cancel_goal` write from
   the MCP-tool call path too, concurrently with the heartbeat — `GoalStore.transition()`
   is the CAS'd choke point (`devclaw/goal/transitions.py`'s `LEGAL` table) that makes
   that safe: a stale-snapshot write raises `TransitionConflict` and is abandoned rather
@@ -203,7 +202,7 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~2200 tests, all stubbed — no docker, no claude; ~27s (-n auto)
+pytest        # ~1150 tripwire tests, all stubbed — no docker, no claude; ~23s (-n auto)
 ruff check .  # pyflakes + syntax errors only; CI gates it
 mypy          # type check (config in pyproject [tool.mypy]); CI gates it too
 ```
@@ -217,12 +216,17 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 ## Conventions
 
 - **Conventional-commit messages** (`fix(queue): …`, `feat(cognition): …`).
-- **Every behavior-change PR adds a named regression test** — the T0 fixes each
-  shipped with one (`test_integrity_gate.py`, `test_delivery.py`, `test_goal_tick.py`, …).
+- **The suite is a tripwire net, not a coverage instrument** (ruled 2026-08-29,
+  tests-to-tripwires prune): a PR ships a test ONLY when it touches an
+  autonomous-operation invariant — zero-token idle, fail-closed gates,
+  CAS/single-writer, OAuth strip + sandbox fence, pause/brake machinery, the
+  materialize span, doctor seeded-faults, structural guards. Ordinary behavior
+  changes ship NO test; the live instance + done-gate + post-merge review are
+  their regression surface, and cognition quality is measured by evals.
   **The ratchet is symmetric** (2026-08-27): a PR that removes behavior removes
-  that behavior's tests in the same PR; prefer strengthening an existing named
-  test over minting a sibling when the class is already pinned. Net-LOC is
-  reported on every `/ship` — informational, never a gate.
+  that behavior's tests in the same PR; never mint an instance-test — extend
+  the class test. Net-LOC is reported on every `/ship` — informational, never
+  a gate.
 - **A PR that changes persisted state shape or in-repo boilerplate ships its
   doctor check** (spec 016 FR-014) — the deployed-instance sibling of the
   named-regression-test rule: the stubbed suite guards the code, doctor guards
@@ -235,6 +239,17 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 - **Keep `docs/` honest.** If a change makes a doc wrong, fix the doc in the same PR
   and update its currency tag in [`docs/INDEX.md`](./docs/INDEX.md). A stale doc that
   looks current is worse than no doc.
+- **Repo gold standard** ([REPO-STANDARD.md](https://github.com/lifekit-hq/.github/blob/main/REPO-STANDARD.md),
+  adopted 2026-08-29, #695): squash-only merges, delete-branch-on-merge, the
+  `P1`/`P2`/`needs-refinement`/`devclaw-ready` labels, plus the conventions above.
+  Deliberate divergences: branches are `<type>/<slug>` with no issue number
+  (speckit-driven work isn't always issue-backed); no husky-style pre-commit hook —
+  the same gates run in CI plus the `/ship` ritual and `.claude/hooks`; milestones
+  aren't used — the speckit spec is the unit of direction and issues carry priority
+  labels; PR bodies state verification via the `/ship` ritual (suite result + the
+  named regression test) rather than a titled Validation section; the root
+  carries `AGENTS.md`/`ARCHITECTURE.md` — devclaw's own machine-maintained
+  onboarding doc set, which the standard explicitly accepts.
 
 ## The dev harness (`.claude/`)
 

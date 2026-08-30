@@ -262,22 +262,6 @@ def resolve_goal_strictness(goal) -> _Strictness:
     return effective_strictness(None, manifest.strictness_default if manifest else None)
 
 
-def resolve_verify_cmd(action_verify_cmd: Optional[str], goal_verify_cmd: Optional[str],
-                       workspace_dir: Optional[str]) -> Optional[str]:
-    """verify_cmd precedence: planner action > goal > manifest (merged base).
-    All three tiers are host-validated inputs; the manifest tier is
-    human-authored and PR-reviewed (unlike the removed #233 planner override,
-    which was model output honored blindly)."""
-    if action_verify_cmd:
-        return action_verify_cmd
-    if goal_verify_cmd:
-        return goal_verify_cmd
-    if not workspace_dir:
-        return None
-    manifest = load_manifest_at_base(workspace_dir)
-    return manifest.verify_cmd if manifest else None
-
-
 def resolve_surface(workspace_dir: str) -> Optional[str]:
     """The declared browser-gate surface kind at the merged base, or None when
     undeclared (the path-glob heuristics stay in charge)."""

@@ -50,3 +50,8 @@ Regression test in `tests/test_issue_ref_freshness.py`.
 - The existing `test_all_refs_closed_proposes_done_with_zero_worker_sessions`
   still passes (first-pass behavior unchanged).
 - Full suite green, ruff clean, mypy clean.
+
+> Note (2026-08-30): `tests/test_issue_ref_freshness.py` — including this fix's
+> regression test — was removed by the tests-to-tripwires prune (#748, ruled
+> 2026-08-29), which landed on main between this work and its merge. The live
+> instance + done-gate are the regression surface per that ruling.

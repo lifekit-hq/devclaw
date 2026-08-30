@@ -359,23 +359,14 @@ class ObservabilityMixin:
     def list_events(
         self,
         *,
-        program_id: Optional[str] = None,
-        task_id: Optional[str] = None,
+        task_id: str,
         since_id: Optional[int] = None,
         limit: int = 500,
     ) -> list[TaskEvent]:
-        """List events for a program or task in id (emission) order. Pass
-        ``since_id`` to resume after a known cursor (exclusive)."""
-        where: list[str] = []
-        args: list[object] = []
-        if program_id:
-            where.append("program_id = ?")
-            args.append(program_id)
-        if task_id:
-            where.append("task_id = ?")
-            args.append(task_id)
-        if not where:
-            raise ValueError("list_events requires program_id or task_id")
+        """List events for a task in id (emission) order. Pass ``since_id``
+        to resume after a known cursor (exclusive)."""
+        where: list[str] = ["task_id = ?"]
+        args: list[object] = [task_id]
         if since_id is not None:
             where.append("id > ?")
             args.append(since_id)

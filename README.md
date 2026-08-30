@@ -12,7 +12,7 @@ Coding agents are excellent at *tasks* and unreliable at *goals*. Prompting one 
 
 *Both screenshots are the live operator console (`/console`) driving real repositories — not a mockup.*
 
-**Measured, not vibes.** The first pass-rate probe — real docker sandbox, real `claude`, one production .NET repo (`lifekit-dashboard`) — shipped **5/5 tickets gate-verified**: four net-new API features and one hardening fix, delivered as PRs, **+19 net-new tests, zero existing tests deleted/skipped/weakened, zero regressions**. That is a single-repo, n=5, gate-verified-**at-ship** measurement — the precursor to the formal **v0.1 proof** (10 tickets across ≥2 repos, scored *merged-without-rework* ≥6/10), whose verdict is still **pending** (see [`ROADMAP.md`](./ROADMAP.md) and `evals/`). Honest scope: small-to-medium machine-verifiable backend tasks; UI and ambiguous specs still need a human.
+**Measured, not vibes.** The first pass-rate probe — real docker sandbox, real `claude`, one production .NET repo (`lifekit-dashboard`) — shipped **5/5 tickets gate-verified**: four net-new API features and one hardening fix, delivered as PRs, **+19 net-new tests, zero existing tests deleted/skipped/weakened, zero regressions**. That is a single-repo, n=5, gate-verified-**at-ship** measurement — the precursor to the formal **v0.1 proof** (10 tickets across ≥2 repos, scored *merged-without-rework* ≥6/10), whose verdict is still **pending** (see [`docs/ROADMAP.md`](./docs/ROADMAP.md) and `evals/`). Honest scope: small-to-medium machine-verifiable backend tasks; UI and ambiguous specs still need a human.
 
 > **DevClaw is the chef.** The waiter — an [OpenClaw](https://openclaw.ai) chat agent, the user-facing assistant — takes orders and translates chat into structured MCP tool calls; devclaw cooks. It owns the **craft of software development as a service**: durable goals, sandbox execution (a `claude-code` session driven over ACP by devclaw's own zero-dependency worker harness), pre-PR adversarial review, gate verification, and grounded direction evaluation — planning happens in-sandbox, where the worker scopes each advance with speckit (`specs/*/` artifacts committed to the repo). (An experimental Tailscale deploy path exists but is not yet load-bearing — it can't yet host the owner's stack; see #401.) devclaw never talks to the user directly.
 
@@ -130,7 +130,6 @@ devclaw/
 │   └── trace.py        #   run-trace recorder (cognition, ticks, dispatches, deliveries)
 ├── advance_brief.py    # the mechanical (zero-LLM) brief each advance dispatch carries — the worker plans in-sandbox
 ├── cognition.py        # the LLM seam — Cognition protocol + Claude/Stub impls
-├── elicitation.py      # scope-grill cognition (called via the scope_grill MCP tool)
 ├── state_store/       # SQLite: programs, tasks, append-only events (rows · control · core)
 ├── task_queue.py       # async task lifecycle, concurrency, on-settle hook → goal poke
 ├── queue/              # TaskQueue's mixins: settle (execute/settle path), admission (memory + breaker)
@@ -149,13 +148,9 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 | Tool | Does |
 |---|---|
 | `dispatch_task(kind, project_id, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository`. `project_id` names a registered project — devclaw resolves its workspace/repo from the registry (never a raw path), rejects an unknown project, and preflights the workspace before dispatch: a real git checkout runs; an absent one is auto-cloned from the project's `repo_url`; anything else is rejected loud (#520 P1 + #523 P2) |
-| `implement_feature(project_id, goal, …)` | Deprecated alias — forwards to `dispatch_task(kind="implement_feature")` |
-| `fix_bug(project_id, description, …)` | Deprecated alias — forwards to `dispatch_task(kind="fix_bug")` |
-| `review_repository(project_id, …)` | Deprecated alias — forwards to `dispatch_task(kind="review_repository")` (read-only) |
 | `onboard(project_id, …)` | Analyze a repo and deliver the draft onboarding doc set as a reviewable PR — a thin `AGENTS.md` pointer (marker-delimited), `README.md`, `ARCHITECTURE.md`, plus `.devcontainer/Dockerfile` when absent |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
-| `get_program(program_id)` / `list_programs()` | Read-only HISTORICAL program rows (the program/DAG lane was retired by spec 022 US3) |
 | `get_status(task_id)` / `list_tasks(...)` / `get_events(...)` | Task history + replayable event feed (live SSE over HTTP) |
 | `get_scorecard_metrics(window_hours?)` | Rolling scorecard over the last N hours (default 1 week): merge rate, evaluator-verdict distribution, steer rate, first-pass hit rate, workspace breaks — a cheap SQLite read, callable from Telegram/dashboards |
 | `review_trends(scope?)` | Tail of the cross-session trend detector's `trends.md` — `harness_self` (devclaw's own self-observability) or a workspace path for that project's trends |
@@ -170,13 +165,11 @@ Async by default: a tool call returns a `task_id` immediately and the work runs 
 - **`long_lived`** (default) — the **drip**: each heartbeat dispatches the next advance, judges *direction* periodically (not just shipped PRs), and stays steerable mid-flight. For fog-of-war objectives where the path reveals itself as work lands.
 - **`one_shot`** — the **sprint**: the same advance loop, but done is proposed as soon as an advance session lands — for work that's fully specified up front. The proposal is still gated on the grounded done-gate review.
 
-In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts committed to the repo (spec 008); the host dispatches a mechanical, zero-LLM advance brief. Both modes share every gate, the delivery contract, and the close discipline. The `start_program` alias and the raw program/DAG queue lane beneath it were retired by spec 022 US3 — one dispatch lane; historical `programs` rows stay readable via `get_program`/`list_programs`.
+In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts committed to the repo (spec 008); the host dispatches a mechanical, zero-LLM advance brief. Both modes share every gate, the delivery contract, and the close discipline. The `start_program` alias and the raw program/DAG queue lane beneath it were retired by spec 022 US3 — one dispatch lane (the lane's read-only remnants — `get_program`/`list_programs`, the program SSE route, the store's program CRUD — were pruned once nothing could write a program row).
 
 | Tool | Does |
 |---|---|
-| `scope_grill(idea, transcript?)` | One turn of the pre-goal scope interview with the waiter: given a rough idea + the transcript so far, returns the next question (with a reasoned default) or the final agreed spec plus the saga slots (`out_of_scope` / `invariants` / `established`) — the input `create_goal` deserves |
-| `create_goal(goal_id, objective, project_id, done_when, out_of_scope, invariants, established, backlog, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick cadence) or `'one_shot'` (same advance loop, done proposed once an advance lands). `project_id` resolves the workspace + repo from the registry (#520). A saga is authored from **named slots, not prose** (spec 012 US2): beyond objective/done_when, `out_of_scope`, `invariants` and `established` are required — pass `[]` to declare one explicitly empty; omitting one is rejected at creation naming the slot, rather than discovered by a worker mid-run |
-| `verify_goal(objective, project_id, …)` | Pre-flight check — same admission validations as `create_goal`, no side effects; previews reject/warn conditions |
+| `create_goal(goal_id, objective, project_id, issues, mode, …)` | Register a goal DevClaw drives — `mode='long_lived'` (default, per-tick cadence), `'one_shot'` (same advance loop, done proposed once an advance lands), or `'qa'`. **The issue is the contract** (spec 024): `issues` is required for every mode but `qa`; the ask, acceptance criteria and saga sections live in the referenced issue and are fetched live per dispatch. `objective` is display identity only. (The prose lane — `scope_grill`, `dry_evaluate`, `verify_goal`, saga-slot arguments — was removed by the 2026-08-29 prune) |
 | `get_goal(goal_id)` | Objective, phase, what's in flight, the latest direction verdict, recent log |
 | `list_goals()` | All goals + phase + direction |
 | `steer_goal(goal_id, message)` | Correct/redirect — recorded as steering, honored on the next tick |
@@ -207,8 +200,6 @@ previewing what the loop *would* think before committing a goal.
 
 | Tool | Does |
 |---|---|
-| `dry_evaluate(objective, done_when, review_report, …)` | The direction/done evaluator against a supplied review report |
-
 ### The project registry (control plane)
 
 The single source of truth for **"which repos is devclaw working on, and what's the status of each"** — one entity above the tasks/programs/goals primitives, drivable from chat, API, *and* CLI. A `Project` is a thin record (repo · workspace · status · the goal(s) driving it); it links goals **by id** and joins their live status on read, so it never caches phase and never rots.
@@ -298,7 +289,7 @@ DEVCLAW_TRANSPORT=stdio devclaw-mcp        # local dev (MCP over stdio)
 # or HTTP for a long-running service:
 DEVCLAW_TRANSPORT=http DEVCLAW_PORT=8000 devclaw-mcp
 #   → MCP at /mcp, the operator console at /console (/ redirects there; the
-#     legacy /dashboard · /goals · /projects pages 302 to it), SSE at /programs/:id/events
+#     legacy /dashboard · /goals · /projects pages 302 to it)
 ```
 
 (`devclaw-mcp` is the console script for the server; `devclaw` is the control-plane CLI; `python -m devclaw.server` / `python -m devclaw.cli` work too.)

@@ -203,8 +203,8 @@ def _check_scope_anchor_for_from_scratch(
         message=(
             "this is a from-scratch goal (no repo_url) but no spec and no "
             "backlog were provided. The worker has nothing concrete to "
-            "plan against and will invent shape. Run scope_grill to produce a "
-            "spec, or pass a starting backlog of acceptance items."
+            "plan against and will invent shape. Author the scope in the "
+            "referenced issue, or pass a starting backlog of acceptance items."
         ),
         severity="reject",
         field="spec",
