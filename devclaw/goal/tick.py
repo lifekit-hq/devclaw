@@ -995,6 +995,10 @@ async def tick_all(
     # (single-writer invariant), the engine is just the seam.
     _engine_prune_traces(engine)
     _engine_prune_events(engine)
+    # Settled-task result_json compaction (DEVCLAW_TASK_RESULT_RETENTION_DAYS,
+    # 2026-08-30 DB audit) — transcripts, the DB's biggest payload, get the
+    # same daily bounded pass; the settle summary + eval_outcomes stay forever.
+    _engine_compact_task_results(engine)
     # Reclaim the disk those DELETEs free — a weekly, freelist-gated VACUUM
     # (SQLite reuses freed pages but never shrinks the .db file on its own).
     # Same cheap-path slot, same zero-LLM guarantee.
@@ -1150,6 +1154,20 @@ def _engine_prune_traces(engine: GoalEngine) -> None:
     a maintenance failure must never break the heartbeat — the traces table
     just stays bigger until a later tick succeeds."""
     fn = getattr(engine, "prune_traces", None)
+    if not callable(fn):
+        return
+    try:
+        fn()
+    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
+        pass
+
+
+def _engine_compact_task_results(engine: GoalEngine) -> None:
+    """Run the daily settled-task result_json compaction via the engine, if it
+    exposes one (the in-process engine does; test doubles may not → no
+    compaction). Best-effort: a maintenance failure must never break the
+    heartbeat — old transcripts just stay bigger until a later tick succeeds."""
+    fn = getattr(engine, "compact_task_results", None)
     if not callable(fn):
         return
     try:

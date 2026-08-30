@@ -68,3 +68,41 @@ def test_event_ts_normalized_to_ms_and_never_immediately_prune_eligible(store):
     store._db.execute("UPDATE events SET ts = ts * 1000 WHERE ts > 0 AND ts < 1000000000000")
     (ts_after,) = store._db.execute("SELECT ts FROM events WHERE task_id='t1'").fetchone()
     assert ts_after == ts_stored
+
+
+def test_task_result_compaction_touches_only_old_settled_rows(store):
+    """Retention tripwire (settled-task transcript compaction): only settled
+    rows past retention lose result_json; fresh settled rows and unsettled
+    rows of ANY age keep theirs, error/pr_url survive compaction, and
+    retention_days=0 disables the pass entirely."""
+    import json as _json
+    import time
+
+    now = int(time.time() * 1000)
+    old = now - 40 * 24 * 3600 * 1000
+    db = store._db
+    for tid, status, completed, result in (
+        ("old-done", "done", old, '{"big": "transcript"}'),
+        ("new-done", "done", now, '{"fresh": true}'),
+        ("old-running", "running", None, '{"partial": true}'),
+    ):
+        db.execute(
+            "INSERT INTO tasks (id, kind, status, workspace_dir, goal, created_at,"
+            " completed_at, result_json, error, pr_url) "
+            "VALUES (?, 'implement_feature', ?, '/ws', 'g', ?, ?, ?, 'boom', 'http://pr')",
+            (tid, status, old, completed, result),
+        )
+    db.commit()
+
+    # disabled → nothing happens, not even to ancient rows
+    assert store.maybe_compact_task_results(now_ms=now, retention_days=0) == 0
+    assert store.get_task("old-done").result_json is not None
+
+    assert store.maybe_compact_task_results(now_ms=now, retention_days=30) == 1
+    old_done = store.get_task("old-done")
+    assert old_done.result_json is None
+    assert old_done.error == "boom" and old_done.pr_url == "http://pr"  # summary survives
+    assert _json.loads(store.get_task("new-done").result_json) == {"fresh": True}
+    assert store.get_task("old-running").result_json is not None  # never touch unsettled
+    # daily watermark: a second call in the same cycle is a no-op
+    assert store.maybe_compact_task_results(now_ms=now, retention_days=30) == 0

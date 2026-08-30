@@ -38,6 +38,11 @@ if TYPE_CHECKING:
 TRACE_RETENTION_DAYS_DEFAULT = 30
 #: Days of event history to keep when ``DEVCLAW_EVENTS_RETENTION_DAYS`` is unset.
 EVENTS_RETENTION_DAYS_DEFAULT = 30
+#: Days a settled task keeps its full ``result_json`` transcript when
+#: ``DEVCLAW_TASK_RESULT_RETENTION_DAYS`` is unset. Transcript-class data, so
+#: it matches the events default; the settle summary (status/error/pr_url) and
+#: the ``eval_outcomes`` projection are permanent and are never touched.
+TASK_RESULT_RETENTION_DAYS_DEFAULT = 30
 #: Max rows deleted per prune call — one bounded batch per heartbeat tick until
 #: the backlog drains, so a 400MB first prune spreads across ticks.
 TRACE_PRUNE_BATCH = 5000
@@ -45,6 +50,9 @@ TRACE_PRUNE_BATCH = 5000
 _TRACE_PRUNE_INTERVAL_MS = 24 * 3600 * 1000
 #: meta key holding the epoch-ms of the last COMPLETED (drained) trace prune cycle.
 _TRACE_PRUNE_META_KEY = "trace_prune_last_ms"
+#: meta key holding the epoch-ms of the last COMPLETED (drained) task-result
+#: compaction cycle.
+_TASK_RESULT_COMPACT_META_KEY = "task_result_compact_last_ms"
 #: meta key holding the epoch-ms of the last COMPLETED (drained) events prune cycle.
 _EVENTS_PRUNE_META_KEY = "events_prune_last_ms"
 
@@ -78,6 +86,14 @@ def events_retention_days() -> int:
     :func:`_parse_retention_days`)."""
     return _parse_retention_days(
         _config.events_retention_days_raw(), EVENTS_RETENTION_DAYS_DEFAULT
+    )
+
+
+def task_result_retention_days() -> int:
+    """Settled-task result retention in days from
+    ``DEVCLAW_TASK_RESULT_RETENTION_DAYS`` (see :func:`_parse_retention_days`)."""
+    return _parse_retention_days(
+        _config.task_result_retention_days_raw(), TASK_RESULT_RETENTION_DAYS_DEFAULT
     )
 
 
@@ -363,6 +379,53 @@ class ObservabilityMixin:
             table="events", meta_key=_EVENTS_PRUNE_META_KEY,
             retention_days=days, now_ms=now, batch_limit=batch_limit,
         )
+
+    def maybe_compact_task_results(
+        self,
+        *,
+        now_ms: Optional[int] = None,
+        retention_days: Optional[int] = None,
+        batch_limit: int = TRACE_PRUNE_BATCH,
+    ) -> int:
+        """Retention COMPACTION for settled tasks' ``result_json`` — the full
+        worker transcript, the biggest payload in the DB (2026-08-30 audit:
+        83.5MB of 277MB). Unlike the prunes this deletes no rows: it NULLs
+        ``result_json`` on done/failed/cancelled tasks whose ``completed_at``
+        is past retention, leaving status/error/pr_url/goal and every other
+        column untouched (the settle summary and the ``eval_outcomes``
+        projection are the permanent record). Running/pending rows are never
+        touched regardless of age. Same operational envelope as the prunes:
+        one cycle per day (own watermark), batched, pure SQLite, zero LLM,
+        ``retention_days <= 0`` disables. Returns rows compacted this call."""
+        days = task_result_retention_days() if retention_days is None else retention_days
+        if days <= 0:
+            return 0
+        now = _now_ms() if now_ms is None else now_ms
+        raw = self.get_meta(_TASK_RESULT_COMPACT_META_KEY)
+        try:
+            last = int(raw) if raw else 0
+        except ValueError:
+            last = 0
+        if last and (now - last) < _TRACE_PRUNE_INTERVAL_MS:
+            return 0
+        cutoff = now - days * 24 * 3600 * 1000
+        with self._lock:
+            cur = self._db.execute(
+                "UPDATE tasks SET result_json = NULL WHERE id IN ("
+                "  SELECT id FROM tasks"
+                "  WHERE status IN ('done', 'failed', 'cancelled')"
+                "    AND result_json IS NOT NULL"
+                "    AND completed_at IS NOT NULL AND completed_at < ?"
+                "  LIMIT ?)",
+                (cutoff, batch_limit),
+            )
+            self._commit()
+        compacted = cur.rowcount if cur.rowcount is not None and cur.rowcount > 0 else 0
+        if compacted < batch_limit:
+            # Drained — stamp the watermark so the next cycle waits a day; a
+            # full batch leaves it alone so the next tick continues the drain.
+            self.set_meta(_TASK_RESULT_COMPACT_META_KEY, str(now))
+        return compacted
 
     def list_events(
         self,
