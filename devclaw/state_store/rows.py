@@ -8,7 +8,6 @@ literals, and the shared busy-timeout constant.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -39,9 +38,6 @@ class Task:
     created_at: int
     started_at: Optional[int]
     completed_at: Optional[int]
-    program_id: Optional[str]
-    depends_on: list[str]
-    order_idx: Optional[int]
     #: the spec milestone this task serves (set by plan-from-spec; else None)
     milestone: Optional[str]
     #: optional verify-gate command run after the agent finishes; its exit code
@@ -56,8 +52,7 @@ class Task:
     title: Optional[str] = None
     #: The durable goal that owns this task. Set when the goal heartbeat
     #: dispatches a task; None for standalone user-initiated dispatches
-    #: (``dispatch_task``). Orthogonal to ``program_id`` (ephemeral DAG-run
-    #: pointer) — a task can carry both, one, or neither.
+    #: (``dispatch_task``).
     parent_goal_id: Optional[str] = None
     #: How many times this task was requeued by a usage-limit pause. Bounds the
     #: pause→requeue→re-run loop: a permanently-failing task whose error text
@@ -111,11 +106,6 @@ class Task:
     #: resolve BY this id, not by a workspace-path scan. None for the goal path
     #: (goals carry their own project_id) and for a task with no owning project.
     project_id: Optional[str] = None
-    #: LEGACY fan-out lane metadata (spec 010 US3; the lane was retired by
-    #: spec 022 US3). Nothing writes or reads it anymore — the column survives
-    #: only on historical rows.
-    lane_json: Optional[str] = None
-
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -129,9 +119,6 @@ class Task:
             "createdAt": self.created_at,
             "startedAt": self.started_at,
             "completedAt": self.completed_at,
-            "programId": self.program_id,
-            "dependsOn": self.depends_on,
-            "orderIdx": self.order_idx,
             "milestone": self.milestone,
             "verifyCmd": self.verify_cmd,
             "deliver": self.deliver,
@@ -149,7 +136,6 @@ class Task:
 class TaskEvent:
     id: int
     task_id: str
-    program_id: Optional[str]
     type: str
     source: str
     payload_json: str
@@ -159,7 +145,6 @@ class TaskEvent:
         return {
             "id": self.id,
             "taskId": self.task_id,
-            "programId": self.program_id,
             "type": self.type,
             "source": self.source,
             "payloadJson": self.payload_json,
@@ -168,15 +153,6 @@ class TaskEvent:
 
 
 def _row_to_task(r: sqlite3.Row) -> Task:
-    depends_on: list[str] = []
-    if r["depends_on"]:
-        try:
-            parsed = json.loads(r["depends_on"])
-            if isinstance(parsed, list):
-                depends_on = [x for x in parsed if isinstance(x, str)]
-        except json.JSONDecodeError:
-            # tolerate a corrupt depends_on cell — treat as no deps
-            pass
     return Task(
         id=r["id"],
         kind=r["kind"],
@@ -189,9 +165,6 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         created_at=r["created_at"],
         started_at=r["started_at"],
         completed_at=r["completed_at"],
-        program_id=r["program_id"],
-        depends_on=depends_on,
-        order_idx=r["order_idx"],
         milestone=r["milestone"],
         verify_cmd=r["verify_cmd"],
         deliver=bool(r["deliver"]),
@@ -214,7 +187,6 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         base_branch=r["base_branch"] if "base_branch" in r.keys() else None,
         target_branch=r["target_branch"] if "target_branch" in r.keys() else None,
         project_id=r["project_id"] if "project_id" in r.keys() else None,
-        lane_json=r["lane_json"] if "lane_json" in r.keys() else None,
     )
 
 
@@ -292,7 +264,6 @@ def _row_to_event(r: sqlite3.Row) -> TaskEvent:
     return TaskEvent(
         id=r["id"],
         task_id=r["task_id"],
-        program_id=r["program_id"],
         type=r["type"],
         source=r["source"],
         payload_json=r["payload_json"],

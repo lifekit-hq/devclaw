@@ -624,7 +624,6 @@ class SettleMixin:
         kind: TaskKind,
         workspace_dir: str,
         goal: str,
-        program_id: Optional[str],
     ) -> None:
         # The task is already 'running' (claim_pending set it); just run + settle.
         # An open_pr task (standalone OR program-child) must NOT be observable as
@@ -745,7 +744,6 @@ class SettleMixin:
                 if delivery.get("no_agent_commit"):
                     self._store.append_event(
                         task_id=task_id,
-                        program_id=program_id,
                         type="delivery.no_agent_commit",
                         source="devclaw",
                         payload_json=json.dumps({
@@ -792,13 +790,11 @@ class SettleMixin:
             else:
                 # 'done' becomes observable only now, atomically with pr_url.
                 self._store.mark_done(task_id, json.dumps(success), pr_url=pr_url)
-        if program_id is None:
-            final = self._store.get_task(task_id)
-            if final and final.notify_url:
-                await self._notify_task(final)
-            self._fire_settle()  # a standalone task settled → wake the goal layer
-        # A global slot freed; this program may now be complete or have newly-ready
-        # tasks; another program may be able to start. Re-pump.
+        final = self._store.get_task(task_id)
+        if final and final.notify_url:
+            await self._notify_task(final)
+        self._fire_settle()  # the task settled → wake the goal layer
+        # A global slot freed — another pending task may be able to start. Re-pump.
         self._pump()
 
     # ---- shared runner --------------------------------------------------
@@ -827,19 +823,14 @@ class SettleMixin:
         except Exception as err:  # noqa: BLE001 — observability, not correctness
             sys.stderr.write(f"task-queue: gate-advisory record failed: {err}\n")
 
-    def _append_task_event(
-        self, task_id: str, program_id: Optional[str], event: EngineEvent
-    ) -> None:
+    def _append_task_event(self, task_id: str, event: EngineEvent) -> None:
         """Persist one engine event onto the append-only StateStore log, tagged
-        with its ``task_id`` + ``program_id``. Passed to the engine per attempt
-        as ``functools.partial(self._append_task_event, task_id, program_id)``
-        (was an inline closure in ``_run_and_settle`` capturing exactly those two
-        vars + ``self``; lifting it keeps that byte-identical). Event writes must
+        with its ``task_id``. Passed to the engine per attempt as
+        ``functools.partial(self._append_task_event, task_id)``. Event writes must
         NEVER crash the run — a persistence hiccup logs to stderr and is swallowed."""
         try:
             self._store.append_event(
                 task_id=task_id,
-                program_id=program_id,
                 type=event.type,
                 source=event.source,
                 payload_json=json.dumps(event.payload),
@@ -878,9 +869,8 @@ class SettleMixin:
         #    which classifier claims it first — reordering silently changes the
         #    outcome. Leave the order as written.
         #
-        # Resolve program_id + the verify gate once so on_event doesn't re-query.
+        # Resolve the row's gate/dial fields once so on_event doesn't re-query.
         row = self._store.get_task(task_id)
-        program_id = row.program_id if row else None
         verify_cmd = row.verify_cmd if row else None
         # L3 (#222): a scaffold task skips ONLY the adversarial review gate below.
         # The verify gate (checked first) and test-integrity scan are NOT gated on
@@ -915,9 +905,9 @@ class SettleMixin:
         )
 
         # Per-attempt event sink: the lifted _append_task_event bound method,
-        # pre-bound to this task's (task_id, program_id) so the engine calls it
-        # with just the event. Same three captured vars as the old closure.
-        on_event = functools.partial(self._append_task_event, task_id, program_id)
+        # pre-bound to this task's task_id so the engine calls it with just
+        # the event.
+        on_event = functools.partial(self._append_task_event, task_id)
 
         # The pinned base of the judged span (spec 013). Materialization writes
         # the post-run counterpart when the run ends; the change is the range

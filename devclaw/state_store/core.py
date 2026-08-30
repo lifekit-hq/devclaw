@@ -189,7 +189,6 @@ class StateStore(
         workspace_dir: str,
         goal: str,
         notify_url: Optional[str] = None,
-        program_id: Optional[str] = None,
         verify_cmd: Optional[str] = None,
         deliver: bool = False,
         title: Optional[str] = None,
@@ -204,10 +203,10 @@ class StateStore(
             self._db.execute(
                 """INSERT INTO tasks
                      (id, kind, status, workspace_dir, goal, notify_url, created_at,
-                      program_id, verify_cmd, deliver,
+                      verify_cmd, deliver,
                       title, parent_goal_id, scaffold, strictness,
                       base_branch, target_branch, project_id)
-                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     id,
                     kind,
@@ -215,7 +214,6 @@ class StateStore(
                     goal,
                     notify_url,
                     _now_ms(),
-                    program_id,
                     verify_cmd,
                     1 if deliver else 0,
                     title,
@@ -231,9 +229,7 @@ class StateStore(
 
     def claim_pending(self, task_id: str) -> bool:
         """Atomically transition pending -> running. Returns True if THIS call
-        won the race (caller must execute the task), False otherwise. Used by
-        the DAG scheduler where multiple siblings finishing can both try to
-        unblock the same downstream task."""
+        won the race (caller must execute the task), False otherwise."""
         with self._lock:
             cur = self._db.execute(
                 "UPDATE tasks SET status = 'running', started_at = ? "
@@ -487,11 +483,14 @@ class StateStore(
         return int(row["n"])
 
     def list_pending_standalone(self, *, limit: int = 100) -> list[Task]:
-        """Pending tasks with no program (the standalone path), oldest first so
-        a backlog drains in submission order."""
+        """Pending tasks, oldest first so a backlog drains in submission order.
+        (The name's "standalone" qualifier predates the 022 program-lane
+        demolition — with the lane gone, every pending task is standalone; the
+        demolition migration deleted the lane's zombie pending rows before
+        dropping the program_id column this method used to filter on.)"""
         with self._lock:
             rows = self._db.execute(
-                "SELECT * FROM tasks WHERE program_id IS NULL AND status = 'pending' "
+                "SELECT * FROM tasks WHERE status = 'pending' "
                 "ORDER BY created_at ASC LIMIT ?",
                 (limit,),
             ).fetchall()

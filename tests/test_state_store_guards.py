@@ -34,8 +34,8 @@ def test_claim_pending_is_atomic(store):
 
 def test_events_append_and_order(store):
     store.create_task(id="t1", kind="implement_feature", workspace_dir="/ws", goal="g")
-    id1 = store.append_event(task_id="t1", program_id=None, type="ActionEvent", source="agent", payload_json="{}")
-    id2 = store.append_event(task_id="t1", program_id=None, type="ObservationEvent", source="env", payload_json="{}")
+    id1 = store.append_event(task_id="t1", type="ActionEvent", source="agent", payload_json="{}")
+    id2 = store.append_event(task_id="t1", type="ObservationEvent", source="env", payload_json="{}")
     assert id2 > id1
     evs = store.list_events(task_id="t1")
     assert [e.type for e in evs] == ["ActionEvent", "ObservationEvent"]
@@ -55,7 +55,7 @@ def test_event_ts_normalized_to_ms_and_never_immediately_prune_eligible(store):
     store.create_task(id="t1", kind="implement_feature", workspace_dir="/ws", goal="g")
     now_s = int(time.time())
     store.append_event(
-        task_id="t1", program_id=None, type="ACPToolCallEvent",
+        task_id="t1", type="ACPToolCallEvent",
         source="agent", payload_json="{}", ts=now_s,  # seconds-scale input
     )
     (ts_stored,) = store._db.execute("SELECT ts FROM events WHERE task_id='t1'").fetchone()

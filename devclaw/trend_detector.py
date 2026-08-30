@@ -169,6 +169,13 @@ class TrendDetector:
         self._harness_self_path = harness_self_trends_path
         self._now_ms = now_ms
 
+    def prune_stale_scopes(self, live_workspaces: "set[str]") -> int:
+        """Drop cooldown/fingerprint/bookmark state for project workspaces
+        that are no longer registered — trend state expires WITH the project.
+        Driven by the heartbeat beside :meth:`run_harness_self`; the
+        harness-self scope is never project-keyed and is never touched."""
+        return self._store.prune_stale_trend_meta(live_workspaces)
+
     # ---- enablement + cooldown gates ---------------------------------------
 
     def _is_signal_enabled(self, signal: Signal) -> bool:

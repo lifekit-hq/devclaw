@@ -30,7 +30,7 @@ def _make_freelist(store, rows: int = 3000) -> int:
     exactly the state a big retention prune leaves behind."""
     for _ in range(rows):
         store.append_event(
-            task_id="t", program_id=None, type="x", source="s",
+            task_id="t", type="x", source="s",
             payload_json="p" * 512, ts=1,
         )
     store._db.commit()

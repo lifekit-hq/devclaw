@@ -111,6 +111,33 @@ def check_legacy_dropped_shapes(ctx: "InstanceContext") -> list[Finding]:
         else:
             findings.append(Finding("instance.legacy.inbox_cursor_column", Verdict.OK,
                                     "goal_status table absent (no goals yet)"))
+        # Program-lane remnants (spec 022 US3's store tail, dropped 2026-08-30):
+        # the orphan `programs` table, the tasks.program_id column, and — most
+        # load-bearing — zombie pending rows the lane left behind. With the
+        # column dropped, the pending scan has no filter to hide them behind,
+        # so a row that survived the demolition DELETE would become
+        # dispatchable garbage.
+        lane_detail: list[str] = []
+        if "programs" in tables:
+            lane_detail.append("table `programs` still present")
+        task_cols = {r["name"] for r in db.execute("PRAGMA table_info(tasks)")}
+        if "program_id" in task_cols:
+            lane_detail.append("column tasks.program_id still present")
+            n = db.execute(
+                "SELECT COUNT(*) AS n FROM tasks "
+                "WHERE status = 'pending' AND program_id IS NOT NULL"
+            ).fetchone()["n"]
+            if n:
+                lane_detail.append(f"{n} zombie pending task(s) from the dead lane")
+        if lane_detail:
+            findings.append(Finding(
+                "instance.legacy.program_lane", Verdict.FAIL,
+                "; ".join(lane_detail) + " — the 022 demolition migration should have dropped these",
+                remedy="restart devclaw (demolition migration runs at boot)",
+            ))
+        else:
+            findings.append(Finding("instance.legacy.program_lane", Verdict.OK,
+                                    "program-lane remnants dropped (table, columns, zombie rows)"))
     return findings
 
 

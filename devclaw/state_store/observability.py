@@ -98,7 +98,6 @@ class ObservabilityMixin:
         self,
         *,
         task_id: str,
-        program_id: Optional[str],
         type: str,
         source: str,
         payload_json: str,
@@ -117,9 +116,9 @@ class ObservabilityMixin:
             ts = int(ts * 1000)
         with self._lock:
             cur = self._db.execute(
-                "INSERT INTO events (task_id, program_id, type, source, payload_json, ts) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (task_id, program_id, type, source, payload_json, ts if ts is not None else _now_ms()),
+                "INSERT INTO events (task_id, type, source, payload_json, ts) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (task_id, type, source, payload_json, ts if ts is not None else _now_ms()),
             )
             self._commit()
             assert cur.lastrowid is not None  # INSERT always assigns a rowid

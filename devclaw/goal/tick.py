@@ -123,6 +123,7 @@ class TrendDetector(Protocol):
 
     async def run_per_goal(self, *, goal_id: str, workspace_dir: str) -> None: ...
     async def run_harness_self(self) -> None: ...
+    def prune_stale_scopes(self, live_workspaces: "set[str]") -> int: ...
 
 
 
@@ -1076,6 +1077,14 @@ async def tick_all(
                 await trend_detector.run_harness_self()
         except Exception:  # noqa: BLE001 — telemetry must not break the heartbeat
             pass
+        # Trend state expires WITH the project: drop cooldown/fingerprint/
+        # bookmark keys for workspaces no longer registered (2026-08-30 DB
+        # audit — 215 keys pinned to weeks-dead workspaces). Zero LLM.
+        if project_workspaces is not None:
+            try:
+                trend_detector.prune_stale_scopes(project_workspaces())
+            except Exception:  # noqa: BLE001 — telemetry must not break the heartbeat
+                pass
 
     return outcomes
 
