@@ -42,3 +42,29 @@ def test_events_append_and_order(store):
     # resume cursor
     after = store.list_events(task_id="t1", since_id=id1)
     assert [e.id for e in after] == [id2]
+
+
+def test_event_ts_normalized_to_ms_and_never_immediately_prune_eligible(store):
+    """Retention tripwire: the runner has emitted seconds-scale time.time()
+    ts values; stored verbatim in the ms column they read as 1970 and the
+    30-day ms-cutoff prune deletes them as ancient — a just-written event
+    must be stored in ms and survive the prune, whatever scale the emitter
+    used."""
+    import time
+
+    store.create_task(id="t1", kind="implement_feature", workspace_dir="/ws", goal="g")
+    now_s = int(time.time())
+    store.append_event(
+        task_id="t1", program_id=None, type="ACPToolCallEvent",
+        source="agent", payload_json="{}", ts=now_s,  # seconds-scale input
+    )
+    (ts_stored,) = store._db.execute("SELECT ts FROM events WHERE task_id='t1'").fetchone()
+    assert ts_stored == now_s * 1000  # normalized to ms at the single writer
+    # force a prune cycle NOW (no watermark yet) — the fresh event survives
+    deleted = store.maybe_prune_events(now_ms=int(time.time() * 1000), retention_days=30)
+    assert deleted == 0
+    assert store.list_events(task_id="t1")
+    # the schema-ensure repair is idempotent: re-running it never double-scales
+    store._db.execute("UPDATE events SET ts = ts * 1000 WHERE ts > 0 AND ts < 1000000000000")
+    (ts_after,) = store._db.execute("SELECT ts FROM events WHERE task_id='t1'").fetchone()
+    assert ts_after == ts_stored

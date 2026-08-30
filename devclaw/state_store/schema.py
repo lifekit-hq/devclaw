@@ -362,6 +362,14 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                     ON cycle_reports(created_at);
                 """
             )
+            # (4) Data repair: events.ts is MILLISECONDS, but runner-emitted
+            # events (through 2026-08-30) carried seconds-scale time.time()
+            # values, which read as 1970 and get deleted by the ms-cutoff
+            # retention prune as "ancient". Naturally idempotent (repaired
+            # rows leave the range), rides idx_events_ts, and self-heals any
+            # straggler written by a lagging sandbox image. 10**12 ms is
+            # 2001-09 — below every real ms value, above every seconds value.
+            db.execute("UPDATE events SET ts = ts * 1000 WHERE ts > 0 AND ts < 1000000000000")
             commit()
 
     # ---- tasks ----------------------------------------------------------

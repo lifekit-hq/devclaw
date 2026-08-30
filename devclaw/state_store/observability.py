@@ -105,7 +105,16 @@ class ObservabilityMixin:
         ts: Optional[int] = None,
     ) -> int:
         """Append one event row. Returns the auto-assigned monotonic id, which
-        the SSE layer uses as the resume cursor (Last-Event-Id)."""
+        the SSE layer uses as the resume cursor (Last-Event-Id).
+
+        ``ts`` is normalized to MILLISECONDS here, at the single writer: the
+        runner (a deployed sandbox image, which can lag this host) has emitted
+        seconds-scale ``time.time()`` values, and a seconds ts in the ms column
+        reads as 1970 — which the retention prune then deletes as ancient.
+        ``10**12`` ms is 2001-09; every real seconds value sits far below it,
+        every real ms value far above."""
+        if ts is not None and 0 < ts < 10**12:
+            ts = int(ts * 1000)
         with self._lock:
             cur = self._db.execute(
                 "INSERT INTO events (task_id, program_id, type, source, payload_json, ts) "
