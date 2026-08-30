@@ -44,10 +44,13 @@ from enum import Enum
 # long before re-probing (capped at MAX). A STATED hint — the provider told us
 # when the limit lifts, relative ("in 2 hours") or absolute ("resets 10pm") —
 # is trusted up to STATED_MAX instead: clamping it to MAX made devclaw re-probe
-# a multi-hour/day cap hourly, each probe a doomed dispatch.
+# a multi-hour/day cap hourly, each probe a doomed dispatch. STATED_MAX is a
+# distrust-of-parse bound, not policy: a real reset can never exceed the weekly
+# billing cycle, so 7 days is the natural cap (24h clamped the dated weekly-cap
+# wording "resets Aug 31, 6am (UTC)" ~35h out — one extra doomed probe).
 RATE_LIMIT_PAUSE_S = 1800
 RATE_LIMIT_MAX_PAUSE_S = 3600
-RATE_LIMIT_STATED_MAX_S = 86_400
+RATE_LIMIT_STATED_MAX_S = 7 * 86_400
 
 #: fixed re-probe cadence for an AUTH pause. No reset time exists to parse (the
 #: provider can't say when a human will re-login), so the trade is: short →
@@ -198,13 +201,23 @@ _RETRY_AFTER_HEADER = re.compile(r"retry[- ]after:?\s*(\d+)\b", re.IGNORECASE)
 # Absolute reset TIME — Claude's actual usage-cap wording states a wall-clock
 # time, not a delay: "You're out of extra usage · resets 10pm (UTC)", "You've
 # hit your session limit · resets 12:20am", "Your limit will reset at 3:30pm".
-# Optional minutes, optional trailing "(zone)". Non-UTC zone names are treated
+# When the reset is more than a day out the wording also carries a DATE —
+# "You're out of extra usage · resets Aug 31, 6am (UTC)" (observed live
+# 2026-08-29) — exactly the case where dropping the hint hurts most (the
+# fallback re-probed a ~35h cap every 30 min). Optional "Mon DD," date,
+# optional minutes, optional trailing "(zone)". Non-UTC zone names are treated
 # as UTC too — a wrong pause is self-correcting (the next probe re-classifies),
 # whereas skipping the hint left a multi-hour cap re-probed on the short cap.
 _RESET_AT_ABS = re.compile(
-    r"reset[s]?(?:\s+at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+    r"reset[s]?(?:\s+at|\s+on)?\s+"
+    r"(?:([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?"
+    r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
     re.IGNORECASE,
 )
+_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
 #: slack added past the stated reset so we don't probe a second early and
 #: re-trip the same limit.
 _RESET_ABS_SLACK_S = 120
@@ -212,24 +225,43 @@ _RESET_ABS_SLACK_S = 120
 
 def _seconds_until_reset(text: str, now_utc: datetime) -> int | None:
     """Seconds from ``now_utc`` to the NEXT occurrence of an absolute reset time
-    stated in ``text`` ("resets 10pm (UTC)"), plus a small slack. None when no
-    absolute time is stated. Assumes UTC when no/other zone is given (see the
-    regex note). Pure — the clock is injected, never read."""
+    stated in ``text`` ("resets 10pm (UTC)", "resets Aug 31, 6am (UTC)"), plus a
+    small slack. None when no absolute time is stated, and best-effort on the
+    date part — an unknown month word or impossible date ("Feb 30") degrades to
+    None (default backoff), never raises. Assumes UTC when no/other zone is
+    given (see the regex note). Pure — the clock is injected, never read."""
     m = _RESET_AT_ABS.search(text or "")
     if not m:
         return None
-    hour = int(m.group(1)) % 12
-    if m.group(3).lower() == "pm":
+    hour = int(m.group(3)) % 12
+    if m.group(5).lower() == "pm":
         hour += 12
-    minute = int(m.group(2) or 0)
+    minute = int(m.group(4) or 0)
     if minute > 59:
         return None
     if now_utc.tzinfo is None:
         now_utc = now_utc.replace(tzinfo=timezone.utc)
     now_utc = now_utc.astimezone(timezone.utc)
-    target = now_utc.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target <= now_utc:
-        target += timedelta(days=1)  # stated time already passed today → tomorrow
+    if m.group(1):
+        month = _MONTHS.get(m.group(1)[:3].lower())
+        if month is None:
+            return None
+        try:
+            target = now_utc.replace(
+                month=month, day=int(m.group(2)),
+                hour=hour, minute=minute, second=0, microsecond=0,
+            )
+        except ValueError:
+            return None
+        if target <= now_utc:  # stated date already passed → year boundary
+            try:
+                target = target.replace(year=target.year + 1)
+            except ValueError:  # Feb 29 → next year isn't a leap year
+                return None
+    else:
+        target = now_utc.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if target <= now_utc:
+            target += timedelta(days=1)  # stated time already passed today → tomorrow
     return int((target - now_utc).total_seconds()) + _RESET_ABS_SLACK_S
 
 
