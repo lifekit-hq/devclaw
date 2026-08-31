@@ -134,6 +134,9 @@ COGNITION_MEM_RESERVE = os.environ.get("DEVCLAW_COGNITION_MEM_RESERVE", "1536m")
 TICK_SECONDS = float(os.environ.get("DEVCLAW_TICK_SECONDS", "10"))
 TASK_TIMEOUT_S = float(os.environ.get("DEVCLAW_TASK_TIMEOUT_S", "3600"))
 TASK_MAX_RETRIES = int(os.environ.get("DEVCLAW_MAX_RETRIES", "1"))
+#: Wall-clock cap for the host-side evidence verify run after a no-result
+#: termination (issue #565). Mirrors the runner's own default.
+EVIDENCE_VERIFY_TIMEOUT_S = int(os.environ.get("DEVCLAW_VERIFY_TIMEOUT_S", "900"))
 BROWSER_GATE_ENABLED = os.environ.get("DEVCLAW_GOAL_BROWSER_GATE", "1") not in ("0", "false", "")
 
 

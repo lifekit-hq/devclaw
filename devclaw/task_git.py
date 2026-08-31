@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import subprocess
 
+from . import config as _config
 from .git_identity import git_identity_env
 
 #: Generic manifest / entrypoint files worth grounding the reviewer on — one per
@@ -324,6 +325,19 @@ def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
     timeout, nothing to commit, git error) — the caller logs it and proceeds
     with the requeue either way; a snapshot hiccup must never block the pause
     path."""
+    return _wip_commit_sync(
+        host_dir, task_id,
+        f"wip(devclaw): interrupted by usage limit (task {task_id[:8]})",
+    )
+
+
+def _wip_commit_sync(host_dir: str, task_id: str, message: str) -> str:
+    """Commit any uncommitted changes as a WIP commit with ``message``.
+
+    Shared by :func:`_wip_snapshot_sync` (pause path) and
+    :func:`_push_interrupted_work_sync` (timeout path). Returns
+    ``"committed"``, ``"clean tree — nothing to snapshot"``, or a short reason
+    string. Strictly best-effort — never raises."""
     def run(*args: str, env_extra: dict[str, str] | None = None) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["git", "-C", host_dir, *args],
@@ -342,13 +356,111 @@ def _wip_snapshot_sync(host_dir: str, task_id: str) -> str:
             return f"git add failed: {(add.stderr or '').strip()[:120]}"
         # Identity via GIT_* env (not -c): env beats every config level, so an
         # ambient/leaked identity can't author devclaw's snapshot commit.
-        commit = run(
-            "commit", "-m",
-            f"wip(devclaw): interrupted by usage limit (task {task_id[:8]})",
-            env_extra=git_identity_env(),
-        )
+        commit = run("commit", "-m", message, env_extra=git_identity_env())
         if commit.returncode != 0:
             return f"git commit failed: {(commit.stderr or '').strip()[:120]}"
         return "committed"
     except (OSError, subprocess.SubprocessError) as err:
         return f"{err.__class__.__name__}: {err}"
+
+
+#: Shell for the host-side evidence verify (same ``pipefail`` semantics as the
+#: runner's ``_run_verify``). Falls back to ``/bin/sh`` when bash is absent.
+import shutil as _shutil
+_EVIDENCE_VERIFY_SHELL: list[str] = (
+    [_shutil.which("bash") or "/bin/bash", "-o", "pipefail", "-c"]
+    if _shutil.which("bash") else ["/bin/sh", "-c"]
+)
+
+
+def _check_no_result_evidence_sync(
+    host_dir: str, base_sha: str, verify_cmd: str | None,
+) -> dict:
+    """Inspect the workspace for salvageable evidence after a no-result
+    termination (timeout, transport loss).  Never raises.
+
+    Returns one of:
+    - ``{"has_commits": False}``
+      Nothing to salvage; caller should settle ``failed`` as today.
+    - ``{"has_commits": True, "verify": None}``
+      Commits present but no ``verify_cmd`` to run.
+    - ``{"has_commits": True, "verify": {...}}``
+      Commits present and ``verify_cmd`` was run — ``verify["passed"]``
+      distinguishes green from red."""
+    if not base_sha:
+        return {"has_commits": False}
+    try:
+        p = subprocess.run(
+            ["git", "-C", host_dir, "log", f"{base_sha}..HEAD", "--oneline"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if p.returncode != 0 or not p.stdout.strip():
+            return {"has_commits": False}
+    except (OSError, subprocess.SubprocessError):
+        return {"has_commits": False}
+
+    if not verify_cmd:
+        return {"has_commits": True, "verify": None}
+
+    # Run verify on the host — same pipefail shell semantics as the runner.
+    try:
+        proc = subprocess.run(
+            _EVIDENCE_VERIFY_SHELL + [verify_cmd],
+            cwd=host_dir,
+            capture_output=True, text=True,
+            timeout=_config.EVIDENCE_VERIFY_TIMEOUT_S,
+        )
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        verify: dict = {
+            "ran": True, "cmd": verify_cmd,
+            "passed": proc.returncode == 0,
+            "exit_code": proc.returncode, "timed_out": False,
+            "output": combined[-4000:],
+        }
+    except subprocess.TimeoutExpired as exc:
+        out_part = exc.output if isinstance(exc.output, str) else ""
+        verify = {
+            "ran": True, "cmd": verify_cmd, "passed": False,
+            "exit_code": None, "timed_out": True,
+            "output": out_part[-4000:],
+        }
+    except (OSError, subprocess.SubprocessError) as exc:
+        verify = {
+            "ran": True, "cmd": verify_cmd, "passed": False,
+            "exit_code": None, "timed_out": False,
+            "output": f"failed to run verify: {exc}",
+        }
+    return {"has_commits": True, "verify": verify}
+
+
+def _push_interrupted_work_sync(host_dir: str, task_id: str) -> str:
+    """Commit any uncommitted changes as a wip snapshot, then push the current
+    branch to origin so committed work survives the next
+    ``prepare_workspace`` reset (which resets to the remote tip).
+
+    Returns ``"pushed"``, ``"committed-only:<reason>"``, or a short error
+    string.  Strictly best-effort — never raises; a push failure is logged by
+    the caller and settle proceeds."""
+    snap = _wip_commit_sync(
+        host_dir, task_id,
+        f"wip(devclaw): interrupted by timeout (task {task_id[:8]})",
+    )
+    try:
+        branch_proc = subprocess.run(
+            ["git", "-C", host_dir, "branch", "--show-current"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if branch_proc.returncode != 0 or not branch_proc.stdout.strip():
+            return f"committed-only: could not determine branch ({snap})"
+        branch = branch_proc.stdout.strip()
+        push_proc = subprocess.run(
+            ["git", "-C", host_dir, "push", "origin", branch],
+            capture_output=True, text=True, timeout=60,
+        )
+        if push_proc.returncode == 0:
+            return "pushed"
+        return (
+            f"committed-only: push failed ({(push_proc.stderr or '').strip()[:120]})"
+        )
+    except (OSError, subprocess.SubprocessError) as err:
+        return f"committed-only: {err.__class__.__name__}: {err}"
