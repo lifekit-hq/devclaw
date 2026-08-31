@@ -25,7 +25,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from typing import Optional, Protocol
-from .goal.issue_ref import CONTRACT_HEADING
+from .goal.issue_ref import CONTRACT_HEADING, extract_acceptance
 from .procutil import run as _run
 
 #: the intake marker label every filed ask carries (proposal §5).
@@ -402,6 +402,17 @@ async def file_intake(
 # cognition caller (``intake_readiness``) only returns a parsed verdict.
 
 
+#: The reason text when extract_acceptance cannot find a contract — ONE home for
+#: the wording so the label comment and the regression test both stay in sync with
+#: the accepted heading forms without duplicating the string.
+NO_CONTRACT_REASON = (
+    "no completion contract found — the issue body must contain a Markdown "
+    "heading (##, ###, or ####) whose text starts with "
+    '"Done when" or "Acceptance" '
+    '(e.g. "## Done when", "## Acceptance criteria"); '
+    'bold text such as "**Acceptance criteria**" is not recognized'
+)
+
 #: the fixed-shape statement (spec 012 FR-012). Stated where the dispatcher reads
 #: the verdict, because #600's complaint was that the shape was a per-ask
 #: judgement call: the expected count SIZES the plan, it never selects a shape.
@@ -763,6 +774,31 @@ async def regrade(
                 f"regrade failed: issue {issue} on {slug} has no readable "
                 "title or body — nothing to grade"
             )
+
+    # Fail closed on a missing contract (issue #769): extract_acceptance is the
+    # done-gate's ONE definition of "this issue has a parseable completion
+    # contract" — calling the same parser here ensures the grader and the gate
+    # agree. A body it cannot parse cannot earn devclaw-ready; the check fires
+    # pre-cognition so no LLM call is wasted on an ungradeable body.
+    if extract_acceptance(body) is None:
+        _no_contract = intake_readiness.ReadinessVerdict(
+            ready=False,
+            missing=[NO_CONTRACT_REASON],
+            rationale="no parseable acceptance section",
+        )
+        await _apply_readiness_label(gh, slug, issue, NEEDS_REFINEMENT_LABEL, _no_contract)
+        return {
+            "issue_url": issue,
+            "project_id": project.id,
+            "repo": slug,
+            "readiness": NEEDS_REFINEMENT_LABEL,
+            "expected_increments": claimed if claim_stated else None,
+            "increment_basis": claim_basis if claim_stated else "",
+            "assessed_increments": None,
+            "sizing": "needs_human",
+            "sizing_reason": "no parseable acceptance section — extent cannot be assessed",
+            "stale": False,
+        }
 
     caller = claude_caller or intake_readiness.default_caller()
     graded = await grade_and_label(
