@@ -163,7 +163,7 @@ nothing — unknown is not an alarm.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_HEALTH_DISK_WARN_PCT` | `80` | Disk-used % at which the workspace filesystem is flagged as `disk_usage_high` in the problems catalog. 0/non-positive/unparseable → 80. |
+| `DEVCLAW_HEALTH_DISK_WARN_PCT` | `80` | Disk-used % at which a filesystem is flagged as `disk_usage_high` in the problems catalog. Applies to EVERY instance-critical filesystem enumerated by `health_drift._disk_surfaces` — the workspace volume (`DEVCLAW_GOALS_DIR`), the SQLite home (`DEVCLAW_DB`, configured independently and fatal when full), and the docker root (`docker info --format {{.DockerRootDir}}`) — reported once per distinct DEVICE, so a single-disk box raises one alarm naming all surfaces at risk while split volumes are reported separately. An undeterminable path is omitted, never guessed. 0/non-positive/unparseable → 80. |
 | `DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN` | `10` | Count of docker toolchain volumes (`devclaw-toolchains-*`) with no registered project workspace above which an `orphan_docker_volumes` problem is recorded. Negative/unparseable → 10. Docker probe failure → no record. |
 | `DEVCLAW_HEALTH_STALE_WS_WARN` | `20` | Count of sweep-eligible workspace directories (terminal goal, past retention, still on disk) above which a `stale_workspaces` problem is recorded. Negative/unparseable → 20. |
 | `DEVCLAW_HEALTH_INTERVAL_S` | `3600` | Minimum wall-clock seconds between health drift probe runs. The gate is a cheap meta-key timestamp compare; probes (including the docker subprocess) only fire when the interval has elapsed. Non-positive/unparseable → 3600. |
