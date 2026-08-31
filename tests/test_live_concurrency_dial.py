@@ -22,43 +22,69 @@ def store(tmp_path):
     return StateStore(str(tmp_path / "devclaw.db"))
 
 
+#: Both operator caps, driven through ONE set of store assertions — the dials
+#: are the same class (absence means default, sub-1 is refused, corruption
+#: degrades to the default). A second copy of these cases for the cognition
+#: dial would be an instance-test; this is the class test, so new dials get
+#: added HERE as a parametrize case.
+DIALS = [
+    pytest.param("max_concurrent", id="sandboxed-tasks"),
+    pytest.param("max_host_cognition", id="host-cognition"),
+]
+
+
+@pytest.fixture(params=DIALS)
+def dial(request, store):
+    name = request.param
+
+    class _Dial:
+        key = name
+        set = staticmethod(getattr(store, f"set_{name}"))
+        get = staticmethod(getattr(store, name))
+
+    return _Dial()
+
+
 # ---- the store dial ---------------------------------------------------------
 
-def test_absent_override_means_use_the_configured_default(store):
+def test_absent_override_means_use_the_configured_default(dial):
     """Absence is the signal for 'use the default' — never a stored copy of it,
-    so changing DEVCLAW_MAX_CONCURRENT still moves the floor for an instance
-    that has never set an override."""
-    assert store.max_concurrent() is None
+    so changing the env var still moves the floor for an instance that has
+    never set an override."""
+    assert dial.get() is None
 
 
-def test_override_round_trips_and_clears(store):
-    store.set_max_concurrent(1)
-    assert store.max_concurrent() == 1
+def test_override_round_trips_and_clears(dial):
+    dial.set(1)
+    assert dial.get() == 1
 
-    store.set_max_concurrent(7)
-    assert store.max_concurrent() == 7
+    dial.set(7)
+    assert dial.get() == 7
 
-    store.set_max_concurrent(None)
-    assert store.max_concurrent() is None, "None must CLEAR, not store a zero"
+    dial.set(None)
+    assert dial.get() is None, "None must CLEAR, not store a zero"
 
 
 @pytest.mark.parametrize("bad", [0, -1, True, False, 1.5, "two"])
-def test_a_cap_that_could_wedge_dispatch_is_rejected(store, bad):
-    """0 would stop every launch while looking like a tuning choice. The dial
-    refuses rather than silently becoming a stop button."""
+def test_a_cap_that_could_wedge_the_system_is_rejected(dial, bad):
+    """0 would stop every launch (or deadlock every cognition call) while
+    looking like a tuning choice. The dial refuses rather than silently
+    becoming a stop button."""
     with pytest.raises(ValueError):
-        store.set_max_concurrent(bad)
-    assert store.max_concurrent() is None
+        dial.set(bad)
+    assert dial.get() is None
 
 
 @pytest.mark.parametrize("junk", ["", "  ", "abc", "0", "-3", "1.5"])
-def test_corrupt_stored_value_degrades_to_the_default_not_to_zero(store, junk):
+def test_corrupt_stored_value_degrades_to_the_default_not_to_zero(
+    store, dial, junk
+):
     """A hand-edited or half-written meta row must fall back to the default.
-    Degrading to 0 would wedge dispatch — the exact silent stall this dial
-    exists to prevent."""
-    store.set_meta("max_concurrent", junk)
+    Degrading to 0 would wedge the system — the exact silent stall these dials
+    exist to prevent."""
+    store.set_meta(dial.key, junk)
 
-    assert store.max_concurrent() is None
+    assert dial.get() is None
 
 
 # ---- the queue reads it live ------------------------------------------------

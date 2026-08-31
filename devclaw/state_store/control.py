@@ -195,6 +195,33 @@ class ControlPlaneMixin:
             return None
         return n if n >= 1 else None
 
+    def set_max_host_cognition(self, n: "int | None") -> None:
+        """Set (``n>=1``) or clear (``None``) the operator override for the
+        concurrent host-side ``claude --print`` cap. Sibling of
+        :meth:`set_max_concurrent`; same conventions, different population —
+        that one counts sandboxed tasks, this one counts host subprocesses."""
+        if n is None:
+            self.delete_meta("max_host_cognition")
+            return
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise ValueError(
+                "max_host_cognition must be a whole number >= 1 (None clears "
+                "the override); 0 would deadlock every cognition call"
+            )
+        self.set_meta("max_host_cognition", str(int(n)))
+
+    def max_host_cognition(self) -> "int | None":
+        """The operator override, or ``None`` when unset/corrupt — the caller
+        falls back to ``DEVCLAW_MAX_HOST_COGNITION``."""
+        raw = self.get_meta("max_host_cognition")
+        if raw is None:
+            return None
+        try:
+            n = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return n if n >= 1 else None
+
     # ---- quiet mode (spec 025 US3) ---------------------------------------
     # One instance-wide switch: while armed, only instance-dead pings go out;
     # everything else is recorded into suppressed_pings. operator_hold

@@ -40,6 +40,7 @@ from .control import (  # noqa: F401
     clear_usage_pause,
     list_suppressed_pings,
     set_max_concurrent,
+    set_max_host_cognition,
     set_operator_hold,
     set_quiet_mode,
     set_run_schedule,

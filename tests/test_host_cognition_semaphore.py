@@ -112,3 +112,89 @@ def test_host_cognition_env_parse_is_failsafe():
     assert f("-3") == 2      # negative → default
     assert f("1") == 1       # fully serialized host cognition is legal
     assert f("4") == 4
+
+
+# ---- the cap is a LIVE dial (2026-08-31) ------------------------------------
+# Same tripwire class as tests/test_live_concurrency_dial.py, different
+# population: that one caps sandboxed tasks, this one caps host subprocesses.
+# The invariant with teeth is that changing the cap can never let the host
+# admit MORE than the cap while earlier calls are still running — rebuilding a
+# fixed-capacity semaphore would do exactly that, and over-admission is what
+# OOM-killed 117 cognition calls.
+
+@pytest.fixture(autouse=True)
+def _fresh_cap_override(monkeypatch):
+    monkeypatch.setattr(llm_call, "_host_cognition_cap_override", None)
+
+
+def test_live_override_beats_the_env_value(monkeypatch):
+    monkeypatch.setattr(llm_call._config, "max_host_cognition_raw", lambda: "4")
+    assert llm_call.host_cognition_cap() == 4
+
+    llm_call.set_host_cognition_cap(1)
+    assert llm_call.host_cognition_cap() == 1
+
+    llm_call.set_host_cognition_cap(None)
+    assert llm_call.host_cognition_cap() == 4, "None must CLEAR, not pin a value"
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, False, 1.5, "two"])
+def test_a_cap_that_would_deadlock_cognition_is_rejected(bad):
+    with pytest.raises(ValueError):
+        llm_call.set_host_cognition_cap(bad)
+    assert llm_call._host_cognition_cap_override is None
+
+
+def test_lowering_the_cap_never_over_admits_while_calls_are_in_flight():
+    """The reason this is a dynamic limiter and not a rebuilt semaphore.
+
+    Rebuilding would hand a fresh full-capacity object to new callers while the
+    old holders are still running, so the host would briefly exceed the cap.
+    Here: fill to 2, drop the cap to 1, and assert nothing new is admitted
+    until in-flight drops below the new cap.
+    """
+    async def scenario():
+        llm_call.set_host_cognition_cap(2)
+        limiter = llm_call._DynamicLimiter()
+        a = await limiter.__aenter__()
+        b = await limiter.__aenter__()
+        assert limiter.in_flight == 2
+
+        llm_call.set_host_cognition_cap(1)
+
+        blocked = asyncio.create_task(limiter.__aenter__())
+        await asyncio.sleep(0.05)
+        assert not blocked.done(), "admitted a 3rd call while 2 were in flight at cap=1"
+
+        await limiter.__aexit__()  # in_flight 2 -> 1, still not under cap=1
+        await asyncio.sleep(0.05)
+        assert not blocked.done(), "admitted while in_flight was still at the cap"
+
+        await limiter.__aexit__()  # in_flight 1 -> 0, now under cap
+        await asyncio.wait_for(blocked, timeout=1)
+        assert limiter.in_flight == 1
+
+        await limiter.__aexit__()
+        del a, b
+
+    asyncio.run(scenario())
+
+
+def test_raising_the_cap_admits_more_on_the_next_release():
+    async def scenario():
+        llm_call.set_host_cognition_cap(1)
+        limiter = llm_call._DynamicLimiter()
+        await limiter.__aenter__()
+
+        waiting = asyncio.create_task(limiter.__aenter__())
+        await asyncio.sleep(0.05)
+        assert not waiting.done()
+
+        llm_call.set_host_cognition_cap(3)
+        await limiter.__aexit__()  # release wakes the waiter, which re-reads the cap
+
+        await asyncio.wait_for(waiting, timeout=1)
+        assert limiter.in_flight == 1
+        await limiter.__aexit__()
+
+    asyncio.run(scenario())
