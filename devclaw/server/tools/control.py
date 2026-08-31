@@ -62,6 +62,7 @@ async def get_run_schedule(goal_id: Optional[str] = None) -> str:
             "override": override,
             "default": GLOBAL_MAX_CONCURRENT,
         },
+        "max_host_cognition": _host_cognition_view(),
     }
     return json.dumps(out, indent=2)
 
@@ -223,3 +224,55 @@ async def set_max_concurrent(n: Optional[int] = None) -> str:
         },
         indent=2,
     )
+
+
+def _host_cognition_view() -> dict:
+    """The cognition cap as {effective, override, default} — the same shape as
+    max_concurrent so one read tool reports both populations identically."""
+    from ...llm_call import (
+        _max_host_cognition_from_env,
+        host_cognition_cap,
+    )
+    from ... import config as _cfg
+
+    return {
+        "effective": host_cognition_cap(),
+        "override": store.max_host_cognition(),
+        "default": _max_host_cognition_from_env(_cfg.max_host_cognition_raw()),
+    }
+
+
+@mcp.tool
+async def set_max_host_cognition(n: Optional[int] = None) -> str:
+    """Set the cap on CONCURRENT host-side ``claude --print`` subprocesses —
+    the done-gate, evaluator, review gate and triage calls. This is a DIFFERENT
+    population from set_max_concurrent: that one counts sandboxed tasks, this
+    one counts host processes, and neither is visible to the other. Both caps
+    apply at once — capping tasks at 1 does not stop two gates running beside
+    that task.
+
+    Omit ``n`` (or pass null) to CLEAR the override and fall back to the
+    ``DEVCLAW_MAX_HOST_COGNITION`` default.
+
+    Takes effect on the next acquire — no restart, no redeploy. In-flight
+    cognition calls always finish; lowering the cap only makes the next call
+    wait its turn. Queued callers never error, and the wait does not count
+    against a call's timeout budget (the timeout starts after the acquire).
+
+    Sizing: these are the memory-hungry ones. Four concurrent review gates plus
+    goal cognition is what the kernel OOM-killed 117 times before this cap
+    existed, so raise it only if the box has headroom. ``n`` must be >= 1 — zero
+    would deadlock every cognition call."""
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
+        raise ToolError(
+            "n must be a whole number >= 1, or null to clear the override — "
+            "0 would deadlock every cognition call"
+        )
+    from ...llm_call import set_host_cognition_cap
+
+    try:
+        store.set_max_host_cognition(n)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+    set_host_cognition_cap(n)
+    return json.dumps({"max_host_cognition": _host_cognition_view()}, indent=2)

@@ -24,6 +24,7 @@ from ._state import (
     mcp,
     queue,
     registry,
+    store,
 )
 
 
@@ -53,10 +54,35 @@ class AuthMiddleware:
         await resp(scope, receive, send)
 
 
+def _seed_host_cognition_cap() -> None:
+    """Re-apply the stored host-cognition override at startup.
+
+    The task-queue cap needs no equivalent: the pump reads the store directly
+    on every pass. The cognition cap CANNOT — ``llm_call`` is a layer-3
+    primitive that must not import the state store — so the durable value is
+    pushed INTO it here, once. Without this the override would silently revert
+    to the env default on every restart, which is the exact
+    survives-a-redeploy-or-not confusion this dial exists to end.
+
+    Best-effort: a control-plane read failure leaves the env default in force
+    rather than blocking serve — the cap still bounds the host population, it
+    just is not the operator's chosen number until they set it again."""
+    try:
+        from ..llm_call import set_host_cognition_cap
+
+        set_host_cognition_cap(store.max_host_cognition())
+    except Exception as exc:  # noqa: BLE001 — never block serve on a dial
+        sys.stderr.write(
+            f"{SERVER_NAME}: host-cognition cap seed failed ({exc}) — "
+            "DEVCLAW_MAX_HOST_COGNITION default in force\n"
+        )
+
+
 def _start_loops() -> None:
     """Start the two heartbeats: the task queue (resumes work + advances DAGs) and
     the goal layer (drives durable goals). Wire the queue's on-settle hook to the
     goal heartbeat so a finished task triggers an immediate goal tick in-process."""
+    _seed_host_cognition_cap()
     queue.start_ticking()
     queue.set_on_settle(goals.poke)
     goals.start()
