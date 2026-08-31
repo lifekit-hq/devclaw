@@ -345,8 +345,19 @@ failures **even when devclaw recovered from them**: a block entry
 (`StateStore.mark_failed`, terminal), a usage-limit pause
 (`StateStore.set_global_pause`, **recovered** — it auto-resumes), and the
 error-bearing trace events centralized in `PersistentTracer`
-(cognition/subprocess errors, a review-gate-blocked delivery). Mechanical
-auto-heals do **not** re-record — the original block entry already counted it.
+(cognition/subprocess errors, a review-gate-blocked delivery). A fourth feeder
+joined these on a different axis (spec 027, `devclaw/goal/health_drift.py`): a
+periodic, zero-LLM **environmental** probe records threshold breaches — disk
+headroom across every instance-critical filesystem (the workspace volume, the
+SQLite home and the docker root, enumerated by `_disk_surfaces` and grouped per
+device), docker toolchain volumes no registered project accounts for, and
+workspace directories that outlived their goals. Unlike the three above it
+fires on **degradation rather than failure**, so the catalog surfaces "this box
+is filling up" before it becomes "the task died". It records through the same
+`record_problem` choke point, so it dedupes and ages identically; an
+undeterminable probe records nothing (unknown is never an alarm and never a
+false all-clear). Mechanical auto-heals do **not** re-record — the original
+block entry already counted it.
 This is the **capture + dedup + count** layer; the `list_problems` MCP tool
 (reading `StateStore.list_problems`, most-frequent first, optional `category`
 filter) is the read surface over it. **The catalog is a GATHERER, not a backlog

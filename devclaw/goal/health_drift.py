@@ -30,6 +30,16 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
+# Imported at MODULE scope on purpose. These two are an internal seam in
+# engine/sandcastle.py, and the probe below runs inside a blanket
+# `except Exception: return None`. Imported lazily in there, a rename on the
+# other side of the seam would be swallowed as an ImportError and the probe
+# would return "unknown" forever — indistinguishable from a healthy instance,
+# since unknown records no problem. At module scope the same rename is a loud
+# ImportError that fails every test that touches this module, which is what a
+# code defect (as opposed to an environmental probe failure) deserves.
+from ..engine.sandcastle import _toolchain_volume_name, _translate_workspace_path
+
 if TYPE_CHECKING:
     from ..state_store import StateStore
 
@@ -85,8 +95,6 @@ def _orphan_docker_volume_count(
     is load-bearing (see ``host_resources.toolchain_volume_for``).
     """
     try:
-        from ..engine.sandcastle import _toolchain_volume_name, _translate_workspace_path
-
         expected = {
             _toolchain_volume_name(_translate_workspace_path(ws))
             for ws in project_workspaces

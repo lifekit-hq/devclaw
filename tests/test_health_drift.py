@@ -74,14 +74,24 @@ def test_healthy_instance_records_no_problem(store, monkeypatch):
     assert store.list_problems() == []
 
 
-def test_disk_at_exactly_threshold_is_not_a_problem(store, monkeypatch):
-    # Strictly BELOW threshold → no record; AT threshold → record (boundary).
-    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 79.9)
+@pytest.mark.parametrize(
+    ("pct", "records"),
+    [(79.9, False), (80.0, True), (80.1, True)],
+    ids=["below", "at-threshold", "above"],
+)
+def test_disk_threshold_boundary_is_inclusive(store, monkeypatch, pct, records):
+    """The comparison is `pct >= threshold`, so AT the threshold records.
+
+    The previous version was named for the AT case but only ever exercised
+    79.9 — the boundary it claimed to guard was untested, which is worse than
+    no test: it reads as covered. All three sides are pinned here."""
+    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: pct)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
     _run(store, disk_warn_pct=80.0)
-    assert store.list_problems() == []
+
+    assert bool(store.list_problems()) is records
 
 
 def test_orphan_count_below_threshold_records_no_problem(store, monkeypatch):
@@ -316,3 +326,39 @@ def test_device_key_falls_back_to_the_path_when_stat_fails(tmp_path):
 
     assert _REAL_DEVICE_KEY(missing) == _REAL_DEVICE_KEY(missing)
     assert _REAL_DEVICE_KEY(missing) != _REAL_DEVICE_KEY(str(tmp_path / "other"))
+
+
+def test_the_sandcastle_seam_is_imported_at_module_scope(monkeypatch):
+    """A rename in engine/sandcastle.py must break LOUDLY, not silently.
+
+    `_orphan_docker_volume_count` runs inside a blanket `except Exception:
+    return None`. While the seam was imported lazily inside that block, a
+    rename on the other side was swallowed as an ImportError and the probe
+    returned "unknown" forever — and unknown records no problem, so a
+    permanently dead probe is indistinguishable from a healthy instance.
+    Module-scope import turns the same rename into an import-time failure.
+    """
+    assert hasattr(_hd, "_toolchain_volume_name")
+    assert hasattr(_hd, "_translate_workspace_path")
+
+    import devclaw.engine.sandcastle as _sc
+
+    assert _hd._toolchain_volume_name is _sc._toolchain_volume_name
+    assert _hd._translate_workspace_path is _sc._translate_workspace_path
+
+
+def test_orphan_probe_counts_volumes_no_registered_workspace_explains(
+    store, monkeypatch
+):
+    """Exercises the REAL function against a stubbed docker, rather than
+    monkeypatching it away — so the seam it depends on is actually executed and
+    a rename is caught by a failing assertion, not just at import."""
+    class _Result:
+        returncode = 0
+        stdout = "devclaw-toolchains-known\ndevclaw-toolchains-orphan\n"
+
+    monkeypatch.setattr(_hd, "_toolchain_volume_name", lambda p: f"devclaw-toolchains-{p}")
+    monkeypatch.setattr(_hd, "_translate_workspace_path", lambda ws: "known")
+    monkeypatch.setattr(_hd.subprocess, "run", lambda *a, **k: _Result())
+
+    assert _hd._orphan_docker_volume_count("docker", {"/ws/known"}) == 1
