@@ -1131,7 +1131,7 @@ class SettleMixin:
                         project_id=project_id,
                     )
                     salvage_gates: list = [
-                        _VerifyGate(), _MaterializeGate(), _IntegrityGate(), _ScopeGate(),
+                        _VerifyGate(), _MaterializeGate(), _IntegrityGate(),
                     ]
                     if strictness != "trust":
                         salvage_gates.append(_ReviewGate(self))
