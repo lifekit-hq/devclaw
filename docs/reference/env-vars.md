@@ -164,6 +164,7 @@ nothing — unknown is not an alarm.
 | Var | Default | Purpose |
 |---|---|---|
 | `DEVCLAW_HEALTH_DISK_WARN_PCT` | `80` | Disk-used % at which the workspace filesystem is flagged as `disk_usage_high` in the problems catalog. 0/non-positive/unparseable → 80. |
+| `DEVCLAW_HEALTH_DOCKER_DISK_WARN_PCT` | `80` | Disk-used % at which docker's data-root filesystem (resolved via `docker info`) is flagged as `docker_root_disk_high`. Probed separately from workspaces because docker's data volume may live on a different filesystem. 0/non-positive/unparseable → 80. Docker probe failure → no record. |
 | `DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN` | `10` | Count of docker toolchain volumes (`devclaw-toolchains-*`) with no registered project workspace above which an `orphan_docker_volumes` problem is recorded. Negative/unparseable → 10. Docker probe failure → no record. |
 | `DEVCLAW_HEALTH_STALE_WS_WARN` | `20` | Count of sweep-eligible workspace directories (terminal goal, past retention, still on disk) above which a `stale_workspaces` problem is recorded. Negative/unparseable → 20. |
 | `DEVCLAW_HEALTH_INTERVAL_S` | `3600` | Minimum wall-clock seconds between health drift probe runs. The gate is a cheap meta-key timestamp compare; probes (including the docker subprocess) only fire when the interval has elapsed. Non-positive/unparseable → 3600. |

@@ -1,14 +1,17 @@
 """Instance health drift probes — named regression tests (spec 027 / issue #596).
 
-Pins three invariants from the done-when:
+Pins four invariants from the done-when:
   T1. A healthy instance (all probes below threshold) records no problem.
   T2. A threshold breach records exactly ONE deduplicated problem row; calling
       again with the same reading increments ``count`` on that same row.
   T3. A probe returning ``None`` (failure) produces no record and no exception.
+  T4. Docker root disk probe is distinct from workspace disk: a breach on
+      docker's data-root records ``docker_root_disk_high``, separate from the
+      workspace ``disk_usage_high`` kind.
 
 Uses a real StateStore with a temp SQLite — same pattern as
 ``test_problems_catalog.py`` — so the dedup fingerprinting is exercised
-end-to-end. The three injectable probe functions are monkeypatched at the
+end-to-end. The four injectable probe functions are monkeypatched at the
 module level so no docker daemon or real filesystem is needed.
 """
 
@@ -34,6 +37,7 @@ def _run(store: StateStore, **overrides) -> None:
         now_ms=0,
         goals_dir="/tmp/goals",
         disk_warn_pct=80.0,
+        docker_disk_warn_pct=80.0,
         orphan_docker_warn=10,
         stale_ws_warn=20,
         docker_bin="docker",
@@ -47,6 +51,7 @@ def _run(store: StateStore, **overrides) -> None:
 
 def test_healthy_instance_records_no_problem(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -58,6 +63,7 @@ def test_healthy_instance_records_no_problem(store, monkeypatch):
 def test_disk_at_exactly_threshold_is_not_a_problem(store, monkeypatch):
     # Strictly BELOW threshold → no record; AT threshold → record (boundary).
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 79.9)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -67,6 +73,7 @@ def test_disk_at_exactly_threshold_is_not_a_problem(store, monkeypatch):
 
 def test_orphan_count_below_threshold_records_no_problem(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 9)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -79,6 +86,7 @@ def test_orphan_count_below_threshold_records_no_problem(store, monkeypatch):
 
 def test_disk_breach_records_one_row(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 85.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -91,6 +99,7 @@ def test_disk_breach_records_one_row(store, monkeypatch):
 
 def test_disk_breach_deduplicates_on_second_call(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 85.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -106,6 +115,7 @@ def test_disk_breach_deduplicates_on_second_call(store, monkeypatch):
 
 def test_orphan_volume_breach_records_one_row(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 15)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -117,6 +127,7 @@ def test_orphan_volume_breach_records_one_row(store, monkeypatch):
 
 def test_stale_workspace_breach_records_one_row(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 25)
 
@@ -128,6 +139,7 @@ def test_stale_workspace_breach_records_one_row(store, monkeypatch):
 
 def test_all_three_breached_records_three_rows(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 85.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 15)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 25)
 
@@ -142,6 +154,7 @@ def test_all_three_breached_records_three_rows(store, monkeypatch):
 
 def test_disk_probe_failure_records_nothing_and_does_not_raise(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: None)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -151,6 +164,7 @@ def test_disk_probe_failure_records_nothing_and_does_not_raise(store, monkeypatc
 
 def test_docker_probe_failure_records_nothing_and_does_not_raise(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: None)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: None)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 
@@ -160,10 +174,68 @@ def test_docker_probe_failure_records_nothing_and_does_not_raise(store, monkeypa
 
 def test_all_probes_failing_records_nothing_and_does_not_raise(store, monkeypatch):
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: None)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: None)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: None)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: None)
 
     _run(store)  # must not raise
+    assert store.list_problems() == []
+
+
+# ---- T4: docker root disk probe is distinct from workspace disk -------------
+
+
+def test_docker_root_disk_breach_records_docker_root_disk_high(store, monkeypatch):
+    """Breach on docker's data-root records docker_root_disk_high, not disk_usage_high."""
+    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 88.0)
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
+
+    _run(store, docker_disk_warn_pct=80.0)
+    rows = store.list_problems(category="other")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "docker_root_disk_high"
+    assert rows[0]["count"] == 1
+
+
+def test_docker_root_disk_breach_deduplicates_on_second_call(store, monkeypatch):
+    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 88.0)
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
+
+    _run(store)
+    _run(store)
+    rows = store.list_problems(category="other")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "docker_root_disk_high"
+    assert rows[0]["count"] == 2
+
+
+def test_workspace_and_docker_root_both_breached_records_two_distinct_rows(
+    store, monkeypatch
+):
+    """Workspace and docker root on separate volumes can breach independently."""
+    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 85.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 90.0)
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
+
+    _run(store)
+    rows = store.list_problems(category="other")
+    kinds = {r["kind"] for r in rows}
+    assert kinds == {"disk_usage_high", "docker_root_disk_high"}
+
+
+def test_docker_root_disk_failure_records_nothing(store, monkeypatch):
+    """A docker_root probe returning None (daemon unavailable) is not an alarm."""
+    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 50.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: None)
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
+
+    _run(store)
     assert store.list_problems() == []
 
 
@@ -174,6 +246,7 @@ def test_run_health_drift_checks_never_invokes_claude(store, monkeypatch):
     """The probe module must never call into the cognition layer — belt + suspenders
     beyond what the typed function signatures already make impossible."""
     monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 85.0)
+    monkeypatch.setattr(_hd, "_docker_disk_used_pct", lambda _bin: 50.0)
     monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _bin, _ws: 0)
     monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _pw, _now: 0)
 

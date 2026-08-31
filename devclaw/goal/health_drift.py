@@ -1,8 +1,11 @@
 """Instance health drift detection — periodic, zero-LLM environmental probe.
 
-Three probes (issue #596):
+Four probes (issue #596):
   - disk_headroom: ``shutil.disk_usage`` on the goals-dir filesystem (the volume
     backing workspaces); a percentage.
+  - docker_disk_headroom: ``shutil.disk_usage`` on docker's data-root directory
+    (resolved via ``docker info``); recorded separately because the docker volume
+    may live on a different filesystem from workspaces.
   - orphan_docker_volumes: ``docker volume ls`` filtered to the
     ``devclaw-toolchains-*`` prefix; count of volumes not accounted for by any
     registered project workspace.
@@ -37,6 +40,35 @@ _DOCKER_TIMEOUT_S = 20
 
 
 # ---- individual probes (each returns a value or None for unknown) ----------
+
+
+def _docker_root_dir(docker_bin: str) -> Optional[str]:
+    """Docker data-root directory via ``docker info``, or ``None`` on any failure."""
+    try:
+        result = subprocess.run(
+            [docker_bin, "info", "--format", "{{.DockerRootDir}}"],
+            capture_output=True,
+            text=True,
+            timeout=_DOCKER_TIMEOUT_S,
+        )
+        if result.returncode != 0:
+            return None
+        path = result.stdout.strip()
+        return path if path else None
+    except Exception:  # noqa: BLE001 — degrade silently, never raise
+        return None
+
+
+def _docker_disk_used_pct(docker_bin: str) -> Optional[float]:
+    """Used % of docker's data-root filesystem, or ``None`` on any failure.
+
+    Resolves the data-root via ``docker info`` then delegates to ``_disk_used_pct``.
+    A missing daemon, timeout, or empty path all degrade to ``None``.
+    """
+    root = _docker_root_dir(docker_bin)
+    if root is None:
+        return None
+    return _disk_used_pct(root)
 
 
 def _disk_used_pct(path: str) -> Optional[float]:
@@ -122,19 +154,39 @@ def run_health_drift_checks(
     now_ms: int,
     goals_dir: str,
     disk_warn_pct: float,
+    docker_disk_warn_pct: float,
     orphan_docker_warn: int,
     stale_ws_warn: int,
     docker_bin: str,
 ) -> None:
-    """Run all three probes and record problems for breached thresholds.
+    """Run all four probes and record problems for breached thresholds.
 
     Never raises. A probe returning ``None`` (unknown) produces no record —
     unknown is not an alarm and is not a false all-clear.
     """
     _check_disk(store, goals_dir, disk_warn_pct)
+    _check_docker_disk(store, docker_bin, docker_disk_warn_pct)
     goals_list = list(goals)
     _check_orphan_volumes(store, docker_bin, project_workspaces, orphan_docker_warn)
     _check_stale_workspaces(store, goals_list, project_workspaces, now_ms, stale_ws_warn)
+
+
+def _check_docker_disk(
+    store: "StateStore", docker_bin: str, threshold_pct: float
+) -> None:
+    pct = _docker_disk_used_pct(docker_bin)
+    if pct is None:
+        return
+    if pct >= threshold_pct:
+        store.record_problem(
+            category="other",
+            kind="docker_root_disk_high",
+            message=(
+                f"docker data-root filesystem at {pct:.0f}% capacity "
+                f"(threshold: {threshold_pct:.0f}%)"
+            ),
+            recovered=False,
+        )
 
 
 def _check_disk(store: "StateStore", goals_dir: str, threshold_pct: float) -> None:

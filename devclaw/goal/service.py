@@ -628,6 +628,7 @@ class GoalService:
             now_ms=now,
             goals_dir=str(self._cfg.goals_dir),
             disk_warn_pct=_config.health_disk_warn_pct(),
+            docker_disk_warn_pct=_config.health_docker_disk_warn_pct(),
             orphan_docker_warn=_config.health_orphan_docker_warn(),
             stale_ws_warn=_config.health_stale_ws_warn(),
             docker_bin=_config.DOCKER_BIN,
