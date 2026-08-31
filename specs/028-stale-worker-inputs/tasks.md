@@ -1,4 +1,4 @@
-# Tasks: Stale worker inputs (spec 027)
+# Tasks: Stale worker inputs (spec 028)
 
 **Input**: [spec.md](./spec.md), [plan.md](./plan.md)
 

@@ -675,7 +675,7 @@ class SettleMixin:
             # Goal-path tasks (parent_goal_id set) skip this — the goal tick
             # already called prepare_workspace with the goal branch. Best-effort:
             # a workspace without an origin remote (local-only, tests) logs and
-            # continues rather than blocking (spec 027 FR-004).
+            # continues rather than blocking (spec 028 FR-004).
             try:
                 await prepare_workspace(workspace_dir, branch=None)
             except Exception as exc:  # noqa: BLE001

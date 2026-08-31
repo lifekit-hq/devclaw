@@ -1,4 +1,4 @@
-# Plan: Spec 027 — Stale worker inputs
+# Plan: Spec 028 — Stale worker inputs
 
 ## US1 surface: direct dispatch workspace reset
 

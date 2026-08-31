@@ -1140,7 +1140,7 @@ async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_
 async def test_direct_dispatch_without_target_branch_resets_to_origin_head(
     store, tmp_path, monkeypatch
 ):
-    """Spec 027 FR-001: a direct dispatch (no branch params, no parent_goal_id)
+    """Spec 028 FR-001: a direct dispatch (no branch params, no parent_goal_id)
     resets the workspace to origin/<default> before the engine runs, so the
     worker always sees the current state of main instead of a stale branch from
     a prior task."""

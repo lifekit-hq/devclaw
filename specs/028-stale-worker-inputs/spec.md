@@ -1,4 +1,4 @@
-# Spec 027 — Stale worker inputs
+# Spec 028 — Stale worker inputs
 
 **Issue:** lifekit-hq/devclaw#592
 
