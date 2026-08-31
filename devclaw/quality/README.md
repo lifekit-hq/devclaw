@@ -19,7 +19,7 @@ failure modes are all closed.
 | Module | Job |
 |---|---|
 | `__init__.py` | The adversarial diff-review gate: `review_diff` (the single reviewer), `review_gate` (the wired entry — `review_diff` wrapped in the degradation ladder), `format_feedback` (verdict → retry brief). Includes the cognition-timeout **degradation ladder**: an oversized diff is split per file and the verdicts unioned, still fail-closed end to end (#281). |
-| `task_gates.py` | The settle path's gate chain, extracted from `task_queue.py`: the six `Gate` adapters (`_VerifyGate`, `_MaterializeGate`, `_IntegrityGate`, `_ScopeGate`, `_ReviewGate`, `_BrowserGate`) plus their pure verdict helpers. The gates only READ run artifacts and return verdicts — single-writer stays in the TaskQueue. |
+| `task_gates.py` | The settle path's gate chain, extracted from `task_queue.py`: the five `Gate` adapters (`_VerifyGate`, `_MaterializeGate`, `_IntegrityGate`, `_ReviewGate`, `_BrowserGate`) plus their pure verdict helpers. The gates only READ run artifacts and return verdicts — single-writer stays in the TaskQueue. |
 | `browser_gate.py` | Browser-E2E verification: a change touching web-UI paths must carry a passing **real-browser** Playwright run in the verify output, or it fails closed. Pure parsing — no LLM. |
 | `reachability.py` | The gate's grounded escape valve: an independent judge may clear a browser-gate block **only** on an affirmatively proven "this UI isn't rendered in the running app". Uncertain / crash / reachable → the block stands. |
 | `prompts/` | The gate's own prompt templates + loader — inside the boundary, so the package renders its verdicts without devclaw's prompt dir. |
@@ -65,8 +65,7 @@ moves to its own repo, those three seams are the entire integration surface.
 
 One call site: the TaskQueue settle mixin (`devclaw/queue/settle.py`) runs this package's gate chain (`task_gates.py`) in the settle path, in order —
 verify gate (green tests) → `test_integrity` (nobody weakened the tests) →
-`loom.declared_scope` (a `[P]` increment stayed inside its declared file
-scope — spec 010 FR-103) → `review_gate` (adversarial review) →
+`review_gate` (adversarial review) →
 `browser_gate` (+ `reachability` escape valve). Any failure feeds back into the retry brief; the terminal
 failure escalates to a human. Tests: `tests/test_review_gate*.py`,
 `tests/test_review_degrade_ladder.py`, `tests/test_browser_gate*.py`,

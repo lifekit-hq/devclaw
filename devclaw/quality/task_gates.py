@@ -15,7 +15,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, cast
 
 from .. import config as _config
-from ..loom.declared_scope import scope_check, violation_summary
 from ..loom.test_integrity import present_test_names, scan_diff
 from .browser_gate import PLAYWRIGHT_CONFIG_NAMES, browser_run_verdict
 from .gate_pipeline import GateInput, GateVerdict
@@ -251,53 +250,6 @@ class _MaterializeGate:
 
 
 @dataclass
-class _ScopeGate:
-    """Declared-file-scope gate (spec 010 FR-103) — always-hard, zero-LLM.
-
-    A `[P]` task declares the paths it will touch; this is where that
-    declaration stops being a promise. It reads
-    the SAME shared diff test-integrity just consumed and asks one question: did
-    the change stay inside what its plan declared?
-
-    Self-skipping by design. An increment that
-    claimed no scoped `[P]` task has no contract, so the gate is
-    *not consulted* — it produces no verdict to ship on and leaves every ordinary
-    increment byte-unaffected. When it IS consulted it fails CLOSED: a violation
-    blocks, and so does a check that cannot decide (a crash is not an approval,
-    #186). The parser is total precisely so that second branch stays unreachable.
-
-    Placed after integrity and before the cognition gates: it costs one string
-    scan, so running it early means a hermeticity violation short-circuits ahead
-    of every ``claude`` call.
-    """
-
-    gate_id: str = "scope"
-
-    def applies(self, gi: GateInput) -> bool:
-        return True
-
-    async def check(self, gi: GateInput) -> GateVerdict:
-        # The shared span is MATERIALIZED (spec 013), so it already contains the
-        # files the agent chose not to record. This gate held its own
-        # `git status --untracked-files=all` probe for exactly that gap; the gap
-        # is closed upstream now, for scoped and unscoped increments alike, so
-        # the probe is gone. A gate that recomputed the change would be the
-        # third component owning its definition — the defect, not a fix.
-        diff = await gi.diff()
-        try:
-            check = scope_check(diff)
-        except Exception as err:  # noqa: BLE001 — unreviewable ⇒ fail closed (#186)
-            return GateVerdict.failed(
-                self.gate_id,
-                f"declared-scope check could not produce a verdict "
-                f"({err.__class__.__name__}: {err}) — failing closed: an "
-                f"unreviewable hermeticity check is not an approval",
-            )
-        if not check.consulted or not check.violations:
-            return GateVerdict.passed(self.gate_id)
-        return GateVerdict.failed(self.gate_id, violation_summary(check))
-
-
 @dataclass
 class _ReviewGate:
     """Adversarial pre-PR review over the shared diff (runs only after integrity

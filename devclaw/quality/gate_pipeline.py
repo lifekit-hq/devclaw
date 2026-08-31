@@ -142,6 +142,22 @@ class GateInput:
 
 
 @dataclass(frozen=True)
+class GateOutcome:
+    """What one gate did on one increment, for the record rather than for the
+    decision. ``consulted`` False covers both "did not apply" and "applied but
+    had no contract"; either way the gate approved nothing."""
+
+    gate_id: str
+    consulted: bool
+    ok: bool
+    why: "Optional[str]" = None
+
+    def to_dict(self) -> dict:
+        return {"gate_id": self.gate_id, "consulted": self.consulted,
+                "ok": self.ok, "why": self.why}
+
+
+@dataclass(frozen=True)
 class GateVerdict:
     """One gate's decision. ``ok`` gates let the cascade continue; a non-ok gate
     carries the ``reason`` fed back into the retry loop (and, for a ``dialable``
@@ -155,10 +171,24 @@ class GateVerdict:
     reason: Optional[str] = None
     #: whether this gate's finding is an ADR-0007 dial-able one (browser / review)
     dialable: bool = False
+    #: whether the gate had a contract to judge at all. False means it ran and
+    #: found nothing to enforce — NOT that it approved anything. Kept distinct
+    #: from ``ok`` because collapsing the two is how a gate goes inert
+    #: unnoticed: the declared-scope gate returned a bare pass on every real
+    #: increment for weeks after spec 022 deleted the `[P]` lane that produced
+    #: its trigger, and every report read that as "consulted and passed".
+    consulted: bool = True
 
     @classmethod
     def passed(cls, gate_id: str) -> "GateVerdict":
         return cls(gate_id=gate_id, ok=True)
+
+    @classmethod
+    def not_consulted(cls, gate_id: str, why: str) -> "GateVerdict":
+        """The gate ran and had nothing to judge. Non-blocking like a pass, but
+        recorded as a DIFFERENT thing, so "this gate never has anything to
+        judge" is an observable fact rather than an invisible one."""
+        return cls(gate_id=gate_id, ok=True, reason=why, consulted=False)
 
     @classmethod
     def failed(
@@ -187,7 +217,8 @@ class Gate(Protocol):
 
 
 async def run_pipeline(
-    gate_input: GateInput, gates: Sequence[Gate]
+    gate_input: GateInput, gates: Sequence[Gate],
+    *, trace: "Optional[list[GateOutcome]]" = None,
 ) -> Optional[GateVerdict]:
     """Run an ORDERED sequence of gates, short-circuiting on the first non-ok
     verdict. Returns that first failing :class:`GateVerdict`, or ``None`` if every
@@ -201,8 +232,14 @@ async def run_pipeline(
     """
     for gate in gates:
         if not gate.applies(gate_input):
+            if trace is not None:
+                trace.append(GateOutcome(gate.gate_id, consulted=False, ok=True,
+                                         why="did not apply to this input"))
             continue
         verdict = await gate.check(gate_input)
+        if trace is not None:
+            trace.append(GateOutcome(verdict.gate_id, consulted=verdict.consulted,
+                                     ok=verdict.ok, why=verdict.reason))
         if not verdict.ok:
             return verdict
     return None

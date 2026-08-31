@@ -185,3 +185,61 @@ async def test_review_gate_pass_is_ok_and_not_dialable():
 
     assert verdict.ok is True
     assert verdict.gate_id == "review"
+
+
+# ---- consultation is a distinct, recorded state ---------------------------
+# The invariant this pins: a gate that judges nothing must not be recorded as
+# a gate that judged and approved. Collapsing the two is how the declared-scope
+# gate stayed registered and green for weeks after spec 022 US3 deleted the
+# `[P]` lane that produced its trigger — every report read its bare pass as
+# "consulted and passed". Retired in this same change; the distinction stays so
+# the next gate to lose its trigger is visible instead of silent.
+
+
+class _NoContractGate:
+    gate_id = "nocontract"
+
+    def applies(self, gi):
+        return True
+
+    async def check(self, gi):
+        return GateVerdict.not_consulted(self.gate_id, "nothing to judge here")
+
+
+class _DoesNotApplyGate:
+    gate_id = "inapplicable"
+
+    def applies(self, gi):
+        return False
+
+    async def check(self, gi):  # pragma: no cover - must never run
+        raise AssertionError("check() ran on a gate that does not apply")
+
+
+async def test_not_consulted_is_non_blocking_but_not_a_pass():
+    v = GateVerdict.not_consulted("scope", "no contract")
+    assert v.ok is True, "must not block the cascade"
+    assert v.consulted is False, "must not read as a judged pass"
+    assert GateVerdict.passed("scope").consulted is True
+
+
+async def test_trace_records_every_gate_including_the_ones_that_judged_nothing():
+    gi = _gate_input([])
+    trace: list = []
+    verdict = await run_pipeline(
+        gi, (_NoContractGate(), _DoesNotApplyGate()), trace=trace,
+    )
+    assert verdict is None, "neither gate blocks"
+    by_id = {o.gate_id: o for o in trace}
+    # both appear — a gate that judged nothing is recorded, never omitted
+    assert set(by_id) == {"nocontract", "inapplicable"}
+    assert by_id["nocontract"].consulted is False
+    assert by_id["inapplicable"].consulted is False
+    assert all(o.ok for o in trace)
+
+
+async def test_trace_is_optional_and_the_cascade_is_byte_identical_without_it():
+    gi = _gate_input([])
+    gates = (_NoContractGate(), _DoesNotApplyGate())
+    assert await run_pipeline(gi, gates) is None
+    assert await run_pipeline(gi, gates, trace=[]) is None

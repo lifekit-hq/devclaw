@@ -318,6 +318,76 @@ def check_auth_pause(ctx: "InstanceContext") -> list[Finding]:
 # ---- skills bundle -------------------------------------------------------
 
 
+#: how many recent settles must carry a gate's record before "never consulted"
+#: is evidence rather than noise.
+_GATE_INERT_MIN_SETTLES = 20
+
+
+def check_gate_consultation(ctx: "InstanceContext") -> list[Finding]:
+    """A registered gate that is never CONSULTED is not a passing gate.
+
+    This is the deployed-instance half of an invariant the stubbed suite
+    structurally cannot see. The declared-scope gate ran on every increment
+    for weeks, approving nothing, because spec 022 US3 deleted the `[P]` lane
+    that produced its trigger — while its own tests stayed green by building
+    that trigger synthetically. A green suite proves a gate CAN fire; only the
+    running instance can show whether it EVER DOES.
+
+    Reads the ``gate_outcomes`` events the settle path records. A gate present
+    across a meaningful window of settles with zero consultations is reported
+    LOUD: either its trigger is gone and it should be retired, or the path that
+    feeds it has broken. Below the window it is unproven, not healthy.
+    """
+    cid = "instance.gates.consultation"
+    try:
+        with _ro_db(ctx.store.db_path) as db:
+            tables = {r["name"] for r in db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if "events" not in tables:
+                return [Finding(cid, Verdict.OK, "no events table yet")]
+            rows = list(db.execute(
+                "SELECT payload_json FROM events WHERE type = 'gate_outcomes' "
+                "ORDER BY id DESC LIMIT 200"
+            ))
+    except Exception as exc:  # noqa: BLE001 — unreadable ⇒ unknown, never OK
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"could not read gate_outcomes events ({exc.__class__.__name__})")]
+    seen: dict[str, int] = {}
+    consulted: dict[str, int] = {}
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"])
+        except Exception:  # noqa: BLE001 - a malformed row is skipped, not fatal
+            continue
+        for g in payload.get("gates", []):
+            gid = str(g.get("gate_id") or "")
+            if not gid:
+                continue
+            seen[gid] = seen.get(gid, 0) + 1
+            if g.get("consulted"):
+                consulted[gid] = consulted.get(gid, 0) + 1
+    if not seen:
+        return [Finding(cid, Verdict.OK,
+                        "no gate_outcomes recorded yet (no settles in the "
+                        "retained event window)")]
+    inert = sorted(
+        gid for gid, n in seen.items()
+        if n >= _GATE_INERT_MIN_SETTLES and consulted.get(gid, 0) == 0
+    )
+    if inert:
+        detail = ", ".join(f"{gid} (0/{seen[gid]})" for gid in inert)
+        return [Finding(cid, Verdict.FAIL,
+                        f"registered gate(s) never consulted across the recent "
+                        f"window: {detail} — the gate approved nothing on any of "
+                        f"those settles; its trigger is gone or its feed is broken",
+                        remedy="re-ground the gate on a trigger the dispatch path "
+                               "emits, or retire it from the pipeline, gate_policy "
+                               "and the docs together")]
+    return [Finding(cid, Verdict.OK,
+                    "every recorded gate was consulted at least once in the "
+                    f"recent window ({len(seen)} gate(s))")]
+
+
 def check_skills_bundle(ctx: "InstanceContext") -> list[Finding]:
     cid = "instance.skills.bundle"
     # dynamic import: the canonical resolver lives in the (deliberately
@@ -597,6 +667,7 @@ INSTANCE_CHECKS: tuple = (
     check_auth_setup_token,
     check_registry_token,
     check_auth_pause,
+    check_gate_consultation,
     check_skills_bundle,
     check_schedule_raw_key,
     check_schedule_dispatch,

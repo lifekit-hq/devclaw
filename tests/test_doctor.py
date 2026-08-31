@@ -579,3 +579,59 @@ def test_registry_token_value_never_appears_in_any_finding(env, monkeypatch, val
     report = _run(env)
     serialized = json.dumps(report.to_dict())
     assert value not in serialized
+# ---- instance: a registered gate that is never consulted (seeded faults) ---
+# The stubbed suite structurally cannot see this class: the declared-scope
+# gate's own tests stayed green by BUILDING its trigger synthetically, while
+# the production dispatch path stopped emitting it entirely after spec 022 US3.
+# A green suite proves a gate CAN fire; only the running instance shows whether
+# it ever does. Hence a doctor check, and hence these seeded faults.
+_GATE_CID = "instance.gates.consultation"
+
+
+def _seed_gate_outcomes(env, gates_per_settle, n):
+    """Append n gate_outcomes events, each recording the same gate roster."""
+    for i in range(n):
+        env["store"].append_event(
+            task_id=f"t{i}", type="gate_outcomes", source="settle",
+            payload_json=json.dumps({"gates": gates_per_settle}),
+        )
+
+
+def test_gate_never_consulted_across_the_window_fails_loud(env):
+    _seed_gate_outcomes(env, [
+        {"gate_id": "verify", "consulted": True, "ok": True},
+        {"gate_id": "scope", "consulted": False, "ok": True},
+    ], 25)
+    (f,) = _findings(_run(env), _GATE_CID)
+    assert f.verdict is Verdict.FAIL
+    assert "scope (0/25)" in f.evidence
+    assert "verify" not in f.evidence, "a consulted gate is not reported inert"
+    assert f.remedy
+
+
+def test_a_gate_consulted_even_once_is_not_inert(env):
+    gates = [{"gate_id": "browser", "consulted": False, "ok": True}]
+    _seed_gate_outcomes(env, gates, 24)
+    _seed_gate_outcomes(env, [{"gate_id": "browser", "consulted": True, "ok": True}], 1)
+    (f,) = _findings(_run(env), _GATE_CID)
+    assert f.verdict is Verdict.OK, "self-skipping is normal; never firing is not"
+
+
+def test_below_the_window_is_unproven_not_inert(env):
+    """Too few settles is not evidence — don't cry wolf on a fresh instance."""
+    _seed_gate_outcomes(env, [{"gate_id": "scope", "consulted": False, "ok": True}], 5)
+    (f,) = _findings(_run(env), _GATE_CID)
+    assert f.verdict is Verdict.OK
+
+
+def test_no_gate_outcomes_recorded_is_ok_not_a_fault(env):
+    (f,) = _findings(_run(env), _GATE_CID)
+    assert f.verdict is Verdict.OK and "no gate_outcomes" in f.evidence
+
+
+def test_malformed_gate_outcome_payload_is_skipped_not_fatal(env):
+    env["store"].append_event(task_id="bad", type="gate_outcomes",
+                              source="settle", payload_json="{not json")
+    _seed_gate_outcomes(env, [{"gate_id": "verify", "consulted": True, "ok": True}], 22)
+    (f,) = _findings(_run(env), _GATE_CID)
+    assert f.verdict is Verdict.OK
