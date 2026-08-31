@@ -255,16 +255,17 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 
 This repo carries a Claude-Code project harness for developing devclaw itself
 (distinct from layer 5's model-agnostic `.agent/skills/`, which is product):
-`rules/` (testing · git-workflow · cognition-prompts · speckit-workflow —
+`.claude/rules/` (testing · git-workflow · cognition-prompts · speckit-workflow —
 auto-loaded, the operational detail this file deliberately doesn't carry;
 speckit-workflow is the anti-drift pipeline since 2026-08-13: every
 behavior-changing change starts `/speckit-specify` → `/speckit-clarify` →
 plan → tasks → implement, specs landing in `specs/` and the machinery in `.specify/`, no implementation before clarify,
 with the constitution (`.specify/memory/constitution.md`) as the invariant
 statement specs are checked against; `docs/proposals/` + `docs/decisions/`
-are frozen history), `commands/ship` (the pre-PR ritual as `/ship`),
-`hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
-escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `skills/` (docs-audit,
+are frozen history),
+`.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
+`.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
+escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit,
 live-shakedown).
 
 ## Where to look next
