@@ -1093,10 +1093,11 @@ async def test_pinned_target_branch_miss_settles_failed_not_delivered(
 async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_shape(
     store, tmp_path, monkeypatch
 ):
-    """Goal-path/byte-unaffected pin: a task submitted WITHOUT branch params
-    (exactly what the goal layer and program children do) triggers no prep
-    subprocess and calls deliver_change with the LEGACY kwarg shape — a
-    pre-PR-2 test stub signature (no base_branch/target_branch) still works."""
+    """Goal-path/byte-unaffected pin: a GOAL-DISPATCHED task (parent_goal_id set,
+    no branch params) triggers no prep subprocess — the goal tick already called
+    prepare_workspace with the goal branch; re-prepping would reset it. Calls
+    deliver_change with the LEGACY kwarg shape — a pre-PR-2 test stub signature
+    (no base_branch/target_branch) still works."""
     repo = str(tmp_path / "wsy")
     os.makedirs(repo)
     _init_repo(repo)
@@ -1125,15 +1126,42 @@ async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_
     q = TaskQueue(store, runner=_writing_runner("feature.txt"))
     tid = q.submit(
         kind="implement_feature", workspace_dir=repo, goal="add feature",
-        deliver=True,
+        deliver=True, parent_goal_id="goal-fixture",  # goal-dispatched: exempt from direct-dispatch reset
     )
     await q.drain()
 
     t = store.get_task(tid)
     assert t.status == "done"
     assert t.pr_url == "https://github.com/acme/w/pull/3"
-    assert prep_calls == []  # no branch params → the wire is fully inert
+    assert prep_calls == []  # goal-path task → direct-dispatch reset is skipped
     assert "base_branch" not in seen_kwargs and "target_branch" not in seen_kwargs
+
+
+async def test_direct_dispatch_without_target_branch_resets_to_origin_head(
+    store, tmp_path, monkeypatch
+):
+    """Spec 028 FR-001: a direct dispatch (no branch params, no parent_goal_id)
+    resets the workspace to origin/<default> before the engine runs, so the
+    worker always sees the current state of main instead of a stale branch from
+    a prior task."""
+    origin, repo = _clone_with_origin(tmp_path)
+    prep_calls: list = []
+
+    async def fake_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
+        prep_calls.append(branch)
+        return "main"
+
+    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", fake_prep)
+
+    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
+    # No parent_goal_id, no target_branch, no base_branch → direct dispatch
+    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done"
+    # prepare_workspace called exactly once with branch=None (reset to default)
+    assert prep_calls == [None]
 
 
 async def test_target_branch_on_base_or_default_is_rejected_before_any_push(

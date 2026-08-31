@@ -66,10 +66,10 @@ reset, landing the engine on whatever branch a prior task left.
 ## Tasks
 
 - [x] Write tinyspec
-- [ ] Implement `elif` in `_execute` (`settle.py`)
-- [ ] Update `test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_shape`
-- [ ] Add `test_direct_dispatch_without_target_branch_resets_to_origin_head`
-- [ ] Full suite + `ruff check .` + `mypy` green
+- [x] Implement `elif` in `_execute` (`settle.py`)
+- [x] Update `test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_shape`
+- [x] Add `test_direct_dispatch_without_target_branch_resets_to_origin_head`
+- [x] Full suite + `ruff check .` + `mypy` green
 
 ## Done When
 
