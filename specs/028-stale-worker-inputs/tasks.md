@@ -24,3 +24,10 @@
 - [x] Add `test_direct_dispatch_workspace_reset_unexpected_exception_marks_failed` and `test_direct_dispatch_workspace_reset_workspace_error_is_best_effort` in `tests/test_delivery.py`
 - [x] Fix CLAUDE.md: replace full backtick-path references to `.claude/commands/ship.md`, `.claude/hooks/`, `.claude/skills/` with relative form so `test_harness_docs_map` passes in the sandbox environment
 - [x] Full suite + `ruff check .` + `mypy` green
+
+## Post-merge steering (increment 3)
+
+- [x] Distinguish no-remote `WorkspaceError` (best-effort) from origin-configured fetch failure (mark_failed): add `_proc_run("git remote get-url origin")` pre-check in `settle.py::_execute`; `_has_origin=True` + `WorkspaceError` → `prep_failure` (spec 028 steering 2026-08-31)
+- [x] Add `test_direct_dispatch_workspace_reset_origin_fetch_failure_marks_failed` in `tests/test_delivery.py`
+- [x] Fix `test_review_gate_grounded_in_actual_workspace_repo` to monkeypatch `prepare_workspace` (the test's origin URL is unreachable in CI; it was relying on the now-removed best-effort-for-all-WorkspaceErrors behavior)
+- [x] Full suite (1258 passed) + `ruff check .` + `mypy` green

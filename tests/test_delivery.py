@@ -1229,6 +1229,37 @@ async def test_direct_dispatch_workspace_reset_workspace_error_is_best_effort(
     assert runner_calls == ["add feature"]
 
 
+async def test_direct_dispatch_workspace_reset_origin_fetch_failure_marks_failed(
+    store, tmp_path, monkeypatch
+):
+    """Spec 028 steering (2026-08-31): when origin IS configured but the fetch
+    fails (network/auth/unreachable), the WorkspaceError must surface as
+    mark_failed — not swallowed as best-effort. Best-effort only applies to
+    workspaces with no origin remote (local-only checkouts)."""
+    origin, repo = _clone_with_origin(tmp_path)
+    runner_calls: list = []
+
+    async def auth_denied_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
+        raise WorkspaceError("fetch failed: ERROR: Repository not found / auth denied")
+
+    async def recording_runner(req: EngineRequest):
+        runner_calls.append(req.goal)
+        return {"status": "ok", "workspaceDir": req.workspace_dir}
+
+    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", auth_denied_prep)
+
+    q = TaskQueue(store, runner=recording_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature")
+    await q.drain()
+
+    t = store.get_task(tid)
+    # Origin configured + fetch failure → real problem → task failed
+    assert t.status == "failed"
+    assert "fetch failed" in (t.error or "")
+    # Engine must not have run against the stale workspace
+    assert runner_calls == []
+
+
 async def test_target_branch_on_base_or_default_is_rejected_before_any_push(
     store, tmp_path, monkeypatch
 ):
