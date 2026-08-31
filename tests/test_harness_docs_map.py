@@ -161,3 +161,54 @@ def test_the_rules_dir_half_of_the_guard_actually_ran():
         "cognition-prompts.md names no repo paths — either it was gutted or the "
         "path pattern above stopped matching."
     )
+
+
+# ---- the other direction: a real dir may not go UNMENTIONED -----------------
+#: Everything under `.claude/` that is runtime state or editor config rather
+#: than authored harness content. These carry nothing a session needs briefing
+#: on, so the docs are not expected to name them.
+_HARNESS_NOT_CONTENT = {
+    "worktrees",        # git worktree scratch, created by tooling
+    "__pycache__",
+    "settings.json", "settings.local.json",
+    "scheduled_tasks.lock", "RESUME.md",
+}
+
+
+def test_every_claude_harness_dir_is_named_by_the_docs():
+    """The DUAL of the resolves-check above, and the reason this file exists.
+
+    ``test_every_module_path_in_the_harness_docs_resolves`` catches claiming
+    something exists that does not. It cannot catch the opposite — deleting a
+    true claim — and that is the direction that actually bit: four goal
+    branches independently removed the `.claude/hooks` section asserting
+    "hooks were deleted", while both hooks were tracked and working (#762,
+    #764). A docs-only deletion changes no behavior, so verify and
+    test_integrity pass, and under `trust` no reviewer is consulted. Nothing
+    in the system could see it.
+
+    A ratchet that only turns one way is not a ratchet. If a harness directory
+    exists, the auto-loaded docs must name it — because those docs are the
+    grounding input every session and every autonomous worker reads. Delete
+    the directory and this check goes quiet on its own; delete only the
+    sentence and it fails, which is the whole point.
+    """
+    harness = _ROOT / ".claude"
+    if not harness.is_dir():  # pragma: no cover - the harness is checked in
+        return
+    present = {
+        entry.name for entry in harness.iterdir()
+        if entry.name not in _HARNESS_NOT_CONTENT and not entry.name.startswith(".")
+    }
+    documented = set()
+    for doc in _docs():
+        for claim in _claimed_paths(doc):
+            parts = claim.split("/")
+            if len(parts) >= 2 and parts[0] == ".claude":
+                documented.add(parts[1])
+    missing = sorted(present - documented)
+    assert not missing, (
+        "these .claude/ harness entries exist but no auto-loaded doc names them "
+        "— a true claim was deleted, or a new one was never written:\n  "
+        + "\n  ".join(f".claude/{m}" for m in missing)
+    )
