@@ -2,6 +2,56 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [1.0.0](https://github.com/lifekit-hq/devclaw/compare/v0.6.0...v1.0.0) (2026-08-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **server:** kill the prose lane and the kind-alias tools — the ticket is the only doorway ([#750](https://github.com/lifekit-hq/devclaw/issues/750))
+
+### Features
+
+* **dispatch:** retire prose-only path — auto-file intake + goal lane… ([#727](https://github.com/lifekit-hq/devclaw/issues/727)) ([eb3d56f](https://github.com/lifekit-hq/devclaw/commit/eb3d56f3c4564988550b4ebdd18d50c4c6217f24))
+* **doctor:** ship slice_hold_count column check — issue [#728](https://github.com/lifekit-hq/devclaw/issues/728) ([#739](https://github.com/lifekit-hq/devclaw/issues/739)) ([73cc0d5](https://github.com/lifekit-hq/devclaw/commit/73cc0d56d8980e6d1857d80a0c3f18544a2f92e8))
+* **goal:** merge-on-close — an achieved goal closes merged, or it does not close (spec 025 US1) ([#735](https://github.com/lifekit-hq/devclaw/issues/735)) ([30bfe33](https://github.com/lifekit-hq/devclaw/commit/30bfe3342e76e3f357b57843eef1ef9cd977842b))
+* **goal:** quiet mode — only instance-dead pings while armed, everything else recorded (spec 025 US3) ([#737](https://github.com/lifekit-hq/devclaw/issues/737)) ([2f6194d](https://github.com/lifekit-hq/devclaw/commit/2f6194dd5ac5d2b047804e63a5cdb261875a9a47))
+* **goal:** repo brief carries a code-map pointer so workers stop re-deriving the codebase (spec 029) ([#759](https://github.com/lifekit-hq/devclaw/issues/759)) ([24ce546](https://github.com/lifekit-hq/devclaw/commit/24ce5460772157fc83b0702130ebbe3d118f6c1a))
+* **goal:** self-deploy on merge — quiescence-gated trigger, probe + one rollback (spec 025 US2) ([#736](https://github.com/lifekit-hq/devclaw/issues/736)) ([6864951](https://github.com/lifekit-hq/devclaw/commit/68649512309273f4b9227cb7cabc3f3d52217f91))
+* **goal:** surface instance health drift — disk, orphaned volumes, stale workspaces (spec 027) ([#757](https://github.com/lifekit-hq/devclaw/issues/757)) ([acbc2f4](https://github.com/lifekit-hq/devclaw/commit/acbc2f4ef6d24402d226adac23f9fcd9e3e16597))
+* **goal:** ticket as contract — slot exemption for the issue lane, judged-revision log, issue template (spec 024) ([#741](https://github.com/lifekit-hq/devclaw/issues/741)) ([33a8287](https://github.com/lifekit-hq/devclaw/commit/33a8287fd109b0524b20e5cd74739b3131adc613))
+* **queue:** evidence-based settle — a task that dies without a result line consults the workspace before fail+wipe ([#756](https://github.com/lifekit-hq/devclaw/issues/756)) ([95562d5](https://github.com/lifekit-hq/devclaw/commit/95562d5a168256ef8f00467154a692fc56db504c))
+* **server:** event-driven triggers — webhooks wake the machinery, grading on issue events (spec 023) ([#740](https://github.com/lifekit-hq/devclaw/issues/740)) ([60e1538](https://github.com/lifekit-hq/devclaw/commit/60e1538db17bd2810a847bc14de0d4235b1824aa))
+* **store:** retention for settled tasks' result_json — the DB's biggest payload had none ([#755](https://github.com/lifekit-hq/devclaw/issues/755)) ([2b209f4](https://github.com/lifekit-hq/devclaw/commit/2b209f4583a15b379f7110f1a89c93d5eac9a055))
+
+
+### Bug Fixes
+
+* **deploy:** a set-but-invalid registry token fails LOUD instead of 401ing inside the sandbox ([#761](https://github.com/lifekit-hq/devclaw/issues/761)) ([c3b8f91](https://github.com/lifekit-hq/devclaw/commit/c3b8f918d0211a263e9eee3f4eff12614bc02912))
+* **goal:** one home for the completion-contract heading — intake wrote "Done when", the reader matched only "Acceptance" ([#760](https://github.com/lifekit-hq/devclaw/issues/760)) ([fe2c466](https://github.com/lifekit-hq/devclaw/commit/fe2c4669aed7aefc3bb3ce08369ffe71c156c0e8))
+* **loom:** parse the dated usage-limit reset wording + trust stated resets up to 7d ([#752](https://github.com/lifekit-hq/devclaw/issues/752)) ([a9c2873](https://github.com/lifekit-hq/devclaw/commit/a9c2873e60d4c187c9fc856c12dba4734c53e896))
+* **queue:** reset workspace to origin/default on direct dispatch (spec 028) ([#758](https://github.com/lifekit-hq/devclaw/issues/758)) ([cf64892](https://github.com/lifekit-hq/devclaw/commit/cf648922f0208cf2be914bb1ede1d1dae3a0b5db))
+* **store:** normalize event ts to ms at the single writer — seconds-scale runner ts read as 1970 and got pruned as ancient ([#753](https://github.com/lifekit-hq/devclaw/issues/753)) ([c2e98ca](https://github.com/lifekit-hq/devclaw/commit/c2e98ca7503c9bb30405376343071d9784341565))
+
+
+### Refactoring
+
+* **quality:** retire the declared-scope gate and make gate consultation observable ([#762](https://github.com/lifekit-hq/devclaw/issues/762)) ([#763](https://github.com/lifekit-hq/devclaw/issues/763)) ([7b20419](https://github.com/lifekit-hq/devclaw/commit/7b204191d241c7f8cb07be22fffc2ab28e708a53))
+* **queue:** demolish the program/DAG lane + dormant fan-out (spec 022 US3, T012-T015) ([#743](https://github.com/lifekit-hq/devclaw/issues/743)) ([e3be18f](https://github.com/lifekit-hq/devclaw/commit/e3be18faa7a394c40c60d3e3f7c86359fc9b3665))
+* **server:** kill the prose lane and the kind-alias tools — the ticket is the only doorway ([#750](https://github.com/lifekit-hq/devclaw/issues/750)) ([c2a4ed8](https://github.com/lifekit-hq/devclaw/commit/c2a4ed86e4983e5dec2d2f9f4f0c418f5db639c9))
+* **state:** prune the program/DAG lane's dead remnants + fix the tool re-export drift ([#747](https://github.com/lifekit-hq/devclaw/issues/747)) ([4e96dcf](https://github.com/lifekit-hq/devclaw/commit/4e96dcfcd93c2583f630336e7a1b8499d1c78f42))
+* **store:** delete the four spent one-shot migrations ([#749](https://github.com/lifekit-hq/devclaw/issues/749)) ([e00de4d](https://github.com/lifekit-hq/devclaw/commit/e00de4d6d8b0ac67be65767b7bea1cc2a329a464))
+* **store:** drop the program-lane remnants — the 022 demolition's store tail ([#754](https://github.com/lifekit-hq/devclaw/issues/754)) ([646f254](https://github.com/lifekit-hq/devclaw/commit/646f254fe0498799f5e057472df2fbc3a533c49b))
+
+
+### Documentation
+
+* adopt the repo gold standard ([#695](https://github.com/lifekit-hq/devclaw/issues/695)) ([#745](https://github.com/lifekit-hq/devclaw/issues/745)) ([b3f8fbf](https://github.com/lifekit-hq/devclaw/commit/b3f8fbf2fb41cda576e312b573bc2b20b7045b77))
+* restore the .claude/hooks section — the deletion asserted something false ([#764](https://github.com/lifekit-hq/devclaw/issues/764)) ([3f0f94a](https://github.com/lifekit-hq/devclaw/commit/3f0f94a7e345aec63d13213a22e9ebb8ec63e3da))
+* **spec:** park 007 with an owner and a live resume condition ([#742](https://github.com/lifekit-hq/devclaw/issues/742)) ([6db0f67](https://github.com/lifekit-hq/devclaw/commit/6db0f6747f57270b0c527772adc0d7482046259c))
+* **spec:** park 023/024 with an explicit owner and resume condition ([#731](https://github.com/lifekit-hq/devclaw/issues/731)) ([699e908](https://github.com/lifekit-hq/devclaw/commit/699e908f965f0d938abb8334be1823d92dfc0c4c))
+* **specs:** reconcile phantom-unchecked bookkeeping in 012-us3 and the churn-brake tinyspec ([#734](https://github.com/lifekit-hq/devclaw/issues/734)) ([d3862a7](https://github.com/lifekit-hq/devclaw/commit/d3862a7ebd4bbae10cf90d0e8eedabb209b9f4f4))
+* **specs:** renumber dispatch-brief-budget 025 → 026 — two specs claimed 025 ([#751](https://github.com/lifekit-hq/devclaw/issues/751)) ([25fe45b](https://github.com/lifekit-hq/devclaw/commit/25fe45b040c69da4f9820132e82995116e475b10))
+
 ## [0.6.0](https://github.com/lifekit-hq/devclaw/compare/v0.5.2...v0.6.0) (2026-08-28)
 
 
