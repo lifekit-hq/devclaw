@@ -47,6 +47,9 @@ async def get_run_schedule(goal_id: Optional[str] = None) -> str:
         blocked, why = schedule_blocks(schedule, now)
     else:
         blocked, why = operator_block(hold, schedule, now)
+    from ...task_queue import GLOBAL_MAX_CONCURRENT
+
+    override = store.max_concurrent()
     out = {
         "goal_id": goal_id,
         "schedule": schedule,
@@ -54,6 +57,11 @@ async def get_run_schedule(goal_id: Optional[str] = None) -> str:
         "dispatch_open": not blocked,
         "why_blocked": why or None,
         "next_window_open_ms": next_window_open_ms(schedule, now),
+        "max_concurrent": {
+            "effective": override or GLOBAL_MAX_CONCURRENT,
+            "override": override,
+            "default": GLOBAL_MAX_CONCURRENT,
+        },
     }
     return json.dumps(out, indent=2)
 
@@ -171,3 +179,47 @@ async def list_suppressed_pings(limit: int = 200) -> str:
         "quiet": store.quiet_mode()[0],
         "pings": store.list_suppressed_pings(limit),
     }, indent=2, default=str)
+
+
+@mcp.tool
+async def set_max_concurrent(n: Optional[int] = None) -> str:
+    """Set the global cap on concurrently-running sandboxed tasks — the
+    backpressure dial. ``n=1`` is strictly serial (one sandbox at a time), the
+    unattended-operation setting: concurrent sandboxes contend for ONE account
+    quota while the usage-limit pause budget is counted per task, so a high cap
+    trades reliability for parallelism. Omit ``n`` (or pass null) to CLEAR the
+    override and fall back to the ``DEVCLAW_MAX_CONCURRENT`` default.
+
+    Takes effect on the next queue pump — no restart, no redeploy. In-flight
+    tasks always finish; lowering the cap never kills running work, it just
+    stops new launches until the count drops below it.
+
+    This is backpressure, not a safety gate: it cannot stop dispatch entirely
+    (``n`` must be >= 1). To halt all new work use set_operator_hold; to gate it
+    by time of day use set_run_schedule. Read the current value with
+    get_run_schedule.
+
+    Host-side cognition subprocesses are NOT counted here — they have their own
+    cap (``DEVCLAW_MAX_HOST_COGNITION``)."""
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
+        raise ToolError(
+            "n must be a whole number >= 1, or null to clear the override — "
+            "0 would wedge every dispatch; use set_operator_hold to stop work"
+        )
+    try:
+        store.set_max_concurrent(n)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+    from ...task_queue import GLOBAL_MAX_CONCURRENT
+
+    override = store.max_concurrent()
+    return json.dumps(
+        {
+            "max_concurrent": {
+                "effective": override or GLOBAL_MAX_CONCURRENT,
+                "override": override,
+                "default": GLOBAL_MAX_CONCURRENT,
+            }
+        },
+        indent=2,
+    )
