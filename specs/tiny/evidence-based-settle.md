@@ -41,10 +41,10 @@ Files touched:
 
 ## Tasks
 - [x] Write tinyspec
-- [ ] Add helpers to task_git.py
-- [ ] Add async wrappers + timeout handler to settle.py
-- [ ] Add named regression test to tests/test_task_retry.py
-- [ ] Run suite + lint
+- [x] Add helpers to task_git.py
+- [x] Add async wrappers + timeout handler to settle.py
+- [x] Add named regression test to tests/test_task_retry.py
+- [x] Run suite + lint
 
 ## Done-When
 `test_no_result_termination_with_green_verify_salvages_instead_of_wiping` passes;
