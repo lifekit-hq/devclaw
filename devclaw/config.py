@@ -323,6 +323,53 @@ def failed_workspace_retention_days_raw() -> "str | None":
     return os.environ.get("DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED")
 
 
+# ---- instance health drift probe (issue #596) ----------------------------
+
+
+def health_disk_warn_pct() -> float:
+    """Disk-usage % at which the workspace filesystem is flagged as a problem.
+    ``DEVCLAW_HEALTH_DISK_WARN_PCT``, default 80. Returns 80.0 on bad input."""
+    raw = os.environ.get("DEVCLAW_HEALTH_DISK_WARN_PCT", "80")
+    try:
+        v = float(raw)
+        return v if 0 < v <= 100 else 80.0
+    except (ValueError, TypeError):
+        return 80.0
+
+
+def health_orphan_docker_warn() -> int:
+    """Orphaned docker toolchain volume count threshold.
+    ``DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN``, default 10. Returns 10 on bad input."""
+    raw = os.environ.get("DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN", "10")
+    try:
+        v = int(raw)
+        return v if v >= 0 else 10
+    except (ValueError, TypeError):
+        return 10
+
+
+def health_stale_ws_warn() -> int:
+    """Sweep-eligible workspace directory count threshold.
+    ``DEVCLAW_HEALTH_STALE_WS_WARN``, default 20. Returns 20 on bad input."""
+    raw = os.environ.get("DEVCLAW_HEALTH_STALE_WS_WARN", "20")
+    try:
+        v = int(raw)
+        return v if v >= 0 else 20
+    except (ValueError, TypeError):
+        return 20
+
+
+def health_check_interval_s() -> int:
+    """Minimum seconds between health drift probe runs.
+    ``DEVCLAW_HEALTH_INTERVAL_S``, default 3600. Returns 3600 on bad/non-positive input."""
+    raw = os.environ.get("DEVCLAW_HEALTH_INTERVAL_S", "3600")
+    try:
+        v = int(raw)
+        return v if v > 0 else 3600
+    except (ValueError, TypeError):
+        return 3600
+
+
 # ---- trend detector ------------------------------------------------------
 
 TREND_ENABLED = os.environ.get("DEVCLAW_TREND_ENABLED", "1") != "0"
