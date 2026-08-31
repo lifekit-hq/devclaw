@@ -39,6 +39,7 @@ _ADVANCE_BRIEF = (
     "PLAN.md included.\n\nGoal: Build a small field notes REST API"
 )
 from devclaw.engine import EngineRequest
+from devclaw.engine.workspace import WorkspaceError
 from devclaw.state_store import StateStore
 from devclaw.task_queue import TaskQueue
 
@@ -1162,6 +1163,70 @@ async def test_direct_dispatch_without_target_branch_resets_to_origin_head(
     assert t.status == "done"
     # prepare_workspace called exactly once with branch=None (reset to default)
     assert prep_calls == [None]
+
+
+async def test_direct_dispatch_workspace_reset_unexpected_exception_marks_failed(
+    store, tmp_path, monkeypatch
+):
+    """Spec 028 steering: an unexpected (non-WorkspaceError) exception during the
+    direct-dispatch workspace reset surfaces as a legible mark_failed — the engine
+    never runs against an unknown workspace state, and the caller gets an actionable
+    reason rather than a silent proceed."""
+    repo = str(tmp_path / "repo")
+    os.makedirs(repo)
+    _init_repo(repo)
+    runner_calls: list = []
+
+    async def boom_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
+        raise OSError("disk full or something unexpected")
+
+    async def recording_runner(req: EngineRequest):
+        runner_calls.append(req.goal)
+        return {"status": "ok", "workspaceDir": req.workspace_dir}
+
+    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", boom_prep)
+
+    q = TaskQueue(store, runner=recording_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature")
+    await q.drain()
+
+    t = store.get_task(tid)
+    # Unexpected exception → task failed, not silently continued
+    assert t.status == "failed"
+    assert "unexpected error" in (t.error or "")
+    assert "OSError" in (t.error or "") or "disk full" in (t.error or "")
+    # Engine must not have run
+    assert runner_calls == []
+
+
+async def test_direct_dispatch_workspace_reset_workspace_error_is_best_effort(
+    store, tmp_path, monkeypatch
+):
+    """Spec 028 FR-004: a WorkspaceError during direct-dispatch reset (e.g. no
+    remote on a local-only checkout) logs and continues — the engine runs and
+    the task succeeds."""
+    repo = str(tmp_path / "repo")
+    os.makedirs(repo)
+    _init_repo(repo)
+    runner_calls: list = []
+
+    async def local_only_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
+        raise WorkspaceError("fetch failed: 'origin' does not appear to be a git repository")
+
+    async def recording_runner(req: EngineRequest):
+        runner_calls.append(req.goal)
+        return {"status": "ok", "workspaceDir": req.workspace_dir}
+
+    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", local_only_prep)
+
+    q = TaskQueue(store, runner=recording_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature")
+    await q.drain()
+
+    t = store.get_task(tid)
+    # WorkspaceError (no-remote case) → best-effort, engine runs, task done
+    assert t.status == "done"
+    assert runner_calls == ["add feature"]
 
 
 async def test_target_branch_on_base_or_default_is_rejected_before_any_push(

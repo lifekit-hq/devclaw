@@ -696,10 +696,20 @@ class SettleMixin:
             # continues rather than blocking (spec 028 FR-004).
             try:
                 await prepare_workspace(workspace_dir, branch=None)
-            except Exception as exc:  # noqa: BLE001
+            except WorkspaceError as exc:
+                # Best-effort: a workspace with no remote (local-only checkout,
+                # test fixture) raises WorkspaceError on fetch. Log and continue
+                # so those environments don't block (spec 028 FR-004).
                 sys.stderr.write(
                     f"task-queue: direct-dispatch workspace reset failed "
                     f"({task_id}): {exc} — proceeding on current branch\n"
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Unexpected failure (not a known workspace error) — surface as
+                # a legible mark_failed rather than silently running the engine
+                # against an unknown workspace state.
+                prep_failure = (
+                    f"direct-dispatch workspace reset: unexpected error — {exc!r}"
                 )
         if prep_failure is not None:
             # Fail loudly and FAST — the engine never runs against a workspace
