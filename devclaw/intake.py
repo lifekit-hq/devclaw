@@ -485,6 +485,19 @@ def _readiness_comment(label: str, verdict, sizing_note: str = "") -> str:
         )
     missing = verdict.missing or ["the ask could not be grounded against the repo"]
     lines = "\n".join(f"- {m}" for m in missing)
+    if getattr(verdict, "stale", False):
+        # Spec 028 FR-010: a stale ask reads differently to a vague one — the
+        # fix is to close or rewrite it, not to add detail.
+        return (
+            "> DevClaw readiness gate: **needs-refinement** (stale).\n\n"
+            "This ask appears to be already satisfied by the repository, so "
+            "dispatching it would burn a session rediscovering that:\n\n"
+            f"{lines}\n\n"
+            "Close this issue if the work is genuinely done, or rewrite it to "
+            "describe what is still missing, then re-run the grade "
+            "(`regrade_intake`)."
+            + tail
+        )
     return (
         "> DevClaw readiness gate: **needs-refinement**.\n\n"
         "This ask is not yet groundable enough for autonomous execution. Concrete "
@@ -630,6 +643,7 @@ async def grade_and_label(
         "assessed_increments": sizing.assessed,
         "sizing": "needs_human" if needs_human else "agreed",
         "sizing_reason": reason,
+        "stale": bool(getattr(verdict, "stale", False)),
     }
 
 

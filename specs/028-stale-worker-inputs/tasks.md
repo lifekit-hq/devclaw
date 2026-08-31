@@ -12,8 +12,8 @@
 
 ## US2 — Issue staleness grading (P2)
 
-- [ ] Add staleness check to `devclaw/prompts/intake-readiness.md`
-- [ ] Add `stale: bool` field to `ReadinessVerdict` in `devclaw/intake_readiness.py`
-- [ ] Parse staleness result in `validate()` and surface in missing list
-- [ ] Add `test_stale_issue_graded_not_ready_when_condition_already_resolved` in `tests/`
-- [ ] Full suite + `ruff check .` + `mypy` green; open PR 2
+- [x] Add staleness check to `devclaw/prompts/intake-readiness.md`
+- [x] Add `stale: bool` field to `ReadinessVerdict` in `devclaw/intake_readiness.py`
+- [x] Parse staleness result in `validate()` and surface in missing list
+- [x] Add `test_stale_issue_graded_not_ready_when_condition_already_resolved` in `tests/`
+- [x] Full suite + `ruff check .` + `mypy` green; open PR 2

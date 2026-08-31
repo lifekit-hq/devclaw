@@ -14,6 +14,12 @@ assess the ask to take, and whether that matches the count the *filer* claimed.
 The filer's claim is the record (FR-010b); this module never emits a number
 that replaces it, and a sizing disagreement never moves the readiness verdict.
 
+Spec 028 US2 adds a THIRD axis to the same call (again no new cognition call —
+FR-008, so the zero-token idle guard is untouched): staleness. An ask whose
+described condition the repo already satisfies is not ready — dispatching it
+burns a session to discover the work is done. Staleness FORCES not-ready
+(FR-007); sizing never moves it and it never moves sizing (FR-009).
+
 Layering (``.claude/rules/cognition-prompts.md``): this module returns parsed
 output; the intake layer (:mod:`devclaw.intake`) is what persists the verdict
 as a GitHub label and is where the FAIL-CLOSED choke point lives. On its own
@@ -85,6 +91,11 @@ class ReadinessVerdict:
     missing: list[str] = field(default_factory=list)
     rationale: str = ""
     sizing: SizingAssessment = field(default_factory=SizingAssessment)
+    #: the described condition is already resolved in the repo (spec 028
+    #: FR-010). Absent/garbled model output ⇒ False: a missing staleness signal
+    #: must not block an otherwise-groundable ask, and the readiness axis fails
+    #: closed on its own.
+    stale: bool = False
 
 
 async def repo_context(workspace_dir: str) -> str:
@@ -171,6 +182,26 @@ def extract_json(text: str) -> str:
     raise ReadinessError("no JSON object found in readiness response", text)
 
 
+#: The concrete, asker-fixable reason a stale ask is not ready (spec 028
+#: FR-007). ONE home for the wording — the prompt asks the question, this
+#: names the answer, and the intake comment renders it verbatim.
+STALE_REASON = (
+    "the described condition appears to be already resolved in the repository"
+)
+
+
+def _parse_stale(raw: object) -> bool:
+    """Normalize the staleness flag. Anything that is not an explicit
+    affirmative is False (spec 028 FR-010): a missing or garbled staleness
+    signal must not block an otherwise-groundable ask, and the readiness axis
+    already fails closed on its own."""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"true", "yes", "stale"}
+    return False
+
+
 def _parse_sizing(raw: object) -> SizingAssessment:
     """Normalize the ``increments`` object. Fails toward "a human decides":
     anything missing, wrongly typed, or out of range yields ``assessed=None``
@@ -202,7 +233,10 @@ def validate(parsed: object) -> ReadinessVerdict:
     for an explicit affirmative; any drift (missing field, wrong type, a hedged
     string) yields not-ready. A not-ready verdict always carries at least one
     concrete missing element (FR-004) — synthesized from the rationale if the
-    model omitted the array."""
+    model omitted the array.
+
+    Staleness (spec 028 FR-007) is checked BEFORE the ready short-circuit: an
+    ask the repo already satisfies is not ready no matter how well it grounds."""
     if not isinstance(parsed, dict):
         raise ReadinessError("readiness output must be a JSON object")
     raw_ready = parsed.get("ready")
@@ -220,6 +254,21 @@ def validate(parsed: object) -> ReadinessVerdict:
     )
     rationale = str(parsed.get("rationale", "")).strip()
     sizing = _parse_sizing(parsed.get("increments"))
+    stale = _parse_stale(parsed.get("stale"))
+    if stale:
+        # FR-007: a stale ask is NEVER ready, however well it grounds — the work
+        # it describes is already done, so dispatching it burns a session to
+        # rediscover that. The reason leads the missing list so the asker sees
+        # the actual objection first.
+        if STALE_REASON not in missing:
+            missing = [STALE_REASON, *missing]
+        return ReadinessVerdict(
+            ready=False,
+            missing=missing,
+            rationale=rationale,
+            sizing=sizing,
+            stale=True,
+        )
     if ready:
         return ReadinessVerdict(
             ready=True, missing=[], rationale=rationale, sizing=sizing
