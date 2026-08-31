@@ -153,6 +153,21 @@ pure library gets no preview container unless its project pins `autodeploy=on`.
 | `DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE` | `3` | Cap on NEW self-filed issues opened per cycle (noise budget). Reopens and closes are not capped (not new noise); anything suppressed over the cap is **named** in the cycle-report line, never silently dropped. |
 | `DEVCLAW_SELF_FIX_CONCURRENCY` | `1` | How many self-fix goals may be in flight at once (self-issue-filing **Stage 2 / P2 — FIX pickup**). At the same once-per-cycle edge, a human-`accepted` + `devclaw:self-filed` issue is picked up as ONE `one_shot` self-fix goal that opens a PR for **human** review (no auto-merge — the tiered classifier is deferred to P2.1/P2.2). `1` serialises self-modification: parallel self-fixes multiply the self-brick surface and muddy failure attribution. Gated by `DEVCLAW_SELF_REPO` (unset ⇒ no pickup, nothing shelled). |
 
+## Instance health (drift detection)
+
+Read-only, zero-LLM environmental probes (spec 027 / issue #596). Run at most
+once per `DEVCLAW_HEALTH_INTERVAL_S` as a 4th heartbeat scheduled edge.
+Breaches are recorded in the problems catalog (deduped, aged, visible via
+`/problems.json` and the cycle report). A probe failing gracefully records
+nothing — unknown is not an alarm.
+
+| Var | Default | Purpose |
+|---|---|---|
+| `DEVCLAW_HEALTH_DISK_WARN_PCT` | `80` | Disk-used % at which the workspace filesystem is flagged as `disk_usage_high` in the problems catalog. 0/non-positive/unparseable → 80. |
+| `DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN` | `10` | Count of docker toolchain volumes (`devclaw-toolchains-*`) with no registered project workspace above which an `orphan_docker_volumes` problem is recorded. Negative/unparseable → 10. Docker probe failure → no record. |
+| `DEVCLAW_HEALTH_STALE_WS_WARN` | `20` | Count of sweep-eligible workspace directories (terminal goal, past retention, still on disk) above which a `stale_workspaces` problem is recorded. Negative/unparseable → 20. |
+| `DEVCLAW_HEALTH_INTERVAL_S` | `3600` | Minimum wall-clock seconds between health drift probe runs. The gate is a cheap meta-key timestamp compare; probes (including the docker subprocess) only fire when the interval has elapsed. Non-positive/unparseable → 3600. |
+
 ## Deploy hosting
 
 | Var | Default | Purpose |

@@ -376,6 +376,15 @@ class GoalService:
                 await _self_deploy.maybe_trigger(self._store, now_ms=_now_ms())
             except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
                 sys.stderr.write(f"goal-layer: self-deploy edge crashed: {exc}\n")
+            # Health-drift edge (spec 027 / issue #596) — zero-LLM, read-only:
+            # probes disk headroom, orphaned docker volumes, and stale workspace
+            # dirs; records findings in the problems catalog. Rate-gated by a
+            # meta key so the docker subprocess runs at most once per
+            # DEVCLAW_HEALTH_INTERVAL_S, not every tick. Own try.
+            try:
+                await self._maybe_check_health_drift()
+            except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
+                sys.stderr.write(f"goal-layer: health-drift edge crashed: {exc}\n")
 
     def _make_tracer(self, goal_id: str) -> "Optional[_trace.PersistentTracer]":
         """Per-goal-tick PersistentTracer that writes into the sqlite traces
@@ -567,6 +576,63 @@ class GoalService:
         except Exception as exc:  # noqa: BLE001 — pickup never fails the cycle edge
             sys.stderr.write(f"goal-layer: self-fix pickup failed: {exc}\n")
         return cycle_key
+
+    async def _maybe_check_health_drift(self) -> None:
+        """Zero-LLM environmental health probe (spec 027 / issue #596).
+
+        Rate-gated by ``health_drift_last_check_ms`` meta key so probes run at
+        most once per ``DEVCLAW_HEALTH_INTERVAL_S`` (default 1 h). On idle ticks
+        within the window this is a cheap meta read + timestamp compare.
+
+        The full probe runs in a thread (``asyncio.to_thread``) because the docker
+        subprocess in the orphaned-volume probe is blocking. Never raises — the
+        caller wraps this in its own ``try`` for extra safety.
+        """
+        from . import health_drift as _hd
+
+        interval_ms = _config.health_check_interval_s() * 1000
+        now = _now_ms()
+        last_raw = self._store.get_meta(_hd._LAST_CHECK_META)
+        if last_raw is not None:
+            try:
+                if now - int(last_raw) < interval_ms:
+                    return  # interval not elapsed — cheap exit
+            except (ValueError, TypeError):
+                pass  # corrupt meta → run now
+
+        # Collect the inputs synchronously (fast SQLite + filesystem reads) then
+        # run the blocking probes off the event loop thread.
+        try:
+            goal_ids = self._goal_store.list_goal_ids()
+            goals = [self._goal_store.load_goal(gid) for gid in goal_ids]
+        except Exception:  # noqa: BLE001
+            goals = []
+        try:
+            project_workspaces: set[str] = (
+                {
+                    str(p.workspace_dir)
+                    for p in self._project_registry.list()
+                    if p.workspace_dir
+                }
+                if self._project_registry is not None
+                else set()
+            )
+        except Exception:  # noqa: BLE001
+            project_workspaces = set()
+
+        await asyncio.to_thread(
+            _hd.run_health_drift_checks,
+            store=self._store,
+            goals=goals,
+            project_workspaces=project_workspaces,
+            now_ms=now,
+            goals_dir=str(self._cfg.goals_dir),
+            disk_warn_pct=_config.health_disk_warn_pct(),
+            orphan_docker_warn=_config.health_orphan_docker_warn(),
+            stale_ws_warn=_config.health_stale_ws_warn(),
+            docker_bin=_config.DOCKER_BIN,
+        )
+        self._store.set_meta(_hd._LAST_CHECK_META, str(now))
 
     # ---- steer / observe surface (wrapped by MCP tools) --------------------
 
