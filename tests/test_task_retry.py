@@ -6,6 +6,7 @@ Timeouts are NOT retried. Driven with stub runners (no docker).
 """
 
 import asyncio
+import json
 
 import pytest
 
@@ -429,3 +430,84 @@ async def test_tripwire_firing_lands_one_problems_row_countable_per_goal(store):
     assert len(rows) == 1
     assert rows[0]["category"] == "limit"
     assert rows[0]["terminal_count"] == 1 and rows[0]["recovered_count"] == 0
+
+
+# ── Evidence-based settle (issue #565) ─────────────────────────────────────
+#
+# A task that times out after committing verify-green work must be SALVAGED
+# (not wiped): the settle path consults the workspace before failing, and if
+# it finds committed + verify-passing work, it routes through the normal gate
+# + delivery path and settles "done".  A no-commit timeout still settles
+# plain "failed".
+
+
+async def test_no_result_termination_with_green_verify_salvages_instead_of_wiping(
+    store, monkeypatch, tmp_path
+):
+    """Named regression test (issue #565): a task that times out after committing
+    verify-green work settles salvaged (done), not failed+wiped.  A no-commit
+    timeout still settles plain failed."""
+    monkeypatch.setattr(queue_settle, "TASK_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+
+    # Fake evidence: committed work + verify-green.
+    _green_evidence = {
+        "has_commits": True,
+        "verify": {
+            "ran": True, "cmd": "pytest -q", "passed": True,
+            "exit_code": 0, "timed_out": False, "output": "1 passed",
+        },
+    }
+
+    async def fake_evidence(host_dir, pre_run_sha, verify_cmd, task_id):
+        return _green_evidence
+
+    monkeypatch.setattr(queue_settle, "_check_no_result_evidence", fake_evidence)
+
+    # Fake _capture_change so we don't need a real git repo with real commits.
+    from devclaw.task_change import CHANGE as _CHANGE_SOME, ChangeSet
+
+    async def fake_capture(ws, base, **kw):
+        return ChangeSet(status=_CHANGE_SOME, base_sha=base or "base0",
+                         diff="+ A = 1\n", agent_authored=True, materialized=True)
+
+    monkeypatch.setattr(queue_settle, "_capture_change", fake_capture)
+
+    async def slow(req: EngineRequest):
+        await asyncio.sleep(5)  # exceeds 0.05s cap
+        return {"status": "ok"}
+
+    q = TaskQueue(store, runner=slow)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X",
+                   verify_cmd="pytest -q")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done", f"expected done, got {t.status}: {t.error}"
+    detail = json.loads(t.result_json)
+    assert detail.get("salvaged") is True
+    assert "timeout" in detail.get("salvage_reason", "").lower()
+
+
+async def test_no_commit_timeout_still_settles_failed(store, monkeypatch):
+    """Issue #565 counter-case: when the timed-out workspace has no new commits,
+    the task fails plain (no salvage attempt)."""
+    monkeypatch.setattr(queue_settle, "TASK_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+
+    async def fake_evidence(host_dir, pre_run_sha, verify_cmd, task_id):
+        return {"has_commits": False}
+
+    monkeypatch.setattr(queue_settle, "_check_no_result_evidence", fake_evidence)
+
+    async def slow(req: EngineRequest):
+        await asyncio.sleep(5)
+        return {"status": "ok"}
+
+    q = TaskQueue(store, runner=slow)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert "wall-clock timeout" in t.error

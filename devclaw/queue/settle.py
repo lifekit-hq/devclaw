@@ -57,9 +57,11 @@ from ..state_store import TaskKind, _now_ms
 from ..task_git import (
     BRANCH_STALE_THRESHOLD,
     _base_branch_error_sync,
+    _check_no_result_evidence_sync,
     _git_commit_exists_sync,
     _git_diff_sync,
     _git_head_sync,
+    _push_interrupted_work_sync,
     _review_repo_context_sync,
     _wip_snapshot_sync,
     branch_staleness_sync as _branch_staleness_sync,
@@ -378,6 +380,23 @@ async def _branch_staleness(host_dir: str, base_branch: str) -> Optional[dict]:
 async def _wip_snapshot(host_dir: str, task_id: str) -> str:
     """Async wrapper — same thread-offload rationale as :func:`_git_diff`."""
     return await asyncio.to_thread(_wip_snapshot_sync, host_dir, task_id)
+
+
+async def _check_no_result_evidence(
+    host_dir: str, pre_run_sha: str, verify_cmd: Optional[str], task_id: str,
+) -> dict:
+    """Async wrapper around :func:`_check_no_result_evidence_sync` — looks up
+    the sync function as a module global so tests can patch it here (issue #565
+    evidence-based settle).  Never raises."""
+    return await asyncio.to_thread(
+        _check_no_result_evidence_sync, host_dir, pre_run_sha, verify_cmd,
+    )
+
+
+async def _push_interrupted_work(host_dir: str, task_id: str) -> str:
+    """Async wrapper around :func:`_push_interrupted_work_sync` — module global
+    so tests can patch it here.  Never raises."""
+    return await asyncio.to_thread(_push_interrupted_work_sync, host_dir, task_id)
 
 
 async def _review_repo_context(host_dir: str) -> str:
@@ -1033,13 +1052,123 @@ class SettleMixin:
                 else:
                     result = await self._runner(request)
             except asyncio.TimeoutError:
-                self._store.mark_failed(
-                    task_id,
-                    f"task exceeded the {TASK_TIMEOUT_S:.0f}s wall-clock timeout with no "
-                    f"terminal result — sandbox torn down. Raise DEVCLAW_TASK_TIMEOUT_S "
-                    f"if this was a legitimately long task.",
+                # Evidence-based settle (issue #565 / specs/tiny/evidence-based-settle.md):
+                # before failing + wiping, check if the worker left committed,
+                # verifiable work.  Module globals so tests can patch them here.
+                ev = await _check_no_result_evidence(
+                    workspace_dir, pre_run_sha, verify_cmd, task_id
                 )
-                self._check_and_trip_breaker(workspace_dir, task_id)
+                base_timeout_msg = (
+                    f"task exceeded the {TASK_TIMEOUT_S:.0f}s wall-clock timeout "
+                    f"with no terminal result — sandbox torn down"
+                )
+                if not ev.get("has_commits"):
+                    # Nothing committed: fail as today.
+                    self._store.mark_failed(
+                        task_id,
+                        f"{base_timeout_msg}. "
+                        f"Raise DEVCLAW_TASK_TIMEOUT_S if this was a legitimately "
+                        f"long task.",
+                    )
+                    self._check_and_trip_breaker(workspace_dir, task_id)
+                    return None
+
+                host_verify = ev.get("verify")
+                verify_passed = bool(host_verify and host_verify.get("passed"))
+
+                if not verify_passed:
+                    # Commits present but verify unavailable / red: push a wip
+                    # snapshot so the next attempt can inspect the work, then fail.
+                    push_result = await _push_interrupted_work(workspace_dir, task_id)
+                    sys.stderr.write(
+                        f"task-queue: task {task_id} timed out with committed "
+                        f"work but verify did not pass — pushed wip ({push_result})\n"
+                    )
+                    verify_detail = ""
+                    if host_verify and host_verify.get("ran"):
+                        tail = (host_verify.get("output") or "").strip()[-400:]
+                        verify_detail = (
+                            f"; verify exited {host_verify.get('exit_code')} "
+                            + (f"— {tail}" if tail else "")
+                        )
+                    self._store.mark_failed(
+                        task_id,
+                        f"{base_timeout_msg}{verify_detail}. "
+                        f"Work was committed but verify did not pass; "
+                        f"wip pushed ({push_result}) for next-attempt inspection.",
+                    )
+                    self._check_and_trip_breaker(workspace_dir, task_id)
+                    return None
+
+                # Commits + verify green: run the full gate pipeline on the
+                # salvageable workspace — fail-closed stance unchanged; nothing
+                # ships without passing every gate.
+                sys.stderr.write(
+                    f"task-queue: task {task_id} timed out with committed + "
+                    f"verify-green work — attempting salvage through gate pipeline\n"
+                )
+                salvage_result: dict = {
+                    "status": "ok",
+                    "verify": host_verify,
+                    "salvaged": True,
+                    "salvage_reason": base_timeout_msg,
+                }
+                try:
+                    salvage_gate_input = GateInput(
+                        kind=kind,
+                        goal=goal,
+                        workspace_dir=workspace_dir,
+                        verify=host_verify,
+                        scaffold=scaffold,
+                        browser_mode=self._browser_gate_mode(project_id),
+                        surface=await asyncio.to_thread(
+                            _manifest.resolve_surface, workspace_dir
+                        ),
+                        change_fn=lambda: _capture_change(
+                            workspace_dir, pre_run_sha,
+                            task_id=task_id, message=materialize_msg,
+                        ),
+                        project_id=project_id,
+                    )
+                    salvage_gates: list = [
+                        _VerifyGate(), _MaterializeGate(), _IntegrityGate(),
+                    ]
+                    if strictness != "trust":
+                        salvage_gates.append(_ReviewGate(self))
+                    salvage_gates.append(_BrowserGate(self))
+                    salvage_verdict = await run_pipeline(
+                        salvage_gate_input, tuple(salvage_gates)
+                    )
+                except Exception as gate_err:  # noqa: BLE001 — fail closed on crash
+                    self._store.mark_failed(
+                        task_id,
+                        f"{base_timeout_msg}. Salvage gate pipeline crashed "
+                        f"({gate_err.__class__.__name__}: {gate_err}) — "
+                        f"failing closed.",
+                    )
+                    self._check_and_trip_breaker(workspace_dir, task_id)
+                    return None
+
+                if salvage_verdict is not None:
+                    self._store.mark_failed(
+                        task_id,
+                        f"{base_timeout_msg}. Salvage failed gate "
+                        f"'{salvage_verdict.gate_id}': {salvage_verdict.reason}",
+                    )
+                    self._check_and_trip_breaker(workspace_dir, task_id)
+                    return None
+
+                # All gates passed — deliver or settle done (same as normal path).
+                _attach_change(
+                    salvage_result,
+                    await salvage_gate_input.change(),
+                    kind=kind,
+                    workspace_dir=workspace_dir,
+                    verify_cmd=verify_cmd,
+                )
+                if defer_done:
+                    return salvage_result  # _execute delivers, then settles done+pr_url
+                self._store.mark_done(task_id, json.dumps(salvage_result))
                 return None
             except Exception as err:
                 last_failure = str(err)  # unexpected runner error — retryable
