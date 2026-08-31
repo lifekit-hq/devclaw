@@ -12,12 +12,50 @@ dir). Nothing noticed for weeks because nothing checked. This is the check.
 """
 import fnmatch
 import re
+import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
 _RULES_DIR = _ROOT / ".claude" / "rules"
+
+
+@lru_cache(maxsize=1)
+def _tracked() -> "frozenset[str]":
+    """Every repo-relative path tracked by version control.
+
+    These docs describe the REPOSITORY, so the repository — not the filesystem
+    — is what they must be checked against. The two differ inside the worker
+    sandbox: ``engine/sandcastle.py`` mounts an empty tmpfs over the
+    workspace's ``.claude/`` (spec 011 / #583) so the repo's contributor hooks
+    cannot bind devclaw's own engineer, re-exposing only ``rules/``.
+
+    Filesystem-only checks therefore reached OPPOSITE verdicts by environment:
+    in-sandbox the resolve check failed against perfectly true claims, and the
+    rational repair — deleting the claim — then failed the symmetric ratchet in
+    CI, where the directories exist. Three workers hit this independently on
+    2026-08-31 and each invented a different rewrite (inserted space, reworded
+    prose, stripped backticks), because each reasoned correctly from false
+    evidence. Reading the index makes both checks environment-independent, so
+    one revision cannot be green in one place and red in the other (#778).
+
+    Empty when the VCS is unavailable (tarball export, no binary) — callers
+    fall back to the filesystem, so behaviour outside a checkout is unchanged.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(_ROOT), "ls-files", "-z"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except Exception:  # noqa: BLE001 — unavailable ⇒ fall back, never fail here
+        return frozenset()
+    if out.returncode != 0:
+        return frozenset()
+    return frozenset(x for x in out.stdout.split("\0") if x)
 
 #: Repo-relative paths are written inside backticks in these docs. Match only
 #: paths rooted at a real top-level dir, so prose like `str.format` or a bare
@@ -61,17 +99,31 @@ def _claimed_paths(doc: Path) -> set[str]:
 def _resolves(claim: str) -> bool:
     """A claim resolves if it names an existing file, an existing directory, or
     a glob matching at least one file. Directories are written with a trailing
-    slash by convention but tolerated without one."""
+    slash by convention but tolerated without one.
+
+    Checked against the tracked set UNION the filesystem: a path the repository
+    tracks resolves even where this environment has it shadowed (see
+    :func:`_tracked`), and an untracked-but-real path still resolves as before.
+    A claim absent from BOTH is dead and still fails — the guard is not
+    weakened, only made environment-independent."""
     if "{" in claim:  # brace expansion is invisible to this guard — see below
         return False
-    target = _ROOT / claim.rstrip("/")
+    bare = claim.rstrip("/")
+    target = _ROOT / bare
     if target.exists():
+        return True
+    tracked = _tracked()
+    if bare in tracked:
+        return True
+    if any(t.startswith(bare + "/") for t in tracked):  # a tracked directory
         return True
     if "*" in claim:
         parent = _ROOT / str(Path(claim).parent)
         if parent.is_dir():
             pattern = Path(claim).name
-            return any(fnmatch.fnmatch(p.name, pattern) for p in parent.iterdir())
+            if any(fnmatch.fnmatch(p.name, pattern) for p in parent.iterdir()):
+                return True
+        return any(fnmatch.fnmatch(t, bare) for t in tracked)
     return False
 
 
@@ -194,12 +246,21 @@ def test_every_claude_harness_dir_is_named_by_the_docs():
     sentence and it fails, which is the whole point.
     """
     harness = _ROOT / ".claude"
-    if not harness.is_dir():  # pragma: no cover - the harness is checked in
-        return
-    present = {
-        entry.name for entry in harness.iterdir()
-        if entry.name not in _HARNESS_NOT_CONTENT and not entry.name.startswith(".")
+    # Union of the tracked set and what is on disk, for the same reason
+    # _resolves uses it: inside the sandbox the tmpfs hides every .claude/
+    # entry but rules/, so a filesystem-only read makes this check go quiet
+    # exactly where the resolve check is failing — and a worker that deletes
+    # the claim to satisfy one then breaks the other in CI (#778).
+    present = {e.name for e in (harness.iterdir() if harness.is_dir() else ())} | {
+        t.split("/")[1] for t in _tracked()
+        if t.startswith(".claude/") and len(t.split("/")) >= 2
     }
+    present = {
+        name for name in present
+        if name not in _HARNESS_NOT_CONTENT and not name.startswith(".")
+    }
+    if not present:  # pragma: no cover - the harness is checked in
+        return
     documented = set()
     for doc in _docs():
         for claim in _claimed_paths(doc):
@@ -212,3 +273,90 @@ def test_every_claude_harness_dir_is_named_by_the_docs():
         "— a true claim was deleted, or a new one was never written:\n  "
         + "\n  ".join(f".claude/{m}" for m in missing)
     )
+
+
+# ---- the sandbox shadow must not change either verdict (#778) --------------
+# engine/sandcastle.py mounts an empty tmpfs over the workspace's .claude/ so
+# the repo's contributor hooks cannot bind devclaw's own engineer, re-exposing
+# only rules/. Both guards above therefore have to judge the REPOSITORY, not
+# the mounted filesystem — otherwise the same revision is green in CI and red
+# in the sandbox, and the only edit that satisfies one breaks the other.
+
+
+def _shadowed(monkeypatch, tmp_path, tracked):
+    """Simulate the sandbox: a checkout whose .claude/ is invisible on disk
+    while version control still tracks its contents."""
+    monkeypatch.setattr(_docs_module_root(), "_ROOT", tmp_path)
+    _tracked.cache_clear()
+    monkeypatch.setattr(_docs_module_root(), "_tracked", lambda: frozenset(tracked))
+
+
+def _docs_module_root():
+    import sys
+
+    return sys.modules[__name__]
+
+
+def test_a_tracked_path_resolves_even_when_the_filesystem_hides_it(
+    monkeypatch, tmp_path
+):
+    """The forward guard. In-sandbox `.claude/hooks/` does not exist on disk,
+    but the repository tracks it — so the claim is TRUE and must not be
+    reported dead. Reporting it dead is what made three workers delete it."""
+    _shadowed(monkeypatch, tmp_path, {".claude/hooks/main-branch-guard.py"})
+
+    assert _resolves(".claude/hooks/") is True
+    assert _resolves(".claude/hooks") is True
+
+
+def test_a_path_in_neither_the_index_nor_the_filesystem_is_still_dead(
+    monkeypatch, tmp_path
+):
+    """The guard is not weakened: a genuinely deleted path fails as before."""
+    _shadowed(monkeypatch, tmp_path, {".claude/hooks/main-branch-guard.py"})
+
+    assert _resolves("devclaw/goal/decomposer.py") is False
+    assert _resolves(".claude/does-not-exist/") is False
+
+
+def test_tracked_harness_dirs_are_still_required_to_be_documented(
+    monkeypatch, tmp_path
+):
+    """The reverse ratchet. With .claude/ shadowed on disk, a filesystem-only
+    read sees nothing and the check goes quiet — exactly where the forward
+    check is failing, which is the trap. Reading the index keeps it armed, so
+    deleting the claim can no longer buy a green run anywhere."""
+    _shadowed(
+        monkeypatch,
+        tmp_path,
+        {
+            ".claude/hooks/main-branch-guard.py",
+            ".claude/skills/docs-audit/SKILL.md",
+            ".claude/commands/ship.md",
+        },
+    )
+
+    present = {
+        t.split("/")[1] for t in _tracked()
+        if t.startswith(".claude/") and len(t.split("/")) >= 2
+    }
+    present = {n for n in present if n not in _HARNESS_NOT_CONTENT}
+
+    assert present == {"hooks", "skills", "commands"}, (
+        "the ratchet must still see harness dirs the repository tracks, even "
+        "when the sandbox hides them — otherwise deleting the doc claim is a "
+        "way to pass both checks, which is the #778 convergence failure"
+    )
+
+
+def test_no_vcs_falls_back_to_the_filesystem(monkeypatch, tmp_path):
+    """Outside a checkout (tarball export, no binary) behaviour is unchanged:
+    the tracked set is empty and the filesystem alone decides."""
+    monkeypatch.setattr(_docs_module_root(), "_ROOT", tmp_path)
+    _tracked.cache_clear()
+    monkeypatch.setattr(_docs_module_root(), "_tracked", frozenset)
+    (tmp_path / "devclaw").mkdir()
+    (tmp_path / "devclaw" / "real.py").write_text("")
+
+    assert _resolves("devclaw/real.py") is True
+    assert _resolves("devclaw/ghost.py") is False
