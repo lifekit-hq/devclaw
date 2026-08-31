@@ -6,11 +6,11 @@
 
 | File | What changes |
 |------|-------------|
-| `devclaw/goal/health_drift.py` | NEW — three probe fns + `run_health_drift_checks()` orchestrator |
-| `devclaw/config.py` | 4 new call-time accessors for `DEVCLAW_HEALTH_*` vars |
+| `devclaw/goal/health_drift.py` | NEW — four probe fns + `run_health_drift_checks()` orchestrator |
+| `devclaw/config.py` | 5 new call-time accessors for `DEVCLAW_HEALTH_*` vars |
 | `devclaw/goal/service.py` | 4th scheduled edge `_maybe_check_health_drift()` in `_loop()` |
-| `docs/reference/env-vars.md` | 4 new rows in a new "Instance health" section |
-| `tests/test_health_drift.py` | NEW — T1/T2/T3 named regression tests |
+| `docs/reference/env-vars.md` | 5 new rows in a new "Instance health" section |
+| `tests/test_health_drift.py` | NEW — T1/T2/T3/T4 named regression tests |
 | `specs/027-instance-health-drift/` | spec.md, plan.md, tasks.md |
 
 ### Key choices
