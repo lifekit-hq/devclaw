@@ -664,6 +664,25 @@ class SettleMixin:
             prep_failure = await self._prep_branch_target(
                 workspace_dir, base_branch=base_branch, target_branch=target_branch
             )
+        elif (
+            not (base_branch or target_branch)
+            and not (row and row.parent_goal_id)
+            and not (row and row.pause_count > 0)
+        ):
+            # Direct dispatch (no branch params, no goal parent, not a resume):
+            # reset to origin/<default> so the worker sees the current state of
+            # the default branch rather than whatever a prior task left behind.
+            # Goal-path tasks (parent_goal_id set) skip this — the goal tick
+            # already called prepare_workspace with the goal branch. Best-effort:
+            # a workspace without an origin remote (local-only, tests) logs and
+            # continues rather than blocking (spec 027 FR-004).
+            try:
+                await prepare_workspace(workspace_dir, branch=None)
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(
+                    f"task-queue: direct-dispatch workspace reset failed "
+                    f"({task_id}): {exc} — proceeding on current branch\n"
+                )
         if prep_failure is not None:
             # Fail loudly and FAST — the engine never runs against a workspace
             # that isn't on the contract the caller pinned (a bogus base would
