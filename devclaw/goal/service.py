@@ -627,6 +627,7 @@ class GoalService:
             project_workspaces=project_workspaces,
             now_ms=now,
             goals_dir=str(self._cfg.goals_dir),
+            db_path=_config.db_path(),
             disk_warn_pct=_config.health_disk_warn_pct(),
             orphan_docker_warn=_config.health_orphan_docker_warn(),
             stale_ws_warn=_config.health_stale_ws_warn(),

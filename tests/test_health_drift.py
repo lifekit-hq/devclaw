@@ -20,9 +20,27 @@ from devclaw.goal import health_drift as _hd
 from devclaw.state_store import StateStore
 
 
+#: The REAL implementations, captured before the autouse fixture below stubs
+#: them — tests that exercise a probe itself must not be handed the stub.
+_REAL_DEVICE_KEY = _hd._device_key
+
+
 @pytest.fixture
 def store(tmp_path) -> StateStore:
     return StateStore(str(tmp_path / "health.db"))
+
+
+@pytest.fixture(autouse=True)
+def _single_disk_box(monkeypatch):
+    """Default every test to the common shape: ONE disk behind every surface,
+    so a breach is one row. Tests that care about split volumes override
+    `_device_key` explicitly.
+
+    Without this the probe would shell out to a real `docker info` during the
+    suite — the no-docker-in-tests structural guard forbids that, and both the
+    root and the device layout would vary by machine."""
+    monkeypatch.setattr(_hd, "_docker_root_dir", lambda _bin: "/tmp/goals")
+    monkeypatch.setattr(_hd, "_device_key", lambda _p: "one-disk")
 
 
 def _run(store: StateStore, **overrides) -> None:
@@ -33,6 +51,7 @@ def _run(store: StateStore, **overrides) -> None:
         project_workspaces=set(),
         now_ms=0,
         goals_dir="/tmp/goals",
+        db_path="/tmp/goals/devclaw.db",
         disk_warn_pct=80.0,
         orphan_docker_warn=10,
         stale_ws_warn=20,
@@ -181,3 +200,119 @@ def test_run_health_drift_checks_never_invokes_claude(store, monkeypatch):
     # Zero LLM is structurally guaranteed (no claude import in health_drift.py);
     # this test pins that no later edit silently wires in a cognition call.
     _run(store)
+
+
+
+
+# ---- every instance-critical filesystem, once per device --------------------
+# done_when named "the volume backing workspaces and the docker root", and the
+# first implementation probed only goals_dir — the done-gate refused three
+# rounds on that clause. The fix is deliberately NOT "add a second probe": the
+# monitored set is derived from `_disk_surfaces`, so the DB volume (whose
+# exhaustion kills the instance outright, and which `DEVCLAW_DB` configures
+# independently of the goals dir) is covered by the same mechanism, and the
+# next critical path is one line rather than a fourth bespoke check.
+
+
+def test_every_instance_critical_path_is_enumerated(monkeypatch):
+    """The surface list IS the contract — assert it names all three, so
+    dropping one is a test failure rather than a silent blind spot."""
+    monkeypatch.setattr(_hd, "_docker_root_dir", lambda _bin: "/var/lib/docker")
+
+    names = {n for n, _ in _hd._disk_surfaces("/g", "/db/devclaw.db", "docker")}
+
+    assert names == {"workspace", "database", "docker root"}
+
+
+def test_undeterminable_docker_root_is_omitted_not_guessed(monkeypatch):
+    monkeypatch.setattr(_hd, "_docker_root_dir", lambda _bin: None)
+
+    names = {n for n, _ in _hd._disk_surfaces("/g", "/db/devclaw.db", "docker")}
+
+    assert names == {"workspace", "database"}, "unknown must drop out, never guess"
+
+
+def test_each_distinct_volume_is_reported_separately(store, monkeypatch):
+    """A full docker root must never hide behind a healthy workspace volume —
+    the exact gap that held the goal open."""
+    monkeypatch.setattr(_hd, "_docker_root_dir", lambda _bin: "/var/lib/docker")
+    monkeypatch.setattr(_hd, "_device_key", lambda path: path)  # all distinct
+    monkeypatch.setattr(
+        _hd, "_disk_used_pct",
+        lambda path: 95.0 if path == "/var/lib/docker" else 10.0,
+    )
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _b, _w: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _p, _n: 0)
+
+    _run(store)
+
+    rows = store.list_problems(category="other")
+    assert len(rows) == 1
+    assert "docker root" in rows[0]["sample_message"]
+
+
+def test_a_full_db_volume_is_caught_even_when_the_workspace_is_healthy(
+    store, monkeypatch
+):
+    """The bug one row over: DEVCLAW_DB is configured independently, and a full
+    DB volume kills the instance outright. A two-probe fix would have missed
+    this; the derived surface set does not."""
+    monkeypatch.setattr(_hd, "_docker_root_dir", lambda _bin: None)
+    monkeypatch.setattr(_hd, "_device_key", lambda path: path)
+    monkeypatch.setattr(
+        _hd, "_disk_used_pct",
+        lambda path: 99.0 if path.endswith("devclaw.db") else 5.0,
+    )
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _b, _w: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _p, _n: 0)
+
+    _run(store, db_path="/data/devclaw.db")
+
+    rows = store.list_problems(category="other")
+    assert len(rows) == 1
+    assert "database" in rows[0]["sample_message"]
+
+
+def test_surfaces_sharing_a_disk_collapse_to_one_row_naming_all_of_them(
+    store, monkeypatch
+):
+    """The common single-disk box: three surfaces, one alarm, but the message
+    still names everything at risk on that volume."""
+    monkeypatch.setattr(_hd, "_docker_root_dir", lambda _bin: "/var/lib/docker")
+    monkeypatch.setattr(_hd, "_device_key", lambda _path: "same-disk")
+    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 97.0)
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _b, _w: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _p, _n: 0)
+
+    _run(store)
+
+    rows = store.list_problems(category="other")
+    assert len(rows) == 1, "one disk must not raise three identical alarms"
+    msg = rows[0]["sample_message"]
+    assert "database" in msg and "docker root" in msg and "workspace" in msg
+
+
+def test_surface_names_are_sorted_so_the_fingerprint_is_stable(store, monkeypatch):
+    """Dedupe is on normalize(message). Unsorted names would fingerprint
+    differently run to run and defeat the catalog's aging."""
+    monkeypatch.setattr(_hd, "_docker_root_dir", lambda _bin: "/var/lib/docker")
+    monkeypatch.setattr(_hd, "_device_key", lambda _path: "same-disk")
+    monkeypatch.setattr(_hd, "_disk_used_pct", lambda _path: 97.0)
+    monkeypatch.setattr(_hd, "_orphan_docker_volume_count", lambda _b, _w: 0)
+    monkeypatch.setattr(_hd, "_stale_workspace_count", lambda _g, _p, _n: 0)
+
+    _run(store)
+    _run(store)
+
+    rows = store.list_problems(category="other")
+    assert len(rows) == 1 and rows[0]["count"] == 2
+    assert rows[0]["sample_message"].startswith("database+docker root+workspace")
+
+
+def test_device_key_falls_back_to_the_path_when_stat_fails(tmp_path):
+    """An unreadable path must group with ITSELF, never merge into another
+    surface's reading and inherit its all-clear."""
+    missing = str(tmp_path / "nope")
+
+    assert _REAL_DEVICE_KEY(missing) == _REAL_DEVICE_KEY(missing)
+    assert _REAL_DEVICE_KEY(missing) != _REAL_DEVICE_KEY(str(tmp_path / "other"))
