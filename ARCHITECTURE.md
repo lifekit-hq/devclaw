@@ -200,7 +200,7 @@ If the worker proposed `done`, a grounded read-only `review_repository` runs aga
 | `traces` | Per-tick observability: cognition calls, dispatches, deliveries | `PersistentTracer` in `loom/trace.py` |
 | `eval_outcomes` | Projection: one row per task settle (status, gate verdicts, failure class) | `StateStore.mark_done/mark_failed` inside the settle transaction |
 | `cycle_reports` | Nightly window metrics (clean/busy, merge/wedge counts) | `GoalService._maybe_emit_cycle_report` |
-| `problems` | Failure dedup catalog (UPSERT per fingerprint, count-based, not per-occurrence) | `StateStore.record_problem` (`problems.py`) |
+| `problems` | Failure dedup catalog (UPSERT per fingerprint, count-based, not per-occurrence) | `StateStore.record_problem` (`problems.py`) — fed by the failure choke points (block, task-fail, usage pause, error traces) AND by the periodic zero-LLM environmental probe in `devclaw/goal/health_drift.py`, which records disk/orphan-volume/stale-workspace **degradation** before it becomes failure |
 | `problem_cycles` | Problem recurrence cross-referenced per nightly cycle | `ProblemsMixin` |
 
 Retention defaults: traces and events 30 days (`DEVCLAW_TRACE_RETENTION_DAYS`, `DEVCLAW_EVENTS_RETENTION_DAYS`). SQLite VACUUM fires weekly when freelist > 10k pages.
