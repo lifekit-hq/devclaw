@@ -39,7 +39,7 @@ truth throughout and PLAN.md gone.**
   STAGE 1 · READINESS GRADE                                [P1]  (async)
     also enters here: any EXISTING open issue, any format,
     via regrade_intake / grade_backlog (spec 009)  [exists]
-    ONE cognition call, TWO independent axes:
+    ONE cognition call, THREE independent axes:
     (a) ground the ask vs the repo: locatable surface +
         concrete change + verifiable intent?  fail-closed →
         ├── devclaw-ready ─────────────────┐
@@ -48,6 +48,11 @@ truth throughout and PLAN.md gone.**
         └── needs-sizing when no claim / unestimable / unassessable /
             disputed — a human decides. Never moves axis (a), and
             never selects a shape: every work item runs as a saga.
+    (c) staleness: does the repo already satisfy the ask? →
+        └── stale ⇒ needs-refinement, whatever (a) said — the work
+            is already done, so dispatching burns a session to
+            rediscover that. Uncertain ⇒ not stale; (b) never
+            makes an ask stale.
                                             │
                                             ▼
   STAGE 2 · DISPATCH                                        [P2]
@@ -131,6 +136,10 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
   reason. Orthogonal to readiness: a `devclaw-ready` + `needs-sizing` issue is
   dispatchable, it just has an extent a human should settle first. The count sizes
   the plan; it never selects an execution shape. *[spec 012 US3]*
+- **Already-done ask** (the fix landed since the issue was filed) → Stage 1 axis (c) →
+  **`needs-refinement` (stale)**, naming "the described condition appears to be already
+  resolved in the repository." Overrides a clean grounding verdict: close the issue, or
+  rewrite it to describe what is still missing, then re-grade. *[spec 028 US2]*
 - **Self-filed ask** (devclaw's own self-issue-filing) → graded ready, but at Stage 2 the
   **provenance wall** holds it until *you* promote it. No self-dealing. *[P2]*
 - **A bug** (`fix: forecast off-by-one`) → Stage 3 routes it **direct-advance, no spec** —

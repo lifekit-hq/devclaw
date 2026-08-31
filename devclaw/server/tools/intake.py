@@ -144,9 +144,15 @@ async def regrade_intake(project_id: str, issue_url: str) -> str:
     A sizing dispute never moves the readiness verdict, and the count never
     selects an execution shape — every work item runs as a saga.
 
+    A THIRD axis checks staleness (spec 028 US2): an ask whose described
+    condition the repository already satisfies grades ``needs-refinement`` with
+    ``stale`` true, because dispatching it would burn a session rediscovering
+    that the work is done. Staleness is judged only against the repo snapshot;
+    uncertain means not stale, and a sizing dispute never makes an ask stale.
+
     Returns ``{issue_url, project_id, repo, readiness, expected_increments,
-    increment_basis, assessed_increments, sizing, sizing_reason}``. The grade
-    fails CLOSED: any failure to reach a confident ready verdict lands
+    increment_basis, assessed_increments, sizing, sizing_reason, stale}``. The
+    grade fails CLOSED: any failure to reach a confident ready verdict lands
     ``needs-refinement``, never ``devclaw-ready``; any failure to reach a
     confident agreement lands ``needs-sizing``."""
     try:
