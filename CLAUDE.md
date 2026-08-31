@@ -244,7 +244,7 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
   `P1`/`P2`/`needs-refinement`/`devclaw-ready` labels, plus the conventions above.
   Deliberate divergences: branches are `<type>/<slug>` with no issue number
   (speckit-driven work isn't always issue-backed); no husky-style pre-commit hook —
-  the same gates run in CI plus the `/ship` ritual and `.claude/` hooks; milestones
+  the same gates run in CI plus the `/ship` ritual and `.claude/hooks`; milestones
   aren't used — the speckit spec is the unit of direction and issues carry priority
   labels; PR bodies state verification via the `/ship` ritual (suite result + the
   named regression test) rather than a titled Validation section; the root
@@ -263,9 +263,9 @@ plan → tasks → implement, specs landing in `specs/` and the machinery in `.s
 with the constitution (`.specify/memory/constitution.md`) as the invariant
 statement specs are checked against; `docs/proposals/` + `docs/decisions/`
 are frozen history),
-`commands/ship.md` (the pre-PR ritual as `/ship`),
-`hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
-escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `skills/` (docs-audit,
+`.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
+`.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
+escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit,
 live-shakedown).
 
 ## Where to look next

@@ -340,17 +340,6 @@ def health_disk_warn_pct() -> float:
         return 80.0
 
 
-def health_docker_disk_warn_pct() -> float:
-    """Disk-usage % at which docker's data-root filesystem is flagged as a problem.
-    ``DEVCLAW_HEALTH_DOCKER_DISK_WARN_PCT``, default 80. Returns 80.0 on bad input."""
-    raw = os.environ.get("DEVCLAW_HEALTH_DOCKER_DISK_WARN_PCT", "80")
-    try:
-        v = float(raw)
-        return v if 0 < v <= 100 else 80.0
-    except (ValueError, TypeError):
-        return 80.0
-
-
 def health_orphan_docker_warn() -> int:
     """Orphaned docker toolchain volume count threshold.
     ``DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN``, default 10. Returns 10 on bad input."""

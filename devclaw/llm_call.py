@@ -140,23 +140,89 @@ def _max_host_cognition_from_env(raw: str | None) -> int:
     return n if n >= 1 else _MAX_HOST_COGNITION_DEFAULT
 
 
-#: Lazy holder for the semaphore, keyed to the event loop it was created under.
-#: Lazy so importing this module never touches an event loop, and so the env
-#: var is read at first use (tests monkeypatch it). Loop-keyed because an
-#: ``asyncio.Semaphore`` binds to the running loop on first acquire and raises
-#: if reused from another loop — production runs one loop forever (one stable
-#: semaphore), while each ``asyncio.run`` in the test suite gets a fresh one.
-_host_cognition_sem: asyncio.Semaphore | None = None
+#: Operator override for the cap, set live via the ``set_max_host_cognition``
+#: MCP tool and seeded from the control plane at server start. ``None`` ⇒ use
+#: the ``DEVCLAW_MAX_HOST_COGNITION`` env value. Held as a module global rather
+#: than read from the store here on purpose: this is a layer-3 primitive and
+#: must not import the state store (nor need a DB path to spawn a subprocess).
+#: The layer-1 tool owns durability; this owns the live value.
+_host_cognition_cap_override: int | None = None
+
+
+def set_host_cognition_cap(n: int | None) -> None:
+    """Set (``n>=1``) or clear (``None``) the live cap. Takes effect on the
+    next ACQUIRE — in-flight cognition calls always finish, exactly like the
+    task-queue dial. Rejects ``< 1``: zero would deadlock every call."""
+    global _host_cognition_cap_override
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
+        raise ValueError("max_host_cognition must be a whole number >= 1, or None")
+    _host_cognition_cap_override = n
+
+
+def host_cognition_cap() -> int:
+    """The cap in force right now: the live override when set, else the env
+    value. Re-read on every acquire, which is what makes the dial live."""
+    if _host_cognition_cap_override is not None:
+        return _host_cognition_cap_override
+    return _max_host_cognition_from_env(_config.max_host_cognition_raw())
+
+
+class _DynamicLimiter:
+    """A semaphore whose capacity is re-read on EVERY acquire.
+
+    ``asyncio.Semaphore`` fixes its capacity at construction, so the only way
+    to change it was a restart. Rebuilding the semaphore instead is NOT a valid
+    substitute: holders of the old object release into the old object, so a
+    fresh one starts at full capacity while those calls are still running and
+    the host briefly admits MORE than the cap — which is precisely the
+    over-admission that OOM-killed 117 cognition calls and put this gate here.
+    Counting in-flight ourselves and re-checking the cap per acquire keeps the
+    bound true across a change.
+
+    Semantics match the task-queue dial: lowering the cap never cancels
+    in-flight work, it only makes the next acquire wait. Raising it takes
+    effect on the next release — a waiter can only exist while something is
+    in flight, so that wait is bounded by one call, never a deadlock.
+    """
+
+    def __init__(self) -> None:
+        self._in_flight = 0
+        self._cond = asyncio.Condition()
+
+    @property
+    def in_flight(self) -> int:
+        return self._in_flight
+
+    async def __aenter__(self) -> "_DynamicLimiter":
+        async with self._cond:
+            await self._cond.wait_for(lambda: self._in_flight < host_cognition_cap())
+            self._in_flight += 1
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        # Returns None, not False, on purpose: a bool-returning __aexit__ tells
+        # the type checker this block MIGHT suppress exceptions, which would
+        # let a cognition failure be swallowed here instead of propagating to
+        # the fail-closed callers. This limiter never suppresses anything.
+        async with self._cond:
+            self._in_flight -= 1
+            self._cond.notify_all()
+
+
+#: Lazy holder for the limiter, keyed to the event loop it was created under.
+#: Lazy so importing this module never touches an event loop. Loop-keyed
+#: because the ``asyncio.Condition`` inside binds to the running loop and
+#: raises if reused from another — production runs one loop forever (one
+#: stable limiter), while each ``asyncio.run`` in the suite gets a fresh one.
+_host_cognition_sem: "_DynamicLimiter | None" = None
 _host_cognition_sem_loop: asyncio.AbstractEventLoop | None = None
 
 
-def _host_cognition_semaphore() -> asyncio.Semaphore:
+def _host_cognition_semaphore() -> "_DynamicLimiter":
     global _host_cognition_sem, _host_cognition_sem_loop
     loop = asyncio.get_running_loop()
     if _host_cognition_sem is None or _host_cognition_sem_loop is not loop:
-        _host_cognition_sem = asyncio.Semaphore(
-            _max_host_cognition_from_env(_config.max_host_cognition_raw())
-        )
+        _host_cognition_sem = _DynamicLimiter()
         _host_cognition_sem_loop = loop
     return _host_cognition_sem
 

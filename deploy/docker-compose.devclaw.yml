@@ -83,6 +83,14 @@ services:
       # in the env file is a silent no-op (2026-08-26 OOM incident: a 2g cap
       # cannot hold the in-sandbox agent plus an Angular test run). Defaults
       # mirror devclaw/config.py.
+      # Global sandboxed-task concurrency cap. Same silent-no-op trap as the
+      # sizing knobs below: config.py reads it and task_queue.py enforces it,
+      # but without this line an env-file setting never reaches the container.
+      # 1 = strictly serial (one sandbox at a time) — the unattended-week mode:
+      # concurrent sandboxes contend for one account quota, and on 2026-08-29
+      # that killed six tasks at "exceeded 5 usage-limit pauses" with nothing
+      # delivered. Default mirrors devclaw/config.py.
+      DEVCLAW_MAX_CONCURRENT: ${DEVCLAW_MAX_CONCURRENT:-4}
       DEVCLAW_SANDBOX_MEMORY: ${DEVCLAW_SANDBOX_MEMORY:-2g}
       DEVCLAW_SANDBOX_CPUS: ${DEVCLAW_SANDBOX_CPUS:-2.0}
       DEVCLAW_COGNITION_MEM_RESERVE: ${DEVCLAW_COGNITION_MEM_RESERVE:-1536m}

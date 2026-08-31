@@ -15,7 +15,7 @@
 - **Python** ≥3.11; package root `devclaw/`; sandbox runner at `runner/runner.py`
 - **Database**: SQLite (`devclaw.db`), single-writer/lock discipline; `StateStore` owns all mutations
 - **MCP surface**: FastMCP — tools in `devclaw/server/tools.py`, HTTP routes in `devclaw/server/routes/`
-- **Tests**: pytest (fully stubbed, no docker, no claude) — ~1220 tests in ~90s (`-n auto`)
+- **Tests**: pytest (fully stubbed, no docker, no claude) — ~1262 tests in ~21s (`-n auto`)
 - **Lint**: `ruff check .` — pyflakes + syntax errors only (`select = ["F", "E9"]`)
 
 ## Build / test

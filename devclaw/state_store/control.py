@@ -152,6 +152,76 @@ class ControlPlaneMixin:
         except (ValueError, TypeError):
             return False, ""
 
+    # ---- live concurrency cap --------------------------------------------
+    # The global sandboxed-task cap as an OPERATOR DIAL, not a deployment
+    # constant. DEVCLAW_MAX_CONCURRENT is read once at import by config.py, so
+    # changing it used to mean editing /srv/devclaw/.env and redeploying — and
+    # before 2026-08-31 the compose block did not even forward it, making the
+    # env-file line a silent no-op. Same class as the sandbox-sizing knobs spec
+    # 020 moved into the project registry: a knob the operator must be able to
+    # turn WITHOUT a restart belongs in the control plane beside the run-window
+    # and the manual hold.
+    #
+    # Absence is the signal for "use the configured default" — never a stored
+    # copy of it, so changing DEVCLAW_MAX_CONCURRENT still moves the floor for
+    # an instance that has never set an override. Corrupt or out-of-range degrades
+    # to absence (the reader falls back), never to 0: a zero cap would wedge
+    # every dispatch, which is exactly the silent-stall this dial exists to
+    # avoid.
+
+    def set_max_concurrent(self, n: "int | None") -> None:
+        """Set (``n>=1``) or clear (``None``) the operator override for the
+        global concurrent-task cap. Takes effect on the next queue pump — no
+        restart, no redeploy."""
+        if n is None:
+            self.delete_meta("max_concurrent")
+            return
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise ValueError(
+                "max_concurrent must be a whole number >= 1 (None clears the "
+                "override); 0 would wedge every dispatch"
+            )
+        self.set_meta("max_concurrent", str(int(n)))
+
+    def max_concurrent(self) -> "int | None":
+        """The operator override, or ``None`` when unset/corrupt — the caller
+        falls back to the configured default."""
+        raw = self.get_meta("max_concurrent")
+        if raw is None:
+            return None
+        try:
+            n = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return n if n >= 1 else None
+
+    def set_max_host_cognition(self, n: "int | None") -> None:
+        """Set (``n>=1``) or clear (``None``) the operator override for the
+        concurrent host-side ``claude --print`` cap. Sibling of
+        :meth:`set_max_concurrent`; same conventions, different population —
+        that one counts sandboxed tasks, this one counts host subprocesses."""
+        if n is None:
+            self.delete_meta("max_host_cognition")
+            return
+        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
+            raise ValueError(
+                "max_host_cognition must be a whole number >= 1 (None clears "
+                "the override); 0 would deadlock every cognition call"
+            )
+        self.set_meta("max_host_cognition", str(int(n)))
+
+    def max_host_cognition(self) -> "int | None":
+        """The operator override, or ``None`` when unset/corrupt — the caller
+        falls back to ``DEVCLAW_MAX_HOST_COGNITION``."""
+        raw = self.get_meta("max_host_cognition")
+        if raw is None:
+            return None
+        try:
+            n = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+        return n if n >= 1 else None
+
     # ---- quiet mode (spec 025 US3) ---------------------------------------
     # One instance-wide switch: while armed, only instance-dead pings go out;
     # everything else is recorded into suppressed_pings. operator_hold

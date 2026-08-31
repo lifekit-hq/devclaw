@@ -1,11 +1,14 @@
 """Instance health drift detection — periodic, zero-LLM environmental probe.
 
-Four probes (issue #596):
-  - disk_headroom: ``shutil.disk_usage`` on the goals-dir filesystem (the volume
-    backing workspaces); a percentage.
-  - docker_disk_headroom: ``shutil.disk_usage`` on docker's data-root directory
-    (resolved via ``docker info``); recorded separately because the docker volume
-    may live on a different filesystem from workspaces.
+Three probes (issue #596):
+  - disk_headroom: ``shutil.disk_usage`` over every filesystem the instance
+    depends on — the workspace volume, the SQLite home, and the docker root —
+    enumerated by ``_disk_surfaces`` and reported once per distinct DEVICE.
+    Extending the monitored set is a one-line addition to that list; the
+    grouping and reporting are generic. Deliberately NOT a hardcoded probe:
+    the first version watched only the goals dir, so the docker root went
+    unmonitored, and a hardcoded two-probe version would have left the DB
+    volume equally unmonitored even though filling it kills the instance.
   - orphan_docker_volumes: ``docker volume ls`` filtered to the
     ``devclaw-toolchains-*`` prefix; count of volumes not accounted for by any
     registered project workspace.
@@ -22,6 +25,7 @@ meta key so probes run at most once per ``DEVCLAW_HEALTH_INTERVAL_S`` (default
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from typing import TYPE_CHECKING, Any, Iterable, Optional
@@ -42,40 +46,28 @@ _DOCKER_TIMEOUT_S = 20
 # ---- individual probes (each returns a value or None for unknown) ----------
 
 
-def _docker_root_dir(docker_bin: str) -> Optional[str]:
-    """Docker data-root directory via ``docker info``, or ``None`` on any failure."""
-    try:
-        result = subprocess.run(
-            [docker_bin, "info", "--format", "{{.DockerRootDir}}"],
-            capture_output=True,
-            text=True,
-            timeout=_DOCKER_TIMEOUT_S,
-        )
-        if result.returncode != 0:
-            return None
-        path = result.stdout.strip()
-        return path if path else None
-    except Exception:  # noqa: BLE001 — degrade silently, never raise
-        return None
-
-
-def _docker_disk_used_pct(docker_bin: str) -> Optional[float]:
-    """Used % of docker's data-root filesystem, or ``None`` on any failure.
-
-    Resolves the data-root via ``docker info`` then delegates to ``_disk_used_pct``.
-    A missing daemon, timeout, or empty path all degrade to ``None``.
-    """
-    root = _docker_root_dir(docker_bin)
-    if root is None:
-        return None
-    return _disk_used_pct(root)
-
-
 def _disk_used_pct(path: str) -> Optional[float]:
     """Filesystem used-% for the path's volume, or ``None`` on any failure."""
     try:
         u = shutil.disk_usage(path)
         return 100.0 * u.used / u.total if u.total else None
+    except Exception:  # noqa: BLE001 — degrade silently, never raise
+        return None
+
+
+def _docker_root_dir(docker_bin: str) -> Optional[str]:
+    """The docker daemon's data-root, or ``None`` when it cannot be determined
+    (no docker, daemon down, unparseable output). Unknown is not an alarm."""
+    try:
+        out = subprocess.run(
+            [docker_bin, "info", "--format", "{{.DockerRootDir}}"],
+            capture_output=True,
+            text=True,
+            timeout=_DOCKER_TIMEOUT_S,
+        )
+        if out.returncode != 0:
+            return None
+        return (out.stdout or "").strip() or None
     except Exception:  # noqa: BLE001 — degrade silently, never raise
         return None
 
@@ -153,44 +145,99 @@ def run_health_drift_checks(
     project_workspaces: "set[str]",
     now_ms: int,
     goals_dir: str,
+    db_path: str,
     disk_warn_pct: float,
-    docker_disk_warn_pct: float,
     orphan_docker_warn: int,
     stale_ws_warn: int,
     docker_bin: str,
 ) -> None:
-    """Run all four probes and record problems for breached thresholds.
+    """Run all three probes and record problems for breached thresholds.
 
     Never raises. A probe returning ``None`` (unknown) produces no record —
     unknown is not an alarm and is not a false all-clear.
     """
-    _check_disk(store, goals_dir, disk_warn_pct)
-    _check_docker_disk(store, docker_bin, docker_disk_warn_pct)
+    _check_disk(
+        store,
+        goals_dir=goals_dir,
+        db_path=db_path,
+        docker_bin=docker_bin,
+        threshold_pct=disk_warn_pct,
+    )
     goals_list = list(goals)
     _check_orphan_volumes(store, docker_bin, project_workspaces, orphan_docker_warn)
     _check_stale_workspaces(store, goals_list, project_workspaces, now_ms, stale_ws_warn)
 
 
-def _check_docker_disk(
-    store: "StateStore", docker_bin: str, threshold_pct: float
+def _disk_surfaces(
+    goals_dir: str, db_path: str, docker_bin: str
+) -> "list[tuple[str, str]]":
+    """Every filesystem whose exhaustion stops devclaw working, as
+    ``(surface name, path)``.
+
+    THIS LIST is the contract, and it is the only thing to extend when the
+    instance grows a new critical path — the grouping, deduping and reporting
+    below are generic. The first implementation hardcoded a single probe on
+    ``goals_dir``, which is why the docker root went unmonitored; a hardcoded
+    two-probe version would have left the DB exactly as unmonitored, since
+    ``DEVCLAW_DB`` is configured independently of ``DEVCLAW_GOALS_DIR`` and a
+    full DB volume kills the instance outright rather than merely stalling
+    dispatch.
+
+    An undeterminable path is omitted rather than guessed — unknown is never an
+    alarm and never a false all-clear.
+    """
+    surfaces = [("workspace", goals_dir), ("database", db_path)]
+    root = _docker_root_dir(docker_bin)
+    if root:
+        surfaces.append(("docker root", root))
+    return [(name, path) for name, path in surfaces if path]
+
+
+def _device_key(path: str) -> object:
+    """Identity of the filesystem a path sits on, for collapsing surfaces that
+    share a volume. Falls back to the absolute path when the device cannot be
+    read, so an unreadable path groups with itself rather than silently
+    merging into another surface's reading."""
+    try:
+        return os.stat(path).st_dev
+    except Exception:  # noqa: BLE001 — degrade to path identity, never raise
+        return os.path.abspath(path)
+
+
+def _check_disk(
+    store: "StateStore",
+    *,
+    goals_dir: str,
+    db_path: str,
+    docker_bin: str,
+    threshold_pct: float,
 ) -> None:
-    pct = _docker_disk_used_pct(docker_bin)
-    if pct is None:
-        return
-    if pct >= threshold_pct:
-        store.record_problem(
-            category="other",
-            kind="docker_root_disk_high",
-            message=(
-                f"docker data-root filesystem at {pct:.0f}% capacity "
-                f"(threshold: {threshold_pct:.0f}%)"
-            ),
-            recovered=False,
-        )
+    """Probe every instance-critical filesystem, once per distinct DEVICE.
+
+    Grouping by device is what keeps this honest in both directions: on the
+    common single-disk box three surfaces collapse to ONE row instead of three
+    identical alarms, and on a split box each volume is reported separately
+    with the surfaces at risk named — so a full docker root can never hide
+    behind a healthy workspace volume, which is the failure this replaced.
+    """
+    groups: "dict[object, list[str]]" = {}
+    paths: "dict[object, str]" = {}
+    for name, path in _disk_surfaces(goals_dir, db_path, docker_bin):
+        key = _device_key(path)
+        groups.setdefault(key, []).append(name)
+        paths.setdefault(key, path)
+    for key, names in groups.items():
+        _record_disk(store, paths[key], threshold_pct, "+".join(sorted(names)))
 
 
-def _check_disk(store: "StateStore", goals_dir: str, threshold_pct: float) -> None:
-    pct = _disk_used_pct(goals_dir)
+def _record_disk(
+    store: "StateStore", path: str, threshold_pct: float, surface: str
+) -> None:
+    """One device's reading. The surface names ride in the message (sorted, so
+    the fingerprint is stable across runs) — catalog dedupe is on
+    ``category|kind|normalize(message)``, so distinct volumes age as distinct
+    rows instead of collapsing into one."""
+    pct = _disk_used_pct(path)
     if pct is None:
         return
     if pct >= threshold_pct:
@@ -198,7 +245,7 @@ def _check_disk(store: "StateStore", goals_dir: str, threshold_pct: float) -> No
             category="other",
             kind="disk_usage_high",
             message=(
-                f"workspace filesystem at {pct:.0f}% capacity "
+                f"{surface} filesystem at {pct:.0f}% capacity "
                 f"(threshold: {threshold_pct:.0f}%)"
             ),
             recovered=False,

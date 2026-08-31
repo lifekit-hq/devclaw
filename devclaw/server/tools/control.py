@@ -47,6 +47,9 @@ async def get_run_schedule(goal_id: Optional[str] = None) -> str:
         blocked, why = schedule_blocks(schedule, now)
     else:
         blocked, why = operator_block(hold, schedule, now)
+    from ...task_queue import GLOBAL_MAX_CONCURRENT
+
+    override = store.max_concurrent()
     out = {
         "goal_id": goal_id,
         "schedule": schedule,
@@ -54,6 +57,12 @@ async def get_run_schedule(goal_id: Optional[str] = None) -> str:
         "dispatch_open": not blocked,
         "why_blocked": why or None,
         "next_window_open_ms": next_window_open_ms(schedule, now),
+        "max_concurrent": {
+            "effective": override or GLOBAL_MAX_CONCURRENT,
+            "override": override,
+            "default": GLOBAL_MAX_CONCURRENT,
+        },
+        "max_host_cognition": _host_cognition_view(),
     }
     return json.dumps(out, indent=2)
 
@@ -171,3 +180,99 @@ async def list_suppressed_pings(limit: int = 200) -> str:
         "quiet": store.quiet_mode()[0],
         "pings": store.list_suppressed_pings(limit),
     }, indent=2, default=str)
+
+
+@mcp.tool
+async def set_max_concurrent(n: Optional[int] = None) -> str:
+    """Set the global cap on concurrently-running sandboxed tasks — the
+    backpressure dial. ``n=1`` is strictly serial (one sandbox at a time), the
+    unattended-operation setting: concurrent sandboxes contend for ONE account
+    quota while the usage-limit pause budget is counted per task, so a high cap
+    trades reliability for parallelism. Omit ``n`` (or pass null) to CLEAR the
+    override and fall back to the ``DEVCLAW_MAX_CONCURRENT`` default.
+
+    Takes effect on the next queue pump — no restart, no redeploy. In-flight
+    tasks always finish; lowering the cap never kills running work, it just
+    stops new launches until the count drops below it.
+
+    This is backpressure, not a safety gate: it cannot stop dispatch entirely
+    (``n`` must be >= 1). To halt all new work use set_operator_hold; to gate it
+    by time of day use set_run_schedule. Read the current value with
+    get_run_schedule.
+
+    Host-side cognition subprocesses are NOT counted here — they have their own
+    cap (``DEVCLAW_MAX_HOST_COGNITION``)."""
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
+        raise ToolError(
+            "n must be a whole number >= 1, or null to clear the override — "
+            "0 would wedge every dispatch; use set_operator_hold to stop work"
+        )
+    try:
+        store.set_max_concurrent(n)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+    from ...task_queue import GLOBAL_MAX_CONCURRENT
+
+    override = store.max_concurrent()
+    return json.dumps(
+        {
+            "max_concurrent": {
+                "effective": override or GLOBAL_MAX_CONCURRENT,
+                "override": override,
+                "default": GLOBAL_MAX_CONCURRENT,
+            }
+        },
+        indent=2,
+    )
+
+
+def _host_cognition_view() -> dict:
+    """The cognition cap as {effective, override, default} — the same shape as
+    max_concurrent so one read tool reports both populations identically."""
+    from ...llm_call import (
+        _max_host_cognition_from_env,
+        host_cognition_cap,
+    )
+    from ... import config as _cfg
+
+    return {
+        "effective": host_cognition_cap(),
+        "override": store.max_host_cognition(),
+        "default": _max_host_cognition_from_env(_cfg.max_host_cognition_raw()),
+    }
+
+
+@mcp.tool
+async def set_max_host_cognition(n: Optional[int] = None) -> str:
+    """Set the cap on CONCURRENT host-side ``claude --print`` subprocesses —
+    the done-gate, evaluator, review gate and triage calls. This is a DIFFERENT
+    population from set_max_concurrent: that one counts sandboxed tasks, this
+    one counts host processes, and neither is visible to the other. Both caps
+    apply at once — capping tasks at 1 does not stop two gates running beside
+    that task.
+
+    Omit ``n`` (or pass null) to CLEAR the override and fall back to the
+    ``DEVCLAW_MAX_HOST_COGNITION`` default.
+
+    Takes effect on the next acquire — no restart, no redeploy. In-flight
+    cognition calls always finish; lowering the cap only makes the next call
+    wait its turn. Queued callers never error, and the wait does not count
+    against a call's timeout budget (the timeout starts after the acquire).
+
+    Sizing: these are the memory-hungry ones. Four concurrent review gates plus
+    goal cognition is what the kernel OOM-killed 117 times before this cap
+    existed, so raise it only if the box has headroom. ``n`` must be >= 1 — zero
+    would deadlock every cognition call."""
+    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
+        raise ToolError(
+            "n must be a whole number >= 1, or null to clear the override — "
+            "0 would deadlock every cognition call"
+        )
+    from ...llm_call import set_host_cognition_cap
+
+    try:
+        store.set_max_host_cognition(n)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+    set_host_cognition_cap(n)
+    return json.dumps({"max_host_cognition": _host_cognition_view()}, indent=2)
