@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 from .. import config as _config
 from .. import project_manifest as _manifest
 from .. import validation_loop as _validation
+from ..procutil import run as _proc_run
 from ..delivery import deliver_change, delivery_failed
 from ..engine import EngineEvent, EngineRequest
 from ..loom.limits import classify_failure, pause_seconds
@@ -691,15 +692,38 @@ class SettleMixin:
             # reset to origin/<default> so the worker sees the current state of
             # the default branch rather than whatever a prior task left behind.
             # Goal-path tasks (parent_goal_id set) skip this — the goal tick
-            # already called prepare_workspace with the goal branch. Best-effort:
-            # a workspace without an origin remote (local-only, tests) logs and
-            # continues rather than blocking (spec 028 FR-004).
+            # already called prepare_workspace with the goal branch.
+            #
+            # Pre-check whether origin is configured. A local-only workspace
+            # (no origin remote) is expected to fail the fetch; treat that as
+            # best-effort (log + continue, spec 028 FR-004). A workspace WITH
+            # an origin whose fetch then fails is a real problem (network/auth/
+            # unreachable) — surface it as mark_failed so it isn't silently
+            # swallowed (spec 028 FR-004 narrowed by steering 2026-08-31).
+            _rc, _ = await _proc_run(
+                "git", "remote", "get-url", "origin", cwd=workspace_dir
+            )
+            _has_origin = (_rc == 0)
             try:
                 await prepare_workspace(workspace_dir, branch=None)
+            except WorkspaceError as exc:
+                if _has_origin:
+                    # Origin configured but fetch failed (network/auth/
+                    # unreachable) — real failure, surface as mark_failed.
+                    prep_failure = (
+                        f"direct-dispatch workspace reset: fetch failed — {exc}"
+                    )
+                else:
+                    # No origin remote (local-only checkout, test fixture) —
+                    # best-effort: log and continue (spec 028 FR-004).
+                    sys.stderr.write(
+                        f"task-queue: direct-dispatch workspace reset failed "
+                        f"({task_id}): {exc} — proceeding on current branch\n"
+                    )
             except Exception as exc:  # noqa: BLE001
-                sys.stderr.write(
-                    f"task-queue: direct-dispatch workspace reset failed "
-                    f"({task_id}): {exc} — proceeding on current branch\n"
+                # Unexpected failure — surface as legible mark_failed.
+                prep_failure = (
+                    f"direct-dispatch workspace reset: unexpected error — {exc!r}"
                 )
         if prep_failure is not None:
             # Fail loudly and FAST — the engine never runs against a workspace

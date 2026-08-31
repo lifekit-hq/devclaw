@@ -658,6 +658,12 @@ async def test_review_gate_grounded_in_actual_workspace_repo(store, tmp_path, mo
     (live-found 2026-07-13: a lone ci.yml diff on .NET/Angular closeloop-bench was
     reviewed as devclaw's own Python/React repo because the prompt was ungrounded)."""
     monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+    # Skip workspace reset — this test verifies review CONTEXT grounding,
+    # not workspace prep. The origin URL is unreachable in test environments;
+    # skipping prep keeps the test about what it's actually testing.
+    async def _noop_prep(*a, **kw):
+        pass
+    monkeypatch.setattr(queue_settle, "prepare_workspace", _noop_prep)
 
     def _git(*args):
         subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
