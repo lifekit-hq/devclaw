@@ -20,11 +20,15 @@ Everything here is pure computation; reads/writes live on the GoalStore
 
 from __future__ import annotations
 
+import os
+
 from ..project_registry import _normalize_workspace
 
 #: Cap on the accumulated brief. Oldest lines are dropped first — the brief
 #: is an operational cheat-sheet, not an archive; recent facts win.
-MAX_BRIEF_CHARS = 4000
+#: Raised from 4 000 (the pre-production default, spec 029): the lifekit-dashboard
+#: brief reached 3 583 chars after a handful of goals, leaving no headroom.
+MAX_BRIEF_CHARS = 12_000
 
 
 def scope_key_for(workspace_dir: "str | None") -> "str | None":
@@ -56,6 +60,28 @@ def merge_repo_notes(existing: "str | None", new_notes: str) -> str:
         dropped = lines.pop(0)
         seen.discard(dropped)
     return "\n".join(lines)
+
+
+def architecture_map_pointer(workspace_dir: "str | None") -> str:
+    """Return a dispatch-brief section pointing the worker at ARCHITECTURE.md.
+
+    Best-effort and never-raises: an absent file or any OS error returns "".
+    The pointer fires only when the file is present at the workspace root;
+    the worker is responsible for reading the current content rather than
+    a snapshot stored in the brief.
+    """
+    if not workspace_dir:
+        return ""
+    try:
+        if os.path.isfile(os.path.join(workspace_dir, "ARCHITECTURE.md")):
+            return (
+                "[This repo has an ARCHITECTURE.md at the root — read it before "
+                "exploring the codebase. It maps where each component lives and "
+                "how the pieces connect.]\n\n"
+            )
+    except OSError:
+        pass
+    return ""
 
 
 def render_brief_prefix(brief: "str | None") -> str:
