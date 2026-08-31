@@ -261,7 +261,7 @@ async def _dispatch_action(
     # gotchas — so a fresh goal doesn't relearn them from zero. Mechanism,
     # not cognition (one SQLite read); skipped for read-only reviews so the
     # reviewer's grounded read isn't seeded with prior claims to confirm.
-    # Architecture map pointer (spec 027): if ARCHITECTURE.md exists at the
+    # Architecture map pointer (spec 029): if ARCHITECTURE.md exists at the
     # workspace root, prepend a one-line pointer before the operational notes
     # so the worker reads the component map before exploring raw files. Pure
     # file-existence probe — best-effort, never-raises, zero LLM, zero token.

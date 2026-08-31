@@ -1,4 +1,4 @@
-"""Structural regression tests for the repo-brief module (spec 027).
+"""Structural regression tests for the repo-brief module (spec 029).
 
 Guards two invariants:
   1. The architecture map pointer fires when ARCHITECTURE.md is present and
@@ -84,5 +84,5 @@ def test_brief_retains_facts_under_raised_cap():
 
 def test_max_brief_chars_is_at_least_12000():
     """Document the intentional raise: anyone lowering MAX_BRIEF_CHARS below
-    12 000 must also update this test deliberately (spec 027)."""
+    12 000 must also update this test deliberately (spec 029)."""
     assert MAX_BRIEF_CHARS >= 12_000

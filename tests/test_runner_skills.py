@@ -198,7 +198,7 @@ def test_onboard_skill_is_three_docs_with_managed_markers(runner, skill_dir):
 
 
 def test_common_skill_instructs_reading_architecture_map(runner, skill_dir):
-    """Spec 027: the always-on _common.md must instruct workers to read
+    """Spec 029: the always-on _common.md must instruct workers to read
     ARCHITECTURE.md when it exists, for every task kind. Presence is proven
     against the raw source first (per rules/testing.md — both presence AND
     absence assertions need the marker to actually be in the file)."""

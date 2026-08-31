@@ -1,6 +1,6 @@
 # Feature Specification: Code-map pointer + brief retention
 
-**Feature Branch**: `027-code-map-brief`
+**Feature Branch**: `029-code-map-brief`
 
 **Created**: 2026-08-31
 

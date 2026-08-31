@@ -26,7 +26,7 @@ from ..project_registry import _normalize_workspace
 
 #: Cap on the accumulated brief. Oldest lines are dropped first — the brief
 #: is an operational cheat-sheet, not an archive; recent facts win.
-#: Raised from 4 000 (the pre-production default, spec 027): the lifekit-dashboard
+#: Raised from 4 000 (the pre-production default, spec 029): the lifekit-dashboard
 #: brief reached 3 583 chars after a handful of goals, leaving no headroom.
 MAX_BRIEF_CHARS = 12_000
 
