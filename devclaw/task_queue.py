@@ -88,7 +88,12 @@ from .queue.settle import (  # noqa: F401 — helpers re-exported for callers/te
 )
 
 NOTIFY_BACKOFF_MS = (1000, 2000, 4000)
-#: global cap on concurrently-running tasks — backpressure
+#: DEFAULT global cap on concurrently-running tasks — backpressure. The
+#: effective cap is resolved per pump by ``_effective_max_concurrent``: a
+#: control-plane override (set live via ``set_max_concurrent``) beats this,
+#: and this is the floor when no override is set. Read at import, so it alone
+#: could never be changed without a restart — which is the whole reason the
+#: override exists.
 GLOBAL_MAX_CONCURRENT = _config.GLOBAL_MAX_CONCURRENT
 
 
@@ -444,6 +449,10 @@ class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
             self._hold_logged = None
         if not self._store.has_active_work():
             return
+        # Resolve the cap HERE, once per pump, not at import: the operator dial
+        # must take effect on the next pump without a restart. Read after the
+        # cheap-idle guard above so an idle tick still touches nothing extra.
+        max_concurrent = self._effective_max_concurrent()
         running = self._store.count_running()
         # Host-memory admission budget: measured ONCE per pump, and only HERE —
         # after the cheap-idle guard above, so an idle tick never reads /proc and
@@ -459,9 +468,9 @@ class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
         # Standalone pending tasks (no deps) — oldest first, up to the global cap.
         # Workspace circuit-breaker skips dispatch to a workspace whose recent
         # failure run tripped a hold; siblings on other workspaces keep flowing.
-        if running < GLOBAL_MAX_CONCURRENT:
-            for t in self._store.list_pending_standalone(limit=GLOBAL_MAX_CONCURRENT):
-                if running >= GLOBAL_MAX_CONCURRENT:
+        if running < max_concurrent:
+            for t in self._store.list_pending_standalone(limit=max_concurrent):
+                if running >= max_concurrent:
                     break
                 if self._workspace_break_active(t.workspace_dir):
                     continue
@@ -524,6 +533,26 @@ class TaskQueue(_NotifyMixin, SettleMixin, AdmissionMixin):
             self._registry.resolve_override(project_id, "sandbox_memory", None),
             self._registry.resolve_override(project_id, "sandbox_cpus", None),
         )
+
+    def _effective_max_concurrent(self) -> int:
+        """The cap this pump enforces: the control-plane override when set,
+        else the import-time default from ``DEVCLAW_MAX_CONCURRENT``.
+
+        Resolved per pump rather than captured at import so ``set_max_concurrent``
+        takes effect on the next pump — no restart, no redeploy. A store read
+        that fails degrades to the default rather than wedging dispatch: a
+        control-plane hiccup must not silently stop all work (it is a
+        backpressure dial, not a safety gate — the safety gates are the
+        operator hold, the run window, and the quota pause, all checked above).
+
+        ``GLOBAL_MAX_CONCURRENT`` is read from the module namespace at call
+        time so the existing monkeypatch in the durability test keeps working.
+        """
+        try:
+            override = self._store.max_concurrent()
+        except Exception:  # noqa: BLE001 — a dial must never wedge dispatch
+            override = None
+        return override if override else GLOBAL_MAX_CONCURRENT
 
     def _effective_sandbox_mem_bytes(self, project_id) -> int:
         """The bytes launch admission must account for THIS task (spec 020
