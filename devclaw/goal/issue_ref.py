@@ -168,16 +168,31 @@ class MissingAcceptance(Exception):
         )
 
 
+#: The heading an issue's completion contract lives under. ONE home for the
+#: name: :mod:`devclaw.intake` RENDERS ``CONTRACT_HEADING`` and
+#: :func:`extract_acceptance` READS every alias below. Generator and reader
+#: splitting on this string is not hypothetical — intake wrote "Done when"
+#: while the reader matched only "Acceptance", so every intake-filed issue
+#: graded ready, created a goal, and parked it on "no acceptance section"
+#: against a body that carried a perfectly good contract (#591/#592/#596).
+#: Hand-written issues use "Acceptance"; both are recognized, forever.
+CONTRACT_HEADING = "Done when"
+CONTRACT_HEADINGS = (CONTRACT_HEADING, "Acceptance")
+
+
 def extract_acceptance(body: str) -> Optional[str]:
-    """Mechanically slice the acceptance section out of an issue body: from a
-    heading whose text starts with 'Acceptance' to the next heading of the
-    same or higher level. Zero cognition — the grading pipeline guarantees
-    the format; this only cuts along it. None when absent."""
+    """Mechanically slice the completion-contract section out of an issue
+    body: from a heading whose text starts with any of
+    :data:`CONTRACT_HEADINGS` to the next heading of the same or higher
+    level. Zero cognition — the grading pipeline guarantees the format; this
+    only cuts along it. None when absent."""
     import re
 
     if not body:
         return None
-    m = re.search(r"^(#{2,4})\s*Acceptance\b.*$", body, flags=re.MULTILINE | re.IGNORECASE)
+    _alts = "|".join(re.escape(h) for h in CONTRACT_HEADINGS)
+    m = re.search(rf"^(#{{2,4}})\s*(?:{_alts})\b.*$", body,
+                  flags=re.MULTILINE | re.IGNORECASE)
     if not m:
         return None
     level = len(m.group(1))

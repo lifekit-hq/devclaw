@@ -25,6 +25,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from typing import Optional, Protocol
+from .goal.issue_ref import CONTRACT_HEADING
 from .procutil import run as _run
 
 #: the intake marker label every filed ask carries (proposal §5).
@@ -195,7 +196,7 @@ def issue_body(
         "> Dispatch is a separate human-gated step; this issue is the durable record\n"
         "> of the ask, and its URL is the asker's receipt.\n\n"
         f"## What\n\n{what.strip()}\n\n"
-        f"## Done when\n\n{done_when.strip()}\n\n"
+        f"## {CONTRACT_HEADING}\n\n{done_when.strip()}\n\n"
         f"## Context\n\n{ctx}\n\n"
         + increments_section(expected_increments, increment_basis)
         + "\n"
@@ -648,7 +649,7 @@ def parse_issue_fields(body: str) -> tuple[str, str, str]:
         return m.group(1).strip() if m else ""
 
     what = _section("What")
-    done_when = _section("Done when")
+    done_when = _section(CONTRACT_HEADING)
     context = _section("Context")
     if context == "—":  # the rendered "omitted context" placeholder
         context = ""

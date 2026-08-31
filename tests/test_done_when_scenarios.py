@@ -248,3 +248,46 @@ async def test_done_gate_logs_the_judged_issue_revision(tmp_path):
 
     contract = await _ir.scenarios_contract("", [7], FakeIssueFetcher({7: _snap(7, body=BODY_V1)}))
     assert hashlib.sha256(contract.encode()).hexdigest()[:12] in log
+
+
+# ---- the heading vocabulary is ONE home (generator ↔ reader) --------------
+# Extends the fail-loud contract class above with the drift that actually
+# happened: intake rendered "## Done when" while the reader matched only
+# "Acceptance", so every intake-filed issue graded ready, spawned a goal, and
+# parked it on "no acceptance section" against a body carrying a real
+# contract. Both names are recognized; absence must still be absence.
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        # what devclaw's own file_intake renders
+        ("## What\n\nw\n\n## Done when\n\n- a\n- b\n\n## Context\n\nc", "- a\n- b"),
+        # what a hand-written issue uses
+        ("ctx\n## Acceptance\n- a\n## Notes\nx", "- a"),
+        # heading-with-suffix, either vocabulary
+        ("## Acceptance scenarios\n- a\n## Notes\nx", "- a"),
+        ("## Done when (all must hold)\n- a\n## Notes\nx", "- a"),
+        # case-insensitive, deeper levels
+        ("### done when\n- a\n### Notes\nx", "- a"),
+        # absence is still absence — the gate never evaluates an empty contract
+        ("## What\n\nno contract here\n\n## Provenance\n- x", None),
+        ("", None),
+    ],
+)
+def test_contract_heading_vocabulary_is_shared_by_generator_and_reader(body, expected):
+    from devclaw.goal.issue_ref import extract_acceptance
+
+    assert extract_acceptance(body) == expected
+
+
+def test_intake_renders_the_heading_the_reader_parses():
+    """The anti-drift assertion: whatever intake writes, the contract reader
+    must be able to slice back out. A rename on either side fails here."""
+    from devclaw.goal.issue_ref import CONTRACT_HEADING, extract_acceptance
+    from devclaw.intake import issue_body
+
+    body = issue_body(
+        what="a thing", done_when="- the thing holds", context=None,
+        asker="someone", channel="test", project_id="p", slug="s", filed_ms=0,
+    )
+    assert f"## {CONTRACT_HEADING}" in body
+    assert extract_acceptance(body) == "- the thing holds"
