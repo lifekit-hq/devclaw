@@ -28,6 +28,7 @@ _EXPIRY_WARN_MS = 48 * 3600 * 1000
 #: the sandbox OAuth env var (one home: engine.sandcastle.OAUTH_TOKEN_VAR;
 #: re-imported, not restated).
 from ..engine.sandcastle import OAUTH_TOKEN_VAR as _OAUTH_TOKEN_VAR  # noqa: E402
+from ..engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR  # noqa: E402
 
 
 def _ro_db(db_path: str) -> sqlite3.Connection:
@@ -221,6 +222,85 @@ def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
     if present:
         return [Finding(cid, Verdict.OK, f"{_OAUTH_TOKEN_VAR} set (sandbox auth rides the setup-token)")]
     return [Finding(cid, Verdict.OK, f"{_OAUTH_TOKEN_VAR} not set (sandbox auth rides the mounted /login credential)")]
+
+
+#: GitHub token prefixes. A `read:packages` credential that matches none of
+#: these is not a GitHub token at all — the exact 2026-08-31 failure, where a
+#: malformed secret rode the whole plumbing into the sandbox and only
+#: surfaced as an `npm ci` 401 after it had eaten a goal's dispatch budget.
+_GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "ghs_", "gho_")
+
+#: Module-global so tests patch it HERE (the caller's module), per the
+#: collector convention. Never raises: every failure degrades to None, which
+#: the check reports as UNKNOWN — an unverifiable credential is never OK.
+def _probe_registry_token(token: str, timeout_s: float = 5.0) -> Optional[int]:
+    """HTTP status from an authenticated GitHub API call, or None if the
+    probe could not run at all. The token is never logged or returned."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://api.github.com/user",
+        headers={"Authorization": f"Bearer {token}", "User-Agent": "devclaw-doctor"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return int(resp.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+    except Exception:
+        return None
+
+
+def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
+    """The registry-read credential is present, well-formed, AND live.
+
+    Spec `specs/tiny/sandbox-registry-read-token.md` specified only the UNSET
+    case ("blank ⇒ no forward, byte-identical"). Set-but-invalid was never
+    considered, and it is strictly worse than unset: the token crosses into
+    every sandbox, `npm ci` 401s in there, the worker self-reports BLOCKED,
+    and the goal burns its dispatch budget on an environment fault it cannot
+    fix. The value is never echoed — shape and probe status only.
+    """
+    cid = "instance.registry.token"
+    remedy = (
+        "regenerate a read:packages-only classic PAT, "
+        "`gh secret set NODE_AUTH_TOKEN`, then redeploy"
+    )
+    token = os.environ.get(_REGISTRY_TOKEN_VAR, "").strip()
+    if not token:
+        # A supported posture (the pre-token deployment), not a fault — same
+        # convention as check_auth_setup_token. The consequence is named so
+        # the report still explains why a frontend build cannot run.
+        return [Finding(cid, Verdict.OK,
+                        f"{_REGISTRY_TOKEN_VAR} not set (no registry credential "
+                        "crosses into the sandbox; `npm ci` on a GitHub-Packages "
+                        "repo cannot resolve in there)")]
+    if not token.startswith(_GH_TOKEN_PREFIXES):
+        return [Finding(cid, Verdict.FAIL,
+                        f"{_REGISTRY_TOKEN_VAR} is set but is not a GitHub token "
+                        f"(no {'/'.join(_GH_TOKEN_PREFIXES)} prefix) — it will "
+                        "reach every sandbox and 401 there",
+                        remedy=remedy)]
+    status = _probe_registry_token(token)
+    if status is None:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"{_REGISTRY_TOKEN_VAR} is well-formed but could not be "
+                        "verified (registry unreachable) — validity unproven",
+                        remedy=remedy)]
+    if status in (401, 403):
+        return [Finding(cid, Verdict.FAIL,
+                        f"{_REGISTRY_TOKEN_VAR} rejected by GitHub (HTTP {status}) "
+                        "— expired, revoked, or missing the read:packages scope",
+                        remedy=remedy)]
+    if status >= 400:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"{_REGISTRY_TOKEN_VAR} probe returned HTTP {status} — "
+                        "validity unproven",
+                        remedy=remedy)]
+    return [Finding(cid, Verdict.OK,
+                    f"{_REGISTRY_TOKEN_VAR} set, well-formed, and accepted by "
+                    f"GitHub (HTTP {status})")]
 
 
 def check_auth_pause(ctx: "InstanceContext") -> list[Finding]:
@@ -515,6 +595,7 @@ INSTANCE_CHECKS: tuple = (
     check_auth_credentials_file,
     check_auth_claude_json,
     check_auth_setup_token,
+    check_registry_token,
     check_auth_pause,
     check_skills_bundle,
     check_schedule_raw_key,

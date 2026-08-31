@@ -38,6 +38,10 @@ def env(tmp_path, monkeypatch):
     (cfg_dir / ".claude.json").write_text(json.dumps({"oauthAccount": {"emailAddress": "x@y"}}))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(cfg_dir))
     monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    # NODE_AUTH_TOKEN too: unset keeps the registry check on its no-probe
+    # path, so the suite can never reach the network from a dev machine
+    # that happens to carry a real token.
+    monkeypatch.delenv("NODE_AUTH_TOKEN", raising=False)
 
     store = StateStore(str(tmp_path / "devclaw.db"))
     goals_dir = tmp_path / "goals"
@@ -489,3 +493,89 @@ def test_slice_hold_count_column_absent_detected(env):
 def test_slice_hold_count_column_present_is_ok(env):
     (f,) = _findings(_run(env), "instance.dispatch.goal_status_slice_hold_count")
     assert f.verdict is Verdict.OK
+
+
+# ---- instance: registry-read credential (seeded faults) -------------------
+# The tinyspec that added NODE_AUTH_TOKEN specified only the UNSET case
+# ("blank ⇒ no forward, byte-identical"). Set-but-invalid was never
+# considered and is strictly worse: it crosses into every sandbox and only
+# surfaces as an `npm ci` 401 in there, after eating a goal's dispatch
+# budget. Doctor is the deployed-instance guard for that; these are its
+# seeded faults. NOTE: every case either leaves the token unset or patches
+# the probe — the suite must never make a real network call.
+_REG_CID = "instance.registry.token"
+
+
+def _patch_probe(monkeypatch, status):
+    from devclaw.doctor import checks_instance as ci
+
+    called = {}
+
+    def _fake(token, timeout_s=5.0):
+        called["token_seen"] = token
+        return status
+
+    monkeypatch.setattr(ci, "_probe_registry_token", _fake)
+    return called
+
+
+def test_registry_token_unset_warns_and_never_probes(env, monkeypatch):
+    def _boom(token, timeout_s=5.0):  # pragma: no cover - must not run
+        raise AssertionError("probed on the unset path")
+
+    from devclaw.doctor import checks_instance as ci
+
+    monkeypatch.setattr(ci, "_probe_registry_token", _boom)
+    (f,) = _findings(_run(env), _REG_CID)
+    # unset is a supported posture (pre-token deployment), so it stays OK and
+    # a clean instance still reports healthy — only malformed/rejected fails.
+    assert f.verdict is Verdict.OK and "not set" in f.evidence
+
+
+def test_registry_token_malformed_fails_without_probing(env, monkeypatch):
+    """The 2026-08-31 incident shape: a set-but-not-a-GitHub-token value."""
+    from devclaw.doctor import checks_instance as ci
+
+    def _boom(token, timeout_s=5.0):  # pragma: no cover - must not run
+        raise AssertionError("probed a malformed token")
+
+    monkeypatch.setattr(ci, "_probe_registry_token", _boom)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", "powershell-junk-not-a-token")
+    (f,) = _findings(_run(env), _REG_CID)
+    assert f.verdict is Verdict.FAIL
+    assert "not a GitHub token" in f.evidence and f.remedy
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_registry_token_rejected_by_github_fails(env, monkeypatch, status):
+    _patch_probe(monkeypatch, status)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", "ghp_wellformedbutdead")
+    (f,) = _findings(_run(env), _REG_CID)
+    assert f.verdict is Verdict.FAIL and str(status) in f.evidence
+
+
+def test_registry_token_unreachable_is_unknown_never_ok(env, monkeypatch):
+    """An unverifiable credential must never read as a healthy one."""
+    _patch_probe(monkeypatch, None)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", "ghp_wellformedunverifiable")
+    (f,) = _findings(_run(env), _REG_CID)
+    assert f.verdict is Verdict.UNKNOWN
+    assert f.verdict is not Verdict.OK
+
+
+def test_registry_token_valid_is_ok(env, monkeypatch):
+    _patch_probe(monkeypatch, 200)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", "ghp_goodtoken")
+    (f,) = _findings(_run(env), _REG_CID)
+    assert f.verdict is Verdict.OK
+
+
+@pytest.mark.parametrize("value", ["powershell-junk-not-a-token", "ghp_supersecretvalue"])
+def test_registry_token_value_never_appears_in_any_finding(env, monkeypatch, value):
+    """The token is a credential: shape and probe status only, never the
+    value — not in evidence, not in remedy, not anywhere in the report."""
+    _patch_probe(monkeypatch, 401)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", value)
+    report = _run(env)
+    serialized = json.dumps(report.to_dict())
+    assert value not in serialized

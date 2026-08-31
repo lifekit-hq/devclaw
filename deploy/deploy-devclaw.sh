@@ -50,6 +50,29 @@ else
   printf '\033[1;33m⚠ no CLAUDE_CODE_OAUTH_TOKEN (env or %s) — this instance will run on the mounted ~/.claude login, which an interactive login elsewhere on the account can revoke mid-run. Set the repo Actions secret and deploy from the workflow.\033[0m\n' "$ENV_FILE" >&2
 fi
 
+# ─── Registry credential: if SET it must be WELL-FORMED ────────────────────
+# NODE_AUTH_TOKEN is the read:packages credential forwarded into every
+# sandbox for `npm ci` on a GitHub-Packages repo. Unset is a supported
+# posture (no -e forward; frontend builds simply cannot run) so it only
+# warns. Set-but-malformed is FATAL: the sandbox spec only ever considered
+# the unset case, and a wrong value is strictly worse than none — it rides
+# the whole plumbing in and surfaces as an `npm ci` 401 inside a container,
+# after it has already eaten a goal's dispatch budget. Catch it here, at the
+# gate, where the fix is obvious. Never echo the value.
+_reg_tok="${NODE_AUTH_TOKEN:-}"
+if [[ -z "$_reg_tok" ]] && grep -qE '^NODE_AUTH_TOKEN=.+' "$ENV_FILE" 2>/dev/null; then
+  _reg_tok="$(grep -E '^NODE_AUTH_TOKEN=' "$ENV_FILE" | tail -1 | cut -d= -f2-)"
+fi
+if [[ -z "$_reg_tok" ]]; then
+  printf '\033[1;33m⚠ no NODE_AUTH_TOKEN (env or %s) — sandboxes carry no registry credential, so `npm ci` on a GitHub-Packages repo cannot resolve and no real frontend build or e2e evidence is possible in there.\033[0m\n' "$ENV_FILE" >&2
+elif [[ ! "$_reg_tok" =~ ^(ghp_|github_pat_|ghs_|gho_) ]]; then
+  unset _reg_tok
+  die "NODE_AUTH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). A malformed registry token reaches every sandbox and 401s there. Regenerate a read:packages-only classic PAT, \`gh secret set NODE_AUTH_TOKEN\`, and redeploy."
+else
+  say "registry credential: NODE_AUTH_TOKEN present and well-formed"
+fi
+unset _reg_tok
+
 export DEVCLAW_MCP_IMAGE="${REGISTRY}/devclaw-mcp:${TAG}"
 export DEVCLAW_SANDBOX_IMAGE="${REGISTRY}/devclaw-sandbox:${TAG}"
 
