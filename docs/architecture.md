@@ -33,7 +33,7 @@ knows the paradigm already knows the contract.
 | The milestone-level objective | **Saga** / long-running process | a goal — authored from five named slots, never prose (spec 012 US2: objective · done_when · out_of_scope · invariants · established) |
 | The execution atom | **Unit of Work** (Fowler) | one sandbox run → one atomic, verified, PR-able change-set |
 | The plan | **Task graph (DAG)** | `tasks.md`; `[P]` marks topological independence — parallelism is *data in the plan*, never executor control flow |
-| Parallel safety | **Hermetic action with declared I/O** (Bazel) | a claimed `[P]` task's declared file scope, checked at settle — always-hard, zero-LLM (`loom/declared_scope.py`) |
+| Parallel safety | **Hermetic action with declared I/O** (Bazel) | **not enforced** — the declared-scope gate was retired 2026-08-31 with the `[P]` lane spec 022 US3 deleted; nothing constrains an increment to a declared file scope (#762) |
 | Concurrency default | **Single-writer / actor-per-project** | at most one goal actively dispatching per project |
 | Integration | ~~**Merge queue** (Bors)~~ | *removed by spec 022 US3* — the dormant fan-out lane and its serial merge queue (`loom/merge_queue.py`, `DEVCLAW_FANOUT`) were demolished; every increment integrates sequentially on the goal branch |
 
@@ -211,8 +211,12 @@ When the tick decides to *do* something (not just think):
    planned parallelism: a task graph may mark tasks topologically independent
    (`[P]`) and declare the file paths each will touch, and this gate verifies at
    settle that the increment's diff stayed inside its declaration. Pure
-   mechanism — a string scan of the diff the other read-the-change gates already
-   share, zero LLM, no git call of its own (`devclaw/loom/declared_scope.py`).
+   The declared-scope gate that lived here was RETIRED (2026-08-31): its
+   trigger was the spec 010 `[P]` scope claim, and spec 022 US3 deleted the
+   lane that emitted it, so the gate self-skipped on every real increment
+   while its own tests kept it green. `loom/diff_paths.py` keeps the two
+   general path helpers it left behind. See #762 for the containment gap
+   this leaves under `trust`.
    An increment whose plan declared nothing is *not consulted*, so nothing about
    an ordinary increment changes; one that declared a scope and left it fails
    closed, in `trust` as well as `strict`, because a declared scope is what

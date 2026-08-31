@@ -34,13 +34,12 @@ from ..loom.limits import classify_failure, pause_seconds
 from ..quality.browser_gate import browser_run_verdict
 from ..quality.change_advisories import change_advisories
 from ..quality.gate_policy import Consequence, gate_consequence
-from ..quality.gate_pipeline import GateInput, run_pipeline
+from ..quality.gate_pipeline import GateInput, GateOutcome, run_pipeline
 from ..quality.task_gates import (
     _BrowserGate,
     _IntegrityGate,
     _MaterializeGate,
     _ReviewGate,
-    _ScopeGate,
     _VerifyGate,
     _has_playwright_config,
 )
@@ -1115,12 +1114,28 @@ class SettleMixin:
                     # test_integrity stay always-hard; browser stays dial-able.
                     gates: list = [
                         _VerifyGate(), _MaterializeGate(), _IntegrityGate(),
-                        _ScopeGate(),
                     ]
                     if strictness != "trust":
                         gates.append(_ReviewGate(self))
                     gates.append(_BrowserGate(self))
-                    verdict = await run_pipeline(gate_input, tuple(gates))
+                    gate_trace: "list[GateOutcome]" = []
+                    verdict = await run_pipeline(
+                        gate_input, tuple(gates), trace=gate_trace,
+                    )
+                    # Record what every gate DID, consulted or not. A gate that
+                    # is never consulted approved nothing; collapsing that into
+                    # a pass is how the declared-scope gate went inert unnoticed
+                    # after spec 022 removed the lane that produced its trigger.
+                    try:
+                        self._store.append_event(
+                            task_id=task_id, type="gate_outcomes",
+                            source="settle",
+                            payload_json=json.dumps(
+                                {"gates": [g.to_dict() for g in gate_trace]}
+                            ),
+                        )
+                    except Exception:  # noqa: BLE001 — observability never fails a settle
+                        pass
                     if verdict is not None:
                         # The first failing gate — feed its reason back through the
                         # SAME retry loop as a gate fail. For a DIAL-ABLE gate (review

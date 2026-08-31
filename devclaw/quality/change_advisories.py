@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 import re
 
-from ..loom.declared_scope import changed_paths, path_in_scope
+from ..loom.diff_paths import changed_paths, path_in_scope
 
 #: Browser-test spec files. A run that ADDS one while ``verify_cmd`` cannot run
 #: it ships a test nothing executes (the cf-11 failure mode).
