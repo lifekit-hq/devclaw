@@ -261,11 +261,18 @@ async def _dispatch_action(
     # gotchas — so a fresh goal doesn't relearn them from zero. Mechanism,
     # not cognition (one SQLite read); skipped for read-only reviews so the
     # reviewer's grounded read isn't seeded with prior claims to confirm.
+    # Architecture map pointer (spec 027): if ARCHITECTURE.md exists at the
+    # workspace root, prepend a one-line pointer before the operational notes
+    # so the worker reads the component map before exploring raw files. Pure
+    # file-existence probe — best-effort, never-raises, zero LLM, zero token.
     brief_prefix = ""
     if action.tool != "review_repository":
+        arch_ptr = _repo_brief.architecture_map_pointer(goal.workspace_dir)
         scope = _repo_brief.scope_key_for(goal.workspace_dir)
+        notes_prefix = ""
         if scope:
-            brief_prefix = _repo_brief.render_brief_prefix(store.read_repo_brief(scope))
+            notes_prefix = _repo_brief.render_brief_prefix(store.read_repo_brief(scope))
+        brief_prefix = arch_ptr + notes_prefix
     # Human-facing form of the action (#550 — the display half of the #547
     # class): the thin-advance brief is dispatch plumbing, so everything a
     # HUMAN reads from this dispatch — the ``next`` hint (get_goal/console/

@@ -197,6 +197,20 @@ def test_onboard_skill_is_three_docs_with_managed_markers(runner, skill_dir):
     assert "preserves everything outside" in bundle
 
 
+def test_common_skill_instructs_reading_architecture_map(runner, skill_dir):
+    """Spec 027: the always-on _common.md must instruct workers to read
+    ARCHITECTURE.md when it exists, for every task kind. Presence is proven
+    against the raw source first (per rules/testing.md — both presence AND
+    absence assertions need the marker to actually be in the file)."""
+    raw = (skill_dir / "_common.md").read_text(encoding="utf-8")
+    assert "ARCHITECTURE.md" in raw  # marker is real in the source
+    for kind in ("implement_feature", "fix_bug", "review_repository", "onboard"):
+        bundle = runner._load_skills(kind)
+        assert "ARCHITECTURE.md" in bundle, (
+            f"kind={kind!r}: _common.md ARCHITECTURE.md instruction missing from bundle"
+        )
+
+
 def test_fix_bug_keeps_its_smallest_change_skill(runner, skill_dir):
     bundle = runner._load_skills("fix_bug")
     assert "smallest change" in bundle.lower()
