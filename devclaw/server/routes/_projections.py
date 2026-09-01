@@ -63,6 +63,25 @@ def _active_goal_count(goals_list: list[dict]) -> int:
 _TERMINAL_PHASES = {"done", "cancelled", "error", "achieved"}
 
 
+def _goal_needs_you(g: dict) -> bool:
+    """ONE definition of "this goal is waiting on the operator": blocked,
+    progress-stalled, or a stop-state direction verdict. The overview count
+    (control.py), the goal-row projection, and — through the row's ``needsYou``
+    field — the console frontend all read this predicate; before it existed the
+    Overview page counted only ``phase == blocked`` and showed "All clear" over
+    a dozen parked goals. Accepts both direction shapes (the list projection's
+    bare verdict string and the detail's ``{verdict, at, note}`` dict)."""
+    if g.get("phase") in _TERMINAL_PHASES:
+        return False
+    direction = g.get("direction")
+    verdict = direction.get("verdict") if isinstance(direction, dict) else direction
+    return bool(
+        g.get("blocked_on")
+        or (g.get("progress") or {}).get("stalled")
+        or verdict in ("stalled", "needs_human")
+    )
+
+
 def _phase_label(phase: str | None) -> str:
     """Map internal phase to the design's label vocabulary. `done` is presented
     as `Achieved` per the mock (Project Detail archived section).
@@ -122,6 +141,7 @@ def _goal_row(goal_id: str) -> dict:
             "phaseLabel": "Missing",
             "action": "—",
             "lastUpdateMs": None,
+            "needsYou": False,
         }
     phase = g.get("phase")
     return {
@@ -134,6 +154,7 @@ def _goal_row(goal_id: str) -> dict:
         "phaseLabel": _phase_label(phase),
         "action": _goal_action_label(goal_id),
         "lastUpdateMs": _goal_last_update_ms(goal_id),
+        "needsYou": _goal_needs_you(g),
     }
 
 

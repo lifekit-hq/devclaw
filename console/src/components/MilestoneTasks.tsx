@@ -51,16 +51,23 @@ export function MilestoneTasks({ tasks, emptyLabel }: { tasks: TaskRow[]; emptyL
   const active = milestones.filter((m) => m.active);
   const settled = milestones.filter((m) => !m.active);
 
+  // Fold settled milestones only while something live sits above them. When
+  // history is ALL the goal has (an idle goal between actions, or a finished
+  // one), folding it renders a page that says "Tasks N" and shows nothing.
+  const foldSettled = active.length > 0;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {active.map((m) => <MilestoneBlock key={m.key} m={m} />)}
-      {settled.length > 0 && (
+      {settled.length > 0 && (foldSettled ? (
         <TieredDisclosure label="Completed milestones" count={settled.length}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 6 }}>
             {settled.map((m) => <MilestoneBlock key={m.key} m={m} />)}
           </div>
         </TieredDisclosure>
-      )}
+      ) : (
+        settled.map((m) => <MilestoneBlock key={m.key} m={m} />)
+      ))}
     </div>
   );
 }

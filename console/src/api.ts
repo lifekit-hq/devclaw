@@ -32,6 +32,10 @@ export interface GoalRow {
   phaseLabel: string;
   action: string;
   lastUpdateMs: number | null;
+  /** Backend-computed "waiting on the operator" flag — blocked, stalled, or a
+   *  stop-state verdict. The ONE definition lives in the server projection
+   *  (_projections._goal_needs_you); render it, don't re-derive it. */
+  needsYou: boolean;
 }
 
 export type TaskKind =
@@ -188,6 +192,11 @@ export interface GoalDetail {
   timeline: TimelineNode[];
   blockedOn: string | null;
   blockedKind: string;
+  /** When another goal holds this project's lane: its id, and the human line
+   *  explaining the wait. The reason is the empty-state explanation for a
+   *  queued goal's otherwise blank detail page. */
+  queuedBehind: string | null;
+  queuedReason: string | null;
   /** Firming questions to answer when blocked awaiting owner input; else []. */
   unknowns: Unknown[];
   /** §6 structured decision blocks (ADR 0010): the planner's options for a

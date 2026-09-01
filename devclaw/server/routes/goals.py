@@ -26,7 +26,6 @@ from starlette.responses import (
 )
 
 from ... import telemetry as _telemetry
-from ...goal import slice_guard
 from ...goal.slice_guard import _TASKS_PATH_RE
 from .._state import goals, mcp, store
 from ._common import _task_row
@@ -357,6 +356,11 @@ async def goal_json(request: Request) -> Response:
             "timeline": timeline,
             "blockedOn": g.get("blocked_on"),
             "blockedKind": g.get("blocked_kind", ""),
+            # Lane state — why an idle goal with zero tasks is empty. Without
+            # these the detail page renders a blank "Tasks 0" with no way to
+            # say "queued behind <goal> — starts when it finishes".
+            "queuedBehind": g.get("queued_behind"),
+            "queuedReason": g.get("queued_reason"),
             "blockOptions": block_options,
             "usage": usage,
             "tasks": dispatched_tasks,
@@ -530,17 +534,16 @@ async def _tasks_paths_at_ref(workspace_dir: str, ref: str) -> "list[str]":
 async def _read_plan(workspace_dir: str, goal_id: str) -> dict:
     """The goal's current speckit plan, for the console's Plan view.
 
-    Reads the ACTIVE feature's ``specs/NNN-*/tasks.md`` — the worker-owned
-    execution contract since spec 008. This used to read ``PLAN.md``; nothing
-    has written that file since the speckit shrink, so the console's DEFAULT
-    tab returned ``content: None`` for every goal. The tab was not broken by
-    deleting PLAN.md — it had been empty since 008, and pointing it at the file
-    the worker actually maintains is what restores it.
-
-    Tries the goal's LIVE delivery branch first (so an in-flight plan shows,
-    not only a merged one), then whatever is checked out, then the working
-    tree. A repo with no speckit contract returns ``content=None`` (a goal that
-    has not planned yet), never an error."""
+    Reads the ``specs/NNN-*/tasks.md`` THIS goal's branch introduced — the
+    worker-owned execution contract since spec 008. Candidates are the
+    tasks.md paths present on the goal's delivery branch but NOT on the
+    default branch: a project workspace is shared by every goal in the
+    project, so "newest spec dir at the ref" attributes whichever goal
+    planned last (every finance-sentry goal page rendered the liquidity-brain
+    checklist). A goal that authored no spec returns ``content=None`` ("no
+    plan yet") — honest-empty over another goal's plan. When the default
+    branch cannot be resolved the subtraction degrades to a no-op
+    (best-effort, never raises)."""
     # The workspace resets to the default branch between actions, so a short,
     # bounded fetch keeps origin/goal/<id> current for an in-flight goal. Never
     # let a plan view hang on the network.
@@ -552,30 +555,24 @@ async def _read_plan(workspace_dir: str, goal_id: str) -> dict:
         await asyncio.wait_for(fetch.communicate(), timeout=8.0)
     except (OSError, asyncio.TimeoutError):
         pass
+    inherited: set[str] = set()
+    for default_ref in ("origin/HEAD", "origin/main", "origin/master"):
+        base_paths = await _tasks_paths_at_ref(workspace_dir, default_ref)
+        if base_paths:
+            inherited = set(base_paths)
+            break
     for source, ref in (
         ("branch", f"origin/goal/{goal_id}"),
         ("branch", f"goal/{goal_id}"),
-        ("head", "HEAD"),
     ):
-        paths = await _tasks_paths_at_ref(workspace_dir, ref)
+        paths = [p for p in await _tasks_paths_at_ref(workspace_dir, ref)
+                 if p not in inherited]
         if not paths:
             continue
         content = await _git_show(workspace_dir, f"{ref}:{paths[-1]}")
         if content:
             return {"content": content, "source": source, "ref": ref,
                     "path": paths[-1]}
-    try:
-        rel = slice_guard.current_feature_dir_sync(workspace_dir)
-        if rel:
-            path = os.path.join(workspace_dir, rel, "tasks.md")
-            if os.path.isfile(path):
-                with open(path, encoding="utf-8", errors="replace") as fh:
-                    content = fh.read()
-                if content.strip():
-                    return {"content": content, "source": "worktree", "ref": None,
-                            "path": f"{rel}/tasks.md"}
-    except OSError:
-        pass
     return {"content": None, "source": None, "ref": None, "path": None}
 
 
