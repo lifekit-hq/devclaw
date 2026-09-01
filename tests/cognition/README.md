@@ -15,7 +15,8 @@ tests/cognition/
 │   └── evaluator/
 │       ├── achieved_clean.json           happy-path done-gate: real evidence, expects `achieved`
 │       ├── off_track_missing_clause.json real evidence for 3/4 clauses; expects downgrade to `off_track`
-│       └── off_track_stub_disguise.json  clause satisfied by an unauthorized stub; expects `off_track`
+│       ├── off_track_stub_disguise.json  clause satisfied by an unauthorized stub; expects `off_track`
+│       └── needs_human_design_conflict.json  clause contradicted by deliberate, fenced design; expects `needs_human` (fs-479 trace)
 └── test_evaluator_evals.py         mechanism guards (always) + live cognition run (opt-in)
 ```
 

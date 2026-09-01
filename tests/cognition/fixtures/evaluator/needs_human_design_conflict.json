@@ -1,0 +1,52 @@
+{
+  "name": "needs_human_design_conflict",
+  "module": "evaluator",
+  "source": "production-trace",
+  "notes": "fs-479 (2026-09-01): a done_when clause demanded 'excluding pending' while the backend deliberately includes pending with a commented rationale at the exact line. The gate diagnosed 'a design reversal, not a dropped clause' in its own rationale and still returned off_track three rounds running; the worker could only satisfy the correction by changing a service the goal's out_of_scope fenced off — which it did (#358 class). Correct behaviour per prompt step 3b: `needs_human` with a question naming both sides.",
+  "inputs": {
+    "goal": {
+      "id": "expense-summary-consistency",
+      "objective": "Make the report page's 'Total spent' figure use the same backend definition as the summary card, and delete the client-side page-sum.",
+      "done_when": "Navigating from the summary card to the report shows the same number for the same period (excluding refunds, all currencies normalized, full-month server-side aggregate). The figure does not change as more rows are lazily loaded. A test asserts the equality under mocked data containing a refund.",
+      "backlog": [],
+      "stub_acceptable": [],
+      "cadence": "1d",
+      "workspace_dir": "/repos/expense-tracker",
+      "out_of_scope": [
+        "Changing the summary card's computation or the backend SpendingStatisticsService definition"
+      ]
+    },
+    "status": {
+      "phase": "verifying",
+      "lifecycle": "executing",
+      "next": "verifying done",
+      "actions_dispatched": 1,
+      "deliveries_since_eval": 1
+    },
+    "recent_log": "PR #12 open on the goal branch — report page reads totalSpentUsd from the shared SpendingStatisticsService aggregate; client-side page-sum deleted; equality e2e test added with a refund fixture.",
+    "deliveries": "One increment on the goal branch: report store reads the backend aggregate; page-sum computed deleted; e2e test 'summary card equals report total' green with a refund ($40) in the mocked page.",
+    "review_report": "## Per-clause evidence\n- clause: `same number for the same period` — satisfied. Both surfaces read totalSpentUsd from SpendingStatisticsService.GetMonthlyAsync; e2e test asserts card == report under mocked data.\n- clause: `all currencies normalized` — satisfied. The aggregate sums amountUsd; fixtures carry a EUR row normalized upstream.\n- clause: `full-month server-side aggregate` — satisfied. Query filters by UTC month key server-side.\n- clause: `figure stable under lazy loading` — satisfied. Value stored once on load; loadMore does not touch it.\n- clause: `excluding refunds` — CONTRADICTED BY DESIGN. SpendingStatisticsService.cs:58 deliberately INCLUDES refunds as negative amounts; the line carries the comment 'refunds net against spending — excluding them overstates the month'. A unit test GetMonthly_NetsRefunds pins this behaviour. This is an intentional, working design the clause asks to negate, and the goal's out_of_scope forbids changing this service.\n- clause: `test asserts equality under mocked refund data` — satisfied. e2e fixture includes a $40 refund; equality asserted.\n\n## Structural health\nverdict: ok.\n\n## Risks not in done_when\nnone material.",
+    "at_done_gate": true,
+    "spec": ""
+  },
+  "expected": {
+    "verdict": "needs_human",
+    "must_contain_rationale_hints": ["refund", "deliberate"],
+    "must_contain_correction_hints": [],
+    "notes": "Every clause is evidenced except one that is contradicted by an intentional, commented, unit-tested design decision the goal's own scope fence protects. Step 3b: this is a human question (which side wins), never an off_track correction — a correction here can only instruct negating deliberate design or breaking the fence. If the model answers off_track, that is the fs-479 failure mode reproduced."
+  },
+  "canned_model_output": {
+    "verdict": "needs_human",
+    "rationale": "Five of six clauses have specific repo-confirmed evidence. The 'excluding refunds' clause is contradicted by a deliberate design decision: SpendingStatisticsService.cs:58 intentionally nets refunds, with a commented rationale and a unit test pinning it, and the goal's out_of_scope forbids changing that service. This is a contract-vs-design conflict only the owner can resolve.",
+    "corrections": [],
+    "clauses": [
+      {"clause": "Navigating from the summary card to the report shows the same number for the same period", "satisfied": true, "evidence": "Both surfaces read totalSpentUsd from SpendingStatisticsService.GetMonthlyAsync; e2e equality test green."},
+      {"clause": "excluding refunds", "satisfied": false, "evidence": "SpendingStatisticsService.cs:58 deliberately includes refunds as negative amounts ('refunds net against spending'); GetMonthly_NetsRefunds pins it; out_of_scope forbids changing the service."},
+      {"clause": "all currencies normalized", "satisfied": true, "evidence": "Aggregate sums amountUsd; EUR fixture normalized upstream."},
+      {"clause": "full-month server-side aggregate", "satisfied": true, "evidence": "UTC month-key filter server-side."},
+      {"clause": "The figure does not change as more rows are lazily loaded", "satisfied": true, "evidence": "Value stored once on load; loadMore untouched."},
+      {"clause": "A test asserts the equality under mocked data containing a refund", "satisfied": true, "evidence": "e2e fixture includes a $40 refund; equality asserted."}
+    ],
+    "question": "The contract requires 'excluding refunds', but SpendingStatisticsService deliberately nets refunds against spending (commented rationale, pinned by GetMonthly_NetsRefunds), and the goal's out_of_scope forbids changing that service. Which wins — amend the acceptance text to ratify the design, or lift the scope fence so the service changes?"
+  }
+}

@@ -66,6 +66,17 @@ placeholder) satisfies a clause ONLY when the goal's `stub_acceptable` list
 stubs — mark the clause unsatisfied and put it in `corrections` so the
 worker builds the real capability.
 
+**3b. A clause contradicted by deliberate design is a question, not a
+correction.** When the evidence shows the repository *deliberately* does the
+opposite of what a clause requires — an intentional, working behaviour the
+code explains or tests (e.g. a commented rationale at the contradicting
+line) — the verdict is `needs_human`: put both sides in `question` ("the
+contract requires X; the code deliberately does not-X because R — which
+wins?"). Never emit an `off_track` correction that instructs negating a
+deliberate design decision or working outside the goal's `out_of_scope`
+fences. A clause that is merely unmet (the work is absent, partial, or
+broken) stays `off_track` per step 4.
+
 **4. Choose the verdict from clause coverage:**
 - `achieved` — done-gate only; EVERY clause has specific, repo-confirmed
   evidence.
