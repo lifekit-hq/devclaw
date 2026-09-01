@@ -23,7 +23,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install --quiet --upgrade pip
           "$RUNNER_TEMP/venv/bin/pip" install --quiet -e '.[dev]'
-          TMPDIR=$(mktemp -d) "$RUNNER_TEMP/venv/bin/python" -m pytest -q
+          TMPDIR=$(mktemp -d -p "$RUNNER_TEMP") "$RUNNER_TEMP/venv/bin/python" -m pytest -q
 
   lint:
     name: Lint (ruff + mypy + secrets + yaml)
