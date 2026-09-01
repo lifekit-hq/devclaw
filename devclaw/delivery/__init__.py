@@ -253,11 +253,18 @@ def _scope_label(title: str) -> str:
     """A light PR label from the conventional-commit scope (``feat(tags):`` →
     ``tags``) or, absent a scope, the type (``fix:`` → ``fix``) — so a delivered PR
     carries an area/kind label the way a human-managed repo does. Empty when the
-    title isn't conventional (no label rather than a junk one)."""
+    title isn't conventional (no label rather than a junk one).
+
+    An issue-number scope (``fix(479):`` — the shape workers title issue-driven
+    increments with) is treated as NO scope and falls back to the type: a label
+    must describe an area or kind, and a bare number describes nothing — left
+    alone this minted one junk repo label per referenced issue."""
     m = _CC.match(title.strip())
     if not m:
         return ""
     scope = (m.group(2) or "").strip("()").strip()
+    if scope.lstrip("#").isdigit():
+        scope = ""
     return _slug(scope or m.group(1), n=30)
 
 

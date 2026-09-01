@@ -200,6 +200,10 @@ def test_scope_label_from_cc_scope_then_type():
     assert _scope_label("feat(tags): add tag filtering") == "tags"
     assert _scope_label("fix: harden the reject path") == "fix"
     assert _scope_label("not a conventional subject") == ""
+    # an issue-number scope must not mint a junk repo label — it describes
+    # nothing; fall back to the type (fs-479 minted a `479` label, 2026-09-01)
+    assert _scope_label("fix(479): restore pending exclusion") == "fix"
+    assert _scope_label("chore(#123): close out the issue") == "chore"
 
 
 def test_pr_body_uses_summary_and_testing_sections():
