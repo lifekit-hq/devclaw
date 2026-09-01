@@ -197,18 +197,19 @@ def _node_vitals() -> dict:
     reason = op_reason if op_blocked else (f"quota: {q_reason}" if quota_active else "")
 
     # Goal population — bucketed the same way the morning digest triages
-    # (cancelled/done are terminal; needs-you = blocked OR stalled OR a
-    # stop-state verdict; everything else active is running).
+    # (cancelled/done are terminal; needs-you rides the ONE predicate in
+    # _projections._goal_needs_you; everything else active is running).
+    from ._projections import _goal_needs_you
+
     total = running = needs_you = done = cancelled = 0
     for g in goals.list_goals():
         total += 1
         phase = g.get("phase")
-        prog = g.get("progress") or {}
         if phase == "cancelled":
             cancelled += 1
         elif phase in ("done", "achieved"):
             done += 1
-        elif g.get("blocked_on") or prog.get("stalled") or g.get("direction") in ("stalled", "needs_human"):
+        elif _goal_needs_you(g):
             needs_you += 1
         else:
             running += 1

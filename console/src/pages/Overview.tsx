@@ -31,7 +31,10 @@ export function Overview() {
   }, []);
 
   const live = (rows ?? []).filter((g) => phaseIsLive(g.phase));
-  const blocked = (rows ?? []).filter((g) => g.phase === "blocked");
+  // Backend-computed flag — the same predicate the Node page's count uses.
+  // Filtering on phase === "blocked" here is how the Overview said "All
+  // clear" over a dozen stalled/needs_human goals.
+  const blocked = (rows ?? []).filter((g) => !g.archived && g.needsYou);
   const projects = projectCount ?? 0;
   const recent = [...(rows ?? [])]
     .filter((g) => !g.archived)

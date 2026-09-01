@@ -103,7 +103,5 @@ export function prMeta(row: PRRow): { color: string; label: string; canMerge: bo
   return { color, label, canMerge };
 }
 
-// A goal is "waiting on you" when it's blocked or its direction says needs_human.
-export function needsYou(phase: string | null, verdict?: Verdict | null): boolean {
-  return phase === "blocked" || verdict === "needs_human";
-}
+// "Waiting on you" is a BACKEND predicate (_projections._goal_needs_you),
+// delivered as GoalRow.needsYou — render it, don't re-derive it here.

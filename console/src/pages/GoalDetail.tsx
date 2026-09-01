@@ -234,6 +234,28 @@ export function GoalDetail() {
             </div>
           </div>
 
+          {data.phase !== "blocked" && data.queuedReason && (
+            // Lane state — the answer to "why is this goal's page empty".
+            // Without it a queued goal renders "Tasks 0" and nothing else.
+            <div
+              className="card"
+              style={{ padding: "12px 16px", marginBottom: 18, borderLeft: "3px solid var(--amber)", fontSize: 13 }}
+            >
+              <span style={{ fontWeight: 600, marginRight: 8 }}>Waiting for the project lane</span>
+              <span className="secondary">
+                {data.queuedReason}
+                {data.queuedBehind && (
+                  <>
+                    {" — "}
+                    <Link to={`/goals/${encodeURIComponent(data.queuedBehind)}${qs}`} style={{ color: "inherit" }}>
+                      open {data.queuedBehind}
+                    </Link>
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+
           {data.phase === "blocked" && (
             <BlockedBanner
               blockedOn={data.blockedOn}
@@ -260,12 +282,12 @@ export function GoalDetail() {
                 <Plan goalId={data.id} />
                 <div>
                   <div className="eyebrow" style={{ marginBottom: 10 }}>Execution — tasks against this plan</div>
-                  <MilestoneTasks tasks={data.tasks ?? []} emptyLabel="No tasks dispatched yet — the heartbeat files them here." />
+                  <MilestoneTasks tasks={data.tasks ?? []} emptyLabel={data.queuedReason ?? "No tasks dispatched yet — the heartbeat files them here."} />
                 </div>
               </div>
             )}
             {tab === "tasks" && (
-              <MilestoneTasks tasks={data.tasks ?? []} emptyLabel="No tasks dispatched yet — the heartbeat files them here." />
+              <MilestoneTasks tasks={data.tasks ?? []} emptyLabel={data.queuedReason ?? "No tasks dispatched yet — the heartbeat files them here."} />
             )}
             {tab === "prs" && <PRList goalId={data.id} />}
             {tab === "activity" && <EventFeed goalId={data.id} />}
