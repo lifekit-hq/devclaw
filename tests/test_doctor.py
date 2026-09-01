@@ -635,3 +635,52 @@ def test_malformed_gate_outcome_payload_is_skipped_not_fatal(env):
     _seed_gate_outcomes(env, [{"gate_id": "verify", "consulted": True, "ok": True}], 22)
     (f,) = _findings(_run(env), _GATE_CID)
     assert f.verdict is Verdict.OK
+
+
+# ---- project: ready-label vs acceptance-contract drift -------------------
+# The label and the contract have separate lifecycles (spec 019 made the
+# acceptance section load-bearing after issues were already graded ready) —
+# doctor surfaces the whole labeled population; dispatch stays the hard gate.
+
+_READY_CID = "project.backlog.ready_contract"
+
+
+def test_ready_issue_without_acceptance_section_warns(env, tmp_path, monkeypatch):
+    from devclaw.doctor import checks_project
+
+    register_tmp_project(env["registry"], str(tmp_path / "wsrc"),
+                         repo_url="https://github.com/o/r")
+    monkeypatch.setattr(checks_project, "_list_ready_issues", lambda url, label: [
+        {"number": 12, "body": "just prose, no contract section"},
+        {"number": 13, "body": "## Done when\n- behavior holds"},
+        {"number": 14, "body": "## Acceptance criteria\n- also fine"},
+    ])
+    (f,) = _findings(_run(env), _READY_CID)
+    assert f.verdict is Verdict.WARN
+    assert "#12" in f.evidence and "#13" not in f.evidence and "#14" not in f.evidence
+    assert "regrade_intake" in f.remedy
+
+
+def test_unlistable_ready_backlog_is_unknown_never_ok(env, tmp_path, monkeypatch):
+    from devclaw.doctor import checks_project
+
+    register_tmp_project(env["registry"], str(tmp_path / "wsrc2"),
+                         repo_url="https://github.com/o/r2")
+    monkeypatch.setattr(checks_project, "_list_ready_issues", lambda url, label: None)
+    (f,) = _findings(_run(env), _READY_CID)
+    assert f.verdict is Verdict.UNKNOWN
+
+
+def test_no_repo_url_short_circuits_without_listing(env, tmp_path, monkeypatch):
+    """The stubbed suite must never shell out to gh — repo_url=None is the
+    fixture default, so the boundary staying uncalled is load-bearing."""
+    from devclaw.doctor import checks_project
+
+    register_tmp_project(env["registry"], str(tmp_path / "wsrc3"))
+
+    def _boom(url, label):  # pragma: no cover - the assertion is that it never runs
+        raise AssertionError("gh boundary called with no repo_url")
+
+    monkeypatch.setattr(checks_project, "_list_ready_issues", _boom)
+    (f,) = _findings(_run(env), _READY_CID)
+    assert f.verdict is Verdict.OK and "no repo_url" in f.evidence

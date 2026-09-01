@@ -206,6 +206,90 @@ def check_issue_refs_shape(ctx: "InstanceContext", project: "Project") -> list[F
     return [Finding(cid, Verdict.OK, "all referenced-goal records parse", project_id=project.id)]
 
 
+#: Module-global gh boundary so tests patch it HERE (the collector
+#: convention). Returns the open ready-labeled issues as parsed dicts, or
+#: None when the listing could not run at all (no gh, network failure,
+#: non-JSON) — the check reports UNKNOWN then, never OK. PRs are excluded:
+#: the issues listing endpoint returns them too.
+def _list_ready_issues(repo_url: str, label: str) -> "list[dict] | None":
+    import json
+    import subprocess
+
+    from ..goal.remote_checks import parse_owner_repo
+
+    owner_repo = parse_owner_repo(repo_url)
+    if not owner_repo:
+        return None
+    try:
+        proc = subprocess.run(
+            ["gh", "api",
+             f"repos/{owner_repo}/issues?labels={label}&state=open&per_page=100"],
+            capture_output=True, text=True, timeout=20,
+        )
+    except Exception:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout)
+    except ValueError:
+        return None
+    if not isinstance(data, list):
+        return None
+    return [i for i in data if isinstance(i, dict) and "pull_request" not in i]
+
+
+def check_backlog_ready_contract(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """Every open ready-labeled issue carries an acceptance section the
+    contract reader actually parses.
+
+    The label and the contract have separate lifecycles: grading stamps the
+    label once, while :func:`devclaw.goal.issue_ref.extract_acceptance` reads
+    the section live at every dispatch — so a requirement change (spec 019
+    made the section load-bearing) or a later body edit leaves labeled issues
+    the pointer lane can only discover goal-by-goal, as ``MissingAcceptance``
+    blocks. Same drift class as #641: the stubbed suite structurally cannot
+    see it. Advisory, never a hold — the dispatch boundary already fails
+    loud; doctor's job is surfacing the whole labeled population at once.
+    """
+    from ..intake import READY_LABEL  # one home for the label (issue_doorway discipline)
+
+    from ..goal.issue_ref import extract_acceptance
+
+    cid = "project.backlog.ready_contract"
+    if not project.repo_url:
+        return [Finding(cid, Verdict.OK,
+                        "no repo_url — no labeled backlog to verify",
+                        project_id=project.id)]
+    issues = _list_ready_issues(project.repo_url, READY_LABEL)
+    if issues is None:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"could not list open {READY_LABEL} issues for "
+                        f"{project.repo_url} — contract coverage unproven",
+                        remedy="verify gh auth/network on the instance, re-run doctor",
+                        project_id=project.id)]
+    bad = sorted(
+        int(i["number"]) for i in issues
+        if isinstance(i.get("number"), int)
+        and not extract_acceptance(str(i.get("body") or ""))
+    )
+    if bad:
+        shown = ", ".join(f"#{n}" for n in bad[:10]) + (
+            f" (+{len(bad) - 10} more)" if len(bad) > 10 else "")
+        return [Finding(cid, Verdict.WARN,
+                        f"open {READY_LABEL} issue(s) with no parseable acceptance "
+                        f"section: {shown} — a goal referencing one blocks at "
+                        "dispatch (MissingAcceptance)",
+                        remedy="regrade_intake (groom a '## Done when' / "
+                               "'## Acceptance' section into the issue)",
+                        project_id=project.id)]
+    evidence = (
+        f"{len(issues)} open {READY_LABEL} issue(s) all carry a parseable "
+        "acceptance section" if issues else f"no open {READY_LABEL} issues"
+    )
+    return [Finding(cid, Verdict.OK, evidence, project_id=project.id)]
+
+
 PROJECT_CHECKS: tuple = (
     check_workspace_preflight,
     check_dangling_links,
@@ -214,4 +298,5 @@ PROJECT_CHECKS: tuple = (
     check_marker_integrity,
     check_scaffold_drift,
     check_issue_refs_shape,
+    check_backlog_ready_contract,
 )
