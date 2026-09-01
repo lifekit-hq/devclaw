@@ -59,9 +59,18 @@ async def _resolve_polling_done_gate(
         with ctx.store.transaction():
             ctx.store.record_settlement(goal_id, ref_id=ref.id, ref_kind=ref.ref_kind, status=poll.status)
             ctx.store.append_log(goal_id, f"done-check review {ref.id} → {poll.status}", mirror=False)
+            # last_plan_at=None reopens the re-plan cadence BEFORE the
+            # evaluator runs (#784): the goal now sits idle with a close
+            # resolution still owed, and if the evaluator dies mid-flight
+            # (quota pause, OOM, restart) nothing re-drives it — without this
+            # the next planning opportunity is a full cadence away (fs-479
+            # lost 24h and its whole project lane to a 24-second-unlucky
+            # quota pause). A completed resolution supersedes this: achieved
+            # closes the goal, a refusal steers work in, and the next
+            # dispatch stamps a fresh last_plan_at either way.
             new_status = ctx.store.transition(
                 goal_id, Event.DONE_GATE_SETTLED,
-                replace(status, in_flight=None, phase="idle"),
+                replace(status, in_flight=None, phase="idle", last_plan_at=None),
                 expect=status,
             )
     except Exception:

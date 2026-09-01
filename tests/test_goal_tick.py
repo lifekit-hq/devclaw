@@ -729,6 +729,47 @@ async def test_done_gate_review_off_track_steers_and_continues(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_interrupted_done_gate_close_reopens_cadence_next_tick(tmp_path):
+    """#784 (pause-and-resume brake): a close resolution that dies between the
+    done-check verdict and the evaluator's verdict must not strand the goal for
+    a full re-plan cadence. DONE_GATE_SETTLED clears ``last_plan_at`` before
+    the evaluator runs, so whatever kills the evaluator mid-flight (quota
+    pause, OOM, restart), the next non-paused tick acts immediately."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", cadence="1d")
+    store.save_status("g", GoalStatus(
+        phase="verifying",
+        last_plan_at=store.now_iso(),  # cadence freshly stamped by the propose
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+    ))
+
+    class AbortingClaude(FakeClaude):
+        async def __call__(self, prompt: str) -> str:
+            await super().__call__(prompt)
+            raise RuntimeError("Internal error: You're out of extra usage (rate_limit)")
+
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="looks done"))
+    notifier = RecordingNotifier()
+
+    try:
+        await _tick(store, "g", AbortingClaude(), engine, notifier)
+    except Exception:
+        pass  # a raw quota abort propagates to the sweep wrapper in prod
+
+    s = store.load_status("g")
+    assert s.phase == "idle" and s.in_flight is None
+    # THE invariant: the settle reopened the cadence before the evaluator ran,
+    # so the aborted resolution cannot strand the goal until cadence elapses.
+    assert s.last_plan_at is None
+
+    # Next tick with cognition healthy: the goal ACTS (re-derives the close)
+    # instead of sleeping out the 1d cadence.
+    healthy = FakeClaude(json.dumps({"verdict": "off_track", "rationale": "r", "corrections": ["c"]}))
+    out = await _tick(store, "g", healthy, engine, notifier)
+    assert out is not Outcome.IDLE
+
+
+@pytest.mark.asyncio
 async def test_done_gate_disabled_uses_artifact_eval(tmp_path):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
