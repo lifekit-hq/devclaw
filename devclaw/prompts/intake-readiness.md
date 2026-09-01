@@ -30,6 +30,14 @@ An ask is needs-refinement when any of the three is missing or too vague to
 locate — it names nothing that exists in the repo, describes no concrete
 change, or states an intent no one could verify.
 
+Verifiable intent states desired observable behaviour, never facts about the
+current implementation. An acceptance clause asserting how the code works
+today ("the backend already excludes X", "service Y currently does Z") is
+needs-refinement: quote the offending clause in `missing` and state the
+rewrite rule — describe the outcome wanted, not the code believed to exist;
+current-state analysis belongs in the ask's narrative, outside its
+acceptance section.
+
 ## What you do NOT decide
 
 Do not derive completion criteria, a `done_when`, or a task checklist — the
