@@ -9,8 +9,12 @@ surfaces at integration (#553 was one symptom — two goals allocating the same
 
 **The hold is DERIVED, not stored** (FR-005, amended by owner ruling
 2026-08-22). The holder of a project is a pure function of rows that already
-exist: the first non-terminal goal on that project, ordered by age and
-tie-broken on goal id. There is no acquire, no release, and no holder column.
+exist: the first goal on that project that could actually act this sweep
+(work in flight, unread steering, or a due cadence — blocked and merge-owing
+goals excepted), ordered by age with in-flight work outranking it, tie-broken
+on goal id. There is no acquire, no release, and no holder column. The
+"could actually act" clause is the runnable-head rule (owner ruling
+2026-09-01): head-of-line blocking is a bug, not a policy — see holder_map.
 
 That is the whole point. A stored lock has a state the derived form cannot
 enter — a holder that dies, is force-cancelled, or is lost to a crash leaves a
@@ -109,10 +113,35 @@ def holder_map(store) -> "dict[str, str]":
             # park that only a human can clear.
             if str(getattr(status, "phase", "") or "") == "blocked":
                 continue
-            scope = scope_key(store.load_goal(goal_id))
+            goal = store.load_goal(goal_id)
+            scope = scope_key(goal)
         except Exception:  # noqa: BLE001 — a bad goal.yaml must not sink the sweep
             continue
         if scope is None:
+            continue
+        # Runnable-head rule (owner ruling 2026-09-01, generalizing spec 025's
+        # blocked skip-over): a goal that CANNOT act this sweep is not a
+        # candidate either. Head-of-line blocking is a bug, not a policy — on
+        # 2026-08-31 one idle head waiting out its 1d re-plan cadence stranded
+        # 7 runnable successors for a whole night. A head with work in flight
+        # always holds (single-writer); a head owing only its merge needs no
+        # lane at all (the pending-merge finalize runs BEFORE the hold gate by
+        # design); an idle head is runnable only when it has unread steering
+        # or a due cadence — the same cheap reads the tick's own should_plan
+        # gate uses, so this stays zero-token and zero-write. The head
+        # reclaims the lane the moment it is runnable again and no successor
+        # has work in flight. Deliberately OUTSIDE the try above: these are
+        # core-table reads (module failure policy) — swallowing a broken one
+        # would silently thin candidacy, which is how single-writer switches
+        # itself off. (scope is None already skipped qa goals, whose empty
+        # cadence never parses.)
+        if status.in_flight is None and (
+            status.pending_merge_pr
+            or (
+                not store.unread_steering_rows(goal_id)
+                and not store.cadence_due(goal, status)
+            )
+        ):
             continue
         # A goal with WORK IN FLIGHT outranks age: when a parked predecessor
         # is resumed while its skip-over successor is mid-task, the successor

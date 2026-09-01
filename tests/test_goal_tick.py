@@ -3165,6 +3165,49 @@ async def test_blocked_goal_releases_project_lane_for_queued_successor(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_idle_head_with_nothing_to_do_releases_lane_to_runnable_successor(tmp_path):
+    """Runnable-head rule (owner ruling 2026-09-01, generalizing spec 025's
+    blocked skip-over): a head that cannot act this sweep — idle, nothing in
+    flight, no unread steering, cadence not due — must not strand runnable
+    successors. On 2026-08-31 one such head held the finance-sentry lane a
+    whole night with 7 runnable goals queued behind it."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "head", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "succ", created_at_ms=2_000)
+    # head just planned: cadence (1d) freshly stamped, nothing else pending
+    store.save_status("head", GoalStatus(
+        phase="idle", lifecycle="executing", last_plan_at=store.now_iso(),
+    ))
+    engine = FakeEngine()
+
+    out = await _tick(store, "succ", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
+async def test_runnable_again_head_reclaims_lane_from_idle_successor(tmp_path):
+    """The reclaim half of the runnable-head rule: steering arriving on the
+    skipped head makes it runnable, and — with no successor work in flight —
+    age names it holder again. (With successor work IN flight the existing
+    in-flight-outranks-age rule keeps the lane on the successor; that facet
+    is pinned by test_resumed_predecessor_waits_while_successor_task_is_in_flight.)"""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "head", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "succ", created_at_ms=2_000)
+    store.save_status("head", GoalStatus(
+        phase="idle", lifecycle="executing", last_plan_at=store.now_iso(),
+    ))
+    store.append_steering("head", ["operator: change course"], source="denys")
+
+    out = await _tick(store, "succ", FakeClaude(), engine := FakeEngine(), RecordingNotifier())
+
+    assert out is Outcome.QUEUED
+    assert engine.dispatched == []
+
+
+@pytest.mark.asyncio
 async def test_resumed_predecessor_waits_while_successor_task_is_in_flight(tmp_path):
     """The skip-over trap: resuming a parked predecessor while its skip-over
     successor is MID-TASK must not hand the lane back by age — that would

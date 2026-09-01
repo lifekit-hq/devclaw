@@ -80,15 +80,22 @@ the drift only surfaces at integration (#553 was one symptom: two goals
 allocating the same `specs/009-…` directory).
 
 The hold is **derived, not stored** (spec 010 FR-005, amended 2026-08-22): the
-holder of a project is the first non-terminal goal on it by age, tie-broken on
-goal id — a pure function of rows the CAS'd transition discipline already
-governs (`devclaw/goal/project_hold.py`). There is no lock row, no acquire and
-no release, so a holder that dies cannot leave a lock nobody clears, and no heal
-machinery is needed for a state that cannot occur. A blocked goal is
-non-terminal and therefore still holds its project — the operator frees it by
-resuming or cancelling it. Goal-less direct dispatches
-(`dispatch_task`/`fix_bug`/`implement_feature`) are exempt because they are
-operator-present, and say loudly that a goal holds the project.
+holder of a project is the first goal on it that can actually act this sweep,
+by age with in-flight work outranking it, tie-broken on goal id — a pure
+function of rows the CAS'd transition discipline already governs
+(`devclaw/goal/project_hold.py`). There is no lock row, no acquire and no
+release, so a holder that dies cannot leave a lock nobody clears, and no heal
+machinery is needed for a state that cannot occur. "Can actually act" is the
+**runnable-head rule** (owner ruling 2026-09-01, generalizing spec 025 FR-015's
+blocked skip-over): a blocked goal, a goal owing only its merge, and an idle
+goal with no unread steering and no due cadence are all skipped as candidates —
+head-of-line blocking is a bug, not a policy (2026-08-31: one cadence-idle head
+stranded 7 runnable successors for a night). The single-writer invariant is
+untouched: at most one goal dispatches per project, a successor mid-task keeps
+the lane against a newly-runnable elder (in-flight outranks age), and the elder
+reclaims it at the next sweep where nothing is in flight. Goal-less direct
+dispatches (`dispatch_task`/`fix_bug`/`implement_feature`) are exempt because
+they are operator-present, and say loudly that a goal holds the project.
 
 ---
 
