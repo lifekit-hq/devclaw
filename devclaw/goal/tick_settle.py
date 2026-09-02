@@ -371,7 +371,7 @@ async def _resolve_polling_action(
                 ctx.store.record_problem(
                     category="admission", kind="lint_miss",
                     message=f"worker block named a sandbox-impossible capability the lint admitted: {reason[:200]}",
-                    recovered=False,
+                    recovered=False, goal_id=goal_id,
                 )
         except Exception:  # noqa: BLE001
             pass
