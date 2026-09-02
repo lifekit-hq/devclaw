@@ -38,6 +38,11 @@
       "type": "array",
       "items": { "type": "string" },
       "description": "Declared stack markers (e.g. 'dotnet', 'angular'). Informational in schema v1."
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Environment capabilities this project's verify contract depends on (spec 030). v1 ids: 'registry:npm-github', 'sandbox:image'. A capability whose mechanical probe is red holds dispatch with a self-healing 'mechanical:env' block; nothing is inferred, and a project that declares none is admitted as before."
     }
   },
   "additionalProperties": true

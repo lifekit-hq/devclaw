@@ -25,7 +25,7 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Literal, Optional
+from typing import Callable, Literal, Optional, Protocol
 
 from .engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR
 from .engine.sandcastle import SANDBOX_IMAGE as _SANDBOX_IMAGE
@@ -34,8 +34,18 @@ from .doctor.checks_instance import (
     _GH_TOKEN_PREFIXES as _CI_GH_PREFIXES,
 )
 
-if TYPE_CHECKING:
-    from .state_store import StateStore
+
+class MetaStore(Protocol):
+    """The only store surface a probe needs: two control-plane meta rows.
+
+    Structural on purpose — the sweep runner holds a ``StateStore`` while the
+    tick path holds a ``GoalStore`` (which passes both through to the same
+    shared store). Typing this as either concrete class is what let the first
+    cut of this module compile while raising ``AttributeError`` in production."""
+
+    def get_meta(self, key: str) -> Optional[str]: ...
+    def set_meta(self, key: str, value: str) -> None: ...
+
 
 # ---- constants ---------------------------------------------------------------
 
@@ -68,7 +78,7 @@ def _meta_key(cap_id: str) -> str:
     return f"{_META_PREFIX}{cap_id}"
 
 
-def read_result(store: "StateStore", cap_id: str) -> Optional[CapProbeResult]:
+def read_result(store: MetaStore, cap_id: str) -> Optional[CapProbeResult]:
     """Read the last persisted probe result for ``cap_id``.
 
     Returns ``None`` if the capability has never been probed.  The admission
@@ -87,7 +97,7 @@ def read_result(store: "StateStore", cap_id: str) -> Optional[CapProbeResult]:
         return None
 
 
-def _write_result(store: "StateStore", cap_id: str, result: CapProbeResult) -> None:
+def _write_result(store: MetaStore, cap_id: str, result: CapProbeResult) -> None:
     from .state_store import _now_ms  # deferred — avoids circular at module load
     raw = json.dumps({
         "status": result.status,
@@ -98,7 +108,7 @@ def _write_result(store: "StateStore", cap_id: str, result: CapProbeResult) -> N
     store.set_meta(_meta_key(cap_id), raw)
 
 
-def _is_stale(store: "StateStore", cap_id: str) -> bool:
+def _is_stale(store: MetaStore, cap_id: str) -> bool:
     """True when there is no cached result or it is older than ``PROBE_TTL_S``."""
     raw = store.get_meta(_meta_key(cap_id))
     if not raw:
@@ -218,7 +228,7 @@ _PROBE_RUNNERS: dict[str, Callable[[], CapProbeResult]] = {
 
 # ---- sweep runner (called from tick_all, never from per-goal ticks) ----------
 
-def run_if_stale(store: "StateStore", cap_id: str) -> CapProbeResult:
+def run_if_stale(store: MetaStore, cap_id: str) -> CapProbeResult:
     """Run the probe for ``cap_id`` if the cached result is stale; return the
     cached result when it is still fresh.
 
@@ -244,7 +254,7 @@ def run_if_stale(store: "StateStore", cap_id: str) -> CapProbeResult:
     return result
 
 
-def refresh_needed(store: "StateStore", needed_caps: frozenset) -> None:
+def refresh_needed(store: MetaStore, needed_caps: frozenset) -> None:
     """Refresh all stale probes for the capabilities in ``needed_caps``.
 
     Called ONCE per heartbeat sweep before the per-goal ticks (FR-004: the
@@ -262,16 +272,19 @@ def refresh_needed(store: "StateStore", needed_caps: frozenset) -> None:
 
 
 def red_caps_for(
-    store: "StateStore", declared: "tuple[str, ...]",
-) -> "list[CapProbeResult]":
-    """Return the CapProbeResults that are ``red`` for the declared capabilities.
+    store: MetaStore, declared: "tuple[str, ...]",
+) -> "list[tuple[str, CapProbeResult]]":
+    """Return the ``(capability id, result)`` pairs that are ``red`` for the
+    declared capabilities.
 
     Reads only persisted meta rows (zero network I/O). An absent or
     ``unknown`` result is fail-open (FR-007): only a confirmed ``red`` holds
-    dispatch."""
-    red: list[CapProbeResult] = []
+    dispatch. The id rides along because the operator-facing block must name
+    the same probe id doctor reports (FR/US3) — probe evidence alone does not
+    carry it."""
+    red: list[tuple[str, CapProbeResult]] = []
     for cap_id in declared:
         result = read_result(store, cap_id)
         if result is not None and result.status == "red":
-            red.append(result)
+            red.append((cap_id, result))
     return red

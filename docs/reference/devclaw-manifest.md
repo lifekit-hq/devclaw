@@ -16,7 +16,8 @@ onboarding agent is instructed not to touch it.
   "strictnessDefault": "trust",
   "surface": "app",
   "verifyCmd": "dotnet test",
-  "stack": ["dotnet", "angular"]
+  "stack": ["dotnet", "angular"],
+  "capabilities": ["registry:npm-github"]
 }
 ```
 
@@ -32,8 +33,31 @@ Machine schema: [`devclaw-manifest.schema.json`](./devclaw-manifest.schema.json)
 | `surface` | `app` \| `library` | browser-E2E gate applicability — declaration instead of path-glob heuristics |
 | `verifyCmd` | string | verify-command fallback tier |
 | `stack` | list of strings | informational (v1) |
+| `capabilities` | list of capability ids | environment-capability admission (spec 030): the project is not dispatched while one of these is provably broken |
 
 Unknown keys are tolerated (forward-compat within a schema version).
+
+### `capabilities` (spec 030)
+
+The explicit, complete list of environment capabilities this project's verify
+contract depends on — nothing is inferred. v1 ids: `registry:npm-github` (the
+GitHub Packages npm credential) and `sandbox:image` (the per-task sandbox image
+is present/pullable). A project that declares none is admitted exactly as
+before.
+
+While a declared capability's mechanical probe is **red**, dispatch is held
+with a `mechanical:env` block naming the probe id and its remedy; the hold
+clears on its own within ~one heartbeat sweep of the probe greening. An absent
+or `unknown` probe result never holds (fail-open on uncertainty, fail-closed on
+evidence of breakage). Doctor also carries an **advisory** check for a repo that
+visibly depends on a private registry without declaring `registry:*` — the
+known cost of explicit-only declaration.
+
+Unlike the gate-relevant fields below, `capabilities` is read from the
+**worktree**, not the merged base: the hold is a session-burn brake, so a
+worker-side edit can only hurt that worker's own goal (dispatching into a
+broken environment, or wedging itself behind a legible self-healing block) —
+it can never bias a gate toward shipping.
 
 ## Precedence (most-specific-wins, resolved live)
 

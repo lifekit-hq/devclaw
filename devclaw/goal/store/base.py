@@ -192,6 +192,17 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         passthrough so the close path never reaches into ``_state``."""
         self._state.set_deploy_pending(sha, goal_id, _now_ms())
 
+    def get_meta(self, key: str) -> "str | None":
+        """Read one control-plane meta row (spec 030: the env-capability probe
+        results the admission gate consults). Passthrough in the same shape as
+        :meth:`mark_self_deploy_pending` so the goal layer never reaches into
+        ``_state``."""
+        return self._state.get_meta(key)
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Write one control-plane meta row — see :meth:`get_meta`."""
+        self._state.set_meta(key, value)
+
     def render_mirrors(self, goal_id: str) -> None:
         """Flush every mirror write deferred for ``goal_id`` (in the order
         recorded) to disk, then clear the pending list. Idempotent — a no-op

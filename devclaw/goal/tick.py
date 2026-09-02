@@ -322,7 +322,7 @@ async def _tick_goal_impl(
             # (zero network, zero LLM). The sweep refreshes probes before each
             # sweep, so the result here is at most one sweep old.
             healed = await _autoheal_env_cap(
-                goal_id, goal, status, store=store,
+                goal_id, goal, status, store=store, notifier=notifier,
             )
         if healed is not None:
             status = healed

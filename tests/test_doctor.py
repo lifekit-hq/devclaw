@@ -343,6 +343,46 @@ def test_scaffold_drift_detected_against_packaged_source(env, tmp_path):
     assert f.verdict is Verdict.WARN and tmpl.name in f.evidence
 
 
+# ---- spec 030 FR-005a: undeclared capability advisory ---------------------
+
+
+def test_undeclared_private_registry_dependency_is_advisory_only(env, tmp_path):
+    """Seeded fault: the repo resolves against a private npm registry but its
+    devclaw.json declares no ``registry:*`` capability — the write-and-forget
+    cost of explicit-only declaration (spec 030 FR-005a). Doctor must SEE it
+    (a WARN naming the file and the fix) and never escalate it to a FAIL: this
+    advisory is a report line, never a dispatch hold."""
+    ws = tmp_path / "ws-cap1"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
+    (ws / ".npmrc").write_text("@lifekit-hq:registry=https://npm.pkg.github.com\n")
+
+    (f,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert f.verdict is Verdict.WARN            # advisory — never FAIL
+    assert ".npmrc" in f.evidence and "npm.pkg.github.com" in f.evidence
+    assert "registry:npm-github" in f.remedy
+
+    # Declaring the capability settles it — the same repo, one manifest key.
+    (ws / "devclaw.json").write_text(
+        '{"schemaVersion": 1, "boilerplateRevision": 1, '
+        '"capabilities": ["registry:npm-github"]}'
+    )
+    (ok,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert ok.verdict is Verdict.OK
+
+
+def test_no_private_registry_dependency_is_ok(env, tmp_path):
+    """A repo with no visible private-registry dependency declares nothing and
+    is clean — the advisory must not nag every public-registry project."""
+    ws = tmp_path / "ws-cap2"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
+    (ws / "package-lock.json").write_text('{"packages": {"": {"name": "x"}}}')
+
+    (f,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert f.verdict is Verdict.OK
+
+
 # ---- instance: scorecard convergence ledger (spec 018 US1) ----------------
 
 

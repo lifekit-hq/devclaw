@@ -184,6 +184,12 @@ PREP_HEAL_CAP = 5
 PREP_BACKOFF_BASE_S = 30 * 60
 PREP_BACKOFF_MAX_S = 6 * 3600
 
+#: Heal budget for a ``mechanical:env`` hold (spec 030). The recheck is free
+#: (a persisted-row read), so unlike prep there is no backoff window — the cap
+#: exists only to park a FLAPPING capability for the owner instead of cycling
+#: hold→resume→hold forever.
+ENV_HEAL_CAP = 5
+
 
 async def _prep_recheck_ok(goal: Goal) -> bool:
     """The mechanical prep recheck — no LLM, best-effort, never raises.
@@ -296,7 +302,7 @@ async def _heal_give_up(
 
 async def _block_on_env_cap(
     goal_id: str, status: GoalStatus,
-    red_caps: "list[_env_cap.CapProbeResult]",
+    red_caps: "list[tuple[str, _env_cap.CapProbeResult]]",
     *, store: GoalStore, notifier: Notifier,
     summarize: "ClaudeCaller | None" = None,
     consume_steering: "list[int] | None" = None,
@@ -304,12 +310,17 @@ async def _block_on_env_cap(
     """Block the goal because one or more required capability probes are red.
 
     Spec 030 FR-002/FR-003. The block message names every failing capability
-    and its remedy so the operator sees ONE story. Exactly one owner ping per
-    hold episode — the ``BLOCK`` transition only fires here; subsequent blocked
-    ticks auto-heal via :func:`_autoheal_env_cap` without re-pinging."""
+    and its remedy so the operator sees ONE story.
+
+    Exactly one owner ping per hold EPISODE, where an episode spans a flap: a
+    re-block that follows an env heal (``heal_attempts > 0``) logs but does not
+    ping, so a probe oscillating green↔red converges to held + one ping instead
+    of a ping storm (spec 030 edge case). ``heal_attempts`` is reset by a
+    productive settle, so a genuine later breakage does ping again."""
     cap_lines = "; ".join(
-        f"{r.evidence} → {r.remedy}" if r.remedy else r.evidence
-        for r in red_caps
+        f"{cap_id}: {r.evidence} → {r.remedy}" if r.remedy
+        else f"{cap_id}: {r.evidence}"
+        for cap_id, r in red_caps
     )
     msg = (
         f"environment capability check failed — dispatching would burn a session: "
@@ -323,26 +334,40 @@ async def _block_on_env_cap(
                 blocked_kind="mechanical:env", next=""),
         expect=status, consume_steering=consume_steering,
     )
-    await _notify(
-        notifier, NotifyLevel.OWNER,
-        f"🔴 [{goal_id}] dispatch held — environment not ready: {cap_lines}; "
-        "devclaw auto-resumes when the probe turns green",
-        summarize=summarize,
-    )
+    if status.heal_attempts == 0:
+        await _notify(
+            notifier, NotifyLevel.OWNER,
+            f"🔴 [{goal_id}] dispatch held — environment not ready: {cap_lines}; "
+            "devclaw auto-resumes when the probe turns green",
+            summarize=summarize,
+        )
     return Outcome.BLOCKED
 
 
 async def _autoheal_env_cap(
     goal_id: str, goal: Goal, status: GoalStatus,
-    *, store: GoalStore,
+    *, store: GoalStore, notifier: Notifier,
 ) -> "GoalStatus | None":
     """Lift a ``mechanical:env`` block once all required capability probes are
     no longer red.
 
-    Reads persisted probe rows (zero network, zero LLM). The sweep runner
-    refreshes them before each sweep so the results here are always at most
-    one sweep old. Returns the healed status, or ``None`` when the block must
-    remain (at least one probe is still red)."""
+    Reads persisted probe rows (zero network, zero LLM) — unlike the prep heal
+    there is no backoff window, because the recheck IS the row read; the sweep
+    runner refreshes the probes before each sweep, so a healed environment
+    resumes within ~one sweep (spec 030 US2).
+
+    The heal budget still applies: a probe that flaps green↔red burns one
+    attempt per heal and parks for the owner at :data:`ENV_HEAL_CAP` rather
+    than cycling forever. Returns the healed status, or ``None`` when the block
+    must remain (still red, or parked)."""
+    if status.heal_attempts > ENV_HEAL_CAP:
+        return None  # parked — the gave-up ping already went out
+    if status.heal_attempts >= ENV_HEAL_CAP:
+        await _heal_give_up(
+            goal_id, store=store, notifier=notifier, cap=ENV_HEAL_CAP,
+            reason="the required environment capability keeps breaking",
+        )
+        return None
     try:
         manifest_obj = _manifest.load_manifest(goal.workspace_dir)
         declared = manifest_obj.capabilities if manifest_obj else ()
@@ -357,6 +382,10 @@ async def _autoheal_env_cap(
     red = _env_cap.red_caps_for(store, declared)
     if red:
         return None  # still broken — stay blocked at zero cost
-    healed = _heal_unblock(goal_id, status, store, heal_attempts=status.heal_attempts)
-    store.append_log(goal_id, "env-cap hold cleared — all required capabilities are now green")
+    n = status.heal_attempts + 1
+    healed = _heal_unblock(goal_id, status, store, heal_attempts=n)
+    store.append_log(
+        goal_id,
+        f"auto-resumed: required capabilities are green again (heal {n}/{ENV_HEAL_CAP})",
+    )
     return healed
