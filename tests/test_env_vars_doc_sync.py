@@ -28,6 +28,17 @@ _READ_RE = re.compile(
 )
 _ROW_RE = re.compile(r"^\| `(DEVCLAW_[A-Z_]+)`", re.MULTILINE)
 
+_COMPOSE = _REPO / "deploy" / "docker-compose.devclaw.yml"
+_SANDCASTLE = _REPO / "devclaw" / "engine" / "sandcastle.py"
+_CONFIG = _REPO / "devclaw" / "config.py"
+#: a `_config.<NAME>` reference in the container launcher
+_CFG_REF_RE = re.compile(r"_config\.([A-Za-z_]+)")
+#: `NAME = os.environ.get("DEVCLAW_X"` or a `def name()` whose body reads one
+_CFG_BIND_RE = re.compile(
+    r"^(?:def\s+)?([A-Za-z_]+)\s*(?:\(\)[^\n]*)?=?[^\n]*\n(?:[^\n]*\n){0,8}?",
+    re.MULTILINE,
+)
+
 
 def _runtime_reads() -> set[str]:
     files = list((_REPO / "devclaw").rglob("*.py"))
@@ -58,4 +69,60 @@ def test_every_documented_var_is_read():
         f"vars documented in docs/reference/env-vars.md but read nowhere in the "
         f"runtime: {sorted(ghosts)} — remove the row (dead config docs are "
         f"worse than none)"
+    )
+
+
+def _sandcastle_env_vars() -> set[str]:
+    """Every ``DEVCLAW_*`` var the CONTAINER LAUNCHER acts on.
+
+    Resolved structurally rather than from a hand-kept list: collect the
+    ``_config.<NAME>`` references in ``engine/sandcastle.py``, then map each
+    back to the env var its binding in ``config.py`` reads. A new sandbox dial
+    is therefore covered the moment sandcastle reads it — no list to remember.
+    """
+    src = _SANDCASTLE.read_text(encoding="utf-8")
+    names = set(_CFG_REF_RE.findall(src))
+    config_src = _CONFIG.read_text(encoding="utf-8")
+    found: set[str] = set()
+    for name in names:
+        # module-level constant: NAME = os.environ.get("DEVCLAW_X", ...)
+        m = re.search(
+            rf"^{re.escape(name)}\s*=\s*[^\n]*?\"(DEVCLAW_[A-Z_]+)\"",
+            config_src, re.MULTILINE,
+        )
+        if m:
+            found.add(m.group(1))
+            continue
+        # accessor: def name() -> ...:  <body reads DEVCLAW_X>
+        m = re.search(
+            rf"^def\s+{re.escape(name)}\s*\([^)]*\)[^\n]*:\n(?:(?!^def\s).*\n)*?"
+            rf".*?\"(DEVCLAW_[A-Z_]+)\"",
+            config_src, re.MULTILINE,
+        )
+        if m:
+            found.add(m.group(1))
+    return found
+
+
+def test_every_sandbox_dial_reaches_the_deployed_container():
+    """A dial the container launcher reads must be forwarded by the production
+    compose file — otherwise it is documented, settable, and silently inert.
+
+    The compose file forwards ONLY the vars it names; there is no ``env_file``.
+    So a knob an operator sets in ``/srv/devclaw/.env`` never reaches the
+    process unless a line exists here. That trap is called out in the compose
+    file itself for ``DEVCLAW_MAX_CONCURRENT`` — and was fixed for that one var
+    only. ``DEVCLAW_EXEC_MODEL`` (documented as "the token/quota bulk") was
+    among five that stayed inert, so the deployed worker could not be moved off
+    the default model at all. This pins the CLASS: any var sandcastle reads.
+    """
+    compose = _COMPOSE.read_text(encoding="utf-8")
+    forwarded = set(re.findall(r"^\s{6}(DEVCLAW_[A-Z_]+):", compose, re.MULTILINE))
+    dials = _sandcastle_env_vars()
+    assert dials, "structural scan found no sandcastle dials — the regex rotted"
+    missing = sorted(dials - forwarded)
+    assert not missing, (
+        "these sandbox dials are read by engine/sandcastle.py but NOT forwarded "
+        f"by deploy/docker-compose.devclaw.yml, so setting them on the deployed "
+        f"instance silently does nothing: {missing}"
     )
