@@ -258,12 +258,25 @@ class StateStore(
                 self._insert_live_outcome(task_id, status="done", result_json=result_json)
             self._commit()
 
-    def mark_failed(self, task_id: str, error: str) -> None:
+    def mark_failed(
+        self, task_id: str, error: str, result_json: Optional[str] = None
+    ) -> None:
+        """Settle a task 'failed'. ``result_json`` is optional structured
+        evidence about the failed run, written in the SAME statement as the
+        status flip so a poller can never observe 'failed' before the evidence
+        that qualifies it. COALESCE leaves any already-recorded result intact
+        when None is passed, so every existing caller is byte-unaffected.
+
+        Today its one producer is the context-tripwire landing path, which
+        records the materialized span a blocked-but-landed worker left on the
+        branch (spec tiny/partial-settlement-continuation) — the task still
+        fails CLOSED (#186); only what the settle RECORDS changes."""
         with self._lock:
             cur = self._db.execute(
-                "UPDATE tasks SET status = 'failed', error = ?, completed_at = ? "
+                "UPDATE tasks SET status = 'failed', error = ?, "
+                "result_json = COALESCE(?, result_json), completed_at = ? "
                 "WHERE id = ? AND status IN ('pending', 'running')",
-                (error, _now_ms(), task_id),
+                (error, result_json, _now_ms(), task_id),
             )
             moved = cur.rowcount == 1
             if moved:

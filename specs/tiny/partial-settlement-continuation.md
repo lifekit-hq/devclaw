@@ -2,7 +2,7 @@
 
 **Branch**: fix/partial-settlement-continuation
 **Date**: 2026-09-02
-**Status**: draft
+**Status**: done
 **Complexity**: small
 
 ## What
@@ -105,31 +105,37 @@ and feeds forward as *continue from the branch*, never as *nothing landed*.
 
 ## Tasks
 
-- [ ] Persist `tripwire.landed` + the materialized span on the worker-blocked
+- [x] Persist `tripwire.landed` + the materialized span on the worker-blocked
       settle path (`queue/settle.py`), task still `failed`
-- [ ] `PollResult.landed_partial` + `_landed_partial` parser wired into
+- [x] `PollResult.landed_partial` + `_landed_partial` parser wired into
       `_poll_task` (`goal/models.py`, `goal/engine.py`)
-- [ ] `partial` settlement status + cap refund in `goal/tick_settle.py`;
+- [x] `partial` settlement status + cap refund in `goal/tick_settle.py`;
       `last_progress_at` deliberately untouched
-- [ ] Continue-from-the-branch rendering for `status=partial`, and scope the
+- [x] Continue-from-the-branch rendering for `status=partial`, and scope the
       "not in the tree" sentence to genuine failures
       (`goal/prior_increments.py`)
-- [ ] Extend the dispatch-cap brake class test: a landed partial refunds the
-      cap and re-dispatches; an empty-span landing does NOT refund and still
-      parks; a partial does not reset the no-progress watchdog
-- [ ] Extend the feed-forward test: a `partial` entry renders
+- [x] Extend the dispatch-cap brake class test: an empty-handed block still
+      keeps its dispatch count (added to the existing parametrized
+      `test_unproductive_settle_keeps_dispatch_count`), and
+      `test_landed_partial_refunds_the_cap_but_leaves_the_watchdog_armed`
+      pins the refund + armed watchdog together. NOTE the refund's
+      observable is NOT a lower `actions_dispatched`: the refund lets the
+      SAME tick dispatch the continuation, so the test asserts
+      `Outcome.DISPATCHED` instead of `BLOCKED` — verified to fail as
+      `BLOCKED` with the refund reverted.
+- [x] Extend the feed-forward test: a `partial` entry renders
       continue-from-the-branch and never the "not in the tree" sentence
-- [ ] Full suite + `ruff check .` + `mypy` green
-- [ ] Docs honesty: if this makes `docs/flows/task-execution.md` or spec 021's
+- [x] Full suite + `ruff check .` + `mypy` green
+- [x] Docs honesty: if this makes `docs/flows/task-execution.md` or spec 021's
       tripwire description wrong, fix it + its `docs/INDEX.md` currency tag in
       this PR
 
 ## Done When
 
-- [ ] All tasks checked off
-- [ ] A goal whose worker tripwire-lands twice in a row keeps dispatching
+- [x] All tasks checked off
+- [x] A goal whose worker tripwire-lands twice in a row keeps dispatching
       instead of parking at `mechanical:dispatch_cap`, and each successor's
       brief tells it to continue from the committed artifacts
-- [ ] A worker block with nothing committed still fails closed, unrefunded,
+- [x] A worker block with nothing committed still fails closed, unrefunded,
       and still parks at the cap — the brake is narrowed, not weakened
-- [ ] Zero-token guard tests (`FakeClaude.calls == 0`) untouched and green
+- [x] Zero-token guard tests (`FakeClaude.calls == 0`) untouched and green

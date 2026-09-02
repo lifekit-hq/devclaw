@@ -1023,6 +1023,12 @@ class SettleMixin:
         dialable_finding: Optional[tuple[str, str]] = None
         last_gate_result: Optional[dict] = None
         last_gate_change: Optional[ChangeSet] = None
+        #: the runner's last context-tripwire report, carried OUT of the attempt
+        #: loop so the worker-blocked settle below can tell a landing (the
+        #: worker committed a coherent partial before the context wall) from a
+        #: bare block. Set on every attempt that reported one; the last attempt
+        #: wins, matching every other accumulator here.
+        last_tripwire: Optional[dict] = None
         # A retry KEEPS the workspace (spec 013 FR-012, ruled 2026-08-22). The
         # loop used to rewind to ``pre_run_sha`` and ``clean -fdx`` between
         # attempts, so the gates would diff a clean base — a compensation for
@@ -1203,6 +1209,7 @@ class SettleMixin:
                 # ratchet metric — regardless of how the task then settled.
                 trip = result.get("tripwire")
                 if isinstance(trip, dict):
+                    last_tripwire = trip
                     self._store.record_problem(
                         category="limit",
                         kind="context_tripwire",
@@ -1348,12 +1355,40 @@ class SettleMixin:
             # classify_failure so an unlucky reason wording can't be misrouted into
             # the pause path — a block is never a quota event.
             if last_failure.startswith(_WORKER_BLOCKED_MARKER):
+                # A block that arrived WITH a context-tripwire landing is not an
+                # empty-handed block. The runner told the worker to commit a
+                # coherent partial increment plus its specs/ artifacts before the
+                # context wall (runner._LAND_BUDGET_PROMPT) and it did — onto
+                # ``goal/<id>``, the branch the NEXT action is placed on. Record
+                # the materialized span alongside the failure so the goal layer
+                # can settle it `partial`: refund the dispatch cap and tell the
+                # next session to CONTINUE from those artifacts instead of
+                # re-planning work already in its own working tree.
+                #
+                # The task still fails CLOSED — nothing ships, no gate is
+                # bypassed, no PR is opened (#186). Only what this settle
+                # RECORDS changes. Both helpers below are never-raises, so a
+                # bookkeeping hiccup degrades to today's plain failure.
+                partial_json: Optional[str] = None
+                if isinstance(last_tripwire, dict) and last_tripwire.get("landed"):
+                    landed_result: dict = {"tripwire_landed": True}
+                    _attach_change(
+                        landed_result,
+                        await _capture_change(
+                            workspace_dir, pre_run_sha,
+                            task_id=task_id, message=materialize_msg,
+                        ),
+                        kind=kind, workspace_dir=workspace_dir,
+                        verify_cmd=verify_cmd,
+                    )
+                    partial_json = json.dumps(landed_result)
                 self._store.mark_failed(
                     task_id,
                     f"{last_failure} — the worker reports it cannot complete this "
                     "task as specified. Not auto-retried: a re-run reproduces the "
                     "same block. Needs a human — adjust the goal/instructions or "
                     "supply the missing capability.",
+                    result_json=partial_json,
                 )
                 self._check_and_trip_breaker(workspace_dir, task_id)
                 return None

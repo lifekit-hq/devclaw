@@ -400,6 +400,14 @@ class PollResult:
     #: accomplished nothing cannot masquerade as work. False for read-only kinds
     #: (a review legitimately changes nothing) and for engines that predate it.
     no_change: bool = False
+    #: the worker blocked on the context tripwire having LANDED a coherent
+    #: partial increment — a determinable, non-empty span committed onto the
+    #: goal branch, which is the branch the next action is placed on. Distinct
+    #: from a bare block (nothing landed) and from ``done`` (nothing shipped,
+    #: no gate passed): the settle stays failed-closed, but upstream reads it
+    #: as forward progress worth continuing from rather than a wasted dispatch.
+    #: False for engines that predate the flag.
+    landed_partial: bool = False
 
     @property
     def running(self) -> bool:

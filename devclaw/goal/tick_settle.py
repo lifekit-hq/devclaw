@@ -228,13 +228,26 @@ async def _resolve_polling_action(
         # Actions run was failing at startup.
         evidence.append("sandbox gate=passed" if poll.gate_passed else "sandbox gate=FAILED")
     ev_str = (" — " + ", ".join(evidence)) if evidence else ""
-    settle_line = f"{ref.tool} {ref.id} → {poll.status}{ev_str}"
+    # A context-tripwire LANDING is its own settlement outcome (spec
+    # tiny/partial-settlement-continuation). The worker hit the context wall
+    # having committed a coherent partial increment — with its specs/ artifacts
+    # — onto ``goal/<id>``, the branch the next action is placed on. The task
+    # itself settled failed-CLOSED and shipped nothing (#186 untouched), but to
+    # this layer it is forward progress to CONTINUE from, not a wasted
+    # dispatch, and it must never feed forward as "nothing landed".
+    settled_status = "partial" if poll.landed_partial else poll.status
+    settle_line = f"{ref.tool} {ref.id} → {settled_status}{ev_str}"
 
     # An empty span is NOT a delivery (spec 013 FR-014). A code-writing action
     # that finished having changed nothing published nothing, so it must not
     # reset the no-progress watchdog — otherwise a goal whose worker keeps
     # accomplishing nothing looks, to every timestamp upstream, exactly like a
     # goal that keeps shipping.
+    # NOTE a landed partial is deliberately NOT `delivered`: it publishes no PR
+    # and may have committed only re-planning. Leaving the no-progress watchdog
+    # armed is what keeps the brake honest — a goal that lands forever without
+    # ever shipping still trips it, so refunding the cap above cannot become a
+    # licence to loop. No new counter is needed; this one already exists.
     delivered = 1 if (poll.status == "done" and not poll.no_change) else 0
     # Any SUCCESSFUL settle hands back its dispatch-cap budget: the cap exists
     # to stop a planner that spins without producing, not to ration healthy
@@ -245,7 +258,16 @@ async def _resolve_polling_action(
     # night after the #172 refund shipped). Only failures and gate-FAILED work
     # accumulate; churn on successful-but-aimless dispatches is the direction
     # evaluator's and no-progress watchdog's job, not this counter's.
-    productive = 1 if (poll.status == "done" and poll.gate_passed is not False) else 0
+    # A landed partial is productive: the cap exists to stop a goal that spins
+    # without producing, and this one produced — it just ran out of window. Not
+    # refunding it is what turned a 2-dispatch cap into two guaranteed no-ops
+    # (devclaw-030-env-admission-2026-09-01, parked ~20h with a complete
+    # tasks.md on its branch). A landing whose span was empty or undeterminable
+    # is NOT partial (see engine._landed_partial) and still burns its dispatch.
+    productive = 1 if (
+        (poll.status == "done" and poll.gate_passed is not False)
+        or poll.landed_partial
+    ) else 0
     new_status = replace(
         status, in_flight=None, phase="idle",
         actions_dispatched=max(0, status.actions_dispatched - productive),
@@ -274,7 +296,7 @@ async def _resolve_polling_action(
     # this settle for the same ref is a no-op INSERT, not a duplicate.
     try:
         with ctx.store.transaction():
-            ctx.store.record_settlement(goal_id, ref_id=ref.id, ref_kind=ref.ref_kind, status=poll.status)
+            ctx.store.record_settlement(goal_id, ref_id=ref.id, ref_kind=ref.ref_kind, status=settled_status)
             ctx.store.append_delivery(goal_id, ref.goal or ref.tool, poll.detail or "", ref_id=ref.id, mirror=False)
             ctx.store.append_log(goal_id, settle_line, mirror=False)
             # Persist IMMEDIATELY (within this same atomic unit) — the
