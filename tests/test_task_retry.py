@@ -10,6 +10,8 @@ import json
 
 import pytest
 
+from devclaw.goal.engine import _landed_partial
+
 from devclaw.queue import settle as queue_settle
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore
@@ -235,6 +237,87 @@ async def test_worker_blocked_status_is_not_retried_and_surfaces_reason(store, m
     assert "worker reported BLOCKED:" in t.error
     assert "the task needs a paid API key not present in the repo" in t.error
     assert "Needs a human" in t.error
+
+
+async def test_tripwire_span_is_recorded_even_when_the_worker_did_not_land(
+    store, monkeypatch, tmp_path
+):
+    """The span, not the worker's self-report, decides whether a blocked run
+    left something to continue from.
+
+    A tripwire firing whose ``landed`` flag is False still leaves work in the
+    tree when the agent ran out mid-landing — 4 of the first 9 firings on the
+    live instance reported landed=False. Capture is mechanical, so devclaw
+    records the span regardless and the goal layer settles it `partial`.
+    The task itself still fails CLOSED (#186)."""
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
+    ws = _repo(tmp_path)
+
+    async def blocked_runner(req: EngineRequest):
+        # work left in the tree, but the agent never recorded it itself
+        (ws / "us1.py").write_text("IMPLEMENTED = True\n")
+        return {"status": "blocked",
+                "reason": "context budget exhausted",
+                "tripwire": {"threshold_pct": 75, "used": 150000,
+                             "size": 200000, "landed": False}}
+
+    q = TaskQueue(store, runner=blocked_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="spec 030",
+                   verify_cmd="pytest")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"  # fails CLOSED — a block is not an approval
+    payload = json.loads(t.result_json)
+    assert payload["tripwire_fired"] is True
+    assert payload["change"]["status"] == "change"  # the span devclaw measured
+    # ...and the goal layer reads that as a continuable partial
+    assert _landed_partial(t.result_json) is True
+
+
+async def test_tripwire_with_an_empty_span_is_not_a_partial(store, monkeypatch, tmp_path):
+    """A firing that left nothing behind stays a plain failure: there is
+    nothing for the next session to continue from, so it must still burn its
+    dispatch and let the cap catch it. The refund narrows the brake, never
+    weakens it."""
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
+    ws = _repo(tmp_path)
+
+    async def blocked_runner(req: EngineRequest):
+        return {"status": "blocked",
+                "reason": "context budget exhausted",
+                "tripwire": {"threshold_pct": 75, "used": 150000,
+                             "size": 200000, "landed": True}}
+
+    q = TaskQueue(store, runner=blocked_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="spec 030",
+                   verify_cmd="pytest")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    # landed=True is NOT enough — the span is what decides
+    assert _landed_partial(t.result_json) is False
+
+
+async def test_worker_block_without_a_tripwire_records_no_span(store, monkeypatch, tmp_path):
+    """An ordinary honest-block (missing capability, impossible instructions)
+    is unchanged: no tripwire, no span recorded, no partial."""
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
+    ws = _repo(tmp_path)
+
+    async def blocked_runner(req: EngineRequest):
+        (ws / "scratch.py").write_text("X = 1\n")
+        return {"status": "blocked", "reason": "needs a credential the sandbox lacks"}
+
+    q = TaskQueue(store, runner=blocked_runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="do X",
+                   verify_cmd="pytest")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert _landed_partial(t.result_json) is False
 
 
 async def test_prompt_too_long_fails_fast_without_retry(store, monkeypatch):

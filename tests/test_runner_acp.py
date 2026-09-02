@@ -313,6 +313,29 @@ def test_tripwire_fires_once_and_lands_a_normal_delivery(tmp_path):
     assert fires[0]["payload"]["threshold_pct"] == 75
 
 
+def test_tripwire_rides_the_blocked_shortcircuit(tmp_path):
+    """A landing that ends in the agent's own honest BLOCK must still carry
+    the tripwire + context fields.
+
+    The blocked short-circuit returns BEFORE the ok-path payload, and it used
+    to drop them — so the single most common landing outcome reached the host
+    indistinguishable from an ordinary block: no problems-catalog row, and no
+    span capture, which is exactly the case the partial-settlement path exists
+    to serve. Live: devclaw-030 task 75d43d2b emitted a ContextTripwire event
+    at 78.4% and settled with result_json NULL."""
+    proc, events, result, _ = _run_runner(
+        tmp_path, "usage_window_blocked",
+        env_extra={"DEVCLAW_CONTEXT_TRIPWIRE_PCT": "75"},
+    )
+    assert proc.returncode == 0
+    assert result["status"] == "blocked"          # still fails closed
+    assert "context budget exhausted" in result["reason"]
+    assert result["tripwire"]["threshold_pct"] == 75
+    assert result["tripwire"]["used"] == 800
+    assert result["context"] == {"used": 800, "size": 1000}
+    assert len([e for e in events if e["type"] == "ContextTripwire"]) == 1
+
+
 def test_below_threshold_behavior_is_byte_identical(tmp_path):
     """Under the threshold nothing changes: no tripwire field, no event —
     only the last observed context usage is reported."""

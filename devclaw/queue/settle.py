@@ -1369,11 +1369,31 @@ class SettleMixin:
                 # bypassed, no PR is opened (#186). Only what this settle
                 # RECORDS changes. Both helpers below are never-raises, so a
                 # bookkeeping hiccup degrades to today's plain failure.
+                # The gate is the tripwire having FIRED plus a span devclaw
+                # measured itself — deliberately NOT the worker's ``landed``
+                # self-report. Capture is mechanical (stage-everything, then
+                # record it, via _capture_change), so it does not depend on the
+                # agent having recorded its own work before the wall: an agent
+                # that ran out mid-landing still leaves the work in the tree,
+                # and 4 of the first 9 firings on the live instance reported
+                # landed=False while the span was the only thing that could say
+                # whether anything survived. Same doctrine as #630 — no
+                # instruction to the agent is load-bearing for the completeness
+                # of the change. ``landed`` stays the problems-catalog's
+                # `recovered` metric above (did the agent land it ITSELF),
+                # which is a different question from "is there work here to
+                # continue from".
+                #
+                # The dict's PRESENCE is "fired": runner.py attaches
+                # result["tripwire"] only under `if tripwire.fired`.
+                # Emptiness is judged downstream by goal.engine._landed_partial
+                # (`change.status == "change"`), so an empty or undeterminable
+                # span still settles as a plain failure.
                 partial_json: Optional[str] = None
-                if isinstance(last_tripwire, dict) and last_tripwire.get("landed"):
-                    landed_result: dict = {"tripwire_landed": True}
+                if isinstance(last_tripwire, dict):
+                    partial_result: dict = {"tripwire_fired": True}
                     _attach_change(
-                        landed_result,
+                        partial_result,
                         await _capture_change(
                             workspace_dir, pre_run_sha,
                             task_id=task_id, message=materialize_msg,
@@ -1381,7 +1401,7 @@ class SettleMixin:
                         kind=kind, workspace_dir=workspace_dir,
                         verify_cmd=verify_cmd,
                     )
-                    partial_json = json.dumps(landed_result)
+                    partial_json = json.dumps(partial_result)
                 self._store.mark_failed(
                     task_id,
                     f"{last_failure} — the worker reports it cannot complete this "

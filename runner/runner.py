@@ -1696,6 +1696,38 @@ def main() -> None:
             )
             client.cancel_turn()
 
+    def _stamp_context_budget(payload: dict, *, landed: "bool | None" = None) -> None:
+        """Stamp spec 021 US2's context-budget observability onto a TERMINAL
+        payload — one definition, applied to every one of them.
+
+        The blocked short-circuit used to return before the ok-path's private
+        copy of this, so a tripwire that fired and then landed via the agent's
+        own ``STATUS: BLOCKED: context budget exhausted`` reached the host
+        carrying no ``tripwire`` field at all. That is the single most common
+        landing outcome, and it silently produced no problems-catalog row and
+        no span capture (spec tiny/partial-settlement-continuation) — exactly
+        the case the partial path exists to serve. Live proof: task 75d43d2b
+        emitted a ContextTripwire event at 78.4% and settled result_json NULL.
+
+        ``landed`` overrides the tripwire's own flag for the error path, where
+        the landing sequence provably did not complete.
+        """
+        if tripwire.seen:
+            payload["context"] = {"used": tripwire.used, "size": tripwire.size}
+        if tripwire.fired:
+            payload["tripwire"] = {
+                "threshold_pct": tripwire.threshold_pct,
+                "used": tripwire.used,
+                "size": tripwire.size,
+                "active_slice": watcher.active_slice() or None,
+                "landed": bool(tripwire.landed) if landed is None else landed,
+            }
+        elif tripwire.threshold_pct > 0 and not tripwire.seen:
+            payload["usage_absent_note"] = (
+                f"context tripwire configured at {tripwire.threshold_pct}% but the "
+                "agent reported no usage stream — tripwire inert this session"
+            )
+
     client = acp.AcpClient(
         acp_command, acp_env, on_event=_emit_and_watch, on_update=_observe_update
     )
@@ -1770,16 +1802,9 @@ def main() -> None:
                 client.last_agent_message, client.stderr_tail()
             ),
         )
-        if tripwire.fired:
-            # The landing sequence did not complete — the firing still rides
-            # the result so the host counts it (recovered=False).
-            err_payload["tripwire"] = {
-                "threshold_pct": tripwire.threshold_pct,
-                "used": tripwire.used,
-                "size": tripwire.size,
-                "active_slice": watcher.active_slice() or None,
-                "landed": False,
-            }
+        # The landing sequence did not complete — the firing still rides the
+        # result so the host counts it (recovered=False).
+        _stamp_context_budget(err_payload, landed=False)
         if hook_warnings:
             err_payload["hook_warnings"] = hook_warnings
         _emit_result(err_payload)
@@ -1810,6 +1835,9 @@ def main() -> None:
             blocked_payload["repo_notes"] = repo_notes
         if hook_warnings:
             blocked_payload["hook_warnings"] = hook_warnings
+        # A block is the tripwire's MOST COMMON landing outcome — the agent
+        # lands, then honestly reports it cannot finish in this session.
+        _stamp_context_budget(blocked_payload)
         _emit_result(blocked_payload)
         return
 
@@ -1841,21 +1869,7 @@ def main() -> None:
     # Context-budget observability (spec 021 US2, contracts/runner-result.md):
     # the last observed usage, the firing record, or the loud inert note —
     # never fabricated (no usage stream ⇒ no `context` field).
-    if tripwire.seen:
-        result_payload["context"] = {"used": tripwire.used, "size": tripwire.size}
-    if tripwire.fired:
-        result_payload["tripwire"] = {
-            "threshold_pct": tripwire.threshold_pct,
-            "used": tripwire.used,
-            "size": tripwire.size,
-            "active_slice": watcher.active_slice() or None,
-            "landed": bool(tripwire.landed),
-        }
-    elif tripwire.threshold_pct > 0 and not tripwire.seen:
-        result_payload["usage_absent_note"] = (
-            f"context tripwire configured at {tripwire.threshold_pct}% but the "
-            "agent reported no usage stream — tripwire inert this session"
-        )
+    _stamp_context_budget(result_payload)
     if usage:
         result_payload["usage"] = usage
     if repo_notes:

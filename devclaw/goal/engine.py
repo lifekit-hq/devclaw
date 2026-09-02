@@ -349,16 +349,21 @@ def _no_change(result_json: Optional[str]) -> bool:
 
 
 def _landed_partial(result_json: Optional[str]) -> bool:
-    """Did this task block on the context tripwire having LANDED real work?
+    """Did this task block on the context tripwire leaving real work behind?
 
-    True only when the queue recorded BOTH the landing flag and a span it could
-    determine to be non-empty (``change.status == "change"``). Every other
-    shape reads False, which is today's behaviour: an undeterminable span
-    (``error``/``no_repo``) must never be optimistically read as progress —
-    the same fail-closed reasoning as the materialize gate — and a landing that
-    committed nothing has nothing for the next session to continue from."""
+    True only when the queue recorded BOTH that the tripwire FIRED and a span
+    it could determine to be non-empty (``change.status == "change"``). Every
+    other shape reads False, which is today's behaviour: an undeterminable span
+    (``error``/``no_repo``) must never be optimistically read as progress — the
+    same fail-closed reasoning as the materialize gate — and a firing that left
+    nothing behind has nothing for the next session to continue from.
+
+    Note what is deliberately NOT consulted: the worker's own ``landed``
+    self-report. The span is devclaw's mechanical measurement of what is
+    actually in the tree, and it is the only thing that can answer this
+    question honestly (#630)."""
     data = _parse_result(result_json)
-    if not isinstance(data, dict) or data.get("tripwire_landed") is not True:
+    if not isinstance(data, dict) or data.get("tripwire_fired") is not True:
         return False
     change = data.get("change")
     return isinstance(change, dict) and change.get("status") == _CHANGE
