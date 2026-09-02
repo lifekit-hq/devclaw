@@ -44,6 +44,7 @@ from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
 from . import problems as _problems
+from . import decisions as _decisions
 from ..delivery import deploy as _deploy
 
 from ..engine.workspace import WorkspaceError
@@ -420,6 +421,9 @@ async def _resolve_done_gate(
             goal, status, store.recent_log(goal_id), store.recent_deliveries(goal_id),
             claude_caller=evaluator_caller, review_report=review_report, at_done_gate=True,
             spec=spec, repo_context=repo_context, strictness=resolved_strictness,
+            # spec 031 US4: the owner's recorded rulings — a clause with a
+            # current Decision is graded resolved_by_decision, never re-asked
+            decisions=_decisions.render(store.decisions(goal_id)),
         )
     except _evaluator.GoalEvalError as exc:
         store.append_log(goal_id, f"done-gate eval error: {exc}")

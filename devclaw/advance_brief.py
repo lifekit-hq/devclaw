@@ -49,6 +49,9 @@ GOAL_LINE_PREFIX = "Goal:"
 #: contract — ``goal/prior_increments.render`` builds the section's opening line
 #: from this constant and ``display_goal`` below detects on it.
 PRIOR_INCREMENTS_MARKER = "Prior increments of this goal"
+#: spec 031 US4 — the head line of the Decisions feed-forward section
+#: (``goal/decisions.render``): the owner's recorded rulings, applied as fact.
+DECISIONS_MARKER = "Decisions on this goal"
 
 #: The count is rendered into the marker line so the display side can annotate
 #: how many increments preceded this one WITHOUT re-reading the store. Generator

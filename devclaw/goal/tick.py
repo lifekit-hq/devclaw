@@ -57,6 +57,7 @@ from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event, IllegalTransition, TransitionConflict
 from . import problems as _problems
+from . import decisions as _decisions
 from ..loom import trace as _trace
 from ..loom.limits import FailureKind, classify_failure, pause_seconds
 from ..state_store import _now_ms
@@ -458,6 +459,7 @@ def _chunk_plan_corruption(workspace_dir: str) -> str:
 def _advance_brief(
     goal: Goal, steering: str, failure_context: str = "",
     prior_increments: str = "", issue_context: str = "",
+    decisions: str = "",
 ) -> str:
     """The light pull-brief for a thin-path advance session (demolition P3;
     speckit substrate, spec 008 US1).
@@ -504,6 +506,10 @@ def _advance_brief(
         parts += ["", issue_context.strip()]
     if prior_increments.strip():
         parts += ["", prior_increments.strip()]
+    if decisions.strip():
+        # spec 031 US4: the owner's rulings, directly after prior increments —
+        # devclaw-controlled facts the session applies, never re-derives.
+        parts += ["", decisions.strip()]
     if failure_context.strip():
         # Spec 020 FR-002a: an environment-cap (sandbox OOM) failure gets
         # cap-aware bounding advice — the generic "smaller slice" directive is
@@ -767,6 +773,12 @@ async def _handle_long_lived_advance(
     except Exception:  # noqa: BLE001
         increment_rows = []
         prior_increments = ""
+    # Spec 031 US4 — the owner's Decisions, same gate, same best-effort shape:
+    # one SQLite read, never an LLM call, a hiccup degrades to "no section".
+    try:
+        decisions = _decisions.render(store.decisions(goal_id))
+    except Exception:  # noqa: BLE001
+        decisions = ""
     # Chunk-plan integrity (spec 021 FR-004): a continuation (prior increments
     # exist) whose current feature's tasks.md cannot be read blocks LOUD —
     # the committed speckit artifacts are the workspace's memory of the arc,
@@ -910,6 +922,7 @@ async def _handle_long_lived_advance(
         goal=_advance_brief(
             goal, steering, failure_context=failure_context,
             prior_increments=prior_increments, issue_context=issue_context,
+            decisions=decisions,
         ),
         verify_cmd=goal.verify_cmd,
         open_pr=goal.open_pr,

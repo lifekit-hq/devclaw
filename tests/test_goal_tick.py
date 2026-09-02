@@ -3235,6 +3235,43 @@ async def test_advance_brief_carries_prior_increments_after_a_settled_delivery(t
 
 
 @pytest.mark.asyncio
+async def test_decisions_marker_present_and_capped(tmp_path):
+    """Spec 031 US4 structural guard (beside the prior-increments guard): the
+    section's head line is DECISIONS_MARKER, superseded Decisions are absent,
+    the entry list caps under the budget with the marker never truncated, and
+    the next dispatch's brief carries it."""
+    from devclaw.advance_brief import DECISIONS_MARKER
+    from devclaw.goal import decisions as _dec
+    from devclaw.goal.models import Decision as _D
+    from devclaw.goal.prompt_budget import DECISIONS_KEEP, DECISIONS_TRUNCATION_MARKER
+
+    rows = [_D(id=f"dec_{i}", goal_id="g", problem_id="", clause=f"clause {i}", verb="decide",
+               option_key="correct", text="x" * 300, provenance="owner", made_by="denys",
+               made_at=1_000 + i, superseded_by=("dec_9" if i == 0 else ""))
+            for i in range(40)]
+    text = _dec.render(rows)
+    assert text.startswith(DECISIONS_MARKER)
+    assert "clause 0" not in text                      # superseded → absent
+    assert DECISIONS_TRUNCATION_MARKER in text          # capped
+    assert len(text.split("\n", 2)[2]) <= DECISIONS_KEEP + len(DECISIONS_TRUNCATION_MARKER) + 8
+    assert _dec.render([]) == ""                        # absence needs no statement
+
+    # end-to-end: a recorded Decision reaches the next brief as fact
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.record_decision(_D(id="dec_live", goal_id="g", problem_id="", clause="clause 7",
+                             verb="decide", option_key="accept_close", text="",
+                             provenance="owner", made_by="denys", made_at=5))
+    store.save_status("g", GoalStatus(phase="idle"))
+    store.append_steering("g", ["keep going"], source="owner")
+    engine = FakeEngine()
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert DECISIONS_MARKER in action.goal and "clause 7" in action.goal
+
+
+@pytest.mark.asyncio
 async def test_first_advance_brief_states_no_prior_increments(tmp_path):
     """FR-004: with nothing settled, the absence is stated, not omitted."""
     from devclaw.advance_brief import PRIOR_INCREMENTS_MARKER
