@@ -115,3 +115,18 @@ post-landing corrections below.
       dropping it would starve the probe refresh its auto-resume needs. The
       once-per-sweep tripwire gains a cancelled-goal case (class test extended,
       not cloned).
+- [x] T020 The scan read LIVE GOALS' prepared workspaces, so a goal whose
+      workspace has never been prepared declared nothing and its FIRST-EVER
+      dispatch ran unguarded against a capability already red on record — the
+      hole in SC-002's "zero worker sessions until rotated". The declaration is
+      now sourced from the PROJECT REGISTRY once per sweep
+      (`GoalService._registered_capabilities`, threaded through `tick_all` →
+      `TickContext.project_caps` on the `holders` precedent), and both
+      consumers — the dispatch guard and the `mechanical:env` auto-heal —
+      resolve it through the single `tick_guards.declared_caps_for`; splitting
+      that resolution is what would make an unprepared-workspace hold clear
+      itself straight back into the red capability every tick. Still
+      once-per-sweep and zero-LLM. The US1 class test is parametrized over the
+      declaration SOURCE (workspace / registry-on-unprepared-workspace) and the
+      once-per-sweep test gains a registry-declared probe case — both extended,
+      neither cloned.

@@ -71,12 +71,28 @@ One new module plus four wires — no new layer, no new store.
   default sweep, which kept a red row fresh through the sweep after the fix —
   FR-004's "resume within ~one sweep" silently cost two, and tightening
   `DEVCLAW_GOAL_TICK_SECONDS` widened that gap instead of closing it.
-- **The per-sweep capability scan is scoped to LIVE goals**
+- **The capability declaration is sourced from the PROJECT REGISTRY**, once per
+  sweep (`GoalService._registered_capabilities` → `tick_all` → `TickContext`,
+  the `holders` threading precedent), and the resulting `project_id -> caps`
+  map is what BOTH the dispatch guard and the auto-heal resolve through
+  (`tick_guards.declared_caps_for`). Reading only each goal's own prepared
+  workspace — the first implementation — meant a goal whose workspace has never
+  been prepared declared nothing, so its FIRST dispatch sailed through a
+  capability that was already red on record: precisely the session SC-002
+  promises not to burn. Capabilities belong to the project, not the goal, and
+  the registry answers before any goal workspace exists. Splitting the
+  resolution between the two consumers is what makes an unprepared-workspace
+  hold clear itself every tick, so there is exactly ONE resolver.
+- **Live goals' workspaces are still scanned on top**, for goals belonging to
+  no registered project, and scoped to non-terminal goals there
   (`project_hold.is_terminal`, the same rule the hold derivation uses). A done
   or cancelled goal's workspace can never be dispatched into again, so its
   declaration must not buy the fleet a recurring network/docker probe forever.
   Blocked goals deliberately still count: the env hold IS a block, and dropping
   it from the scan would starve the very probe refresh its auto-resume needs.
+  Archived projects are skipped for the same reason; a project whose checkout
+  cannot be read is OMITTED from the map rather than recorded as declaring
+  nothing, so its goals fall back to the workspace read instead of fail-open.
 - **`mechanical:env` is not `mechanical:env_cap`.** The latter already exists
   (spec 020: the sandbox-OOM re-dispatch budget). Different brake, different
   kind string — do not merge them.

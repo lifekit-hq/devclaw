@@ -188,6 +188,38 @@ class GoalService:
                 out.add(norm)
         return out
 
+    def _registered_capabilities(self) -> "dict[str, tuple[str, ...]]":
+        """``project_id -> declared environment capabilities`` (spec 030).
+
+        Read from each registered project's own ``devclaw.json``, so the
+        admission gate is keyed by PROJECT and answers before any of its goals
+        has a prepared workspace — a goal's first-ever dispatch is held on a
+        red capability rather than fail-open (SC-002). Pure filesystem +
+        SQLite: zero LLM calls, called once per sweep.
+
+        Archived projects are skipped — nothing dispatches there, and their
+        declarations must not keep buying the fleet a recurring probe. A
+        project whose checkout cannot be read is OMITTED rather than recorded
+        as declaring nothing, so the goal-workspace fallback still applies.
+        """
+        from ..project_manifest import load_manifest
+
+        if self._project_registry is None:
+            return {}
+        out: "dict[str, tuple[str, ...]]" = {}
+        for project in self._project_registry.list():
+            if getattr(project, "status", "active") == "archived":
+                continue
+            workspace = getattr(project, "workspace_dir", None)
+            if not workspace:
+                continue
+            try:
+                manifest = load_manifest(workspace)
+            except Exception:  # noqa: BLE001 — see docstring
+                continue
+            out[project.id] = tuple(manifest.capabilities) if manifest else ()
+        return out
+
     def _evaluator(self) -> ClaudeCaller:
         if self._evaluator_caller is None:
             self._evaluator_caller = goal_evaluator.default_caller()
@@ -424,6 +456,7 @@ class GoalService:
             triage_caller=self._triage(),
             mergeability_probe=goal_mergeability.pr_conflicting,
             project_workspaces=self._registered_workspaces,
+            project_capabilities=self._registered_capabilities,
         )
         # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
         # crashing tick leaves this stale, which is exactly the signal an
@@ -444,6 +477,7 @@ class GoalService:
                 trend_detector=self._trend_detector(),
                 remote_checker=self._remote_checker(),
                 mergeability_probe=goal_mergeability.pr_conflicting,
+                project_caps=self._registered_capabilities(),
                 issue_fetcher=_issue_ref.fetch_issue,
             )
         return outcome.value
@@ -676,6 +710,7 @@ class GoalService:
                 store=self._goal_store, engine=self._engine,
                 notifier=self._notifier, notify_url="",
                 prepare_ws=prepare_workspace, summarize=self._summary(),
+                project_caps=self._registered_capabilities(),
             )
             return gid
         return None

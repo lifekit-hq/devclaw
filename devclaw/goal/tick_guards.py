@@ -300,6 +300,39 @@ async def _heal_give_up(
     )
 
 
+def _declared_caps_for(
+    goal: Goal, project_caps: "dict[str, tuple[str, ...]] | None",
+) -> "tuple[str, ...]":
+    """The environment capabilities this goal's PROJECT declares (spec 030).
+
+    The registry-sourced map wins whenever it carries this goal's project: it
+    is read from the project's own checkout once per sweep, so it answers even
+    when the GOAL's workspace has never been prepared — which is the whole
+    point. Reading only the goal's workspace made a brand-new goal's FIRST
+    dispatch fail open on a capability that was already red on record, the
+    hole in SC-002's "zero worker sessions until rotated" promise.
+
+    The goal-workspace read stays as the fallback for a goal that belongs to no
+    registered project (an ad-hoc goal pointed straight at a checkout). A
+    project present in the map with NO capabilities is authoritative — it
+    declares none — and must not fall through to a second, divergent read.
+
+    Never raises: an unreadable manifest degrades to "declares nothing", which
+    is fail-open by FR-007. A malformed manifest fails loud on the paths that
+    own that (prep/doctor), not here.
+    """
+    project_id = (goal.project_id or "").strip()
+    if project_caps and project_id:
+        declared = project_caps.get(project_id)
+        if declared is not None:
+            return tuple(declared)
+    try:
+        manifest_obj = _manifest.load_manifest(goal.workspace_dir)
+    except Exception:  # noqa: BLE001 — see docstring
+        return ()
+    return tuple(manifest_obj.capabilities) if manifest_obj else ()
+
+
 async def _block_on_env_cap(
     goal_id: str, status: GoalStatus,
     red_caps: "list[tuple[str, _env_cap.CapProbeResult]]",
@@ -354,6 +387,7 @@ async def _block_on_env_cap(
 async def _autoheal_env_cap(
     goal_id: str, goal: Goal, status: GoalStatus,
     *, store: GoalStore, notifier: Notifier,
+    project_caps: "dict[str, tuple[str, ...]] | None" = None,
 ) -> "GoalStatus | None":
     """Lift a ``mechanical:env`` block once all required capability probes are
     no longer red.
@@ -375,11 +409,11 @@ async def _autoheal_env_cap(
             reason="the required environment capability keeps breaking",
         )
         return None
-    try:
-        manifest_obj = _manifest.load_manifest(goal.workspace_dir)
-        declared = manifest_obj.capabilities if manifest_obj else ()
-    except Exception:  # noqa: BLE001 — a malformed manifest does not wedge heal
-        declared = ()
+    # SAME resolution as the dispatch guard (:func:`_declared_caps_for`) — a
+    # hold set from the project registry on an unprepared workspace would
+    # otherwise read "declares nothing" here and clear itself every tick,
+    # re-dispatching straight back into the red capability.
+    declared = _declared_caps_for(goal, project_caps)
     if not declared:
         # No declared capabilities → the hold should not have been set; clear it
         # defensively so the goal is not permanently wedged.

@@ -53,6 +53,12 @@ evidence of breakage). Doctor also carries an **advisory** check for a repo that
 visibly depends on a private registry without declaring `registry:*` — the
 known cost of explicit-only declaration.
 
+The declaration is read per PROJECT — from the registered project's own
+checkout, once per heartbeat sweep — not from each goal's workspace, so the
+hold applies to a goal's first-ever dispatch, before that goal has a workspace
+at all. (A goal belonging to no registered project falls back to its own
+workspace.)
+
 Unlike the gate-relevant fields below, `capabilities` is read from the
 **worktree**, not the merged base: the hold is a session-burn brake, so a
 worker-side edit can only hurt that worker's own goal (dispatching into a

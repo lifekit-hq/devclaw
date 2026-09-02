@@ -24,7 +24,11 @@ from .tick_context import (
     _notify,
     _run_atomic,
 )
-from .tick_guards import _block_on_env_cap, _block_on_prep_failure
+from .tick_guards import (
+    _block_on_env_cap,
+    _block_on_prep_failure,
+    _declared_caps_for,
+)
 from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
 from . import repo_brief as _repo_brief
@@ -39,7 +43,6 @@ from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
 from .. import env_cap as _env_cap
-from .. import project_manifest as _manifest
 
 #: consecutive dispatch-boundary holds before the goal escalates to ``blocked``
 #: with ``blocked_kind="mechanical:slice_hold"`` (issue #728 Part B).
@@ -75,6 +78,7 @@ async def _dispatch_action(
     notify_url: str, prepare_ws: WorkspacePrep,
     summarize: "ClaudeCaller | None" = None,
     consume_steering: "list[int] | None" = None,
+    project_caps: "dict[str, tuple[str, ...]] | None" = None,
 ) -> Outcome:
     # Runaway backstop (mechanism, not cognition): never spawn more than the
     # goal's known-bounded work surface + a small margin without a human. The
@@ -183,17 +187,15 @@ async def _dispatch_action(
     # any of its required capabilities is provably broken (probe result = red).
     # Unknown/absent probe results are fail-open (FR-007); only a confirmed red
     # holds dispatch. The probe results were refreshed ONCE before this sweep
-    # in tick_all; here we only read the persisted rows (zero network I/O).
+    # in tick_all; here we only read the persisted rows (zero network I/O), and
+    # the declaration comes from the sweep's project-registry map so this fires
+    # on a goal's FIRST dispatch, before its workspace exists.
     # Read-only reviews run in the workspace but need no capabilities (they
     # examine the repo, not run it), so they are exempt.
     if action.tool != "review_repository":
-        try:
-            _manifest_obj = await asyncio.to_thread(
-                _manifest.load_manifest, goal.workspace_dir
-            )
-            _declared = _manifest_obj.capabilities if _manifest_obj else ()
-        except Exception:  # noqa: BLE001 — a malformed manifest fails loud elsewhere
-            _declared = ()
+        _declared = await asyncio.to_thread(
+            _declared_caps_for, goal, project_caps
+        )
         if _declared:
             _red = _env_cap.red_caps_for(store, _declared)
             if _red:

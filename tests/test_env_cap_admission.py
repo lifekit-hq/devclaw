@@ -71,17 +71,50 @@ async def _tick(store, engine, notifier, evaluator):
     )
 
 
+@pytest.mark.parametrize("declared_via", ["goal_workspace", "project_registry"])
 @pytest.mark.asyncio
-async def test_red_capability_holds_dispatch_with_one_ping_and_zero_cognition(tmp_path):
+async def test_red_capability_holds_dispatch_with_one_ping_and_zero_cognition(
+    tmp_path, declared_via,
+):
     """US1/SC-001: a red probe for a DECLARED capability holds the dispatch —
     no worker launched, a ``mechanical:env`` block naming the probe evidence and
     its remedy, exactly one owner ping, zero LLM calls. Holding it for further
-    ticks stays free and silent (the pause_notified shape)."""
-    store = _seed(tmp_path, REGISTRY)
-    _probe(store, "red")
-    engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
+    ticks stays free and silent (the pause_notified shape).
 
-    assert await _tick(store, engine, notifier, evaluator) is Outcome.BLOCKED
+    Both declaration SOURCES hold identically. ``project_registry`` is the
+    first-ever-dispatch case: the goal's workspace has NEVER been prepared, so
+    reading the declaration out of it finds nothing and the goal would sail
+    through into a session that cannot work. Only the sweep's registry-sourced
+    map holds it, which is what SC-002's "zero worker sessions until the token
+    is rotated" actually promises."""
+    engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
+    if declared_via == "goal_workspace":
+        store = _seed(tmp_path, REGISTRY)
+        project_caps = None
+    else:
+        goals = tmp_path / "goals"
+        store = GoalStore(goals, now=Clock())
+        seed_goal(
+            goals, "g", project_id="proj",
+            workspace_dir=str(tmp_path / "never-prepared"),
+        )
+        store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+        project_caps = {"proj": (REGISTRY,)}
+    _probe(store, "red")
+
+    async def tick() -> Outcome:
+        """Drive the registry case through the SWEEP, which is where the
+        capability map is sourced; the workspace case needs no sweep."""
+        if project_caps is None:
+            return await _tick(store, engine, notifier, evaluator)
+        outcomes = await tick_all(
+            store=store, engine=engine, evaluator_caller=evaluator,
+            notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
+            project_capabilities=lambda: project_caps,
+        )
+        return outcomes["g"]
+
+    assert await tick() is Outcome.BLOCKED
 
     st = store.load_status("g")
     assert st.phase == "blocked" and st.blocked_kind == "mechanical:env"
@@ -92,8 +125,12 @@ async def test_red_capability_holds_dispatch_with_one_ping_and_zero_cognition(tm
     assert REGISTRY in notifier.sent[0]
     assert evaluator.calls == 0
 
+    # Held ticks stay free and silent — and, for the registry case, the hold
+    # SURVIVES: the auto-heal must resolve the declaration the same way the
+    # gate did, or an unprepared workspace reads "declares nothing" and clears
+    # the block straight back into the red capability every tick.
     for _ in range(3):
-        await _tick(store, engine, notifier, evaluator)
+        await tick()
     assert store.load_status("g").blocked_kind == "mechanical:env"
     assert engine.dispatched == [] and len(notifier.sent) == 1
     assert evaluator.calls == 0
@@ -278,10 +315,11 @@ async def test_doctor_and_the_goal_block_name_the_same_probe_id(tmp_path, monkey
 async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path, monkeypatch):
     """FR-004: the network probe lives in the sweep pre-loop, not the tick. A
     per-goal tick reads persisted rows only (zero probe runs); ``tick_all`` runs
-    each STALE declared probe once, and runs nothing for a capability that no
-    LIVE goal's project declares — neither an undeclared one, nor one left
-    behind by a terminal goal, whose workspace can never be dispatched into
-    again and so must not buy the fleet a recurring network probe forever."""
+    each STALE declared probe once, from either source — a registered project's
+    manifest or a live goal's workspace — and runs nothing for a capability no
+    one declares, nor for one left behind by a terminal goal, whose workspace
+    can never be dispatched into again and so must not buy the fleet a
+    recurring network probe forever."""
     runs: list[str] = []
 
     def _fake(cap_id: str):
@@ -318,3 +356,14 @@ async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
     assert runs == [REGISTRY]                               # still TTL-fresh: no re-probe
+
+    # A REGISTERED project declares the other capability. Its declaration buys
+    # the probe even though no goal workspace on disk mentions it — that is the
+    # source the admission gate reads, so the sweep must keep it fresh.
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    await tick_all(
+        store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+        notify_url="http://relay", prepare_ws=fake_prepare,
+        project_capabilities=lambda: {"proj": ("sandbox:image",)},
+    )
+    assert runs == [REGISTRY, "sandbox:image"]
