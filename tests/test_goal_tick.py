@@ -2884,6 +2884,39 @@ async def test_done_gate_off_track_below_cap_counts_the_round(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_done_gate_round_that_beats_the_best_clause_count_restarts_the_churn_counter(tmp_path):
+    """Progress-aware brake (2026-09-02): a refusal is churn only when the
+    satisfied-clause count is FLAT. devclaw-030 parked at 14/15 after three
+    refusals while the count rose every round — the loop was winning and the
+    brake could not tell. A round that beats the persisted best resets the
+    counter to 1 and persists the new best; it never parks."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="verifying",
+        donegate_rounds=DONEGATE_ROUND_CAP - 1, donegate_progress=1,
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+    ))
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "clause 3 unmet",
+        "corrections": ["[clause 3] wire the scan to the registry"],
+        "clauses": [
+            {"clause": "clause 1", "satisfied": True, "evidence": "a.py:1"},
+            {"clause": "clause 2", "satisfied": True, "evidence": "b.py:2"},
+            {"clause": "clause 3", "satisfied": False, "evidence": "missing — should live in tick.py"},
+        ],
+    }))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+    assert out is Outcome.SLEPT           # kept going — NOT parked at the cap
+    s = store.load_status("g")
+    assert s.phase == "idle"
+    assert s.blocked_kind != "donegate_churn"
+    assert s.donegate_rounds == 1          # restarted, not cap-1 + 1
+    assert s.donegate_progress == 2        # the new best persists
+
+
+@pytest.mark.asyncio
 async def test_one_shot_done_gate_off_track_rides_the_advance_loop_with_the_churn_brake(tmp_path):
     """Named regression (round-2 amputation): a one_shot goal's non-achieved
     done-gate rides the SAME path as long_lived — both modes share ONE
@@ -2921,13 +2954,20 @@ async def test_done_gate_churn_brake_parks_after_cap_rounds(tmp_path):
     blocked_on."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
+    # FLAT progress: the best seen is 1 and this round reports 1 again — the
+    # treadmill the brake was built for. A rising count is covered by
+    # test_done_gate_round_that_beats_the_best_clause_count_restarts_the_churn_counter.
     store.save_status("g", GoalStatus(
-        phase="verifying", donegate_rounds=DONEGATE_ROUND_CAP - 1,
+        phase="verifying", donegate_rounds=DONEGATE_ROUND_CAP - 1, donegate_progress=1,
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
     evaluator = FakeClaude(json.dumps({
         "verdict": "off_track", "rationale": "clause 2 unmet",
         "corrections": ["[clause 2] add the parity test"],
+        "clauses": [
+            {"clause": "clause 1", "satisfied": True, "evidence": "a.py:1"},
+            {"clause": "clause 2", "satisfied": False, "evidence": "missing — should live in b.py"},
+        ],
     }))
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
     notifier = RecordingNotifier()
@@ -2951,10 +2991,12 @@ async def test_resume_goal_resets_the_donegate_round_count(tmp_path):
         store = svc._goal_store
         store.save_status("g", GoalStatus(
             phase="blocked", blocked_on="done-gate churn brake: parked",
-            donegate_rounds=DONEGATE_ROUND_CAP,
+            donegate_rounds=DONEGATE_ROUND_CAP, donegate_progress=14,
         ))
         svc.resume_goal("g")
-        assert store.load_status("g").donegate_rounds == 0
+        s = store.load_status("g")
+        assert s.donegate_rounds == 0
+        assert s.donegate_progress == 0   # the vouch restores the FULL budget
     finally:
         db.close()
 async def test_failed_settle_reason_rides_the_next_advance_brief(tmp_path):
@@ -3522,7 +3564,7 @@ def test_green_mechanical_verification_alone_never_closes_a_goal():
     assert 'if ev.verdict == "achieved":' in src, "the close lost its verdict guard"
     guard = (
         'store.transition(\n            goal_id, Event.ACHIEVE,\n'
-        '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,\n'
+        '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,\n'
         '                    pending_merge_pr="", merge_heal_attempted=False),'
     )
     assert guard in src, "the primary ACHIEVE no longer clears the merge marker inside the verdict block"

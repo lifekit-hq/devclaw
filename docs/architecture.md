@@ -211,8 +211,11 @@ When the tick decides to *do* something (not just think):
    concerns) rides the dial like the review-shaped gates: under `trust`
    reported concerns advise-and-ship as follow-ups on the close, under
    `strict` they hold it open. A done-gate that refuses to close the same
-   goal 3 rounds in a row parks it for the owner (`donegate_churn`) instead
-   of re-advancing forever. Every *unreviewable* case (a gate crash,
+   goal 3 rounds in a row *with the satisfied-clause count flat* parks it for
+   the owner (`donegate_churn`) instead of re-advancing forever; a round that
+   beats the best count seen restarts the counter
+   (`goal_status.donegate_progress`), so a converging goal is never parked as
+   churn. Every *unreviewable* case (a gate crash,
    quota, worker-block) still fails closed regardless of the dial (#186 holds).
    **The declared-scope gate (spec 010 FR-103)** is the hermetic-I/O half of
    planned parallelism: a task graph may mark tasks topologically independent

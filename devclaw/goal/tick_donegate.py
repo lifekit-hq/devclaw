@@ -521,7 +521,7 @@ async def _resolve_done_gate(
                 goal_id, Event.RESUME_IDLE,
                 replace(base, phase="idle", merge_heal_attempted=True,
                         next="merge conflict — resolution increment queued",
-                        donegate_rounds=0),
+                        donegate_rounds=0, donegate_progress=0),
                 expect=status, consume_steering=consume_steering,
             )
             store.append_steering(goal_id, [
@@ -578,7 +578,7 @@ async def _resolve_done_gate(
                 )
         store.transition(
             goal_id, Event.ACHIEVE,
-            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,
+            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,
                     pending_merge_pr="", merge_heal_attempted=False),
             expect=status, consume_steering=consume_steering,
         )
@@ -651,7 +651,19 @@ async def _resolve_done_gate(
     # + an eval), not convergence — park it for the owner with the FULL last
     # verdict instead of re-advancing forever. Below the cap, steer
     # corrections back in and continue.
-    rounds = status.donegate_rounds + 1
+    # Progress-aware: count satisfied clauses this round. Beating the best
+    # count seen so far is convergence — the round counter restarts at 1 and
+    # the new best persists. Only a FLAT count accumulates toward the cap, so
+    # the brake catches the treadmill it was built for (fresh nits per round,
+    # nothing landing) and lets a goal that is visibly closing the gap keep
+    # closing it. No clauses reported (a pre-decomposition verdict) is treated
+    # as flat — never as progress.
+    progress = sum(1 for c in (ev.clauses or ()) if c.satisfied)
+    best = status.donegate_progress
+    if progress > best:
+        rounds, best = 1, progress
+    else:
+        rounds = status.donegate_rounds + 1
     if rounds >= DONEGATE_ROUND_CAP:
         q = (
             f"done-gate churn brake: {rounds} consecutive done proposals did not "
@@ -662,7 +674,7 @@ async def _resolve_done_gate(
         store.transition(
             goal_id, Event.BLOCK,
             replace(base, phase="blocked", blocked_on=q, blocked_kind="donegate_churn",
-                    donegate_rounds=rounds, next=""),
+                    donegate_rounds=rounds, donegate_progress=best, next=""),
             expect=status, consume_steering=consume_steering,
         )
         _apply_corrections(store, goal_id, ev)  # visible in inbox for the owner's decision
@@ -671,7 +683,7 @@ async def _resolve_done_gate(
     store.transition(
         goal_id, Event.RESUME_IDLE,
         replace(base, phase="idle", next="done-gate said keep going",
-                donegate_rounds=rounds),
+                donegate_rounds=rounds, donegate_progress=best),
         expect=status, consume_steering=consume_steering,
     )
     _apply_corrections(store, goal_id, ev)
@@ -794,7 +806,7 @@ async def _finalize_pending_merge(
         rationale = status.last_eval_note or "achieved (merge completed on retry)"
         store.transition(
             goal_id, Event.ACHIEVE,
-            replace(base, phase="done", next=rationale[:200], donegate_rounds=0,
+            replace(base, phase="done", next=rationale[:200], donegate_rounds=0, donegate_progress=0,
                     pending_merge_pr="", merge_heal_attempted=False),
             expect=status,
         )
