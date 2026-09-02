@@ -84,6 +84,11 @@ class Manifest:
     verify_cmd: Optional[str] = None
     stack: tuple[str, ...] = field(default_factory=tuple)
     validation: Optional[ValidationContract] = None
+    #: spec 030 FR-005 — the explicit capability ids this project requires.
+    #: Only these ids are consulted at admission; nothing is inferred.
+    #: An absent or empty list means "no capability dependencies", which
+    #: admits byte-identically to today (SC-003).
+    capabilities: tuple[str, ...] = field(default_factory=tuple)
 
 
 def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
@@ -124,6 +129,11 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
     stack = raw.get("stack", [])
     if not isinstance(stack, list) or any(not isinstance(s, str) for s in stack):
         raise ManifestError(f"{source}: stack must be a list of strings")
+    capabilities = raw.get("capabilities", [])
+    if not isinstance(capabilities, list) or any(
+        not isinstance(c, str) or not c.strip() for c in capabilities
+    ):
+        raise ManifestError(f"{source}: capabilities must be a list of non-empty strings")
     validation = _parse_validation(raw.get("validation"), source)
     return Manifest(
         schema_version=sv,
@@ -132,6 +142,7 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
         surface=surface,
         verify_cmd=verify_cmd.strip() if isinstance(verify_cmd, str) else None,
         stack=tuple(stack),
+        capabilities=tuple(capabilities),
         validation=validation,
     )
 

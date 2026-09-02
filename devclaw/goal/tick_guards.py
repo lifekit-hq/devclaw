@@ -24,6 +24,8 @@ from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
 from ..task_git import _ls_remote_ok_sync
+from .. import env_cap as _env_cap
+from .. import project_manifest as _manifest
 
 
 def _progress_window_active(status: GoalStatus) -> bool:
@@ -290,3 +292,71 @@ async def _heal_give_up(
         f"🟡 [{goal_id}] auto-recovery gave up after {cap} attempts — "
         f"{reason}; needs you (steer to resume)",
     )
+
+
+async def _block_on_env_cap(
+    goal_id: str, status: GoalStatus,
+    red_caps: "list[_env_cap.CapProbeResult]",
+    *, store: GoalStore, notifier: Notifier,
+    summarize: "ClaudeCaller | None" = None,
+    consume_steering: "list[int] | None" = None,
+) -> Outcome:
+    """Block the goal because one or more required capability probes are red.
+
+    Spec 030 FR-002/FR-003. The block message names every failing capability
+    and its remedy so the operator sees ONE story. Exactly one owner ping per
+    hold episode — the ``BLOCK`` transition only fires here; subsequent blocked
+    ticks auto-heal via :func:`_autoheal_env_cap` without re-pinging."""
+    cap_lines = "; ".join(
+        f"{r.evidence} → {r.remedy}" if r.remedy else r.evidence
+        for r in red_caps
+    )
+    msg = (
+        f"environment capability check failed — dispatching would burn a session: "
+        f"{cap_lines}. Waiting for the environment to be fixed; devclaw will "
+        "resume automatically when the probe turns green."
+    )
+    store.append_log(goal_id, f"env-cap hold: {cap_lines}")
+    store.transition(
+        goal_id, Event.BLOCK,
+        replace(status, phase="blocked", blocked_on=msg,
+                blocked_kind="mechanical:env", next=""),
+        expect=status, consume_steering=consume_steering,
+    )
+    await _notify(
+        notifier, NotifyLevel.OWNER,
+        f"🔴 [{goal_id}] dispatch held — environment not ready: {cap_lines}; "
+        "devclaw auto-resumes when the probe turns green",
+        summarize=summarize,
+    )
+    return Outcome.BLOCKED
+
+
+async def _autoheal_env_cap(
+    goal_id: str, goal: Goal, status: GoalStatus,
+    *, store: GoalStore,
+) -> "GoalStatus | None":
+    """Lift a ``mechanical:env`` block once all required capability probes are
+    no longer red.
+
+    Reads persisted probe rows (zero network, zero LLM). The sweep runner
+    refreshes them before each sweep so the results here are always at most
+    one sweep old. Returns the healed status, or ``None`` when the block must
+    remain (at least one probe is still red)."""
+    try:
+        manifest_obj = _manifest.load_manifest(goal.workspace_dir)
+        declared = manifest_obj.capabilities if manifest_obj else ()
+    except Exception:  # noqa: BLE001 — a malformed manifest does not wedge heal
+        declared = ()
+    if not declared:
+        # No declared capabilities → the hold should not have been set; clear it
+        # defensively so the goal is not permanently wedged.
+        healed = _heal_unblock(goal_id, status, store, heal_attempts=status.heal_attempts)
+        store.append_log(goal_id, "env-cap hold cleared (no capabilities declared)")
+        return healed
+    red = _env_cap.red_caps_for(store, declared)
+    if red:
+        return None  # still broken — stay blocked at zero cost
+    healed = _heal_unblock(goal_id, status, store, heal_attempts=status.heal_attempts)
+    store.append_log(goal_id, "env-cap hold cleared — all required capabilities are now green")
+    return healed

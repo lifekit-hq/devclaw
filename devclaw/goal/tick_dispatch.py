@@ -24,7 +24,7 @@ from .tick_context import (
     _notify,
     _run_atomic,
 )
-from .tick_guards import _block_on_prep_failure
+from .tick_guards import _block_on_env_cap, _block_on_prep_failure
 from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
 from . import repo_brief as _repo_brief
@@ -38,6 +38,8 @@ from ..advance_brief import display_goal as _display_goal
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
+from .. import env_cap as _env_cap
+from .. import project_manifest as _manifest
 
 #: consecutive dispatch-boundary holds before the goal escalates to ``blocked``
 #: with ``blocked_kind="mechanical:slice_hold"`` (issue #728 Part B).
@@ -176,6 +178,30 @@ async def _dispatch_action(
         if hold_reason:
             store.append_log(goal_id, f"dispatch held: {hold_reason}")
             return Outcome.SLEPT
+    # ---- environment-capability admission gate (spec 030 FR-002) ---------------
+    # A project that declares capability dependencies is not dispatchable while
+    # any of its required capabilities is provably broken (probe result = red).
+    # Unknown/absent probe results are fail-open (FR-007); only a confirmed red
+    # holds dispatch. The probe results were refreshed ONCE before this sweep
+    # in tick_all; here we only read the persisted rows (zero network I/O).
+    # Read-only reviews run in the workspace but need no capabilities (they
+    # examine the repo, not run it), so they are exempt.
+    if action.tool != "review_repository":
+        try:
+            _manifest_obj = await asyncio.to_thread(
+                _manifest.load_manifest, goal.workspace_dir
+            )
+            _declared = _manifest_obj.capabilities if _manifest_obj else ()
+        except Exception:  # noqa: BLE001 — a malformed manifest fails loud elsewhere
+            _declared = ()
+        if _declared:
+            _red = _env_cap.red_caps_for(store, _declared)
+            if _red:
+                return await _block_on_env_cap(
+                    goal_id, base, _red,
+                    store=store, notifier=notifier,
+                    summarize=summarize, consume_steering=consume_steering,
+                )
     # ---- speckit contract enforcement at the dispatch boundary (issue #679) --
     # (a) block when spec dirs exist but none are graded (no tasks.md — the plan
     #     step hasn't run); (b) block when 2+ features have pending tasks BEYOND

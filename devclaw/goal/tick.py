@@ -62,6 +62,8 @@ from ..state_store import _now_ms
 from ..engine.workspace import prepare_workspace
 from .. import config as _config
 from .prompt_budget import cap_steering as _cap_steering
+from .. import env_cap as _env_cap_mod
+from .. import project_manifest as _env_cap_manifest_mod  # aliased to dodge shadowing
 
 # ---- extracted-module re-export facade (behavior-preserving split) --------
 # Every symbol MOVED out of this file is re-exported here so
@@ -90,7 +92,9 @@ from .tick_context import (  # noqa: F401 (re-exported)
 )
 from .tick_guards import (  # noqa: F401 (re-exported)
     PREP_HEAL_CAP,
+    _autoheal_env_cap,
     _autoheal_prep,
+    _block_on_env_cap,
     _block_on_lost_ref,
     _block_on_prep_failure,
     _check_no_progress,
@@ -312,6 +316,13 @@ async def _tick_goal_impl(
         if status.blocked_kind == "mechanical:prep":
             healed = await _autoheal_prep(
                 goal_id, goal, status, store=store, notifier=notifier,
+            )
+        elif status.blocked_kind == "mechanical:env":
+            # spec 030 FR-003: no backoff needed — just read the persisted row
+            # (zero network, zero LLM). The sweep refreshes probes before each
+            # sweep, so the result here is at most one sweep old.
+            healed = await _autoheal_env_cap(
+                goal_id, goal, status, store=store,
             )
         if healed is not None:
             status = healed
@@ -1019,6 +1030,28 @@ async def tick_all(
     # per goal would make one sweep an N² scan. Cheap and zero-LLM — it belongs
     # in this same pre-loop slot as the other mechanical housekeeping above.
     holders = _project_hold.holder_map(store)
+
+    # Env-cap probe refresh (spec 030 FR-004): run stale capability probes
+    # ONCE per sweep, BEFORE the per-goal ticks. Each tick reads only
+    # persisted meta rows (zero network) — this is the only place that probes
+    # networks. Only runs probes for capabilities that at least one active
+    # goal's project has declared; a fleet with no capability gating spends
+    # zero I/O here. Best-effort: a probe failure degrades to ``unknown``
+    # (fail-open per FR-007), never wedges the sweep.
+    try:
+        _needed_caps: frozenset[str] = frozenset()
+        for _gid in store.list_goal_ids():
+            try:
+                _g = store.load_goal(_gid)
+                _m = _env_cap_manifest_mod.load_manifest(_g.workspace_dir)
+                if _m and _m.capabilities:
+                    _needed_caps = _needed_caps | frozenset(_m.capabilities)
+            except Exception:  # noqa: BLE001 — one bad manifest must not sink the sweep
+                pass
+        if _needed_caps:
+            _env_cap_mod.refresh_needed(store, _needed_caps)
+    except Exception:  # noqa: BLE001 — the probe sweep must never wedge the heartbeat
+        pass
 
     for goal_id in store.list_goal_ids():
         # Per-goal run-window: a goal can carry its OWN night/off-hours schedule
