@@ -49,7 +49,7 @@ export function GoalDetail() {
     else next.set("tab", t);
     setSearchParams(next, { replace: true });
   };
-  const [busy, setBusy] = useState<"cancel" | "steer" | "resume" | "answer" | "strictness" | null>(null);
+  const [busy, setBusy] = useState<"cancel" | "steer" | "resume" | "answer" | "strictness" | "resolve" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [steerOpen, setSteerOpen] = useState(false);
   const [steerMsg, setSteerMsg] = useState("");
