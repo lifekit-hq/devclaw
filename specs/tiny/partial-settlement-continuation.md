@@ -139,3 +139,53 @@ and feeds forward as *continue from the branch*, never as *nothing landed*.
 - [x] A worker block with nothing committed still fails closed, unrefunded,
       and still parks at the cap — the brake is narrowed, not weakened
 - [x] Zero-token guard tests (`FakeClaude.calls == 0`) untouched and green
+
+---
+
+## Follow-up 2026-09-02 — gate on FIRED + measured span, not the worker's `landed`
+
+The first cut gated the span capture on the runner's ``landed`` flag — the
+worker's own report that it managed to record its partial before the wall.
+Live data from the problems catalog says that flag is wrong nearly half the
+time:
+
+```
+kind=context_tripwire  count=9  recovered=5  first=08-28 11:36  last=09-02 05:24
+```
+
+``recovered`` is ``bool(trip["landed"])``. **4 of the first 9 firings reported
+landed=False** — the agent ran out of context mid-landing. But the work is
+still sitting in the tree: capture is mechanical (stage everything, then
+record it), so it never needed the agent's cooperation in the first place.
+Gating on the self-report threw away every one of those four.
+
+Changed:
+
+- The gate is now the tripwire dict's PRESENCE (runner.py attaches
+  ``result["tripwire"]`` only under ``if tripwire.fired``, so presence IS
+  fired) plus the span devclaw measures itself. The result key is renamed
+  ``tripwire_landed`` → ``tripwire_fired`` to say what is actually being
+  recorded. No compatibility shim: zero rows carried the old key (verified
+  on the live DB before the rename).
+- ``landed`` keeps its one honest use — the problems-catalog ``recovered``
+  metric, which answers "did the agent land it ITSELF", a different question
+  from "is there work here to continue from".
+
+Emptiness is still judged downstream by ``goal.engine._landed_partial``
+(``change.status == "change"``), so an empty or undeterminable span remains a
+plain failure and the cap still catches it. **The brake is narrowed, never
+weakened** — that boundary is unchanged from the original.
+
+This is the #630 doctrine applied one level deeper: no instruction to the
+agent, and no report from it, is load-bearing for the completeness of the
+change. The span is.
+
+New tripwire tests (the settle path had no direct coverage before):
+
+- ``test_tripwire_span_is_recorded_even_when_the_worker_did_not_land`` —
+  landed=False + work in the tree → span recorded, reads as a partial.
+  Verified to FAIL under the old ``landed`` gate.
+- ``test_tripwire_with_an_empty_span_is_not_a_partial`` — landed=True is not
+  enough; an empty span is still a plain failure.
+- ``test_worker_block_without_a_tripwire_records_no_span`` — an ordinary
+  honest-block is unchanged.

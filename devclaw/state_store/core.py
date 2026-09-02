@@ -267,10 +267,10 @@ class StateStore(
         that qualifies it. COALESCE leaves any already-recorded result intact
         when None is passed, so every existing caller is byte-unaffected.
 
-        Today its one producer is the context-tripwire landing path, which
-        records the materialized span a blocked-but-landed worker left on the
-        branch (spec tiny/partial-settlement-continuation) — the task still
-        fails CLOSED (#186); only what the settle RECORDS changes."""
+        Today its one producer is the context-tripwire path, which records the
+        materialized span a blocked worker left on the branch after the
+        tripwire fired (spec tiny/partial-settlement-continuation) — the task
+        still fails CLOSED (#186); only what the settle RECORDS changes."""
         with self._lock:
             cur = self._db.execute(
                 "UPDATE tasks SET status = 'failed', error = ?, "
