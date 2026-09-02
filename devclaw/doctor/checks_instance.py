@@ -600,6 +600,31 @@ def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
             remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
         )]
     return [Finding(cid, Verdict.OK, "goal_status.slice_hold_count column present")]
+def check_goal_status_donegate_progress(ctx: "InstanceContext") -> list[Finding]:
+    """Progress-aware churn brake (per spec-016 FR-014: a goal_status column
+    change ships its doctor check): ``donegate_progress`` persists the best
+    satisfied-clause count a done-gate round has reported, so a round that
+    beats it resets the churn counter instead of counting toward the cap. An
+    instance whose DB predates the ALTER TABLE migration reads it as absent:
+    every round then looks flat, and a goal that is visibly converging
+    (14/15 → 15/15) parks for a human exactly as before the fix. A server
+    restart runs the ALTER TABLE idempotently."""
+    cid = "instance.donegate.goal_status_donegate_progress"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
+    if "donegate_progress" not in cols:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal_status.donegate_progress column absent — the DB predates the "
+            "progress-aware churn brake; a converging goal will still park at the round cap",
+            remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_status.donegate_progress column present")]
+
+
 def check_merge_on_close_columns(ctx: "InstanceContext") -> list[Finding]:
     """Spec 025 US1 (per spec-016 FR-014: a store-shape change ships its
     doctor check): merge-on-close persists ``pending_merge_pr`` /
@@ -676,6 +701,7 @@ INSTANCE_CHECKS: tuple = (
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
     check_goal_status_slice_hold_count,
+    check_goal_status_donegate_progress,
     check_merge_on_close_columns,
     check_suppressed_pings_table,
 )

@@ -246,6 +246,15 @@ class GoalStatus:
     #: and when a HUMAN vouches (steer_goal / resume_goal) — never on a
     #: productive settle: every treadmill round settles productively.
     donegate_rounds: int = 0
+    #: the most satisfied ``done_when`` clauses any done-gate round of this
+    #: goal has reported. A round that beats it is convergence, not churn —
+    #: it resets ``donegate_rounds`` to 1 instead of counting toward the cap.
+    #: Three refusals at 14/15 with the count still rising is the loop
+    #: winning; the brake exists for the treadmill (fresh nits, flat count),
+    #: and a pure round counter could not tell them apart (2026-09-02:
+    #: devclaw-030 parked at 14/15 and needed a human to say "keep going").
+    #: Reset with ``donegate_rounds`` on close and on a human vouch.
+    donegate_progress: int = 0
     #: adapted re-dispatches spent on the sandbox-OOM environment-cap class
     #: (spec 020 FR-002a). The class is deterministic per environment, so the
     #: goal earns exactly ONE re-dispatch whose brief names the cap and

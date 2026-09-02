@@ -128,8 +128,11 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   ``done_when`` contract in both modes; its *structural* axis rides the same
   dial (under ``trust`` reported concerns advise-and-ship as follow-ups on the
   close, under ``strict`` they hold it open), and a done-gate that refuses to
-  close the same goal 3 rounds in a row parks it for the owner
-  (``donegate_churn``) instead of re-advancing forever. The
+  close the same goal 3 rounds in a row **with the satisfied-clause count
+  flat** parks it for the owner (``donegate_churn``) instead of re-advancing
+  forever — a round that beats the best count seen restarts the counter
+  (`goal_status.donegate_progress`), so a converging goal is never parked as
+  churn. The
   verify/test-integrity/done gates stay always-hard, and every *unreviewable* case (crash/quota) in a
   *consulted* gate still fails closed in both modes — #186 governs consulted gates,
   and a gate not consulted under `trust` produces no silence to ship on.
