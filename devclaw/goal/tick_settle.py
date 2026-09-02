@@ -362,6 +362,19 @@ async def _resolve_polling_action(
                 expect=new_status,
             )
         ctx.store.append_log(goal_id, f"worker block → problem {prob.id}")
+        # Spec 031 T044: if the block names a capability the admission lint
+        # should have refused, record the MISS so the class gets fixed, not
+        # the instance (constitution VII). Never wedges the settle.
+        try:
+            from . import admission_lint as _lint
+            if _lint.lint_mechanical(reason).refused:
+                ctx.store.record_problem(
+                    category="admission", kind="lint_miss",
+                    message=f"worker block named a sandbox-impossible capability the lint admitted: {reason[:200]}",
+                    recovered=False,
+                )
+        except Exception:  # noqa: BLE001
+            pass
         await _notify(ctx.notifier, NotifyLevel.OWNER,
                       f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
         return Outcome.BLOCKED

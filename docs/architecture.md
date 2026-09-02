@@ -660,7 +660,11 @@ as the block, and resolved by exactly two verbs, `correct_implementation` and
 `decide`, each recording a Decision (`goal_decisions`) and unblocking with the
 steer's budget-restoring shape. A timed-out Problem takes its default and
 informs; under `strict` a default that would close the goal parks instead.
-`steer_goal` is refused while a Problem is open.
+`steer_goal` is refused while a Problem is open. At creation the `done_when`
+admission lint (`devclaw/goal/admission_lint.py`) refuses sandbox-impossible
+clauses, rewrites baseline-less absolutes, and raises an undecided design
+choice as a Problem before any dispatch — its one cognition call runs at
+creation, never on the tick.
 
 ## Testability (one stub at every seam)
 

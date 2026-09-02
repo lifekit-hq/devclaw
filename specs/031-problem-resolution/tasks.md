@@ -123,15 +123,15 @@ tripwires), `docs/`, `specs/`. New modules are named in plan.md's source tree.
 
 ### Tripwire tests for Phase 5
 
-- [ ] T039 [P] [US3] `test_admission_lint_catches_the_three_classes` — parametrized over class (a) refuse / (b) rewrite / (c) problem, plus the four 2026-09-02 contracts and their corrected forms; asserts nothing is persisted on refusal — in tests/test_goal_tick.py (beside the spec-019 readiness refusal tests)
-- [ ] T040 [P] [US3] Extend the zero-token family: the lint's class-(c) cognition call happens at creation only — a tick over an admitted goal makes zero calls — in tests/test_goal_tick.py
+- [x] T039 [P] [US3] `test_admission_lint_catches_the_three_classes` — parametrized over class (a) refuse / (b) rewrite / (c) problem, plus the four 2026-09-02 contracts and their corrected forms; asserts nothing is persisted on refusal — in tests/test_goal_tick.py (beside the spec-019 readiness refusal tests)
+- [x] T040 [P] [US3] Extend the zero-token family: the lint's class-(c) cognition call happens at creation only — a tick over an admitted goal makes zero calls — in tests/test_goal_tick.py
 
 ### Implementation for Phase 5
 
-- [ ] T041 [US3] Create devclaw/goal/admission_lint.py — `lint(done_when, *, workspace_dir) -> LintResult(refusals, rewrites, problems)`: class (a) mechanical vocabulary + the manifest's undeclared-capability complement; class (b) mechanical rewrite to "no new failures relative to the default branch"; class (c) via the existing intake-readiness cognition caller, returning a Problem payload (kind `admission`, `raised_by=admission_lint`, options from the reading, default = the first) (depends on T016)
-- [ ] T042 [US3] Call the lint in `create_goal_async` after the referenced-contract readiness check and before anything persists: refusal → `ValueError` per contract, nothing persisted; rewrites → apply to the contract, `record_decision(provenance=admission, made_by=admission_lint)` after the goal row exists; class (c) → create the goal `blocked` with the admission Problem; return `admission` in the response — in devclaw/goal/service.py (depends on T041, T006)
-- [ ] T043 [P] [US3] Surface the refusal as `ToolError` and the `admission` block in `create_goal`'s response — in devclaw/server/tools/goals.py (depends on T042)
-- [ ] T044 [US3] Record a lint miss: when a worker honest-block names a capability the lint should have caught, also `record_problem(category="admission", kind="lint_miss")` in the problems catalog — in devclaw/goal/tick_settle.py (depends on T018, T041)
+- [x] T041 [US3] Create devclaw/goal/admission_lint.py — `lint(done_when, *, workspace_dir) -> LintResult(refusals, rewrites, problems)`: class (a) mechanical vocabulary + the manifest's undeclared-capability complement; class (b) mechanical rewrite to "no new failures relative to the default branch"; class (c) via the existing intake-readiness cognition caller, returning a Problem payload (kind `admission`, `raised_by=admission_lint`, options from the reading, default = the first) (depends on T016)
+- [x] T042 [US3] Call the lint in `create_goal_async` after the referenced-contract readiness check and before anything persists: refusal → `ValueError` per contract, nothing persisted; rewrites → apply to the contract, `record_decision(provenance=admission, made_by=admission_lint)` after the goal row exists; class (c) → create the goal `blocked` with the admission Problem; return `admission` in the response — in devclaw/goal/service.py (depends on T041, T006)
+- [x] T043 [P] [US3] Surface the refusal as `ToolError` and the `admission` block in `create_goal`'s response — in devclaw/server/tools/goals.py (depends on T042)
+- [x] T044 [US3] Record a lint miss: when a worker honest-block names a capability the lint should have caught, also `record_problem(category="admission", kind="lint_miss")` in the problems catalog — in devclaw/goal/tick_settle.py (depends on T018, T041)
 
 **Checkpoint (end of P2b PR)**: T039–T040 green; suite + ruff + mypy green; live steps 1–2 of quickstart.md pass; SC-004 replay recorded in the PR body.
 
@@ -224,6 +224,7 @@ Task: "get_goal/list_goals/goal_json projections"
 - T047: `docs/flows/task-execution.md` traces one task and never described the park — nothing there became stale, so it is untouched; `delivery.md` carries the flow note
 - T051: no constitution change — the check passed pre- and post-design unchanged
 - P2a PR (2026-09-03): T030–T038 done; the writes-code brief was re-trimmed under the 13,200 leanness guard (my bullet shortened; one explanatory clause cut from 40-verify-iterate.md)
+- P2b PR (2026-09-03): T039–T044 done — spec 031 fully built (4/4 stories); T050 (live walkthrough) and the two-week measurement remain
 - Console (T028) is wired but not type-checked locally (no `console/node_modules`); the deploy image builds it, so a TS error fails the deploy loudly rather than shipping
 - Never mint a sibling test: every tripwire above names the class test it extends
 - The single-ACHIEVE-emitter structural guard pins the ACHIEVE line's literal text; if T022/T035 change nothing on that line, it stays untouched — verify before assuming

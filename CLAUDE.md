@@ -108,6 +108,12 @@ spawn containers itself — it goes through the engine).
   `goal-branch` the cumulative PR deliberately stays open for the done-gate, and the
   sandbox carries no GitHub credential, so no run can ever satisfy such a clause. Hold
   this when you AUTHOR a goal — the gate's drop is a backstop, not a licence.
+  Since spec 031 (2026-09-02) creation runs the **admission lint**
+  (`devclaw/goal/admission_lint.py`): a clause needing a capability the sandbox
+  cannot have is **refused** (nothing persisted); a baseline-less absolute
+  predicate ("all tests pass") is **rewritten** to "no new failures relative
+  to the default branch" and recorded as an admission Decision; an undecided
+  design choice becomes a Problem to the author **before any dispatch**.
 
 ## Hardening philosophy (Tranche 0 — baked in, not in the README yet)
 
