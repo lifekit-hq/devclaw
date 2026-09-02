@@ -64,6 +64,19 @@ One new module plus four wires — no new layer, no new store.
 - **The block message carries the capability id explicitly** (`red_caps_for`
   returns `(cap_id, result)` pairs): US3 requires the goal's block and doctor's
   finding to name the SAME probe id, and probe evidence alone does not carry it.
+- **The probe TTL is DERIVED from the heartbeat cadence, never a constant**
+  (`env_cap.probe_ttl_s()` = half `config.goal_tick_seconds()`). The TTL's only
+  job is to make a result last exactly one sweep, so it has to move when the
+  cadence does. The 16-min literal it replaced was *wider* than the 15-min
+  default sweep, which kept a red row fresh through the sweep after the fix —
+  FR-004's "resume within ~one sweep" silently cost two, and tightening
+  `DEVCLAW_GOAL_TICK_SECONDS` widened that gap instead of closing it.
+- **The per-sweep capability scan is scoped to LIVE goals**
+  (`project_hold.is_terminal`, the same rule the hold derivation uses). A done
+  or cancelled goal's workspace can never be dispatched into again, so its
+  declaration must not buy the fleet a recurring network/docker probe forever.
+  Blocked goals deliberately still count: the env hold IS a block, and dropping
+  it from the scan would starve the very probe refresh its auto-resume needs.
 - **`mechanical:env` is not `mechanical:env_cap`.** The latter already exists
   (spec 020: the sandbox-OOM re-dispatch budget). Different brake, different
   kind string — do not merge them.

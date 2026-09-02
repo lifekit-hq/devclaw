@@ -1034,14 +1034,21 @@ async def tick_all(
     # Env-cap probe refresh (spec 030 FR-004): run stale capability probes
     # ONCE per sweep, BEFORE the per-goal ticks. Each tick reads only
     # persisted meta rows (zero network) — this is the only place that probes
-    # networks. Only runs probes for capabilities that at least one active
-    # goal's project has declared; a fleet with no capability gating spends
-    # zero I/O here. Best-effort: a probe failure degrades to ``unknown``
-    # (fail-open per FR-007), never wedges the sweep.
+    # networks. Only runs probes for capabilities that at least one LIVE goal's
+    # project has declared; a fleet with no capability gating spends zero I/O
+    # here. Terminal goals are skipped (same rule as the hold derivation above):
+    # a done or cancelled goal's workspace can no longer be dispatched into, so
+    # its declaration must not keep buying the fleet a recurring network/docker
+    # probe forever. Blocked goals deliberately still count — the env hold IS a
+    # block, and dropping it here would strand the auto-resume it feeds (US2).
+    # Best-effort: a probe failure degrades to ``unknown`` (fail-open per
+    # FR-007), never wedges the sweep.
     try:
         _needed_caps: frozenset[str] = frozenset()
         for _gid in store.list_goal_ids():
             try:
+                if _project_hold.is_terminal(store.load_status(_gid)):
+                    continue
                 _g = store.load_goal(_gid)
                 _m = _env_cap_manifest_mod.load_manifest(_g.workspace_dir)
                 if _m and _m.capabilities:

@@ -3,7 +3,7 @@
 A capability probe is a zero-LLM check with a stable id (e.g.
 ``registry:npm-github``) that produces green/red/unknown + evidence. Results
 are TTL-cached in the state-store meta table; the sweep runner refreshes them
-at most once per heartbeat sweep (``PROBE_TTL_S``), and only when at least one
+at most once per heartbeat sweep (:func:`probe_ttl_s`), and only when at least one
 registered project has declared the capability in its ``devclaw.json``. The
 per-goal dispatch gate reads the persisted rows — it never probes networks.
 
@@ -27,6 +27,7 @@ import subprocess
 from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Protocol
 
+from . import config as _config
 from .engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR
 from .engine.sandcastle import SANDBOX_IMAGE as _SANDBOX_IMAGE
 
@@ -44,10 +45,6 @@ class MetaStore(Protocol):
 
 
 # ---- constants ---------------------------------------------------------------
-
-#: TTL for a cached probe result. Slightly wider than the ~15-min heartbeat so
-#: a result from one sweep is still valid when the next sweep reads it.
-PROBE_TTL_S: int = 16 * 60  # 16 min
 
 _META_PREFIX = "env_cap_probe:"
 
@@ -118,8 +115,23 @@ def _write_result(store: MetaStore, cap_id: str, result: CapProbeResult) -> None
     store.set_meta(_meta_key(cap_id), raw)
 
 
+def probe_ttl_s() -> int:
+    """How long a cached probe result stays fresh — half the heartbeat cadence.
+
+    Derived, never fixed: the TTL's only job is to make a result last exactly
+    one sweep, so it has to move when the cadence does. A constant wider than
+    the heartbeat (the 16-min literal this replaces, against a 15-min default)
+    keeps a RED row fresh through the sweep that follows the fix, which turns
+    FR-004's "auto-resume within ~one sweep" into two — and any operator who
+    tightens ``DEVCLAW_GOAL_TICK_SECONDS`` stretches that gap further rather
+    than shrinking it. Halving guarantees staleness by the next sweep with
+    room for cadence jitter; the floor only keeps a nonsensical cadence from
+    producing a zero TTL."""
+    return max(1, _config.goal_tick_seconds() // 2)
+
+
 def _is_stale(store: MetaStore, cap_id: str) -> bool:
-    """True when there is no cached result or it is older than ``PROBE_TTL_S``."""
+    """True when there is no cached result or it is older than :func:`probe_ttl_s`."""
     raw = store.get_meta(_meta_key(cap_id))
     if not raw:
         return True
@@ -127,7 +139,7 @@ def _is_stale(store: MetaStore, cap_id: str) -> bool:
         d = json.loads(raw)
         from .state_store import _now_ms
         age_ms = _now_ms() - int(d.get("probed_at_ms", 0))
-        return age_ms > PROBE_TTL_S * 1000
+        return age_ms > probe_ttl_s() * 1000
     except Exception:  # noqa: BLE001
         return True
 

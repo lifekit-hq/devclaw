@@ -98,3 +98,20 @@ post-landing corrections below.
       fake settle now carries the damping counters forward instead of
       rebuilding a bare `GoalStatus` — it was resetting the very markers it
       asserted on.
+- [x] T018 The TTL was hardcoded at 16 min — WIDER than the 15-min default
+      heartbeat, so a red row was still fresh on the sweep after the fix and
+      FR-004's "resume within ~one sweep" quietly cost two.
+      `devclaw/env_cap.py::probe_ttl_s()` derives it from
+      `config.goal_tick_seconds()` (half the cadence) so it tracks
+      `DEVCLAW_GOAL_TICK_SECONDS` instead of being invalidated by it. The US2
+      resume test now runs two real `tick_all` sweeps with the cached row aged
+      between them, exercising the expiry rather than writing the green row by
+      hand (which asserted the heal while skipping what delivers it).
+- [x] T019 The per-sweep capability scan read EVERY goal, so a cancelled
+      goal's stale workspace kept buying the fleet a recurring network/docker
+      probe forever. `devclaw/goal/tick.py` scopes the scan with
+      `project_hold.is_terminal` — the same rule the hold derivation uses.
+      Blocked goals still count on purpose: the env hold IS a block, and
+      dropping it would starve the probe refresh its auto-resume needs. The
+      once-per-sweep tripwire gains a cancelled-goal case (class test extended,
+      not cloned).

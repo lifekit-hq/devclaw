@@ -20,6 +20,7 @@ from dataclasses import replace
 import pytest
 
 from devclaw import env_cap
+from devclaw.config import goal_tick_seconds
 from devclaw.env_cap import CapProbeResult
 from devclaw.goal.models import GoalStatus
 from devclaw.goal.store import GoalStore
@@ -99,18 +100,54 @@ async def test_red_capability_holds_dispatch_with_one_ping_and_zero_cognition(tm
 
 
 @pytest.mark.asyncio
-async def test_hold_clears_without_an_operator_verb_when_the_probe_greens(tmp_path):
-    """US2: the owner fixes the environment; the next sweep's probe result is
-    green and the held goal resumes on its own tick — no steer, no resume, and
-    no second ping."""
+async def test_hold_clears_without_an_operator_verb_when_the_probe_greens(tmp_path, monkeypatch):
+    """US2/FR-004: the owner fixes the environment and the hold lifts on its
+    own — no steer, no resume, no second ping.
+
+    Driven through two REAL heartbeat sweeps, with the cached row aged between
+    them, because the TTL is what makes "auto-resume within ~one sweep"
+    reachable at all: a result that is still fresh when the next sweep reads it
+    is never re-probed, so the tick reads the stale RED and the hold outlives
+    the fix by a whole cadence. Writing the green row by hand would assert the
+    heal while skipping the expiry that has to deliver it."""
+    from devclaw import state_store as _state_store
+
+    # env_cap resolves ``_now_ms`` through a deferred import, so patching it on
+    # the package moves ONLY the probe cache's clock — every other writer bound
+    # the symbol at import time. The narrowest seam for aging a cached row.
+    clock_ms = [1_700_000_000_000]
+    monkeypatch.setattr(_state_store, "_now_ms", lambda: clock_ms[0])
+
+    verdict = ["red"]
+    monkeypatch.setitem(env_cap._PROBE_RUNNERS, REGISTRY, lambda: CapProbeResult(
+        status=verdict[0],
+        evidence=f"probe says {verdict[0]}",
+        remedy="rotate NODE_AUTH_TOKEN and redeploy" if verdict[0] == "red" else "",
+    ))
+
     store = _seed(tmp_path, REGISTRY)
-    _probe(store, "red")
     engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
-    assert await _tick(store, engine, notifier, evaluator) is Outcome.BLOCKED
 
-    _probe(store, "green")
-    assert await _tick(store, engine, notifier, evaluator) is Outcome.DISPATCHED
+    async def sweep():
+        return await tick_all(
+            store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+            notify_url="http://relay", prepare_ws=fake_prepare,
+        )
 
+    assert (await sweep())["g"] is Outcome.BLOCKED
+    st = store.load_status("g")
+    assert st.blocked_kind == "mechanical:env"
+    assert REGISTRY in st.blocked_on and "rotate NODE_AUTH_TOKEN" in st.blocked_on
+    assert engine.dispatched == [] and len(notifier.sent) == 1
+
+    # The owner rotates the token; one heartbeat cadence passes. The TTL is
+    # derived from that cadence precisely so the row is guaranteed stale here —
+    # a TTL wider than a sweep would silently strand this goal for another one.
+    verdict[0] = "green"
+    assert env_cap.probe_ttl_s() < goal_tick_seconds()
+    clock_ms[0] += goal_tick_seconds() * 1000
+
+    assert (await sweep())["g"] is Outcome.DISPATCHED
     st = store.load_status("g")
     assert st.blocked_kind == "" and st.phase == "in_flight"
     assert len(engine.dispatched) == 1
@@ -241,8 +278,10 @@ async def test_doctor_and_the_goal_block_name_the_same_probe_id(tmp_path, monkey
 async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path, monkeypatch):
     """FR-004: the network probe lives in the sweep pre-loop, not the tick. A
     per-goal tick reads persisted rows only (zero probe runs); ``tick_all`` runs
-    each STALE declared probe once, and runs nothing for a capability no
-    registered project declares."""
+    each STALE declared probe once, and runs nothing for a capability that no
+    LIVE goal's project declares — neither an undeclared one, nor one left
+    behind by a terminal goal, whose workspace can never be dispatched into
+    again and so must not buy the fleet a recurring network probe forever."""
     runs: list[str] = []
 
     def _fake(cap_id: str):
@@ -255,6 +294,10 @@ async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path
     monkeypatch.setitem(env_cap._PROBE_RUNNERS, "sandbox:image", _fake("sandbox:image"))
 
     store = _seed(tmp_path, REGISTRY)
+    # A cancelled goal on its own project, declaring the OTHER capability.
+    cancelled_ws = _workspace(tmp_path / "gone", "sandbox:image")
+    seed_goal(tmp_path / "goals", "dead", workspace_dir=cancelled_ws)
+    store.save_status("dead", GoalStatus(phase="cancelled", lifecycle="executing"))
     engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
 
     await _tick(store, engine, notifier, evaluator)
@@ -265,7 +308,9 @@ async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path
         store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
     )
-    assert runs == [REGISTRY]                               # declared only, exactly once
+    # Declared by a live goal only, exactly once: the cancelled goal's
+    # ``sandbox:image`` declaration buys no probe.
+    assert runs == [REGISTRY]
 
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
     await tick_all(
