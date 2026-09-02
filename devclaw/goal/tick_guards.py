@@ -187,7 +187,12 @@ PREP_BACKOFF_MAX_S = 6 * 3600
 #: Heal budget for a ``mechanical:env`` hold (spec 030). The recheck is free
 #: (a persisted-row read), so unlike prep there is no backoff window — the cap
 #: exists only to park a FLAPPING capability for the owner instead of cycling
-#: hold→resume→hold forever.
+#: hold→resume→hold forever. Counted on its OWN column
+#: (``GoalStatus.env_heal_attempts``), never the shared ``heal_attempts``: a
+#: goal that had earlier healed unrelated ``mechanical:prep`` blocks would
+#: otherwise arrive at its first env hold with the budget already spent and
+#: sit parked instead of auto-resuming within one sweep of the probe going
+#: green (US2).
 ENV_HEAL_CAP = 5
 
 
@@ -261,11 +266,16 @@ async def _autoheal_prep(
 
 def _heal_unblock(
     goal_id: str, status: GoalStatus, store: GoalStore, *, heal_attempts: int,
+    env_heal_attempts: "int | None" = None,
 ) -> GoalStatus:
     """The resume-shaped UNBLOCK write the mechanical heal fires: actions +
     plan cadence reset so the tick actually re-plans, the backoff window
     cleared, and a preserved in-flight ref restored to its polling phase so it
-    settles normally instead of being orphaned."""
+    settles normally instead of being orphaned.
+
+    Each brake spends its OWN budget: ``env_heal_attempts`` is written only
+    when the env heal supplies it, so an env heal never consumes the prep
+    budget and vice versa."""
     if status.in_flight is not None:
         restored_phase: Phase = "verifying" if status.in_flight.is_done_check else "in_flight"
     else:
@@ -276,6 +286,10 @@ def _heal_unblock(
             status, phase=restored_phase, blocked_on="",
             actions_dispatched=0, last_plan_at=None,
             heal_attempts=heal_attempts, next_heal_at=None,
+            env_heal_attempts=(
+                status.env_heal_attempts if env_heal_attempts is None
+                else env_heal_attempts
+            ),
         ),
         expect=status,
     )
@@ -283,13 +297,17 @@ def _heal_unblock(
 
 async def _heal_give_up(
     goal_id: str, *, store: GoalStore, notifier: Notifier, cap: int, reason: str,
+    counter_field: str = "heal_attempts",
 ) -> None:
     """Park a mechanical block whose heal budget is spent: mark FIRST (the
     sentinel bump one past the cap — a column-only write, the goal stays
     blocked, so this must not be a phase transition; it is what keeps the
     ping to exactly one, the pause_notified pattern), then log, then ONE
-    plain owner ping — never through the summarizer LLM."""
-    store.update_status_fields(goal_id, heal_attempts=cap + 1)
+    plain owner ping — never through the summarizer LLM.
+
+    ``counter_field`` names the budget being parked, so each brake's sentinel
+    lands on its own column."""
+    store.update_status_fields(goal_id, **{counter_field: cap + 1})
     store.append_log(
         goal_id, f"auto-recovery gave up after {cap} attempts — {reason}; needs you",
     )
@@ -399,14 +417,16 @@ async def _autoheal_env_cap(
 
     The heal budget still applies: a probe that flaps green↔red burns one
     attempt per heal and parks for the owner at :data:`ENV_HEAL_CAP` rather
-    than cycling forever. Returns the healed status, or ``None`` when the block
-    must remain (still red, or parked)."""
-    if status.heal_attempts > ENV_HEAL_CAP:
+    than cycling forever. That budget is this brake's own
+    (``env_heal_attempts``) — see :data:`ENV_HEAL_CAP`. Returns the healed
+    status, or ``None`` when the block must remain (still red, or parked)."""
+    if status.env_heal_attempts > ENV_HEAL_CAP:
         return None  # parked — the gave-up ping already went out
-    if status.heal_attempts >= ENV_HEAL_CAP:
+    if status.env_heal_attempts >= ENV_HEAL_CAP:
         await _heal_give_up(
             goal_id, store=store, notifier=notifier, cap=ENV_HEAL_CAP,
             reason="the required environment capability keeps breaking",
+            counter_field="env_heal_attempts",
         )
         return None
     # SAME resolution as the dispatch guard (:func:`_declared_caps_for`) — a
@@ -420,11 +440,14 @@ async def _autoheal_env_cap(
         healed = _heal_unblock(goal_id, status, store, heal_attempts=status.heal_attempts)
         store.append_log(goal_id, "env-cap hold cleared (no capabilities declared)")
         return healed
-    red = _env_cap.red_caps_for(store, declared)
+    red = _env_cap.red_caps_for(store, declared, goal.project_id)
     if red:
         return None  # still broken — stay blocked at zero cost
-    n = status.heal_attempts + 1
-    healed = _heal_unblock(goal_id, status, store, heal_attempts=n)
+    n = status.env_heal_attempts + 1
+    healed = _heal_unblock(
+        goal_id, status, store,
+        heal_attempts=status.heal_attempts, env_heal_attempts=n,
+    )
     store.append_log(
         goal_id,
         f"auto-resumed: required capabilities are green again (heal {n}/{ENV_HEAL_CAP})",

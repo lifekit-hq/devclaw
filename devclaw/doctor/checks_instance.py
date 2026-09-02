@@ -642,6 +642,17 @@ def check_goal_status_env_hold_notified(ctx: "InstanceContext") -> list[Finding]
         "the DB predates spec 030; an environment-capability hold would ping "
         "the owner on every tick instead of once per episode",
     )
+
+
+def check_goal_status_env_heal_attempts(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 030 US2: ``env_heal_attempts`` is the env brake's OWN heal budget.
+    Absent, the auto-heal falls back to nothing to count and a flapping
+    capability can never be parked for the owner."""
+    return _goal_status_column_finding(
+        ctx, "instance.env.goal_status_env_heal_attempts", "env_heal_attempts",
+        "the DB predates spec 030's per-brake heal budget; a flapping "
+        "environment capability would cycle hold→resume forever",
+    )
 def check_merge_on_close_columns(ctx: "InstanceContext") -> list[Finding]:
     """Spec 025 US1 (per spec-016 FR-014: a store-shape change ships its
     doctor check): merge-on-close persists ``pending_merge_pr`` /
@@ -719,6 +730,7 @@ INSTANCE_CHECKS: tuple = (
     check_goal_issue_identity_table,
     check_goal_status_slice_hold_count,
     check_goal_status_env_hold_notified,
+    check_goal_status_env_heal_attempts,
     check_merge_on_close_columns,
     check_suppressed_pings_table,
 )

@@ -25,7 +25,7 @@ import json
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional, Protocol
+from typing import Callable, Iterable, Literal, Optional, Protocol
 
 from . import config as _config
 from .engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR
@@ -59,6 +59,24 @@ CAP_SANDBOX_IMAGE = "sandbox:image"
 #: v1 capability ids this instance can probe (FR-006).
 KNOWN_CAPABILITIES: frozenset[str] = frozenset({CAP_REGISTRY_NPM_GITHUB, CAP_SANDBOX_IMAGE})
 
+CapScope = Literal["instance", "project"]
+
+#: What each capability's answer is ABOUT. An ``instance``-scoped capability has
+#: one answer for the whole fleet — the registry credential is a process-wide
+#: env var, so probing it twice can only produce the same result. A ``project``
+#: one is about a value the owning project resolves for itself: ``sandbox:image``
+#: is about the image THAT project's sandbox launches, and a project may pin its
+#: own (``projects.sandbox_image``, ADR 0005). Caching those under one
+#: fleet-wide key answers about the wrong image in both directions — a project
+#: pinning ``devclaw-sandbox-dotnet:local`` would be admitted because the
+#: DEFAULT image is pullable, and held because the default one isn't. The scope
+#: is what :func:`_meta_key` keys on, so a new capability declares its scope
+#: here rather than each caller remembering to pass a project id.
+CAP_SCOPES: dict[str, CapScope] = {
+    CAP_REGISTRY_NPM_GITHUB: "instance",
+    CAP_SANDBOX_IMAGE: "project",
+}
+
 #: GitHub token prefixes. A `read:packages` credential that matches none of
 #: these is not a GitHub token at all — the exact 2026-08-31 failure, where a
 #: malformed secret rode the whole plumbing into the sandbox and only
@@ -88,18 +106,43 @@ class CapProbeResult:
     remedy: str = ""
 
 
+@dataclass(frozen=True)
+class CapTarget:
+    """One probe run: the capability, and — when it is project-scoped — whose.
+
+    ``subject`` is the resolved per-project value the probe is about (for
+    ``sandbox:image``, the image ref that project's sandbox will launch).
+    The SWEEP caller resolves it, not this module: env_cap must not reach into
+    the project registry, and the per-goal read path needs only the cache key
+    (``cap_id`` + ``project_id``), never the subject. ``None`` ⇒ the instance
+    default."""
+    cap_id: str
+    project_id: Optional[str] = None
+    subject: Optional[str] = None
+
+
 # ---- meta-table helpers ------------------------------------------------------
 
-def _meta_key(cap_id: str) -> str:
+def _meta_key(cap_id: str, project_id: Optional[str] = None) -> str:
+    """The meta row a result is cached under — per project for a
+    project-scoped capability (:data:`CAP_SCOPES`), fleet-wide otherwise.
+
+    A project-scoped capability with no owning project (an ad-hoc goal) keys
+    fleet-wide on purpose: no project means no override, so the probe really
+    is about the instance default."""
+    if project_id and CAP_SCOPES.get(cap_id) == "project":
+        return f"{_META_PREFIX}{cap_id}@{project_id}"
     return f"{_META_PREFIX}{cap_id}"
 
 
-def read_result(store: MetaStore, cap_id: str) -> Optional[CapProbeResult]:
+def read_result(
+    store: MetaStore, cap_id: str, project_id: Optional[str] = None,
+) -> Optional[CapProbeResult]:
     """Read the last persisted probe result for ``cap_id``.
 
     Returns ``None`` if the capability has never been probed.  The admission
     gate treats ``None`` as ``unknown``, which is fail-open (FR-007)."""
-    raw = store.get_meta(_meta_key(cap_id))
+    raw = store.get_meta(_meta_key(cap_id, project_id))
     if not raw:
         return None
     try:
@@ -113,7 +156,7 @@ def read_result(store: MetaStore, cap_id: str) -> Optional[CapProbeResult]:
         return None
 
 
-def _write_result(store: MetaStore, cap_id: str, result: CapProbeResult) -> None:
+def _write_result(store: MetaStore, target: CapTarget, result: CapProbeResult) -> None:
     from .state_store import _now_ms  # deferred — avoids circular at module load
     raw = json.dumps({
         "status": result.status,
@@ -121,7 +164,7 @@ def _write_result(store: MetaStore, cap_id: str, result: CapProbeResult) -> None
         "remedy": result.remedy,
         "probed_at_ms": _now_ms(),
     })
-    store.set_meta(_meta_key(cap_id), raw)
+    store.set_meta(_meta_key(target.cap_id, target.project_id), raw)
 
 
 def probe_ttl_s() -> int:
@@ -139,9 +182,9 @@ def probe_ttl_s() -> int:
     return max(1, _config.goal_tick_seconds() // 2)
 
 
-def _is_stale(store: MetaStore, cap_id: str) -> bool:
+def _is_stale(store: MetaStore, target: CapTarget) -> bool:
     """True when there is no cached result or it is older than :func:`probe_ttl_s`."""
-    raw = store.get_meta(_meta_key(cap_id))
+    raw = store.get_meta(_meta_key(target.cap_id, target.project_id))
     if not raw:
         return True
     try:
@@ -181,7 +224,7 @@ def probe_registry_token(token: str, timeout_s: float = 5.0) -> Optional[int]:
         return None
 
 
-def _probe_registry_npm_github() -> CapProbeResult:
+def _probe_registry_npm_github(target: CapTarget) -> CapProbeResult:
     """Probe the GitHub Packages npm-registry credential (the fs-479 class).
 
     Runs the same HTTP check doctor's ``instance.registry.token`` reports on
@@ -242,12 +285,18 @@ def _probe_registry_npm_github() -> CapProbeResult:
     return CapProbeResult(status="green", evidence=f"HTTP {status_code}")
 
 
-def _probe_sandbox_image() -> CapProbeResult:
+def _probe_sandbox_image(target: CapTarget) -> CapProbeResult:
     """Check that the per-task sandbox Docker image is present and pullable.
+
+    Probes the image THIS project's sandbox will actually launch — its
+    ``sandbox_image`` pin (ADR 0005) when it has one, resolved by the sweep and
+    carried on ``target.subject``, else the instance default. This capability
+    is project-scoped (:data:`CAP_SCOPES`) for exactly that reason: one
+    fleet-wide answer would be about an image the project never runs.
 
     Module-level for test patching. Never raises; returns ``unknown`` on infra
     failure (e.g. Docker daemon not running — FR-007: infra failure ≠ red)."""
-    image = _SANDBOX_IMAGE
+    image = target.subject or _SANDBOX_IMAGE
     try:
         inspect = subprocess.run(
             ["docker", "image", "inspect", image, "--format", "{{.Id}}"],
@@ -259,7 +308,7 @@ def _probe_sandbox_image() -> CapProbeResult:
             evidence=f"docker inspect could not run: {exc}",
         )
     if inspect.returncode == 0:
-        return CapProbeResult(status="green", evidence="image present locally")
+        return CapProbeResult(status="green", evidence=f"image {image!r} present locally")
     # Not cached locally — try a pull to distinguish "missing" from "daemon down"
     try:
         pull = subprocess.run(
@@ -272,11 +321,11 @@ def _probe_sandbox_image() -> CapProbeResult:
             evidence=f"docker pull could not run: {exc}",
         )
     if pull.returncode == 0:
-        return CapProbeResult(status="green", evidence="image pulled successfully")
+        return CapProbeResult(status="green", evidence=f"image {image!r} pulled successfully")
     stderr = (pull.stderr or "").strip()[:200]
     return CapProbeResult(
         status="red",
-        evidence=f"docker pull failed: {stderr}",
+        evidence=f"docker pull of {image!r} failed: {stderr}",
         remedy=(
             f"sandbox image {image!r} is not available — "
             "pre-pull it ('docker pull <image>') or rebuild the image "
@@ -287,7 +336,7 @@ def _probe_sandbox_image() -> CapProbeResult:
 
 #: Registry of probe runners, keyed by capability id.  Module-level so tests
 #: can monkeypatch individual entries (``env_cap._PROBE_RUNNERS[cap_id] = fake``).
-_PROBE_RUNNERS: dict[str, Callable[[], CapProbeResult]] = {
+_PROBE_RUNNERS: dict[str, Callable[[CapTarget], CapProbeResult]] = {
     CAP_REGISTRY_NPM_GITHUB: _probe_registry_npm_github,
     CAP_SANDBOX_IMAGE: _probe_sandbox_image,
 }
@@ -295,51 +344,53 @@ _PROBE_RUNNERS: dict[str, Callable[[], CapProbeResult]] = {
 
 # ---- sweep runner (called from tick_all, never from per-goal ticks) ----------
 
-def run_if_stale(store: MetaStore, cap_id: str) -> CapProbeResult:
-    """Run the probe for ``cap_id`` if the cached result is stale; return the
-    cached result when it is still fresh.
+def run_if_stale(store: MetaStore, target: CapTarget) -> CapProbeResult:
+    """Run ``target``'s probe if its cached result is stale; return the cached
+    result when it is still fresh.
 
     Never raises — a probe exception degrades to ``unknown`` which is cached
     and read by the next tick (FR-007: unknown ≠ hold, so goals are not
     held for an unrunnable probe)."""
-    if not _is_stale(store, cap_id):
-        cached = read_result(store, cap_id)
+    if not _is_stale(store, target):
+        cached = read_result(store, target.cap_id, target.project_id)
         if cached is not None:
             return cached
-    runner = _PROBE_RUNNERS.get(cap_id)
+    runner = _PROBE_RUNNERS.get(target.cap_id)
     if runner is None:
         result = CapProbeResult(
             status="unknown",
-            evidence=f"capability id {cap_id!r} not recognised by this instance",
+            evidence=f"capability id {target.cap_id!r} not recognised by this instance",
         )
     else:
         try:
-            result = runner()
+            result = runner(target)
         except Exception as exc:  # noqa: BLE001
             result = CapProbeResult(status="unknown", evidence=f"probe raised: {exc}")
-    _write_result(store, cap_id, result)
+    _write_result(store, target, result)
     return result
 
 
-def refresh_needed(store: MetaStore, needed_caps: frozenset) -> None:
-    """Refresh all stale probes for the capabilities in ``needed_caps``.
+def refresh_needed(store: MetaStore, targets: "Iterable[CapTarget]") -> None:
+    """Refresh every stale probe in ``targets``.
 
     Called ONCE per heartbeat sweep before the per-goal ticks (FR-004: the
     tick path reads persisted rows, it never probes networks). An empty
-    ``needed_caps`` is a no-op (zero I/O — common when no project uses
-    capability gating).
+    ``targets`` is a no-op (zero I/O — common when no project uses capability
+    gating). Deduplication is the caller's job: it owns the scope rule that
+    decides whether two projects share one target (see :data:`CAP_SCOPES`).
 
     Best-effort: a single probe failure is swallowed; its cached result
     stays ``unknown`` (FR-007: fail-open on infra uncertainty)."""
-    for cap_id in needed_caps:
+    for target in targets:
         try:
-            run_if_stale(store, cap_id)
+            run_if_stale(store, target)
         except Exception:  # noqa: BLE001
             pass
 
 
 def red_caps_for(
     store: MetaStore, declared: "tuple[str, ...]",
+    project_id: Optional[str] = None,
 ) -> "list[tuple[str, CapProbeResult]]":
     """Return the ``(capability id, result)`` pairs that are ``red`` for the
     declared capabilities.
@@ -348,10 +399,12 @@ def red_caps_for(
     ``unknown`` result is fail-open (FR-007): only a confirmed ``red`` holds
     dispatch. The id rides along because the operator-facing block must name
     the same probe id doctor reports (FR/US3) — probe evidence alone does not
-    carry it."""
+    carry it. ``project_id`` selects the per-project row for a project-scoped
+    capability (:data:`CAP_SCOPES`) — a goal must be admitted against the probe
+    of the image ITS sandbox launches, not the fleet default's."""
     red: list[tuple[str, CapProbeResult]] = []
     for cap_id in declared:
-        result = read_result(store, cap_id)
+        result = read_result(store, cap_id, project_id)
         if result is not None and result.status == "red":
             red.append((cap_id, result))
     return red

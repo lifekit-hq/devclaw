@@ -54,11 +54,14 @@ def _seed(tmp_path, *capabilities: str) -> GoalStore:
     return store
 
 
-def _probe(store: GoalStore, status: str, cap_id: str = REGISTRY) -> None:
+def _probe(
+    store: GoalStore, status: str, cap_id: str = REGISTRY,
+    project_id: "str | None" = None,
+) -> None:
     # Evidence deliberately does NOT contain the capability id — the block must
     # name the probe id itself (US3: doctor and the block tell ONE story), and
     # the real registry probe's evidence is "NODE_AUTH_TOKEN rejected by …".
-    env_cap._write_result(store, cap_id, CapProbeResult(
+    env_cap._write_result(store, env_cap.CapTarget(cap_id, project_id), CapProbeResult(
         status=status,
         evidence=f"probe says {status}",
         remedy="rotate NODE_AUTH_TOKEN and redeploy" if status == "red" else "",
@@ -208,7 +211,7 @@ async def test_hold_clears_without_an_operator_verb_when_the_probe_greens(tmp_pa
     monkeypatch.setattr(_state_store, "_now_ms", lambda: clock_ms[0])
 
     verdict = ["red"]
-    monkeypatch.setitem(env_cap._PROBE_RUNNERS, REGISTRY, lambda: CapProbeResult(
+    monkeypatch.setitem(env_cap._PROBE_RUNNERS, REGISTRY, lambda _t: CapProbeResult(
         status=verdict[0],
         evidence=f"probe says {verdict[0]}",
         remedy="rotate NODE_AUTH_TOKEN and redeploy" if verdict[0] == "red" else "",
@@ -368,7 +371,8 @@ async def test_a_flapping_capability_converges_to_held_with_one_ping(tmp_path):
     assert len(notifier.sent) == 1                         # no ping storm
     st = store.load_status("g")
     assert st.blocked_kind == "mechanical:env"
-    assert st.heal_attempts >= ENV_HEAL_CAP
+    assert st.env_heal_attempts >= ENV_HEAL_CAP
+    assert st.heal_attempts == 0          # the prep budget was never touched
 
     _probe(store, "green")                                  # budget spent: no auto-heal
     assert await _tick(store, engine, notifier, evaluator) is not Outcome.DISPATCHED
@@ -379,17 +383,22 @@ async def test_a_flapping_capability_converges_to_held_with_one_ping(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_unrelated_prior_heal_does_not_swallow_the_env_hold_ping(tmp_path):
-    """FR-003/SC-002: the one owner ping is owed per ENVIRONMENT hold episode.
+@pytest.mark.parametrize("prior_heals", [2, ENV_HEAL_CAP + 1])
+async def test_an_unrelated_prior_heal_does_not_swallow_the_env_brake(
+    tmp_path, prior_heals,
+):
+    """FR-003/SC-002 + US2: the env brake owns BOTH its markers.
 
     ``heal_attempts`` is shared with every other ``mechanical:*`` auto-heal, so
-    a goal that earlier healed a ``mechanical:prep`` block carries a non-zero
-    count into an unrelated, genuine environment breakage. Gating the ping on
-    that counter silently swallowed exactly the ping SC-002 promises — the
-    brake would hold dispatch and tell nobody."""
+    a goal that earlier healed ``mechanical:prep`` blocks carries a non-zero
+    count into an unrelated, genuine environment breakage. Reading that shared
+    counter cost the brake its two promises at once: the ping SC-002 owes was
+    swallowed (the hold told nobody), and with a spent prep budget the goal was
+    parked instead of auto-resuming when the probe greened — so the case is
+    parametrized over a merely-nonzero count AND one past ``ENV_HEAL_CAP``."""
     store = _seed(tmp_path, REGISTRY)
     store.save_status("g", GoalStatus(
-        phase="idle", lifecycle="executing", heal_attempts=2,   # from a prep heal
+        phase="idle", lifecycle="executing", heal_attempts=prior_heals,
     ))
     _probe(store, "red")
     engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
@@ -401,6 +410,15 @@ async def test_an_unrelated_prior_heal_does_not_swallow_the_env_hold_ping(tmp_pa
     # is what silences the re-holds.
     await _tick(store, engine, notifier, evaluator)
     assert len(notifier.sent) == 1
+
+    # US2: the probe greens and the goal resumes on the very next tick, with
+    # the prep budget still untouched.
+    _probe(store, "green")
+    assert await _tick(store, engine, notifier, evaluator) is Outcome.DISPATCHED
+    st = store.load_status("g")
+    assert st.blocked_kind == ""
+    assert st.env_heal_attempts == 1
+    assert st.heal_attempts == prior_heals
     assert evaluator.calls == 0
 
 
@@ -441,10 +459,12 @@ async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path
     can never be dispatched into again and so must not buy the fleet a
     recurring network probe forever."""
     runs: list[str] = []
+    targets: "list[env_cap.CapTarget]" = []
 
     def _fake(cap_id: str):
-        def run() -> CapProbeResult:
+        def run(target: env_cap.CapTarget) -> CapProbeResult:
             runs.append(cap_id)
+            targets.append(target)
             return CapProbeResult(status="green", evidence="fake")
         return run
 
@@ -487,3 +507,32 @@ async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path
         project_capabilities=lambda: {"proj": ("sandbox:image",)},
     )
     assert runs == [REGISTRY, "sandbox:image"]
+
+    # SCOPE (CAP_SCOPES): ``sandbox:image`` is about the image THAT project's
+    # sandbox launches, so a project pinning its own (ADR 0005) is probed —
+    # and cached — apart from one on the fleet default. One fleet-wide row
+    # answers about an image the project never runs, in BOTH directions: the
+    # pinned project admitted because the default is pullable, or held because
+    # it isn't. The instance-scoped registry credential is the opposite case:
+    # one process-wide env var, so N projects buy exactly one probe.
+    targets.clear()
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    await tick_all(
+        store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+        notify_url="http://relay", prepare_ws=fake_prepare,
+        project_capabilities=lambda: {
+            "alpha": ("sandbox:image",), "beta": ("sandbox:image",),
+        },
+        project_images=lambda: {"beta": "devclaw-sandbox-dotnet:local"},
+    )
+    assert sorted((t.project_id, t.subject) for t in targets) == [
+        ("alpha", None),                          # inherits the fleet default
+        ("beta", "devclaw-sandbox-dotnet:local"),  # its own pin
+    ]
+    # ... and the results land in per-project rows, so one project's red never
+    # holds the other.
+    _probe(store, "red", "sandbox:image", project_id="beta")
+    assert env_cap.red_caps_for(store, ("sandbox:image",), "beta")
+    assert env_cap.red_caps_for(store, ("sandbox:image",), "alpha") == []
+    # An instance-scoped capability ignores the project entirely — one row.
+    assert env_cap.read_result(store, REGISTRY, "alpha") == env_cap.read_result(store, REGISTRY)

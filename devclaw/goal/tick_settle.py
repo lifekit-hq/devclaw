@@ -282,6 +282,7 @@ async def _resolve_polling_action(
         # the environment demonstrably worked. A LATER breakage is a new
         # incident and earns its own owner ping.
         env_hold_notified=(False if productive else status.env_hold_notified),
+        env_heal_attempts=(0 if productive else status.env_heal_attempts),
         # spec 020: a shipped increment proves the environment now fits its
         # workload — the env-cap adapted-re-dispatch budget resets with it.
         envcap_redispatches=(0 if productive else status.envcap_redispatches),

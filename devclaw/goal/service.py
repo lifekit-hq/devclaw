@@ -228,6 +228,22 @@ class GoalService:
             out[project.id] = tuple(manifest.capabilities)
         return out
 
+    def _registered_sandbox_images(self) -> "dict[str, str | None]":
+        """``project_id -> pinned sandbox image`` (spec 030, project-scoped probes).
+
+        The subject a ``sandbox:image`` probe is about: a project pinning its
+        own image (ADR 0005) must be admitted against THAT image, never the
+        fleet default. Read straight off the listed rows rather than through
+        ``resolve_override`` per project — same value, one query instead of N,
+        and this runs once per sweep beside ``_registered_capabilities``.
+        A project with no pin maps to ``None`` = the engine default."""
+        if self._project_registry is None:
+            return {}
+        return {
+            project.id: getattr(project, "sandbox_image", None)
+            for project in self._project_registry.list()
+        }
+
     def _evaluator(self) -> ClaudeCaller:
         if self._evaluator_caller is None:
             self._evaluator_caller = goal_evaluator.default_caller()
@@ -465,6 +481,7 @@ class GoalService:
             mergeability_probe=goal_mergeability.pr_conflicting,
             project_workspaces=self._registered_workspaces,
             project_capabilities=self._registered_capabilities,
+            project_images=self._registered_sandbox_images,
         )
         # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
         # crashing tick leaves this stale, which is exactly the signal an
@@ -1413,6 +1430,7 @@ class GoalService:
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
                         heal_attempts=0, next_heal_at=None, donegate_rounds=0,
                         slice_hold_count=0, env_hold_notified=False,
+                        env_heal_attempts=0,
                         merge_heal_attempted=False),
                 expect=s,
             )
@@ -1492,7 +1510,8 @@ class GoalService:
             goal_id, Event.UNBLOCK,
             replace(s, phase="idle", blocked_on="", actions_dispatched=0, last_plan_at=None,
                     heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                    slice_hold_count=0, env_hold_notified=False),
+                    slice_hold_count=0, env_hold_notified=False,
+                    env_heal_attempts=0),
             expect=s,
         )
         self._goal_store.append_log(

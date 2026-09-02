@@ -1,7 +1,7 @@
 # Tasks — spec 030 environment-capability admission
 
-**Status**: IMPLEMENTED — all user stories and FRs done (#800), plus the two
-post-landing corrections below.
+**Status**: IMPLEMENTED — all user stories and FRs done (#800), plus the
+post-landing correction rounds below.
 
 ## US1 — A broken capability holds the project (P1)
 
@@ -164,3 +164,30 @@ post-landing corrections below.
       `docs/reference/env-vars.md` (`NODE_AUTH_TOKEN` unset is no longer
       byte-identical for a declaring project) and both `docs/INDEX.md` currency
       tags.
+
+## Post-landing corrections (done-gate findings, round 3, 2026-09-02)
+
+- [x] T025 `sandbox:image` answered about the WRONG image for any project
+      pinning its own (`projects.sandbox_image`, ADR 0005): the probe read the
+      fleet-default `SANDBOX_IMAGE` and cached one row keyed by capability id
+      alone. Capabilities now carry a scope (`env_cap.CAP_SCOPES`) and the
+      scope is what `_meta_key` keys on — instance-scoped ids keep one shared
+      row, `sandbox:image` gets one per project. The sweep resolves the
+      subject (`GoalService._registered_sandbox_images` → `tick_all`'s
+      `project_images` → `CapTarget.subject`) so `env_cap` stays ignorant of
+      the project registry; both readers (`red_caps_for` at the dispatch guard
+      and in the auto-heal) pass the goal's `project_id`. The once-per-sweep
+      class test gains the scope case: two projects, distinct subjects,
+      per-project rows, and one shared row for the instance-scoped id.
+- [x] T026 The env auto-heal spent the SHARED `heal_attempts`, so a goal with
+      prior `mechanical:prep` heals could reach its first env hold with the
+      budget gone and stay parked instead of auto-resuming within one sweep of
+      the probe greening (US2) — the same defect T015 fixed for the ping, in
+      the other counter. New `goal_status.env_heal_attempts` column (the
+      `env_hold_notified` shape, reset on the same three events);
+      `_heal_give_up` takes the `counter_field` it parks and `_heal_unblock`
+      writes only the budget its caller spent. Persisted-state shape ⇒ its
+      doctor check (`instance.env.goal_status_env_heal_attempts`), a case on
+      the parametrized `_BRAKE_COLUMNS` seeded-fault test. T015's class test is
+      parametrized over the prior-heal count (nonzero / past `ENV_HEAL_CAP`)
+      and now asserts the resume too — never a sibling test.

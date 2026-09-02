@@ -47,6 +47,25 @@ One new module plus four wires — no new layer, no new store.
   earlier healed a `mechanical:prep` block was silently denied the FIRST ping
   of an unrelated environment breakage, i.e. exactly the ping SC-002 promises.
   Precedent for the dedicated flag: `no_progress_notified`.
+  *Revised again 2026-09-02*: the heal BUDGET had the same defect and needed
+  the same fix — `_autoheal_env_cap` counted on the shared `heal_attempts`,
+  so prior prep heals could arrive with the env budget already spent and the
+  goal parked instead of auto-resuming within one sweep of the probe greening
+  (US2). Each brake now spends its own column (`env_heal_attempts`), and
+  `_heal_give_up` takes the counter it parks.
+- **Capabilities carry a SCOPE** (`env_cap.CAP_SCOPES`), and the scope is what
+  the cache key keys on. `registry:npm-github` is instance-scoped — one
+  process-wide env var, so N declaring projects buy one probe. `sandbox:image`
+  is project-scoped: a project may pin its own `sandbox_image` (ADR 0005), so
+  a fleet-wide row would answer about an image that project never launches, in
+  both directions (admitted because the *default* is pullable; held because it
+  isn't). The sweep resolves the per-project subject
+  (`GoalService._registered_sandbox_images`) and hands it to the probe on
+  `CapTarget`; `env_cap` never reaches into the project registry, and the
+  per-goal read path needs only the key (`cap_id` + `project_id`), never the
+  subject. Rejected: restricting `sandbox:image` to instance scope and ignoring
+  it on a pinning project — that removes the check from precisely the projects
+  whose image is most likely to be missing.
 - **One capability id, imported everywhere** (`env_cap.CAP_REGISTRY_NPM_GITHUB`
   / `CAP_SANDBOX_IMAGE`). The registry probe primitive and the token-shape rule
   moved from `devclaw/doctor/checks_instance.py` into `devclaw/env_cap.py`, and

@@ -250,6 +250,15 @@ class GoalStatus:
     #: a productive settle and on steer_goal / resume_goal. Same
     #: ping-once-per-episode shape as ``no_progress_notified``.
     env_hold_notified: bool = False
+    #: spec 030 FR-003/US2: auto-heals spent on the CURRENT environment-capability
+    #: hold, damping a capability that flaps green↔red. Its own counter for the
+    #: same reason ``env_hold_notified`` is its own flag: sharing
+    #: ``heal_attempts`` with the ``mechanical:prep`` heal let unrelated prep
+    #: retries spend the env budget, so a goal with prior heals stayed held for
+    #: a sweep — or parked outright — after its probe went green, which is the
+    #: within-one-sweep auto-resume US2 promises. Reset alongside
+    #: ``env_hold_notified``: productive settle, steer_goal, resume_goal.
+    env_heal_attempts: int = 0
     #: consecutive done-gate rounds that did NOT close the goal (the
     #: on_track/off_track resolutions). The done-gate treadmill brake: each
     #: non-closing round increments it; at ``DONEGATE_ROUND_CAP`` the goal

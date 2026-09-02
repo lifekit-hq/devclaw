@@ -110,14 +110,14 @@ class GoalStateStatusMixin:
                 """
                 INSERT INTO goal_status (
                   goal_id, version, state, phase, lifecycle, blocked_on, blocked_kind,
-                  heal_attempts, next_heal_at, env_hold_notified, "next",
+                  heal_attempts, next_heal_at, env_hold_notified, env_heal_attempts, "next",
                   last_plan_at, last_tick_at, actions_dispatched,
                   donegate_rounds, envcap_redispatches, slice_hold_count,
                   pending_merge_pr, merge_heal_attempted,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, in_flight_ref_id, in_flight_kind,
                   in_flight_json, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -128,6 +128,7 @@ class GoalStateStatusMixin:
                   heal_attempts         = excluded.heal_attempts,
                   next_heal_at          = excluded.next_heal_at,
                   env_hold_notified     = excluded.env_hold_notified,
+                  env_heal_attempts     = excluded.env_heal_attempts,
                   "next"                = excluded."next",
                   last_plan_at          = excluded.last_plan_at,
                   last_tick_at          = excluded.last_tick_at,
@@ -157,6 +158,7 @@ class GoalStateStatusMixin:
                     status.heal_attempts,
                     status.next_heal_at,
                     1 if status.env_hold_notified else 0,
+                    status.env_heal_attempts,
                     status.next,
                     status.last_plan_at,
                     status.last_tick_at,
@@ -210,6 +212,7 @@ class GoalStateStatusMixin:
         # spec 030: the env-hold ping-once marker. Column-only so the ping
         # can be stamped on a still-BLOCKED goal without a full-row rewrite.
         "env_hold_notified": "env_hold_notified",
+        "env_heal_attempts": "env_heal_attempts",
         # #430: the settle path stamps the unmerged-PR marker column-only (after
         # the atomic ACTION_SETTLED write, once the merge attempt's outcome is
         # known) — a telemetry field derive_state never reads.
@@ -333,6 +336,7 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         blocked_kind=row["blocked_kind"] or "",
         heal_attempts=int(row["heal_attempts"] or 0),
         env_hold_notified=bool(row["env_hold_notified"]),
+        env_heal_attempts=int(row["env_heal_attempts"] or 0),
         envcap_redispatches=int(row["envcap_redispatches"] or 0),
         # NULL on a pre-spec-025 row (lazily ALTERed) reads as the defaults.
         pending_merge_pr=row["pending_merge_pr"] or "",

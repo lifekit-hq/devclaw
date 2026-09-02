@@ -900,6 +900,7 @@ async def tick_all(
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     project_workspaces: "Callable[[], set[str]] | None" = None,
     project_capabilities: "Callable[[], dict[str, tuple[str, ...]]] | None" = None,
+    project_images: "Callable[[], dict[str, str | None]] | None" = None,
     issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal. One goal's failure never stops the others, and a usage
@@ -1067,9 +1068,27 @@ async def tick_all(
     try:
         if project_capabilities is not None:
             caps_by_project = project_capabilities() or {}
-        _needed_caps: frozenset[str] = frozenset()
-        for _declared in caps_by_project.values():
-            _needed_caps = _needed_caps | frozenset(_declared)
+        images_by_project = (project_images() or {}) if project_images is not None else {}
+        # Keyed by the row a result is CACHED under, so an instance-scoped
+        # capability declared by five projects is probed once while a
+        # project-scoped one is probed per project (spec 030 CAP_SCOPES) —
+        # the dedup rule and the cache key stay the same rule.
+        _targets: "dict[tuple[str, str | None], _env_cap_mod.CapTarget]" = {}
+
+        def _want_caps(cap_ids: "tuple[str, ...]", project_id: str) -> None:
+            pid = (project_id or "").strip() or None
+            for cap_id in cap_ids:
+                scoped = pid if _env_cap_mod.CAP_SCOPES.get(cap_id) == "project" else None
+                _targets.setdefault(
+                    (cap_id, scoped),
+                    _env_cap_mod.CapTarget(
+                        cap_id=cap_id, project_id=scoped,
+                        subject=images_by_project.get(scoped) if scoped else None,
+                    ),
+                )
+
+        for _pid, _declared in caps_by_project.items():
+            _want_caps(_declared, _pid)
         for _gid in store.list_goal_ids():
             try:
                 if _project_hold.is_terminal(store.load_status(_gid)):
@@ -1079,11 +1098,11 @@ async def tick_all(
                     continue  # the registry already answered for this project
                 _m = _env_cap_manifest_mod.load_manifest(_g.workspace_dir)
                 if _m and _m.capabilities:
-                    _needed_caps = _needed_caps | frozenset(_m.capabilities)
+                    _want_caps(tuple(_m.capabilities), _g.project_id or "")
             except Exception:  # noqa: BLE001 — one bad manifest must not sink the sweep
                 pass
-        if _needed_caps:
-            _env_cap_mod.refresh_needed(store, _needed_caps)
+        if _targets:
+            _env_cap_mod.refresh_needed(store, _targets.values())
     except Exception:  # noqa: BLE001 — the probe sweep must never wedge the heartbeat
         pass
 

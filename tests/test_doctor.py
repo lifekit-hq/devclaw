@@ -527,6 +527,7 @@ _BRAKE_COLUMNS = [
     # (column, check id, issue #728 / spec 030)
     ("slice_hold_count", "instance.dispatch.goal_status_slice_hold_count"),
     ("env_hold_notified", "instance.env.goal_status_env_hold_notified"),
+    ("env_heal_attempts", "instance.env.goal_status_env_heal_attempts"),
 ]
 
 

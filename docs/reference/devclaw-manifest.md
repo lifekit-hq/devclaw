@@ -54,6 +54,15 @@ without one. (Doctor's instance-level `instance.registry.token` keeps its
 unset-is-a-supported-posture verdict only while no registered project declares
 the capability; once one does, it reports the same fault the hold names.)
 
+Capabilities carry a **scope**. `registry:npm-github` is *instance*-scoped —
+one process-wide credential, so N declaring projects buy exactly one probe and
+share its cached row. `sandbox:image` is *project*-scoped: it is probed against
+the image **that** project's sandbox will launch (its `sandbox_image` registry
+pin, ADR 0005, or the fleet default), and cached per project. A single
+fleet-wide row for it would answer about an image the project never runs — a
+pinned project admitted because the *default* is pullable, or held because the
+default isn't.
+
 While a declared capability's mechanical probe is **red**, dispatch is held
 with a `mechanical:env` block naming the probe id and its remedy; the hold
 clears on its own within ~one heartbeat sweep of the probe greening. An absent

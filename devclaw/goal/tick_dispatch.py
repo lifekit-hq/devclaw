@@ -197,7 +197,7 @@ async def _dispatch_action(
             _declared_caps_for, goal, project_caps
         )
         if _declared:
-            _red = _env_cap.red_caps_for(store, _declared)
+            _red = _env_cap.red_caps_for(store, _declared, goal.project_id)
             if _red:
                 return await _block_on_env_cap(
                     goal_id, base, _red,
