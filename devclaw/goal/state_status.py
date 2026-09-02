@@ -26,6 +26,15 @@ if TYPE_CHECKING:
     from ..state_store import StateStore
 
 
+#: ``GoalStatus`` fields persisted as SQLite INTEGER 0/1. The column-only
+#: UPDATE path writes whatever the caller passed, so a truthy non-bool would
+#: land verbatim and read back wrong; normalising through one set beats the
+#: per-field inline check the second bool column outgrew.
+_BOOL_STATUS_FIELDS: frozenset[str] = frozenset({
+    "no_progress_notified", "env_hold_notified",
+})
+
+
 class GoalStateStatusMixin:
     if TYPE_CHECKING:
         # The composing class owns this (its docstring names the same contract in
@@ -101,14 +110,14 @@ class GoalStateStatusMixin:
                 """
                 INSERT INTO goal_status (
                   goal_id, version, state, phase, lifecycle, blocked_on, blocked_kind,
-                  heal_attempts, next_heal_at, "next",
+                  heal_attempts, next_heal_at, env_hold_notified, "next",
                   last_plan_at, last_tick_at, actions_dispatched,
                   donegate_rounds, envcap_redispatches, slice_hold_count,
                   pending_merge_pr, merge_heal_attempted,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, in_flight_ref_id, in_flight_kind,
                   in_flight_json, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -118,6 +127,7 @@ class GoalStateStatusMixin:
                   blocked_kind          = excluded.blocked_kind,
                   heal_attempts         = excluded.heal_attempts,
                   next_heal_at          = excluded.next_heal_at,
+                  env_hold_notified     = excluded.env_hold_notified,
                   "next"                = excluded."next",
                   last_plan_at          = excluded.last_plan_at,
                   last_tick_at          = excluded.last_tick_at,
@@ -146,6 +156,7 @@ class GoalStateStatusMixin:
                     status.blocked_kind,
                     status.heal_attempts,
                     status.next_heal_at,
+                    1 if status.env_hold_notified else 0,
                     status.next,
                     status.last_plan_at,
                     status.last_tick_at,
@@ -196,6 +207,9 @@ class GoalStateStatusMixin:
         # on a still-BLOCKED goal without a full-row rewrite.
         "heal_attempts": "heal_attempts",
         "next_heal_at": "next_heal_at",
+        # spec 030: the env-hold ping-once marker. Column-only so the ping
+        # can be stamped on a still-BLOCKED goal without a full-row rewrite.
+        "env_hold_notified": "env_hold_notified",
         # #430: the settle path stamps the unmerged-PR marker column-only (after
         # the atomic ACTION_SETTLED write, once the merge attempt's outcome is
         # known) — a telemetry field derive_state never reads.
@@ -215,7 +229,7 @@ class GoalStateStatusMixin:
         params: list = []
         for key, value in fields.items():
             col = self.STATUS_FIELD_COLUMNS[key]
-            if key == "no_progress_notified":
+            if key in _BOOL_STATUS_FIELDS:
                 value = 1 if value else 0
             sets.append(f"{col} = ?")
             params.append(value)
@@ -318,6 +332,7 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         # ALTERed by _bootstrap) reads as "" — unclassified, same as the default.
         blocked_kind=row["blocked_kind"] or "",
         heal_attempts=int(row["heal_attempts"] or 0),
+        env_hold_notified=bool(row["env_hold_notified"]),
         envcap_redispatches=int(row["envcap_redispatches"] or 0),
         # NULL on a pre-spec-025 row (lazily ALTERed) reads as the defaults.
         pending_merge_pr=row["pending_merge_pr"] or "",

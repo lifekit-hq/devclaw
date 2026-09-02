@@ -237,7 +237,7 @@ class GoalStatusMixin:
         """Column-only telemetry update — ``last_tick_at`` / ``last_plan_at`` /
         ``last_progress_at`` / ``no_progress_notified`` / ``last_eval_verdict``
         / ``last_eval_at`` / ``last_eval_note`` /
-        ``heal_attempts`` / ``next_heal_at`` ONLY (see
+        ``heal_attempts`` / ``next_heal_at`` / ``env_hold_notified`` ONLY (see
         :data:`GoalState.STATUS_FIELD_COLUMNS`). NEVER a full-row
         rewrite, so it can never be the write that clobbers a concurrent
         phase/lifecycle/in_flight transition — this is the mechanism half of
@@ -345,6 +345,7 @@ class GoalStatusMixin:
             "pending_merge_pr": status.pending_merge_pr,
             "merge_heal_attempted": status.merge_heal_attempted,
             "next_heal_at": status.next_heal_at,
+            "env_hold_notified": status.env_hold_notified,
             "next": status.next,
             "last_plan_at": status.last_plan_at,
             "last_tick_at": status.last_tick_at,

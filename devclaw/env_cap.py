@@ -29,10 +29,6 @@ from typing import Callable, Literal, Optional, Protocol
 
 from .engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR
 from .engine.sandcastle import SANDBOX_IMAGE as _SANDBOX_IMAGE
-from .doctor.checks_instance import (
-    _probe_registry_token as _ci_probe_registry_token,
-    _GH_TOKEN_PREFIXES as _CI_GH_PREFIXES,
-)
 
 
 class MetaStore(Protocol):
@@ -55,8 +51,22 @@ PROBE_TTL_S: int = 16 * 60  # 16 min
 
 _META_PREFIX = "env_cap_probe:"
 
+#: The v1 capability ids (FR-006), as constants because they are cross-surface
+#: identifiers, not local literals: a project's ``devclaw.json`` declares them,
+#: the ``mechanical:env`` block names them, and doctor's findings must name the
+#: SAME string so the operator reads ONE story rather than two (US3). Anything
+#: that speaks about a capability imports these — never a re-typed literal.
+CAP_REGISTRY_NPM_GITHUB = "registry:npm-github"
+CAP_SANDBOX_IMAGE = "sandbox:image"
+
 #: v1 capability ids this instance can probe (FR-006).
-KNOWN_CAPABILITIES: frozenset[str] = frozenset({"registry:npm-github", "sandbox:image"})
+KNOWN_CAPABILITIES: frozenset[str] = frozenset({CAP_REGISTRY_NPM_GITHUB, CAP_SANDBOX_IMAGE})
+
+#: GitHub token prefixes. A `read:packages` credential that matches none of
+#: these is not a GitHub token at all — the exact 2026-08-31 failure, where a
+#: malformed secret rode the whole plumbing into the sandbox and only
+#: surfaced as an `npm ci` 401 after it had eaten a goal's dispatch budget.
+GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "ghs_", "gho_")
 
 # ---- data types --------------------------------------------------------------
 
@@ -124,13 +134,39 @@ def _is_stale(store: MetaStore, cap_id: str) -> bool:
 
 # ---- probe implementations (module-level for test patching) ------------------
 
+def probe_registry_token(token: str, timeout_s: float = 5.0) -> Optional[int]:
+    """HTTP status from an authenticated GitHub API call, or None if the
+    probe could not run at all. The token is never logged or returned.
+
+    Lives here rather than in doctor because the capability layer and the
+    doctor check are two READERS of one probe primitive; doctor imports it
+    (both re-export it as a module global so tests patch it in the calling
+    module, per the collector convention). Never raises: every failure
+    degrades to None — an unverifiable credential is ``unknown``, never OK
+    and never red (FR-007)."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://api.github.com/user",
+        headers={"Authorization": f"Bearer {token}", "User-Agent": "devclaw-doctor"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return int(resp.status)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code)
+    except Exception:
+        return None
+
+
 def _probe_registry_npm_github() -> CapProbeResult:
     """Probe the GitHub Packages npm-registry credential (the fs-479 class).
 
-    Reuses the same HTTP check as
-    ``devclaw.doctor.checks_instance._probe_registry_token`` — the reference
-    implementation from spec FR-006. Module-level so tests can patch it.
-    Never raises; returns ``unknown`` on infra failure (FR-007)."""
+    Runs the same HTTP check doctor's ``instance.registry.token`` reports on
+    (:func:`probe_registry_token` — the FR-006 reference implementation), so
+    the two surfaces can never disagree about the credential. Module-level so
+    tests can patch it. Never raises; ``unknown`` on infra failure (FR-007)."""
     token = os.environ.get(_REGISTRY_TOKEN_VAR, "").strip()
     if not token:
         # Not set: supported posture (pre-token deployment), not evidence of
@@ -140,19 +176,19 @@ def _probe_registry_npm_github() -> CapProbeResult:
             evidence=f"{_REGISTRY_TOKEN_VAR} not set — no registry credential; "
                      "npm ci will only succeed against public registries",
         )
-    if not token.startswith(_CI_GH_PREFIXES):
+    if not token.startswith(GH_TOKEN_PREFIXES):
         return CapProbeResult(
             status="red",
             evidence=(
                 f"{_REGISTRY_TOKEN_VAR} is set but is not a GitHub token "
-                f"(expected prefix: {'/'.join(_CI_GH_PREFIXES)})"
+                f"(expected prefix: {'/'.join(GH_TOKEN_PREFIXES)})"
             ),
             remedy=(
                 f"regenerate a read:packages-only classic PAT, "
                 f"set {_REGISTRY_TOKEN_VAR} to the new token, and redeploy"
             ),
         )
-    status_code = _ci_probe_registry_token(token)
+    status_code = probe_registry_token(token)
     if status_code is None:
         return CapProbeResult(
             status="unknown",
@@ -221,8 +257,8 @@ def _probe_sandbox_image() -> CapProbeResult:
 #: Registry of probe runners, keyed by capability id.  Module-level so tests
 #: can monkeypatch individual entries (``env_cap._PROBE_RUNNERS[cap_id] = fake``).
 _PROBE_RUNNERS: dict[str, Callable[[], CapProbeResult]] = {
-    "registry:npm-github": _probe_registry_npm_github,
-    "sandbox:image": _probe_sandbox_image,
+    CAP_REGISTRY_NPM_GITHUB: _probe_registry_npm_github,
+    CAP_SANDBOX_IMAGE: _probe_sandbox_image,
 }
 
 

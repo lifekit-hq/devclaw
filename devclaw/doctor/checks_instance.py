@@ -224,32 +224,14 @@ def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, f"{_OAUTH_TOKEN_VAR} not set (sandbox auth rides the mounted /login credential)")]
 
 
-#: GitHub token prefixes. A `read:packages` credential that matches none of
-#: these is not a GitHub token at all — the exact 2026-08-31 failure, where a
-#: malformed secret rode the whole plumbing into the sandbox and only
-#: surfaced as an `npm ci` 401 after it had eaten a goal's dispatch budget.
-_GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "ghs_", "gho_")
-
-#: Module-global so tests patch it HERE (the caller's module), per the
-#: collector convention. Never raises: every failure degrades to None, which
-#: the check reports as UNKNOWN — an unverifiable credential is never OK.
-def _probe_registry_token(token: str, timeout_s: float = 5.0) -> Optional[int]:
-    """HTTP status from an authenticated GitHub API call, or None if the
-    probe could not run at all. The token is never logged or returned."""
-    import urllib.error
-    import urllib.request
-
-    req = urllib.request.Request(
-        "https://api.github.com/user",
-        headers={"Authorization": f"Bearer {token}", "User-Agent": "devclaw-doctor"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            return int(resp.status)
-    except urllib.error.HTTPError as exc:
-        return int(exc.code)
-    except Exception:
-        return None
+#: Shape rules and the live probe are owned by ``devclaw.env_cap`` — the
+#: capability layer and this check are two readers of ONE primitive, so a
+#: rule stated twice could drift into doctor reporting OK on a credential the
+#: admission gate calls red. Re-bound as module globals because tests patch
+#: the probe HERE, in the calling module (the collector convention).
+from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY  # noqa: E402
+from ..env_cap import GH_TOKEN_PREFIXES as _GH_TOKEN_PREFIXES  # noqa: E402
+from ..env_cap import probe_registry_token as _probe_registry_token  # noqa: E402
 
 
 def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
@@ -261,11 +243,16 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
     every sandbox, `npm ci` 401s in there, the worker self-reports BLOCKED,
     and the goal burns its dispatch budget on an environment fault it cannot
     fix. The value is never echoed — shape and probe status only.
+
+    Every non-OK remedy names the spec-030 capability id this check backs, so
+    an operator reading a ``mechanical:env`` hold and an operator reading
+    doctor see the SAME probe id and one story, not two (US3).
     """
     cid = "instance.registry.token"
     remedy = (
         "regenerate a read:packages-only classic PAT, "
-        "`gh secret set NODE_AUTH_TOKEN`, then redeploy"
+        "`gh secret set NODE_AUTH_TOKEN`, then redeploy "
+        f"(clears the '{_CAP_REGISTRY}' capability hold)"
     )
     token = os.environ.get(_REGISTRY_TOKEN_VAR, "").strip()
     if not token:
@@ -579,27 +566,51 @@ def check_goal_issue_identity_table(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "goal_issue_identity uniqueness table present")]
 
 
-def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
-    """Issue #728 (per spec-016 FR-014: a goal_status column change ships its
-    doctor check): the slice_hold_count column tracks consecutive dispatch holds
-    so the escalation-to-blocked logic can fire. An instance whose DB predates
-    the ALTER TABLE migration reads the column as absent; every dispatch hold
-    silently resets to 0 and the goal never escalates. A server restart runs the
-    ALTER TABLE idempotently."""
-    cid = "instance.dispatch.goal_status_slice_hold_count"
+def _goal_status_column_finding(
+    ctx: "InstanceContext", cid: str, column: str, consequence: str,
+) -> list[Finding]:
+    """The shared body of every "a goal_status column a brake depends on must
+    exist on THIS instance" check (spec-016 FR-014).
+
+    A DB bootstrapped before the column's ``ALTER TABLE`` reads it as absent,
+    which is invisible to the stubbed suite — that whole class is why FR-014
+    exists. Callers supply the check id and the CONSEQUENCE of the column
+    missing; the probe, the no-goals-yet case and the remedy are identical
+    across them, and were duplicated per column until this extraction."""
     with _ro_db(ctx.store.db_path) as db:
         tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "goal_status" not in tables:
             return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
         cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
-    if "slice_hold_count" not in cols:
+    if column not in cols:
         return [Finding(
             cid, Verdict.FAIL,
-            "goal_status.slice_hold_count column absent — the DB predates issue #728; "
-            "persistent dispatch holds will never escalate to blocked",
+            f"goal_status.{column} column absent — {consequence}",
             remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
         )]
-    return [Finding(cid, Verdict.OK, "goal_status.slice_hold_count column present")]
+    return [Finding(cid, Verdict.OK, f"goal_status.{column} column present")]
+
+
+def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
+    """Issue #728: the slice_hold_count column tracks consecutive dispatch holds
+    so the escalation-to-blocked logic can fire."""
+    return _goal_status_column_finding(
+        ctx, "instance.dispatch.goal_status_slice_hold_count", "slice_hold_count",
+        "the DB predates issue #728; persistent dispatch holds will never "
+        "escalate to blocked",
+    )
+
+
+def check_goal_status_env_hold_notified(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 030 FR-003: ``env_hold_notified`` marks the one owner ping an
+    environment-capability hold episode is allowed. Absent, every held tick
+    re-reads it as false and the brake that exists to make fs-479 loud becomes
+    a ping storm — the failure mode SC-002 is written against."""
+    return _goal_status_column_finding(
+        ctx, "instance.env.goal_status_env_hold_notified", "env_hold_notified",
+        "the DB predates spec 030; an environment-capability hold would ping "
+        "the owner on every tick instead of once per episode",
+    )
 def check_merge_on_close_columns(ctx: "InstanceContext") -> list[Finding]:
     """Spec 025 US1 (per spec-016 FR-014: a store-shape change ships its
     doctor check): merge-on-close persists ``pending_merge_pr`` /
@@ -676,6 +687,7 @@ INSTANCE_CHECKS: tuple = (
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
     check_goal_status_slice_hold_count,
+    check_goal_status_env_hold_notified,
     check_merge_on_close_columns,
     check_suppressed_pings_table,
 )

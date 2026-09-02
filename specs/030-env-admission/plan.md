@@ -35,11 +35,25 @@ One new module plus four wires — no new layer, no new store.
   because its recheck costs a git subprocess; the env recheck IS a persisted-row
   read, so a blocked tick stays zero-subprocess without one. The heal BUDGET is
   still kept (`ENV_HEAL_CAP`), for the flap case only.
-- **One ping per hold episode spans a flap.** A re-block after an env heal
-  (`heal_attempts > 0`) logs but does not ping, and the budget parks the goal
-  at the cap — so a probe oscillating green↔red converges to held + one ping
-  (spec edge case) instead of a ping storm. A productive settle resets
-  `heal_attempts`, so a genuine later breakage pings again.
+- **One ping per hold episode spans a flap**, marked by the brake's OWN
+  `goal_status.env_hold_notified` column. A re-block inside the episode logs
+  but does not ping, and the heal budget parks the goal at the cap — so a probe
+  oscillating green↔red converges to held + one ping (spec edge case) instead
+  of a ping storm. The episode ends on a productive settle or when a human
+  vouches (`steer_goal` / `resume_goal`), so a genuine later breakage pings
+  again. *Revised 2026-09-02*: the first cut gated on `heal_attempts == 0`,
+  which is shared with every other `mechanical:*` heal — a goal that had
+  earlier healed a `mechanical:prep` block was silently denied the FIRST ping
+  of an unrelated environment breakage, i.e. exactly the ping SC-002 promises.
+  Precedent for the dedicated flag: `no_progress_notified`.
+- **One capability id, imported everywhere** (`env_cap.CAP_REGISTRY_NPM_GITHUB`
+  / `CAP_SANDBOX_IMAGE`). The registry probe primitive and the token-shape rule
+  moved from `devclaw/doctor/checks_instance.py` into `devclaw/env_cap.py`, and
+  doctor imports them — reversing a core→doctor import and giving the id and
+  its credential rule ONE home. Doctor's check id stays
+  `instance.registry.token` (its own dotted namespace, which operators filter
+  on); what US3 requires is that both surfaces NAME the same probe id, so the
+  check's non-OK remedy carries the capability id.
 - **`capabilities` is read from the WORKTREE, not the merged base** — a
   deliberate divergence from the `devclaw.json` gate trust boundary
   (`docs/reference/devclaw-manifest.md`). The hold is a session-burn brake, not

@@ -15,6 +15,7 @@ Tripwire classes pinned here (rules/testing.md):
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -157,9 +158,15 @@ async def test_a_flapping_capability_converges_to_held_with_one_ping(tmp_path):
     for _ in range(ENV_HEAL_CAP):
         _probe(store, "green")
         await _tick(store, engine, notifier, evaluator)    # heals, dispatches
-        store.save_status("g", GoalStatus(
-            phase="idle", lifecycle="executing",
-            heal_attempts=store.load_status("g").heal_attempts,
+        # Stand in for a NON-productive settle. Re-arm only the SCHEDULING
+        # fields (budget + plan cadence) so the next tick reaches the
+        # admission gate, and carry every damping counter forward via
+        # replace(), as tick_settle does — rebuilding a bare GoalStatus here
+        # would reset the episode markers the damping is MADE of and make the
+        # ping assertion below vacuous.
+        store.save_status("g", replace(
+            store.load_status("g"), phase="idle", in_flight=None,
+            actions_dispatched=0, last_plan_at=None,
         ))
         _probe(store, "red")
         await _tick(store, engine, notifier, evaluator)    # re-holds, silently
@@ -175,6 +182,59 @@ async def test_a_flapping_capability_converges_to_held_with_one_ping(tmp_path):
     assert len(notifier.sent) == 2                          # the gave-up ping, once
     assert "auto-recovery gave up" in notifier.sent[1]
     assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_prior_heal_does_not_swallow_the_env_hold_ping(tmp_path):
+    """FR-003/SC-002: the one owner ping is owed per ENVIRONMENT hold episode.
+
+    ``heal_attempts`` is shared with every other ``mechanical:*`` auto-heal, so
+    a goal that earlier healed a ``mechanical:prep`` block carries a non-zero
+    count into an unrelated, genuine environment breakage. Gating the ping on
+    that counter silently swallowed exactly the ping SC-002 promises — the
+    brake would hold dispatch and tell nobody."""
+    store = _seed(tmp_path, REGISTRY)
+    store.save_status("g", GoalStatus(
+        phase="idle", lifecycle="executing", heal_attempts=2,   # from a prep heal
+    ))
+    _probe(store, "red")
+    engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
+
+    assert await _tick(store, engine, notifier, evaluator) is Outcome.BLOCKED
+    assert len(notifier.sent) == 1 and REGISTRY in notifier.sent[0]
+    assert store.load_status("g").env_hold_notified is True
+    # ... and still exactly one: the episode marker, not the shared counter,
+    # is what silences the re-holds.
+    await _tick(store, engine, notifier, evaluator)
+    assert len(notifier.sent) == 1
+    assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_doctor_and_the_goal_block_name_the_same_probe_id(tmp_path, monkeypatch):
+    """US3: an operator reading a ``mechanical:env`` hold and an operator
+    reading doctor must see ONE story. Both surfaces name the capability id
+    from the single constant in ``env_cap`` — a re-typed literal on either
+    side is how the two drift into telling different stories about one fault."""
+    from devclaw.doctor import checks_instance as ci
+
+    cap = env_cap.CAP_REGISTRY_NPM_GITHUB
+    # env_cap owns the credential rule; doctor re-exports it rather than
+    # restating it, so the two can never disagree about one token.
+    assert ci._probe_registry_token is env_cap.probe_registry_token
+    assert ci._GH_TOKEN_PREFIXES is env_cap.GH_TOKEN_PREFIXES
+
+    store = _seed(tmp_path, REGISTRY)
+    _probe(store, "red")
+    await _tick(store, FakeEngine(), RecordingNotifier(), FakeClaude())
+    assert cap in store.load_status("g").blocked_on
+
+    # The doctor side. ``check_registry_token`` reads os.environ, never ctx.
+    monkeypatch.setattr(ci, "_probe_registry_token", lambda t, timeout_s=5.0: 401)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", "ghp_wellformedbutrejected")
+    (finding,) = ci.check_registry_token(None)  # type: ignore[arg-type]
+    assert finding.verdict.value == "fail"
+    assert cap in finding.remedy
 
 
 @pytest.mark.asyncio

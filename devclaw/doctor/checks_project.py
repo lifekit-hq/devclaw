@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .. import project_manifest as _manifest
 from ..engine.workspace import workspace_is_dispatchable
+from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY
 from .model import Finding, Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -341,7 +342,7 @@ def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> 
                     f"{name} resolves against {host} but devclaw.json declares no "
                     "registry:* capability — a broken registry credential will "
                     "burn worker sessions instead of holding dispatch",
-                    remedy='add "capabilities": ["registry:npm-github"] to devclaw.json',
+                    remedy=f'add "capabilities": ["{_CAP_REGISTRY}"] to devclaw.json',
                     project_id=project.id,
                 )]
     return [Finding(cid, Verdict.OK, "no undeclared registry dependency visible",

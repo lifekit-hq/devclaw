@@ -312,11 +312,14 @@ async def _block_on_env_cap(
     Spec 030 FR-002/FR-003. The block message names every failing capability
     and its remedy so the operator sees ONE story.
 
-    Exactly one owner ping per hold EPISODE, where an episode spans a flap: a
-    re-block that follows an env heal (``heal_attempts > 0``) logs but does not
-    ping, so a probe oscillating green↔red converges to held + one ping instead
-    of a ping storm (spec 030 edge case). ``heal_attempts`` is reset by a
-    productive settle, so a genuine later breakage does ping again."""
+    Exactly one owner ping per hold EPISODE, marked by ``env_hold_notified``:
+    a re-block that follows an env heal logs but does not ping, so a probe
+    oscillating green↔red converges to held + one ping instead of a ping storm
+    (spec 030 edge case). The marker is this brake's OWN — gating on
+    ``heal_attempts`` swallowed the first ping of a genuine breakage whenever
+    the goal had earlier healed an unrelated ``mechanical:prep`` block, which
+    is precisely the ping SC-002 promises. It resets on a productive settle
+    and when a human vouches, so a later breakage pings again."""
     cap_lines = "; ".join(
         f"{cap_id}: {r.evidence} → {r.remedy}" if r.remedy
         else f"{cap_id}: {r.evidence}"
@@ -334,7 +337,11 @@ async def _block_on_env_cap(
                 blocked_kind="mechanical:env", next=""),
         expect=status, consume_steering=consume_steering,
     )
-    if status.heal_attempts == 0:
+    if not status.env_hold_notified:
+        # Mark FIRST, then ping (the pause_notified pattern shared with
+        # _heal_give_up): a column-only write on the still-blocked goal, so a
+        # crash in the notifier can never re-arm the ping on the next tick.
+        store.update_status_fields(goal_id, env_hold_notified=True)
         await _notify(
             notifier, NotifyLevel.OWNER,
             f"🔴 [{goal_id}] dispatch held — environment not ready: {cap_lines}; "

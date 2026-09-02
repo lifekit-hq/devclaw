@@ -1,6 +1,7 @@
 # Tasks — spec 030 environment-capability admission
 
-**Status**: IMPLEMENTED — all user stories and FRs done, PR pending.
+**Status**: IMPLEMENTED — all user stories and FRs done (#800), plus the two
+post-landing corrections below.
 
 ## US1 — A broken capability holds the project (P1)
 
@@ -65,3 +66,35 @@
 ## Polish
 
 - [x] T013 Full suite + `ruff check .` + `mypy` green before the PR
+
+## Post-landing corrections (done-gate findings on #800, 2026-09-02)
+
+- [x] T014 US3 was only half-met: the goal's block named `registry:npm-github`
+      while doctor's `check_registry_token` named nothing but its own check id,
+      so the operator still read TWO stories. `devclaw/env_cap.py` now owns the
+      capability-id constants (`CAP_REGISTRY_NPM_GITHUB` / `CAP_SANDBOX_IMAGE`)
+      AND the registry probe primitive + token-shape rule that
+      `devclaw/doctor/checks_instance.py` used to own; doctor imports both and
+      names the capability id in every non-OK remedy. Also reverses the
+      core→doctor import env_cap shipped with.
+      `devclaw/doctor/checks_project.py` drops its re-typed literal.
+- [x] T015 FR-003's "exactly one owner ping per hold episode" leaked in the
+      other direction: `_block_on_env_cap` gated the ping on
+      `heal_attempts == 0`, a counter shared with every `mechanical:*` heal, so
+      a goal with any prior heal got NO ping on its first env breakage. New
+      `goal_status.env_hold_notified` column (the `no_progress_notified`
+      shape) — set mark-first at ping time, reset on a productive settle
+      (`devclaw/goal/tick_settle.py`) and on `steer_goal` / `resume_goal`
+      (`devclaw/goal/service.py`).
+- [x] T016 Persisted-state-shape change ⇒ its doctor check (CLAUDE.md /
+      spec-016 FR-014): `instance.env.goal_status_env_hold_notified`. The
+      per-column check body was duplicated per column, so it is extracted to
+      `_goal_status_column_finding` and both callers share it; the seeded-fault
+      test in `tests/test_doctor.py` is parametrized over the column set rather
+      than cloned (never mint an instance-test).
+- [x] T017 `tests/test_env_cap_admission.py`: a `heal_attempts > 0` seed case
+      proving the ping still fires, and the US3 cross-reference test asserting
+      doctor and the goal block name the SAME capability id. The flap test's
+      fake settle now carries the damping counters forward instead of
+      rebuilding a bare `GoalStatus` — it was resetting the very markers it
+      asserted on.
