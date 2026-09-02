@@ -24,6 +24,7 @@ Scripts (what happens on ``session/prompt``):
                stop condition; answers the land-now follow-up prompt (spec 021)
   wrapup_only  completes ONE slice then only wraps up — must NOT be stopped
   usage_window     streams rising usage_update past the tripwire threshold,
+  usage_window_blocked  same, but lands via an honest BLOCK (the live shape),
                    awaits the cancel, answers the land-now prompt (spec 021)
   usage_high_no_stop  reports high usage but ends the turn normally
 
@@ -322,6 +323,26 @@ class FakeAgent:
         self.message("working under a budget")
         self.update({"sessionUpdate": "usage_update", "used": 500, "size": 1000})
         self._tool_step("tc-bud-1")
+        self.update({"sessionUpdate": "usage_update", "used": 800, "size": 1000})
+        self._await_cancel_then_end(prompt_id)
+
+    def script_usage_window_blocked(self, prompt_id: int) -> None:
+        """Same as usage_window, but the land-now turn ends in the agent's own
+        honest BLOCK — the shape every real context-exhaustion landing takes
+        (live: devclaw-030 task 75d43d2b). The blocked short-circuit must still
+        carry the tripwire/context fields."""
+        if self.prompt_count > 1:
+            self.message(
+                "committed what I had.\n\n"
+                "STATUS: BLOCKED: context budget exhausted — partial increment committed"
+            )
+            _send(
+                {"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}}
+            )
+            return
+        self.message("working under a budget")
+        self.update({"sessionUpdate": "usage_update", "used": 500, "size": 1000})
+        self._tool_step("tc-bud-b1")
         self.update({"sessionUpdate": "usage_update", "used": 800, "size": 1000})
         self._await_cancel_then_end(prompt_id)
 
