@@ -105,7 +105,13 @@ def render(records: "list[IncrementRecord]") -> str:
 
     ALWAYS returns a non-blank section: with no prior increments it states the
     absence explicitly rather than omitting the section, so the worker is never
-    left to infer whether it is the first (FR-004)."""
+    left to infer whether it is the first (FR-004).
+
+    ``status=partial`` (a context-tripwire landing) is rendered as CONTINUE
+    FROM THE BRANCH, never as "nothing landed": under goal-branch delivery the
+    partial's commits are in the next worker's working tree, so telling it the
+    tree is empty is both false and expensive — it re-plans, re-tripwires, and
+    burns the dispatch cap without ever writing code."""
     n = len(records)
     lines = [PRIOR_INCREMENTS_MARKER + f" — what earlier units of work delivered ({n} settled):"]
     if n == 0:
@@ -120,6 +126,11 @@ def render(records: "list[IncrementRecord]") -> str:
         "that are recorded as shipped; do NOT re-implement them. An entry with "
         "status=failed or gate=FAILED did NOT land — its work is not in the "
         "tree, and repeating that attempt unchanged will fail the same way. "
+        "An entry with status=partial DID land: it ran out of context and "
+        "committed what it had — code and specs/ artifacts — to the branch you "
+        "are on now. Read those artifacts and CONTINUE from them; re-planning "
+        "work that is already in your working tree is the one thing that "
+        "guarantees you run out of context too. "
         "These are devclaw's own settlement records, not the workers' summaries."
     )
     # Cap the ENTRY LIST only, never the assembled section: the budget

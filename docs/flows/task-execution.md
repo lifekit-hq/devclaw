@@ -123,7 +123,11 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       – context tripwire: usage_update ≥         │                                 │
      │  │         DEVCLAW_CONTEXT_TRIPWIRE_PCT → land a    │                                 │
      │  │         partial increment (ContextTripwire       │                                 │
-     │  │         event + problems row at settle)          │                                 │
+     │  │         event + problems row at settle). A       │                                 │
+     │  │         LANDED tripwire also records its         │                                 │
+     │  │         materialized span: the goal layer settles│                                 │
+     │  │         that `partial` — cap refunded, next      │                                 │
+     │  │         session told to continue from the branch │                                 │
      │  │                     ──────► spawns subprocess:  │                                  │
      │  │                                                  │                                 │
      │  │     ┌──────────────────────────────────────┐     │                                 │

@@ -23,6 +23,7 @@ from typing import Optional, Protocol
 
 from .models import Action, Goal, InFlight, PollResult
 from ..state_store import StateStore, TaskKind
+from ..task_change import CHANGE as _CHANGE
 from ..state_store.core import _now_ms
 
 #: Watermark for the daily goal-workspace retention sweep (#595).
@@ -302,6 +303,7 @@ class InProcessEngine:
             diff_stats=_diff_stats(t.result_json),
             repo_notes=_repo_notes(t.result_json) if terminal else None,
             no_change=_no_change(t.result_json) if terminal else False,
+            landed_partial=_landed_partial(t.result_json) if terminal else False,
         )
 
 
@@ -344,6 +346,22 @@ def _no_change(result_json: Optional[str]) -> bool:
     flag keeps today's behaviour."""
     data = _parse_result(result_json)
     return bool(data.get("no_change")) if isinstance(data, dict) else False
+
+
+def _landed_partial(result_json: Optional[str]) -> bool:
+    """Did this task block on the context tripwire having LANDED real work?
+
+    True only when the queue recorded BOTH the landing flag and a span it could
+    determine to be non-empty (``change.status == "change"``). Every other
+    shape reads False, which is today's behaviour: an undeterminable span
+    (``error``/``no_repo``) must never be optimistically read as progress —
+    the same fail-closed reasoning as the materialize gate — and a landing that
+    committed nothing has nothing for the next session to continue from."""
+    data = _parse_result(result_json)
+    if not isinstance(data, dict) or data.get("tripwire_landed") is not True:
+        return False
+    change = data.get("change")
+    return isinstance(change, dict) and change.get("status") == _CHANGE
 
 
 def _diff_stats(result_json: Optional[str]) -> Optional[dict]:

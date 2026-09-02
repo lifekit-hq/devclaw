@@ -400,6 +400,13 @@ async def test_gateless_successful_settle_refunds_dispatch_cap(tmp_path):
         # done but gate FAILED — unverified, no refund
         PollResult(terminal=True, status="done", detail="broke tests",
                    pr_url="https://github.com/o/r/pull/9", gate_passed=False),
+        # a worker block that landed NOTHING (empty or undeterminable span, so
+        # engine._landed_partial reads False) — there is nothing for the next
+        # session to continue from, so it still burns its dispatch and the cap
+        # still catches it. The refund narrows the brake; it never weakens it.
+        PollResult(terminal=True, status="failed",
+                   detail="worker reported BLOCKED: missing credential",
+                   landed_partial=False),
     ],
 )
 async def test_unproductive_settle_keeps_dispatch_count(tmp_path, poll):
@@ -416,6 +423,78 @@ async def test_unproductive_settle_keeps_dispatch_count(tmp_path, poll):
     await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
 
     assert store.load_status("g").actions_dispatched == 4
+
+
+@pytest.mark.asyncio
+async def test_landed_partial_refunds_the_cap_but_leaves_the_watchdog_armed(tmp_path):
+    """The refund must not become a licence to loop.
+
+    A landed partial publishes no PR and may have committed only re-planning,
+    so it is NOT a delivered increment: ``last_progress_at`` is left untouched
+    and the no-progress watchdog stays armed. That is what makes refunding the
+    dispatch cap safe without minting a second counter — a goal that lands
+    forever without ever shipping still trips the existing brake."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")  # backlog 2 → cap 4
+    stale = "2026-01-01T00:00:00+00:00"
+    store.save_status(
+        "g", GoalStatus(
+            phase="in_flight", actions_dispatched=4, last_progress_at=stale,
+            in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "spec 030"),
+        ),
+    )
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed",
+        detail="worker reported BLOCKED: context budget exhausted",
+        landed_partial=True,
+    ))
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    # AT the cap the refund is what keeps the goal moving: it settles, hands
+    # the budget back, and dispatches the continuation on this same tick
+    # instead of parking at mechanical:dispatch_cap. Without the refund this
+    # is Outcome.BLOCKED — the live devclaw-030 failure.
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+    after = store.load_status("g")
+    assert after.blocked_kind != "mechanical:dispatch_cap"
+    # ...but it did not DELIVER: the watchdog is left armed, so a goal that
+    # lands forever without ever shipping still trips the existing brake.
+    assert after.last_progress_at == stale
+
+
+@pytest.mark.asyncio
+async def test_partial_feeds_forward_as_continue_from_the_branch(tmp_path):
+    """The sentence the next worker reasons from.
+
+    Under goal-branch delivery a partial's commits are in the next worker's
+    working tree, so the failed-entry wording ("its work is not in the tree")
+    must never render for one — that lie is what made worker N+1 re-plan,
+    re-tripwire, and burn the cap without writing code."""
+    from devclaw.advance_brief import PRIOR_INCREMENTS_MARKER
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.record_settlement("g", ref_id="t1", ref_kind="task", status="partial")
+    store.append_delivery(
+        "g", "implement spec 030 US1",
+        "Error:\nworker reported BLOCKED: context budget exhausted\n",
+        ref_id="t1",
+    )
+    store.save_status("g", GoalStatus(phase="idle"))
+    store.append_steering("g", ["keep going"], source="owner")
+    engine = FakeEngine()
+
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert PRIOR_INCREMENTS_MARKER in action.goal
+    assert "status=partial" in action.goal
+    assert "CONTINUE from them" in action.goal
+    # the load-bearing absence: the failed-entry wording must not apply here
+    assert "status=partial DID land" in action.goal
 
 
 @pytest.mark.asyncio
