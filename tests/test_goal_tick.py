@@ -3126,6 +3126,98 @@ async def test_worker_honest_block_raises_a_problem_without_burning_the_cap(tmp_
     assert not any("steer_goal" in m for m in notifier.sent)
 
 
+# ---- spec 031 US3: the done_when admission lint -----------------------------
+
+@pytest.mark.parametrize("done_when,expect", [
+    # (a) sandbox-impossible → refused (the 2026-09-02 issue-414 shape)
+    ("A real Telegram brief is sent and sanity-checked against browser Ledger numbers.", "refuse"),
+    ("The job runs with the production credentials and posts to Slack.", "refuse"),
+    # (b) baseline-less absolute → rewritten (the issue-443 shape)
+    ("All tests pass (dotnet test backend/FinanceSentry.sln).", "rewrite"),
+    ("Zero lint warnings in the frontend.", "rewrite"),
+    # already baselined / decided → admitted unchanged
+    ("No new failures relative to main after the change.", "ok"),
+    ("The capability scan holds a goal whose project has a red probe on record.", "ok"),
+    ("Committed share of outflow over the last 3 complete months is shown on the dashboard.", "ok"),
+])
+def test_admission_lint_catches_the_three_classes(done_when, expect):
+    """Spec 031 US3 / SC-004: classes (a) and (b) are mechanical and
+    deterministic; a decided contract admits unchanged. The four 2026-09-02
+    contracts replay as the first two rows of each kind."""
+    from devclaw.goal import admission_lint as L
+    r = L.lint_mechanical(done_when)
+    if expect == "refuse":
+        assert r.refused and "sandbox cannot provide" in L.refusal_message(r)
+    elif expect == "rewrite":
+        assert not r.refused and r.rewrites and "no new failures relative to the default branch" in r.done_when
+    else:
+        assert not r.refused and not r.rewrites and r.done_when == done_when
+
+
+@pytest.mark.asyncio
+async def test_admission_refusal_persists_nothing_and_undecided_raises_a_problem(tmp_path, monkeypatch):
+    """(a) refuses with nothing persisted; (c) admits the goal BLOCKED with an
+    admission Problem before any dispatch, and a tick over it costs zero
+    cognition (constitution III — the lint's one call was at creation)."""
+    from devclaw.goal import service as _svc
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        store = svc._goal_store
+        ws = tmp_path / "ws"; ws.mkdir()
+        # (a) refusal — nothing persisted
+        with pytest.raises(ValueError) as ei:
+            await svc.create_goal_async(
+                "g-refused", objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+                done_when="A real Telegram brief is sent.",
+            )
+        assert "sandbox cannot provide" in str(ei.value)
+        assert not store.exists("g-refused")
+        # (c) undecided — judged by the patched module-global, raised as a Problem
+        async def fake_judge(done_when, caller):
+            return (L.Undecided(clause="the scan sources from somewhere", choice="registry or live workspaces?",
+                                options=("walk the project registry", "walk live workspaces")),), ""
+        from devclaw.goal import admission_lint as L
+        monkeypatch.setattr(_svc, "_judge_undecided", fake_judge)
+        out = await svc.create_goal_async(
+            "g-undecided", objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+            done_when="The scan sources from somewhere and holds red projects.",
+        )
+        assert out["admission"]["problem"]["raised_by"] == "admission_lint"
+        s = store.load_status("g-undecided")
+        assert s.phase == "blocked" and s.problem_id
+        p = store.current_problem("g-undecided")
+        assert p is not None and p.kind == "admission" and len(p.options) == 2
+        # zero-token: the admitted-but-blocked goal ticks with no cognition
+        ev, eng = FakeClaude(), FakeEngine()
+        await _tick(store, "g-undecided", ev, eng, RecordingNotifier())
+        assert ev.calls == 0 and eng.dispatched == []
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_admission_rewrite_is_recorded_as_a_decision(tmp_path, monkeypatch):
+    """(b): the rewrite lands in the contract AND as an admission Decision that
+    the feed-forward will carry to the worker and the gate (US4)."""
+    from devclaw.goal import service as _svc
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        async def no_undecided(done_when, caller):
+            return (), ""
+        monkeypatch.setattr(_svc, "_judge_undecided", no_undecided)
+        ws = tmp_path / "ws"; ws.mkdir()
+        out = await svc.create_goal_async(
+            "g-rewrite", objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+            done_when="All tests pass.",
+        )
+        assert out["admission"]["rewrites"][0]["to"].startswith("no new failures relative")
+        decs = svc._goal_store.decisions("g-rewrite")
+        assert len(decs) == 1 and decs[0].provenance == "admission"
+        assert svc._goal_store.load_status("g-rewrite").phase != "blocked"
+    finally:
+        db.close()
+
+
 @pytest.mark.asyncio
 async def test_resume_goal_resets_the_donegate_round_count(tmp_path):
     """A human vouching for a parked goal (resume/steer) restores the full

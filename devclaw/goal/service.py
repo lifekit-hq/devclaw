@@ -41,7 +41,11 @@ from .store import GoalStore
 from .tick import AUTODEPLOY_ENABLED, VERIFY_DONE, sweep_orphaned_refs, tick_all, tick_goal
 from .transitions import Event
 from . import problems as _problems
+from . import admission_lint as _lint
 from .models import Decision as _Decision
+#: the class-(c) judge, bound as a module global so tests patch it HERE
+#: (cognition-prompts rule: snapshot/judge collectors live in the caller's module)
+_judge_undecided = _lint.judge_undecided
 from ..dispatch_gate import next_window_open_ms, operator_block, schedule_blocks
 from ..loom import trace as _trace
 from ..state_store import StateStore, _now_ms
@@ -735,6 +739,61 @@ class GoalService:
                         "the issue to carry an acceptance section (the "
                         "readiness convention), or pass an explicit done_when."
                     )
+        # Spec 031 US3 — the done_when admission lint, after the referenced-
+        # contract readiness check and BEFORE anything persists. (a) a clause
+        # the sandbox can never satisfy refuses creation (Q3 → A, nothing
+        # persisted); (b) a baseline-less absolute predicate is rewritten and
+        # recorded as an admission Decision; (c) an undecided design choice
+        # becomes a Problem to the author before any dispatch. The one
+        # cognition call ((c)) runs here, at creation — never on the tick.
+        done_when = (kwargs.get("done_when") or "").strip()
+        admission: dict = {}
+        if done_when:
+            mech = _lint.lint_mechanical(done_when)
+            if mech.refused:
+                raise ValueError(_lint.refusal_message(mech))
+            undecided, note = await _judge_undecided(mech.done_when, self._evaluator_caller)
+            if mech.rewrites:
+                kwargs["done_when"] = mech.done_when
+                admission["rewrites"] = [
+                    {"from": r.original, "to": r.rewritten} for r in mech.rewrites
+                ]
+            if note:
+                admission["note"] = note
+            created = self.create_goal(goal_id, **kwargs)
+            for r in mech.rewrites:
+                self._goal_store.record_decision(_Decision(
+                    id=f"dec_{__import__('uuid').uuid4().hex[:20]}", goal_id=goal_id,
+                    problem_id="", clause=r.rewritten, verb="decide", option_key="",
+                    text=f"admission rewrite of: {r.original}", provenance="admission",
+                    made_by="admission_lint", made_at=_now_ms(),
+                ))
+            if undecided:
+                u = undecided[0]
+                opts = tuple(
+                    _problems.ProblemOption(f"c{i + 1}", o[:160], "the contract is settled this way")
+                    for i, o in enumerate(u.options[:4])
+                )
+                prob = _problems.new_problem(
+                    goal_id, kind="admission", raised_by="admission_lint",
+                    what=f"undecided design choice: {u.choice}", clause=u.clause,
+                    why="the contract does not make this choice; a worker would guess it",
+                    options=opts, default_key="c1",
+                )
+                s = self._goal_store.load_status(goal_id)
+                with self._goal_store.transaction():
+                    _problems.raise_problem(self._goal_store, prob)
+                    self._goal_store.transition(
+                        goal_id, Event.BLOCK,
+                        replace(s, phase="blocked", blocked_on=_problems.summary_line(prob),
+                                blocked_kind="needs_answer", problem_id=prob.id),
+                        expect=s,
+                    )
+                self._goal_store.append_log(goal_id, f"admission: problem {prob.id} raised before any dispatch")
+                admission["problem"] = _problems.to_dict(prob)
+            if admission and isinstance(created, dict):
+                created["admission"] = admission
+            return created
         return self.create_goal(goal_id, **kwargs)
 
     def create_goal(
