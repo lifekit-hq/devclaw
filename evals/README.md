@@ -142,3 +142,23 @@ harness can pass itself).
 
 The JSON report (`evals/runs/passrate-*.json`) captures PRs + gate results per ticket; the
 merged-without-rework column and the buckets are the human layer on top.
+
+## Token-burn profile (`burn_profile.py`)
+
+Where a worker's context actually goes — pure mechanism over the events
+table, zero LLM, read-only. Attributes each rise in the agent's own
+`usage_update.used` to the tool call that preceded it.
+
+```bash
+# one task in detail (default: newest implement_feature)
+.venv/bin/python evals/burn_profile.py [task_id_prefix]
+
+# the last N tasks bucketed by tool + command shape — systemic waste, not
+# one session's accident
+.venv/bin/python evals/burn_profile.py --aggregate 25
+```
+
+Reads `$DEVCLAW_DB` (default `./devclaw.db`). On the deployed instance run it
+inside the container against `/var/lib/devclaw/devclaw.db`. Use it before
+tuning any worker skill for context cost — the 2026-09-02 profile of 25
+tasks overturned two confident hunches (see the module docstring).
