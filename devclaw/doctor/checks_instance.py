@@ -231,7 +231,27 @@ def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
 #: the probe HERE, in the calling module (the collector convention).
 from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY  # noqa: E402
 from ..env_cap import GH_TOKEN_PREFIXES as _GH_TOKEN_PREFIXES  # noqa: E402
+from ..env_cap import REGISTRY_UNSET_REMEDY as _REGISTRY_UNSET_REMEDY  # noqa: E402
 from ..env_cap import probe_registry_token as _probe_registry_token  # noqa: E402
+
+
+def _projects_declaring_registry_cap(ctx: "InstanceContext") -> list[str]:
+    """Ids of registered projects whose ``devclaw.json`` declares the registry
+    capability. Best-effort: an unreadable manifest is already reported by the
+    project manifest checks, and must never crash this instance check."""
+    from ..project_manifest import load_manifest
+
+    out: list[str] = []
+    for proj in ctx.registry.list():
+        if getattr(proj, "status", "active") == "archived":
+            continue
+        try:
+            manifest = load_manifest(getattr(proj, "workspace_dir", "") or "")
+        except Exception:  # noqa: BLE001 — see docstring
+            continue
+        if manifest and _CAP_REGISTRY in manifest.capabilities:
+            out.append(proj.id)
+    return out
 
 
 def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
@@ -256,9 +276,20 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
     )
     token = os.environ.get(_REGISTRY_TOKEN_VAR, "").strip()
     if not token:
-        # A supported posture (the pre-token deployment), not a fault — same
-        # convention as check_auth_setup_token. The consequence is named so
-        # the report still explains why a frontend build cannot run.
+        # Unset is a supported posture (the pre-token deployment) only while
+        # nothing NEEDS it — same convention as check_auth_setup_token. Once a
+        # project declares the capability, the same absence is a declared
+        # dependency that is missing: the spec-030 probe calls it red and holds
+        # that project's dispatch, so doctor must not answer OK on the state
+        # the operator is being held by (US3: ONE story, not two).
+        declaring = _projects_declaring_registry_cap(ctx)
+        if declaring:
+            return [Finding(cid, Verdict.FAIL,
+                            f"{_REGISTRY_TOKEN_VAR} not set, but project(s) "
+                            f"{', '.join(sorted(declaring))} declare "
+                            f"'{_CAP_REGISTRY}' — their dispatch is held until a "
+                            "credential exists",
+                            remedy=_REGISTRY_UNSET_REMEDY)]
         return [Finding(cid, Verdict.OK,
                         f"{_REGISTRY_TOKEN_VAR} not set (no registry credential "
                         "crosses into the sandbox; `npm ci` on a GitHub-Packages "

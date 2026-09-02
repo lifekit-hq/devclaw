@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -64,6 +65,34 @@ def _probe(store: GoalStore, status: str, cap_id: str = REGISTRY) -> None:
     ))
 
 
+def _registered_caps(tmp_path, workspaces: "dict[str, str]") -> "dict[str, tuple[str, ...]]":
+    """Run the REAL per-project resolver (``GoalService._registered_capabilities``)
+    over a registry of ``project_id -> workspace_dir``."""
+    from types import SimpleNamespace
+
+    from devclaw.goal.service import GoalConfig, GoalService
+    from devclaw.state_store import StateStore
+    from devclaw.task_queue import TaskQueue
+
+    db = StateStore(str(tmp_path / "caps-state.db"))
+    try:
+        registry = SimpleNamespace(list=lambda: [
+            SimpleNamespace(id=pid, workspace_dir=ws, status="active")
+            for pid, ws in workspaces.items()
+        ])
+        svc = GoalService(
+            TaskQueue(db), db,
+            config=GoalConfig(
+                goals_dir=tmp_path / "goals", notify_url="", tick_seconds=900,
+                verify_done=False,
+            ),
+            project_registry=registry,  # type: ignore[arg-type]
+        )
+        return svc._registered_capabilities()
+    finally:
+        db.close()
+
+
 async def _tick(store, engine, notifier, evaluator):
     return await tick_goal(
         "g", store=store, engine=engine, evaluator_caller=evaluator,
@@ -71,7 +100,9 @@ async def _tick(store, engine, notifier, evaluator):
     )
 
 
-@pytest.mark.parametrize("declared_via", ["goal_workspace", "project_registry"])
+@pytest.mark.parametrize(
+    "declared_via", ["goal_workspace", "project_registry", "project_registry_no_checkout"],
+)
 @pytest.mark.asyncio
 async def test_red_capability_holds_dispatch_with_one_ping_and_zero_cognition(
     tmp_path, declared_via,
@@ -81,16 +112,37 @@ async def test_red_capability_holds_dispatch_with_one_ping_and_zero_cognition(
     its remedy, exactly one owner ping, zero LLM calls. Holding it for further
     ticks stays free and silent (the pause_notified shape).
 
-    Both declaration SOURCES hold identically. ``project_registry`` is the
+    Every declaration SOURCE holds identically. ``project_registry`` is the
     first-ever-dispatch case: the goal's workspace has NEVER been prepared, so
     reading the declaration out of it finds nothing and the goal would sail
     through into a session that cannot work. Only the sweep's registry-sourced
     map holds it, which is what SC-002's "zero worker sessions until the token
-    is rotated" actually promises."""
+    is rotated" actually promises.
+
+    ``project_registry_no_checkout`` runs the REAL resolver over a project
+    whose checkout does not exist, and is the other half of that trade: the
+    registry map is authoritative wherever it answers, so a project it could
+    not read must be OMITTED from it rather than recorded as declaring
+    nothing. Recording it turns "no answer" into a licence to dispatch and
+    silently repeals the brake for every goal whose own workspace carries the
+    declaration."""
     engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
     if declared_via == "goal_workspace":
         store = _seed(tmp_path, REGISTRY)
         project_caps = None
+    elif declared_via == "project_registry_no_checkout":
+        # The goal BELONGS to the registered project (so an entry in the map
+        # would answer for it) but the project's checkout does not exist; the
+        # declaration lives in the goal's own prepared workspace.
+        goals = tmp_path / "goals"
+        store = GoalStore(goals, now=Clock())
+        seed_goal(
+            goals, "g", project_id="proj",
+            workspace_dir=_workspace(tmp_path, REGISTRY),
+        )
+        store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+        project_caps = _registered_caps(tmp_path, {"proj": str(tmp_path / "never-cloned")})
+        assert project_caps == {}             # omitted, NOT {"proj": ()}
     else:
         goals = tmp_path / "goals"
         store = GoalStore(goals, now=Clock())
@@ -214,6 +266,74 @@ async def test_only_a_red_probe_for_a_declared_capability_holds(tmp_path, declar
     assert await _tick(store, engine, notifier, evaluator) is Outcome.DISPATCHED
     assert len(engine.dispatched) == 1
     assert store.load_status("g").blocked_kind == ""
+
+
+@pytest.mark.asyncio
+async def test_a_declared_capability_with_no_credential_at_all_is_red(tmp_path, monkeypatch):
+    """FR-002/SC-002: the probe only runs because a project DECLARED the
+    capability, so an ABSENT credential is the declared dependency missing —
+    not the fail-open uncertainty of FR-007. Treating unset as a passing
+    posture is the deterministic `npm ci` 401 burn class the brake exists to
+    prevent: every dispatch would spend a session discovering, in the sandbox,
+    something the host knew before launching it.
+
+    Driven through the REAL probe runner (no network: an empty credential is
+    decided before any request) so the verdict and its remedy are the ones an
+    operator actually sees."""
+    from devclaw.engine.sandcastle import REGISTRY_TOKEN_VAR
+
+    monkeypatch.delenv(REGISTRY_TOKEN_VAR, raising=False)
+    store = _seed(tmp_path, REGISTRY)
+    engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
+
+    outcomes = await tick_all(
+        store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+        notify_url="http://relay", prepare_ws=fake_prepare,
+    )
+
+    assert outcomes["g"] is Outcome.BLOCKED
+    st = store.load_status("g")
+    assert st.blocked_kind == "mechanical:env" and REGISTRY in st.blocked_on
+    assert f"set {REGISTRY_TOKEN_VAR}" in st.blocked_on      # the remedy is actionable
+    assert engine.dispatched == [] and evaluator.calls == 0
+
+    # Doctor tells the SAME story on the same state (US3): the instance check
+    # keeps its unset-is-a-supported-posture verdict only while no project
+    # declares the capability.
+    from devclaw.doctor import checks_instance as ci
+
+    ctx = SimpleNamespace(registry=SimpleNamespace(list=lambda: [
+        SimpleNamespace(id="proj", workspace_dir=store.load_goal("g").workspace_dir,
+                        status="active"),
+    ]))
+    (finding,) = ci.check_registry_token(ctx)  # type: ignore[arg-type]
+    assert finding.verdict.value == "fail" and REGISTRY in finding.evidence
+    (ok,) = ci.check_registry_token(
+        SimpleNamespace(registry=SimpleNamespace(list=list)),  # type: ignore[arg-type]
+    )
+    assert ok.verdict.value == "ok"
+
+
+def test_a_typoed_capability_id_fails_loud_instead_of_disabling_the_brake():
+    """FR-005/FR-006: capability ids are value-validated at the manifest parse,
+    the ``strictnessDefault``/``surface`` precedent — not tolerated like the
+    informational ``stack``.
+
+    An id no probe answers to is worse than none: the repo reads as protected
+    while the brake is silently off, so ``registry:npmgithub`` would spend
+    exactly the sessions the declaration was written to save. Loud at the
+    doorway means prep and doctor reject it while a human is still watching."""
+    from devclaw.project_manifest import ManifestError, parse_manifest
+
+    for cap in list(env_cap.KNOWN_CAPABILITIES):
+        assert parse_manifest(
+            json.dumps({"schemaVersion": 1, "capabilities": [cap]}),
+        ).capabilities == (cap,)
+
+    with pytest.raises(ManifestError) as exc:
+        parse_manifest(json.dumps({"schemaVersion": 1, "capabilities": ["registry:npmgithub"]}))
+    assert "registry:npmgithub" in str(exc.value)
+    assert REGISTRY in str(exc.value)                        # names what IS probeable
 
 
 @pytest.mark.asyncio

@@ -43,7 +43,16 @@ The explicit, complete list of environment capabilities this project's verify
 contract depends on — nothing is inferred. v1 ids: `registry:npm-github` (the
 GitHub Packages npm credential) and `sandbox:image` (the per-task sandbox image
 is present/pullable). A project that declares none is admitted exactly as
-before.
+before. Ids are **value-validated at the parse**, like `strictnessDefault` and
+`surface`: an id this instance cannot probe fails the manifest loud, because a
+typo would otherwise read as protection while the brake is silently off.
+
+Declaring a capability changes what "absent" means. `registry:npm-github` with
+no `NODE_AUTH_TOKEN` at all probes **red** — the project said it needs the
+credential, and an install against GitHub Packages 401s deterministically
+without one. (Doctor's instance-level `instance.registry.token` keeps its
+unset-is-a-supported-posture verdict only while no registered project declares
+the capability; once one does, it reports the same fault the hold names.)
 
 While a declared capability's mechanical probe is **red**, dispatch is held
 with a `mechanical:env` block naming the probe id and its remedy; the hold
@@ -56,8 +65,10 @@ known cost of explicit-only declaration.
 The declaration is read per PROJECT — from the registered project's own
 checkout, once per heartbeat sweep — not from each goal's workspace, so the
 hold applies to a goal's first-ever dispatch, before that goal has a workspace
-at all. (A goal belonging to no registered project falls back to its own
-workspace.)
+at all. (A goal belonging to no registered project — or to one whose checkout
+could not be read — falls back to its own workspace. The per-project map is
+authoritative only where it actually answered: "no answer" must never read as
+"declares nothing", which would fail a red capability open.)
 
 Unlike the gate-relevant fields below, `capabilities` is read from the
 **worktree**, not the merged base: the hold is a session-burn brake, so a

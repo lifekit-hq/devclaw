@@ -91,6 +91,18 @@ class Manifest:
     capabilities: tuple[str, ...] = field(default_factory=tuple)
 
 
+def _known_capabilities() -> "frozenset[str]":
+    """The capability ids this instance can probe (``env_cap.KNOWN_CAPABILITIES``).
+
+    Imported lazily: the capability layer reads the sandbox image name off the
+    engine, and the engine reads manifests — a module-level import would close
+    that loop. The ids live in ``env_cap`` because that is where they are
+    probed; re-typing them here is what T014 removed."""
+    from .env_cap import KNOWN_CAPABILITIES
+
+    return KNOWN_CAPABILITIES
+
+
 def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
     """Parse + validate manifest JSON. Fail-loud on any malformation; unknown
     keys are tolerated (forward-compat within a schema version)."""
@@ -134,6 +146,18 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
         not isinstance(c, str) or not c.strip() for c in capabilities
     ):
         raise ManifestError(f"{source}: capabilities must be a list of non-empty strings")
+    # Value-validated against the instance's probe set, the `strictnessDefault`
+    # / `surface` precedent — NOT tolerated like `stack`, which is
+    # informational. An id nothing can probe is worse than no id at all: it
+    # reads as protection in the repo while producing zero probing and zero
+    # holding, so `registry:npmgithub` would silently spend the very sessions
+    # the declaration was written to save (spec 030 FR-005/FR-006).
+    unknown = [c for c in capabilities if c.strip() not in _known_capabilities()]
+    if unknown:
+        raise ManifestError(
+            f"{source}: unknown capability id(s) {sorted(unknown)} — this instance "
+            f"can probe {sorted(_known_capabilities())}"
+        )
     validation = _parse_validation(raw.get("validation"), source)
     return Manifest(
         schema_version=sv,

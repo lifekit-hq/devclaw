@@ -11,7 +11,8 @@ One new module plus four wires — no new layer, no new store.
   `refresh_needed` are the ONLY places that touch a network; `read_result` /
   `red_caps_for` read persisted meta rows and are what the tick path calls.
 - `devclaw/project_manifest.py`: the `capabilities` key (FR-005) — a list of
-  non-empty strings, validated in the same fail-loud shape as `stack`.
+  non-empty strings whose VALUES are checked against `env_cap.KNOWN_CAPABILITIES`
+  (the `strictnessDefault`/`surface` shape, not the tolerant `stack` one).
 - `devclaw/goal/tick.py::tick_all`: the once-per-sweep probe refresh, in the
   pre-loop housekeeping slot beside `_project_hold.holder_map` (the existing
   precedent for "computed once per sweep, threaded into each tick").
@@ -90,9 +91,25 @@ One new module plus four wires — no new layer, no new store.
   declaration must not buy the fleet a recurring network/docker probe forever.
   Blocked goals deliberately still count: the env hold IS a block, and dropping
   it from the scan would starve the very probe refresh its auto-resume needs.
-  Archived projects are skipped for the same reason; a project whose checkout
-  cannot be read is OMITTED from the map rather than recorded as declaring
-  nothing, so its goals fall back to the workspace read instead of fail-open.
+  Archived projects are skipped for the same reason.
+- **The per-project map is authoritative only where it ANSWERED.** A project is
+  recorded only when its manifest was actually read; an absent checkout, an
+  absent `devclaw.json` and an unreadable one are all "no answer" and the
+  project is OMITTED, so its goals fall back to the workspace read. *Corrected
+  2026-09-02*: the first cut recorded `()` whenever `load_manifest` returned
+  `None` — which is every not-yet-cloned checkout — and because a present-but-
+  empty entry deliberately SUPPRESSES the fallback, that turned "could not
+  read" into a licence to dispatch and repealed the brake for exactly the goals
+  whose own workspace carried the declaration. Only a raise was omitted, which
+  is the rarer half of "cannot be read".
+- **A DECLARED capability's missing credential is red, not a posture.**
+  `registry:npm-github` with no `NODE_AUTH_TOKEN` probes red: the probe runs
+  only because a project declared the capability, and an install against
+  GitHub Packages 401s deterministically without a credential — evidence of
+  breakage (fail-closed), not the uncertainty FR-007 fails open on. Doctor's
+  `instance.registry.token` is instance-scoped and has no declaration to read,
+  so it keeps unset-is-OK *until* some registered project declares the
+  capability, at which point it reports the same fault (US3: one story).
 - **`mechanical:env` is not `mechanical:env_cap`.** The latter already exists
   (spec 020: the sandbox-OOM re-dispatch budget). Different brake, different
   kind string — do not merge them.

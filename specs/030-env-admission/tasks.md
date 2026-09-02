@@ -129,4 +129,38 @@ post-landing corrections below.
       once-per-sweep and zero-LLM. The US1 class test is parametrized over the
       declaration SOURCE (workspace / registry-on-unprepared-workspace) and the
       once-per-sweep test gains a registry-declared probe case — both extended,
-      neither cloned.
+      neither cloned. (Its "declares nothing is authoritative" half was only
+      half-built — see T023.)
+
+## Post-landing corrections (done-gate findings, round 2, 2026-09-02)
+
+- [x] T021 A declared `registry:npm-github` with NO credential probed GREEN —
+      the deterministic `npm ci` 401 burn SC-002 exists to prevent, admitted as
+      a "supported posture". The probe runs only because a project DECLARED the
+      capability, so the absence is a missing dependency:
+      `devclaw/env_cap.py` returns red with a shared `REGISTRY_UNSET_REMEDY`.
+      `devclaw/doctor/checks_instance.py` keeps unset-is-OK only while no
+      registered project declares the capability
+      (`_projects_declaring_registry_cap`), so doctor cannot answer OK on the
+      state a goal is being held by (US3).
+- [x] T022 `KNOWN_CAPABILITIES` was a dead constant — nothing consulted it, so
+      a typo'd id (`registry:npmgithub`) read as protection in the repo while
+      producing zero probing and zero holding.
+      `devclaw/project_manifest.py::parse_manifest` now value-validates
+      capability ids against it and fails loud — the `strictnessDefault` /
+      `surface` precedent, not the tolerant `stack` one. The manifest schema's
+      `capabilities` items gain the matching `enum`.
+- [x] T023 T020's claim ran ahead of its code:
+      `GoalService._registered_capabilities` omitted a project only when
+      `load_manifest` RAISED, and recorded `()` when it returned `None` — every
+      not-yet-cloned checkout and every repo without a `devclaw.json`. Since a
+      present-but-empty entry deliberately suppresses the goal-workspace
+      fallback, that failed a red capability OPEN. A project is now recorded
+      only when its manifest was actually READ; the US1 class test gains a
+      third declaration source (`project_registry_no_checkout`) that runs the
+      REAL resolver and proves the hold still fires. plan.md's bullet is
+      corrected to describe the code rather than the intent.
+- [x] T024 `docs/reference/devclaw-manifest.md`, the manifest schema,
+      `docs/reference/env-vars.md` (`NODE_AUTH_TOKEN` unset is no longer
+      byte-identical for a declaring project) and both `docs/INDEX.md` currency
+      tags.

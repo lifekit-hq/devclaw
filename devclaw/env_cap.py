@@ -65,6 +65,15 @@ KNOWN_CAPABILITIES: frozenset[str] = frozenset({CAP_REGISTRY_NPM_GITHUB, CAP_SAN
 #: surfaced as an `npm ci` 401 after it had eaten a goal's dispatch budget.
 GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "ghs_", "gho_")
 
+#: Remedy for the credential being absent while a project declares the
+#: capability. Shared with doctor so both surfaces print the same fix (US3).
+REGISTRY_UNSET_REMEDY = (
+    f"set {_REGISTRY_TOKEN_VAR} to a read:packages-only classic PAT "
+    f"(`gh secret set {_REGISTRY_TOKEN_VAR}`) and redeploy, or drop "
+    f"{CAP_REGISTRY_NPM_GITHUB!r} from the project's devclaw.json if it no "
+    "longer depends on a private registry"
+)
+
 # ---- data types --------------------------------------------------------------
 
 CapStatus = Literal["green", "red", "unknown"]
@@ -178,15 +187,25 @@ def _probe_registry_npm_github() -> CapProbeResult:
     Runs the same HTTP check doctor's ``instance.registry.token`` reports on
     (:func:`probe_registry_token` — the FR-006 reference implementation), so
     the two surfaces can never disagree about the credential. Module-level so
-    tests can patch it. Never raises; ``unknown`` on infra failure (FR-007)."""
+    tests can patch it. Never raises; ``unknown`` on infra failure (FR-007).
+
+    UNSET is RED here, unlike the instance-level doctor check. The probe runs
+    at all only because a project DECLARED this capability, and a declared
+    dependency that is absent is not an uncertainty — `npm ci` against GitHub
+    Packages 401s deterministically, which is precisely the session burn
+    SC-002 exists to prevent. Doctor's check is instance-scoped, so it has no
+    declaration to read and keeps unset as the supported pre-token posture
+    unless some registered project declares the capability."""
     token = os.environ.get(_REGISTRY_TOKEN_VAR, "").strip()
     if not token:
-        # Not set: supported posture (pre-token deployment), not evidence of
-        # breakage — admit the goal (mirrors check_registry_token's reasoning).
         return CapProbeResult(
-            status="green",
-            evidence=f"{_REGISTRY_TOKEN_VAR} not set — no registry credential; "
-                     "npm ci will only succeed against public registries",
+            status="red",
+            evidence=(
+                f"{_REGISTRY_TOKEN_VAR} is not set, but this project declares "
+                f"{CAP_REGISTRY_NPM_GITHUB!r} — no credential reaches the sandbox "
+                "and an install against GitHub Packages will 401 there"
+            ),
+            remedy=REGISTRY_UNSET_REMEDY,
         )
     if not token.startswith(GH_TOKEN_PREFIXES):
         return CapProbeResult(

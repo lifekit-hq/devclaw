@@ -198,9 +198,15 @@ class GoalService:
         SQLite: zero LLM calls, called once per sweep.
 
         Archived projects are skipped — nothing dispatches there, and their
-        declarations must not keep buying the fleet a recurring probe. A
-        project whose checkout cannot be read is OMITTED rather than recorded
-        as declaring nothing, so the goal-workspace fallback still applies.
+        declarations must not keep buying the fleet a recurring probe.
+
+        A project is recorded ONLY when its manifest was actually read. An
+        absent checkout, an absent ``devclaw.json`` and an unreadable one are
+        all "no answer", and the map is authoritative where it answers — so
+        recording them as declaring nothing would suppress the goal-workspace
+        fallback in ``tick_guards`` and fail a red capability OPEN, which is
+        the hole this per-project read was added to close in the first place.
+        Omitted means "ask the goal's own workspace".
         """
         from ..project_manifest import load_manifest
 
@@ -217,7 +223,9 @@ class GoalService:
                 manifest = load_manifest(workspace)
             except Exception:  # noqa: BLE001 — see docstring
                 continue
-            out[project.id] = tuple(manifest.capabilities) if manifest else ()
+            if manifest is None:
+                continue
+            out[project.id] = tuple(manifest.capabilities)
         return out
 
     def _evaluator(self) -> ClaudeCaller:

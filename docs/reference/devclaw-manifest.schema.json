@@ -41,8 +41,8 @@
     },
     "capabilities": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
-      "description": "Environment capabilities this project's verify contract depends on (spec 030). v1 ids: 'registry:npm-github', 'sandbox:image'. A capability whose mechanical probe is red holds dispatch with a self-healing 'mechanical:env' block; nothing is inferred, and a project that declares none is admitted as before."
+      "items": { "type": "string", "enum": ["registry:npm-github", "sandbox:image"] },
+      "description": "Environment capabilities this project's verify contract depends on (spec 030). Ids are validated against the set this instance can probe — an unknown id fails the manifest loud rather than silently disabling the brake. A capability whose mechanical probe is red holds dispatch with a self-healing 'mechanical:env' block; nothing is inferred, and a project that declares none is admitted as before. Declaring 'registry:npm-github' makes an ABSENT NODE_AUTH_TOKEN red, not a supported posture."
     }
   },
   "additionalProperties": true
