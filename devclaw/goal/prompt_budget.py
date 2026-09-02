@@ -95,6 +95,25 @@ PRIOR_INCREMENTS_TRUNCATION_MARKER = (
 )
 
 
+#: spec 031 US4 — the Decisions feed-forward section rides the same budget
+#: discipline as prior increments: re-sent with every dispatch, so bounded.
+DECISIONS_KEEP = 4_000
+
+DECISIONS_TRUNCATION_MARKER = (
+    "[…older decisions elided to fit the prompt budget: the most-recent ones "
+    "are kept; the full ledger is on the goal (get_goal → decisions)]"
+)
+
+
+def cap_decisions(section: str) -> str:
+    """Bound the Decisions feed-forward section. Tail-kept (the newest rulings
+    are the ones most likely to govern the next increment); small or empty
+    passes through byte-identical."""
+    return cap_section(
+        section, keep=DECISIONS_KEEP, marker=DECISIONS_TRUNCATION_MARKER
+    )
+
+
 def cap_prior_increments(section: str) -> str:
     """Bound the prior-increments feed-forward section. Tail-kept (the newest
     increments are the ones the next session builds on); small or empty passes

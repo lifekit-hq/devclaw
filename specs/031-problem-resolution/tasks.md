@@ -98,18 +98,18 @@ tripwires), `docs/`, `specs/`. New modules are named in plan.md's source tree.
 
 ### Tripwire tests for Phase 4
 
-- [ ] T030 [P] [US4] `test_decisions_marker_present_and_capped` — beside the prior-increments structural guard: head line is `DECISIONS_MARKER`; superseded Decisions absent; entry list capped under `DECISIONS_KEEP` with the marker never truncated — in tests/test_goal_tick.py
-- [ ] T031 [P] [US4] Extend the evaluator omission/presence prompt test: with `decisions=None` the rendered prompt contains no `DECISIONS` block (prove absence from the raw template first); with a section it does — in the existing evaluator prompt test module (tests/cognition/ or tests/test_goal_tick.py where the #234 pattern lives)
+- [x] T030 [P] [US4] `test_decisions_marker_present_and_capped` — beside the prior-increments structural guard: head line is `DECISIONS_MARKER`; superseded Decisions absent; entry list capped under `DECISIONS_KEEP` with the marker never truncated — in tests/test_goal_tick.py
+- [x] T031 [P] [US4] Extend the evaluator omission/presence prompt test: with `decisions=None` the rendered prompt contains no `DECISIONS` block (prove absence from the raw template first); with a section it does — in the existing evaluator prompt test module (tests/cognition/ or tests/test_goal_tick.py where the #234 pattern lives)
 
 ### Implementation for Phase 4
 
-- [ ] T032 [P] [US4] Create devclaw/goal/decisions.py — `render(rows) -> str` per contracts/brief-section.md (marker head line, one line per current Decision, devclaw-controlled fields only) (depends on T006)
-- [ ] T033 [P] [US4] Add `DECISIONS_MARKER = "Decisions on this goal"` and `DECISIONS_KEEP` + `cap_decisions()` beside the prior-increments cap — in devclaw/advance_brief.py and devclaw/goal/prompt_budget.py
-- [ ] T034 [US4] Slot the rendered section into the advance brief directly after prior increments; read `store.decisions(goal_id)` BELOW the `should_plan` gate — in devclaw/goal/tick.py (depends on T032, T033)
-- [ ] T035 [US4] Add blank-safe `decisions: str | None = None` to `evaluate(...)`; render a `DECISIONS` grounding block when non-blank; parse optional `resolved_by` on clause objects into `ClauseVerdict.resolved_by` and count such clauses as satisfied; ignore malformed values — in devclaw/goal/evaluator.py (depends on T002)
-- [ ] T036 [US4] Add the one-sentence rule (a clause with a current Decision is graded `resolved_by_decision`, cited as evidence, not re-evaluated) in the procedure section; reference the block as *Decisions* in prose, never the literal header — in devclaw/prompts/goal-evaluator.md (depends on T035)
-- [ ] T037 [US4] Collect `decisions.render(store.decisions(goal_id))` at the done-gate call site and pass it through — in devclaw/goal/tick_donegate.py (depends on T032, T035)
-- [ ] T038 [P] [US4] Add the single worker-skill line ("A *Decisions on this goal* section in your brief is settled fact from the owner: apply it, never re-open it, cite it in your hand-back") — in runner/skills/_writes-code/05-speckit-memory.md; confirm the always-on brief stays under the leanness guard (tests/test_runner_skills.py)
+- [x] T032 [P] [US4] Create devclaw/goal/decisions.py — `render(rows) -> str` per contracts/brief-section.md (marker head line, one line per current Decision, devclaw-controlled fields only) (depends on T006)
+- [x] T033 [P] [US4] Add `DECISIONS_MARKER = "Decisions on this goal"` and `DECISIONS_KEEP` + `cap_decisions()` beside the prior-increments cap — in devclaw/advance_brief.py and devclaw/goal/prompt_budget.py
+- [x] T034 [US4] Slot the rendered section into the advance brief directly after prior increments; read `store.decisions(goal_id)` BELOW the `should_plan` gate — in devclaw/goal/tick.py (depends on T032, T033)
+- [x] T035 [US4] Add blank-safe `decisions: str | None = None` to `evaluate(...)`; render a `DECISIONS` grounding block when non-blank; parse optional `resolved_by` on clause objects into `ClauseVerdict.resolved_by` and count such clauses as satisfied; ignore malformed values — in devclaw/goal/evaluator.py (depends on T002)
+- [x] T036 [US4] Add the one-sentence rule (a clause with a current Decision is graded `resolved_by_decision`, cited as evidence, not re-evaluated) in the procedure section; reference the block as *Decisions* in prose, never the literal header — in devclaw/prompts/goal-evaluator.md (depends on T035)
+- [x] T037 [US4] Collect `decisions.render(store.decisions(goal_id))` at the done-gate call site and pass it through — in devclaw/goal/tick_donegate.py (depends on T032, T035)
+- [x] T038 [P] [US4] Add the single worker-skill line ("A *Decisions on this goal* section in your brief is settled fact from the owner: apply it, never re-open it, cite it in your hand-back") — in runner/skills/_writes-code/05-speckit-memory.md; confirm the always-on brief stays under the leanness guard (tests/test_runner_skills.py)
 
 **Checkpoint (end of P2a PR)**: T030–T031 green; suite + ruff + mypy green; live step 6 of quickstart.md passes.
 
@@ -223,6 +223,7 @@ Task: "get_goal/list_goals/goal_json projections"
 - P1 PR (2026-09-02): **1308 passed, 5 skipped** (+12: 7 tripwires incl. 2 parametrized, 4 doctor seeded-fault, 1 LEGAL guard); ruff clean; mypy clean (142 files)
 - T047: `docs/flows/task-execution.md` traces one task and never described the park — nothing there became stale, so it is untouched; `delivery.md` carries the flow note
 - T051: no constitution change — the check passed pre- and post-design unchanged
+- P2a PR (2026-09-03): T030–T038 done; the writes-code brief was re-trimmed under the 13,200 leanness guard (my bullet shortened; one explanatory clause cut from 40-verify-iterate.md)
 - Console (T028) is wired but not type-checked locally (no `console/node_modules`); the deploy image builds it, so a TS error fails the deploy loudly rather than shipping
 - Never mint a sibling test: every tripwire above names the class test it extends
 - The single-ACHIEVE-emitter structural guard pins the ACHIEVE line's literal text; if T022/T035 change nothing on that line, it stays untouched — verify before assuming

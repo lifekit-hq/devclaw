@@ -422,6 +422,34 @@ def test_eval_prompt_omits_spec_section_when_absent():
     assert "Agreed spec" not in prompt
 
 
+def test_eval_prompt_carries_decisions_block_only_when_given():
+    """Spec 031 US4 (#234 shape): the `## Decisions` grounding block is present
+    iff a rendered section is passed. The raw template must not contain the
+    literal header, or the absence half is vacuous — the prose refers to the
+    block as *Decisions* without the `##`."""
+    import pathlib
+    template = pathlib.Path(__file__).resolve().parents[1] / "devclaw/prompts/goal-evaluator.md"
+    assert "## Decisions" not in template.read_text(encoding="utf-8")
+    without = build_prompt(_goal(), GoalStatus(), "log", "deliveries")
+    assert "## Decisions" not in without
+    section = "Decisions on this goal — settled by the owner (1 current):\n- [clause: \"c1\"] → decide: accept the gap and close (owner, 2026-09-02)"
+    with_ = build_prompt(_goal(), GoalStatus(), "log", "deliveries", decisions=section)
+    assert "## Decisions" in with_ and "accept the gap and close" in with_
+
+
+def test_clause_resolved_by_decision_counts_as_satisfied():
+    """Spec 031 FR-011: a clause the gate grades with a `resolved_by` id counts
+    as satisfied and carries the id; a malformed value is ignored (#233)."""
+    from devclaw.goal.evaluator import _parse_clauses
+    clauses = _parse_clauses([
+        {"clause": "c1", "satisfied": False, "evidence": "", "resolved_by": "dec_abc"},
+        {"clause": "c2", "satisfied": False, "evidence": "missing — x", "resolved_by": 42},
+    ])
+    assert clauses[0].satisfied is True and clauses[0].resolved_by == "dec_abc"
+    assert "dec_abc" in clauses[0].evidence
+    assert clauses[1].satisfied is False and clauses[1].resolved_by == ""
+
+
 # ---- stub-policy enforcement (the 2026-06-26 v5 safety net) ---------------
 #
 # Backstory: finance-sentry-mcp-v5 shipped 4 `not_yet_available` stubs for
