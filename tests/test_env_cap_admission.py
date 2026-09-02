@@ -332,6 +332,16 @@ def test_a_typoed_capability_id_fails_loud_instead_of_disabling_the_brake():
         assert parse_manifest(
             json.dumps({"schemaVersion": 1, "capabilities": [cap]}),
         ).capabilities == (cap,)
+        # Same class, second instance: whitespace padding. Validation compares
+        # the STRIPPED id, so the parse must also STORE it stripped — a padded
+        # id kept raw keys nothing in `_PROBE_RUNNERS`, probes "unknown", and
+        # FR-007 declines to hold on unknown. Identical silent-brake-off
+        # outcome as the typo, reached without a typo.
+        padded = parse_manifest(
+            json.dumps({"schemaVersion": 1, "capabilities": [f"  {cap}\t\n"]}),
+        ).capabilities
+        assert padded == (cap,)
+        assert all(c in env_cap._PROBE_RUNNERS for c in padded)
 
     with pytest.raises(ManifestError) as exc:
         parse_manifest(json.dumps({"schemaVersion": 1, "capabilities": ["registry:npmgithub"]}))

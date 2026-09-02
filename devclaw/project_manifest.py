@@ -152,6 +152,10 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
     # reads as protection in the repo while producing zero probing and zero
     # holding, so `registry:npmgithub` would silently spend the very sessions
     # the declaration was written to save (spec 030 FR-005/FR-006).
+    # Validation compares the STRIPPED id, so the parse must also store the
+    # stripped form — otherwise a padded id validates here and then misses
+    # `_PROBE_RUNNERS`, probing "unknown", which FR-007 declines to hold on.
+    # That is the silent-brake-off outcome this validation exists to prevent.
     unknown = [c for c in capabilities if c.strip() not in _known_capabilities()]
     if unknown:
         raise ManifestError(
@@ -166,7 +170,7 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
         surface=surface,
         verify_cmd=verify_cmd.strip() if isinstance(verify_cmd, str) else None,
         stack=tuple(stack),
-        capabilities=tuple(capabilities),
+        capabilities=tuple(c.strip() for c in capabilities),
         validation=validation,
     )
 

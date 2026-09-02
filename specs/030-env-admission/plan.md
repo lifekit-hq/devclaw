@@ -74,6 +74,12 @@ One new module plus four wires — no new layer, no new store.
   `instance.registry.token` (its own dotted namespace, which operators filter
   on); what US3 requires is that both surfaces NAME the same probe id, so the
   check's non-OK remedy carries the capability id.
+- **The parse NORMALIZES capability ids (strips) before storing them**, because
+  FR-006's validation compares the stripped id. Any divergence between the form
+  validated and the form stored reopens the exact hole FR-006 closes: a padded
+  id validates, then keys nothing in `_PROBE_RUNNERS`, probes `unknown`, and
+  FR-007 declines to hold on unknown — the brake silently off on a repo that
+  reads as protected.
 - **`capabilities` is read from the WORKTREE, not the merged base** — a
   deliberate divergence from the `devclaw.json` gate trust boundary
   (`docs/reference/devclaw-manifest.md`). The hold is a session-burn brake, not
