@@ -56,6 +56,7 @@ from .notify import Notifier
 from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event, IllegalTransition, TransitionConflict
+from . import problems as _problems
 from ..loom import trace as _trace
 from ..loom.limits import FailureKind, classify_failure, pause_seconds
 from ..state_store import _now_ms
@@ -125,6 +126,52 @@ class TrendDetector(Protocol):
     async def run_harness_self(self) -> None: ...
     def prune_stale_scopes(self, live_workspaces: "set[str]") -> int: ...
 
+
+
+async def _apply_problem_default(goal_id, goal, status, *, store, notifier):
+    """Apply an elapsed Problem's default option as a DEFAULTED Decision and
+    UNBLOCK with the human-vouch reset shape; one owner notice. Returns the
+    new status, or None when nothing applied (timebox not reached, Problem
+    gone, or the strict-hold). Pure mechanism — no cognition."""
+    from .models import Decision as _Decision
+    import uuid as _uuid
+    prob = store.problem_by_id(status.problem_id)
+    if prob is None or prob.status != "open":
+        return None
+    if _now_ms() < prob.timebox_at:
+        return None
+    default = prob.default
+    hold = "awaiting an explicit decide (strict): the default would close the goal"
+    if default.closes_goal and getattr(goal, "strictness", "trust") == "strict":
+        # once, not every tick: the hold line is the log's tail until the
+        # owner acts (the goal is blocked, so nothing else writes the log)
+        if not store.recent_log(goal_id, 1).rstrip().endswith(hold):
+            store.append_log(goal_id, hold)
+            await _notify(notifier, NotifyLevel.OWNER,
+                          f"🟡 [{goal_id}] problem {prob.id} timed out; its default would close "
+                          f"the goal and strictness is strict — only an explicit decide can close it.")
+        return None
+    dec = _Decision(
+        id=f"dec_{_uuid.uuid4().hex[:20]}", goal_id=goal_id, problem_id=prob.id,
+        clause=prob.clause, verb="decide", option_key=default.key, text="",
+        provenance="defaulted", made_by="tick", made_at=_now_ms(),
+    )
+    with store.transaction():
+        store.record_decision(dec, problem_status="defaulted")
+        new = store.transition(
+            goal_id, Event.UNBLOCK,
+            replace(status, phase="idle", blocked_on="", actions_dispatched=0,
+                    heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                    donegate_progress=0, slice_hold_count=0,
+                    merge_heal_attempted=False, problem_id="",
+                    next=f"defaulted: {default.label}"),
+            expect=status,
+        )
+    store.append_log(goal_id, f"problem {prob.id} defaulted → {default.key} ({default.label})")
+    await _notify(notifier, NotifyLevel.OWNER,
+                  f"ℹ️ [{goal_id}] defaulted — {default.label} on \"{prob.clause or 'contract'}\"; "
+                  f"override with decide.")
+    return new
 
 
 async def tick_goal(
@@ -309,6 +356,16 @@ async def _tick_goal_impl(
     # below at zero cognition, same as any blocked tick.
     if status.phase == "blocked":
         healed = None
+        # Spec 031 US2: a Problem whose timebox elapsed takes its default —
+        # a timestamp compare, zero cognition (constitution III). Under
+        # strict a default that would CLOSE the goal parks instead (Q2 → C).
+        if status.problem_id:
+            defaulted = await _apply_problem_default(
+                goal_id, goal, status, store=store, notifier=notifier,
+            )
+            if defaulted is not None:
+                status = defaulted
+                phase = _classify(status)
         if status.blocked_kind == "mechanical:prep":
             healed = await _autoheal_prep(
                 goal_id, goal, status, store=store, notifier=notifier,
@@ -791,13 +848,21 @@ async def _handle_long_lived_advance(
                     "graded ready — the owner revoked readiness. Re-grade "
                     "them (regrade_intake) and resume_goal, or cancel."
                 )
-                store.transition(
-                    goal_id, Event.BLOCK,
-                    replace(base, phase="blocked", blocked_on=q,
-                            blocked_kind="needs_answer", next=""),
-                    expect=status, consume_steering=consume_ids,
+                prob = _problems.new_problem(
+                    goal_id, kind="needs_answer", raised_by="dispatch_park", what=q,
+                    clause="", why="referenced issues lost their ready grade",
+                    options=(_problems.CORRECT, _problems.CANCEL), default_key="correct",
                 )
-                await _notify(ctx.notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
+                with store.transaction():
+                    _problems.raise_problem(store, prob)
+                    store.transition(
+                        goal_id, Event.BLOCK,
+                        replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
+                                blocked_kind="needs_answer", problem_id=prob.id, next=""),
+                        expect=status, consume_steering=consume_ids,
+                    )
+                await _notify(ctx.notifier, NotifyLevel.OWNER,
+                              f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
                 return Outcome.BLOCKED
             if base.donegate_rounds == 0:
                 # First pass: all issues closed, no prior done-gate refusal.

@@ -43,6 +43,7 @@ from .notify import Notifier
 from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
+from . import problems as _problems
 from ..delivery import deploy as _deploy
 
 from ..engine.workspace import WorkspaceError
@@ -637,13 +638,29 @@ async def _resolve_done_gate(
         await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label}{merged_note} — {ev.rationale[:200]}{followups}{live}{summary_suffix}", summarize=summarize)
         return Outcome.DONE
     if ev.verdict in ("stalled", "needs_human"):
+        # Spec 031 US1: the block carries a typed Problem — what, clause, why,
+        # bounded options (the evaluator's own corrections, then the fixed
+        # tail), a default, a timebox — raised in the SAME transaction as the
+        # BLOCK so a conflict rolls both back. blocked_on keeps a one-line
+        # summary for readers that predate the Problem.
         q = ev.question or ev.rationale or "done-gate flagged a problem"
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q, blocked_kind="needs_answer", next=""),
-            expect=status, consume_steering=consume_steering,
+        unsatisfied = [c.clause for c in (ev.clauses or ()) if not c.satisfied]
+        prob = _problems.new_problem(
+            goal_id, kind="needs_answer", raised_by="done_gate", what=q,
+            clause=(unsatisfied[0] if unsatisfied else ""), why=ev.rationale or "",
+            options=_problems.options_from_corrections(ev.corrections or []),
         )
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] not done — {q}", summarize=summarize)
+        with store.transaction():
+            _problems.raise_problem(store, prob)
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
+                        blocked_kind="needs_answer", problem_id=prob.id, next=""),
+                expect=status, consume_steering=consume_steering,
+            )
+        await _notify(notifier, NotifyLevel.OWNER,
+                      f"🟡 [{goal_id}] not done — {_problems.render_for_human(prob)}",
+                      summarize=summarize)
         return Outcome.BLOCKED
     # on_track / off_track → not done yet. Count the round: a gate that
     # refuses to close the same goal DONEGATE_ROUND_CAP times in a row is a
@@ -671,14 +688,27 @@ async def _resolve_done_gate(
             f"open PR yourself, then resume (re-judges the same contract), steer, "
             f"or cancel."
         )
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q, blocked_kind="donegate_churn",
-                    donegate_rounds=rounds, donegate_progress=best, next=""),
-            expect=status, consume_steering=consume_steering,
+        # Spec 031: the park carries a typed Problem (fixed churn options —
+        # correct / accept and close / split), raised with the BLOCK.
+        unsatisfied = [c.clause for c in (ev.clauses or ()) if not c.satisfied]
+        prob = _problems.new_problem(
+            goal_id, kind="donegate_churn", raised_by="churn_park",
+            what=ev.rationale[:1000] or q, clause=(unsatisfied[0] if unsatisfied else ""),
+            why=f"{rounds} done proposals with the satisfied-clause count flat",
+            options=_problems.CHURN_OPTIONS, default_key="correct",
         )
+        with store.transaction():
+            _problems.raise_problem(store, prob)
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
+                        blocked_kind="donegate_churn", problem_id=prob.id,
+                        donegate_rounds=rounds, donegate_progress=best, next=""),
+                expect=status, consume_steering=consume_steering,
+            )
         _apply_corrections(store, goal_id, ev)  # visible in inbox for the owner's decision
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}", summarize=summarize)
+        await _notify(notifier, NotifyLevel.OWNER,
+                      f"🟡 [{goal_id}] {_problems.render_for_human(prob)}", summarize=summarize)
         return Outcome.BLOCKED
     store.transition(
         goal_id, Event.RESUME_IDLE,

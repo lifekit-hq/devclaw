@@ -55,7 +55,9 @@ from .delivery import (  # noqa: F401
 )
 from .goals import (  # noqa: F401
     cancel_goal,
+    correct_implementation,
     create_goal,
+    decide,
     evaluate_goal,
     get_goal,
     get_trace,

@@ -112,6 +112,9 @@ _REVIEW_CRASH_MARKER = "review gate crashed (failing closed):"
 #: re-dispatch loop. It is NEVER treated as an approval (never settles ``done``);
 #: the reason rides the failure so the goal layer surfaces it to the owner.
 _WORKER_BLOCKED_MARKER = "worker reported BLOCKED:"
+#: public alias — the goal layer recognises a worker honest-block by it
+#: (spec 031 R4) and raises a typed Problem instead of burning the cap.
+WORKER_BLOCKED_MARKER = _WORKER_BLOCKED_MARKER
 #: Substring the engine surfaces when the worker's conversation OVERFLOWED the
 #: model context window (full shape: ``Conversation run failed for id=...:
 #: Internal error: Prompt is too long``). Unlike the two markers above this one

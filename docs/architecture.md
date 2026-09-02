@@ -212,7 +212,8 @@ When the tick decides to *do* something (not just think):
    reported concerns advise-and-ship as follow-ups on the close, under
    `strict` they hold it open. A done-gate that refuses to close the same
    goal 3 rounds in a row *with the satisfied-clause count flat* parks it for
-   the owner (`donegate_churn`) instead of re-advancing forever; a round that
+   the owner (`donegate_churn`, carrying a typed Problem — spec 031) instead
+   of re-advancing forever; a round that
    beats the best count seen restarts the counter
    (`goal_status.donegate_progress`), so a converging goal is never parked as
    churn. Every *unreviewable* case (a gate crash,
@@ -651,7 +652,15 @@ stays a zero-subprocess tick). Past its cap a goal parks for a human with one
 plain ping. `needs_answer`, `bug`, `mechanical:lost_ref`, and
 `mechanical:dispatch_cap` blocks stay human-gated on purpose; recovery verbs
 are `resume_goal` (blocker cleared, same contract) and `steer_goal` (direction
-change) — both restore the heal budget.
+change) — both restore the heal budget. Since spec 031 (2026-09-02) a
+human-gated block **carries a typed Problem** — what is wrong, the `done_when`
+clause, why the loop cannot decide it, bounded options, a default, a timebox —
+raised through one seam (`devclaw/goal/problems.py`) in the same transaction
+as the block, and resolved by exactly two verbs, `correct_implementation` and
+`decide`, each recording a Decision (`goal_decisions`) and unblocking with the
+steer's budget-restoring shape. A timed-out Problem takes its default and
+informs; under `strict` a default that would close the goal parks instead.
+`steer_goal` is refused while a Problem is open.
 
 ## Testability (one stub at every seam)
 

@@ -60,13 +60,14 @@ import sqlite3
 from typing import TYPE_CHECKING
 
 from .state_content import GoalStateContentMixin
+from .state_problems import GoalStateProblemsMixin
 from .state_status import GoalStateStatusMixin
 
 if TYPE_CHECKING:
     from ..state_store import StateStore
 
 
-class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
+class GoalState(GoalStateStatusMixin, GoalStateContentMixin, GoalStateProblemsMixin):
     """Owns the goal-state tables inside a shared :class:`StateStore`.
 
     Handed a ``StateStore``, it borrows that store's single sqlite connection,
@@ -123,6 +124,7 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                   actions_dispatched    INTEGER,
                   donegate_rounds       INTEGER NOT NULL DEFAULT 0,
                   donegate_progress     INTEGER NOT NULL DEFAULT 0,
+                  problem_id            TEXT NOT NULL DEFAULT '',
                   slice_hold_count      INTEGER NOT NULL DEFAULT 0,
                   last_eval_verdict     TEXT,
                   last_eval_at          TEXT,
@@ -238,6 +240,41 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                   created_at  INTEGER NOT NULL,
                   PRIMARY KEY (project_id, issue_key)
                 );
+                -- spec 031: typed Problems and the owner's Decisions. Append-only;
+                -- "current" is a query. Written only inside the BLOCK/UNBLOCK txn.
+                CREATE TABLE IF NOT EXISTS goal_problems (
+                  id                 TEXT PRIMARY KEY,
+                  goal_id            TEXT NOT NULL,
+                  kind               TEXT NOT NULL,
+                  raised_by          TEXT NOT NULL,
+                  what               TEXT NOT NULL,
+                  clause             TEXT NOT NULL DEFAULT '',
+                  why                TEXT NOT NULL DEFAULT '',
+                  options_json       TEXT NOT NULL,
+                  default_key        TEXT NOT NULL,
+                  timebox_at         INTEGER NOT NULL,
+                  status             TEXT NOT NULL DEFAULT 'open',
+                  raised_at          INTEGER NOT NULL,
+                  closed_at          INTEGER,
+                  closed_by_decision TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_problems_goal_status
+                  ON goal_problems(goal_id, status);
+                CREATE TABLE IF NOT EXISTS goal_decisions (
+                  id            TEXT PRIMARY KEY,
+                  goal_id       TEXT NOT NULL,
+                  problem_id    TEXT NOT NULL DEFAULT '',
+                  clause        TEXT NOT NULL DEFAULT '',
+                  verb          TEXT NOT NULL,
+                  option_key    TEXT NOT NULL DEFAULT '',
+                  text          TEXT NOT NULL DEFAULT '',
+                  provenance    TEXT NOT NULL,
+                  made_by       TEXT NOT NULL DEFAULT '',
+                  made_at       INTEGER NOT NULL,
+                  superseded_by TEXT NOT NULL DEFAULT ''
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_decisions_goal_clause
+                  ON goal_decisions(goal_id, clause);
 
                 -- goal_id lookups on the append-only / multi-row tables.
                 CREATE INDEX IF NOT EXISTS idx_goal_phase_history_goal
@@ -268,6 +305,7 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin):
                 "ALTER TABLE goal_status ADD COLUMN next_heal_at TEXT",
                 "ALTER TABLE goal_status ADD COLUMN donegate_rounds INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN donegate_progress INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE goal_status ADD COLUMN problem_id TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE goal_status ADD COLUMN envcap_redispatches INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN slice_hold_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN pending_merge_pr TEXT NOT NULL DEFAULT ''",

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 from ...state_store import _now_ms
 
 if TYPE_CHECKING:
+    from ..models import Decision, Problem
     from datetime import datetime
     from pathlib import Path
     from typing import Callable
@@ -221,6 +222,44 @@ class GoalContentMixin:
             parse_record(instruction, body, statuses.get(ref_id) if ref_id else None)
             for ref_id, instruction, body in self._goal_state.delivery_records(goal_id)
         ]
+    # ---- spec 031: Problems / Decisions --------------------------------
+    # All four run on the shared connection; callers wrap them in the SAME
+    # transaction() as the BLOCK/UNBLOCK transition so a TransitionConflict
+    # rolls the rows back with it (single writer, constitution IV).
+
+    def raise_problem(self, problem: "Problem") -> "Problem":
+        """Record a new OPEN Problem, superseding any open one on the goal —
+        exactly one open Problem per goal is the invariant the pointer column
+        (``GoalStatus.problem_id``) relies on."""
+        self._goal_state.supersede_open_problems(problem.goal_id, _now_ms())
+        self._goal_state.insert_problem(problem)
+        return problem
+
+    def record_decision(self, decision: "Decision", *, problem_status: str = "resolved") -> "Decision":
+        """Record a Decision, close the Problem it answers with
+        ``problem_status`` (``resolved`` for a human verb, ``defaulted`` for
+        the timebox), and supersede any earlier Decision on the same clause."""
+        self._goal_state.insert_decision(decision)
+        if decision.problem_id:
+            self._goal_state.close_problem(
+                decision.problem_id, problem_status, decision.id, _now_ms()
+            )
+        self._goal_state.supersede_decisions(decision.goal_id, decision.clause, decision.id)
+        return decision
+
+    def current_problem(self, goal_id: str) -> "Problem | None":
+        return self._goal_state.current_problem(goal_id)
+
+    def problem_by_id(self, problem_id: str) -> "Problem | None":
+        return self._goal_state.problem_by_id(problem_id)
+
+    def decisions(self, goal_id: str) -> "list[Decision]":
+        """Current (non-superseded) Decisions, oldest first."""
+        return self._goal_state.current_decisions(goal_id)
+
+    def supersede_open_problems(self, goal_id: str) -> int:
+        return self._goal_state.supersede_open_problems(goal_id, _now_ms())
+
     def goal_created_at_map(self) -> "dict[str, int]":
         """``goal_id -> creation timestamp (ms)`` for the whole fleet — the age
         source the derived project hold orders by (spec 010 FR-005, amended).

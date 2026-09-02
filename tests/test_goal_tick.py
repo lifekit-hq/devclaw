@@ -2976,9 +2976,154 @@ async def test_done_gate_churn_brake_parks_after_cap_rounds(tmp_path):
     s = store.load_status("g")
     assert s.phase == "blocked"
     assert s.blocked_kind == "donegate_churn"
-    assert "churn brake" in (s.blocked_on or "")
+    # spec 031: the park carries a typed Problem; blocked_on is its summary
+    assert s.problem_id and "donegate_churn" in (s.blocked_on or "")
+    assert store.current_problem("g").raised_by == "churn_park"
     # the correction still lands as steering so a resumed goal has direction
     assert "[clause 2] add the parity test" in store.unread_steering("g")
+
+
+# ---- spec 031: typed Problems, two verbs, the timebox ----------------------
+
+def _open_problem(store, goal_id, *, timebox_ms, default_key="correct", closes=False, now_ms=1_000_000):
+    """Seed a blocked goal carrying one OPEN Problem (the shape raise_problem
+    writes), returning the Problem. Pure store writes — no tick."""
+    from devclaw.goal import problems as _pb
+    opts = _pb.CHURN_OPTIONS if not closes else (_pb.ACCEPT_CLOSE, _pb.CORRECT)
+    p = _pb.new_problem(
+        goal_id, kind="needs_answer", raised_by="done_gate",
+        what="clause 3 is undecided", clause="clause 3", why="two readings",
+        options=opts, default_key=default_key, timebox_s=1, now_ms=now_ms,
+    )
+    p = replace(p, timebox_at=timebox_ms)
+    store.raise_problem(p)
+    return p
+
+
+@pytest.mark.asyncio
+async def test_blocked_goal_with_open_problem_costs_zero_cognition(tmp_path):
+    """Zero-token idle (constitution III): a goal blocked with an OPEN Problem
+    whose timebox has not elapsed ticks with no cognition and no dispatch —
+    the timebox check is a timestamp compare, nothing more."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    p = _open_problem(store, "g", timebox_ms=10**15)  # far future
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+        problem_id=p.id,
+    ))
+    evaluator, engine = FakeClaude(), FakeEngine()
+    await _tick(store, "g", evaluator, engine, RecordingNotifier())
+    assert evaluator.calls == 0
+    assert engine.dispatched == []
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.problem_id == p.id
+
+
+@pytest.mark.asyncio
+async def test_timebox_default_applies_without_cognition(tmp_path):
+    """Spec 031 FR-005: at the timebox the tick applies the default as a
+    Decision (provenance=defaulted), UNBLOCKs, notifies once — zero cognition."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    p = _open_problem(store, "g", timebox_ms=0)  # already elapsed
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+        problem_id=p.id, actions_dispatched=2, donegate_rounds=2,
+    ))
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+    await _tick(store, "g", evaluator, engine, notifier)
+    assert evaluator.calls == 0
+    s = store.load_status("g")
+    assert s.phase != "blocked" and s.problem_id == ""
+    assert s.donegate_rounds == 0                       # the vouch shape
+    assert len(engine.dispatched) == 1                  # …and it kept moving on this tick
+    decs = store.decisions("g")
+    assert len(decs) == 1 and decs[0].provenance == "defaulted" and decs[0].option_key == "correct"
+    assert store.problem_by_id(p.id).status == "defaulted"
+    assert sum("defaulted" in m for m in notifier.sent) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strictness,expect_blocked,expect_decisions", [
+    ("trust", False, 1),   # the default acts; the done-gate closes on its next round
+    ("strict", True, 0),   # the timeout parks; only an explicit decide can close
+])
+async def test_defaulted_accept_and_close_never_emits_achieve(tmp_path, strictness, expect_blocked, expect_decisions):
+    """Q2 → C and constitution V: a defaulted accept_close never reaches
+    `done` from the tick — under trust the goal returns to idle for the
+    done-gate's single ACHIEVE emitter; under strict it stays blocked with
+    no Decision written."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    p = _open_problem(store, "g", timebox_ms=0, default_key="accept_close", closes=True)
+    store.set_strictness("g", strictness)
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_on="churn: see problem", blocked_kind="donegate_churn",
+        problem_id=p.id,
+    ))
+    notifier = RecordingNotifier()
+    await _tick(store, "g", FakeClaude(), FakeEngine(), notifier)
+    s = store.load_status("g")
+    assert (s.phase == "blocked") is expect_blocked
+    assert s.phase != "done"
+    assert len(store.decisions("g")) == expect_decisions
+    assert len(notifier.sent) >= 1
+
+
+@pytest.mark.asyncio
+async def test_steer_goal_is_refused_while_a_problem_is_open(tmp_path):
+    """Q1 → A: prose steering is refused while a Problem is open — the
+    refusal carries the Problem and the two verbs, and writes nothing."""
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        seed_goal(goals_dir, "g")
+        store = svc._goal_store
+        p = _open_problem(store, "g", timebox_ms=10**15)
+        store.save_status("g", GoalStatus(
+            phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+            problem_id=p.id,
+        ))
+        before = store.load_status("g")
+        with pytest.raises(ValueError) as ei:
+            svc.steer_goal("g", "just do X")
+        msg = str(ei.value)
+        assert p.id in msg and "correct_implementation" in msg and "decide" in msg
+        after = store.load_status("g")
+        assert after.version == before.version and after.phase == "blocked"
+        assert not store.unread_steering("g")
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_honest_block_raises_a_problem_without_burning_the_cap(tmp_path):
+    """Spec 031 US1 (R4): a failed settle whose detail carries the worker's
+    honest BLOCK raises a Problem immediately — blocked with the fixed
+    worker-block options, dispatch count unchanged — instead of spending two
+    more dispatches to park at the cap."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="in_flight", actions_dispatched=1,
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "do X"),
+    ))
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed",
+        detail="Error:\nworker reported BLOCKED: needs a Telegram credential the sandbox lacks — the worker reports it cannot complete",
+    ))
+    notifier = RecordingNotifier()
+    out = await _tick(store, "g", FakeClaude(), engine, notifier)
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.blocked_kind == "needs_answer"
+    assert s.problem_id and s.actions_dispatched == 1
+    p = store.current_problem("g")
+    assert p is not None and p.raised_by == "worker_block"
+    assert {o.key for o in p.options} == {"correct", "supply", "cancel"}
+    assert "Telegram" in p.what
+    assert any("correct_implementation" in m and "decide" in m for m in notifier.sent)
+    assert not any("steer_goal" in m for m in notifier.sent)
 
 
 @pytest.mark.asyncio

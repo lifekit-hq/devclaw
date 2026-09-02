@@ -166,6 +166,17 @@ def goal_text_budget() -> int:
     return int(os.environ.get("DEVCLAW_GOAL_TEXT_BUDGET", "1000"))
 
 
+def problem_timebox_s() -> int:
+    """``DEVCLAW_PROBLEM_TIMEBOX_S`` — seconds a typed Problem waits for the
+    owner before the tick applies its default option (spec 031 US2). Default
+    12h: spans an overnight run, never a full day. ``0`` disables defaulting
+    (the Problem waits for an explicit verb)."""
+    try:
+        return int(os.environ.get("DEVCLAW_PROBLEM_TIMEBOX_S", str(12 * 3600)))
+    except ValueError:
+        return 12 * 3600
+
+
 def context_tripwire_pct() -> int:
     """``DEVCLAW_CONTEXT_TRIPWIRE_PCT`` — the worker context-usage percentage
     at which the in-sandbox runner ends the turn and lands a coherent partial
