@@ -3124,6 +3124,12 @@ async def test_worker_honest_block_raises_a_problem_without_burning_the_cap(tmp_
     assert "Telegram" in p.what
     assert any("correct_implementation" in m and "decide" in m for m in notifier.sent)
     assert not any("steer_goal" in m for m in notifier.sent)
+    # T044: the block named a capability the admission lint should have refused
+    # ("Telegram") — the MISS is recorded in the problems catalog so the class
+    # gets fixed, not the instance. This assertion is what caught the silent
+    # AttributeError the try/except around it used to swallow.
+    rows = store._state.list_problems(category="admission")
+    assert any(r.get("kind") == "lint_miss" for r in rows), rows
 
 
 # ---- spec 031 US3: the done_when admission lint -----------------------------
