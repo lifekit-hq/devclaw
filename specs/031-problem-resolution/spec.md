@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-02
 
-**Status**: Draft — awaiting `/speckit-clarify` (3 questions)
+**Status**: Clarified 2026-09-02 (3 questions walked with Denys, all recommended options taken) — ready for `/speckit-plan`
 
 **Input**: User description: "A goal that cannot proceed states its problem as a
 typed thing, and the owner resolves it with one of exactly two typed moves; most
@@ -112,13 +112,17 @@ and that the inbox received **no** steering line.
    *defaulted*, the goal continues, and the owner receives one notice they
    can override with a later *decide*.
 4. **Given** a goal with an open Problem, **When** the owner calls
-   `steer_goal`, **Then** [NEEDS CLARIFICATION: is prose steering refused
-   while a Problem is open (forcing a typed resolution), or accepted as a
-   direction change that leaves the Problem open?]
+   `steer_goal`, **Then** the call is refused and the response carries the
+   current Problem and names the two resolution verbs; the goal's state is
+   unchanged. A genuine direction change first resolves the Problem
+   (typically *decide → split into a follow-up* or *cancel*), then steers.
 5. **Given** an open Problem whose default option would close the goal,
-   **When** its timebox elapses, **Then** [NEEDS CLARIFICATION: may a
-   defaulted Decision ever close a goal, or must a close always be an explicit
-   *decide*?]
+   **When** its timebox elapses, **Then** the outcome rides the goal's
+   strictness dial: under `trust` the defaulted Decision closes the goal
+   through the existing done-gate path (merge-on-close proceeds, the accepted
+   gap is recorded as a follow-up on the close, the owner is notified once);
+   under `strict` the timeout parks the goal with the Problem still open and
+   the owner is notified that only an explicit *decide* can close it.
 
 ---
 
@@ -141,9 +145,10 @@ forms; assert admission.
 
 1. **Given** a `done_when` clause that requires a capability the sandbox
    cannot provide (a credential, an external service, a human confirming),
-   **When** the goal is created, **Then** creation is [NEEDS CLARIFICATION:
-   refused outright with the clause named, or admitted with the clause
-   rewritten as repository behaviour and the rewrite recorded as a Decision?]
+   **When** the goal is created, **Then** creation is refused; the refusal
+   names the clause and the capability it needs, and nothing is persisted.
+   The author rewrites the clause as observable repository behaviour and
+   resubmits. The contract is never changed on the author's behalf.
 2. **Given** a clause of the form "all tests pass" with no baseline, **When**
    the goal is created, **Then** the clause is rewritten as "no new failures
    relative to the default branch", the rewrite is recorded as a Decision,
@@ -230,23 +235,31 @@ verdict cites the Decision for that clause instead of re-evaluating it.
   default as a Decision with provenance *defaulted*, continue the goal, and
   notify the owner once. A defaulted Decision MUST be overridable by a later
   explicit one.
-- **FR-006**: [NEEDS CLARIFICATION — US2 scenario 4] `steer_goal` on a goal
-  with an open Problem is either refused with the Problem named, or accepted
-  as a direction change that leaves the Problem open; the spec must say which.
-- **FR-007**: [NEEDS CLARIFICATION — US2 scenario 5] A defaulted Decision
-  either may never close a goal (a close is always an explicit *decide*), or
-  may when the default is *accept and close*; the spec must say which.
+- **FR-006**: `steer_goal` on a goal with an open Problem MUST be refused;
+  the refusal MUST return the current Problem and name the two resolution
+  verbs, and MUST leave the goal's state unchanged. Steering is accepted
+  only when no Problem is open. (Ruled 2026-09-02, Q1: option A — the
+  principle is enforced structurally; there is no escape hatch into prose.)
+- **FR-007**: A defaulted Decision whose option is *accept and close* MUST
+  ride the goal's strictness dial: under `trust` it closes the goal only
+  through the existing done-gate ACHIEVE path (merge-on-close proceeds, the
+  accepted gap is recorded as a follow-up on the close, one owner notice);
+  under `strict` the timeout MUST park the goal with the Problem open and
+  notify that only an explicit *decide* can close it. (Ruled 2026-09-02,
+  Q2: option C — the same class as advise-and-ship vs hold, constitution V.)
 - **FR-008**: The `done_when` admission lint MUST run at goal creation and
   MUST catch, with a named reason each: (a) a clause requiring a capability
   the sandbox cannot provide; (b) an absolute repository-wide predicate with
   no baseline; (c) a clause containing an undecided design choice. A contract
   with none of these MUST be admitted unchanged.
-- **FR-009**: [NEEDS CLARIFICATION — US3 scenario 1] For class (a) the lint
-  either refuses creation naming the clause, or rewrites the clause as
-  repository behaviour and records the rewrite as a Decision; the spec must
-  say which. Class (b) MUST be rewritten to "no new failures relative to the
-  default branch" and recorded. Class (c) MUST raise a Problem to the author
-  before any dispatch.
+- **FR-009**: For class (a) the lint MUST refuse creation, naming the clause
+  and the capability it requires, persisting nothing; the contract is never
+  rewritten on the author's behalf. Class (b) MUST be rewritten to "no new
+  failures relative to the default branch" and recorded as an admission
+  Decision (the rewrite is unambiguous). Class (c) MUST raise a Problem to
+  the author before any dispatch (it is a choice, so it gets options).
+  (Ruled 2026-09-02, Q3: option A — the author stays the author; a guessed
+  rewrite would become a settled fact the gate then enforces.)
 - **FR-010**: Every Decision MUST ride the prior-increments feed-forward
   channel to the next brief as devclaw-controlled fact, bounded by the same
   budget, and MUST never be sourced from worker prose.
@@ -336,6 +349,30 @@ verdict cites the Decision for that clause instead of re-evaluating it.
   pre-dispatch only, disabled in production, and has no notion of clause,
   option, default, or timebox.
 
-## Clarifications
+## Clarifications (2026-09-02, walked with Denys one at a time)
 
-_To be walked with Denys one question at a time (`/speckit-clarify`)._
+- **Q1 — Prose steering while a Problem is open** → **A: refused.** `steer_goal`
+  on a goal with an open Problem is refused; the response carries the Problem
+  and the two verbs. A real direction change resolves the Problem first
+  (*decide → split* / *cancel*), then steers. Rejected: B (accept, Problem
+  stays open — the unlinked-strings failure in a new coat) and C (accept and
+  auto-close as superseded — a prose steer silently resolving a typed
+  question is exactly the shape ruled out). Encoded in US2 scenario 4, FR-006.
+- **Q2 — May a defaulted Decision close a goal?** → **C: rides the strictness
+  dial.** Under `trust` a defaulted *accept and close* closes through the
+  existing done-gate ACHIEVE path (merge-on-close, gap recorded as a follow-up,
+  one notice); under `strict` the timeout parks with the Problem open. Same
+  class as advise-and-ship vs hold (constitution V) — no new knob. Rejected:
+  A (never — a done-enough goal waits for a human, against the spec's goal)
+  and B (always — a wrong default merges a known gap with no guard at all).
+  Encoded in US2 scenario 5, FR-007.
+- **Q3 — A clause the sandbox can never satisfy: refuse or rewrite?** → **A:
+  refuse.** Creation fails naming the clause and the capability; nothing is
+  persisted; the author rewrites and resubmits. The author stays the author.
+  Rejected: B (rewrite and admit — the lint guesses what was meant and the
+  guess becomes a settled fact the gate enforces, the one thing US4 makes
+  hard to undo) and C (admit + hold with a defaulting Problem — B with a
+  countdown). The other two lint classes keep their mechanical treatment
+  because they are different in kind: "all tests pass" has an unambiguous
+  rewrite; an undecided design choice *is* a choice and gets options.
+  Encoded in US3 scenario 1, FR-009.
