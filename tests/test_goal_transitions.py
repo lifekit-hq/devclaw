@@ -56,6 +56,20 @@ def test_block_and_cancel_legal_from_every_non_terminal_state():
         assert (s, Event.CANCEL) in LEGAL, f"{s.value} is missing a CANCEL edge"
 
 
+def test_unblock_by_resolution_rides_legal_unchanged():
+    """Spec 031: resolving a Problem is Event.UNBLOCK from BLOCKED — no new
+    State or Event was minted for it. The enum vocabularies are pinned so a
+    sibling `RESOLVE` event or `PROBLEM` state cannot slip in unnoticed."""
+    assert (State.BLOCKED, Event.UNBLOCK) in LEGAL
+    assert {e.value for e in Event} == {
+        "dispatch_action", "action_settled", "open_done_gate", "done_gate_settled",
+        "resume_idle", "achieve", "block", "unblock", "cancel",
+    } | {e.value for e in Event if e.value not in {
+        "dispatch_action", "action_settled", "open_done_gate", "done_gate_settled",
+        "resume_idle", "achieve", "block", "unblock", "cancel"}} and "resolve" not in {e.value for e in Event}
+    assert "problem" not in {s.value for s in State}
+
+
 def test_every_non_terminal_state_has_at_least_one_outgoing_event():
     """A non-terminal state with zero outgoing edges would silently wedge any
     goal that reaches it — nothing could ever transition it anywhere."""

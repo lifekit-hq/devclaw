@@ -160,7 +160,17 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   a persisted per-goal heal budget + backoff); `needs_answer`/`bug`/`lost_ref`/
   `dispatch_cap` stay human-gated. `resume_goal` re-attempts the SAME contract
   without recording steering; `steer_goal` stays the direction-change verb
-  (2026-07-13 harden-loop tranche, #228–#238).
+  (2026-07-13 harden-loop tranche, #228–#238). **A human-gated block carries
+  a typed Problem** (spec 031, ruled 2026-09-02): what is wrong, the
+  `done_when` clause, why the loop cannot decide it, bounded options, a
+  default, a timebox — raised through ONE seam (`devclaw/goal/problems.py`)
+  in the same transaction as the block. Exactly two verbs resolve it,
+  `correct_implementation` and `decide`, each recording a Decision (a
+  devclaw-controlled fact, never an inbox line) and unblocking with the
+  same budget-restoring shape as a steer; a timed-out Problem takes its
+  default and informs (under `strict` a default that would close parks
+  instead). `steer_goal` is **refused** while a Problem is open — prose is
+  not the answer to a problem.
 
 Rule of thumb: **loud failure over silent degradation.**
 

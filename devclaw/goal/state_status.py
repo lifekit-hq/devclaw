@@ -103,12 +103,12 @@ class GoalStateStatusMixin:
                   goal_id, version, state, phase, lifecycle, blocked_on, blocked_kind,
                   heal_attempts, next_heal_at, "next",
                   last_plan_at, last_tick_at, actions_dispatched,
-                  donegate_rounds, donegate_progress, envcap_redispatches, slice_hold_count,
+                  donegate_rounds, donegate_progress, problem_id, envcap_redispatches, slice_hold_count,
                   pending_merge_pr, merge_heal_attempted,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, in_flight_ref_id, in_flight_kind,
                   in_flight_json, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -124,6 +124,7 @@ class GoalStateStatusMixin:
                   actions_dispatched    = excluded.actions_dispatched,
                   donegate_rounds       = excluded.donegate_rounds,
                   donegate_progress     = excluded.donegate_progress,
+                  problem_id            = excluded.problem_id,
                   envcap_redispatches   = excluded.envcap_redispatches,
                   slice_hold_count      = excluded.slice_hold_count,
                   pending_merge_pr      = excluded.pending_merge_pr,
@@ -153,6 +154,7 @@ class GoalStateStatusMixin:
                     status.actions_dispatched,
                     status.donegate_rounds,
                     status.donegate_progress,
+                    status.problem_id,
                     status.envcap_redispatches,
                     status.slice_hold_count,
                     status.pending_merge_pr,
@@ -331,6 +333,7 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         actions_dispatched=int(row["actions_dispatched"] or 0),
         donegate_rounds=int(row["donegate_rounds"] or 0),
         donegate_progress=int(row["donegate_progress"] or 0),
+        problem_id=str(row["problem_id"] or ""),
         slice_hold_count=int(row["slice_hold_count"] or 0),
         last_eval_verdict=row["last_eval_verdict"] or None,
         last_eval_at=row["last_eval_at"] or None,

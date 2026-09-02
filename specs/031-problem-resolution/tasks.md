@@ -31,7 +31,7 @@ tripwires), `docs/`, `specs/`. New modules are named in plan.md's source tree.
 
 **Purpose**: nothing to scaffold — the feature lands inside the existing package. One task pins the baseline so every later PR compares against it.
 
-- [ ] T001 Record the green baseline (suite count, ruff, mypy) at branch point `4dfa0b9` in specs/031-problem-resolution/tasks.md under Notes, and confirm `.specify/feature.json` points at specs/031-problem-resolution
+- [x] T001 Record the green baseline (suite count, ruff, mypy) at branch point `4dfa0b9` in specs/031-problem-resolution/tasks.md under Notes, and confirm `.specify/feature.json` points at specs/031-problem-resolution
 
 ---
 
@@ -41,13 +41,13 @@ tripwires), `docs/`, `specs/`. New modules are named in plan.md's source tree.
 
 **⚠️ CRITICAL**: Phase 3 tasks depend on all of Phase 2.
 
-- [ ] T002 [P] Add frozen dataclasses `ProblemOption`, `Problem`, `Decision` and `GoalStatus.problem_id: str = ""`; add `ClauseVerdict.resolved_by: str = ""` — in devclaw/goal/models.py (fields per data-model.md)
-- [ ] T003 [P] Add `CREATE TABLE IF NOT EXISTS goal_problems` and `goal_decisions` (columns + indexes per data-model.md) and the idempotent `ALTER TABLE goal_status ADD COLUMN problem_id TEXT NOT NULL DEFAULT ''` beside `donegate_progress` — in devclaw/goal/state.py
-- [ ] T004 Persist/read `problem_id` at the four `goal_status` sites (INSERT column list, VALUES placeholder, UPSERT SET, row → dataclass) — in devclaw/goal/state_status.py (depends on T002, T003)
-- [ ] T005 Create devclaw/goal/state_problems.py — row I/O: `insert_problem`, `close_problem(id, status, decision_id)`, `supersede_open_problems(goal_id)`, `current_problem(goal_id)`, `insert_decision`, `supersede_decisions(goal_id, clause, by_id)`, `current_decisions(goal_id)`; all take the open connection so callers run them inside `transaction()` (depends on T003)
-- [ ] T006 Expose store methods `raise_problem(...)`, `record_decision(...)`, `current_problem(goal_id)`, `decisions(goal_id)` on the content mixin, delegating to state_problems — in devclaw/goal/store/content.py (depends on T005); document that `raise_problem` supersedes any open Problem and `record_decision` closes the Problem and supersedes an earlier Decision on the same clause
-- [ ] T007 [P] Add `check_problems_tables` (`instance.problems.tables`) and `check_problem_status_pointer` (`instance.problems.status_pointer`: `goal_status.problem_id` present AND no row points at a non-`open` Problem) mirroring `check_goal_status_slice_hold_count`; register both in `INSTANCE_CHECKS` — in devclaw/doctor/checks_instance.py (depends on T003)
-- [ ] T008 [P] Seeded-fault pairs `test_problems_tables_absent_detected` / `_present_is_ok` (DROP TABLE goal_problems) and `test_problem_pointer_drift_detected` / `_healthy_is_ok` (point a row's `problem_id` at a `resolved` Problem) mirroring the slice_hold_count pair — in tests/test_doctor.py (depends on T007)
+- [x] T002 [P] Add frozen dataclasses `ProblemOption`, `Problem`, `Decision` and `GoalStatus.problem_id: str = ""`; add `ClauseVerdict.resolved_by: str = ""` — in devclaw/goal/models.py (fields per data-model.md)
+- [x] T003 [P] Add `CREATE TABLE IF NOT EXISTS goal_problems` and `goal_decisions` (columns + indexes per data-model.md) and the idempotent `ALTER TABLE goal_status ADD COLUMN problem_id TEXT NOT NULL DEFAULT ''` beside `donegate_progress` — in devclaw/goal/state.py
+- [x] T004 Persist/read `problem_id` at the four `goal_status` sites (INSERT column list, VALUES placeholder, UPSERT SET, row → dataclass) — in devclaw/goal/state_status.py (depends on T002, T003)
+- [x] T005 Create devclaw/goal/state_problems.py — row I/O: `insert_problem`, `close_problem(id, status, decision_id)`, `supersede_open_problems(goal_id)`, `current_problem(goal_id)`, `insert_decision`, `supersede_decisions(goal_id, clause, by_id)`, `current_decisions(goal_id)`; all take the open connection so callers run them inside `transaction()` (depends on T003)
+- [x] T006 Expose store methods `raise_problem(...)`, `record_decision(...)`, `current_problem(goal_id)`, `decisions(goal_id)` on the content mixin, delegating to state_problems — in devclaw/goal/store/content.py (depends on T005); document that `raise_problem` supersedes any open Problem and `record_decision` closes the Problem and supersedes an earlier Decision on the same clause
+- [x] T007 [P] Add `check_problems_tables` (`instance.problems.tables`) and `check_problem_status_pointer` (`instance.problems.status_pointer`: `goal_status.problem_id` present AND no row points at a non-`open` Problem) mirroring `check_goal_status_slice_hold_count`; register both in `INSTANCE_CHECKS` — in devclaw/doctor/checks_instance.py (depends on T003)
+- [x] T008 [P] Seeded-fault pairs `test_problems_tables_absent_detected` / `_present_is_ok` (DROP TABLE goal_problems) and `test_problem_pointer_drift_detected` / `_healthy_is_ok` (point a row's `problem_id` at a `resolved` Problem) mirroring the slice_hold_count pair — in tests/test_doctor.py (depends on T007)
 
 **Checkpoint**: schema + store seams exist; nothing raises a Problem yet; suite, ruff, mypy green; doctor pair green.
 
@@ -61,30 +61,30 @@ tripwires), `docs/`, `specs/`. New modules are named in plan.md's source tree.
 
 ### Tripwire tests for Phase 3 (extend existing class tests; verify each FAILS before its implementation task lands)
 
-- [ ] T009 [P] [US2] `test_blocked_goal_with_open_problem_costs_zero_cognition` — extend the idle-guard family: blocked goal with `problem_id` set, timebox not elapsed, tick → `FakeClaude.calls == 0`, no dispatch — in tests/test_goal_tick.py
-- [ ] T010 [P] [US2] `test_timebox_default_applies_without_cognition` — same family: timebox elapsed → Decision `provenance=defaulted`, goal idle, `FakeClaude.calls == 0`, exactly one notifier line containing "defaulted" — in tests/test_goal_tick.py
-- [ ] T011 [P] [US2] `test_resolve_problem_is_one_transaction_with_unblock` — inject a `TransitionConflict` on the UNBLOCK; assert no Decision row and the Problem still `open` — in tests/test_goal_transactional.py
-- [ ] T012 [P] [US2] `test_unblock_by_resolution_rides_legal_unchanged` — extend the LEGAL-table structural test: `Event.UNBLOCK` from `BLOCKED` is the resolution edge; no new `State`/`Event` symbols exist — in tests/test_goal_transitions.py
-- [ ] T013 [P] [US2] `test_defaulted_accept_and_close_never_emits_achieve` — extend `test_green_mechanical_verification_alone_never_closes_a_goal`'s family: a defaulted `accept_close` under `trust` lands `idle` (never `done`); under `strict` the goal stays `blocked`, no Decision row, one notice — in tests/test_goal_tick.py
-- [ ] T014 [P] [US2] `test_steer_goal_is_refused_while_a_problem_is_open` — `steer_goal` raises, message names the Problem id and both verbs, `goal_steering` has no new row, status version unchanged — in tests/test_goal_tick.py
-- [ ] T015 [P] [US1] `test_worker_honest_block_raises_a_problem_without_burning_the_cap` — a failed settle whose detail carries the worker-blocked marker → `blocked`, Problem `raised_by=worker_block` with the fixed option set, `actions_dispatched` unchanged — in tests/test_goal_tick.py
+- [x] T009 [P] [US2] `test_blocked_goal_with_open_problem_costs_zero_cognition` — extend the idle-guard family: blocked goal with `problem_id` set, timebox not elapsed, tick → `FakeClaude.calls == 0`, no dispatch — in tests/test_goal_tick.py
+- [x] T010 [P] [US2] `test_timebox_default_applies_without_cognition` — same family: timebox elapsed → Decision `provenance=defaulted`, goal idle, `FakeClaude.calls == 0`, exactly one notifier line containing "defaulted" — in tests/test_goal_tick.py
+- [x] T011 [P] [US2] `test_resolve_problem_is_one_transaction_with_unblock` — inject a `TransitionConflict` on the UNBLOCK; assert no Decision row and the Problem still `open` — in tests/test_goal_transactional.py
+- [x] T012 [P] [US2] `test_unblock_by_resolution_rides_legal_unchanged` — extend the LEGAL-table structural test: `Event.UNBLOCK` from `BLOCKED` is the resolution edge; no new `State`/`Event` symbols exist — in tests/test_goal_transitions.py
+- [x] T013 [P] [US2] `test_defaulted_accept_and_close_never_emits_achieve` — extend `test_green_mechanical_verification_alone_never_closes_a_goal`'s family: a defaulted `accept_close` under `trust` lands `idle` (never `done`); under `strict` the goal stays `blocked`, no Decision row, one notice — in tests/test_goal_tick.py
+- [x] T014 [P] [US2] `test_steer_goal_is_refused_while_a_problem_is_open` — `steer_goal` raises, message names the Problem id and both verbs, `goal_steering` has no new row, status version unchanged — in tests/test_goal_tick.py
+- [x] T015 [P] [US1] `test_worker_honest_block_raises_a_problem_without_burning_the_cap` — a failed settle whose detail carries the worker-blocked marker → `blocked`, Problem `raised_by=worker_block` with the fixed option set, `actions_dispatched` unchanged — in tests/test_goal_tick.py
 
 ### Implementation for Phase 3
 
-- [ ] T016 [US1] Create devclaw/goal/problems.py — the ONE raise seam `raise_problem(store, goal_id, *, kind, raised_by, what, clause, why, options, default_key, timebox_s=DEFAULT_TIMEBOX_S)`; option-set builders `options_from_corrections(corrections)` (c1…cN + fixed tail `accept_close`, `split`), `CHURN_OPTIONS`, `WORKER_BLOCK_OPTIONS`; `summary_line(problem)` for `blocked_on`; `DEFAULT_TIMEBOX_S = 12*3600` read via devclaw/config.py doorway `DEVCLAW_PROBLEM_TIMEBOX_S` (document in docs/reference/env-vars.md) (depends on T006)
-- [ ] T017 [US1] Raise a Problem in the done-gate `needs_human` branch (kind `needs_answer`, `raised_by=done_gate`, options from corrections, default = first correction else `accept_close`) and in the churn park (kind `donegate_churn`, `raised_by=churn_park`, `CHURN_OPTIONS`, default `correct`) — inside the existing BLOCK transitions, setting `problem_id` and `blocked_on=summary_line(...)` — in devclaw/goal/tick_donegate.py (depends on T016)
-- [ ] T018 [US1] Raise a Problem for a worker honest-block at settle: when a failed poll's detail carries the worker-blocked marker, BLOCK immediately (kind `needs_answer`, `raised_by=worker_block`, `WORKER_BLOCK_OPTIONS`, default `correct`) instead of counting toward the cap — in devclaw/goal/tick_settle.py (depends on T016); keep the existing `mechanical_setup` routing above it untouched
-- [ ] T019 [US1] Raise a Problem at the dispatch-time `needs_answer` park (the re-slice park) with the fixed churn set and `raised_by=dispatch_park` — in devclaw/goal/tick.py (depends on T016)
-- [ ] T020 [US2] Add `GoalService.resolve_problem(goal_id, problem_id, *, verb, option=None, text=None, made_by="denys")`: validate (current open Problem, verb/args per contracts/mcp-and-http.md), then in ONE `transaction()`: `record_decision(provenance=owner)` + `close_problem(resolved)` + `Event.UNBLOCK` with `steer_goal`'s exact reset shape plus `problem_id=""`; `poke()`; return the contract response — in devclaw/goal/service.py (depends on T006)
-- [ ] T021 [US2] Refuse `steer_goal` when `status.problem_id` is set: raise `ValueError` carrying the rendered Problem + "resolve it with correct_implementation or decide"; write nothing — in devclaw/goal/service.py (depends on T020)
-- [ ] T022 [US2] Timebox default on the tick's blocked branch, BEFORE the `should_plan` gate: if `problem_id` set and `now >= timebox_at` → if default option `closes_goal` and strictness is `strict`: notify once ("only an explicit decide can close it") and stay blocked; else `record_decision(provenance=defaulted, made_by=tick)` + close Problem `defaulted` + UNBLOCK, one ℹ️ notice — in devclaw/goal/tick.py (depends on T016, T006); no cognition on this path
-- [ ] T023 [US2] Make `cancel_goal` mark the open Problem `superseded` in its transaction — in devclaw/goal/service.py (depends on T006)
-- [ ] T024 [P] [US2] Add MCP tools `correct_implementation(goal_id, problem_id, correction)` and `decide(goal_id, problem_id, option=None, text=None)`; convert service `ValueError`s to `ToolError`; make `steer_goal` surface the refusal as `ToolError` — in devclaw/server/tools/goals.py (depends on T020, T021)
-- [ ] T025 [P] [US2] Add `POST /goals/{goal_id}/resolve` (body per contract; 400 codes `invalid_verb|stale_problem|bad_option|missing_field` with the current Problem); make `POST /goals/{id}/steer` return 409 `problem_open` when refused — in devclaw/server/routes/goals.py (depends on T020, T021)
-- [ ] T026 [P] [US1] Carry `problem` (full object) and `decisions` (current) in `get_goal` / `list_goals` (service projections) and in `goal_json` — in devclaw/goal/service.py and devclaw/server/routes/goals.py (depends on T006)
-- [ ] T027 [US1] Owner-ping wording per contracts/mcp-and-http.md (clause, options with default marked, timebox, the two verbs; never `steer_goal`) at the three raise sites and the defaulted notice — in devclaw/goal/tick_donegate.py, devclaw/goal/tick_settle.py, devclaw/goal/tick.py (depends on T017–T019, T022)
-- [ ] T028 [US1] Console: render the Problem (fields + options + default + countdown) and the current Decisions on the goal page; wire the two verbs to `/resolve`; show the 409 on steer — in console/ (the goal view components) (depends on T025, T026)
-- [ ] T029 [US2] Add a devclaw/goal/problems.py docstring + module comment in devclaw/goal/tick.py naming the zero-token property of the timebox check; verify `FakeClaude.calls == 0` family is green (depends on T022)
+- [x] T016 [US1] Create devclaw/goal/problems.py — the ONE raise seam `raise_problem(store, goal_id, *, kind, raised_by, what, clause, why, options, default_key, timebox_s=DEFAULT_TIMEBOX_S)`; option-set builders `options_from_corrections(corrections)` (c1…cN + fixed tail `accept_close`, `split`), `CHURN_OPTIONS`, `WORKER_BLOCK_OPTIONS`; `summary_line(problem)` for `blocked_on`; `DEFAULT_TIMEBOX_S = 12*3600` read via devclaw/config.py doorway `DEVCLAW_PROBLEM_TIMEBOX_S` (document in docs/reference/env-vars.md) (depends on T006)
+- [x] T017 [US1] Raise a Problem in the done-gate `needs_human` branch (kind `needs_answer`, `raised_by=done_gate`, options from corrections, default = first correction else `accept_close`) and in the churn park (kind `donegate_churn`, `raised_by=churn_park`, `CHURN_OPTIONS`, default `correct`) — inside the existing BLOCK transitions, setting `problem_id` and `blocked_on=summary_line(...)` — in devclaw/goal/tick_donegate.py (depends on T016)
+- [x] T018 [US1] Raise a Problem for a worker honest-block at settle: when a failed poll's detail carries the worker-blocked marker, BLOCK immediately (kind `needs_answer`, `raised_by=worker_block`, `WORKER_BLOCK_OPTIONS`, default `correct`) instead of counting toward the cap — in devclaw/goal/tick_settle.py (depends on T016); keep the existing `mechanical_setup` routing above it untouched
+- [x] T019 [US1] Raise a Problem at the dispatch-time `needs_answer` park (the re-slice park) with the fixed churn set and `raised_by=dispatch_park` — in devclaw/goal/tick.py (depends on T016)
+- [x] T020 [US2] Add `GoalService.resolve_problem(goal_id, problem_id, *, verb, option=None, text=None, made_by="denys")`: validate (current open Problem, verb/args per contracts/mcp-and-http.md), then in ONE `transaction()`: `record_decision(provenance=owner)` + `close_problem(resolved)` + `Event.UNBLOCK` with `steer_goal`'s exact reset shape plus `problem_id=""`; `poke()`; return the contract response — in devclaw/goal/service.py (depends on T006)
+- [x] T021 [US2] Refuse `steer_goal` when `status.problem_id` is set: raise `ValueError` carrying the rendered Problem + "resolve it with correct_implementation or decide"; write nothing — in devclaw/goal/service.py (depends on T020)
+- [x] T022 [US2] Timebox default on the tick's blocked branch, BEFORE the `should_plan` gate: if `problem_id` set and `now >= timebox_at` → if default option `closes_goal` and strictness is `strict`: notify once ("only an explicit decide can close it") and stay blocked; else `record_decision(provenance=defaulted, made_by=tick)` + close Problem `defaulted` + UNBLOCK, one ℹ️ notice — in devclaw/goal/tick.py (depends on T016, T006); no cognition on this path
+- [x] T023 [US2] Make `cancel_goal` mark the open Problem `superseded` in its transaction — in devclaw/goal/service.py (depends on T006)
+- [x] T024 [P] [US2] Add MCP tools `correct_implementation(goal_id, problem_id, correction)` and `decide(goal_id, problem_id, option=None, text=None)`; convert service `ValueError`s to `ToolError`; make `steer_goal` surface the refusal as `ToolError` — in devclaw/server/tools/goals.py (depends on T020, T021)
+- [x] T025 [P] [US2] Add `POST /goals/{goal_id}/resolve` (body per contract; 400 codes `invalid_verb|stale_problem|bad_option|missing_field` with the current Problem); make `POST /goals/{id}/steer` return 409 `problem_open` when refused — in devclaw/server/routes/goals.py (depends on T020, T021)
+- [x] T026 [P] [US1] Carry `problem` (full object) and `decisions` (current) in `get_goal` / `list_goals` (service projections) and in `goal_json` — in devclaw/goal/service.py and devclaw/server/routes/goals.py (depends on T006)
+- [x] T027 [US1] Owner-ping wording per contracts/mcp-and-http.md (clause, options with default marked, timebox, the two verbs; never `steer_goal`) at the three raise sites and the defaulted notice — in devclaw/goal/tick_donegate.py, devclaw/goal/tick_settle.py, devclaw/goal/tick.py (depends on T017–T019, T022)
+- [x] T028 [US1] Console: render the Problem (fields + options + default + countdown) and the current Decisions on the goal page; wire the two verbs to `/resolve`; show the 409 on steer — in console/ (the goal view components) (depends on T025, T026)
+- [x] T029 [US2] Add a devclaw/goal/problems.py docstring + module comment in devclaw/goal/tick.py naming the zero-token property of the timebox check; verify `FakeClaude.calls == 0` family is green (depends on T022)
 
 **Checkpoint (end of P1 PR)**: T009–T015 green (each verified red-before-green), full suite + ruff + mypy green, doctor pair green; live walkthrough steps 3–5, 7, 8 of quickstart.md pass on the deployed instance.
 
@@ -141,13 +141,13 @@ tripwires), `docs/`, `specs/`. New modules are named in plan.md's source tree.
 
 **Purpose**: docs honesty and the metric — each in the PR that makes the doc stale.
 
-- [ ] T045 [P] CLAUDE.md: replace the "steer_goal … answer what a goal is blocked on" wording with the two verbs; add the Problem/Decision invariant line under "Mechanical blocks auto-heal; recovery is a verb" (P1 PR)
-- [ ] T046 [P] docs/architecture.md: the human-gated block section describes a typed Problem and the two resolution verbs; the churn-brake paragraph gains "…raises a Problem" (P1 PR); docs/INDEX.md currency tag
-- [ ] T047 [P] docs/flows/delivery.md and docs/flows/task-execution.md: the settle/park hops name `raise_problem` and the resolve route (P1 PR); docs/INDEX.md currency tags
-- [ ] T048 [P] docs/reference/env-vars.md: `DEVCLAW_PROBLEM_TIMEBOX_S` row (P1 PR) — the env-doc parity guard enforces it
-- [ ] T049 [P] Add `evals/ping_profile.py` — pings per goal-week and the provenance split over `goal_problems`/`goal_decisions` (SC-001/002), documented in evals/README.md (P1 PR; extend after P2a/P2b)
+- [x] T045 [P] CLAUDE.md: replace the "steer_goal … answer what a goal is blocked on" wording with the two verbs; add the Problem/Decision invariant line under "Mechanical blocks auto-heal; recovery is a verb" (P1 PR)
+- [x] T046 [P] docs/architecture.md: the human-gated block section describes a typed Problem and the two resolution verbs; the churn-brake paragraph gains "…raises a Problem" (P1 PR); docs/INDEX.md currency tag
+- [x] T047 [P] docs/flows/delivery.md and docs/flows/task-execution.md: the settle/park hops name `raise_problem` and the resolve route (P1 PR); docs/INDEX.md currency tags
+- [x] T048 [P] docs/reference/env-vars.md: `DEVCLAW_PROBLEM_TIMEBOX_S` row (P1 PR) — the env-doc parity guard enforces it
+- [x] T049 [P] Add `evals/ping_profile.py` — pings per goal-week and the provenance split over `goal_problems`/`goal_decisions` (SC-001/002), documented in evals/README.md (P1 PR; extend after P2a/P2b)
 - [ ] T050 Run the full quickstart.md live walkthrough against the deployed instance after each increment's deploy; record outcomes in the PR body (each PR)
-- [ ] T051 Update `.specify/memory/constitution.md`? — NO: no invariant changes; note in the P1 PR body that the constitution check passed unchanged
+- [x] T051 Update `.specify/memory/constitution.md`? — NO: no invariant changes; note in the P1 PR body that the constitution check passed unchanged
 
 ---
 
@@ -220,6 +220,10 @@ Task: "get_goal/list_goals/goal_json projections"
 ## Notes
 
 - Baseline at branch point `4dfa0b9`: **1296 passed, 5 skipped**; ruff clean; mypy clean (140 files) — recorded per T001
+- P1 PR (2026-09-02): **1308 passed, 5 skipped** (+12: 7 tripwires incl. 2 parametrized, 4 doctor seeded-fault, 1 LEGAL guard); ruff clean; mypy clean (142 files)
+- T047: `docs/flows/task-execution.md` traces one task and never described the park — nothing there became stale, so it is untouched; `delivery.md` carries the flow note
+- T051: no constitution change — the check passed pre- and post-design unchanged
+- Console (T028) is wired but not type-checked locally (no `console/node_modules`); the deploy image builds it, so a TS error fails the deploy loudly rather than shipping
 - Never mint a sibling test: every tripwire above names the class test it extends
 - The single-ACHIEVE-emitter structural guard pins the ACHIEVE line's literal text; if T022/T035 change nothing on that line, it stays untouched — verify before assuming
 - `.specify/feature.json` → `specs/031-problem-resolution` (worktree `spec/031-problem-resolution`)

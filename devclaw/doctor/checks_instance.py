@@ -625,6 +625,63 @@ def check_goal_status_donegate_progress(ctx: "InstanceContext") -> list[Finding]
     return [Finding(cid, Verdict.OK, "goal_status.donegate_progress column present")]
 
 
+def check_problems_tables(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 031 (per spec-016 FR-014): typed Problems and Decisions live in
+    ``goal_problems`` / ``goal_decisions``. A DB predating the migration has
+    neither; every human-gated block would then raise into a missing table
+    and fail the BLOCK transaction loud — this names the cause first."""
+    cid = "instance.problems.tables"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "goal_status" not in tables:
+        return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
+    missing = {"goal_problems", "goal_decisions"} - tables
+    if missing:
+        return [Finding(
+            cid, Verdict.FAIL,
+            f"table(s) absent: {', '.join(sorted(missing))} — the DB predates spec 031; "
+            "a human-gated block cannot record its Problem",
+            remedy="restart devclaw (GoalState bootstraps the tables at construction)",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_problems and goal_decisions present")]
+
+
+def check_problem_status_pointer(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 031: ``goal_status.problem_id`` is the pointer to the goal's one
+    OPEN Problem. Two invariants: the column exists (else every block reads
+    as problem-less and the timebox never fires), and no row points at a
+    Problem that is not ``open`` (a pointer/row drift the stubbed suite cannot
+    see on a live DB)."""
+    cid = "instance.problems.status_pointer"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
+        if "problem_id" not in cols:
+            return [Finding(
+                cid, Verdict.FAIL,
+                "goal_status.problem_id column absent — the DB predates spec 031; blocks "
+                "carry no Problem and the timebox default never fires",
+                remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
+            )]
+        drift = 0
+        if "goal_problems" in tables:
+            drift = db.execute(
+                "SELECT COUNT(*) AS n FROM goal_status s "
+                "LEFT JOIN goal_problems p ON p.id = s.problem_id "
+                "WHERE s.problem_id != '' AND (p.id IS NULL OR p.status != 'open')"
+            ).fetchone()["n"]
+    if drift:
+        return [Finding(
+            cid, Verdict.FAIL,
+            f"{drift} goal_status row(s) point at a Problem that is missing or not open",
+            remedy="resume_goal or steer_goal on the affected goal re-derives the pointer; "
+                   "if it persists, inspect goal_problems for the goal",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_status.problem_id present; every pointer targets an open Problem")]
+
+
 def check_merge_on_close_columns(ctx: "InstanceContext") -> list[Finding]:
     """Spec 025 US1 (per spec-016 FR-014: a store-shape change ships its
     doctor check): merge-on-close persists ``pending_merge_pr`` /
@@ -702,6 +759,8 @@ INSTANCE_CHECKS: tuple = (
     check_goal_issue_identity_table,
     check_goal_status_slice_hold_count,
     check_goal_status_donegate_progress,
+    check_problems_tables,
+    check_problem_status_pointer,
     check_merge_on_close_columns,
     check_suppressed_pings_table,
 )

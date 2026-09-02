@@ -255,6 +255,13 @@ class GoalStatus:
     #: devclaw-030 parked at 14/15 and needed a human to say "keep going").
     #: Reset with ``donegate_rounds`` on close and on a human vouch.
     donegate_progress: int = 0
+    #: the goal's single OPEN Problem (spec 031), or "" when none. Set in the
+    #: same transition that BLOCKs for a human-gated reason; cleared in the
+    #: same transition that UNBLOCKs. Read by the tick's blocked branch (the
+    #: timebox default — a timestamp compare, zero cognition), by steer_goal
+    #: (refused while a Problem is open) and by the read surfaces. The
+    #: Problem itself lives in goal_problems; this is the pointer.
+    problem_id: str = ""
     #: adapted re-dispatches spent on the sandbox-OOM environment-cap class
     #: (spec 020 FR-002a). The class is deterministic per environment, so the
     #: goal earns exactly ONE re-dispatch whose brief names the cap and
@@ -353,6 +360,77 @@ class ClauseVerdict:
     #: rejected by the evaluator prompt; a non-empty string here is the evidence
     #: contract.
     evidence: str = ""
+    #: spec 031: the ``goal_decisions.id`` that settled this clause, when the
+    #: done-gate graded it ``resolved_by_decision`` (an owner's recorded
+    #: ruling, cited as the evidence, never re-litigated). "" otherwise.
+    resolved_by: str = ""
+
+
+@dataclass(frozen=True)
+class ProblemOption:
+    """One bounded resolution a Problem offers (spec 031)."""
+
+    key: str
+    label: str
+    consequence: str = ""
+    #: true only for the option that would close the goal — drives the
+    #: strictness-dial rule for a DEFAULTED decision (Q2 → C)
+    closes_goal: bool = False
+
+
+@dataclass(frozen=True)
+class Problem:
+    """What a human-gated block says, typed (spec 031 US1).
+
+    Raised only by ``goal.problems.raise_problem`` inside the caller's BLOCK
+    transaction; exactly one is ``open`` per goal (``GoalStatus.problem_id``).
+    """
+
+    id: str
+    goal_id: str
+    #: the human-gated blocked_kind it accompanies
+    kind: str
+    #: done_gate | churn_park | worker_block | dispatch_park | admission_lint
+    raised_by: str
+    what: str
+    #: the done_when clause concerned; "" = contract-level
+    clause: str
+    why: str
+    options: tuple[ProblemOption, ...]
+    default_key: str
+    timebox_at: int
+    #: open | resolved | defaulted | superseded
+    status: str = "open"
+    raised_at: int = 0
+    closed_at: Optional[int] = None
+    closed_by_decision: str = ""
+
+    @property
+    def default(self) -> ProblemOption:
+        for o in self.options:
+            if o.key == self.default_key:
+                return o
+        return self.options[0]
+
+
+@dataclass(frozen=True)
+class Decision:
+    """The recorded answer to a Problem — devclaw-controlled, fed forward,
+    supersedable (spec 031 US2/US4)."""
+
+    id: str
+    goal_id: str
+    problem_id: str
+    clause: str
+    #: correct_implementation | decide
+    verb: str
+    option_key: str = ""
+    text: str = ""
+    #: owner | defaulted | admission
+    provenance: str = "owner"
+    made_by: str = ""
+    made_at: int = 0
+    superseded_by: str = ""
 
 
 @dataclass(frozen=True)

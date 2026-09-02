@@ -204,6 +204,10 @@ export interface GoalDetail {
    *  the block is open-ended or mechanical — the banner falls back to Answer/
    *  Resume/custom-steer. `recommended` is the loop's suggestion, not a decision. */
   blockOptions: { options?: BlockOption[]; recommended?: string };
+  /** spec 031: the typed Problem a human-gated block carries (null when none). */
+  problem: GoalProblem | null;
+  /** spec 031: the current (non-superseded) Decisions recorded on the goal. */
+  decisions: GoalDecision[];
   usage: GoalUsage | null;
   projectId?: string;
   /** Every task the goal heartbeat dispatched (parent_goal_id = this goal). */
@@ -680,6 +684,57 @@ export async function setGoalSchedule(
       /* keep status-code message */
     }
     throw new Error(msg);
+  }
+  return r.json();
+}
+
+/** spec 031 — the typed Problem a human-gated block carries. */
+export interface GoalProblemOption {
+  key: string;
+  label: string;
+  consequence: string;
+  closes_goal: boolean;
+}
+export interface GoalProblem {
+  id: string;
+  kind: string;
+  raised_by: string;
+  what: string;
+  clause: string;
+  why: string;
+  options: GoalProblemOption[];
+  default: string;
+  timebox_at: number;
+  raised_at: number;
+  status: string;
+}
+export interface GoalDecision {
+  id: string;
+  clause: string;
+  verb: string;
+  option: string | null;
+  text: string | null;
+  provenance: string;
+  made_by: string;
+  made_at: number;
+}
+
+/** spec 031 — one of exactly two typed resolutions of an open Problem. */
+export async function resolveGoal(
+  id: string,
+  body:
+    | { verb: "decide"; problem_id: string; option?: string; text?: string }
+    | { verb: "correct_implementation"; problem_id: string; correction: string },
+): Promise<{ resolved: boolean; decision_id: string }> {
+  const r = await fetch(`/goals/${encodeURIComponent(id)}/resolve${tokenQS()}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (r.status === 404) throw new Error(`goal not found: ${id}`);
+  if (!r.ok) {
+    const err = await r.text();
+    throw new Error(`resolve ${id}: ${r.status} ${err}`);
   }
   return r.json();
 }
