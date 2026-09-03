@@ -343,6 +343,42 @@ def test_scaffold_drift_detected_against_packaged_source(env, tmp_path):
     assert f.verdict is Verdict.WARN and tmpl.name in f.evidence
 
 
+def test_tracked_feature_json_is_flagged_as_merge_conflict_fuel(env, tmp_path):
+    """Seeded fault (merge-on-close wedge class, 2026-09-02): a repo that
+    tracks ``.specify/feature.json`` puts the per-checkout speckit pointer in
+    every goal PR — every worker run rewrites it — so any two goal branches
+    landing in sequence conflict on it. Doctor must WARN naming the file and
+    the untrack remedy; the scaffold-gitignored (untracked) pointer is OK."""
+    import subprocess
+
+    from devclaw.speckit_setup import scaffold_specify
+
+    ws = tmp_path / "ws-fj"
+    register_tmp_project(env["registry"], str(ws))
+    scaffold_specify(str(ws))
+    pointer = ws / ".specify" / "feature.json"
+    pointer.write_text('{"feature_directory": "specs/001-x"}')
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(ws), "-c", "user.email=t@t", "-c", "user.name=t",
+                        *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    # untracked (the scaffold's .specify/.gitignore covers it) ⇒ ok
+    (ok,) = _findings(_run(env), "project.scaffold.tracked_state")
+    assert ok.verdict is Verdict.OK
+    # forced past the ignore and committed — the finance-sentry shape ⇒ warn
+    git("add", "-f", ".specify/feature.json")
+    git("commit", "-q", "-m", "track the pointer")
+    (f,) = _findings(_run(env), "project.scaffold.tracked_state")
+    assert f.verdict is Verdict.WARN and "feature.json" in f.evidence
+    assert "git rm --cached" in f.remedy
+    # the remedy applied ⇒ ok again
+    git("rm", "-q", "--cached", ".specify/feature.json")
+    (ok2,) = _findings(_run(env), "project.scaffold.tracked_state")
+    assert ok2.verdict is Verdict.OK
+
+
 # ---- spec 030 FR-005a: undeclared capability advisory ---------------------
 
 

@@ -180,6 +180,45 @@ def check_scaffold_drift(ctx: "InstanceContext", project: "Project") -> list[Fin
                     project_id=pid)]
 
 
+def check_tracked_checkout_state(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """Per-checkout speckit state tracked by git. The scaffold gitignores
+    ``.specify/feature.json`` because every worker run rewrites it (speckit
+    re-points it at the current feature); a repo that tracks it anyway puts
+    the pointer in EVERY goal PR, so any two goal branches landing in sequence
+    conflict on it — the merge-on-close wedge class of 2026-09-02 (three
+    finance-sentry goal PRs CONFLICTING at once). Mechanical: one
+    ``git ls-files`` read, zero cognition."""
+    cid = "project.scaffold.tracked_state"
+    pid = project.id
+    ws = Path(project.workspace_dir or "")
+    if not (ws / ".specify").is_dir():
+        return [Finding(cid, Verdict.OK, "no .specify/ scaffold (not onboarded yet)",
+                        project_id=pid)]
+    if not (ws / ".git").exists():
+        return [Finding(cid, Verdict.UNKNOWN, "workspace is not a git checkout",
+                        project_id=pid)]
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(ws), "ls-files", "--error-unmatch", ".specify/feature.json"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return [Finding(cid, Verdict.UNKNOWN, f"git ls-files failed: {exc}", project_id=pid)]
+    if proc.returncode == 0:
+        return [Finding(
+            cid, Verdict.WARN,
+            ".specify/feature.json is tracked by git — every worker run rewrites "
+            "this per-checkout pointer, so it lands in every goal PR and any two "
+            "goal branches landing in sequence conflict on it (merge-on-close wedge)",
+            remedy="on the default branch: add the scaffold's .specify/.gitignore "
+                   "and `git rm --cached .specify/feature.json`",
+            project_id=pid,
+        )]
+    return [Finding(cid, Verdict.OK, ".specify/feature.json is not tracked (scaffold-gitignored)",
+                    project_id=pid)]
+
+
 def check_issue_refs_shape(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     """Referenced-goal records parse (spec 019 US1): every goal on this
     project whose goal.yaml carries ``issue_refs`` must load, and the refs
@@ -356,6 +395,7 @@ PROJECT_CHECKS: tuple = (
     check_manifest,
     check_marker_integrity,
     check_scaffold_drift,
+    check_tracked_checkout_state,
     check_issue_refs_shape,
     check_backlog_ready_contract,
     check_capability_declaration,
