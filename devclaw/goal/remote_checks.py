@@ -47,13 +47,13 @@ inject a fake — the same seam shape as ``merge.py``.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from .. import config as _config
+from . import mergeability as _mergeability
 
 #: takes (repo_url, branch), returns the combined remote-check verdict.
 RemoteChecker = Callable[[str, str], Awaitable["RemoteChecksResult"]]
@@ -156,15 +156,10 @@ def combine_states(
 
 
 async def _gh(*args: str) -> tuple[int, str]:
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "gh", *args,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )
-        out, _ = await proc.communicate()
-    except Exception as exc:  # noqa: BLE001 — the caller maps this to "unknown"
-        return 1, f"{exc.__class__.__name__}: {exc}"
-    return proc.returncode or 0, out.decode(errors="replace")
+    """``gh`` under the shared wall-clock bound; a spawn failure or a timeout
+    reads as ``rc != 0`` so the caller maps it to ``unknown``."""
+    rc, out = await _mergeability.run_bounded("gh", *args)
+    return (rc if rc != 0 else 0), out
 
 
 def _parse_json_list(rc: int, out: str) -> Optional[list[dict]]:

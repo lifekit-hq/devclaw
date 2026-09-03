@@ -43,20 +43,50 @@ from typing import Awaitable, Callable, Optional
 MergeabilityProbe = Callable[[str], Awaitable[Optional[bool]]]
 
 
-async def _run_gh(*argv: str) -> tuple[int, str]:
-    """Run a subprocess, returning ``(returncode, combined stdout+stderr)``.
-    Best-effort: a spawn failure returns ``(-1, "<Exc>: msg")`` and never raises
-    into the tick."""
+#: Wall-clock bound on every host-side ``gh`` read that runs inside the tick.
+#: None of these helpers had a timeout before spec 032: a hung ``gh`` (GitHub
+#: outage, a stuck auth prompt) blocked the tick loop's event loop for every
+#: goal. A timeout is reported like a spawn failure — ``(-1, msg)`` — so each
+#: caller's "say nothing / unknown" posture applies unchanged.
+GH_TIMEOUT_S = 20.0
+
+
+async def run_bounded(
+    *argv: str, cwd: "str | None" = None, timeout_s: "float | None" = None
+) -> tuple[int, str]:
+    """Run a subprocess under a wall-clock bound, returning
+    ``(returncode, combined stdout+stderr)``. Best-effort in exactly one
+    direction: a spawn failure OR a timeout returns ``(-1, "<reason>")`` and
+    never raises into the tick. On timeout the child is killed so nothing
+    lingers past the bound."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            *argv, cwd=cwd,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )
-        out, _ = await proc.communicate()
+    except Exception as exc:  # noqa: BLE001 — best-effort; never break the tick
+        return -1, f"{exc.__class__.__name__}: {exc}"
+    bound = GH_TIMEOUT_S if timeout_s is None else timeout_s
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=bound)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return -1, f"timeout after {bound:g}s: {' '.join(argv[:3])}"
     except Exception as exc:  # noqa: BLE001 — best-effort; never break the tick
         return -1, f"{exc.__class__.__name__}: {exc}"
     rc = proc.returncode
     assert rc is not None  # communicate() returned, so the process exited
     return rc, out.decode(errors="replace").strip()
+
+
+async def _run_gh(*argv: str) -> tuple[int, str]:
+    """Run a subprocess, returning ``(returncode, combined stdout+stderr)``.
+    Best-effort: a spawn failure or a timeout returns ``(-1, msg)`` and never
+    raises into the tick (see :func:`run_bounded`)."""
+    return await run_bounded(*argv)
 
 
 async def pr_conflicting(pr_url: str) -> Optional[bool]:
