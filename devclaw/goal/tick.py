@@ -920,8 +920,9 @@ async def _handle_long_lived_advance(
                 await _notify(ctx.notifier, NotifyLevel.OWNER,
                               f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
                 return Outcome.BLOCKED
-            if base.donegate_rounds == 0:
-                # First pass: all issues closed, no prior done-gate refusal.
+            if base.donegate_rounds == 0 and not base.merge_heal_attempted:
+                # First pass: all issues closed, no prior done-gate refusal,
+                # no merge-conflict resolution increment owed.
                 # Out-of-band work may have fully satisfied the contract —
                 # propose done and let the grounded gate decide.
                 # If the gate refuses (donegate_rounds becomes > 0), the next
@@ -949,12 +950,27 @@ async def _handle_long_lived_advance(
             # Dispatch a worker to complete the remaining contract; the closed
             # issues tell it not to re-open or re-work them. The issue closure
             # is an input to the evaluation, not the verdict (spec 019 US2).
-            store.append_log(
-                goal_id,
-                f"all referenced issues are closed but done-gate previously "
-                f"refused ({base.donegate_rounds} round(s)) — dispatching "
-                "worker to complete the remaining contract",
-            )
+            if base.merge_heal_attempted:
+                # spec 025 FR-017: the conflict heal returned the goal to idle
+                # with the round counter reset, which is exactly the state the
+                # propose-done shortcut above keys on — so it skipped the owed
+                # resolution increment and re-ran straight into the same
+                # CONFLICT, parking the goal with a heal budget spent but never
+                # used. The increment is merge work, not scope work: it
+                # dispatches regardless of what the referenced issues say.
+                store.append_log(
+                    goal_id,
+                    "all referenced issues are closed but the cumulative PR "
+                    "conflicts with its base — dispatching the owed "
+                    "merge-conflict resolution increment",
+                )
+            else:
+                store.append_log(
+                    goal_id,
+                    f"all referenced issues are closed but done-gate previously "
+                    f"refused ({base.donegate_rounds} round(s)) — dispatching "
+                    "worker to complete the remaining contract",
+                )
             issue_context = _issue_ref.render_issue_context([], snaps)
         else:
             issue_context = _issue_ref.render_issue_context(
