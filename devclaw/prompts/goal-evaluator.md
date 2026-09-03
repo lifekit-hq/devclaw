@@ -29,6 +29,10 @@ wrong-repo `stalled`/`needs_human` falsely blocks the goal.
 **1. Decompose done_when into atomic clauses.** A numbered list of
 independent requirements joined by AND — *"...with X, including Y, and Z"*
 is three clauses. An "OR" inside a clause means "at least one must hold".
+A clause that has a current ruling in the `Decisions` block is graded
+`resolved_by_decision`: mark it satisfied, cite that decision's id as its
+evidence, set `resolved_by` to the id, and do not re-evaluate it against the
+repository.
 
 **1a. A clause must assert repository behaviour.** Delivery mechanics are
 not completion criteria: how the work ships, how many PRs it takes, which
@@ -101,7 +105,8 @@ Respond with STRICT JSON ONLY — no prose, no markdown fences. Schema:
     {{
       "clause": "<the clause text from done_when>",
       "satisfied": true | false,
-      "evidence": "<specific file/symbol/test names from the repo review, OR 'missing — should live in <where>' when unsatisfied>"
+      "evidence": "<specific file/symbol/test names from the repo review, OR 'missing — should live in <where>' when unsatisfied>",
+      "resolved_by": "<the Decisions-block id that settles this clause; present ONLY for a clause graded resolved_by_decision>"
     }}
   ],
   "structural_health": "clean" | "concerns" | "poor",

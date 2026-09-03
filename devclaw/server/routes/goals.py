@@ -74,6 +74,52 @@ async def goal_steer(request: Request) -> Response:
         result = goals.steer_goal(goal_id, message.strip())
     except KeyError:
         return JSONResponse({"error": "not_found", "id": goal_id}, status_code=404)
+    except ValueError as exc:
+        # spec 031 Q1: a Problem is open — steering is refused with the Problem
+        g = goals.get_goal(goal_id)
+        return JSONResponse(
+            {"error": "problem_open", "detail": str(exc), "problem": g.get("problem"),
+             "resolve_with": ["correct_implementation", "decide"]},
+            status_code=409,
+        )
+    return JSONResponse(result)
+
+
+@mcp.custom_route("/goals/{goal_id}/resolve", methods=["POST"])
+async def goal_resolve(request: Request) -> Response:
+    """Console-facing resolution (spec 031 US2). Body:
+    ``{"verb": "correct_implementation", "problem_id", "correction"}`` or
+    ``{"verb": "decide", "problem_id", "option" | "text"}``. Same
+    GoalService.resolve_problem entry as the MCP verbs."""
+    goal_id = request.path_params["goal_id"]
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "invalid_json"}, status_code=400)
+    body = body or {}
+    verb = body.get("verb")
+    problem_id = body.get("problem_id") or ""
+    if verb not in ("correct_implementation", "decide"):
+        return JSONResponse({"error": "invalid_verb"}, status_code=400)
+    if not problem_id:
+        return JSONResponse({"error": "missing_field", "field": "problem_id"}, status_code=400)
+    try:
+        if verb == "correct_implementation":
+            result = goals.resolve_problem(
+                goal_id, problem_id, verb=verb, text=body.get("correction") or "",
+            )
+        else:
+            result = goals.resolve_problem(
+                goal_id, problem_id, verb=verb, option=body.get("option"), text=body.get("text"),
+            )
+    except KeyError:
+        return JSONResponse({"error": "not_found", "id": goal_id}, status_code=404)
+    except ValueError as exc:
+        msg = str(exc)
+        code = ("stale_problem" if "stale problem" in msg or "no open problem" in msg
+                else "bad_option" if "is not one of" in msg else "missing_field")
+        g = goals.get_goal(goal_id)
+        return JSONResponse({"error": code, "detail": msg, "problem": g.get("problem")}, status_code=400)
     return JSONResponse(result)
 
 
@@ -356,6 +402,8 @@ async def goal_json(request: Request) -> Response:
             "timeline": timeline,
             "blockedOn": g.get("blocked_on"),
             "blockedKind": g.get("blocked_kind", ""),
+            "problem": g.get("problem"),
+            "decisions": g.get("decisions", []),
             # Lane state — why an idle goal with zero tasks is empty. Without
             # these the detail page renders a blank "Tasks 0" with no way to
             # say "queued behind <goal> — starts when it finishes".

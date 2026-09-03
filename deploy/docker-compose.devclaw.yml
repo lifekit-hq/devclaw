@@ -93,6 +93,21 @@ services:
       DEVCLAW_MAX_CONCURRENT: ${DEVCLAW_MAX_CONCURRENT:-4}
       DEVCLAW_SANDBOX_MEMORY: ${DEVCLAW_SANDBOX_MEMORY:-2g}
       DEVCLAW_SANDBOX_CPUS: ${DEVCLAW_SANDBOX_CPUS:-2.0}
+      # The rest of the sandbox/worker execution dials — everything
+      # engine/sandcastle.py reads. Same silent-no-op trap as the sizing knobs
+      # above: config.py reads them, sandcastle.py acts on them, and without a
+      # line here an env-file setting never reaches the container. That trap
+      # was called out for DEVCLAW_MAX_CONCURRENT and fixed for that ONE var;
+      # these five were left inert. DEVCLAW_EXEC_MODEL is the one that stung —
+      # docs/reference/env-vars.md calls it "the token/quota bulk" and it could
+      # not be set on the deployed instance at all.
+      # tests/test_env_vars_doc_sync.py now fails if a new sandcastle dial
+      # lands without a line here.
+      DEVCLAW_EXEC_MODEL: ${DEVCLAW_EXEC_MODEL:-}
+      DEVCLAW_ACP_COMMAND: ${DEVCLAW_ACP_COMMAND:-}
+      DEVCLAW_CONTEXT_TRIPWIRE_PCT: ${DEVCLAW_CONTEXT_TRIPWIRE_PCT:-75}
+      DEVCLAW_DOCKER_BIN: ${DEVCLAW_DOCKER_BIN:-docker}
+      DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST: ${DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST:-}
       DEVCLAW_COGNITION_MEM_RESERVE: ${DEVCLAW_COGNITION_MEM_RESERVE:-1536m}
       DEVCLAW_GOAL_DECOMPOSE: ${DEVCLAW_GOAL_DECOMPOSE:-1}
       DEVCLAW_GOAL_FIRMING: ${DEVCLAW_GOAL_FIRMING:-0}

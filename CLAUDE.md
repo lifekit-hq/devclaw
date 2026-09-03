@@ -108,6 +108,12 @@ spawn containers itself — it goes through the engine).
   `goal-branch` the cumulative PR deliberately stays open for the done-gate, and the
   sandbox carries no GitHub credential, so no run can ever satisfy such a clause. Hold
   this when you AUTHOR a goal — the gate's drop is a backstop, not a licence.
+  Since spec 031 (2026-09-02) creation runs the **admission lint**
+  (`devclaw/goal/admission_lint.py`): a clause needing a capability the sandbox
+  cannot have is **refused** (nothing persisted); a baseline-less absolute
+  predicate ("all tests pass") is **rewritten** to "no new failures relative
+  to the default branch" and recorded as an admission Decision; an undecided
+  design choice becomes a Problem to the author **before any dispatch**.
 
 ## Hardening philosophy (Tranche 0 — baked in, not in the README yet)
 
@@ -128,8 +134,11 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   ``done_when`` contract in both modes; its *structural* axis rides the same
   dial (under ``trust`` reported concerns advise-and-ship as follow-ups on the
   close, under ``strict`` they hold it open), and a done-gate that refuses to
-  close the same goal 3 rounds in a row parks it for the owner
-  (``donegate_churn``) instead of re-advancing forever. The
+  close the same goal 3 rounds in a row **with the satisfied-clause count
+  flat** parks it for the owner (``donegate_churn``) instead of re-advancing
+  forever — a round that beats the best count seen restarts the counter
+  (`goal_status.donegate_progress`), so a converging goal is never parked as
+  churn. The
   verify/test-integrity/done gates stay always-hard, and every *unreviewable* case (crash/quota) in a
   *consulted* gate still fails closed in both modes — #186 governs consulted gates,
   and a gate not consulted under `trust` produces no silence to ship on.
@@ -157,7 +166,17 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   a persisted per-goal heal budget + backoff); `needs_answer`/`bug`/`lost_ref`/
   `dispatch_cap` stay human-gated. `resume_goal` re-attempts the SAME contract
   without recording steering; `steer_goal` stays the direction-change verb
-  (2026-07-13 harden-loop tranche, #228–#238).
+  (2026-07-13 harden-loop tranche, #228–#238). **A human-gated block carries
+  a typed Problem** (spec 031, ruled 2026-09-02): what is wrong, the
+  `done_when` clause, why the loop cannot decide it, bounded options, a
+  default, a timebox — raised through ONE seam (`devclaw/goal/problems.py`)
+  in the same transaction as the block. Exactly two verbs resolve it,
+  `correct_implementation` and `decide`, each recording a Decision (a
+  devclaw-controlled fact, never an inbox line) and unblocking with the
+  same budget-restoring shape as a steer; a timed-out Problem takes its
+  default and informs (under `strict` a default that would close parks
+  instead). `steer_goal` is **refused** while a Problem is open — prose is
+  not the answer to a problem.
 
 Rule of thumb: **loud failure over silent degradation.**
 

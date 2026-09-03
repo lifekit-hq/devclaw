@@ -43,6 +43,8 @@ from .notify import Notifier
 from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
+from . import problems as _problems
+from . import decisions as _decisions
 from ..delivery import deploy as _deploy
 
 from ..engine.workspace import WorkspaceError
@@ -419,6 +421,9 @@ async def _resolve_done_gate(
             goal, status, store.recent_log(goal_id), store.recent_deliveries(goal_id),
             claude_caller=evaluator_caller, review_report=review_report, at_done_gate=True,
             spec=spec, repo_context=repo_context, strictness=resolved_strictness,
+            # spec 031 US4: the owner's recorded rulings — a clause with a
+            # current Decision is graded resolved_by_decision, never re-asked
+            decisions=_decisions.render(store.decisions(goal_id)),
         )
     except _evaluator.GoalEvalError as exc:
         store.append_log(goal_id, f"done-gate eval error: {exc}")
@@ -521,7 +526,7 @@ async def _resolve_done_gate(
                 goal_id, Event.RESUME_IDLE,
                 replace(base, phase="idle", merge_heal_attempted=True,
                         next="merge conflict — resolution increment queued",
-                        donegate_rounds=0),
+                        donegate_rounds=0, donegate_progress=0),
                 expect=status, consume_steering=consume_steering,
             )
             store.append_steering(goal_id, [
@@ -578,7 +583,7 @@ async def _resolve_done_gate(
                 )
         store.transition(
             goal_id, Event.ACHIEVE,
-            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,
+            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,
                     pending_merge_pr="", merge_heal_attempted=False),
             expect=status, consume_steering=consume_steering,
         )
@@ -637,13 +642,29 @@ async def _resolve_done_gate(
         await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label}{merged_note} — {ev.rationale[:200]}{followups}{live}{summary_suffix}", summarize=summarize)
         return Outcome.DONE
     if ev.verdict in ("stalled", "needs_human"):
+        # Spec 031 US1: the block carries a typed Problem — what, clause, why,
+        # bounded options (the evaluator's own corrections, then the fixed
+        # tail), a default, a timebox — raised in the SAME transaction as the
+        # BLOCK so a conflict rolls both back. blocked_on keeps a one-line
+        # summary for readers that predate the Problem.
         q = ev.question or ev.rationale or "done-gate flagged a problem"
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q, blocked_kind="needs_answer", next=""),
-            expect=status, consume_steering=consume_steering,
+        unsatisfied = [c.clause for c in (ev.clauses or ()) if not c.satisfied]
+        prob = _problems.new_problem(
+            goal_id, kind="needs_answer", raised_by="done_gate", what=q,
+            clause=(unsatisfied[0] if unsatisfied else ""), why=ev.rationale or "",
+            options=_problems.options_from_corrections(ev.corrections or []),
         )
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] not done — {q}", summarize=summarize)
+        with store.transaction():
+            _problems.raise_problem(store, prob)
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
+                        blocked_kind="needs_answer", problem_id=prob.id, next=""),
+                expect=status, consume_steering=consume_steering,
+            )
+        await _notify(notifier, NotifyLevel.OWNER,
+                      f"🟡 [{goal_id}] not done — {_problems.render_for_human(prob)}",
+                      summarize=summarize)
         return Outcome.BLOCKED
     # on_track / off_track → not done yet. Count the round: a gate that
     # refuses to close the same goal DONEGATE_ROUND_CAP times in a row is a
@@ -651,7 +672,19 @@ async def _resolve_done_gate(
     # + an eval), not convergence — park it for the owner with the FULL last
     # verdict instead of re-advancing forever. Below the cap, steer
     # corrections back in and continue.
-    rounds = status.donegate_rounds + 1
+    # Progress-aware: count satisfied clauses this round. Beating the best
+    # count seen so far is convergence — the round counter restarts at 1 and
+    # the new best persists. Only a FLAT count accumulates toward the cap, so
+    # the brake catches the treadmill it was built for (fresh nits per round,
+    # nothing landing) and lets a goal that is visibly closing the gap keep
+    # closing it. No clauses reported (a pre-decomposition verdict) is treated
+    # as flat — never as progress.
+    progress = sum(1 for c in (ev.clauses or ()) if c.satisfied)
+    best = status.donegate_progress
+    if progress > best:
+        rounds, best = 1, progress
+    else:
+        rounds = status.donegate_rounds + 1
     if rounds >= DONEGATE_ROUND_CAP:
         q = (
             f"done-gate churn brake: {rounds} consecutive done proposals did not "
@@ -659,19 +692,32 @@ async def _resolve_done_gate(
             f"open PR yourself, then resume (re-judges the same contract), steer, "
             f"or cancel."
         )
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q, blocked_kind="donegate_churn",
-                    donegate_rounds=rounds, next=""),
-            expect=status, consume_steering=consume_steering,
+        # Spec 031: the park carries a typed Problem (fixed churn options —
+        # correct / accept and close / split), raised with the BLOCK.
+        unsatisfied = [c.clause for c in (ev.clauses or ()) if not c.satisfied]
+        prob = _problems.new_problem(
+            goal_id, kind="donegate_churn", raised_by="churn_park",
+            what=ev.rationale[:1000] or q, clause=(unsatisfied[0] if unsatisfied else ""),
+            why=f"{rounds} done proposals with the satisfied-clause count flat",
+            options=_problems.CHURN_OPTIONS, default_key="correct",
         )
+        with store.transaction():
+            _problems.raise_problem(store, prob)
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
+                        blocked_kind="donegate_churn", problem_id=prob.id,
+                        donegate_rounds=rounds, donegate_progress=best, next=""),
+                expect=status, consume_steering=consume_steering,
+            )
         _apply_corrections(store, goal_id, ev)  # visible in inbox for the owner's decision
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}", summarize=summarize)
+        await _notify(notifier, NotifyLevel.OWNER,
+                      f"🟡 [{goal_id}] {_problems.render_for_human(prob)}", summarize=summarize)
         return Outcome.BLOCKED
     store.transition(
         goal_id, Event.RESUME_IDLE,
         replace(base, phase="idle", next="done-gate said keep going",
-                donegate_rounds=rounds),
+                donegate_rounds=rounds, donegate_progress=best),
         expect=status, consume_steering=consume_steering,
     )
     _apply_corrections(store, goal_id, ev)
@@ -794,7 +840,7 @@ async def _finalize_pending_merge(
         rationale = status.last_eval_note or "achieved (merge completed on retry)"
         store.transition(
             goal_id, Event.ACHIEVE,
-            replace(base, phase="done", next=rationale[:200], donegate_rounds=0,
+            replace(base, phase="done", next=rationale[:200], donegate_rounds=0, donegate_progress=0,
                     pending_merge_pr="", merge_heal_attempted=False),
             expect=status,
         )

@@ -164,17 +164,64 @@ async def list_goals() -> str:
 
 @mcp.tool
 async def steer_goal(goal_id: str, message: str) -> str:
-    """Correct or redirect a durable goal. The message is recorded as steering and
-    the next-action planner honors it over the backlog on the next tick (which is
-    poked immediately). Unblocks a blocked goal. Use to change direction, add work,
-    or answer what a goal is blocked on — e.g. 'use Postgres, not SQLite' or
-    'skip the admin UI, focus on the API'."""
+    """Change a durable goal's DIRECTION. The message is recorded as steering and
+    the next advance honors it (the tick is poked immediately). Use for a genuine
+    change of course — 'use Postgres, not SQLite', 'skip the admin UI'. It is NOT
+    the answer to a problem: a goal with an open problem refuses steering and
+    hands back the problem with the two resolution verbs, correct_implementation
+    and decide (spec 031)."""
     if not goal_id or not message:
         raise ToolError("steer_goal requires goal_id and message")
     try:
         return json.dumps(goals.steer_goal(goal_id, message), indent=2)
     except KeyError:
         raise ToolError(f"unknown goal_id: {goal_id}")
+    except ValueError as exc:
+        raise ToolError(str(exc))
+
+
+@mcp.tool
+async def correct_implementation(goal_id: str, problem_id: str, correction: str) -> str:
+    """Resolve a goal's open problem: the requirement was right, the WORK was wrong.
+    Records the correction as a decision against the problem's done_when clause,
+    unblocks the goal with its full budget, and the next session builds on it as
+    settled fact. One of exactly two resolution verbs (spec 031); the other is
+    `decide`. Read the problem with get_goal first."""
+    if not goal_id or not problem_id or not (correction or "").strip():
+        raise ToolError("correct_implementation requires goal_id, problem_id and a correction")
+    try:
+        return json.dumps(
+            goals.resolve_problem(goal_id, problem_id, verb="correct_implementation", text=correction),
+            indent=2,
+        )
+    except KeyError:
+        raise ToolError(f"unknown goal_id: {goal_id}")
+    except ValueError as exc:
+        raise ToolError(str(exc))
+
+
+@mcp.tool
+async def decide(
+    goal_id: str, problem_id: str,
+    option: Optional[str] = None, text: Optional[str] = None,
+) -> str:
+    """Resolve a goal's open problem by taking an action: pick one of the problem's
+    options by key, or write a free-form decision text (exactly one of the two).
+    The decision is recorded into the contract as a devclaw-controlled fact —
+    never as a steering line — and the done-gate treats that clause as settled.
+    One of exactly two resolution verbs (spec 031); the other is
+    `correct_implementation`."""
+    if not goal_id or not problem_id:
+        raise ToolError("decide requires goal_id and problem_id")
+    try:
+        return json.dumps(
+            goals.resolve_problem(goal_id, problem_id, verb="decide", option=option, text=text),
+            indent=2,
+        )
+    except KeyError:
+        raise ToolError(f"unknown goal_id: {goal_id}")
+    except ValueError as exc:
+        raise ToolError(str(exc))
 
 
 @mcp.tool

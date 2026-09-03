@@ -138,6 +138,7 @@ def build_prompt(
     spec: str = "",
     repo_context: Optional[str] = None,
     lean_done_gate: bool = False,
+    decisions: Optional[str] = None,
 ) -> str:
     from ..prompts import load_prompt
     from ..loom.untrusted import UNTRUSTED_NOTE, fence_untrusted
@@ -227,6 +228,13 @@ def build_prompt(
             "source of truth for repo identity and which files exist)",
             repo_context.strip(),
         ]
+    if decisions and decisions.strip():
+        # spec 031 US4: the owner's recorded rulings. A clause with a current
+        # Decision is graded resolved_by_decision — settled, never re-asked.
+        parts += [
+            "\n## Decisions (the owner's recorded rulings on this goal — authoritative)",
+            decisions.strip(),
+        ]
     if lean:
         # The done decision is about the repo's END STATE, not the journey: the
         # delivery record and event log (the two 24K-capped diary blocks that
@@ -293,7 +301,18 @@ def _parse_clauses(raw: object) -> list[ClauseVerdict]:
         else:
             satisfied = False
         evidence = str(entry.get("evidence", "")).strip()
-        out.append(ClauseVerdict(clause=clause, satisfied=satisfied, evidence=evidence))
+        # spec 031 US4: a clause the model grades resolved_by_decision carries
+        # the Decision id; it counts as satisfied with that id as evidence. A
+        # non-string or empty value is ignored (an undocumented output field
+        # is never honoured, #233) and the clause is graded as today.
+        rb = entry.get("resolved_by")
+        resolved_by = rb.strip()[:64] if isinstance(rb, str) else ""
+        if resolved_by:
+            satisfied = True
+            evidence = evidence or f"resolved by decision {resolved_by}"
+        out.append(ClauseVerdict(
+            clause=clause, satisfied=satisfied, evidence=evidence, resolved_by=resolved_by,
+        ))
     return out
 
 
@@ -688,6 +707,7 @@ async def evaluate(
     repo_context: Optional[str] = None,
     lean_done_gate: Optional[bool] = None,
     strictness: Optional[Strictness] = None,
+    decisions: Optional[str] = None,
 ) -> EvalResult:
     """Run the direction evaluation. ``claude_caller`` is injected so tests stub
     the LLM. Pass ``review_report`` + ``at_done_gate`` when judging a done proposal;
@@ -701,6 +721,7 @@ async def evaluate(
         goal, status, recent_log, deliveries,
         review_report=review_report, at_done_gate=at_done_gate, spec=spec,
         repo_context=repo_context, lean_done_gate=lean,
+        decisions=decisions,
     )
     raw = await claude_caller(prompt)
     try:

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { answerGoal, cancelGoal, fetchGoal, resumeGoal, setGoalStrictness, steerGoal, tokenQueryString, type BlockOption, type GoalDetail as GD } from "../api";
+import { answerGoal, cancelGoal, fetchGoal, resolveGoal, resumeGoal, setGoalStrictness, steerGoal, tokenQueryString, type BlockOption, type GoalDetail as GD } from "../api";
 import { EventFeed } from "../components/EventFeed";
 import { GoalRunWindow } from "../components/GoalRunWindow";
 import { PRList } from "../components/PRList";
@@ -49,7 +49,7 @@ export function GoalDetail() {
     else next.set("tab", t);
     setSearchParams(next, { replace: true });
   };
-  const [busy, setBusy] = useState<"cancel" | "steer" | "resume" | "answer" | "strictness" | null>(null);
+  const [busy, setBusy] = useState<"cancel" | "steer" | "resume" | "answer" | "strictness" | "resolve" | null>(null);
   const [flash, setFlash] = useState<string | null>(null);
   const [steerOpen, setSteerOpen] = useState(false);
   const [steerMsg, setSteerMsg] = useState("");
@@ -86,9 +86,51 @@ export function GoalDetail() {
     }
   };
 
+  // spec 031: an open Problem is resolved by one of exactly two typed verbs —
+  // never by steering. Option buttons pick `decide`; the custom box becomes a
+  // `correct_implementation` correction.
+  const doDecide = async (optionKey: string) => {
+    if (!id || !data?.problem) return;
+    setBusy("resolve");
+    try {
+      await resolveGoal(id, { verb: "decide", problem_id: data.problem.id, option: optionKey });
+      setFlash(`Decided: ${optionKey}`);
+      reload();
+    } catch (e) {
+      setFlash(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const doCorrect = async (correction: string) => {
+    if (!id || !data?.problem || !correction.trim()) return;
+    setBusy("resolve");
+    try {
+      await resolveGoal(id, { verb: "correct_implementation", problem_id: data.problem.id, correction: correction.trim() });
+      setFlash("Correction recorded");
+      reload();
+    } catch (e) {
+      setFlash(String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+  const problemOptions: BlockOption[] = (data?.problem?.options ?? []).map((o) => ({
+    key: o.key,
+    label: `${o.label}${o.key === data?.problem?.default ? " (default)" : ""}`,
+    detail: o.consequence,
+    steer: o.key,
+  }));
+
   const doSteer = async () => {
     setSteerOpen(false);
     setSteerMsg("");
+    // spec 031: while a Problem is open, free text is a CORRECTION of the
+    // implementation, not a steer — steering is refused server-side anyway.
+    if (data?.problem) {
+      await doCorrect(steerMsg);
+      return;
+    }
     await doSteerMessage(steerMsg);
   };
 
@@ -258,14 +300,16 @@ export function GoalDetail() {
 
           {data.phase === "blocked" && (
             <BlockedBanner
-              blockedOn={data.blockedOn}
+              blockedOn={data.problem
+                ? `${data.problem.what}${data.problem.clause ? ` — clause: ${data.problem.clause}` : ""}${data.problem.why ? ` (${data.problem.why})` : ""}`
+                : data.blockedOn}
               hasUnknowns={hasUnknowns}
-              options={data.blockOptions?.options ?? []}
+              options={data.problem ? problemOptions : (data.blockOptions?.options ?? [])}
               recommended={data.blockOptions?.recommended ?? ""}
               busy={busy}
               onResume={doResume}
               onAnswer={() => setAnswerOpen(true)}
-              onPickOption={doSteerMessage}
+              onPickOption={data.problem ? doDecide : doSteerMessage}
               onCustom={() => setSteerOpen(true)}
             />
           )}

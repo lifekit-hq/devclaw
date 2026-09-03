@@ -43,3 +43,4 @@ task.
   fall back to repo-wide exploration.
 - Commit the `specs/NNN-*/` artifact changes together with the code they
   describe.
+- *Decisions on this goal* in the brief are the owner's rulings: apply, never re-open.

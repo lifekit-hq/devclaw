@@ -30,6 +30,8 @@ from . import slice_guard as _slice_guard
 from .. import project_manifest as _manifest
 from .engine import GoalEngine, GoalEngineError
 from .models import Goal, GoalStatus, InFlight
+from . import problems as _problems
+from ..queue.settle import WORKER_BLOCKED_MARKER
 from .store import GoalStore
 from .transitions import Event
 from ..loom import trace as _trace
@@ -341,6 +343,46 @@ async def _resolve_polling_action(
         gate_passed=poll.gate_passed, pr_url=poll.pr_url or "",
         diff_stats=poll.diff_stats,
     )
+
+    # ---- worker honest-block → typed Problem, immediately (spec 031 R4) ----
+    # The task layer already failed this settle CLOSED and un-retried; letting
+    # the goal re-dispatch an identical block spends sessions rediscovering a
+    # known fact and parks two runs later as mechanical:dispatch_cap naming
+    # the cap, not the cause. Raise the Problem now, dispatch count untouched.
+    if (poll.status == "failed" and WORKER_BLOCKED_MARKER in (poll.detail or "")
+            and not poll.landed_partial):
+        reason = (poll.detail or "").split(WORKER_BLOCKED_MARKER, 1)[1]
+        reason = reason.split(" — the worker reports", 1)[0].strip() or "no reason given"
+        prob = _problems.new_problem(
+            goal_id, kind="needs_answer", raised_by="worker_block", what=reason,
+            clause="", why="the worker reports it cannot complete the task as specified",
+            options=_problems.WORKER_BLOCK_OPTIONS, default_key="correct",
+        )
+        with ctx.store.transaction():
+            _problems.raise_problem(ctx.store, prob)
+            ctx.store.transition(
+                goal_id, Event.BLOCK,
+                replace(new_status, phase="blocked", blocked_on=_problems.summary_line(prob),
+                        blocked_kind="needs_answer", problem_id=prob.id, next=""),
+                expect=new_status,
+            )
+        ctx.store.append_log(goal_id, f"worker block → problem {prob.id}")
+        # Spec 031 T044: if the block names a capability the admission lint
+        # should have refused, record the MISS so the class gets fixed, not
+        # the instance (constitution VII). Never wedges the settle.
+        try:
+            from . import admission_lint as _lint
+            if _lint.lint_mechanical(reason).refused:
+                ctx.store.record_problem(
+                    category="admission", kind="lint_miss",
+                    message=f"worker block named a sandbox-impossible capability the lint admitted: {reason[:200]}",
+                    recovered=False, goal_id=goal_id,
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        await _notify(ctx.notifier, NotifyLevel.OWNER,
+                      f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
+        return Outcome.BLOCKED
 
     # ---- mechanical-setup failure → damped mechanical:prep breaker (#379) ---
     # A toolchain-not-provisioned / git clone-fetch-clean / target-branch-prep

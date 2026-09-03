@@ -40,6 +40,12 @@ from .notify import HttpNotifier, Notifier, NullNotifier, QuietNotifier
 from .store import GoalStore
 from .tick import AUTODEPLOY_ENABLED, VERIFY_DONE, sweep_orphaned_refs, tick_all, tick_goal
 from .transitions import Event
+from . import problems as _problems
+from . import admission_lint as _lint
+from .models import Decision as _Decision
+#: the class-(c) judge, bound as a module global so tests patch it HERE
+#: (cognition-prompts rule: snapshot/judge collectors live in the caller's module)
+_judge_undecided = _lint.judge_undecided
 from ..dispatch_gate import next_window_open_ms, operator_block, schedule_blocks
 from ..loom import trace as _trace
 from ..state_store import StateStore, _now_ms
@@ -793,6 +799,61 @@ class GoalService:
                         "the issue to carry an acceptance section (the "
                         "readiness convention), or pass an explicit done_when."
                     )
+        # Spec 031 US3 — the done_when admission lint, after the referenced-
+        # contract readiness check and BEFORE anything persists. (a) a clause
+        # the sandbox can never satisfy refuses creation (Q3 → A, nothing
+        # persisted); (b) a baseline-less absolute predicate is rewritten and
+        # recorded as an admission Decision; (c) an undecided design choice
+        # becomes a Problem to the author before any dispatch. The one
+        # cognition call ((c)) runs here, at creation — never on the tick.
+        done_when = (kwargs.get("done_when") or "").strip()
+        admission: dict = {}
+        if done_when:
+            mech = _lint.lint_mechanical(done_when)
+            if mech.refused:
+                raise ValueError(_lint.refusal_message(mech))
+            undecided, note = await _judge_undecided(mech.done_when, self._evaluator_caller)
+            if mech.rewrites:
+                kwargs["done_when"] = mech.done_when
+                admission["rewrites"] = [
+                    {"from": r.original, "to": r.rewritten} for r in mech.rewrites
+                ]
+            if note:
+                admission["note"] = note
+            created = self.create_goal(goal_id, **kwargs)
+            for r in mech.rewrites:
+                self._goal_store.record_decision(_Decision(
+                    id=f"dec_{__import__('uuid').uuid4().hex[:20]}", goal_id=goal_id,
+                    problem_id="", clause=r.rewritten, verb="decide", option_key="",
+                    text=f"admission rewrite of: {r.original}", provenance="admission",
+                    made_by="admission_lint", made_at=_now_ms(),
+                ))
+            if undecided:
+                u = undecided[0]
+                opts = tuple(
+                    _problems.ProblemOption(f"c{i + 1}", o[:160], "the contract is settled this way")
+                    for i, o in enumerate(u.options[:4])
+                )
+                prob = _problems.new_problem(
+                    goal_id, kind="admission", raised_by="admission_lint",
+                    what=f"undecided design choice: {u.choice}", clause=u.clause,
+                    why="the contract does not make this choice; a worker would guess it",
+                    options=opts, default_key="c1",
+                )
+                s = self._goal_store.load_status(goal_id)
+                with self._goal_store.transaction():
+                    _problems.raise_problem(self._goal_store, prob)
+                    self._goal_store.transition(
+                        goal_id, Event.BLOCK,
+                        replace(s, phase="blocked", blocked_on=_problems.summary_line(prob),
+                                blocked_kind="needs_answer", problem_id=prob.id),
+                        expect=s,
+                    )
+                self._goal_store.append_log(goal_id, f"admission: problem {prob.id} raised before any dispatch")
+                admission["problem"] = _problems.to_dict(prob)
+            if admission and isinstance(created, dict):
+                created["admission"] = admission
+            return created
         return self.create_goal(goal_id, **kwargs)
 
     def create_goal(
@@ -1273,6 +1334,14 @@ class GoalService:
             "next": _display_goal(s.next),
             "blocked_on": s.blocked_on,
             "blocked_kind": s.blocked_kind,
+            # Spec 031: the typed Problem (or None) and the current Decisions.
+            "problem": self._problem_view(s.problem_id),
+            "decisions": [
+                {"id": d.id, "clause": d.clause, "verb": d.verb,
+                 "option": d.option_key or None, "text": d.text or None,
+                 "provenance": d.provenance, "made_by": d.made_by, "made_at": d.made_at}
+                for d in self._goal_store.decisions(goal_id)
+            ],
             # Spec 010 P1 — queued behind another goal on the same project.
             # None when this goal holds its project (or has none), so existing
             # consumers see no change. NOT a block: nothing is wrong, and no
@@ -1386,6 +1455,7 @@ class GoalService:
                 "lifecycle": s.lifecycle,
                 **self._delivery_view(gid),
                 "blocked_on": s.blocked_on,
+                "problem": self._problem_view(s.problem_id),
                 "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
                 "direction": s.last_eval_verdict,
                 "actions_dispatched": s.actions_dispatched,
@@ -1394,9 +1464,91 @@ class GoalService:
             })
         return out
 
+    def _problem_view(self, problem_id: str) -> "dict | None":
+        if not problem_id:
+            return None
+        p = self._goal_store.problem_by_id(problem_id)
+        return _problems.to_dict(p) if p is not None else None
+
+    def resolve_problem(
+        self, goal_id: str, problem_id: str, *, verb: str,
+        option: "str | None" = None, text: "str | None" = None, made_by: str = "denys",
+    ) -> dict:
+        """Spec 031 US2 — one of exactly two typed moves resolves a Problem:
+        ``correct_implementation`` (the work was wrong; ``text`` is the
+        correction) or ``decide`` (the owner picks an ``option`` or writes a
+        decision ``text``). Records the Decision, closes the Problem, and
+        UNBLOCKs with the SAME budget-restoring shape as steer_goal — all in
+        ONE transaction (constitution IV). Never touches the steering inbox.
+        Raises ValueError on a stale problem id / bad verb / bad option."""
+        if not self._goal_store.exists(goal_id):
+            raise KeyError(goal_id)
+        s = self._goal_store.load_status(goal_id)
+        cur = self._goal_store.problem_by_id(s.problem_id) if s.problem_id else None
+        if cur is None or cur.status != "open":
+            raise ValueError(f"goal {goal_id} has no open problem")
+        if problem_id != cur.id:
+            raise ValueError(
+                f"stale problem id {problem_id}; the current open problem is {cur.id}:\n"
+                + _problems.render_for_human(cur)
+            )
+        text = (text or "").strip()
+        option_key = ""
+        if verb == "correct_implementation":
+            if not text:
+                raise ValueError("correct_implementation requires a correction text")
+        elif verb == "decide":
+            if bool(option) == bool(text):
+                raise ValueError("decide takes exactly one of option or text")
+            if option:
+                if option not in {o.key for o in cur.options}:
+                    raise ValueError(
+                        f"option {option!r} is not one of {[o.key for o in cur.options]}"
+                    )
+                option_key = option
+        else:
+            raise ValueError("verb must be correct_implementation or decide")
+        dec = _Decision(
+            id=f"dec_{__import__('uuid').uuid4().hex[:20]}", goal_id=goal_id,
+            problem_id=cur.id, clause=cur.clause, verb=verb, option_key=option_key,
+            text=text, provenance="owner", made_by=made_by, made_at=_now_ms(),
+        )
+        with self._goal_store.transaction():
+            self._goal_store.record_decision(dec, problem_status="resolved")
+            self._goal_store.transition(
+                goal_id, Event.UNBLOCK,
+                replace(s, phase="idle", blocked_on="", actions_dispatched=0,
+                        heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                        donegate_progress=0, slice_hold_count=0,
+                        merge_heal_attempted=False, problem_id="",
+                        next=f"{verb}: {(text or option_key)[:120]}"),
+                expect=s,
+            )
+        self._goal_store.append_log(
+            goal_id, f"problem {cur.id} resolved by {verb}: {(text or option_key)[:160]}"
+        )
+        self.poke()
+        return {
+            "goal_id": goal_id, "resolved": True, "decision_id": dec.id, "verb": verb,
+            "clause": cur.clause, "option": option_key or None, "text": text or None,
+        }
+
     def steer_goal(self, goal_id: str, message: str) -> dict:
         if not self._goal_store.exists(goal_id):
             raise KeyError(goal_id)
+        # Spec 031 FR-006 (Q1 → A): prose steering is REFUSED while a Problem
+        # is open. The refusal carries the Problem and the two verbs; nothing
+        # is written.
+        pre = self._goal_store.load_status(goal_id)
+        if pre.problem_id:
+            cur = self._goal_store.problem_by_id(pre.problem_id)
+            if cur is not None and cur.status == "open":
+                raise ValueError(
+                    "steer_goal refused: this goal has an open problem.\n"
+                    + _problems.render_for_human(cur)
+                    + "\nResolve it with correct_implementation or decide; steering "
+                    "resumes once no problem is open."
+                )
         self._goal_store.append_steering(goal_id, [message], source="denys")
         self._goal_store.append_log(goal_id, f"steered: {message[:160]}")
         # Steering unblocks a blocked goal — flip it to idle and clear the
@@ -1429,6 +1581,7 @@ class GoalService:
                 goal_id, Event.UNBLOCK,
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
                         heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                        donegate_progress=0, problem_id="",
                         slice_hold_count=0, env_hold_notified=False,
                         env_heal_attempts=0,
                         merge_heal_attempted=False),
@@ -1510,6 +1663,7 @@ class GoalService:
             goal_id, Event.UNBLOCK,
             replace(s, phase="idle", blocked_on="", actions_dispatched=0, last_plan_at=None,
                     heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                    donegate_progress=0, problem_id="",
                     slice_hold_count=0, env_hold_notified=False,
                     env_heal_attempts=0),
             expect=s,
@@ -1583,9 +1737,13 @@ class GoalService:
                     "the program lane was retired (spec 022 US3); nothing live "
                     "to tear down",
                 )
-        self._goal_store.transition(
-            goal_id, Event.CANCEL, replace(s, phase="cancelled", in_flight=None), expect=s,
-        )
+        with self._goal_store.transaction():
+            if s.problem_id:
+                self._goal_store.supersede_open_problems(goal_id)
+            self._goal_store.transition(
+                goal_id, Event.CANCEL,
+                replace(s, phase="cancelled", in_flight=None, problem_id=""), expect=s,
+            )
         # Convergence ledger (spec 018 US1): a cancel is the abandoned
         # terminal. After the CAS'd transition, same as the achieved close.
         try:

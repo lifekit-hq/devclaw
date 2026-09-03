@@ -185,6 +185,19 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         or one rollback at the outermost exit."""
         return self._state.transaction()
 
+    def record_problem(
+        self, *, category: str, kind: str, message: str,
+        recovered: bool = False, goal_id: str = "", task_id: str = "",
+    ) -> None:
+        """Thin passthrough to the shared StateStore's problems catalog —
+        the goal layer records a problem the same way the queue does (spec
+        031 T044: an admission-lint miss). Best-effort inside the store; a
+        failure here never wedges a settle."""
+        self._state.record_problem(
+            category=category, kind=kind, message=message,
+            recovered=recovered, goal_id=goal_id, task_id=task_id,
+        )
+
     def mark_self_deploy_pending(self, sha: str, goal_id: str) -> None:
         """Spec 025 US2: a devclaw-repo goal just merged — record the owed
         self-deploy on the shared control plane (the heartbeat's

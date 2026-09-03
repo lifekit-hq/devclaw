@@ -90,6 +90,16 @@ is gone with the host planning chain). Progress-aware since #172/#173:
 Both `steer_goal` and `resume_goal` clear the counter; the cap block is
 human-gated by design — unlike `mechanical:prep`, it never auto-heals.
 
+Since spec 031 (2026-09-02) every human-gated block — a done-gate
+`needs_human`, the churn park, a worker honest-block, the dispatch-time park —
+raises a **typed Problem** through `devclaw/goal/problems.py` in the same
+transaction as the block (what, clause, why, options, default, timebox), and
+the owner resolves it with one of exactly two verbs, `correct_implementation`
+or `decide` (`POST /goals/{id}/resolve`), each recording a Decision and
+restoring the budgets exactly as a steer does. A worker honest-block raises
+its Problem on the settle that carries it — it no longer spends two more
+dispatches to reach the cap. `steer_goal` is refused while a Problem is open.
+
 Only a goal looping on **broken** dispatches accumulates to the cap. A
 healthy goal — including one that grounds every delivery in a read-only
 verification review — never blocks. Churn on successful-but-aimless work is

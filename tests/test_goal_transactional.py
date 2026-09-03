@@ -306,6 +306,41 @@ async def test_mirror_discipline_aborted_settle_leaves_files_untouched(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_resolve_problem_is_one_transaction_with_unblock(tmp_path, monkeypatch):
+    """Spec 031 / constitution IV: the Decision row, the Problem close and the
+    UNBLOCK are ONE atomic unit — a TransitionConflict on the transition rolls
+    the rows back, leaving the Problem open and no Decision."""
+    from devclaw.goal import problems as _pb
+    from devclaw.goal.service import GoalService
+
+    svc = GoalService.__new__(GoalService)  # bare instance; only the store is needed below
+    store = GoalStore(tmp_path, now=Clock())
+    svc._goal_store = store
+    svc.poke = lambda: None
+    seed_goal(tmp_path, "g")
+    p = _pb.new_problem("g", kind="needs_answer", raised_by="done_gate", what="w", clause="c1",
+                        why="y", options=_pb.CHURN_OPTIONS, timebox_s=3600, now_ms=1)
+    store.raise_problem(p)
+    store.save_status("g", GoalStatus(phase="blocked", blocked_on="x", blocked_kind="needs_answer",
+                                      problem_id=p.id))
+
+    real = store.transition
+    def conflicting(goal_id, event, new_status, *a, **k):
+        # make the caller's snapshot stale by writing a newer version first,
+        # then let the REAL CAS raise — the genuine conflict, not a fake one
+        store.save_status(goal_id, store.load_status(goal_id))
+        return real(goal_id, event, new_status, *a, **k)
+    monkeypatch.setattr(store, "transition", conflicting)
+
+    with pytest.raises(TransitionConflict):
+        svc.resolve_problem("g", p.id, verb="decide", option="correct")
+
+    monkeypatch.setattr(store, "transition", real)
+    assert store.decisions("g") == []
+    assert store.problem_by_id(p.id).status == "open"
+    assert store.load_status("g").problem_id == p.id
+
+
 async def test_mirror_discipline_successful_settle_matches_rows(tmp_path):
     """The counterpart of the aborted case above: a successful settle's
     mirrors (log.md / deliveries.md) match what actually landed in the

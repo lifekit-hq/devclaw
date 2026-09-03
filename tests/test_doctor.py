@@ -549,6 +549,63 @@ def test_brake_column_present_is_ok(env, column, cid):
     assert f.verdict is Verdict.OK and column in f.evidence
 
 
+def test_donegate_progress_column_absent_detected(env):
+    """Seeded fault (spec-016 FR-014): donegate_progress dropped → the DB
+    predates the progress-aware churn brake; every done-gate round reads as
+    flat and a converging goal parks at the cap exactly as before the fix."""
+    db = env["store"]._db
+    db.execute("ALTER TABLE goal_status DROP COLUMN donegate_progress")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.donegate.goal_status_donegate_progress")
+    assert f.verdict is Verdict.FAIL
+    assert "donegate_progress" in f.evidence and "restart" in f.remedy
+
+
+def test_donegate_progress_column_present_is_ok(env):
+    (f,) = _findings(_run(env), "instance.donegate.goal_status_donegate_progress")
+    assert f.verdict is Verdict.OK
+
+
+def test_problems_tables_absent_detected(env):
+    """Seeded fault (spec-016 FR-014, spec 031): goal_problems dropped → the DB
+    predates spec 031; a human-gated block cannot record its Problem."""
+    db = env["store"]._db
+    db.execute("DROP TABLE goal_problems")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.problems.tables")
+    assert f.verdict is Verdict.FAIL
+    assert "goal_problems" in f.evidence and "restart" in f.remedy
+
+
+def test_problems_tables_present_is_ok(env):
+    (f,) = _findings(_run(env), "instance.problems.tables")
+    assert f.verdict is Verdict.OK
+
+
+def test_problem_pointer_drift_detected(env):
+    """Seeded fault (spec 031): goal_status.problem_id points at a Problem that
+    is not open — drift the stubbed suite cannot see on a live DB."""
+    db = env["store"]._db
+    db.execute(
+        "INSERT INTO goal_problems (id, goal_id, kind, raised_by, what, options_json, "
+        "default_key, timebox_at, status, raised_at) VALUES "
+        "('prb_x', 'g-drift', 'needs_answer', 'done_gate', 'w', '[]', 'k', 1, 'resolved', 1)"
+    )
+    db.execute(
+        "INSERT INTO goal_status (goal_id, version, state, phase, lifecycle, problem_id, updated_at) "
+        "VALUES ('g-drift', 1, 'blocked', 'blocked', 'executing', 'prb_x', 1)"
+    )
+    db.commit()
+    (f,) = _findings(_run(env), "instance.problems.status_pointer")
+    assert f.verdict is Verdict.FAIL
+    assert "not open" in f.evidence
+
+
+def test_problem_pointer_healthy_is_ok(env):
+    (f,) = _findings(_run(env), "instance.problems.status_pointer")
+    assert f.verdict is Verdict.OK
+
+
 # ---- instance: registry-read credential (seeded faults) -------------------
 # The tinyspec that added NODE_AUTH_TOKEN specified only the UNSET case
 # ("blank ⇒ no forward, byte-identical"). Set-but-invalid was never

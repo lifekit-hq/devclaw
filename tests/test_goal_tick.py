@@ -2884,6 +2884,39 @@ async def test_done_gate_off_track_below_cap_counts_the_round(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_done_gate_round_that_beats_the_best_clause_count_restarts_the_churn_counter(tmp_path):
+    """Progress-aware brake (2026-09-02): a refusal is churn only when the
+    satisfied-clause count is FLAT. devclaw-030 parked at 14/15 after three
+    refusals while the count rose every round — the loop was winning and the
+    brake could not tell. A round that beats the persisted best resets the
+    counter to 1 and persists the new best; it never parks."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="verifying",
+        donegate_rounds=DONEGATE_ROUND_CAP - 1, donegate_progress=1,
+        in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
+    ))
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "clause 3 unmet",
+        "corrections": ["[clause 3] wire the scan to the registry"],
+        "clauses": [
+            {"clause": "clause 1", "satisfied": True, "evidence": "a.py:1"},
+            {"clause": "clause 2", "satisfied": True, "evidence": "b.py:2"},
+            {"clause": "clause 3", "satisfied": False, "evidence": "missing — should live in tick.py"},
+        ],
+    }))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
+    out = await _tick(store, "g", evaluator, engine, RecordingNotifier())
+    assert out is Outcome.SLEPT           # kept going — NOT parked at the cap
+    s = store.load_status("g")
+    assert s.phase == "idle"
+    assert s.blocked_kind != "donegate_churn"
+    assert s.donegate_rounds == 1          # restarted, not cap-1 + 1
+    assert s.donegate_progress == 2        # the new best persists
+
+
+@pytest.mark.asyncio
 async def test_one_shot_done_gate_off_track_rides_the_advance_loop_with_the_churn_brake(tmp_path):
     """Named regression (round-2 amputation): a one_shot goal's non-achieved
     done-gate rides the SAME path as long_lived — both modes share ONE
@@ -2921,13 +2954,20 @@ async def test_done_gate_churn_brake_parks_after_cap_rounds(tmp_path):
     blocked_on."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
+    # FLAT progress: the best seen is 1 and this round reports 1 again — the
+    # treadmill the brake was built for. A rising count is covered by
+    # test_done_gate_round_that_beats_the_best_clause_count_restarts_the_churn_counter.
     store.save_status("g", GoalStatus(
-        phase="verifying", donegate_rounds=DONEGATE_ROUND_CAP - 1,
+        phase="verifying", donegate_rounds=DONEGATE_ROUND_CAP - 1, donegate_progress=1,
         in_flight=InFlight("devclaw", "review_repository", "rev1", "task", "verify", is_done_check=True),
     ))
     evaluator = FakeClaude(json.dumps({
         "verdict": "off_track", "rationale": "clause 2 unmet",
         "corrections": ["[clause 2] add the parity test"],
+        "clauses": [
+            {"clause": "clause 1", "satisfied": True, "evidence": "a.py:1"},
+            {"clause": "clause 2", "satisfied": False, "evidence": "missing — should live in b.py"},
+        ],
     }))
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review text"))
     notifier = RecordingNotifier()
@@ -2936,9 +2976,252 @@ async def test_done_gate_churn_brake_parks_after_cap_rounds(tmp_path):
     s = store.load_status("g")
     assert s.phase == "blocked"
     assert s.blocked_kind == "donegate_churn"
-    assert "churn brake" in (s.blocked_on or "")
+    # spec 031: the park carries a typed Problem; blocked_on is its summary
+    assert s.problem_id and "donegate_churn" in (s.blocked_on or "")
+    assert store.current_problem("g").raised_by == "churn_park"
     # the correction still lands as steering so a resumed goal has direction
     assert "[clause 2] add the parity test" in store.unread_steering("g")
+
+
+# ---- spec 031: typed Problems, two verbs, the timebox ----------------------
+
+def _open_problem(store, goal_id, *, timebox_ms, default_key="correct", closes=False, now_ms=1_000_000):
+    """Seed a blocked goal carrying one OPEN Problem (the shape raise_problem
+    writes), returning the Problem. Pure store writes — no tick."""
+    from devclaw.goal import problems as _pb
+    opts = _pb.CHURN_OPTIONS if not closes else (_pb.ACCEPT_CLOSE, _pb.CORRECT)
+    p = _pb.new_problem(
+        goal_id, kind="needs_answer", raised_by="done_gate",
+        what="clause 3 is undecided", clause="clause 3", why="two readings",
+        options=opts, default_key=default_key, timebox_s=1, now_ms=now_ms,
+    )
+    p = replace(p, timebox_at=timebox_ms)
+    store.raise_problem(p)
+    return p
+
+
+@pytest.mark.asyncio
+async def test_blocked_goal_with_open_problem_costs_zero_cognition(tmp_path):
+    """Zero-token idle (constitution III): a goal blocked with an OPEN Problem
+    whose timebox has not elapsed ticks with no cognition and no dispatch —
+    the timebox check is a timestamp compare, nothing more."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    p = _open_problem(store, "g", timebox_ms=10**15)  # far future
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+        problem_id=p.id,
+    ))
+    evaluator, engine = FakeClaude(), FakeEngine()
+    await _tick(store, "g", evaluator, engine, RecordingNotifier())
+    assert evaluator.calls == 0
+    assert engine.dispatched == []
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.problem_id == p.id
+
+
+@pytest.mark.asyncio
+async def test_timebox_default_applies_without_cognition(tmp_path):
+    """Spec 031 FR-005: at the timebox the tick applies the default as a
+    Decision (provenance=defaulted), UNBLOCKs, notifies once — zero cognition."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    p = _open_problem(store, "g", timebox_ms=0)  # already elapsed
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+        problem_id=p.id, actions_dispatched=2, donegate_rounds=2,
+    ))
+    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
+    await _tick(store, "g", evaluator, engine, notifier)
+    assert evaluator.calls == 0
+    s = store.load_status("g")
+    assert s.phase != "blocked" and s.problem_id == ""
+    assert s.donegate_rounds == 0                       # the vouch shape
+    assert len(engine.dispatched) == 1                  # …and it kept moving on this tick
+    decs = store.decisions("g")
+    assert len(decs) == 1 and decs[0].provenance == "defaulted" and decs[0].option_key == "correct"
+    assert store.problem_by_id(p.id).status == "defaulted"
+    assert sum("defaulted" in m for m in notifier.sent) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strictness,expect_blocked,expect_decisions", [
+    ("trust", False, 1),   # the default acts; the done-gate closes on its next round
+    ("strict", True, 0),   # the timeout parks; only an explicit decide can close
+])
+async def test_defaulted_accept_and_close_never_emits_achieve(tmp_path, strictness, expect_blocked, expect_decisions):
+    """Q2 → C and constitution V: a defaulted accept_close never reaches
+    `done` from the tick — under trust the goal returns to idle for the
+    done-gate's single ACHIEVE emitter; under strict it stays blocked with
+    no Decision written."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    p = _open_problem(store, "g", timebox_ms=0, default_key="accept_close", closes=True)
+    store.set_strictness("g", strictness)
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_on="churn: see problem", blocked_kind="donegate_churn",
+        problem_id=p.id,
+    ))
+    notifier = RecordingNotifier()
+    await _tick(store, "g", FakeClaude(), FakeEngine(), notifier)
+    s = store.load_status("g")
+    assert (s.phase == "blocked") is expect_blocked
+    assert s.phase != "done"
+    assert len(store.decisions("g")) == expect_decisions
+    assert len(notifier.sent) >= 1
+
+
+@pytest.mark.asyncio
+async def test_steer_goal_is_refused_while_a_problem_is_open(tmp_path):
+    """Q1 → A: prose steering is refused while a Problem is open — the
+    refusal carries the Problem and the two verbs, and writes nothing."""
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        seed_goal(goals_dir, "g")
+        store = svc._goal_store
+        p = _open_problem(store, "g", timebox_ms=10**15)
+        store.save_status("g", GoalStatus(
+            phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+            problem_id=p.id,
+        ))
+        before = store.load_status("g")
+        with pytest.raises(ValueError) as ei:
+            svc.steer_goal("g", "just do X")
+        msg = str(ei.value)
+        assert p.id in msg and "correct_implementation" in msg and "decide" in msg
+        after = store.load_status("g")
+        assert after.version == before.version and after.phase == "blocked"
+        assert not store.unread_steering("g")
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_honest_block_raises_a_problem_without_burning_the_cap(tmp_path):
+    """Spec 031 US1 (R4): a failed settle whose detail carries the worker's
+    honest BLOCK raises a Problem immediately — blocked with the fixed
+    worker-block options, dispatch count unchanged — instead of spending two
+    more dispatches to park at the cap."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(
+        phase="in_flight", actions_dispatched=1,
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "do X"),
+    ))
+    engine = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed",
+        detail="Error:\nworker reported BLOCKED: needs a Telegram credential the sandbox lacks — the worker reports it cannot complete",
+    ))
+    notifier = RecordingNotifier()
+    out = await _tick(store, "g", FakeClaude(), engine, notifier)
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.blocked_kind == "needs_answer"
+    assert s.problem_id and s.actions_dispatched == 1
+    p = store.current_problem("g")
+    assert p is not None and p.raised_by == "worker_block"
+    assert {o.key for o in p.options} == {"correct", "supply", "cancel"}
+    assert "Telegram" in p.what
+    assert any("correct_implementation" in m and "decide" in m for m in notifier.sent)
+    assert not any("steer_goal" in m for m in notifier.sent)
+    # T044: the block named a capability the admission lint should have refused
+    # ("Telegram") — the MISS is recorded in the problems catalog so the class
+    # gets fixed, not the instance. This assertion is what caught the silent
+    # AttributeError the try/except around it used to swallow.
+    rows = store._state.list_problems(category="admission")
+    assert any(r.get("kind") == "lint_miss" for r in rows), rows
+
+
+# ---- spec 031 US3: the done_when admission lint -----------------------------
+
+@pytest.mark.parametrize("done_when,expect", [
+    # (a) sandbox-impossible → refused (the 2026-09-02 issue-414 shape)
+    ("A real Telegram brief is sent and sanity-checked against browser Ledger numbers.", "refuse"),
+    ("The job runs with the production credentials and posts to Slack.", "refuse"),
+    # (b) baseline-less absolute → rewritten (the issue-443 shape)
+    ("All tests pass (dotnet test backend/FinanceSentry.sln).", "rewrite"),
+    ("Zero lint warnings in the frontend.", "rewrite"),
+    # already baselined / decided → admitted unchanged
+    ("No new failures relative to main after the change.", "ok"),
+    ("The capability scan holds a goal whose project has a red probe on record.", "ok"),
+    ("Committed share of outflow over the last 3 complete months is shown on the dashboard.", "ok"),
+])
+def test_admission_lint_catches_the_three_classes(done_when, expect):
+    """Spec 031 US3 / SC-004: classes (a) and (b) are mechanical and
+    deterministic; a decided contract admits unchanged. The four 2026-09-02
+    contracts replay as the first two rows of each kind."""
+    from devclaw.goal import admission_lint as L
+    r = L.lint_mechanical(done_when)
+    if expect == "refuse":
+        assert r.refused and "sandbox cannot provide" in L.refusal_message(r)
+    elif expect == "rewrite":
+        assert not r.refused and r.rewrites and "no new failures relative to the default branch" in r.done_when
+    else:
+        assert not r.refused and not r.rewrites and r.done_when == done_when
+
+
+@pytest.mark.asyncio
+async def test_admission_refusal_persists_nothing_and_undecided_raises_a_problem(tmp_path, monkeypatch):
+    """(a) refuses with nothing persisted; (c) admits the goal BLOCKED with an
+    admission Problem before any dispatch, and a tick over it costs zero
+    cognition (constitution III — the lint's one call was at creation)."""
+    from devclaw.goal import service as _svc
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        store = svc._goal_store
+        ws = tmp_path / "ws"; ws.mkdir()
+        # (a) refusal — nothing persisted
+        with pytest.raises(ValueError) as ei:
+            await svc.create_goal_async(
+                "g-refused", objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+                done_when="A real Telegram brief is sent.",
+            )
+        assert "sandbox cannot provide" in str(ei.value)
+        assert not store.exists("g-refused")
+        # (c) undecided — judged by the patched module-global, raised as a Problem
+        async def fake_judge(done_when, caller):
+            return (L.Undecided(clause="the scan sources from somewhere", choice="registry or live workspaces?",
+                                options=("walk the project registry", "walk live workspaces")),), ""
+        from devclaw.goal import admission_lint as L
+        monkeypatch.setattr(_svc, "_judge_undecided", fake_judge)
+        out = await svc.create_goal_async(
+            "g-undecided", objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+            done_when="The scan sources from somewhere and holds red projects.",
+        )
+        assert out["admission"]["problem"]["raised_by"] == "admission_lint"
+        s = store.load_status("g-undecided")
+        assert s.phase == "blocked" and s.problem_id
+        p = store.current_problem("g-undecided")
+        assert p is not None and p.kind == "admission" and len(p.options) == 2
+        # zero-token: the admitted-but-blocked goal ticks with no cognition
+        ev, eng = FakeClaude(), FakeEngine()
+        await _tick(store, "g-undecided", ev, eng, RecordingNotifier())
+        assert ev.calls == 0 and eng.dispatched == []
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_admission_rewrite_is_recorded_as_a_decision(tmp_path, monkeypatch):
+    """(b): the rewrite lands in the contract AND as an admission Decision that
+    the feed-forward will carry to the worker and the gate (US4)."""
+    from devclaw.goal import service as _svc
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        async def no_undecided(done_when, caller):
+            return (), ""
+        monkeypatch.setattr(_svc, "_judge_undecided", no_undecided)
+        ws = tmp_path / "ws"; ws.mkdir()
+        out = await svc.create_goal_async(
+            "g-rewrite", objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+            done_when="All tests pass.",
+        )
+        assert out["admission"]["rewrites"][0]["to"].startswith("no new failures relative")
+        decs = svc._goal_store.decisions("g-rewrite")
+        assert len(decs) == 1 and decs[0].provenance == "admission"
+        assert svc._goal_store.load_status("g-rewrite").phase != "blocked"
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio
@@ -2951,10 +3234,12 @@ async def test_resume_goal_resets_the_donegate_round_count(tmp_path):
         store = svc._goal_store
         store.save_status("g", GoalStatus(
             phase="blocked", blocked_on="done-gate churn brake: parked",
-            donegate_rounds=DONEGATE_ROUND_CAP,
+            donegate_rounds=DONEGATE_ROUND_CAP, donegate_progress=14,
         ))
         svc.resume_goal("g")
-        assert store.load_status("g").donegate_rounds == 0
+        s = store.load_status("g")
+        assert s.donegate_rounds == 0
+        assert s.donegate_progress == 0   # the vouch restores the FULL budget
     finally:
         db.close()
 async def test_failed_settle_reason_rides_the_next_advance_brief(tmp_path):
@@ -3045,6 +3330,43 @@ async def test_advance_brief_carries_prior_increments_after_a_settled_delivery(t
     # #358: the previous worker's self-report must NOT become this worker's
     # premise — only devclaw's own settlement facts cross the channel.
     assert "it works great" not in action.goal
+
+
+@pytest.mark.asyncio
+async def test_decisions_marker_present_and_capped(tmp_path):
+    """Spec 031 US4 structural guard (beside the prior-increments guard): the
+    section's head line is DECISIONS_MARKER, superseded Decisions are absent,
+    the entry list caps under the budget with the marker never truncated, and
+    the next dispatch's brief carries it."""
+    from devclaw.advance_brief import DECISIONS_MARKER
+    from devclaw.goal import decisions as _dec
+    from devclaw.goal.models import Decision as _D
+    from devclaw.goal.prompt_budget import DECISIONS_KEEP, DECISIONS_TRUNCATION_MARKER
+
+    rows = [_D(id=f"dec_{i}", goal_id="g", problem_id="", clause=f"clause {i}", verb="decide",
+               option_key="correct", text="x" * 300, provenance="owner", made_by="denys",
+               made_at=1_000 + i, superseded_by=("dec_9" if i == 0 else ""))
+            for i in range(40)]
+    text = _dec.render(rows)
+    assert text.startswith(DECISIONS_MARKER)
+    assert "clause 0" not in text                      # superseded → absent
+    assert DECISIONS_TRUNCATION_MARKER in text          # capped
+    assert len(text.split("\n", 2)[2]) <= DECISIONS_KEEP + len(DECISIONS_TRUNCATION_MARKER) + 8
+    assert _dec.render([]) == ""                        # absence needs no statement
+
+    # end-to-end: a recorded Decision reaches the next brief as fact
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.record_decision(_D(id="dec_live", goal_id="g", problem_id="", clause="clause 7",
+                             verb="decide", option_key="accept_close", text="",
+                             provenance="owner", made_by="denys", made_at=5))
+    store.save_status("g", GoalStatus(phase="idle"))
+    store.append_steering("g", ["keep going"], source="owner")
+    engine = FakeEngine()
+    out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
+    assert out is Outcome.DISPATCHED
+    action, _, _ = engine.dispatched[0]
+    assert DECISIONS_MARKER in action.goal and "clause 7" in action.goal
 
 
 @pytest.mark.asyncio
@@ -3522,7 +3844,7 @@ def test_green_mechanical_verification_alone_never_closes_a_goal():
     assert 'if ev.verdict == "achieved":' in src, "the close lost its verdict guard"
     guard = (
         'store.transition(\n            goal_id, Event.ACHIEVE,\n'
-        '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0,\n'
+        '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,\n'
         '                    pending_merge_pr="", merge_heal_attempted=False),'
     )
     assert guard in src, "the primary ACHIEVE no longer clears the merge marker inside the verdict block"
