@@ -285,7 +285,8 @@ are frozen history),
 `.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
 escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit,
-live-shakedown).
+live-shakedown, root-cause — the fix-the-class procedure, applied before any
+behaviour-changing fix).
 
 ## Where to look next
 
