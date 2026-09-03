@@ -39,6 +39,12 @@ Unknown keys are tolerated (forward-compat within a schema version).
 
 ### `capabilities` (spec 030)
 
+> Since spec 032 (Q3) every **registered** project also carries `ci:definition`
+> implicitly — its own CI is its verification environment — red when the
+> default branch has no `.github/workflows`; onboarding writes one. A worker's
+> `BLOCKED: env — <item>` report is recorded as a `worker:<item>` row on the
+> project (no declaration needed) and holds it until the environment changes.
+
 The explicit, complete list of environment capabilities this project's verify
 contract depends on — nothing is inferred. v1 ids: `registry:npm-github` (the
 GitHub Packages npm credential) and `sandbox:image` (the per-task sandbox image

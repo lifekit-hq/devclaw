@@ -527,6 +527,27 @@ async def _block_on_env_cap(
     return Outcome.BLOCKED
 
 
+async def _block_on_env_deficiency(
+    goal_id: str, goal: Goal, status: GoalStatus, item: str,
+    *, task_id: str = "", store: GoalStore, notifier: Notifier,
+    summarize: "ClaudeCaller | None" = None,
+) -> Outcome:
+    """Spec 032 US2: a worker reported ``BLOCKED: env — <item>``. Record the
+    deficiency as a red capability row for the goal's PROJECT (so every goal on
+    it holds at admission, not only this one) and hold this goal through the
+    same ``mechanical:env`` seam a declared capability uses — one kind, one
+    ping marker, one heal. The pipeline owns the gap; nobody is asked."""
+    pid = (goal.project_id or "").strip() or None
+    cap_id = _env_cap.record_worker_deficiency(store, pid, item, goal_id=goal_id, task_id=task_id)
+    result = _env_cap.read_result(store, cap_id, pid) or _env_cap.CapProbeResult(
+        "red", evidence=f"a worker reported the sandbox lacks: {item}",
+    )
+    store.append_log(goal_id, f"worker environment deficiency → project hold ({cap_id}): {item}")
+    return await _block_on_env_cap(
+        goal_id, status, [(cap_id, result)], store=store, notifier=notifier, summarize=summarize,
+    )
+
+
 async def _autoheal_env_cap(
     goal_id: str, goal: Goal, status: GoalStatus,
     *, store: GoalStore, notifier: Notifier,
@@ -559,15 +580,18 @@ async def _autoheal_env_cap(
     # otherwise read "declares nothing" here and clear itself every tick,
     # re-dispatching straight back into the red capability.
     declared = await asyncio.to_thread(_declared_caps_for, goal, project_caps)
-    if not declared:
-        # No declared capabilities → the hold should not have been set; clear it
-        # defensively so the goal is not permanently wedged.
-        healed = _heal_unblock(goal_id, status, store, heal_attempts=status.heal_attempts)
-        store.append_log(goal_id, "env-cap hold cleared (no capabilities declared)")
-        return healed
+    # red_caps_for also reads the project's WORKER-REPORTED rows (spec 032
+    # US2), so a hold set from a worker's report survives here even when the
+    # project declares nothing.
     red = _env_cap.red_caps_for(store, declared, goal.project_id)
     if red:
         return None  # still broken — stay blocked at zero cost
+    if not declared and not _env_cap.worker_caps_for(store, (goal.project_id or "").strip() or None):
+        # Nothing declared and nothing reported → the hold should not have
+        # been set; clear it defensively so the goal is not permanently wedged.
+        healed = _heal_unblock(goal_id, status, store, heal_attempts=status.heal_attempts)
+        store.append_log(goal_id, "env-cap hold cleared (no capabilities declared)")
+        return healed
     n = status.env_heal_attempts + 1
     healed = _heal_unblock(
         goal_id, status, store,

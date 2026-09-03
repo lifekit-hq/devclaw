@@ -78,9 +78,11 @@ class EngineRequest:
 #: ``status == "rate_limited"`` carries ``error`` + ``retry_after`` (the host
 #: pauses-and-resumes); ``status == "blocked"`` carries ``reason`` — the worker's
 #: honest self-report that it genuinely cannot finish (missing capability,
-#: contradictory/impossible instructions). A ``blocked`` verdict is NOT an
-#: approval: the host fails it CLOSED and does NOT retry (a re-run re-blocks
-#: identically), surfacing the reason instead. When a ``verify_cmd`` ran,
+#: contradictory/impossible instructions) — typed by ``block_kind``: ``"env"``
+#: (``block_item`` names what the sandbox lacks; spec 032 US2 — the pipeline
+#: holds the project) or ``"contract"`` (the owner is asked). A ``blocked``
+#: verdict is NOT an approval: the host fails it CLOSED and does NOT retry
+#: (a re-run re-blocks identically), surfacing the reason instead. When a ``verify_cmd`` ran,
 #: ``result["verify"]`` carries the gate verdict
 #: ``{ran, cmd, passed, exit_code, timed_out, output}`` — the orchestration
 #: (not the engine) decides done-vs-failed from ``passed``.

@@ -196,14 +196,17 @@ async def _dispatch_action(
         _declared = await asyncio.to_thread(
             _declared_caps_for, goal, project_caps
         )
-        if _declared:
-            _red = _env_cap.red_caps_for(store, _declared, goal.project_id)
-            if _red:
-                return await _block_on_env_cap(
-                    goal_id, base, _red,
-                    store=store, notifier=notifier,
-                    summarize=summarize, consume_steering=consume_steering,
-                )
+        # spec 032 US2: consulted even with nothing declared — red_caps_for
+        # also reads the project's worker-reported deficiency rows, and a
+        # worker's report holds every goal on the project until the
+        # environment changes.
+        _red = _env_cap.red_caps_for(store, _declared, goal.project_id)
+        if _red:
+            return await _block_on_env_cap(
+                goal_id, base, _red,
+                store=store, notifier=notifier,
+                summarize=summarize, consume_steering=consume_steering,
+            )
     # ---- speckit contract enforcement at the dispatch boundary (issue #679) --
     # (a) block when spec dirs exist but none are graded (no tasks.md — the plan
     #     step hasn't run); (b) block when 2+ features have pending tasks BEYOND

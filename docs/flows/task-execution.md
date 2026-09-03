@@ -229,6 +229,19 @@ and the read-only review is dispatched. Merge-on-close re-reads and merges
 only the same green head. *Fails if:* `gh` is unreachable — the read is
 `unknown`, which holds and never approves.
 
+**The worker's two block forms (spec 032 US2).** A worker that cannot finish
+ends with `STATUS: BLOCKED: <reason>` (a contract-level block → a typed
+Problem for the owner, spec 031) or `STATUS: BLOCKED: env — <item>` (the
+sandbox lacks a tool, service, credential or access). The runner types the
+form on the wire (`block_kind`, `block_item`); the settle fails the task
+closed and un-retried in both cases, but the env form is the PIPELINE's:
+one problems-catalog row per item (`block/env_deficiency`, self-filed as
+devclaw work when `DEVCLAW_SELF_REPO` is set), and the goal's whole project
+holds on `mechanical:env` (a red `worker:<item>` capability row, read at
+admission by every goal on the project) until the instance's environment
+changes — a new sandbox image or build — when it heals with no operator verb.
+The worker never patches the repo around its environment.
+
 ## How the 2026-06-25 cascade maps onto these steps
 
 | Failure | Step | Symptom seen upstream | Real fix |

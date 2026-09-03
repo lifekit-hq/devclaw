@@ -97,15 +97,29 @@ def test_empty_and_none_are_not_blocked(runner):
 # ---- emission: the terminal `result:` line ----------------------------------
 
 
-def test_blocked_payload_emits_structured_result(runner, monkeypatch):
+@pytest.mark.parametrize("reason,kind,item", [
+    ("cannot access the private registry", "contract", ""),
+    ("env — dotnet-ef not available", "env", "dotnet-ef not available"),
+    ("ENVIRONMENT: postgres service unreachable", "env", "postgres service unreachable"),
+    ("env - NODE_AUTH_TOKEN rejected by the registry", "env", "NODE_AUTH_TOKEN rejected by the registry"),
+    ("environment —", "contract", ""),            # the typed form with no item is not typed
+    ("the environment variable X is unset", "contract", ""),  # prose mentioning the word is not the form
+])
+def test_blocked_payload_emits_structured_result(runner, monkeypatch, reason, kind, item):
+    """Spec 032 US2: the block is TYPED on the wire. ``BLOCKED: env — <item>``
+    rides as ``block_kind == "env"`` with the item, everything else as
+    ``contract``; the host routes on the kind, never on prose."""
     out = io.StringIO()
     monkeypatch.setattr(runner, "_PROTO_OUT", out)
+    block_kind, block_item = runner._classify_block(reason)
+    assert (block_kind, block_item) == (kind, item)
     runner._emit_result(
-        {"status": "blocked", "reason": "cannot access the private registry",
-         "workspace_dir": "/ws", "agent_output": "banner"}
+        {"status": "blocked", "reason": reason, "block_kind": block_kind,
+         "block_item": block_item, "workspace_dir": "/ws", "agent_output": "banner"}
     )
     line = out.getvalue()
     assert line.startswith("result: ") and line.endswith("\n")
     result = json.loads(line[len("result: "):])
     assert result["status"] == "blocked"
-    assert result["reason"] == "cannot access the private registry"
+    assert result["reason"] == reason
+    assert result["block_kind"] == kind and result["block_item"] == item

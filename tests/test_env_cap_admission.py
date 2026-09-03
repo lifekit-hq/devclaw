@@ -255,6 +255,7 @@ async def test_hold_clears_without_an_operator_verb_when_the_probe_greens(tmp_pa
     ((REGISTRY,), None),         # never probed → treated as unknown
     ((), "red"),                 # SC-003: declares nothing ⇒ held by nothing
     ((REGISTRY,), "red-other"),  # a red probe for an UNdeclared capability
+    ((), "ci-red"),              # spec 032: ci:definition is implicit for REGISTERED projects only
 ])
 async def test_only_a_red_probe_for_a_declared_capability_holds(tmp_path, declared, probe):
     """FR-005/FR-007: admission is fail-open everywhere except evidence of
@@ -262,6 +263,8 @@ async def test_only_a_red_probe_for_a_declared_capability_holds(tmp_path, declar
     store = _seed(tmp_path, *declared)
     if probe == "red-other":
         _probe(store, "red", cap_id="sandbox:image")       # declared: registry only
+    elif probe == "ci-red":
+        _probe(store, "red", cap_id=env_cap.CAP_CI_DEFINITION)  # an ad-hoc goal has no project CI
     elif probe is not None:
         _probe(store, probe)
     engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
@@ -430,6 +433,133 @@ async def test_an_unrelated_prior_heal_does_not_swallow_the_env_brake(
     assert st.env_heal_attempts == 1
     assert st.heal_attempts == prior_heals
     assert evaluator.calls == 0
+
+
+_ENV_MARKER = "worker reported environment deficiency:"
+
+
+def _project_pair(tmp_path):
+    """Two goals on one registered project (no capability declared): ``g``
+    mid-flight, ``g2`` dispatch-ready."""
+    from devclaw.goal.models import InFlight
+    goals = tmp_path / "goals"
+    store = GoalStore(goals, now=Clock())
+    seed_goal(goals, "g", project_id="proj", workspace_dir=_workspace(tmp_path))
+    seed_goal(goals, "g2", project_id="proj", workspace_dir=_workspace(tmp_path))
+    store.save_status("g", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add dotnet-ef migration"),
+    ))
+    store.save_status("g2", GoalStatus(phase="idle", lifecycle="executing"))
+    return store
+
+
+@pytest.mark.asyncio
+async def test_a_worker_reported_deficiency_holds_every_goal_on_the_project_with_one_ping(tmp_path):
+    """Spec 032 US2: a worker's ``BLOCKED: env — <item>`` is the pipeline's
+    fact, not the owner's question. The settle holds the reporting goal on
+    ``mechanical:env`` (no Problem, no re-dispatch), records ONE red row for the
+    PROJECT, and every other goal on that project holds at admission — the
+    pause-and-resume shape of a declared capability, at zero cognition."""
+    from devclaw.goal.models import PollResult
+    store = _project_pair(tmp_path)
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    failed = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed",
+        detail=f"{_ENV_MARKER} dotnet-ef not available in the sandbox — the sandbox lacks something the work needs",
+    ))
+
+    async def sweep(engine):
+        return await tick_all(
+            store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+            notify_url="http://relay", prepare_ws=fake_prepare,
+            project_capabilities=lambda: {"proj": ()},
+        )
+
+    out = await sweep(failed)
+    assert out["g"] is Outcome.BLOCKED
+    sg = store.load_status("g")
+    assert sg.blocked_kind == "mechanical:env" and sg.problem_id == ""
+    assert "dotnet-ef" in (sg.blocked_on or "") and "worker:" in (sg.blocked_on or "")
+    assert out["g2"] is Outcome.QUEUED          # g still held the lane when this sweep began
+    # next sweep: g is blocked, so g2 is the runnable head — and the project's
+    # worker-reported row holds it at admission before any worker launches
+    out = await sweep(FakeEngine())
+    assert out["g2"] is Outcome.BLOCKED
+    assert store.load_status("g2").blocked_kind == "mechanical:env"
+    assert failed.dispatched == []
+    assert evaluator.calls == 0
+    assert len(notifier.sent) == 2 and all("dotnet-ef" in m for m in notifier.sent)  # one ping per goal episode
+    assert env_cap.worker_caps_for(store, "proj") == (env_cap.worker_cap_id("dotnet-ef not available in the sandbox"),)
+
+    # held ticks stay free and silent
+    for _ in range(3):
+        await sweep(FakeEngine())
+    assert store.load_status("g").blocked_kind == "mechanical:env"
+    assert store.load_status("g2").blocked_kind == "mechanical:env"
+    assert len(notifier.sent) == 2 and evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_worker_reported_deficiency_heals_when_the_instance_env_ref_changes(tmp_path, monkeypatch):
+    """Spec 032 US2 / SC-004: the row is pinned to the environment it was
+    reported against; a new sandbox image or devclaw build (the fix arriving)
+    reads it green and the whole project resumes with no operator verb."""
+    from devclaw.goal.models import PollResult
+    store = _project_pair(tmp_path)
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    failed = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed",
+        detail=f"{_ENV_MARKER} dotnet-ef not available in the sandbox — the sandbox lacks something the work needs",
+    ))
+    caps = {"proj": ()}
+
+    async def sweep(engine):
+        return await tick_all(
+            store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+            notify_url="http://relay", prepare_ws=fake_prepare,
+            project_capabilities=lambda: caps,
+        )
+
+    out = await sweep(failed)
+    assert out["g"] is Outcome.BLOCKED
+    assert (await sweep(FakeEngine()))["g2"] is Outcome.BLOCKED
+
+    # devclaw ships a new sandbox image: the environment identity changes
+    monkeypatch.setattr(env_cap, "instance_env_ref", lambda: "new-image:abc|deadbeef")
+    engine = FakeEngine()
+    out = await sweep(engine)
+    assert Outcome.DISPATCHED in (out["g"], out["g2"])     # one of them is the runnable head
+    assert "" in (store.load_status("g").blocked_kind, store.load_status("g2").blocked_kind)
+    assert len(engine.dispatched) >= 1
+    assert any("auto-resumed" in line for gid in ("g", "g2") for line in store.recent_log(gid).splitlines())
+    assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_a_registered_project_without_a_ci_definition_is_held(tmp_path):
+    """Spec 032 Q3: a registered project's own CI is its verification
+    environment, so ``ci:definition`` is implicit for every registered project
+    (one place: the registry map) and red holds dispatch like any declared
+    capability — onboarding writes the workflow, nobody is asked."""
+    store = _seed(tmp_path)                      # declares nothing in its manifest
+    project_caps = _registered_caps(tmp_path, {"proj": _workspace(tmp_path)})
+    assert project_caps == {"proj": (env_cap.CAP_CI_DEFINITION,)}
+    goals = tmp_path / "goals"
+    seed_goal(goals, "g", project_id="proj", workspace_dir=_workspace(tmp_path))
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    _probe(store, "red", cap_id=env_cap.CAP_CI_DEFINITION, project_id="proj")
+    engine, notifier, evaluator = FakeEngine(), RecordingNotifier(), FakeClaude()
+
+    out = await tick_all(
+        store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+        notify_url="http://relay", prepare_ws=fake_prepare,
+        project_capabilities=lambda: project_caps,
+    )
+    assert out["g"] is Outcome.BLOCKED
+    st = store.load_status("g")
+    assert st.blocked_kind == "mechanical:env" and env_cap.CAP_CI_DEFINITION in st.blocked_on
+    assert engine.dispatched == [] and evaluator.calls == 0
 
 
 @pytest.mark.asyncio

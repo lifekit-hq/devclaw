@@ -115,6 +115,15 @@ _WORKER_BLOCKED_MARKER = "worker reported BLOCKED:"
 #: public alias — the goal layer recognises a worker honest-block by it
 #: (spec 031 R4) and raises a typed Problem instead of burning the cap.
 WORKER_BLOCKED_MARKER = _WORKER_BLOCKED_MARKER
+#: Spec 032 US2: the worker typed its block as an ENVIRONMENT deficiency
+#: (``BLOCKED: env — <item>``): the sandbox lacks a tool, service, credential
+#: or access the work needs. Same fail-fast, fail-closed handling as the
+#: marker above, but the goal layer routes it to the PIPELINE — a
+#: project-wide ``mechanical:env`` hold, one problems-catalog row per item,
+#: devclaw work — never to the owner as a question: the worker had no way to
+#: fix its environment and must not improvise around it in the repo.
+_WORKER_ENV_MARKER = "worker reported environment deficiency:"
+WORKER_ENV_MARKER = _WORKER_ENV_MARKER
 #: Substring the engine surfaces when the worker's conversation OVERFLOWED the
 #: model context window (full shape: ``Conversation run failed for id=...:
 #: Internal error: Prompt is too long``). Unlike the two markers above this one
@@ -1240,7 +1249,21 @@ class SettleMixin:
                         # CLOSED (never `done`) and fail FAST (a re-run re-blocks
                         # identically), surfacing the reason instead of looping.
                         reason = (result.get("reason") or "").strip() or "no reason given"
-                        last_failure = f"{_WORKER_BLOCKED_MARKER} {reason}"
+                        if result.get("block_kind") == "env":
+                            # spec 032 US2: the typed environment form — one
+                            # catalog row per item (the fingerprint normalizes
+                            # the message), terminal so it self-files as
+                            # devclaw work on the existing cadence.
+                            item = (result.get("block_item") or reason).strip()
+                            last_failure = f"{_WORKER_ENV_MARKER} {item}"
+                            self._store.record_problem(
+                                category="block", kind="env_deficiency", message=item,
+                                recovered=False,
+                                goal_id=(getattr(row, "parent_goal_id", "") or "") if row else "",
+                                task_id=task_id,
+                            )
+                        else:
+                            last_failure = f"{_WORKER_BLOCKED_MARKER} {reason}"
                 else:
                     # "done" means the verify gate passed, not that the agent said
                     # so — then the checks that READ the change. Axis 1 (the gate
@@ -1357,7 +1380,7 @@ class SettleMixin:
             # owner (poll.detail → the planner's next-tick context). Checked BEFORE
             # classify_failure so an unlucky reason wording can't be misrouted into
             # the pause path — a block is never a quota event.
-            if last_failure.startswith(_WORKER_BLOCKED_MARKER):
+            if last_failure.startswith((_WORKER_BLOCKED_MARKER, _WORKER_ENV_MARKER)):
                 # A block that arrived WITH a context-tripwire landing is not an
                 # empty-handed block. The runner told the worker to commit a
                 # coherent partial increment plus its specs/ artifacts before the
@@ -1405,14 +1428,21 @@ class SettleMixin:
                         verify_cmd=verify_cmd,
                     )
                     partial_json = json.dumps(partial_result)
-                self._store.mark_failed(
-                    task_id,
-                    f"{last_failure} — the worker reports it cannot complete this "
-                    "task as specified. Not auto-retried: a re-run reproduces the "
-                    "same block. Needs a human — adjust the goal/instructions or "
-                    "supply the missing capability.",
-                    result_json=partial_json,
-                )
+                if last_failure.startswith(_WORKER_ENV_MARKER):
+                    suffix = (
+                        " — the sandbox lacks something the work needs. Not "
+                        "auto-retried: the same environment reproduces the same gap. "
+                        "Owned by devclaw: the project holds until its environment "
+                        "changes, and the gap is filed as devclaw work."
+                    )
+                else:
+                    suffix = (
+                        " — the worker reports it cannot complete this task as "
+                        "specified. Not auto-retried: a re-run reproduces the same "
+                        "block. Needs a human — adjust the goal/instructions or "
+                        "supply the missing capability."
+                    )
+                self._store.mark_failed(task_id, f"{last_failure}{suffix}", result_json=partial_json)
                 self._check_and_trip_breaker(workspace_dir, task_id)
                 return None
             # Quota guard: a usage/rate limit must NOT be retried-now (that burns

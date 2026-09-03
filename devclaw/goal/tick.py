@@ -1006,6 +1006,7 @@ async def tick_all(
     project_workspaces: "Callable[[], set[str]] | None" = None,
     project_capabilities: "Callable[[], dict[str, tuple[str, ...]]] | None" = None,
     project_images: "Callable[[], dict[str, str | None]] | None" = None,
+    project_repo_urls: "Callable[[], dict[str, str | None]] | None" = None,
     issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal. One goal's failure never stops the others, and a usage
@@ -1174,6 +1175,7 @@ async def tick_all(
         if project_capabilities is not None:
             caps_by_project = project_capabilities() or {}
         images_by_project = (project_images() or {}) if project_images is not None else {}
+        repos_by_project = (project_repo_urls() or {}) if project_repo_urls is not None else {}
         # Keyed by the row a result is CACHED under, so an instance-scoped
         # capability declared by five projects is probed once while a
         # project-scoped one is probed per project (spec 030 CAP_SCOPES) —
@@ -1184,12 +1186,13 @@ async def tick_all(
             pid = (project_id or "").strip() or None
             for cap_id in cap_ids:
                 scoped = pid if _env_cap_mod.CAP_SCOPES.get(cap_id) == "project" else None
+                if cap_id == _env_cap_mod.CAP_CI_DEFINITION:
+                    subject = repos_by_project.get(scoped) if scoped else None
+                else:
+                    subject = images_by_project.get(scoped) if scoped else None
                 _targets.setdefault(
                     (cap_id, scoped),
-                    _env_cap_mod.CapTarget(
-                        cap_id=cap_id, project_id=scoped,
-                        subject=images_by_project.get(scoped) if scoped else None,
-                    ),
+                    _env_cap_mod.CapTarget(cap_id=cap_id, project_id=scoped, subject=subject),
                 )
 
         for _pid, _declared in caps_by_project.items():
