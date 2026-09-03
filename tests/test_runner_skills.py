@@ -170,6 +170,27 @@ def test_feature_slice_doctrine_caps_agents_md_to_keep_honest_never_create(runne
         assert "missing, create it" not in bundle
 
 
+def test_the_skill_bundle_licenses_no_gate_bypass(runner, skill_dir):
+    """Spec 032 US3 (structural guard): the worker's instructions never
+    license bypassing a gate or editing a gate input to pass one. The old
+    repo-gate-conflict skill said "skip it for this one commit with a reason
+    (--no-verify, SKIP=<hook-id>) … document WHY in AGENTS.md" — written for a
+    hook-vs-ticket conflict, applied to sandbox-vs-repo conflicts, it is how
+    committed binaries, LD_LIBRARY_PATH configs and AGENTS.md workarounds
+    reached product repos. Absence is proven against every raw source file;
+    the two typed hand-backs are proven present in the writes-code bundle."""
+    for path in sorted(skill_dir.rglob("*.md")):
+        text = path.read_text(encoding="utf-8")
+        assert "--no-verify" not in text, path
+        assert "SKIP=" not in text, path
+        assert "Fix the mechanism, don't obey it" not in text, path
+    for kind in ("implement_feature", "fix_bug"):
+        bundle = runner._load_skills(kind)
+        assert "BLOCKED: env" in bundle
+        assert "What is never yours to change" in bundle
+        assert "gate inputs" in bundle.lower()
+
+
 def test_onboard_brief_keeps_agents_md_authoring_uncapped(runner, skill_dir):
     """The never-create cap is feature/fix doctrine only — onboarding IS the
     authoring path and must not receive a contradicting rule (the cap lives in

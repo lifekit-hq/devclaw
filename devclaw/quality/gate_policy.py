@@ -39,6 +39,7 @@ ALWAYS_HARD: frozenset[str] = frozenset(
     {
         "verify",  # the verify_cmd gate — green tests are table stakes
         "materialize",  # the agent's change could not be determined at all
+        "change_class",  # a gate input was edited / a binary committed (spec 032 US3)
         "test_integrity",  # tests silently deleted/neutered
         "delivery_trust",  # red CI merged (remote_checks / CI gate)
         "done_gate",  # closing a goal on the model's own say-so

@@ -6,7 +6,7 @@ Concrete failure mode: you add `e2e/*.spec.ts` Playwright tests that pass by han
 
 Before you finish:
 
-1. If you added tests at a layer the existing `verify_cmd` doesn't run, **update `verify_cmd`** (in AGENTS.md, the CI workflow, wherever this repo declares it) to include the new layer.
+1. If you added tests at a layer the existing `verify_cmd` doesn't run, **declare the new layer in the project's `devclaw.json` `verifyCmd`** — never by editing a CI workflow, AGENTS.md or a test-runner config (gate inputs; the change fails).
 2. If a build step is needed before the new tests run (e.g. `npm run build` before serving a SPA), include that step in the gate too.
 3. Record in your final summary which test layers the gate now covers, so the evaluator can verify against it directly.
 

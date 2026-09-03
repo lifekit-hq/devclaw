@@ -18,6 +18,6 @@ kept the offset param for back-compat.
 Fixes #42
 ```
 
-Prefer one commit. Do NOT push or open a PR — devclaw delivers it as a branch + PR.
+Prefer one commit. Do NOT push or open a PR — devclaw delivers it as a branch + PR. Gate inputs and binaries are never yours to change (see the typed-blocks skill).
 
 This is about the MESSAGE, not about completeness: devclaw captures everything in the workspace either way, so anything you leave unstaged is reviewed and shipped regardless. What a good commit buys is a reviewer who can see what you decided and why.

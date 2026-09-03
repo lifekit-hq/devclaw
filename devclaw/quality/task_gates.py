@@ -249,7 +249,53 @@ class _MaterializeGate:
         return GateVerdict.passed(self.gate_id)
 
 
+#: Stable marker on the change-class failure: the retry loop fails FAST on it
+#: (the same span reproduces the same classification) — the queue routes on
+#: the marker like the review-crash and prompt-too-long ones.
+_CHANGE_CLASS_MARKER = "change_class:"
+
+
 @dataclass
+class _ChangeClassGate:
+    """Spec 032 US3 — a worker never edits a project's GATE INPUTS and never
+    ships a binary. Always-hard in both dial positions, zero-LLM, reads the
+    one classified span (``ChangeSet.paths``). Fails closed on any gate-input
+    path the issue did not declare in scope and on any committed binary; an
+    environment-declaration edit passes (recorded loudly by the settle). Placed
+    right after ``materialize``: it is the first judgement of the span."""
+
+    gate_id: str = "change_class"
+
+    def applies(self, gi: GateInput) -> bool:
+        return True
+
+    async def check(self, gi: GateInput) -> GateVerdict:
+        change = await gi.change()
+        if not change.is_change:
+            return GateVerdict.not_consulted(self.gate_id, "no span to classify")
+        inputs = change.gate_input_paths
+        binaries = change.binary_paths
+        if inputs:
+            return GateVerdict.failed(
+                self.gate_id,
+                f"{_CHANGE_CLASS_MARKER} gate-input edit(s) {', '.join(inputs)} — a worker never "
+                f"edits a project's gate inputs (CI workflows, AGENTS.md, test-runner/build "
+                f"configuration, install scripts, toolchain pins) to make a gate pass. If your "
+                f"environment is the reason, end with `STATUS: BLOCKED: env — <what the sandbox "
+                f"lacks>`; if the repo's mechanism contradicts the ticket, end with "
+                f"`STATUS: BLOCKED: <the conflict>`. A ticket that is ABOUT these files "
+                f"declares the path in scope.",
+            )
+        if binaries:
+            return GateVerdict.failed(
+                self.gate_id,
+                f"{_CHANGE_CLASS_MARKER} committed binary file(s) {', '.join(binaries)} — "
+                f"binaries never ship from a sandbox. If the work needs one, end with "
+                f"`STATUS: BLOCKED: env — <what the sandbox lacks>`.",
+            )
+        return GateVerdict.passed(self.gate_id)
+
+
 @dataclass
 class _ReviewGate:
     """Adversarial pre-PR review over the shared diff (runs only after integrity

@@ -1,34 +1,36 @@
-# When a repo mechanism forces a change your ticket forbids
+# When you cannot finish: the two typed blocks
 
-A repo-local **mechanism** — a pre-commit hook, a lint autofix, a formatter, a
-version-bump gate, a CI check that rewrites files — sometimes mechanically
-forces a change your ticket **explicitly forbids** (classic: the ticket says
-"do NOT touch `package.json`" but a pre-commit version-gate bumps it on every
-commit). Two moves lose, and you must take neither:
+Two things can stop you that no amount of trying fixes. Each has ONE correct
+move — a typed hand-back — and one forbidden move: changing what the gate
+reads so the gate passes.
 
-- **Appease it** — make the forbidden change so the gate passes. That ships a
-  scope violation; review flags it and the task fails. Never let a hook's
-  autofix stage the forbidden edit for you either.
-- **Fight it blindly** — retry the same commit hoping the gate relents. It
-  won't; the task dead-ends.
+**Your environment lacks something the work needs** (a tool, a service the
+tests need, a credential, network or registry access). End your final
+message with
 
-## Fix the mechanism, don't obey it
+    BLOCKED: env — <exactly what is missing, one line>
 
-The gate is the **cause**, not a fact of nature — so **fixing or relaxing it is
-in scope** for this change, like refactoring what you touch is in scope.
+devclaw holds the whole project on that fact, files it as devclaw work, and
+resumes every goal on the project when the environment changes. Still fill
+CHANGED / VERIFIED / ACCEPTANCE with how far you got.
 
-1. **Diagnose** the mechanism forcing the edit: `.pre-commit-config.yaml`,
-   `.husky/`, a `lint-staged` block, a `core.hooksPath` hook, a `Makefile`
-   target, a CI step. Name it in your summary.
-2. **Fix it minimally** — correct the over-broad rule, or skip it for this one
-   commit with a reason (`--no-verify`, `SKIP=<hook-id>`). Prefer the real fix;
-   bypass only a legitimate gate that just shouldn't apply here. Never disable a
-   repo's safety net wholesale or weaken a check to go green.
-3. **Document WHY** in the commit body and in `AGENTS.md` (if the repo has
-   one), so the next task doesn't re-hit it. A documented bypass reads as
-   resolving a real conflict; a silent one reads as sneaking past a gate.
+**A repo mechanism contradicts the ticket** (a pre-commit hook, lint
+autofix, version-bump gate or CI check forces a change the ticket forbids).
+End with
 
-If the mechanism genuinely can't be touched, **do not appease and do not
-fabricate success** — report it as a blocker: name the mechanism, the forbidden
-change it forces, and why you couldn't resolve it. A loud "this hook and this
-ticket contradict" is a correct outcome; a silent forbidden edit is not.
+    BLOCKED: <the mechanism, the change it forces, the ticket line it contradicts>
+
+The owner resolves it with a recorded decision; never appease the mechanism,
+never sneak past it.
+
+## What is never yours to change
+
+Gate inputs — CI workflows, AGENTS.md, test-runner and build configuration
+(Playwright, Jest, Karma, Angular, pytest, tox), pre-commit/husky hooks,
+install and postinstall scripts, `.npmrc`, toolchain pins (`global.json`,
+`.tool-versions`, `.mise.toml`) — and any binary file. A span that touches
+one fails before review; skipping a hook, weakening a check or writing a
+workaround into AGENTS.md are not options. The one exception is a ticket
+that is ABOUT those files: it names the path in scope and the classifier
+honours it. A new verify layer is declared in `devclaw.json` (`verifyCmd`),
+never in a workflow you edit.

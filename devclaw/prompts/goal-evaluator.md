@@ -61,7 +61,10 @@ evidence makes the clause UNSATISFIED.
   a verify script that greps for a spec file's existence proves
   presence, not coverage: UNSATISFIED;
 - a merged PR or a passing gate by itself — the gate proves behaviour
-  didn't break, not that the requirement is met.
+  didn't break, not that the requirement is met;
+- edits to gate inputs — AGENTS.md, CI workflows, test-runner or build
+  configuration, install scripts, committed binaries: those files feed the
+  verification and are never evidence for a clause.
 
 **3a. Stub policy.** Evidence that is structurally a stub (a
 `not_yet_available` payload, a `*Stub` class, any "not implemented yet"
