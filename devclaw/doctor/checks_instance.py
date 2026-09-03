@@ -224,32 +224,34 @@ def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, f"{_OAUTH_TOKEN_VAR} not set (sandbox auth rides the mounted /login credential)")]
 
 
-#: GitHub token prefixes. A `read:packages` credential that matches none of
-#: these is not a GitHub token at all — the exact 2026-08-31 failure, where a
-#: malformed secret rode the whole plumbing into the sandbox and only
-#: surfaced as an `npm ci` 401 after it had eaten a goal's dispatch budget.
-_GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "ghs_", "gho_")
+#: Shape rules and the live probe are owned by ``devclaw.env_cap`` — the
+#: capability layer and this check are two readers of ONE primitive, so a
+#: rule stated twice could drift into doctor reporting OK on a credential the
+#: admission gate calls red. Re-bound as module globals because tests patch
+#: the probe HERE, in the calling module (the collector convention).
+from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY  # noqa: E402
+from ..env_cap import GH_TOKEN_PREFIXES as _GH_TOKEN_PREFIXES  # noqa: E402
+from ..env_cap import REGISTRY_UNSET_REMEDY as _REGISTRY_UNSET_REMEDY  # noqa: E402
+from ..env_cap import probe_registry_token as _probe_registry_token  # noqa: E402
 
-#: Module-global so tests patch it HERE (the caller's module), per the
-#: collector convention. Never raises: every failure degrades to None, which
-#: the check reports as UNKNOWN — an unverifiable credential is never OK.
-def _probe_registry_token(token: str, timeout_s: float = 5.0) -> Optional[int]:
-    """HTTP status from an authenticated GitHub API call, or None if the
-    probe could not run at all. The token is never logged or returned."""
-    import urllib.error
-    import urllib.request
 
-    req = urllib.request.Request(
-        "https://api.github.com/user",
-        headers={"Authorization": f"Bearer {token}", "User-Agent": "devclaw-doctor"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            return int(resp.status)
-    except urllib.error.HTTPError as exc:
-        return int(exc.code)
-    except Exception:
-        return None
+def _projects_declaring_registry_cap(ctx: "InstanceContext") -> list[str]:
+    """Ids of registered projects whose ``devclaw.json`` declares the registry
+    capability. Best-effort: an unreadable manifest is already reported by the
+    project manifest checks, and must never crash this instance check."""
+    from ..project_manifest import load_manifest
+
+    out: list[str] = []
+    for proj in ctx.registry.list():
+        if getattr(proj, "status", "active") == "archived":
+            continue
+        try:
+            manifest = load_manifest(getattr(proj, "workspace_dir", "") or "")
+        except Exception:  # noqa: BLE001 — see docstring
+            continue
+        if manifest and _CAP_REGISTRY in manifest.capabilities:
+            out.append(proj.id)
+    return out
 
 
 def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
@@ -261,17 +263,33 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
     every sandbox, `npm ci` 401s in there, the worker self-reports BLOCKED,
     and the goal burns its dispatch budget on an environment fault it cannot
     fix. The value is never echoed — shape and probe status only.
+
+    Every non-OK remedy names the spec-030 capability id this check backs, so
+    an operator reading a ``mechanical:env`` hold and an operator reading
+    doctor see the SAME probe id and one story, not two (US3).
     """
     cid = "instance.registry.token"
     remedy = (
         "regenerate a read:packages-only classic PAT, "
-        "`gh secret set NODE_AUTH_TOKEN`, then redeploy"
+        "`gh secret set NODE_AUTH_TOKEN`, then redeploy "
+        f"(clears the '{_CAP_REGISTRY}' capability hold)"
     )
     token = os.environ.get(_REGISTRY_TOKEN_VAR, "").strip()
     if not token:
-        # A supported posture (the pre-token deployment), not a fault — same
-        # convention as check_auth_setup_token. The consequence is named so
-        # the report still explains why a frontend build cannot run.
+        # Unset is a supported posture (the pre-token deployment) only while
+        # nothing NEEDS it — same convention as check_auth_setup_token. Once a
+        # project declares the capability, the same absence is a declared
+        # dependency that is missing: the spec-030 probe calls it red and holds
+        # that project's dispatch, so doctor must not answer OK on the state
+        # the operator is being held by (US3: ONE story, not two).
+        declaring = _projects_declaring_registry_cap(ctx)
+        if declaring:
+            return [Finding(cid, Verdict.FAIL,
+                            f"{_REGISTRY_TOKEN_VAR} not set, but project(s) "
+                            f"{', '.join(sorted(declaring))} declare "
+                            f"'{_CAP_REGISTRY}' — their dispatch is held until a "
+                            "credential exists",
+                            remedy=_REGISTRY_UNSET_REMEDY)]
         return [Finding(cid, Verdict.OK,
                         f"{_REGISTRY_TOKEN_VAR} not set (no registry credential "
                         "crosses into the sandbox; `npm ci` on a GitHub-Packages "
@@ -579,50 +597,76 @@ def check_goal_issue_identity_table(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "goal_issue_identity uniqueness table present")]
 
 
-def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
-    """Issue #728 (per spec-016 FR-014: a goal_status column change ships its
-    doctor check): the slice_hold_count column tracks consecutive dispatch holds
-    so the escalation-to-blocked logic can fire. An instance whose DB predates
-    the ALTER TABLE migration reads the column as absent; every dispatch hold
-    silently resets to 0 and the goal never escalates. A server restart runs the
-    ALTER TABLE idempotently."""
-    cid = "instance.dispatch.goal_status_slice_hold_count"
+def _goal_status_column_finding(
+    ctx: "InstanceContext", cid: str, column: str, consequence: str,
+) -> list[Finding]:
+    """The shared body of every "a goal_status column a brake depends on must
+    exist on THIS instance" check (spec-016 FR-014).
+
+    A DB bootstrapped before the column's ``ALTER TABLE`` reads it as absent,
+    which is invisible to the stubbed suite — that whole class is why FR-014
+    exists. Callers supply the check id and the CONSEQUENCE of the column
+    missing; the probe, the no-goals-yet case and the remedy are identical
+    across them, and were duplicated per column until this extraction."""
     with _ro_db(ctx.store.db_path) as db:
         tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if "goal_status" not in tables:
             return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
         cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
-    if "slice_hold_count" not in cols:
+    if column not in cols:
         return [Finding(
             cid, Verdict.FAIL,
-            "goal_status.slice_hold_count column absent — the DB predates issue #728; "
-            "persistent dispatch holds will never escalate to blocked",
+            f"goal_status.{column} column absent — {consequence}",
             remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
         )]
-    return [Finding(cid, Verdict.OK, "goal_status.slice_hold_count column present")]
+    return [Finding(cid, Verdict.OK, f"goal_status.{column} column present")]
+
+
+def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
+    """Issue #728: the slice_hold_count column tracks consecutive dispatch holds
+    so the escalation-to-blocked logic can fire."""
+    return _goal_status_column_finding(
+        ctx, "instance.dispatch.goal_status_slice_hold_count", "slice_hold_count",
+        "the DB predates issue #728; persistent dispatch holds will never "
+        "escalate to blocked",
+    )
+
+
+def check_goal_status_env_hold_notified(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 030 FR-003: ``env_hold_notified`` marks the one owner ping an
+    environment-capability hold episode is allowed. Absent, every held tick
+    re-reads it as false and the brake that exists to make fs-479 loud becomes
+    a ping storm — the failure mode SC-002 is written against."""
+    return _goal_status_column_finding(
+        ctx, "instance.env.goal_status_env_hold_notified", "env_hold_notified",
+        "the DB predates spec 030; an environment-capability hold would ping "
+        "the owner on every tick instead of once per episode",
+    )
+
+
+def check_goal_status_env_heal_attempts(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 030 US2: ``env_heal_attempts`` is the env brake's OWN heal budget.
+    Absent, the auto-heal falls back to nothing to count and a flapping
+    capability can never be parked for the owner."""
+    return _goal_status_column_finding(
+        ctx, "instance.env.goal_status_env_heal_attempts", "env_heal_attempts",
+        "the DB predates spec 030's per-brake heal budget; a flapping "
+        "environment capability would cycle hold→resume forever",
+    )
+
+
 def check_goal_status_donegate_progress(ctx: "InstanceContext") -> list[Finding]:
-    """Progress-aware churn brake (per spec-016 FR-014: a goal_status column
-    change ships its doctor check): ``donegate_progress`` persists the best
+    """Progress-aware churn brake: ``donegate_progress`` persists the best
     satisfied-clause count a done-gate round has reported, so a round that
     beats it resets the churn counter instead of counting toward the cap. An
     instance whose DB predates the ALTER TABLE migration reads it as absent:
     every round then looks flat, and a goal that is visibly converging
-    (14/15 → 15/15) parks for a human exactly as before the fix. A server
-    restart runs the ALTER TABLE idempotently."""
-    cid = "instance.donegate.goal_status_donegate_progress"
-    with _ro_db(ctx.store.db_path) as db:
-        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "goal_status" not in tables:
-            return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
-        cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
-    if "donegate_progress" not in cols:
-        return [Finding(
-            cid, Verdict.FAIL,
-            "goal_status.donegate_progress column absent — the DB predates the "
-            "progress-aware churn brake; a converging goal will still park at the round cap",
-            remedy="restart devclaw (the migration runs ALTER TABLE at boot)",
-        )]
-    return [Finding(cid, Verdict.OK, "goal_status.donegate_progress column present")]
+    (14/15 → 15/15) parks for a human exactly as before the fix."""
+    return _goal_status_column_finding(
+        ctx, "instance.donegate.goal_status_donegate_progress", "donegate_progress",
+        "the DB predates the progress-aware churn brake; a converging goal "
+        "will still park at the round cap",
+    )
 
 
 def check_problems_tables(ctx: "InstanceContext") -> list[Finding]:
@@ -758,6 +802,8 @@ INSTANCE_CHECKS: tuple = (
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
     check_goal_status_slice_hold_count,
+    check_goal_status_env_hold_notified,
+    check_goal_status_env_heal_attempts,
     check_goal_status_donegate_progress,
     check_problems_tables,
     check_problem_status_pointer,

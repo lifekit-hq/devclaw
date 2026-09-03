@@ -271,6 +271,14 @@ class TickContext:
     #: one sweep into an N² scan. None → this tick was invoked directly (tests,
     #: ``tick_one``) and the handler derives it lazily for this goal alone.
     holders: "dict[str, str] | None" = None
+    #: ``project_id -> declared environment capabilities`` for the admission
+    #: gate (spec 030). Read ONCE per ``tick_all`` sweep from every registered
+    #: project's ``devclaw.json``. Sourcing it from the REGISTRY rather than
+    #: from each goal's prepared workspace is what makes the hold reach a
+    #: goal's FIRST dispatch, before any workspace exists. None → this tick was
+    #: invoked directly (tests, ``tick_one``) and the guard falls back to the
+    #: goal's own workspace manifest.
+    project_caps: "dict[str, tuple[str, ...]] | None" = None
 
 
 # ---- per-goal tick serialization (Tranche 1/PR8) ---------------------------

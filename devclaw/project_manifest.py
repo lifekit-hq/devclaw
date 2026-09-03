@@ -84,6 +84,23 @@ class Manifest:
     verify_cmd: Optional[str] = None
     stack: tuple[str, ...] = field(default_factory=tuple)
     validation: Optional[ValidationContract] = None
+    #: spec 030 FR-005 — the explicit capability ids this project requires.
+    #: Only these ids are consulted at admission; nothing is inferred.
+    #: An absent or empty list means "no capability dependencies", which
+    #: admits byte-identically to today (SC-003).
+    capabilities: tuple[str, ...] = field(default_factory=tuple)
+
+
+def _known_capabilities() -> "frozenset[str]":
+    """The capability ids this instance can probe (``env_cap.KNOWN_CAPABILITIES``).
+
+    Imported lazily: the capability layer reads the sandbox image name off the
+    engine, and the engine reads manifests — a module-level import would close
+    that loop. The ids live in ``env_cap`` because that is where they are
+    probed; re-typing them here is what T014 removed."""
+    from .env_cap import KNOWN_CAPABILITIES
+
+    return KNOWN_CAPABILITIES
 
 
 def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
@@ -124,6 +141,27 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
     stack = raw.get("stack", [])
     if not isinstance(stack, list) or any(not isinstance(s, str) for s in stack):
         raise ManifestError(f"{source}: stack must be a list of strings")
+    capabilities = raw.get("capabilities", [])
+    if not isinstance(capabilities, list) or any(
+        not isinstance(c, str) or not c.strip() for c in capabilities
+    ):
+        raise ManifestError(f"{source}: capabilities must be a list of non-empty strings")
+    # Value-validated against the instance's probe set, the `strictnessDefault`
+    # / `surface` precedent — NOT tolerated like `stack`, which is
+    # informational. An id nothing can probe is worse than no id at all: it
+    # reads as protection in the repo while producing zero probing and zero
+    # holding, so `registry:npmgithub` would silently spend the very sessions
+    # the declaration was written to save (spec 030 FR-005/FR-006).
+    # Validation compares the STRIPPED id, so the parse must also store the
+    # stripped form — otherwise a padded id validates here and then misses
+    # `_PROBE_RUNNERS`, probing "unknown", which FR-007 declines to hold on.
+    # That is the silent-brake-off outcome this validation exists to prevent.
+    unknown = [c for c in capabilities if c.strip() not in _known_capabilities()]
+    if unknown:
+        raise ManifestError(
+            f"{source}: unknown capability id(s) {sorted(unknown)} — this instance "
+            f"can probe {sorted(_known_capabilities())}"
+        )
     validation = _parse_validation(raw.get("validation"), source)
     return Manifest(
         schema_version=sv,
@@ -132,6 +170,7 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
         surface=surface,
         verify_cmd=verify_cmd.strip() if isinstance(verify_cmd, str) else None,
         stack=tuple(stack),
+        capabilities=tuple(c.strip() for c in capabilities),
         validation=validation,
     )
 

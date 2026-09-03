@@ -343,6 +343,46 @@ def test_scaffold_drift_detected_against_packaged_source(env, tmp_path):
     assert f.verdict is Verdict.WARN and tmpl.name in f.evidence
 
 
+# ---- spec 030 FR-005a: undeclared capability advisory ---------------------
+
+
+def test_undeclared_private_registry_dependency_is_advisory_only(env, tmp_path):
+    """Seeded fault: the repo resolves against a private npm registry but its
+    devclaw.json declares no ``registry:*`` capability — the write-and-forget
+    cost of explicit-only declaration (spec 030 FR-005a). Doctor must SEE it
+    (a WARN naming the file and the fix) and never escalate it to a FAIL: this
+    advisory is a report line, never a dispatch hold."""
+    ws = tmp_path / "ws-cap1"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
+    (ws / ".npmrc").write_text("@lifekit-hq:registry=https://npm.pkg.github.com\n")
+
+    (f,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert f.verdict is Verdict.WARN            # advisory — never FAIL
+    assert ".npmrc" in f.evidence and "npm.pkg.github.com" in f.evidence
+    assert "registry:npm-github" in f.remedy
+
+    # Declaring the capability settles it — the same repo, one manifest key.
+    (ws / "devclaw.json").write_text(
+        '{"schemaVersion": 1, "boilerplateRevision": 1, '
+        '"capabilities": ["registry:npm-github"]}'
+    )
+    (ok,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert ok.verdict is Verdict.OK
+
+
+def test_no_private_registry_dependency_is_ok(env, tmp_path):
+    """A repo with no visible private-registry dependency declares nothing and
+    is clean — the advisory must not nag every public-registry project."""
+    ws = tmp_path / "ws-cap2"
+    register_tmp_project(env["registry"], str(ws))
+    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
+    (ws / "package-lock.json").write_text('{"packages": {"": {"name": "x"}}}')
+
+    (f,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert f.verdict is Verdict.OK
+
+
 # ---- instance: scorecard convergence ledger (spec 018 US1) ----------------
 
 
@@ -476,23 +516,37 @@ def test_project_sizing_check_fails_when_the_host_shrank(env, monkeypatch):
     assert any("no longer admittable" in f.evidence for f in fs)
 
 
-# ---- instance: goal_status.slice_hold_count column (issue #728) -----------
+# ---- instance: goal_status columns a brake depends on ---------------------
+#
+# One class, not one test per column (spec-016 FR-014): a DB bootstrapped
+# before a column's ALTER TABLE reads it as absent, the brake that column
+# carries degrades SILENTLY, and the stubbed suite structurally cannot see it
+# because it always builds a fresh schema. Every new goal_status column a
+# brake reads adds a case here — never a sibling test.
+_BRAKE_COLUMNS = [
+    # (column, check id, issue #728 / spec 030)
+    ("slice_hold_count", "instance.dispatch.goal_status_slice_hold_count"),
+    ("env_hold_notified", "instance.env.goal_status_env_hold_notified"),
+    ("env_heal_attempts", "instance.env.goal_status_env_heal_attempts"),
+]
 
 
-def test_slice_hold_count_column_absent_detected(env):
-    """Seeded fault (spec-016 FR-014): slice_hold_count dropped → DB predates
-    issue #728; persistent dispatch holds will never escalate to blocked."""
+@pytest.mark.parametrize("column,cid", _BRAKE_COLUMNS)
+def test_brake_column_absent_detected(env, column, cid):
+    """Seeded fault: the column is dropped, so the instance looks like one
+    whose DB predates the migration that added it."""
     db = env["store"]._db
-    db.execute("ALTER TABLE goal_status DROP COLUMN slice_hold_count")
+    db.execute(f"ALTER TABLE goal_status DROP COLUMN {column}")
     db.commit()
-    (f,) = _findings(_run(env), "instance.dispatch.goal_status_slice_hold_count")
+    (f,) = _findings(_run(env), cid)
     assert f.verdict is Verdict.FAIL
-    assert "slice_hold_count" in f.evidence and "restart" in f.remedy
+    assert column in f.evidence and "restart" in f.remedy
 
 
-def test_slice_hold_count_column_present_is_ok(env):
-    (f,) = _findings(_run(env), "instance.dispatch.goal_status_slice_hold_count")
-    assert f.verdict is Verdict.OK
+@pytest.mark.parametrize("column,cid", _BRAKE_COLUMNS)
+def test_brake_column_present_is_ok(env, column, cid):
+    (f,) = _findings(_run(env), cid)
+    assert f.verdict is Verdict.OK and column in f.evidence
 
 
 def test_donegate_progress_column_absent_detected(env):

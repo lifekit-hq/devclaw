@@ -64,6 +64,8 @@ from ..state_store import _now_ms
 from ..engine.workspace import prepare_workspace
 from .. import config as _config
 from .prompt_budget import cap_steering as _cap_steering
+from .. import env_cap as _env_cap_mod
+from .. import project_manifest as _env_cap_manifest_mod  # aliased to dodge shadowing
 
 # ---- extracted-module re-export facade (behavior-preserving split) --------
 # Every symbol MOVED out of this file is re-exported here so
@@ -92,7 +94,9 @@ from .tick_context import (  # noqa: F401 (re-exported)
 )
 from .tick_guards import (  # noqa: F401 (re-exported)
     PREP_HEAL_CAP,
+    _autoheal_env_cap,
     _autoheal_prep,
+    _block_on_env_cap,
     _block_on_lost_ref,
     _block_on_prep_failure,
     _check_no_progress,
@@ -192,6 +196,7 @@ async def tick_goal(
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
+    project_caps: "dict[str, tuple[str, ...]] | None" = None,
     issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> Outcome:
     """Run one heartbeat and record a single ``tick`` trace event with the
@@ -226,6 +231,7 @@ async def tick_goal(
                 remote_checker=remote_checker,
                 mergeability_probe=mergeability_probe,
                 holders=holders,
+                project_caps=project_caps,
                 issue_fetcher=issue_fetcher,
             )
         except IllegalTransition as exc:
@@ -301,6 +307,7 @@ async def _tick_goal_impl(
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
+    project_caps: "dict[str, tuple[str, ...]] | None" = None,
     issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> Outcome:
     """Run one heartbeat. Reads the goal's status, classifies it into a
@@ -325,6 +332,7 @@ async def _tick_goal_impl(
         remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
         holders=holders,
+        project_caps=project_caps,
         issue_fetcher=issue_fetcher,
     )
 
@@ -347,10 +355,11 @@ async def _tick_goal_impl(
     # longer holds — no LLM, ever (the mirror of the quota pause's
     # timestamp-compare auto-resume in tick_all), damped by the persisted
     # per-goal heal budget so a flapping condition can't turn the zero-token
-    # blocked steady-state into a plan + ping per cycle. One healable kind:
+    # blocked steady-state into a plan + ping per cycle. Two healable kinds:
     # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs
-    # on the persisted next_heal_at exponential backoff, not every tick. A
-    # human-gated: resume_goal clears it.
+    # on the persisted next_heal_at exponential backoff, not every tick — and
+    # ``env`` (spec 030), whose recheck is a persisted-row read, hence no
+    # backoff window. Both are also human-clearable: resume_goal clears them.
     # needs_answer / bug / lost_ref / dispatch_cap stay human-gated (see the
     # heal guards' docstrings). A refused heal (budget spent / window closed /
     # still broken) leaves the blocked status untouched and the tick idles
@@ -370,6 +379,14 @@ async def _tick_goal_impl(
         if status.blocked_kind == "mechanical:prep":
             healed = await _autoheal_prep(
                 goal_id, goal, status, store=store, notifier=notifier,
+            )
+        elif status.blocked_kind == "mechanical:env":
+            # spec 030 FR-003: no backoff needed — just read the persisted row
+            # (zero network, zero LLM). The sweep refreshes probes before each
+            # sweep, so the result here is at most one sweep old.
+            healed = await _autoheal_env_cap(
+                goal_id, goal, status, store=store, notifier=notifier,
+                project_caps=project_caps,
             )
         if healed is not None:
             status = healed
@@ -600,6 +617,7 @@ async def _handle_qa_goal(
             store=store, engine=ctx.engine, notifier=ctx.notifier,
             notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
             summarize=ctx.summary_caller, consume_steering=[],
+            project_caps=ctx.project_caps,
         )
 
     store.update_status_fields(goal_id, last_tick_at=store.now_iso())
@@ -932,6 +950,7 @@ async def _handle_long_lived_advance(
         store=store, engine=ctx.engine, notifier=ctx.notifier,
         notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
         summarize=ctx.summary_caller, consume_steering=consume_ids,
+        project_caps=ctx.project_caps,
     )
 
 
@@ -959,6 +978,8 @@ async def tick_all(
     triage_caller: "ClaudeCaller | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     project_workspaces: "Callable[[], set[str]] | None" = None,
+    project_capabilities: "Callable[[], dict[str, tuple[str, ...]]] | None" = None,
+    project_images: "Callable[[], dict[str, str | None]] | None" = None,
     issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal. One goal's failure never stops the others, and a usage
@@ -1098,6 +1119,72 @@ async def tick_all(
     # in this same pre-loop slot as the other mechanical housekeeping above.
     holders = _project_hold.holder_map(store)
 
+    # Env-cap capability scan + probe refresh (spec 030 FR-004): read every
+    # declaration and run the stale probes ONCE per sweep, BEFORE the per-goal
+    # ticks. Each tick reads only persisted meta rows (zero network) — this is
+    # the only place that probes networks, and it spends zero LLM calls, so the
+    # idle-tick quota guarantee is untouched.
+    #
+    # The declarations come from the PROJECT REGISTRY: a goal's capability
+    # dependencies belong to its project, and the registry answers for a
+    # project whose goal has never been dispatched — which the previous
+    # live-goals-only scan could not, leaving a brand-new goal's first dispatch
+    # unguarded against a capability that was already red on record (the
+    # SC-002 hole). The map is threaded down to the per-goal ticks so the
+    # dispatch guard and the auto-heal read the same declaration.
+    #
+    # Live goals' workspaces are still scanned ON TOP, for goals belonging to
+    # no registered project. Terminal goals are skipped there (same rule as the
+    # hold derivation above): a done or cancelled goal can no longer be
+    # dispatched into, so its declaration must not keep buying the fleet a
+    # recurring network/docker probe forever. Blocked goals deliberately still
+    # count — the env hold IS a block, and dropping it here would strand the
+    # auto-resume it feeds (US2).
+    #
+    # Best-effort throughout: a probe failure degrades to ``unknown``
+    # (fail-open per FR-007), never wedges the sweep.
+    caps_by_project: "dict[str, tuple[str, ...]]" = {}
+    try:
+        if project_capabilities is not None:
+            caps_by_project = project_capabilities() or {}
+        images_by_project = (project_images() or {}) if project_images is not None else {}
+        # Keyed by the row a result is CACHED under, so an instance-scoped
+        # capability declared by five projects is probed once while a
+        # project-scoped one is probed per project (spec 030 CAP_SCOPES) —
+        # the dedup rule and the cache key stay the same rule.
+        _targets: "dict[tuple[str, str | None], _env_cap_mod.CapTarget]" = {}
+
+        def _want_caps(cap_ids: "tuple[str, ...]", project_id: str) -> None:
+            pid = (project_id or "").strip() or None
+            for cap_id in cap_ids:
+                scoped = pid if _env_cap_mod.CAP_SCOPES.get(cap_id) == "project" else None
+                _targets.setdefault(
+                    (cap_id, scoped),
+                    _env_cap_mod.CapTarget(
+                        cap_id=cap_id, project_id=scoped,
+                        subject=images_by_project.get(scoped) if scoped else None,
+                    ),
+                )
+
+        for _pid, _declared in caps_by_project.items():
+            _want_caps(_declared, _pid)
+        for _gid in store.list_goal_ids():
+            try:
+                if _project_hold.is_terminal(store.load_status(_gid)):
+                    continue
+                _g = store.load_goal(_gid)
+                if (_g.project_id or "").strip() in caps_by_project:
+                    continue  # the registry already answered for this project
+                _m = _env_cap_manifest_mod.load_manifest(_g.workspace_dir)
+                if _m and _m.capabilities:
+                    _want_caps(tuple(_m.capabilities), _g.project_id or "")
+            except Exception:  # noqa: BLE001 — one bad manifest must not sink the sweep
+                pass
+        if _targets:
+            _env_cap_mod.refresh_needed(store, _targets.values())
+    except Exception:  # noqa: BLE001 — the probe sweep must never wedge the heartbeat
+        pass
+
     for goal_id in store.list_goal_ids():
         # Per-goal run-window: a goal can carry its OWN night/off-hours schedule
         # on top of the engine-wide gate above (e.g. a token-heavy standing loop
@@ -1134,6 +1221,7 @@ async def tick_all(
                     remote_checker=remote_checker,
                     mergeability_probe=mergeability_probe,
                     holders=holders,
+                    project_caps=caps_by_project,
                     issue_fetcher=issue_fetcher,
                 )
         except Exception as exc:  # noqa: BLE001 — isolate per-goal blast radius

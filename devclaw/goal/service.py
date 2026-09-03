@@ -194,6 +194,62 @@ class GoalService:
                 out.add(norm)
         return out
 
+    def _registered_capabilities(self) -> "dict[str, tuple[str, ...]]":
+        """``project_id -> declared environment capabilities`` (spec 030).
+
+        Read from each registered project's own ``devclaw.json``, so the
+        admission gate is keyed by PROJECT and answers before any of its goals
+        has a prepared workspace — a goal's first-ever dispatch is held on a
+        red capability rather than fail-open (SC-002). Pure filesystem +
+        SQLite: zero LLM calls, called once per sweep.
+
+        Archived projects are skipped — nothing dispatches there, and their
+        declarations must not keep buying the fleet a recurring probe.
+
+        A project is recorded ONLY when its manifest was actually read. An
+        absent checkout, an absent ``devclaw.json`` and an unreadable one are
+        all "no answer", and the map is authoritative where it answers — so
+        recording them as declaring nothing would suppress the goal-workspace
+        fallback in ``tick_guards`` and fail a red capability OPEN, which is
+        the hole this per-project read was added to close in the first place.
+        Omitted means "ask the goal's own workspace".
+        """
+        from ..project_manifest import load_manifest
+
+        if self._project_registry is None:
+            return {}
+        out: "dict[str, tuple[str, ...]]" = {}
+        for project in self._project_registry.list():
+            if getattr(project, "status", "active") == "archived":
+                continue
+            workspace = getattr(project, "workspace_dir", None)
+            if not workspace:
+                continue
+            try:
+                manifest = load_manifest(workspace)
+            except Exception:  # noqa: BLE001 — see docstring
+                continue
+            if manifest is None:
+                continue
+            out[project.id] = tuple(manifest.capabilities)
+        return out
+
+    def _registered_sandbox_images(self) -> "dict[str, str | None]":
+        """``project_id -> pinned sandbox image`` (spec 030, project-scoped probes).
+
+        The subject a ``sandbox:image`` probe is about: a project pinning its
+        own image (ADR 0005) must be admitted against THAT image, never the
+        fleet default. Read straight off the listed rows rather than through
+        ``resolve_override`` per project — same value, one query instead of N,
+        and this runs once per sweep beside ``_registered_capabilities``.
+        A project with no pin maps to ``None`` = the engine default."""
+        if self._project_registry is None:
+            return {}
+        return {
+            project.id: getattr(project, "sandbox_image", None)
+            for project in self._project_registry.list()
+        }
+
     def _evaluator(self) -> ClaudeCaller:
         if self._evaluator_caller is None:
             self._evaluator_caller = goal_evaluator.default_caller()
@@ -430,6 +486,8 @@ class GoalService:
             triage_caller=self._triage(),
             mergeability_probe=goal_mergeability.pr_conflicting,
             project_workspaces=self._registered_workspaces,
+            project_capabilities=self._registered_capabilities,
+            project_images=self._registered_sandbox_images,
         )
         # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
         # crashing tick leaves this stale, which is exactly the signal an
@@ -450,6 +508,7 @@ class GoalService:
                 trend_detector=self._trend_detector(),
                 remote_checker=self._remote_checker(),
                 mergeability_probe=goal_mergeability.pr_conflicting,
+                project_caps=self._registered_capabilities(),
                 issue_fetcher=_issue_ref.fetch_issue,
             )
         return outcome.value
@@ -682,6 +741,7 @@ class GoalService:
                 store=self._goal_store, engine=self._engine,
                 notifier=self._notifier, notify_url="",
                 prepare_ws=prepare_workspace, summarize=self._summary(),
+                project_caps=self._registered_capabilities(),
             )
             return gid
         return None
@@ -1520,8 +1580,10 @@ class GoalService:
             self._goal_store.transition(
                 goal_id, Event.UNBLOCK,
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
-                        heal_attempts=0, next_heal_at=None, donegate_rounds=0, donegate_progress=0, problem_id="",
-                        slice_hold_count=0,
+                        heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                        donegate_progress=0, problem_id="",
+                        slice_hold_count=0, env_hold_notified=False,
+                        env_heal_attempts=0,
                         merge_heal_attempted=False),
                 expect=s,
             )
@@ -1600,8 +1662,10 @@ class GoalService:
         self._goal_store.transition(
             goal_id, Event.UNBLOCK,
             replace(s, phase="idle", blocked_on="", actions_dispatched=0, last_plan_at=None,
-                    heal_attempts=0, next_heal_at=None, donegate_rounds=0, donegate_progress=0, problem_id="",
-                    slice_hold_count=0),
+                    heal_attempts=0, next_heal_at=None, donegate_rounds=0,
+                    donegate_progress=0, problem_id="",
+                    slice_hold_count=0, env_hold_notified=False,
+                    env_heal_attempts=0),
             expect=s,
         )
         self._goal_store.append_log(

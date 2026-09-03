@@ -24,7 +24,11 @@ from .tick_context import (
     _notify,
     _run_atomic,
 )
-from .tick_guards import _block_on_prep_failure
+from .tick_guards import (
+    _block_on_env_cap,
+    _block_on_prep_failure,
+    _declared_caps_for,
+)
 from . import slice_guard as _slice_guard
 from . import delivery_strategy as _delivery
 from . import repo_brief as _repo_brief
@@ -38,6 +42,7 @@ from ..advance_brief import display_goal as _display_goal
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
+from .. import env_cap as _env_cap
 
 #: consecutive dispatch-boundary holds before the goal escalates to ``blocked``
 #: with ``blocked_kind="mechanical:slice_hold"`` (issue #728 Part B).
@@ -73,6 +78,7 @@ async def _dispatch_action(
     notify_url: str, prepare_ws: WorkspacePrep,
     summarize: "ClaudeCaller | None" = None,
     consume_steering: "list[int] | None" = None,
+    project_caps: "dict[str, tuple[str, ...]] | None" = None,
 ) -> Outcome:
     # Runaway backstop (mechanism, not cognition): never spawn more than the
     # goal's known-bounded work surface + a small margin without a human. The
@@ -176,6 +182,28 @@ async def _dispatch_action(
         if hold_reason:
             store.append_log(goal_id, f"dispatch held: {hold_reason}")
             return Outcome.SLEPT
+    # ---- environment-capability admission gate (spec 030 FR-002) ---------------
+    # A project that declares capability dependencies is not dispatchable while
+    # any of its required capabilities is provably broken (probe result = red).
+    # Unknown/absent probe results are fail-open (FR-007); only a confirmed red
+    # holds dispatch. The probe results were refreshed ONCE before this sweep
+    # in tick_all; here we only read the persisted rows (zero network I/O), and
+    # the declaration comes from the sweep's project-registry map so this fires
+    # on a goal's FIRST dispatch, before its workspace exists.
+    # Read-only reviews run in the workspace but need no capabilities (they
+    # examine the repo, not run it), so they are exempt.
+    if action.tool != "review_repository":
+        _declared = await asyncio.to_thread(
+            _declared_caps_for, goal, project_caps
+        )
+        if _declared:
+            _red = _env_cap.red_caps_for(store, _declared, goal.project_id)
+            if _red:
+                return await _block_on_env_cap(
+                    goal_id, base, _red,
+                    store=store, notifier=notifier,
+                    summarize=summarize, consume_steering=consume_steering,
+                )
     # ---- speckit contract enforcement at the dispatch boundary (issue #679) --
     # (a) block when spec dirs exist but none are graded (no tasks.md — the plan
     #     step hasn't run); (b) block when 2+ features have pending tasks BEYOND

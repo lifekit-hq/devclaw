@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .. import project_manifest as _manifest
 from ..engine.workspace import workspace_is_dispatchable
+from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY
 from .model import Finding, Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -290,6 +291,64 @@ def check_backlog_ready_contract(ctx: "InstanceContext", project: "Project") -> 
     return [Finding(cid, Verdict.OK, evidence, project_id=project.id)]
 
 
+#: Files whose content betrays a private-registry dependency, and how much of
+#: each is worth reading (a lockfile can be tens of MB; the registry line lives
+#: in the config, and in a lockfile it recurs on every resolved URL, so a
+#: bounded head read is enough to see it).
+_REGISTRY_EVIDENCE_FILES: tuple[tuple[str, int], ...] = (
+    (".npmrc", 64 * 1024),
+    ("package-lock.json", 512 * 1024),
+)
+
+#: Private npm registry hosts the advisory recognises. Deliberately narrow —
+#: this check exists to catch the write-and-forget case, not to be a registry
+#: taxonomy.
+_PRIVATE_REGISTRY_HOSTS: tuple[str, ...] = ("npm.pkg.github.com",)
+
+
+def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """ADVISORY (spec 030 FR-005a): the repo visibly depends on a private npm
+    registry but declares no ``registry:*`` capability in ``devclaw.json``.
+
+    Capability declaration is explicit-only (FR-005), which buys a contract the
+    instance can trust and costs write-and-forget — a repo that grows a private
+    dependency never gets the admission brake. This check is that cost's
+    backstop and NOTHING more: it is a report line, never a hold. Mechanical
+    and bounded — a couple of head reads, no network, no cognition.
+    """
+    cid = "project.capabilities.undeclared"
+    ws = Path(project.workspace_dir or "")
+    try:
+        manifest = _manifest.load_manifest(str(ws))
+    except _manifest.ManifestError as exc:
+        # The manifest checks above already report this loudly; say why this
+        # one could not judge rather than guessing (FR-005: never silent).
+        return [Finding(cid, Verdict.UNKNOWN, f"manifest unreadable: {exc}",
+                        project_id=project.id)]
+    declared = manifest.capabilities if manifest else ()
+    if any(c.startswith("registry:") for c in declared):
+        return [Finding(cid, Verdict.OK, "registry capability declared",
+                        project_id=project.id)]
+    for name, budget in _REGISTRY_EVIDENCE_FILES:
+        try:
+            with (ws / name).open("r", encoding="utf-8", errors="replace") as fh:
+                head = fh.read(budget)
+        except OSError:
+            continue  # absent or unreadable — no evidence, not a finding
+        for host in _PRIVATE_REGISTRY_HOSTS:
+            if host in head:
+                return [Finding(
+                    cid, Verdict.WARN,
+                    f"{name} resolves against {host} but devclaw.json declares no "
+                    "registry:* capability — a broken registry credential will "
+                    "burn worker sessions instead of holding dispatch",
+                    remedy=f'add "capabilities": ["{_CAP_REGISTRY}"] to devclaw.json',
+                    project_id=project.id,
+                )]
+    return [Finding(cid, Verdict.OK, "no undeclared registry dependency visible",
+                    project_id=project.id)]
+
+
 PROJECT_CHECKS: tuple = (
     check_workspace_preflight,
     check_dangling_links,
@@ -299,4 +358,5 @@ PROJECT_CHECKS: tuple = (
     check_scaffold_drift,
     check_issue_refs_shape,
     check_backlog_ready_contract,
+    check_capability_declaration,
 )

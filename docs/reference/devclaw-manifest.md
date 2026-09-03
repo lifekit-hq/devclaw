@@ -16,7 +16,8 @@ onboarding agent is instructed not to touch it.
   "strictnessDefault": "trust",
   "surface": "app",
   "verifyCmd": "dotnet test",
-  "stack": ["dotnet", "angular"]
+  "stack": ["dotnet", "angular"],
+  "capabilities": ["registry:npm-github"]
 }
 ```
 
@@ -32,8 +33,57 @@ Machine schema: [`devclaw-manifest.schema.json`](./devclaw-manifest.schema.json)
 | `surface` | `app` \| `library` | browser-E2E gate applicability — declaration instead of path-glob heuristics |
 | `verifyCmd` | string | verify-command fallback tier |
 | `stack` | list of strings | informational (v1) |
+| `capabilities` | list of capability ids | environment-capability admission (spec 030): the project is not dispatched while one of these is provably broken |
 
 Unknown keys are tolerated (forward-compat within a schema version).
+
+### `capabilities` (spec 030)
+
+The explicit, complete list of environment capabilities this project's verify
+contract depends on — nothing is inferred. v1 ids: `registry:npm-github` (the
+GitHub Packages npm credential) and `sandbox:image` (the per-task sandbox image
+is present/pullable). A project that declares none is admitted exactly as
+before. Ids are **value-validated at the parse**, like `strictnessDefault` and
+`surface`: an id this instance cannot probe fails the manifest loud, because a
+typo would otherwise read as protection while the brake is silently off.
+
+Declaring a capability changes what "absent" means. `registry:npm-github` with
+no `NODE_AUTH_TOKEN` at all probes **red** — the project said it needs the
+credential, and an install against GitHub Packages 401s deterministically
+without one. (Doctor's instance-level `instance.registry.token` keeps its
+unset-is-a-supported-posture verdict only while no registered project declares
+the capability; once one does, it reports the same fault the hold names.)
+
+Capabilities carry a **scope**. `registry:npm-github` is *instance*-scoped —
+one process-wide credential, so N declaring projects buy exactly one probe and
+share its cached row. `sandbox:image` is *project*-scoped: it is probed against
+the image **that** project's sandbox will launch (its `sandbox_image` registry
+pin, ADR 0005, or the fleet default), and cached per project. A single
+fleet-wide row for it would answer about an image the project never runs — a
+pinned project admitted because the *default* is pullable, or held because the
+default isn't.
+
+While a declared capability's mechanical probe is **red**, dispatch is held
+with a `mechanical:env` block naming the probe id and its remedy; the hold
+clears on its own within ~one heartbeat sweep of the probe greening. An absent
+or `unknown` probe result never holds (fail-open on uncertainty, fail-closed on
+evidence of breakage). Doctor also carries an **advisory** check for a repo that
+visibly depends on a private registry without declaring `registry:*` — the
+known cost of explicit-only declaration.
+
+The declaration is read per PROJECT — from the registered project's own
+checkout, once per heartbeat sweep — not from each goal's workspace, so the
+hold applies to a goal's first-ever dispatch, before that goal has a workspace
+at all. (A goal belonging to no registered project — or to one whose checkout
+could not be read — falls back to its own workspace. The per-project map is
+authoritative only where it actually answered: "no answer" must never read as
+"declares nothing", which would fail a red capability open.)
+
+Unlike the gate-relevant fields below, `capabilities` is read from the
+**worktree**, not the merged base: the hold is a session-burn brake, so a
+worker-side edit can only hurt that worker's own goal (dispatching into a
+broken environment, or wedging itself behind a legible self-healing block) —
+it can never bias a gate toward shipping.
 
 ## Precedence (most-specific-wins, resolved live)
 

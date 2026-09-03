@@ -24,6 +24,8 @@ from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
 from ..task_git import _ls_remote_ok_sync
+from .. import env_cap as _env_cap
+from .. import project_manifest as _manifest
 
 
 def _progress_window_active(status: GoalStatus) -> bool:
@@ -182,6 +184,17 @@ PREP_HEAL_CAP = 5
 PREP_BACKOFF_BASE_S = 30 * 60
 PREP_BACKOFF_MAX_S = 6 * 3600
 
+#: Heal budget for a ``mechanical:env`` hold (spec 030). The recheck is free
+#: (a persisted-row read), so unlike prep there is no backoff window — the cap
+#: exists only to park a FLAPPING capability for the owner instead of cycling
+#: hold→resume→hold forever. Counted on its OWN column
+#: (``GoalStatus.env_heal_attempts``), never the shared ``heal_attempts``: a
+#: goal that had earlier healed unrelated ``mechanical:prep`` blocks would
+#: otherwise arrive at its first env hold with the budget already spent and
+#: sit parked instead of auto-resuming within one sweep of the probe going
+#: green (US2).
+ENV_HEAL_CAP = 5
+
 
 async def _prep_recheck_ok(goal: Goal) -> bool:
     """The mechanical prep recheck — no LLM, best-effort, never raises.
@@ -253,11 +266,16 @@ async def _autoheal_prep(
 
 def _heal_unblock(
     goal_id: str, status: GoalStatus, store: GoalStore, *, heal_attempts: int,
+    env_heal_attempts: "int | None" = None,
 ) -> GoalStatus:
     """The resume-shaped UNBLOCK write the mechanical heal fires: actions +
     plan cadence reset so the tick actually re-plans, the backoff window
     cleared, and a preserved in-flight ref restored to its polling phase so it
-    settles normally instead of being orphaned."""
+    settles normally instead of being orphaned.
+
+    Each brake spends its OWN budget: ``env_heal_attempts`` is written only
+    when the env heal supplies it, so an env heal never consumes the prep
+    budget and vice versa."""
     if status.in_flight is not None:
         restored_phase: Phase = "verifying" if status.in_flight.is_done_check else "in_flight"
     else:
@@ -268,6 +286,10 @@ def _heal_unblock(
             status, phase=restored_phase, blocked_on="",
             actions_dispatched=0, last_plan_at=None,
             heal_attempts=heal_attempts, next_heal_at=None,
+            env_heal_attempts=(
+                status.env_heal_attempts if env_heal_attempts is None
+                else env_heal_attempts
+            ),
         ),
         expect=status,
     )
@@ -275,13 +297,17 @@ def _heal_unblock(
 
 async def _heal_give_up(
     goal_id: str, *, store: GoalStore, notifier: Notifier, cap: int, reason: str,
+    counter_field: str = "heal_attempts",
 ) -> None:
     """Park a mechanical block whose heal budget is spent: mark FIRST (the
     sentinel bump one past the cap — a column-only write, the goal stays
     blocked, so this must not be a phase transition; it is what keeps the
     ping to exactly one, the pause_notified pattern), then log, then ONE
-    plain owner ping — never through the summarizer LLM."""
-    store.update_status_fields(goal_id, heal_attempts=cap + 1)
+    plain owner ping — never through the summarizer LLM.
+
+    ``counter_field`` names the budget being parked, so each brake's sentinel
+    lands on its own column."""
+    store.update_status_fields(goal_id, **{counter_field: cap + 1})
     store.append_log(
         goal_id, f"auto-recovery gave up after {cap} attempts — {reason}; needs you",
     )
@@ -290,3 +316,143 @@ async def _heal_give_up(
         f"🟡 [{goal_id}] auto-recovery gave up after {cap} attempts — "
         f"{reason}; needs you (steer to resume)",
     )
+
+
+def _declared_caps_for(
+    goal: Goal, project_caps: "dict[str, tuple[str, ...]] | None",
+) -> "tuple[str, ...]":
+    """The environment capabilities this goal's PROJECT declares (spec 030).
+
+    The registry-sourced map wins whenever it carries this goal's project: it
+    is read from the project's own checkout once per sweep, so it answers even
+    when the GOAL's workspace has never been prepared — which is the whole
+    point. Reading only the goal's workspace made a brand-new goal's FIRST
+    dispatch fail open on a capability that was already red on record, the
+    hole in SC-002's "zero worker sessions until rotated" promise.
+
+    The goal-workspace read stays as the fallback for a goal that belongs to no
+    registered project (an ad-hoc goal pointed straight at a checkout). A
+    project present in the map with NO capabilities is authoritative — it
+    declares none — and must not fall through to a second, divergent read.
+
+    The fallback branch reads the manifest off disk, so async callers must run
+    this through ``asyncio.to_thread`` rather than block the heartbeat loop.
+
+    Never raises: an unreadable manifest degrades to "declares nothing", which
+    is fail-open by FR-007. A malformed manifest fails loud on the paths that
+    own that (prep/doctor), not here.
+    """
+    project_id = (goal.project_id or "").strip()
+    if project_caps and project_id:
+        declared = project_caps.get(project_id)
+        if declared is not None:
+            return tuple(declared)
+    try:
+        manifest_obj = _manifest.load_manifest(goal.workspace_dir)
+    except Exception:  # noqa: BLE001 — see docstring
+        return ()
+    return tuple(manifest_obj.capabilities) if manifest_obj else ()
+
+
+async def _block_on_env_cap(
+    goal_id: str, status: GoalStatus,
+    red_caps: "list[tuple[str, _env_cap.CapProbeResult]]",
+    *, store: GoalStore, notifier: Notifier,
+    summarize: "ClaudeCaller | None" = None,
+    consume_steering: "list[int] | None" = None,
+) -> Outcome:
+    """Block the goal because one or more required capability probes are red.
+
+    Spec 030 FR-002/FR-003. The block message names every failing capability
+    and its remedy so the operator sees ONE story.
+
+    Exactly one owner ping per hold EPISODE, marked by ``env_hold_notified``:
+    a re-block that follows an env heal logs but does not ping, so a probe
+    oscillating green↔red converges to held + one ping instead of a ping storm
+    (spec 030 edge case). The marker is this brake's OWN — gating on
+    ``heal_attempts`` swallowed the first ping of a genuine breakage whenever
+    the goal had earlier healed an unrelated ``mechanical:prep`` block, which
+    is precisely the ping SC-002 promises. It resets on a productive settle
+    and when a human vouches, so a later breakage pings again."""
+    cap_lines = "; ".join(
+        f"{cap_id}: {r.evidence} → {r.remedy}" if r.remedy
+        else f"{cap_id}: {r.evidence}"
+        for cap_id, r in red_caps
+    )
+    msg = (
+        f"environment capability check failed — dispatching would burn a session: "
+        f"{cap_lines}. Waiting for the environment to be fixed; devclaw will "
+        "resume automatically when the probe turns green."
+    )
+    store.append_log(goal_id, f"env-cap hold: {cap_lines}")
+    store.transition(
+        goal_id, Event.BLOCK,
+        replace(status, phase="blocked", blocked_on=msg,
+                blocked_kind="mechanical:env", next=""),
+        expect=status, consume_steering=consume_steering,
+    )
+    if not status.env_hold_notified:
+        # Mark FIRST, then ping (the pause_notified pattern shared with
+        # _heal_give_up): a column-only write on the still-blocked goal, so a
+        # crash in the notifier can never re-arm the ping on the next tick.
+        store.update_status_fields(goal_id, env_hold_notified=True)
+        await _notify(
+            notifier, NotifyLevel.OWNER,
+            f"🔴 [{goal_id}] dispatch held — environment not ready: {cap_lines}; "
+            "devclaw auto-resumes when the probe turns green",
+            summarize=summarize,
+        )
+    return Outcome.BLOCKED
+
+
+async def _autoheal_env_cap(
+    goal_id: str, goal: Goal, status: GoalStatus,
+    *, store: GoalStore, notifier: Notifier,
+    project_caps: "dict[str, tuple[str, ...]] | None" = None,
+) -> "GoalStatus | None":
+    """Lift a ``mechanical:env`` block once all required capability probes are
+    no longer red.
+
+    Reads persisted probe rows (zero network, zero LLM) — unlike the prep heal
+    there is no backoff window, because the recheck IS the row read; the sweep
+    runner refreshes the probes before each sweep, so a healed environment
+    resumes within ~one sweep (spec 030 US2).
+
+    The heal budget still applies: a probe that flaps green↔red burns one
+    attempt per heal and parks for the owner at :data:`ENV_HEAL_CAP` rather
+    than cycling forever. That budget is this brake's own
+    (``env_heal_attempts``) — see :data:`ENV_HEAL_CAP`. Returns the healed
+    status, or ``None`` when the block must remain (still red, or parked)."""
+    if status.env_heal_attempts > ENV_HEAL_CAP:
+        return None  # parked — the gave-up ping already went out
+    if status.env_heal_attempts >= ENV_HEAL_CAP:
+        await _heal_give_up(
+            goal_id, store=store, notifier=notifier, cap=ENV_HEAL_CAP,
+            reason="the required environment capability keeps breaking",
+            counter_field="env_heal_attempts",
+        )
+        return None
+    # SAME resolution as the dispatch guard (:func:`_declared_caps_for`) — a
+    # hold set from the project registry on an unprepared workspace would
+    # otherwise read "declares nothing" here and clear itself every tick,
+    # re-dispatching straight back into the red capability.
+    declared = await asyncio.to_thread(_declared_caps_for, goal, project_caps)
+    if not declared:
+        # No declared capabilities → the hold should not have been set; clear it
+        # defensively so the goal is not permanently wedged.
+        healed = _heal_unblock(goal_id, status, store, heal_attempts=status.heal_attempts)
+        store.append_log(goal_id, "env-cap hold cleared (no capabilities declared)")
+        return healed
+    red = _env_cap.red_caps_for(store, declared, goal.project_id)
+    if red:
+        return None  # still broken — stay blocked at zero cost
+    n = status.env_heal_attempts + 1
+    healed = _heal_unblock(
+        goal_id, status, store,
+        heal_attempts=status.heal_attempts, env_heal_attempts=n,
+    )
+    store.append_log(
+        goal_id,
+        f"auto-resumed: required capabilities are green again (heal {n}/{ENV_HEAL_CAP})",
+    )
+    return healed

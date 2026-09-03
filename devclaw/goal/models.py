@@ -239,6 +239,26 @@ class GoalStatus:
     #: between windows a blocked goal stays a zero-subprocess,
     #: zero-cognition tick.
     next_heal_at: Optional[str] = None
+    #: spec 030 FR-003: the owner has already been pinged for the CURRENT
+    #: environment-capability hold episode. Its own flag rather than a read of
+    #: ``heal_attempts`` because that counter is shared with every other
+    #: ``mechanical:*`` heal — a goal that had earlier healed a
+    #: ``mechanical:prep`` block carries a non-zero count, and gating the ping
+    #: on it swallowed the FIRST ping of an unrelated, genuine environment
+    #: breakage. An episode spans a flap (block → heal → re-block pings once)
+    #: and ends when the goal makes real progress or a human vouches: reset on
+    #: a productive settle and on steer_goal / resume_goal. Same
+    #: ping-once-per-episode shape as ``no_progress_notified``.
+    env_hold_notified: bool = False
+    #: spec 030 FR-003/US2: auto-heals spent on the CURRENT environment-capability
+    #: hold, damping a capability that flaps green↔red. Its own counter for the
+    #: same reason ``env_hold_notified`` is its own flag: sharing
+    #: ``heal_attempts`` with the ``mechanical:prep`` heal let unrelated prep
+    #: retries spend the env budget, so a goal with prior heals stayed held for
+    #: a sweep — or parked outright — after its probe went green, which is the
+    #: within-one-sweep auto-resume US2 promises. Reset alongside
+    #: ``env_hold_notified``: productive settle, steer_goal, resume_goal.
+    env_heal_attempts: int = 0
     #: consecutive done-gate rounds that did NOT close the goal (the
     #: on_track/off_track resolutions). The done-gate treadmill brake: each
     #: non-closing round increments it; at ``DONEGATE_ROUND_CAP`` the goal
