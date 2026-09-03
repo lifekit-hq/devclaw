@@ -15,10 +15,10 @@ conventions as ``mergeability.py`` (which stays read-only per its tombstone).
 
 from __future__ import annotations
 
-import asyncio
 import enum
 import json
 from dataclasses import dataclass
+from . import mergeability as _mergeability
 
 
 class MergeOutcome(enum.Enum):
@@ -56,19 +56,10 @@ class MergeResult:
 
 
 async def _run_gh(*argv: str, cwd: "str | None" = None) -> tuple[int, str]:
-    """Best-effort subprocess: a spawn failure returns ``(-1, msg)`` and never
-    raises into the tick (mergeability.py's shape)."""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=cwd,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-        )
-        out, _ = await proc.communicate()
-    except Exception as exc:  # noqa: BLE001 — best-effort; never break the tick
-        return -1, f"{exc.__class__.__name__}: {exc}"
-    rc = proc.returncode
-    assert rc is not None
-    return rc, out.decode(errors="replace").strip()
+    """Best-effort subprocess: a spawn failure or a timeout returns
+    ``(-1, msg)`` and never raises into the tick (mergeability.py's
+    :func:`run_bounded`)."""
+    return await _mergeability.run_bounded(*argv, cwd=cwd)
 
 
 #: stderr fragments gh emits when the merge is blocked by a conflict. Kept

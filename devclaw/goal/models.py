@@ -214,7 +214,9 @@ class GoalStatus:
     #: pass must never string-match ``blocked_on`` to decide what it may retry).
     #: Taxonomy: ``mechanical:<site>`` (the condition is cheaply re-checkable
     #: without an LLM — ``mechanical:prep`` / ``mechanical:corrupt_doc`` /
-    #: ``mechanical:lost_ref`` / ``mechanical:dispatch_cap``); ``needs_answer``
+    #: ``mechanical:lost_ref`` / ``mechanical:dispatch_cap`` / ``mechanical:ci``
+    #: — spec 032: the delivered PR's CI is still running or unreadable, the
+    #: done proposal waits at zero cognition); ``needs_answer``
     #: (cognition asked the owner a question); ``bug`` (the force_block
     #: illegal-transition escape hatch). ``""`` = not blocked, or a block that
     #: predates this field / wasn't classified. Only meaningful while
@@ -308,6 +310,19 @@ class GoalStatus:
     #: (``mechanical:merge_failed``) instead of dispatching again. Reset on a
     #: successful merge and on steer_goal (a re-direction restarts the budget).
     merge_heal_attempted: bool = False
+    #: spec 032 US1: a done proposal is waiting for the delivered PR's CI to
+    #: settle (the goal holds ``mechanical:ci``) or for the tick to re-open the
+    #: gate after the hold healed. The proposal is normally detected from a
+    #: settled task's header; after a hold there is no new settle, so this flag
+    #: is what re-drives ``_open_done_gate``. Cleared on ACHIEVE, on cancel,
+    #: on a productive settle (a new increment is a new proposal) and by the
+    #: gate's own outcome.
+    pending_done_proposal: bool = False
+    #: spec 032 US1: the PR head whose CI rollup was read green when the
+    #: done-gate opened. Merge-on-close requires the head it merges to equal
+    #: this value — a head that moved after the green read re-holds and
+    #: re-opens the gate on the new head. ``""`` = no green read on record.
+    ci_green_head: str = ""
     #: human note of the intended next step
     next: str = ""
     #: ISO ts of the last time the plan step (LLM) ran

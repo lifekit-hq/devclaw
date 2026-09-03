@@ -9,6 +9,8 @@ conflicting delivery as landable, which is the failure #394 added it for.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from devclaw.goal import mergeability
@@ -45,12 +47,38 @@ async def test_probe_maps_gh_verdicts_and_stays_silent_when_unsure(
     assert await mergeability.pr_conflicting("https://github.com/o/r/pull/1") is expected
 
 
+class _HungProc:
+    """A child that never finishes: ``communicate()`` blocks until cancelled."""
+
+    returncode = None
+    killed = False
+
+    async def communicate(self):
+        await asyncio.sleep(3600)
+
+    def kill(self):
+        self.killed = True
+
+
 @pytest.mark.asyncio
-async def test_probe_never_raises_when_gh_is_missing(monkeypatch):
-    # _run_gh converts a spawn failure into (-1, "<Exc>: msg") rather than
-    # raising, because this runs inside the tick.
+@pytest.mark.parametrize("failure", ["missing_binary", "hung_gh"])
+async def test_probe_never_raises_when_gh_is_missing(monkeypatch, failure):
+    # run_bounded converts a spawn failure into (-1, "<Exc>: msg") and a hung
+    # child into (-1, "timeout …") rather than raising or blocking, because
+    # this runs inside the tick (spec 032 T002: every host gh read is bounded).
+    hung = _HungProc()
+
     async def _explode(*argv, **kwargs):
         raise FileNotFoundError("gh")
 
-    monkeypatch.setattr(mergeability.asyncio, "create_subprocess_exec", _explode)
+    async def _hang(*argv, **kwargs):
+        return hung
+
+    monkeypatch.setattr(
+        mergeability.asyncio, "create_subprocess_exec",
+        _explode if failure == "missing_binary" else _hang,
+    )
+    monkeypatch.setattr(mergeability, "GH_TIMEOUT_S", 0.05)
     assert await mergeability.pr_conflicting("https://github.com/o/r/pull/1") is None
+    if failure == "hung_gh":
+        assert hung.killed, "a timed-out gh must be killed, not left running"

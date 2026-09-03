@@ -144,6 +144,18 @@ executing → (done-gate) → done
 shrink — the worker plans via speckit in-sandbox; legacy rows heal to
 `executing` loudly on first tick touch.)
 
+Since spec 032 (2026-09-03) the done-gate is *preceded* by a mechanical read
+of the delivered PR's CI rollup for its exact head (`goal/remote_checks.py`,
+one bounded `gh` read, zero cognition): red steers the failing checks back
+as the next correction without spending a gate round, pending or unreadable
+holds the goal on `mechanical:ci` and re-reads on the heartbeat cadence, no
+CI definition or a CI that cannot execute raises a typed Problem, and only a
+green fact dispatches the review and runs the evaluator. Merge-on-close
+re-reads and requires the *same* green head — a head that moved re-holds and
+re-opens the gate. The project's own verification environment is the verdict
+of record; the in-sandbox `verify_cmd` is a fast pre-check whose pass is
+never evidence.
+
 Two properties make the heartbeat cheap and safe, and both are load-bearing:
 
 1. **Zero-token idle guard.** An idle goal, or one whose work is still in

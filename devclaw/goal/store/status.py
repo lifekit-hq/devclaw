@@ -345,6 +345,8 @@ class GoalStatusMixin:
             "envcap_redispatches": status.envcap_redispatches,
             "pending_merge_pr": status.pending_merge_pr,
             "merge_heal_attempted": status.merge_heal_attempted,
+            "pending_done_proposal": status.pending_done_proposal,
+            "ci_green_head": status.ci_green_head,
             "next_heal_at": status.next_heal_at,
             "env_hold_notified": status.env_hold_notified,
             "env_heal_attempts": status.env_heal_attempts,

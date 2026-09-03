@@ -669,6 +669,29 @@ def check_goal_status_donegate_progress(ctx: "InstanceContext") -> list[Finding]
     )
 
 
+def check_goal_status_pending_done_proposal(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 032 US1: ``pending_done_proposal`` is what re-drives the done-gate
+    after a ``mechanical:ci`` hold heals — there is no new settle to detect the
+    proposal from. Absent, a goal whose CI went green after a hold sits idle
+    until its next cadence instead of re-opening the gate."""
+    return _goal_status_column_finding(
+        ctx, "instance.ci.goal_status_pending_done_proposal", "pending_done_proposal",
+        "the DB predates spec 032; a done proposal held on CI would never be "
+        "re-driven once the checks settle",
+    )
+
+
+def check_goal_status_ci_green_head(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 032 US1: ``ci_green_head`` pins the PR head whose rollup was read
+    green when the gate opened; merge-on-close requires the head it merges to
+    match. Absent, a head pushed after the green read could merge unverified."""
+    return _goal_status_column_finding(
+        ctx, "instance.ci.goal_status_ci_green_head", "ci_green_head",
+        "the DB predates spec 032; merge-on-close cannot prove the merged head "
+        "is the head whose CI was green",
+    )
+
+
 def check_problems_tables(ctx: "InstanceContext") -> list[Finding]:
     """Spec 031 (per spec-016 FR-014): typed Problems and Decisions live in
     ``goal_problems`` / ``goal_decisions``. A DB predating the migration has
@@ -785,6 +808,8 @@ def check_suppressed_pings_table(ctx: "InstanceContext") -> list[Finding]:
 
 
 INSTANCE_CHECKS: tuple = (
+    check_goal_status_pending_done_proposal,
+    check_goal_status_ci_green_head,
     check_legacy_goal_status_lifecycle,
     check_legacy_deliveries_ref_id,
     check_legacy_dropped_shapes,

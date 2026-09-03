@@ -217,6 +217,18 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      ▼  back to the heartbeat — next tick decides: more work, direction-eval, or done-gate.  │
 ```
 
+**Step M — the CI fact (spec 032 US1).** When the settle proposes done, the
+heartbeat first reads the delivered PR's check rollup for its exact head
+(`goal/remote_checks.check_pr`, bounded, zero cognition): red ⇒ the failing
+check names are steered back as the next correction (no review, no
+evaluator, no gate round); pending/unknown ⇒ the goal holds on
+`mechanical:ci` and re-reads once per heartbeat window (parks with one ping
+after `CI_HEAL_CAP` windows); no CI definition / CI that cannot execute ⇒ a
+typed Problem; green ⇒ the head is remembered (`goal_status.ci_green_head`)
+and the read-only review is dispatched. Merge-on-close re-reads and merges
+only the same green head. *Fails if:* `gh` is unreachable — the read is
+`unknown`, which holds and never approves.
+
 ## How the 2026-06-25 cascade maps onto these steps
 
 | Failure | Step | Symptom seen upstream | Real fix |

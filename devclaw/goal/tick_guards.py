@@ -26,6 +26,9 @@ from ..engine.workspace import WorkspaceError
 from ..task_git import _ls_remote_ok_sync
 from .. import env_cap as _env_cap
 from .. import project_manifest as _manifest
+from .. import config as _config
+from . import remote_checks as _remote_checks
+from . import delivery_strategy as _delivery
 
 
 def _progress_window_active(status: GoalStatus) -> bool:
@@ -194,6 +197,125 @@ PREP_BACKOFF_MAX_S = 6 * 3600
 #: sit parked instead of auto-resuming within one sweep of the probe going
 #: green (US2).
 ENV_HEAL_CAP = 5
+
+#: Heal budget for a ``mechanical:ci`` hold (spec 032 US1): the delivered PR's
+#: CI is still running (or unreadable). Each recheck is ONE bounded gh read on
+#: the heartbeat cadence, so the cap bounds the WAIT, not a flap: 16 windows ≈
+#: 4h at the default 15-min tick — longer than any healthy CI — after which the
+#: goal parks for the owner (one ping) instead of polling a CI that will never
+#: settle. Counted on the shared ``heal_attempts`` on purpose: the productive
+#: settle that proposes done resets it in the same tick, so a CI hold always
+#: starts with a full budget.
+CI_HEAL_CAP = 16
+
+
+async def _read_rollup(
+    goal_id: str, goal: Goal, *, store: GoalStore,
+    remote_checker: "_remote_checks.RemoteChecker | None",
+) -> "tuple[str, _remote_checks.RemoteChecksResult] | None":
+    """The CI rollup fact for the goal's cumulative PR head (spec 032 US1) —
+    one bounded gh read, zero cognition, never raises. ``None`` when there is
+    nothing to read BY DESIGN: no checker bound (the test seam /
+    ``DEVCLAW_GOAL_REMOTE_CHECKS=0``), no ``repo_url``, or a per-action delivery
+    strategy with no goal branch. Logs every read so the goal log carries the
+    fact next to the decision it drove."""
+    if remote_checker is None or not goal.repo_url:
+        return None
+    branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
+    if branch is None:
+        return None
+    try:
+        rc = await remote_checker(goal.repo_url, branch)
+    except Exception as exc:  # noqa: BLE001 — checker trouble is an unknown fact, never a wedge
+        rc = _remote_checks.RemoteChecksResult("unknown", f"{exc.__class__.__name__}: {exc}")
+    store.append_log(goal_id, f"done-gate remote checks ({branch}): {rc.state} — {rc.detail[:200]}")
+    return branch, rc
+
+
+def _ci_hold_text(branch: str, rc: "_remote_checks.RemoteChecksResult") -> str:
+    names = ", ".join(rc.pending_names) if rc.pending_names else rc.detail[:200]
+    head = f"@{rc.head_sha[:7]}" if rc.head_sha else ""
+    return f"waiting for CI on {branch}{head}: {names} — the done-gate opens when the checks settle"
+
+
+def _ci_correction(branch: str, rc: "_remote_checks.RemoteChecksResult") -> str:
+    names = ", ".join(rc.failing_names) or rc.detail[:200]
+    head = rc.head_sha[:7] or "the branch head"
+    return (
+        f"[remote-checks] {names} failing on {branch} at {head}. The sandbox gate is "
+        f"not CI: read the failing check's log, fix or quarantine the cause in the "
+        f"product code, and make the branch's checks green. Never bypass a check or "
+        f"edit the CI definition to go green."
+    )
+
+
+async def _autoheal_ci(
+    goal_id: str, goal: Goal, status: GoalStatus,
+    *, store: GoalStore, notifier: Notifier,
+    remote_checker: "_remote_checks.RemoteChecker | None",
+) -> "GoalStatus | None":
+    """Mechanically lift a ``mechanical:ci`` hold (spec 032 US1) once the
+    delivered PR's CI settles. One bounded gh read per heartbeat window
+    (``next_heal_at`` gates it — between windows the tick is zero-subprocess,
+    zero-cognition); ``CI_HEAL_CAP`` windows without a settled answer park the
+    goal for the owner with one ping.
+
+    Green ⇒ the resume-shaped UNBLOCK with the green head stamped, and
+    ``pending_done_proposal`` left set so the next tick re-opens the gate.
+    Red ⇒ UNBLOCK with the failing checks steered back as the next correction
+    (no gate round is spent). Anything else ⇒ wait."""
+    if status.heal_attempts > CI_HEAL_CAP:
+        return None  # parked — the gave-up ping already went out
+    if status.heal_attempts >= CI_HEAL_CAP:
+        await _heal_give_up(
+            goal_id, store=store, notifier=notifier, cap=CI_HEAL_CAP,
+            reason="the delivered PR's CI never settled",
+        )
+        return None
+    remaining = store.seconds_since(status.next_heal_at)
+    if status.next_heal_at and remaining is not None and remaining < 0:
+        return None
+    read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
+    n = status.heal_attempts + 1
+    if read is None:
+        # Nothing readable by design (checker unbound since the hold): there
+        # is nothing to wait for — hand the proposal back to the gate.
+        healed = _heal_unblock(goal_id, status, store, heal_attempts=n)
+        store.append_log(goal_id, "auto-resumed: no CI reader bound — re-opening the done-gate")
+        return healed
+    branch, rc = read
+    if rc.state == "failing":
+        _heal_unblock(goal_id, status, store, heal_attempts=n)
+        # the column-only write returns the fresh row — hand THAT back so the
+        # caller's next CAS'd transition expects the current version
+        healed = store.update_status_fields(goal_id, pending_done_proposal=False, ci_green_head="")
+        store.append_steering(goal_id, [_ci_correction(branch, rc)], source="auto-ci")
+        store.append_log(
+            goal_id,
+            f"auto-resumed: CI red on {branch} ({', '.join(rc.failing_names) or rc.detail[:120]}) "
+            f"— steering the fix (heal {n}/{CI_HEAL_CAP})",
+        )
+        return healed
+    if rc.proceeds:
+        _heal_unblock(goal_id, status, store, heal_attempts=n)
+        healed = store.update_status_fields(goal_id, ci_green_head=rc.head_sha)
+        store.append_log(
+            goal_id,
+            f"auto-resumed: CI green on {branch}@{rc.head_sha[:7] or '?'} "
+            f"(heal {n}/{CI_HEAL_CAP}) — re-opening the done-gate",
+        )
+        return healed
+    window_s = _config.goal_tick_seconds()
+    next_at = (
+        datetime.fromisoformat(store.now_iso()) + timedelta(seconds=window_s)
+    ).isoformat(timespec="seconds")
+    store.update_status_fields(goal_id, heal_attempts=n, next_heal_at=next_at)
+    store.append_log(
+        goal_id,
+        f"ci recheck: {rc.state} ({rc.detail[:120]}) (attempt {n}/{CI_HEAL_CAP}) — "
+        f"next recheck at {next_at}",
+    )
+    return None
 
 
 async def _prep_recheck_ok(goal: Goal) -> bool:

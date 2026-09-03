@@ -288,6 +288,10 @@ async def _resolve_polling_action(
         # spec 020: a shipped increment proves the environment now fits its
         # workload — the env-cap adapted-re-dispatch budget resets with it.
         envcap_redispatches=(0 if productive else status.envcap_redispatches),
+        # spec 032: a new increment is a new done proposal — a green head read
+        # for the previous head is stale, and a pending proposal is superseded.
+        pending_done_proposal=(False if productive else status.pending_done_proposal),
+        ci_green_head=("" if productive else status.ci_green_head),
         # a delivery is forward progress → reset the no-progress watchdog.
         last_progress_at=(ctx.store.now_iso() if delivered else status.last_progress_at),
         no_progress_notified=(False if delivered else status.no_progress_notified),

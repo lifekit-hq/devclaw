@@ -99,6 +99,50 @@ async def test_achieved_close_squash_merges_the_cumulative_pr_before_done(tmp_pa
     assert any("merged abc123def456" in m for m in notifier.sent)
 
 
+class _GreenOnHead:
+    """A remote checker answering ``passing`` for one fixed PR head."""
+
+    def __init__(self, head_sha: str):
+        from devclaw.goal.remote_checks import RemoteChecksResult
+        self.result = RemoteChecksResult("passing", "all green", head_sha=head_sha)
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, repo_url: str, branch: str):
+        self.calls.append((repo_url, branch))
+        return self.result
+
+
+@pytest.mark.asyncio
+async def test_a_head_moved_after_the_green_read_never_merges(tmp_path, monkeypatch):
+    """Spec 032 US1 / FR-002: merge-on-close requires the SAME head whose CI
+    was read green when the gate opened. A head that moved in between (a hand
+    push, a new increment) re-holds the goal on ``mechanical:ci`` and hands the
+    proposal back to the gate — the achieved verdict was for another head."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.save_status("g", replace(_verifying_status(), ci_green_head="old0000aaaa"))
+    fake = ScriptedMerge(moc.MergeResult(moc.MergeOutcome.MERGED, pr_url=PR_URL,
+                                         merged_sha="deadbeef", detail="squash-merged"))
+    monkeypatch.setattr(tick_donegate, "_attempt_merge", fake)
+    checker = _GreenOnHead("new1111bbbb")
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="report"))
+    notifier = RecordingNotifier()
+
+    out = await tick_goal(
+        "g", store=store, engine=engine, evaluator_caller=FakeClaude(ACHIEVED),
+        notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
+        verify_done=True, remote_checker=checker,
+    )
+
+    assert out is Outcome.BLOCKED
+    assert fake.branches == []                      # the merge never fired
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.blocked_kind == "mechanical:ci"
+    assert s.pending_done_proposal is True and s.ci_green_head == ""
+    assert "moved" in (s.blocked_on or "")
+    assert any("merge-on-close deferred" in line for line in store.recent_log("g").splitlines())
+
+
 @pytest.mark.asyncio
 async def test_merge_conflict_dispatches_one_resolution_increment_then_parks(tmp_path, monkeypatch):
     store = _store(tmp_path)
