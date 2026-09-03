@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-03
 
-**Status**: Clarified 2026-09-03 (3 questions walked with Denys) — ready for `/speckit-plan`
+**Status**: Implemented 2026-09-03 — US1 (#811), US2 (#812), US3 (#813), US5 + doctrine amendment + US4 declaration surface (#814). US4 provisioning-or-refusal is DEFERRED by ruling (Q1 = C) until US1 has a live track record; it is the remaining owned work of this spec, tracked in tasks.md Phase 7 / research R8.
 
 **Input**: User description: "Verification ownership: the pipeline verifies a change in the
 project's declared environment, never in devclaw's generic sandbox, and the worker never
