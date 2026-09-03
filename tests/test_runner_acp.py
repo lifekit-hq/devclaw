@@ -8,6 +8,7 @@ the executor is swappable with zero runner-code change. No docker, no claude.
 
 import importlib.util
 import json
+import pytest
 import os
 import shlex
 import subprocess
@@ -85,12 +86,21 @@ def test_ok_run_emits_contract_result_and_events(tmp_path):
     assert "usage" not in result
 
 
-def test_blocked_selfreport_short_circuits_before_verify(tmp_path):
+@pytest.mark.parametrize("script,kind,item_prefix,reason_prefix", [
+    ("blocked", "contract", "", "the task needs a credential"),
+    ("blocked_env", "env", "dotnet-ef not available", "env — dotnet-ef"),
+])
+def test_blocked_selfreport_short_circuits_before_verify(tmp_path, script, kind, item_prefix, reason_prefix):
+    """Both block forms short-circuit before the verify gate (fail closed), and
+    the environment form arrives TYPED (spec 032 US2) so the host can route it
+    to the pipeline instead of the owner."""
     proc, events, result, workspace = _run_runner(
-        tmp_path, "blocked", req_extra={"verify_cmd": "echo should-not-run"}
+        tmp_path, script, req_extra={"verify_cmd": "echo should-not-run"}
     )
     assert result["status"] == "blocked"
-    assert result["reason"].startswith("the task needs a credential")
+    assert result["reason"].startswith(reason_prefix)
+    assert result["block_kind"] == kind
+    assert result["block_item"].startswith(item_prefix)
     # Fail-closed short-circuit: the verify gate never ran.
     assert "verify" not in result
     assert all(e["type"] != "VerifyResult" for e in events)

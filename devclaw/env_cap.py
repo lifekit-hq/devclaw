@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass
 from typing import Callable, Iterable, Literal, Optional, Protocol
@@ -55,9 +56,25 @@ _META_PREFIX = "env_cap_probe:"
 #: that speaks about a capability imports these — never a re-typed literal.
 CAP_REGISTRY_NPM_GITHUB = "registry:npm-github"
 CAP_SANDBOX_IMAGE = "sandbox:image"
+#: spec 032 (Q3): a project's verification environment is its own CI. A
+#: registered project carries this capability IMPLICITLY (the registry map
+#: adds it — one place, ``GoalService._registered_capabilities``); red when
+#: the default branch carries no ``.github/workflows`` — not dispatchable
+#: until onboarding writes one.
+CAP_CI_DEFINITION = "ci:definition"
 
-#: v1 capability ids this instance can probe (FR-006).
-KNOWN_CAPABILITIES: frozenset[str] = frozenset({CAP_REGISTRY_NPM_GITHUB, CAP_SANDBOX_IMAGE})
+#: capability ids this instance can probe (spec 030 FR-006 + spec 032).
+KNOWN_CAPABILITIES: frozenset[str] = frozenset({
+    CAP_REGISTRY_NPM_GITHUB, CAP_SANDBOX_IMAGE, CAP_CI_DEFINITION,
+})
+
+#: spec 032 US2: a WORKER-REPORTED environment deficiency is recorded as a
+#: red capability row under this prefix (``worker:<slug of the item>``), so
+#: admission, the hold, the heal, doctor and get_goal tell the same story
+#: they tell for a declared capability. It has no probe runner: the row is
+#: red while the instance's environment is the one the worker reported
+#: against (:func:`instance_env_ref`) and reads green once that changes.
+WORKER_PREFIX = "worker:"
 
 CapScope = Literal["instance", "project"]
 
@@ -75,7 +92,28 @@ CapScope = Literal["instance", "project"]
 CAP_SCOPES: dict[str, CapScope] = {
     CAP_REGISTRY_NPM_GITHUB: "instance",
     CAP_SANDBOX_IMAGE: "project",
+    CAP_CI_DEFINITION: "project",
 }
+
+
+def instance_env_ref() -> str:
+    """The identity of the environment a worker runs in, as far as this arc
+    can tell it: the sandbox image ref and the devclaw build. A worker-reported
+    deficiency is pinned to the ref it was reported against and heals when the
+    ref changes — a new image or runner IS the fix arriving. (US4 adds the
+    project's environment declaration to this identity.)"""
+    return f"{_SANDBOX_IMAGE}|{_config.git_sha() or ''}"
+
+
+def worker_cap_id(item: str) -> str:
+    """``worker:<slug>`` for a reported item — stable across re-reports of
+    the same gap so one item is one row (and one catalog entry)."""
+    slug = re.sub(r"[^a-z0-9]+", "-", item.lower()).strip("-")[:60] or "unknown"
+    return f"{WORKER_PREFIX}{slug}"
+
+
+def _is_project_scoped(cap_id: str) -> bool:
+    return CAP_SCOPES.get(cap_id) == "project" or cap_id.startswith(WORKER_PREFIX)
 
 #: GitHub token prefixes. A `read:packages` credential that matches none of
 #: these is not a GitHub token at all — the exact 2026-08-31 failure, where a
@@ -130,7 +168,7 @@ def _meta_key(cap_id: str, project_id: Optional[str] = None) -> str:
     A project-scoped capability with no owning project (an ad-hoc goal) keys
     fleet-wide on purpose: no project means no override, so the probe really
     is about the instance default."""
-    if project_id and CAP_SCOPES.get(cap_id) == "project":
+    if project_id and _is_project_scoped(cap_id):
         return f"{_META_PREFIX}{cap_id}@{project_id}"
     return f"{_META_PREFIX}{cap_id}"
 
@@ -147,13 +185,85 @@ def read_result(
         return None
     try:
         d = json.loads(raw)
-        return CapProbeResult(
+        result = CapProbeResult(
             status=d.get("status", "unknown"),
             evidence=d.get("evidence", ""),
             remedy=d.get("remedy", ""),
         )
     except Exception:  # noqa: BLE001
         return None
+    if cap_id.startswith(WORKER_PREFIX) and result.status == "red":
+        # spec 032 US2: the row is about the environment it was reported
+        # against; a changed environment reads green (the fix arrived).
+        if (d.get("env_ref") or "") != instance_env_ref():
+            return CapProbeResult(
+                status="green",
+                evidence=f"environment changed since the worker's report ({result.evidence})",
+            )
+    return result
+
+
+def _worker_index_key(project_id: Optional[str]) -> str:
+    return f"{_META_PREFIX}worker-index@{project_id or ''}"
+
+
+def worker_caps_for(store: MetaStore, project_id: Optional[str]) -> "tuple[str, ...]":
+    """The worker-reported capability ids recorded for ``project_id``."""
+    raw = store.get_meta(_worker_index_key(project_id))
+    if not raw:
+        return ()
+    try:
+        ids = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return ()
+    return tuple(i for i in ids if isinstance(i, str) and i.startswith(WORKER_PREFIX))
+
+
+def record_worker_deficiency(
+    store: MetaStore, project_id: Optional[str], item: str,
+    *, goal_id: str = "", task_id: str = "",
+) -> str:
+    """Record a worker-reported environment deficiency (spec 032 US2) as a
+    red capability row for the project and return its capability id. One
+    row per (item, project): a repeat report against the same environment
+    refreshes ``probed_at_ms`` only; a report against a NEW environment
+    re-pins the row (the earlier fix did not close the gap)."""
+    from .state_store import _now_ms  # deferred — avoids circular at module load
+
+    cap_id = worker_cap_id(item)
+    pid = (project_id or "").strip() or None
+    key = _meta_key(cap_id, pid)
+    ref = instance_env_ref()
+    existing: dict = {}
+    raw = store.get_meta(key)
+    if raw:
+        try:
+            existing = json.loads(raw)
+        except Exception:  # noqa: BLE001
+            existing = {}
+    if existing.get("env_ref") == ref:
+        existing["probed_at_ms"] = _now_ms()
+        store.set_meta(key, json.dumps(existing))
+    else:
+        store.set_meta(key, json.dumps({
+            "status": "red",
+            "evidence": (
+                f"a worker reported the sandbox lacks: {item}"
+                + (f" (goal {goal_id}" + (f", task {task_id}" if task_id else "") + ")" if goal_id else "")
+            ),
+            "remedy": (
+                f"provide {item!r} in the sandbox — devclaw work (the image, a mise tool, "
+                "or the project's environment declaration); the hold clears when the "
+                "instance's environment changes, or resume_goal after fixing it by hand"
+            ),
+            "env_ref": ref,
+            "probed_at_ms": _now_ms(),
+        }))
+    ids = set(worker_caps_for(store, pid))
+    if cap_id not in ids:
+        ids.add(cap_id)
+        store.set_meta(_worker_index_key(pid), json.dumps(sorted(ids)))
+    return cap_id
 
 
 def _write_result(store: MetaStore, target: CapTarget, result: CapProbeResult) -> None:
@@ -334,11 +444,49 @@ def _probe_sandbox_image(target: CapTarget) -> CapProbeResult:
     )
 
 
+_OWNER_REPO_RE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
+
+CI_DEFINITION_REMEDY = (
+    "the project has no CI definition on its default branch — its own CI is the "
+    "verification environment (spec 032): run onboarding, which writes "
+    ".github/workflows/verify.yml around the manifest's verifyCmd, or add one by hand"
+)
+
+
+def _probe_ci_definition(target: CapTarget) -> CapProbeResult:
+    """Does the project's default branch carry a CI definition? ``subject`` is
+    the project's repo url (resolved by the sweep). One bounded ``gh api``
+    read; HTTP 404 on the workflows directory is RED (no definition), any
+    other failure is ``unknown`` (FR-007). Module-level for test patching."""
+    repo = (target.subject or "").strip()
+    m = _OWNER_REPO_RE.search(repo) if repo else None
+    if not m:
+        return CapProbeResult(status="unknown", evidence=f"no GitHub repo url on the project ({repo!r})")
+    owner_repo = f"{m.group(1)}/{m.group(2)}"
+    try:
+        proc = subprocess.run(
+            ["gh", "api", f"repos/{owner_repo}/contents/.github/workflows", "--jq", "length"],
+            capture_output=True, text=True, timeout=20,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return CapProbeResult(status="unknown", evidence=f"gh could not run: {exc}")
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    if proc.returncode == 0 and out.isdigit():
+        if int(out) > 0:
+            return CapProbeResult(status="green", evidence=f"{out} workflow file(s) on the default branch")
+        return CapProbeResult(status="red", evidence=".github/workflows is empty", remedy=CI_DEFINITION_REMEDY)
+    if "404" in err or "Not Found" in err:
+        return CapProbeResult(status="red", evidence="no .github/workflows on the default branch", remedy=CI_DEFINITION_REMEDY)
+    return CapProbeResult(status="unknown", evidence=f"workflows read failed: {(err or out)[:160]}")
+
+
 #: Registry of probe runners, keyed by capability id.  Module-level so tests
 #: can monkeypatch individual entries (``env_cap._PROBE_RUNNERS[cap_id] = fake``).
 _PROBE_RUNNERS: dict[str, Callable[[CapTarget], CapProbeResult]] = {
     CAP_REGISTRY_NPM_GITHUB: _probe_registry_npm_github,
     CAP_SANDBOX_IMAGE: _probe_sandbox_image,
+    CAP_CI_DEFINITION: _probe_ci_definition,
 }
 
 
@@ -351,6 +499,10 @@ def run_if_stale(store: MetaStore, target: CapTarget) -> CapProbeResult:
     Never raises — a probe exception degrades to ``unknown`` which is cached
     and read by the next tick (FR-007: unknown ≠ hold, so goals are not
     held for an unrunnable probe)."""
+    if target.cap_id.startswith(WORKER_PREFIX):
+        # spec 032 US2: no runner — the row is the worker's report, pinned to
+        # an environment ref; it is never re-probed, only re-read.
+        return read_result(store, target.cap_id, target.project_id) or CapProbeResult("unknown")
     if not _is_stale(store, target):
         cached = read_result(store, target.cap_id, target.project_id)
         if cached is not None:
@@ -403,8 +555,10 @@ def red_caps_for(
     capability (:data:`CAP_SCOPES`) — a goal must be admitted against the probe
     of the image ITS sandbox launches, not the fleet default's."""
     red: list[tuple[str, CapProbeResult]] = []
-    for cap_id in declared:
-        result = read_result(store, cap_id, project_id)
+    # spec 032 US2: a worker-reported deficiency holds the project whether or
+    # not anything is declared — the worker's report IS the evidence.
+    for cap_id in tuple(declared) + worker_caps_for(store, (project_id or "").strip() or None):
+        result = read_result(store, cap_id, (project_id or "").strip() or None)
         if result is not None and result.status == "red":
             red.append((cap_id, result))
     return red

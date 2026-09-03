@@ -23,7 +23,7 @@ from .tick_context import (
     _classify,
     _notify,
 )
-from .tick_guards import _block_on_lost_ref, _block_on_prep_failure
+from .tick_guards import _block_on_lost_ref, _block_on_prep_failure, _block_on_env_deficiency
 from .tick_donegate import _resolve_done_gate
 from . import repo_brief as _repo_brief
 from . import slice_guard as _slice_guard
@@ -31,7 +31,7 @@ from .. import project_manifest as _manifest
 from .engine import GoalEngine, GoalEngineError
 from .models import Goal, GoalStatus, InFlight
 from . import problems as _problems
-from ..queue.settle import WORKER_BLOCKED_MARKER
+from ..queue.settle import WORKER_BLOCKED_MARKER, WORKER_ENV_MARKER
 from .store import GoalStore
 from .transitions import Event
 from ..loom import trace as _trace
@@ -347,6 +347,20 @@ async def _resolve_polling_action(
         gate_passed=poll.gate_passed, pr_url=poll.pr_url or "",
         diff_stats=poll.diff_stats,
     )
+
+    # ---- worker environment deficiency → project hold (spec 032 US2) --------
+    # The worker typed its block as `env — <item>`: the sandbox lacks a tool,
+    # service, credential or access. That is the PIPELINE's fault to fix, so
+    # it never becomes a question for the owner (spec 031) — the project holds
+    # on `mechanical:env` (every goal on it, at admission), the catalog carries
+    # one row per item, and the hold heals when the environment changes.
+    if poll.status == "failed" and WORKER_ENV_MARKER in (poll.detail or ""):
+        item = (poll.detail or "").split(WORKER_ENV_MARKER, 1)[1]
+        item = item.split(" — the sandbox lacks", 1)[0].strip() or "unspecified environment gap"
+        return await _block_on_env_deficiency(
+            goal_id, goal, new_status, item, task_id=ref.id,
+            store=ctx.store, notifier=ctx.notifier, summarize=ctx.summary_caller,
+        )
 
     # ---- worker honest-block → typed Problem, immediately (spec 031 R4) ----
     # The task layer already failed this settle CLOSED and un-retried; letting

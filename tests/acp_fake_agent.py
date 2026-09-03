@@ -14,6 +14,8 @@ Scripts (what happens on ``session/prompt``):
   client_call  calls fs/read_text_file; final message reports FS-DENIED-OK
                on the expected -32601, UNEXPECTED-FS-ANSWER otherwise
   blocked      final message is a BLOCKED: self-report → end_turn
+  blocked_env  final message is the TYPED environment block
+               ``STATUS: BLOCKED: env — <item>`` (spec 032 US2) → end_turn
   refusal      short message → stopReason "refusal"
   rate_limit   session/prompt answered with a quota-worded JSON-RPC error
   hang         swallows session/prompt and sleeps forever (idle-timeout prey)
@@ -203,6 +205,13 @@ class FakeAgent:
 
     def script_blocked(self, prompt_id: int) -> None:
         self.message("BLOCKED: the task needs a credential only the owner has")
+        _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
+
+    def script_blocked_env(self, prompt_id: int) -> None:
+        self.message(
+            "CHANGED: nothing — the verify command needs dotnet-ef.\n"
+            "STATUS: BLOCKED: env — dotnet-ef not available in the sandbox"
+        )
         _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
 
     def script_refusal(self, prompt_id: int) -> None:

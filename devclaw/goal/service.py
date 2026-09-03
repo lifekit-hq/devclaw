@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
 from .. import config as _config
+from .. import env_cap as _env_cap_ids
 from ..advance_brief import display_goal as _display_goal
 from . import delivery_strategy as _delivery_strategy
 from . import evaluator as goal_evaluator
@@ -231,8 +232,26 @@ class GoalService:
                 continue
             if manifest is None:
                 continue
-            out[project.id] = tuple(manifest.capabilities)
+            # spec 032 (Q3): every registered project's own CI is its
+            # verification environment — `ci:definition` is implicit here, the
+            # ONE place the implicit declaration lives; the manifest stays
+            # explicit-only for everything else (spec 030 FR-005).
+            caps = tuple(manifest.capabilities)
+            if _env_cap_ids.CAP_CI_DEFINITION not in caps:
+                caps = caps + (_env_cap_ids.CAP_CI_DEFINITION,)
+            out[project.id] = caps
         return out
+
+    def _registered_repo_urls(self) -> "dict[str, str | None]":
+        """``project_id -> repo url`` — the subject the ``ci:definition`` probe is
+        about (spec 032): the project's own repository on GitHub. Read off the
+        listed rows like ``_registered_sandbox_images``."""
+        if self._project_registry is None:
+            return {}
+        return {
+            project.id: getattr(project, "repo_url", None)
+            for project in self._project_registry.list()
+        }
 
     def _registered_sandbox_images(self) -> "dict[str, str | None]":
         """``project_id -> pinned sandbox image`` (spec 030, project-scoped probes).
@@ -488,6 +507,7 @@ class GoalService:
             project_workspaces=self._registered_workspaces,
             project_capabilities=self._registered_capabilities,
             project_images=self._registered_sandbox_images,
+            project_repo_urls=self._registered_repo_urls,
         )
         # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
         # crashing tick leaves this stale, which is exactly the signal an

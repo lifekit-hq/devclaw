@@ -188,7 +188,10 @@ _RETURN_CONTRACT = (
     "End your final message with a hand-back in exactly this shape — one line "
     "per field, plain text, no code fence — so devclaw can read your result "
     "without guessing:\n\n"
-    "STATUS: DONE  — or  BLOCKED: <one-line reason>  if you could not finish.\n"
+    "STATUS: DONE  — or  BLOCKED: env — <the tool, service, credential or access "
+    "your ENVIRONMENT lacks>  when the sandbox cannot do the work (never patch "
+    "the repo around it)  — or  BLOCKED: <one-line reason>  for any other reason "
+    "you could not finish.\n"
     "CHANGED: the files/areas you changed, one clause each, and what each change does.\n"
     "VERIFIED: the checks you ACTUALLY ran and their result — tests, lint, "
     "type-check, build (name the commands).\n"
@@ -879,6 +882,25 @@ _BLOCKED_LINE_RE = re.compile(
     r"^[ \t>#*_-]*(?:STATUS:[ \t]*)?BLOCKED:[ \t]*(.*?)[ \t*_]*$",
     re.MULTILINE,
 )
+
+
+#: Spec 032 US2: the typed form of a block. ``BLOCKED: env — <item>`` says
+#: the ENVIRONMENT lacks something the work needs (a tool, a service, a
+#: credential, network access). That is the pipeline's to fix, not the
+#: owner's to answer and never the worker's to route around in the repo — so
+#: the host holds the whole project on it instead of raising a question.
+_ENV_BLOCK_RE = re.compile(r"^(?:env|environment)\s*[—:–-]\s*(.+)$", re.IGNORECASE)
+
+
+def _classify_block(reason: str | None) -> tuple[str, str]:
+    """A parsed BLOCKED reason → ``(block_kind, block_item)``: ``("env", item)``
+    for the typed environment form, ``("contract", "")`` for everything else."""
+    m = _ENV_BLOCK_RE.match((reason or "").strip())
+    if m:
+        item = m.group(1).strip().strip("*_ ").strip()
+        if item:
+            return "env", item
+    return "contract", ""
 
 
 def _parse_blocked_reason(agent_message: str | None) -> str | None:
@@ -1821,9 +1843,13 @@ def main() -> None:
     blocked_reason = _parse_blocked_reason(client.last_agent_message)
     repo_notes = _parse_repo_notes(client.last_agent_message)
     if blocked_reason is not None:
+        block_kind, block_item = _classify_block(blocked_reason)
         blocked_payload: dict = {
             "status": "blocked",
             "reason": blocked_reason,
+            # spec 032 US2: the typed form — "env" routes to the pipeline
+            "block_kind": block_kind,
+            "block_item": block_item,
             "workspace_dir": workspace_dir,
             "agent_output": _agent_last_words(
             client.last_agent_message, client.stderr_tail()

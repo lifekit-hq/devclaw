@@ -215,18 +215,25 @@ async def test_the_pre_run_reference_stays_pinned_across_retries(store, monkeypa
 
 
 
-async def test_worker_blocked_status_is_not_retried_and_surfaces_reason(store, monkeypatch):
+@pytest.mark.parametrize("kind", ["contract", "env"])
+async def test_worker_blocked_status_is_not_retried_and_surfaces_reason(store, monkeypatch, kind):
     # A worker honest-block (result status="blocked") fails CLOSED and FAST: the
     # task is failed (never "done" — invariant #186), not retried (a re-run
-    # reproduces the same block), and the reason rides the failure so the goal
-    # layer can surface it to the owner.
+    # reproduces the same block), and the reason rides the failure under the
+    # marker the goal layer routes on. The TYPED environment form (spec 032
+    # US2) carries its own marker and leaves exactly one problems-catalog row
+    # keyed by the item, so the pipeline — not the owner — owns the gap.
     monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)  # retries available, must not be used
     calls: list = []
+    reason = ("the task needs a paid API key not present in the repo" if kind == "contract"
+              else "env — dotnet-ef not available in the sandbox")
 
     async def blocked_runner(req: EngineRequest):
         calls.append(req.goal)
-        return {"status": "blocked",
-                "reason": "the task needs a paid API key not present in the repo"}
+        payload = {"status": "blocked", "reason": reason}
+        if kind == "env":
+            payload.update(block_kind="env", block_item="dotnet-ef not available in the sandbox")
+        return payload
 
     q = TaskQueue(store, runner=blocked_runner)
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="do X", verify_cmd="pytest")
@@ -234,9 +241,16 @@ async def test_worker_blocked_status_is_not_retried_and_surfaces_reason(store, m
     t = store.get_task(tid)
     assert t.status == "failed"  # never "done" — a block is not an approval
     assert len(calls) == 1  # not auto-retried despite retries being available
-    assert "worker reported BLOCKED:" in t.error
-    assert "the task needs a paid API key not present in the repo" in t.error
-    assert "Needs a human" in t.error
+    rows = [p for p in store.list_problems(category="block") if p["kind"] == "env_deficiency"]
+    if kind == "contract":
+        assert "worker reported BLOCKED:" in t.error
+        assert "the task needs a paid API key not present in the repo" in t.error
+        assert "Needs a human" in t.error
+        assert rows == []
+    else:
+        assert "worker reported environment deficiency: dotnet-ef not available in the sandbox" in t.error
+        assert "Owned by devclaw" in t.error and "Needs a human" not in t.error
+        assert len(rows) == 1 and rows[0]["count"] == 1 and rows[0]["terminal_count"] == 1
 
 
 async def test_tripwire_span_is_recorded_even_when_the_worker_did_not_land(
