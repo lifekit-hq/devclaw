@@ -304,7 +304,19 @@ class InProcessEngine:
             repo_notes=_repo_notes(t.result_json) if terminal else None,
             no_change=_no_change(t.result_json) if terminal else False,
             landed_partial=_landed_partial(t.result_json) if terminal else False,
+            non_worker_commits=_non_worker_commits(t.result_json) if terminal else (),
         )
+
+
+def _non_worker_commits(result_json: Optional[str]) -> tuple[str, ...]:
+    """Spec 032 US5: the delivery's report of commits on the goal branch the
+    worker did not author. Absent/unparseable ⇒ ()."""
+    data = _parse_result(result_json)
+    delivery = (data or {}).get("delivery") if isinstance(data, dict) else None
+    raw = (delivery or {}).get("non_worker_commits") if isinstance(delivery, dict) else None
+    if not isinstance(raw, list):
+        return ()
+    return tuple(str(x) for x in raw if x)
 
 
 def _parse_result(result_json: Optional[str]) -> Optional[dict]:

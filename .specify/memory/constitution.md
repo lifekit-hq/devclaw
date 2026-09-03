@@ -48,9 +48,12 @@ just their consequence: under `trust` (the default) the per-increment
 adversarial diff review is **not part of the task gate chain at all** — the
 goal-level done-gate's grounded evaluation is the close-and-merge authority
 (spec 025 merge-on-close: an achieved goal's cumulative PR squash-merges at
-the close, and a goal that cannot merge does not close), the human reviews
-merged work after the fact with revert as the remedy, and the done-gate
-re-catches the review gate's findings —
+the close, and a goal that cannot merge does not close), the done-gate
+re-catches the review gate's findings, and — since spec 032 — **the
+project's own verification environment is the verdict of record**: the
+delivered PR's CI rollup is read as a mechanical fact for the exact head
+before any review or evaluator runs and again before the merge; the
+validation lane (spec 015) is the backstop; the human is not a stage —
 while under `strict` it is consulted and fail-closed exactly as before. A gate
 that is by policy not consulted produces no silence to ship on, so removing it
 from the `trust` chain does not repeal #186. The verify, test-integrity, and
@@ -102,8 +105,14 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.5.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-08-29
-(2.5.0 — Principle V's trust rationale updated for spec 025 merge-on-close:
+**Version**: 2.6.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-03
+(2.6.0 — Principle V amended for spec 032 verification ownership: "the human
+reviews merged work post-merge, revert is the remedy" is replaced by "the
+project's own verification environment is the verdict of record; the
+validation lane is the backstop; the human is not a stage". Ruled by Denys
+2026-09-03 on the audit of 25 achieved goals — devclaw is Claude that works
+without him, and a human stage written into doctrine is a missing pipeline
+stage. Prior: 2.5.0 — Principle V's trust rationale updated for spec 025 merge-on-close:
 "the human reviews every PR" (pre-merge) becomes "the done-gate is the
 close-and-merge authority; the human reviews merged work post-merge, revert
 is the remedy". Ruled by Denys 2026-08-29 for unattended operation — the #641

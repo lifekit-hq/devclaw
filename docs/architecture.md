@@ -214,9 +214,10 @@ When the tick decides to *do* something (not just think):
    strictness they fail closed as above; under `trust` (the default) a finding
    that survives every retry (including a browser suite that *ran and failed*)
    **advises-and-ships** — recorded loud in the log + problems catalog and
-   surfaced in the PR body, with post-merge human review as the backstop
-   (spec 025: the done-gate owns the close-and-merge; revert is the remedy) —
-   rather than wedging. The verify gate, test-integrity gate, the declared-scope gate
+   surfaced in the PR body, with the validation lane (spec 015) as the
+   backstop (spec 025: the done-gate owns the close-and-merge; spec 032: the
+   project's own verification environment is the verdict of record and the
+   human is not a stage) — rather than wedging. The verify gate, test-integrity gate, the declared-scope gate
    (below), and the done-gate stay **always-hard** in both modes — for the done-gate that means its
    `done_when` clause grading: an unmet clause holds the goal open under
    either dial. The done-gate's *structural* axis (the review's code-shape

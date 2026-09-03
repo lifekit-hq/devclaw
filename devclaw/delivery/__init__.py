@@ -444,6 +444,27 @@ async def _recent_commit_subjects(workspace_dir: str, base: str | None) -> list[
     return [ln for ln in out.splitlines() if ln.strip()]
 
 
+async def _non_worker_commits(workspace_dir: str, base: str | None) -> list[str]:
+    """Shas of commits on ``base..HEAD`` whose author is NOT the worker's
+    pinned git identity (spec 032 US5): a human's hand push onto a goal branch
+    is an intervention the scorecard counts. Best-effort: [] when the range
+    cannot be resolved."""
+    if not base:
+        return []
+    rc, out = await _run(
+        "git", "log", "--format=%H %ae", f"{base}..HEAD", cwd=workspace_dir,
+    )
+    if rc != 0:
+        return []
+    worker = (git_identity_env().get("GIT_AUTHOR_EMAIL") or "").strip().lower()
+    shas: list[str] = []
+    for ln in out.splitlines():
+        parts = ln.strip().split(" ", 1)
+        if len(parts) == 2 and parts[1].strip().lower() != worker:
+            shas.append(parts[0])
+    return shas
+
+
 async def _find_pr_for_branch(workspace_dir: str, branch: str) -> str | None:
     """The url of an existing open PR with ``--head <branch>``, or None.
     Used when delivering to a goal branch so the second + Nth item just push
@@ -747,6 +768,11 @@ async def deliver_change(
             # "scaffold … (M1)") while later milestones pile up underneath it —
             # the stale-title bug over an eight-commit branch.
             subjects = await _recent_commit_subjects(workspace_dir, base)
+            # spec 032 US5: a hand push onto the goal branch is a human
+            # intervention — reported on the delivery, recorded by the goal layer
+            foreign = await _non_worker_commits(workspace_dir, base)
+            if foreign:
+                result["non_worker_commits"] = foreign
             if subjects:
                 # Title from the LATEST increment's commit subject — the same rule
                 # _resolve_title applies: when there's a worker commit, it IS the

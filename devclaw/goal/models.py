@@ -530,6 +530,9 @@ class PollResult:
     #: as forward progress worth continuing from rather than a wasted dispatch.
     #: False for engines that predate the flag.
     landed_partial: bool = False
+    #: spec 032 US5: shas on the delivered goal branch not authored by the
+    #: worker (a human's hand push) — recorded as interventions at settle
+    non_worker_commits: tuple[str, ...] = ()
 
     @property
     def running(self) -> bool:

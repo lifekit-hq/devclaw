@@ -152,7 +152,7 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
 | `get_status(task_id)` / `list_tasks(...)` / `get_events(...)` | Task history + replayable event feed (live SSE over HTTP) |
-| `get_scorecard_metrics(window_hours?)` | Rolling scorecard over the last N hours (default 1 week): merge rate, evaluator-verdict distribution, steer rate, first-pass hit rate, workspace breaks — a cheap SQLite read, callable from Telegram/dashboards |
+| `get_scorecard_metrics(window_hours?)` | Rolling scorecard over the last N hours (default 1 week): merge rate, evaluator-verdict distribution, steer rate, first-pass hit rate, workspace breaks, and **human interventions per achieved goal** (spec 032 — the number "works without me" is measured by) — a cheap SQLite read, callable from Telegram/dashboards |
 | `review_trends(scope?)` | Tail of the cross-session trend detector's `trends.md` — `harness_self` (devclaw's own self-observability) or a workspace path for that project's trends |
 | `cancel_task(task_id)` | Abort an in-flight task — tears down the sandbox |
 

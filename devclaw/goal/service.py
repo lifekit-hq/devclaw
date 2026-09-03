@@ -1544,6 +1544,7 @@ class GoalService:
                         next=f"{verb}: {(text or option_key)[:120]}"),
                 expect=s,
             )
+        self._goal_store.record_intervention(goal_id, verb, dec.id)
         self._goal_store.append_log(
             goal_id, f"problem {cur.id} resolved by {verb}: {(text or option_key)[:160]}"
         )
@@ -1570,6 +1571,7 @@ class GoalService:
                     "resumes once no problem is open."
                 )
         self._goal_store.append_steering(goal_id, [message], source="denys")
+        self._goal_store.record_intervention(goal_id, "steer", message[:80])
         self._goal_store.append_log(goal_id, f"steered: {message[:160]}")
         # Steering unblocks a blocked goal — flip it to idle and clear the
         # dispatch counter so the cap doesn't re-trigger on the very next tick.
@@ -1688,6 +1690,7 @@ class GoalService:
                     env_heal_attempts=0),
             expect=s,
         )
+        self._goal_store.record_intervention(goal_id, "resume", was_blocked_on[:80])
         self._goal_store.append_log(
             goal_id,
             f"resumed: blocker cleared ({was_blocked_on[:120]}) — re-attempting the same contract",

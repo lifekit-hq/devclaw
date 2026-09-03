@@ -320,6 +320,29 @@ async def test_a_declared_capability_with_no_credential_at_all_is_red(tmp_path, 
     assert ok.verdict.value == "ok"
 
 
+@pytest.mark.parametrize("block,ok", [
+    ({"environment": {"image": "mcr.microsoft.com/dotnet/sdk:10.0", "services": ["postgres:14"], "tools": ["dotnet-ef@10"]}}, True),
+    ({"environment": {"image": "", "services": []}}, False),
+    ({"environment": {"tools": ["", "x"]}}, False),
+    ({"environment": "postgres"}, False),
+])
+def test_a_declared_environment_parses_or_fails_loud(block, ok):
+    """Spec 032 US4 (surface): the environment declaration is parsed like the
+    validation block — absent is today's behaviour, malformed is loud, never a
+    silently-ignored declaration that reads as protection."""
+    import json as _json
+    from devclaw.project_manifest import ManifestError, parse_manifest
+    text = _json.dumps({"schemaVersion": 1, **block})
+    if ok:
+        m = parse_manifest(text)
+        assert m.environment is not None and m.environment.services == ("postgres:14",)
+        assert m.environment.tools == ("dotnet-ef@10",)
+    else:
+        with pytest.raises(ManifestError):
+            parse_manifest(text)
+    assert parse_manifest(_json.dumps({"schemaVersion": 1})).environment is None
+
+
 def test_a_typoed_capability_id_fails_loud_instead_of_disabling_the_brake():
     """FR-005/FR-006: capability ids are value-validated at the manifest parse,
     the ``strictnessDefault``/``surface`` precedent — not tolerated like the

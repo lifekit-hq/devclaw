@@ -422,6 +422,25 @@ def test_missing_merge_columns_detected(env):
     assert "pending_merge_pr" in f.evidence and "restart" in f.remedy
 
 
+# ---- instance: interventions ledger (spec 032 US5) -------------------------
+
+
+def test_missing_goal_interventions_table_detected(env):
+    """Seeded fault: a DB predating spec 032 — human verbs would be dropped
+    and the north-star metric reads unknown; FAIL with the restart remedy."""
+    db = env["store"]._db
+    db.execute("DROP TABLE goal_interventions")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.scorecard.goal_interventions")
+    assert f.verdict is Verdict.FAIL
+    assert "goal_interventions" in f.evidence and "restart" in f.remedy
+
+
+def test_goal_interventions_table_present_is_ok(env):
+    (f,) = _findings(_run(env), "instance.scorecard.goal_interventions")
+    assert f.verdict is Verdict.OK
+
+
 # ---- instance: CI-hold state shape (spec 032 US1) --------------------------
 
 

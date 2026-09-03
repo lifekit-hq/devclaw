@@ -37,6 +37,24 @@ Machine schema: [`devclaw-manifest.schema.json`](./devclaw-manifest.schema.json)
 
 Unknown keys are tolerated (forward-compat within a schema version).
 
+### `environment` (spec 032 US4 — declaration surface only)
+
+```json
+"environment": {
+  "image": "mcr.microsoft.com/dotnet/sdk:10.0",
+  "services": ["postgres:14"],
+  "tools": ["dotnet-ef@10"],
+  "registries": ["npm-github"]
+}
+```
+
+The project's verification environment: the SDK image, the sibling services
+its verify needs, tools beyond the SDK, and the registries its install reads.
+Absent keeps today's behaviour; present-but-malformed fails the manifest loud.
+In this arc the block is parsed and validated only — provisioning exactly what
+is declared (or refusing dispatch) lands with US4's follow-up plan, once the
+CI-rollup fact (US1) has a live track record.
+
 ### `capabilities` (spec 030)
 
 > Since spec 032 (Q3) every **registered** project also carries `ci:definition`

@@ -347,6 +347,10 @@ async def _resolve_polling_action(
         gate_passed=poll.gate_passed, pr_url=poll.pr_url or "",
         diff_stats=poll.diff_stats,
     )
+    # spec 032 US5: a human's hand push onto the goal branch counts as an
+    # intervention (append-only telemetry, never a decision input).
+    for sha in poll.non_worker_commits:
+        ctx.store.record_intervention(goal_id, "commit", sha[:12])
 
     # ---- worker environment deficiency → project hold (spec 032 US2) --------
     # The worker typed its block as `env — <item>`: the sandbox lacks a tool,
