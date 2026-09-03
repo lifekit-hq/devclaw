@@ -615,6 +615,49 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
         "machine_correction_rounds_median": convergence["rounds_median"],
     }
 
+    # ---- human interventions per achieved goal (spec 032 US5) ----------
+    # The north-star: devclaw is Claude that works WITHOUT Denys. Every human
+    # act on a goal (steer / resume / decide / correct_implementation, and a
+    # commit on a goal branch the worker did not author) over the achieved
+    # closes in the same window. Trends to zero without the achieved count
+    # falling, or the loop is not doing its job.
+    interventions: dict[str, Any] = {
+        "steers": 0, "resumes": 0, "decisions": 0, "non_worker_commits": 0,
+        "achieved_goals": convergence["goals_closed"],
+        "per_achieved_goal": None, "items": [], "note": None,
+    }
+    try:
+        with store._lock:
+            iv_rows = store._db.execute(
+                "SELECT goal_id, verb, ref, made_at FROM goal_interventions "
+                "WHERE made_at >= ? ORDER BY made_at",
+                (since_ms,),
+            ).fetchall()
+        for r in iv_rows:
+            verb = r["verb"]
+            if verb == "steer":
+                interventions["steers"] += 1
+            elif verb == "resume":
+                interventions["resumes"] += 1
+            elif verb in ("decide", "correct_implementation"):
+                interventions["decisions"] += 1
+            elif verb == "commit":
+                interventions["non_worker_commits"] += 1
+            interventions["items"].append({
+                "goal_id": r["goal_id"], "verb": verb, "ref": r["ref"], "made_at": int(r["made_at"]),
+            })
+        total = (
+            interventions["steers"] + interventions["resumes"]
+            + interventions["decisions"] + interventions["non_worker_commits"]
+        )
+        if interventions["achieved_goals"]:
+            interventions["per_achieved_goal"] = round(total / interventions["achieved_goals"], 3)
+    except sqlite3.OperationalError:
+        interventions["note"] = (
+            "goal_interventions table absent (DB predates spec 032) — human "
+            "interventions unknown for this window."
+        )
+
     # ---- the finish line, machine-checked (spec 018 US4) ---------------
     # Pass/fail against the configured thresholds + the wedge-free-cycles
     # condition (non-idle cycle_reports rows in-window, all clean). A null
@@ -671,6 +714,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
         "pr": pr_block,
         "convergence": convergence,
         "steering": steering_block,
+        "interventions": interventions,
         "ratchet": ratchet,
         "workspace_breaks_tripped": workspace_breaks,
         "usage": {
@@ -701,6 +745,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
                 convergence_note,
                 pr_note,
                 steering_note,
+                interventions["note"],
                 "usage: cognition rows without real CLI usage contribute their "
                 "len/4 estimate; OAuth (Pro/Max) runs report no dollar cost, so "
                 "tokens_per_merged_pr is the honest cross-billing number and "
@@ -976,6 +1021,15 @@ def format_scorecard(sc: dict) -> str:
         f"steering:         human {st.get('human_steers', 0)} steer(s) · "
         f"machine correction median {med if med is not None else 'n/a'} round(s)"
     )
+    iv = sc.get("interventions") or {}
+    if iv:
+        ratio = iv.get("per_achieved_goal")
+        lines.append(
+            f"interventions:    {ratio if ratio is not None else 'n/a'} per achieved goal "
+            f"(steer {iv.get('steers', 0)}, resume {iv.get('resumes', 0)}, "
+            f"decide {iv.get('decisions', 0)}, non-worker commits {iv.get('non_worker_commits', 0)}"
+            f" over {iv.get('achieved_goals', 0)} achieved)"
+        )
     r = sc.get("ratchet") or {}
     if r:
         parts = []

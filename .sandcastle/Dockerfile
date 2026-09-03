@@ -116,10 +116,12 @@ COPY --chown=agent:agent runner/oom-shield.sh /opt/devclaw/oom-shield.sh
 RUN chmod +x /opt/devclaw/hooks/*.sh
 
 # Chromium's SYSTEM libraries (apt), root stage — the browser binary below is
-# useless without them: a Playwright run in the sandbox could not launch
-# Chromium (fs-479's worker hand-extracted libXfixes.so.3 into /tmp and the
-# LD_LIBRARY_PATH hack ended up committed in a project's playwright config).
-# Debian base is guaranteed above, so install-deps' apt path always applies.
+# useless without them. Part of the DECLARED environment of any project whose
+# verify runs Playwright (spec 032): a worker that finds them missing reports
+# `BLOCKED: env — …` and the project holds; it never patches the repo around
+# the gap (the fs-479 LD_LIBRARY_PATH-in-playwright.config incident is the
+# class the `change_class` gate now fails). Debian base is guaranteed above,
+# so install-deps' apt path always applies.
 RUN npx -y playwright@latest install-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 

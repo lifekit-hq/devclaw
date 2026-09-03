@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-01
 
-**Status**: Clarified 2026-09-01 (3 questions walked with Denys) — ready for `/speckit-plan`
+**Status**: Implemented (2026-09-02). Generalized by spec 032 (2026-09-03): the capability set gains `ci:definition` (implicit for every registered project) and worker-reported `worker:<item>` rows; the same `mechanical:env` seam holds and heals both.
 
 **Input**: User description: "A project is not dispatchable while a capability its
 verify contract depends on is provably broken. Admission consults the mechanical

@@ -669,6 +669,26 @@ def check_goal_status_donegate_progress(ctx: "InstanceContext") -> list[Finding]
     )
 
 
+def check_goal_interventions_table(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 032 US5: the goal_interventions ledger feeds the north-star metric
+    (human interventions per achieved goal). Absent, every verb is silently
+    dropped and the scorecard reports the metric unknown."""
+    cid = "instance.scorecard.goal_interventions"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "goal_status" not in tables:
+        return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
+    if "goal_interventions" not in tables:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal_interventions table absent while goal tables exist — the DB "
+            "predates spec 032; human interventions are not recorded and the "
+            "scorecard's per-achieved-goal metric reads unknown",
+            remedy="restart devclaw (GoalState bootstraps tables at construction)",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_interventions ledger present")]
+
+
 def check_goal_status_pending_done_proposal(ctx: "InstanceContext") -> list[Finding]:
     """Spec 032 US1: ``pending_done_proposal`` is what re-drives the done-gate
     after a ``mechanical:ci`` hold heals — there is no new settle to detect the
@@ -808,6 +828,7 @@ def check_suppressed_pings_table(ctx: "InstanceContext") -> list[Finding]:
 
 
 INSTANCE_CHECKS: tuple = (
+    check_goal_interventions_table,
     check_goal_status_pending_done_proposal,
     check_goal_status_ci_green_head,
     check_legacy_goal_status_lifecycle,

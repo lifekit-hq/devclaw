@@ -4,7 +4,9 @@
   "title": "devclaw project manifest (devclaw.json)",
   "description": "Human-owned, PR-reviewed per-project declaration read by devclaw through the project_manifest doorway. Devclaw never writes this file outside the reviewable onboard PR path.",
   "type": "object",
-  "required": ["schemaVersion"],
+  "required": [
+    "schemaVersion"
+  ],
   "properties": {
     "$schema": {
       "type": "string",
@@ -22,11 +24,17 @@
       "description": "The devclaw boilerplate revision this repo was last brought up to. Compared by doctor against the instance's BOILERPLATE_REVISION constant; re-onboard migrates."
     },
     "strictnessDefault": {
-      "enum": ["trust", "strict"],
+      "enum": [
+        "trust",
+        "strict"
+      ],
       "description": "Per-project gate-strictness default. Precedence: explicit per-goal setting > this value > instance default ('trust'), resolved live at each goal-level read."
     },
     "surface": {
-      "enum": ["app", "library"],
+      "enum": [
+        "app",
+        "library"
+      ],
       "description": "Declared frontend surface kind for the browser-E2E gate. 'library' applies the library exemption without path heuristics; 'app' or absent keeps the default glob heuristics. Read at pre_run_sha for gate decisions."
     },
     "verifyCmd": {
@@ -36,13 +44,83 @@
     },
     "stack": {
       "type": "array",
-      "items": { "type": "string" },
+      "items": {
+        "type": "string"
+      },
       "description": "Declared stack markers (e.g. 'dotnet', 'angular'). Informational in schema v1."
     },
     "capabilities": {
       "type": "array",
-      "items": { "type": "string", "enum": ["registry:npm-github", "sandbox:image"] },
+      "items": {
+        "type": "string",
+        "enum": [
+          "registry:npm-github",
+          "sandbox:image",
+          "ci:definition"
+        ]
+      },
       "description": "Environment capabilities this project's verify contract depends on (spec 030). Ids are validated against the set this instance can probe — an unknown id fails the manifest loud rather than silently disabling the brake. A capability whose mechanical probe is red holds dispatch with a self-healing 'mechanical:env' block; nothing is inferred, and a project that declares none is admitted as before. Declaring 'registry:npm-github' makes an ABSENT NODE_AUTH_TOKEN red, not a supported posture."
+    },
+    "validation": {
+      "type": "object",
+      "required": [
+        "boot",
+        "suites"
+      ],
+      "properties": {
+        "boot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command that boots a hermetic seeded instance (spec 015)."
+        },
+        "suites": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command that runs the acceptance suites against it."
+        },
+        "smokePath": {
+          "type": "string",
+          "pattern": "^/",
+          "default": "/",
+          "description": "Path the read-only production smoke requests after a deploy."
+        }
+      },
+      "description": "Live-validation contract (spec 015): validate_product boots the declared instance and runs the suites; the qa goal mode owns it."
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The dev/SDK image the project's verify runs in (its .devcontainer base)."
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Sibling services the verify needs (e.g. 'postgres:14')."
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Tools beyond the SDK the verify needs (e.g. 'dotnet-ef@10')."
+        },
+        "registries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Package registries the install reads (e.g. 'npm-github')."
+        }
+      },
+      "description": "Spec 032 US4 (declaration surface only in this arc): the project's verification environment. Parsed and validated; provisioning-or-refusal at dispatch lands with US4's follow-up plan. Absent keeps today's behaviour."
     }
   },
   "additionalProperties": true

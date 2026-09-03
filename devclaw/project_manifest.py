@@ -76,6 +76,17 @@ class ValidationContract:
 
 
 @dataclass(frozen=True)
+class EnvironmentDecl:
+    """Spec 032 US4 (surface only in this arc): the project's declared
+    verification environment. Parsed and validated so declarations can start
+    accumulating; consumed by nothing until US4's provisioning plan."""
+    image: Optional[str] = None
+    services: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()
+    registries: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class Manifest:
     schema_version: int
     boilerplate_revision: int = 0
@@ -89,6 +100,8 @@ class Manifest:
     #: An absent or empty list means "no capability dependencies", which
     #: admits byte-identically to today (SC-003).
     capabilities: tuple[str, ...] = field(default_factory=tuple)
+    #: spec 032 US4 — the declared verification environment; absent ⇒ None
+    environment: Optional[EnvironmentDecl] = None
 
 
 def _known_capabilities() -> "frozenset[str]":
@@ -163,6 +176,7 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
             f"can probe {sorted(_known_capabilities())}"
         )
     validation = _parse_validation(raw.get("validation"), source)
+    environment = _parse_environment(raw.get("environment"), source)
     return Manifest(
         schema_version=sv,
         boilerplate_revision=rev,
@@ -172,6 +186,29 @@ def parse_manifest(text: str, *, source: str = MANIFEST_NAME) -> Manifest:
         stack=tuple(stack),
         capabilities=tuple(c.strip() for c in capabilities),
         validation=validation,
+        environment=environment,
+    )
+
+
+def _parse_environment(raw, source: str) -> Optional[EnvironmentDecl]:
+    """Absent ⇒ None (today's behaviour); present-but-malformed ⇒ loud (the
+    ``validation`` block precedent). Every list is non-empty strings."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{source}: environment must be a JSON object")
+    image = raw.get("image")
+    if image is not None and (not isinstance(image, str) or not image.strip()):
+        raise ManifestError(f"{source}: environment.image must be a non-empty string")
+    lists: dict[str, tuple[str, ...]] = {}
+    for key in ("services", "tools", "registries"):
+        val = raw.get(key, [])
+        if not isinstance(val, list) or any(not isinstance(v, str) or not v.strip() for v in val):
+            raise ManifestError(f"{source}: environment.{key} must be a list of non-empty strings")
+        lists[key] = tuple(v.strip() for v in val)
+    return EnvironmentDecl(
+        image=image.strip() if isinstance(image, str) else None,
+        services=lists["services"], tools=lists["tools"], registries=lists["registries"],
     )
 
 

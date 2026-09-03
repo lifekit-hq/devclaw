@@ -126,11 +126,21 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   **per-increment adversarial diff review is dropped from the task gate chain
   entirely** (spec `001-review-gate-repositioning`) — it was the #1 mechanism-wedge
   source; the goal-level done-gate re-catches its findings and owns the
-  close-and-merge (spec 025), with the human reviewing merged work post-merge and
-  revert as the remedy; under `strict` it is consulted and fails closed exactly as before.
+  close-and-merge (spec 025); under `strict` it is consulted and fails closed exactly as before.
+  **Since spec 032 (2026-09-03) the project's own verification environment is
+  the verdict of record**: the delivered PR's CI rollup is read as a mechanical
+  fact for the exact head before the done-check review is dispatched (red ⇒
+  the failing checks are the next correction, pending ⇒ a zero-token
+  `mechanical:ci` hold) and again before merge-on-close (same green head or no
+  merge); the in-sandbox `verify_cmd` is a fast pre-check whose pass is never
+  evidence; every changed path carries a class and the always-hard
+  `change_class` gate fails a gate-input edit or a committed binary; a
+  worker's `BLOCKED: env — <item>` is the pipeline's fact (a project-wide
+  `mechanical:env` hold that heals when the environment changes), never the
+  owner's question. The human is not a stage.
   The browser-E2E gate stays dial-able — under `trust` a surviving finding
-  advises-and-ships (loud + surfaced in the PR, post-merge human review is the
-  backstop) instead of wedging; under `strict` it fails closed. The done-gate's verdict is owned by the
+  advises-and-ships (loud + surfaced in the PR; the validation lane, spec 015,
+  is the backstop) instead of wedging; under `strict` it fails closed. The done-gate's verdict is owned by the
   ``done_when`` contract in both modes; its *structural* axis rides the same
   dial (under ``trust`` reported concerns advise-and-ship as follow-ups on the
   close, under ``strict`` they hold it open), and a done-gate that refuses to

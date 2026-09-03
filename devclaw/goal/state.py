@@ -61,13 +61,17 @@ from typing import TYPE_CHECKING
 
 from .state_content import GoalStateContentMixin
 from .state_problems import GoalStateProblemsMixin
+from .state_interventions import GoalStateInterventionsMixin
 from .state_status import GoalStateStatusMixin
 
 if TYPE_CHECKING:
     from ..state_store import StateStore
 
 
-class GoalState(GoalStateStatusMixin, GoalStateContentMixin, GoalStateProblemsMixin):
+class GoalState(
+    GoalStateStatusMixin, GoalStateContentMixin, GoalStateProblemsMixin,
+    GoalStateInterventionsMixin,
+):
     """Owns the goal-state tables inside a shared :class:`StateStore`.
 
     Handed a ``StateStore``, it borrows that store's single sqlite connection,
@@ -279,6 +283,15 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin, GoalStateProblemsMi
                 );
                 CREATE INDEX IF NOT EXISTS idx_goal_decisions_goal_clause
                   ON goal_decisions(goal_id, clause);
+                CREATE TABLE IF NOT EXISTS goal_interventions (
+                  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                  goal_id TEXT NOT NULL,
+                  verb    TEXT NOT NULL,
+                  ref     TEXT NOT NULL DEFAULT '',
+                  made_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_goal_interventions_made_at
+                  ON goal_interventions(made_at);
 
                 -- goal_id lookups on the append-only / multi-row tables.
                 CREATE INDEX IF NOT EXISTS idx_goal_phase_history_goal

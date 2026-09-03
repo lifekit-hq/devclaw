@@ -227,6 +227,15 @@ class GoalContentMixin:
     # transaction() as the BLOCK/UNBLOCK transition so a TransitionConflict
     # rolls the rows back with it (single writer, constitution IV).
 
+    def record_intervention(self, goal_id: str, verb: str, ref: str = "") -> None:
+        """Spec 032 US5: one human act on this goal (a verb, or a non-worker
+        commit on its branch). Append-only telemetry — never a decision input;
+        best-effort, a bookkeeping hiccup must not fail the verb."""
+        try:
+            self._goal_state.record_intervention(goal_id, verb, ref)
+        except Exception:  # noqa: BLE001 — telemetry, never correctness
+            pass
+
     def raise_problem(self, problem: "Problem") -> "Problem":
         """Record a new OPEN Problem, superseding any open one on the goal —
         exactly one open Problem per goal is the invariant the pointer column
