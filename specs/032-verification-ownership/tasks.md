@@ -7,6 +7,7 @@ description: "Task list for spec 032 — Verification ownership"
 **Input**: Design documents from `/specs/032-verification-ownership/`
 **Prerequisites**: plan.md, spec.md (clarified 2026-09-03), research.md (R1–R8), data-model.md, contracts/, quickstart.md
 **Tests**: only tripwire classes (zero-token, fail-closed gates, CAS/single-writer, sandbox fence, brakes, materialize span, doctor seeded-faults, structural guards). Every test task below extends a named existing class test; no sibling files are minted. Ordinary behavior ships without a test.
+**Status**: Phases 1–7 landed 2026-09-03 (#811–#814); US4 provisioning is the one open item (research R8).
 **Organization**: one phase per increment, each landing as ONE reviewable PR, in plan.md's order: US1 → US2 → US3 → US5 → doctrine (+ US4 manifest surface). Line anchors are into `main` = c77d8ce and drift as earlier phases land; re-anchor by symbol.
 
 ## Format: `[ID] [P?] [Story] Description`
