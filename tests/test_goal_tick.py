@@ -1863,7 +1863,8 @@ _ACHIEVED_EVAL = json.dumps({
 
 
 class FakeRemoteChecker:
-    """Records (repo_url, branch) calls; returns a canned result or raises."""
+    """Records (repo_url, branch) calls; returns a canned result or raises.
+    ``result`` is mutable so a test can flip CI green between ticks."""
 
     def __init__(self, result=None, exc: Exception | None = None):
         from devclaw.goal.remote_checks import RemoteChecksResult
@@ -1892,114 +1893,159 @@ def _verifying_goal_branch_goal(store, tmp_path, goal_id="g"):
     ))
 
 
-@pytest.mark.asyncio
-async def test_failing_remote_checks_block_the_close(tmp_path):
-    from devclaw.goal.remote_checks import RemoteChecksResult
-
-    store = _store(tmp_path, Clock())
-    _verifying_goal_branch_goal(store, tmp_path)
-    checker = FakeRemoteChecker(RemoteChecksResult("failing", "32 failed of 32 (32× startup_failure)"))
-    evaluator = FakeClaude(_ACHIEVED_EVAL)
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
-
-    assert out is Outcome.SLEPT                       # not done — steered back in
-    assert checker.calls == [("https://example.com/demo.git", "goal/g")]
-    s = store.load_status("g")
-    assert s.phase == "idle" and s.phase != "done"
-    assert s.last_eval_verdict == "off_track"
-    assert "remote checks (goal/g): failing" in store.recent_log("g")
-    # the correction steers the fix
-    steering = store.unread_steering("g")
-    assert "[remote-checks]" in steering
-    assert "startup_failure" in steering
+def _settled_advance_proposing_done(store, tmp_path, goal_id="g"):
+    """A goal-branch goal whose advance session just settled green — the settle
+    proposes done, which is where spec 032 US1 reads the project's CI FIRST."""
+    seed_goal(tmp_path, goal_id)
+    store.save_status(goal_id, GoalStatus(
+        phase="in_flight",
+        in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
+    ))
+    return FakeEngine(poll_result=PollResult(
+        terminal=True, status="done", detail="Agent summary: added /health",
+        pr_url="https://github.com/o/r/pull/9", gate_passed=True,
+    ))
 
 
 @pytest.mark.asyncio
-async def test_never_ran_ci_blocks_the_close_under_strict_gate(tmp_path, monkeypatch):
-    from devclaw.goal import remote_checks as _rc
+async def test_red_rollup_on_a_done_proposal_spends_zero_cognition_and_steers_the_failing_check(tmp_path):
+    """Spec 032 US1 (the fs-431 arc): a red CI on the delivered PR is a FACT the
+    tick consumes before any review sandbox or evaluator call — the failing
+    check names become the next correction and no done-gate round is spent."""
     from devclaw.goal.remote_checks import RemoteChecksResult
 
-    monkeypatch.setattr(_rc, "CI_GATE_MODE", "strict")
     store = _store(tmp_path, Clock())
-    _verifying_goal_branch_goal(store, tmp_path)
-    checker = FakeRemoteChecker(RemoteChecksResult("none", "workflows exist but zero runs"))
-    evaluator = FakeClaude(_ACHIEVED_EVAL)
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
-    notifier = RecordingNotifier()
+    engine = _settled_advance_proposing_done(store, tmp_path)
+    checker = FakeRemoteChecker(RemoteChecksResult(
+        "failing", "1 failing: Backend CI", head_sha="abc1234def",
+        failing_names=("Backend CI",),
+    ))
+    evaluator, notifier = FakeClaude(_ACHIEVED_EVAL), RecordingNotifier()
 
     out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.SLEPT
-    assert store.load_status("g").phase != "done"
+    assert evaluator.calls == 0                                   # no evaluator
+    assert not any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)  # no review sandbox
+    assert checker.calls == [("https://example.com/demo.git", "goal/g")]
+    s = store.load_status("g")
+    assert s.phase == "idle" and s.donegate_rounds == 0 and not s.pending_done_proposal
     steering = store.unread_steering("g")
-    assert "ZERO" in steering or "zero" in steering
+    assert "[remote-checks]" in steering and "Backend CI" in steering and "abc1234" in steering
+    assert "remote checks (goal/g): failing" in store.recent_log("g")
 
 
 @pytest.mark.asyncio
-async def test_broken_ci_infra_closes_with_annotation_under_flexible_gate(tmp_path):
-    # Default (flexible) ci-gate: startup_failure-only CI is infrastructure
-    # trouble, not code trouble — the verified close is honored, but the
-    # verdict the owner reads says loudly that CI never executed.
+async def test_pending_rollup_holds_on_mechanical_ci_at_zero_tokens_until_green(tmp_path):
+    """Spec 032 US1: CI still running ⇒ the done proposal WAITS — a
+    ``mechanical:ci`` hold that costs zero cognition per tick, re-reads the
+    rollup once per heartbeat window, and re-opens the gate on green with the
+    green head remembered for merge-on-close."""
     from devclaw.goal.remote_checks import RemoteChecksResult
 
     store = _store(tmp_path, Clock())
-    _verifying_goal_branch_goal(store, tmp_path)
-    checker = FakeRemoteChecker(
-        RemoteChecksResult("infra_broken", "5 of 5 died at startup — CI infrastructure never executed")
+    engine = _settled_advance_proposing_done(store, tmp_path)
+    checker = FakeRemoteChecker(RemoteChecksResult(
+        "pending", "1 still running: Backend CI", head_sha="abc1234def",
+        pending_names=("Backend CI",),
+    ))
+    evaluator, notifier = FakeClaude(_ACHIEVED_EVAL), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.blocked_kind == "mechanical:ci"
+    assert s.pending_done_proposal is True and s.ci_green_head == ""
+    assert "Backend CI" in (s.blocked_on or "")
+    assert evaluator.calls == 0 and engine.dispatched == []
+
+    # still pending: the heal re-reads once, then idles at zero cost
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
+    assert out is Outcome.IDLE
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.heal_attempts == 1 and s.next_heal_at
+    assert evaluator.calls == 0 and engine.dispatched == []
+    assert len(checker.calls) == 2
+
+    # CI settles green; the window opens; the hold heals and the gate re-opens
+    checker.result = RemoteChecksResult("passing", "3 checks green", head_sha="abc1234def")
+    store.update_status_fields("g", next_heal_at=None)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
+    assert out is Outcome.VERIFYING
+    assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
+    s = store.load_status("g")
+    assert s.phase == "verifying" and s.blocked_kind == ""
+    assert s.ci_green_head == "abc1234def" and not s.pending_done_proposal
+    assert evaluator.calls == 0           # the review is a sandbox; the evaluator runs when it settles
+    assert "re-opening the done-gate" in store.recent_log("g")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("how", ["unknown_state", "checker_raises"])
+async def test_unknown_rollup_holds_and_never_approves(tmp_path, how):
+    """Spec 032 US1: an UNREADABLE CI is not a green CI. The old post-evaluator
+    check failed open on ``unknown`` (a verified goal must not wedge on an
+    infra flake); now the proposal simply waits — zero cognition, a bounded
+    recheck cadence, and a park with one ping if it never settles."""
+    from devclaw.goal.remote_checks import RemoteChecksResult
+
+    store = _store(tmp_path, Clock())
+    engine = _settled_advance_proposing_done(store, tmp_path)
+    checker = (
+        FakeRemoteChecker(RemoteChecksResult("unknown", "gh: network unreachable"))
+        if how == "unknown_state" else FakeRemoteChecker(exc=RuntimeError("gh exploded"))
     )
-    evaluator = FakeClaude(_ACHIEVED_EVAL)
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
-    notifier = RecordingNotifier()
+    evaluator, notifier = FakeClaude(_ACHIEVED_EVAL), RecordingNotifier()
 
     out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
-    assert out is Outcome.DONE
-    assert store.load_status("g").phase == "done"
-    assert "internal verify gate only" in store.load_status("g").last_eval_note
-
-
-@pytest.mark.asyncio
-async def test_passing_remote_checks_let_the_goal_close(tmp_path):
-    store = _store(tmp_path, Clock())
-    _verifying_goal_branch_goal(store, tmp_path)
-    checker = FakeRemoteChecker()  # passing
-    evaluator = FakeClaude(_ACHIEVED_EVAL)
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
-
-    assert out is Outcome.DONE
-    assert store.load_status("g").phase == "done"
-    assert "remote checks (goal/g): passing" in store.recent_log("g")
-
-
-@pytest.mark.asyncio
-async def test_unknown_remote_state_fails_open_but_logs(tmp_path):
-    from devclaw.goal.remote_checks import RemoteChecksResult
-
-    store = _store(tmp_path, Clock())
-    _verifying_goal_branch_goal(store, tmp_path)
-    checker = FakeRemoteChecker(RemoteChecksResult("unknown", "gh: network unreachable"))
-    evaluator = FakeClaude(_ACHIEVED_EVAL)
-    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
-    notifier = RecordingNotifier()
-
-    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
-
-    # infra uncertainty must not wedge a verified goal — but it IS observable
-    assert out is Outcome.DONE
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.blocked_kind == "mechanical:ci" and s.pending_done_proposal is True
+    assert evaluator.calls == 0 and engine.dispatched == []
     assert "remote checks (goal/g): unknown" in store.recent_log("g")
 
 
 @pytest.mark.asyncio
-async def test_checker_exception_fails_open(tmp_path):
+@pytest.mark.parametrize("state,detail", [
+    ("no_workflows", "no .github/workflows on the default branch"),
+    ("infra_broken", "5 of 5 died at startup — CI infrastructure never executed"),
+])
+async def test_no_ci_definition_or_broken_ci_raises_a_typed_problem_not_a_close(tmp_path, state, detail):
+    """Spec 032 Q3 + R1: a project with no CI definition has no verification
+    environment, and a CI that cannot execute is a definition no worker may
+    edit (a gate input, US3). Both are a typed Problem for the owner (supply
+    the CI definition / cancel) — never a close on the sandbox gate alone,
+    which is what the retired ``flexible`` ci-gate did."""
+    from devclaw.goal.remote_checks import RemoteChecksResult
+
+    store = _store(tmp_path, Clock())
+    engine = _settled_advance_proposing_done(store, tmp_path)
+    checker = FakeRemoteChecker(RemoteChecksResult(state, detail))
+    evaluator, notifier = FakeClaude(_ACHIEVED_EVAL), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
+
+    assert out is Outcome.BLOCKED
+    s = store.load_status("g")
+    assert s.phase == "blocked" and s.blocked_kind == "needs_answer"
+    assert s.problem_id.startswith("prb_") and s.pending_done_proposal is True
+    assert "CI" in (s.blocked_on or "")
+    assert evaluator.calls == 0 and engine.dispatched == []
+    assert len([m for m in notifier.sent if "🟡" in m]) == 1
+
+
+@pytest.mark.asyncio
+async def test_passing_remote_checks_let_the_goal_close(tmp_path):
+    """The merge-side re-read (spec 032 US1): a settled done-check review with a
+    green rollup for the same head closes and merges; the close clears the
+    remembered head."""
+    from devclaw.goal.remote_checks import RemoteChecksResult
+
     store = _store(tmp_path, Clock())
     _verifying_goal_branch_goal(store, tmp_path)
-    checker = FakeRemoteChecker(exc=RuntimeError("gh exploded"))
+    store.update_status_fields("g", ci_green_head="abc1234def")
+    checker = FakeRemoteChecker(RemoteChecksResult("passing", "all green", head_sha="abc1234def"))
     evaluator = FakeClaude(_ACHIEVED_EVAL)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ok"))
     notifier = RecordingNotifier()
@@ -2007,7 +2053,10 @@ async def test_checker_exception_fails_open(tmp_path):
     out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
 
     assert out is Outcome.DONE
-    assert "unknown" in store.recent_log("g")
+    assert checker.calls == [("https://example.com/demo.git", "goal/g")]
+    s = store.load_status("g")
+    assert s.phase == "done" and s.ci_green_head == "" and not s.pending_done_proposal
+    assert "remote checks (goal/g): passing" in store.recent_log("g")
 
 
 def test_done_gate_review_brief_forbids_existence_only_test_evidence(tmp_path):
@@ -2232,8 +2281,9 @@ async def test_goal_yaml_alone_is_the_whole_contract(tmp_path):
 async def test_blocked_kind_stamped_per_block_site(tmp_path, monkeypatch):
     """Each block class stamps its machine-readable kind next to the prose:
     a workspace-prep failure → mechanical:prep, the dispatch-cap backstop
-    → mechanical:dispatch_cap, the done-gate blocking for a human decision
-    → needs_answer, and force_block (the illegal-transition escape hatch) → bug."""
+    → mechanical:dispatch_cap, a done proposal waiting on CI → mechanical:ci
+    (spec 032), the done-gate blocking for a human decision → needs_answer,
+    and force_block (the illegal-transition escape hatch) → bug."""
     # Each sub-scenario is an INDEPENDENT goal, so each gets its own workspace:
     # goals sharing one project now serialize under the single-writer hold
     # (spec 010 P1), which would queue every goal after the first and starve the
@@ -2255,6 +2305,14 @@ async def test_blocked_kind_stamped_per_block_site(tmp_path, monkeypatch):
     store.save_status("gd", GoalStatus(phase="idle", actions_dispatched=4))
     assert await _tick(store, "gd", evaluator, engine, notifier) is Outcome.BLOCKED
     assert store.load_status("gd").blocked_kind == "mechanical:dispatch_cap"
+
+    # mechanical:ci — the delivered PR's CI is still running (spec 032 US1)
+    from devclaw.goal.remote_checks import RemoteChecksResult
+    engine_ci = _settled_advance_proposing_done(store, tmp_path, "gci")
+    store.save_status("gci", replace(store.load_status("gci")))
+    pending = FakeRemoteChecker(RemoteChecksResult("pending", "running", pending_names=("CI",)))
+    assert await _tick(store, "gci", evaluator, engine_ci, notifier, remote_checker=pending) is Outcome.BLOCKED
+    assert store.load_status("gci").blocked_kind == "mechanical:ci"
 
     # bug — the force_block illegal-transition escape hatch
     seed_goal(tmp_path, "gb", workspace_dir="/repos/gb")
@@ -3845,7 +3903,8 @@ def test_green_mechanical_verification_alone_never_closes_a_goal():
     guard = (
         'store.transition(\n            goal_id, Event.ACHIEVE,\n'
         '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,\n'
-        '                    pending_merge_pr="", merge_heal_attempted=False),'
+        '                    pending_merge_pr="", merge_heal_attempted=False,\n'
+        '                    pending_done_proposal=False, ci_green_head=""),'
     )
     assert guard in src, "the primary ACHIEVE no longer clears the merge marker inside the verdict block"
     assert "async def _finalize_pending_merge" in src and "status.pending_merge_pr" in src, (

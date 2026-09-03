@@ -1,48 +1,40 @@
-"""Grounded remote-checks verification — "is the target repo's REAL CI green?".
+"""The project's CI, read as a mechanical fact for the exact PR head (spec 032 US1).
 
-The 2026-07-06 quarterly benchmark (closeloop-bench-2026-07-05) closed a goal
-whose GitHub Actions had failed at startup on all 32 runs: the sandbox verify
-gate passed, the internal log said "gate=passed", and nothing in the chain ever
-looked at the repo's actual check surface. Silence read as success.
+Origin: the 2026-07-06 quarterly benchmark (closeloop-bench-2026-07-05) closed
+a goal whose GitHub Actions had failed at startup on all 32 runs — the sandbox
+verify gate passed and nothing in the chain ever looked at the repo's actual
+check surface. This module became the look. Spec 032 moved it: it used to run
+AFTER the done-gate evaluator had spent its LLM call, keyed to the BRANCH head,
+and turned "pending" into a worker re-dispatch (the fs-431 churn arc, four
+done-gate rounds against a red CI the loop could not read). It now runs BEFORE
+the done-check review is dispatched, keys to the delivered PR head, and its
+verdict is a fact the tick consumes at zero cognition:
 
-This module is the look. At the done-gate, when the goal's work lives on a
-shared goal branch with a PR, devclaw queries the REAL check state for that
-branch's head commit — both the check-runs API (any CI provider) and the
-Actions runs API (which is where `startup_failure` runs appear even when the
-check-runs list is empty, exactly the benchmark's failure signature) — and an
-``achieved`` verdict is only honored when the remote checks don't contradict it.
+- ``passing``      → the review + evaluator proceed; the head is remembered and
+                     merge-on-close requires the SAME head to still be green.
+- ``failing``      → no review, no evaluator: the failing checks are steered
+                     back as a correction (the worker's next action).
+- ``pending``      → the goal holds (``mechanical:ci``) and re-reads on the
+                     heartbeat cadence; nothing is judged while CI is running.
+- ``unknown``      → gh/network error or a non-GitHub remote: treated like
+                     ``pending`` — an uncertain read never approves and never
+                     accuses (spec 030 FR-007's posture).
+- ``no_pr``        → the branch has no PR (a no-change goal): nothing to read;
+                     the close proceeds and merge-on-close reports NO_PR.
+- ``no_workflows`` → the repo carries no CI definition on its default branch:
+                     a project without a verification environment (Q3 of the
+                     spec — not dispatchable; onboarding writes one).
+- ``infra_broken`` → every settled check died at startup: the project's own
+                     CI definition is broken and no worker may edit it — a
+                     typed Problem for the owner.
 
-Verdict semantics (deliberately fail-open on *infrastructure* uncertainty,
-fail-closed on *evidence* of a problem):
+Which checks count: the base branch's required status checks when branch
+protection defines them; otherwise every check on the head. Read from the
+repository, never configured in devclaw.
 
-- ``passing``      → close as normal.
-- ``failing``      → block the close; the corrections steer a fix.
-- ``pending``      → block the close; re-propose once the runs settle.
-- ``infra_broken`` → every bad run is a ``startup_failure`` — CI infrastructure
-                     never executed a single step (billing lock on a private
-                     repo, disabled Actions), so the runs say nothing about the
-                     code. Blocks only under ``strict`` ci-gate; under
-                     ``flexible`` (the default) the close is honored on the
-                     internal verify gate alone, loudly annotated.
-- ``none``         → workflows exist but produced zero runs/checks for this
-                     commit — the benchmark's "CI never ran and nobody noticed"
-                     case. Same infra-shaped signature: blocks only under
-                     ``strict``.
-- ``no_workflows`` → the repo has no ``.github/workflows`` — nothing to check;
-                     does not block (authoring CI is the checklist's job, per
-                     plan.md §Production-ready C5, not the gate's).
-- ``unknown``      → gh/network error or a non-GitHub remote — logged loudly,
-                     does not block (an infra flake must not wedge a verified
-                     goal; the log line keeps it observable).
-
-``DEVCLAW_GOAL_CI_GATE`` selects the stance: ``flexible`` (default — broken CI
-infrastructure degrades to the internal verify gate instead of wedging the
-goal) or ``strict`` (any non-green remote state blocks, the pre-2026-07-09
-behavior). Test *failures* always block in both modes.
-
-The gh calls live here (not in goal_tick) so the tick stays a pure,
+The gh calls live here (not in the tick) so the tick stays a pure,
 subprocess-free unit under test; goal_service binds the real checker, tests
-inject a fake — the same seam shape as ``merge.py``.
+inject a fake — the same seam shape as ``merge_on_close``.
 """
 
 from __future__ import annotations
@@ -55,50 +47,48 @@ from typing import Awaitable, Callable, Optional
 from .. import config as _config
 from . import mergeability as _mergeability
 
-#: takes (repo_url, branch), returns the combined remote-check verdict.
+#: takes (repo_url, branch), returns the rollup fact for the branch's PR head.
 RemoteChecker = Callable[[str, str], Awaitable["RemoteChecksResult"]]
 
 REMOTE_CHECKS_ENABLED = _config.REMOTE_CHECKS_ENABLED
 
-#: "strict" → infra-broken CI (startup_failure-only / zero runs) blocks the
-#: done-gate; anything else → "flexible" (the default), where only real test
-#: failures and pending runs block.
-CI_GATE_MODE = "flexible"
-
 #: conclusions that contradict "this work is done". ``cancelled`` counts: a
-#: run that never finished proved nothing, and we only query THIS commit's
-#: runs so stale cancels don't bleed in. ``startup_failure`` is kept separate:
-#: it means CI infrastructure never executed (billing lock, disabled Actions),
-#: which says nothing about the code — see ``infra_broken`` above.
-_BAD_CONCLUSIONS = {"failure", "timed_out", "action_required", "cancelled"}
+#: run that never finished proved nothing. ``startup_failure`` is kept
+#: separate: CI infrastructure never executed (billing lock, disabled
+#: Actions), which says nothing about the code — see ``infra_broken`` above.
+_BAD_CONCLUSIONS = {"failure", "timed_out", "action_required", "cancelled", "error", "stale"}
 _INFRA_CONCLUSIONS = {"startup_failure"}
-_PENDING_STATUSES = {"queued", "in_progress", "waiting", "pending", "requested"}
+_OK_CONCLUSIONS = {"success", "neutral", "skipped"}
+_PENDING_STATUSES = {"queued", "in_progress", "waiting", "pending", "requested", "expected"}
 
 _OWNER_REPO_RE = re.compile(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$")
+_NO_PR_MARKERS = ("no pull requests found", "could not find pull request", "no open pull request")
 
 
 @dataclass(frozen=True)
 class RemoteChecksResult:
-    """The combined state of a branch head's real checks."""
+    """The rollup fact for one PR head. ``state`` is one of
+    passing | failing | pending | infra_broken | no_workflows | no_pr | unknown."""
 
-    state: str  # passing | failing | pending | infra_broken | none | no_workflows | unknown
+    state: str
     detail: str = ""
+    #: the head the rollup describes — merge-on-close requires the same head
+    head_sha: str = ""
+    #: the PR the rollup was read from (``""`` for no_pr / unknown)
+    pr_url: str = ""
+    failing_names: tuple[str, ...] = ()
+    pending_names: tuple[str, ...] = ()
 
-    def blocks_done(self, mode: str = "flexible") -> bool:
-        """Does this state contradict an ``achieved`` close under ``mode``?
-        Real failures and pending runs always block; the infra-shaped states
-        (``infra_broken``, ``none``) block only under ``strict``."""
-        if self.state in ("failing", "pending"):
-            return True
-        if self.state in ("infra_broken", "none"):
-            return mode == "strict"
-        return False
+    @property
+    def proceeds(self) -> bool:
+        """May the done-gate review + evaluator run on this fact?"""
+        return self.state in ("passing", "no_pr")
 
 
 def parse_owner_repo(repo_url: str) -> Optional[str]:
     """``https://github.com/o/r.git`` / ``git@github.com:o/r.git`` → ``o/r``.
     None for anything that isn't GitHub — the checker then reports ``unknown``
-    (fail-open) rather than guessing at a forge it can't query."""
+    rather than guessing at a forge it can't query."""
     if not repo_url:
         return None
     m = _OWNER_REPO_RE.search(repo_url.strip())
@@ -107,52 +97,82 @@ def parse_owner_repo(repo_url: str) -> Optional[str]:
     return f"{m.group(1)}/{m.group(2)}"
 
 
-def combine_states(
-    runs: Optional[list[dict]],
-    checks: Optional[list[dict]],
-    *,
-    workflows_present: bool,
-) -> RemoteChecksResult:
-    """Fold Actions runs + check-runs for one commit into a single verdict.
-    Pure function — the subprocess boundary stays in :func:`check_branch`.
+def _item_name(item: dict) -> str:
+    return str(item.get("name") or item.get("context") or "").strip()
 
-    ``runs`` / ``checks`` are lists of ``{"status": ..., "conclusion": ...}``;
-    ``None`` means that API call itself failed (distinct from an empty list).
-    """
-    if runs is None and checks is None:
-        return RemoteChecksResult("unknown", "both check-runs and Actions-runs queries failed")
-    items = (runs or []) + (checks or [])
-    if not items:
-        if not workflows_present:
-            return RemoteChecksResult("no_workflows", "no .github/workflows in the repo — nothing to check")
+
+def combine_states(
+    rollup: Optional[list[dict]],
+    *,
+    required: Optional[frozenset[str]],
+    workflows_present: bool,
+    head_sha: str = "",
+    pr_url: str = "",
+) -> RemoteChecksResult:
+    """Fold a PR's ``statusCheckRollup`` into one fact. Pure — the subprocess
+    boundary stays in :func:`check_pr`.
+
+    ``rollup`` is the list gh returns (CheckRun items carry ``name``/``status``/
+    ``conclusion``; StatusContext items carry ``context``/``state``); ``None``
+    means the read itself failed. ``required`` is the base branch's protected
+    context set, or ``None`` when the branch has no protection (every check
+    counts). A required check that has not reported at all is pending."""
+    if rollup is None:
+        return RemoteChecksResult("unknown", "could not read the PR's check rollup", head_sha, pr_url)
+    if not rollup and not workflows_present:
         return RemoteChecksResult(
-            "none",
-            "workflows exist but produced zero runs/check-runs for this commit — "
-            "CI never ran (check Actions permissions/billing on the repo)",
+            "no_workflows", "no .github/workflows on the default branch — the project has no CI definition",
+            head_sha, pr_url,
         )
-    conclusions: dict[str, int] = {}
-    pending = 0
+    items = list(rollup)
+    seen: set[str] = set()
+    failing: list[str] = []
+    pending: list[str] = []
+    settled: dict[str, int] = {}
     for it in items:
-        status = str(it.get("status") or "").lower()
-        conclusion = str(it.get("conclusion") or "").lower()
-        if status in _PENDING_STATUSES or (status != "completed" and not conclusion):
-            pending += 1
+        name = _item_name(it)
+        if required is not None and name not in required:
             continue
-        conclusions[conclusion] = conclusions.get(conclusion, 0) + 1
-    summary = ", ".join(f"{n}× {c or '(none)'}" for c, n in sorted(conclusions.items())) or "no settled runs"
-    bad = sum(n for c, n in conclusions.items() if c in _BAD_CONCLUSIONS)
-    infra = sum(n for c, n in conclusions.items() if c in _INFRA_CONCLUSIONS)
-    if bad:
-        return RemoteChecksResult("failing", f"{bad} failed of {len(items)} ({summary})")
+        seen.add(name)
+        status = str(it.get("status") or "").lower()
+        conclusion = str(it.get("conclusion") or it.get("state") or "").lower()
+        if status in _PENDING_STATUSES or conclusion in _PENDING_STATUSES or (
+            status and status != "completed" and not conclusion
+        ):
+            pending.append(name)
+            continue
+        settled[conclusion] = settled.get(conclusion, 0) + 1
+        if conclusion in _BAD_CONCLUSIONS:
+            failing.append(name)
+    if required is not None:
+        pending.extend(sorted(required - seen))
+    summary = ", ".join(f"{n}× {c or '(none)'}" for c, n in sorted(settled.items())) or "no settled checks"
+    if failing:
+        return RemoteChecksResult(
+            "failing", f"{len(failing)} failing: {', '.join(failing)} ({summary})",
+            head_sha, pr_url, tuple(failing), tuple(pending),
+        )
     if pending:
-        return RemoteChecksResult("pending", f"{pending} of {len(items)} still running ({summary})")
-    if infra:
+        return RemoteChecksResult(
+            "pending", f"{len(pending)} still running: {', '.join(pending)} ({summary})",
+            head_sha, pr_url, (), tuple(pending),
+        )
+    if not settled:
+        # workflows exist but nothing has reported for this head yet
+        return RemoteChecksResult(
+            "pending", "workflows exist but no check has reported for this head yet",
+            head_sha, pr_url,
+        )
+    infra = sum(n for c, n in settled.items() if c in _INFRA_CONCLUSIONS)
+    ok = sum(n for c, n in settled.items() if c in _OK_CONCLUSIONS)
+    if infra and not ok:
         return RemoteChecksResult(
             "infra_broken",
             f"{infra} of {len(items)} died at startup — CI infrastructure never "
             f"executed (Actions permissions/billing on the repo) ({summary})",
+            head_sha, pr_url,
         )
-    return RemoteChecksResult("passing", f"{len(items)} checks settled ({summary})")
+    return RemoteChecksResult("passing", f"{ok} checks green ({summary})", head_sha, pr_url)
 
 
 async def _gh(*args: str) -> tuple[int, str]:
@@ -162,53 +182,70 @@ async def _gh(*args: str) -> tuple[int, str]:
     return (rc if rc != 0 else 0), out
 
 
-def _parse_json_list(rc: int, out: str) -> Optional[list[dict]]:
+def _parse_json(rc: int, out: str) -> Optional[object]:
     if rc != 0:
         return None
     try:
-        parsed = json.loads(out or "[]")
+        return json.loads(out or "null")
     except json.JSONDecodeError:
         return None
-    return parsed if isinstance(parsed, list) else None
 
 
-async def check_branch(repo_url: str, branch: str) -> RemoteChecksResult:
-    """The real checker: resolve the branch head on GitHub, gather its Actions
-    runs + check-runs, and fold them. Best-effort throughout — every failure
-    path degrades to ``unknown`` rather than raising into the tick."""
+async def check_pr(repo_url: str, branch: str) -> RemoteChecksResult:
+    """The real reader: the PR for ``branch`` on ``repo_url``, its head, its
+    check rollup, and the base branch's required contexts. Best-effort
+    throughout — every failure path degrades to ``unknown`` rather than
+    raising into the tick; only a gh reply that says "no PR" is ``no_pr``."""
     owner_repo = parse_owner_repo(repo_url)
     if not owner_repo:
         return RemoteChecksResult("unknown", f"not a GitHub remote: {repo_url!r}")
 
-    rc, out = await _gh("api", f"repos/{owner_repo}/commits/{branch}", "--jq", ".sha")
+    rc, out = await _gh(
+        "pr", "view", branch, "--repo", owner_repo,
+        "--json", "url,headRefOid,baseRefName,statusCheckRollup",
+    )
     if rc != 0:
-        return RemoteChecksResult("unknown", f"could not resolve {branch!r} head: {out.strip()[:200]}")
-    sha = out.strip()
+        low = out.lower()
+        if any(m in low for m in _NO_PR_MARKERS):
+            return RemoteChecksResult("no_pr", f"no PR for {branch}")
+        return RemoteChecksResult("unknown", f"could not read the PR for {branch!r}: {out.strip()[:200]}")
+    pr = _parse_json(rc, out)
+    if not isinstance(pr, dict):
+        return RemoteChecksResult("unknown", f"unparseable PR payload for {branch!r}")
+    head_sha = str(pr.get("headRefOid") or "")
+    pr_url = str(pr.get("url") or "")
+    base = str(pr.get("baseRefName") or "")
+    rollup_raw = pr.get("statusCheckRollup")
+    rollup = [it for it in rollup_raw if isinstance(it, dict)] if isinstance(rollup_raw, list) else None
 
-    rc_wf, out_wf = await _gh(
-        "api", f"repos/{owner_repo}/contents/.github/workflows?ref={branch}", "--jq", "length",
+    required: Optional[frozenset[str]] = None
+    if base:
+        rc_p, out_p = await _gh(
+            "api", f"repos/{owner_repo}/branches/{base}/protection/required_status_checks/contexts",
+        )
+        contexts = _parse_json(rc_p, out_p)
+        if isinstance(contexts, list):
+            required = frozenset(str(c) for c in contexts if c) or None
+        # rc != 0 (HTTP 404 = no protection, or any read failure) → every check counts
+
+    workflows_present = True
+    if not rollup:
+        rc_wf, out_wf = await _gh(
+            "api", f"repos/{owner_repo}/contents/.github/workflows?ref={base or 'HEAD'}",
+            "--jq", "length",
+        )
+        workflows_present = rc_wf == 0 and out_wf.strip().isdigit() and int(out_wf.strip()) > 0
+
+    return combine_states(
+        rollup, required=required, workflows_present=workflows_present,
+        head_sha=head_sha, pr_url=pr_url,
     )
-    workflows_present = rc_wf == 0 and out_wf.strip().isdigit() and int(out_wf.strip()) > 0
-
-    rc_r, out_r = await _gh(
-        "api", f"repos/{owner_repo}/actions/runs?head_sha={sha}&per_page=50",
-        "--jq", "[.workflow_runs[] | {status, conclusion}]",
-    )
-    runs = _parse_json_list(rc_r, out_r)
-
-    rc_c, out_c = await _gh(
-        "api", f"repos/{owner_repo}/commits/{sha}/check-runs",
-        "--jq", "[.check_runs[] | {status, conclusion}]",
-    )
-    checks = _parse_json_list(rc_c, out_c)
-
-    return combine_states(runs, checks, workflows_present=workflows_present)
 
 
 def default_checker() -> RemoteChecker:
     """The production checker (real gh). Indirected so goal_service can bind it
-    and tests inject a recording fake — the merge.py seam shape."""
-    return check_branch
+    and tests inject a recording fake — the merge_on_close seam shape."""
+    return check_pr
 
 
 # ---- PR-state read for the pr_ledger refresh (spec 018 US2) ----------------

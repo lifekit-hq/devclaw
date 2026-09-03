@@ -10,8 +10,9 @@ below ships its doctor check and seeded-fault test (FR-014 of spec 016).
 
 | field | type | meaning |
 |---|---|---|
-| `state` | `passing \| failing \| pending \| infra_broken \| no_workflows \| unknown` | the fold over required checks (`none` folds into `no_workflows`) |
+| `state` | `passing \| failing \| pending \| infra_broken \| no_workflows \| no_pr \| unknown` | the fold over required checks (`none` folds into `no_workflows`; `no_pr` = the branch has no PR, a no-change goal) |
 | `head_sha` | str | the PR head the rollup describes; `""` when unknown |
+| `pr_url` | str | the PR the rollup was read from; `""` for no_pr / unknown |
 | `failing_names` | tuple[str, …] | required checks with a bad conclusion |
 | `pending_names` | tuple[str, …] | required checks still queued/in progress |
 | `detail` | str | one human line, ≤ 200 chars in logs |
@@ -33,8 +34,8 @@ EXECUTING_IDLE` for the heal; `(BLOCKED, BLOCK) → BLOCKED` for a re-hold on a 
 New `blocked_kind` value: `mechanical:ci` (added to the taxonomy comment at
 `models.py:215-223` and to `test_blocked_kind_stamped_per_block_site`).
 
-Doctor: `instance.goal_status.pending_done_proposal_column`,
-`instance.goal_status.ci_green_head_column` via `_goal_status_column_finding`.
+Doctor: `instance.ci.goal_status_pending_done_proposal`,
+`instance.ci.goal_status_ci_green_head` via `_goal_status_column_finding`.
 
 ## 3. Environment deficiency (worker-reported capability row, `meta` table)
 

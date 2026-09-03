@@ -114,10 +114,11 @@ class GoalStateStatusMixin:
                   last_plan_at, last_tick_at, actions_dispatched,
                   donegate_rounds, donegate_progress, problem_id, envcap_redispatches, slice_hold_count,
                   pending_merge_pr, merge_heal_attempted,
+                  pending_done_proposal, ci_green_head,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, in_flight_ref_id, in_flight_kind,
                   in_flight_json, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -140,6 +141,8 @@ class GoalStateStatusMixin:
                   slice_hold_count      = excluded.slice_hold_count,
                   pending_merge_pr      = excluded.pending_merge_pr,
                   merge_heal_attempted  = excluded.merge_heal_attempted,
+                  pending_done_proposal = excluded.pending_done_proposal,
+                  ci_green_head         = excluded.ci_green_head,
                   last_eval_verdict     = excluded.last_eval_verdict,
                   last_eval_at          = excluded.last_eval_at,
                   last_eval_note        = excluded.last_eval_note,
@@ -172,6 +175,8 @@ class GoalStateStatusMixin:
                     status.slice_hold_count,
                     status.pending_merge_pr,
                     1 if status.merge_heal_attempted else 0,
+                    1 if status.pending_done_proposal else 0,
+                    status.ci_green_head,
                     status.last_eval_verdict,
                     status.last_eval_at,
                     status.last_eval_note,
@@ -213,6 +218,10 @@ class GoalStateStatusMixin:
         # on a still-BLOCKED goal without a full-row rewrite.
         "heal_attempts": "heal_attempts",
         "next_heal_at": "next_heal_at",
+        # spec 032: the CI-hold bookkeeping the heal stamps on a still-BLOCKED
+        # goal (the green head after a heal) — never read by derive_state.
+        "pending_done_proposal": "pending_done_proposal",
+        "ci_green_head": "ci_green_head",
         # spec 030: the env-hold ping-once marker. Column-only so the ping
         # can be stamped on a still-BLOCKED goal without a full-row rewrite.
         "env_hold_notified": "env_hold_notified",
@@ -345,6 +354,9 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         # NULL on a pre-spec-025 row (lazily ALTERed) reads as the defaults.
         pending_merge_pr=row["pending_merge_pr"] or "",
         merge_heal_attempted=bool(row["merge_heal_attempted"]),
+        # NULL on a pre-spec-032 row (lazily ALTERed) reads as the defaults.
+        pending_done_proposal=bool(row["pending_done_proposal"]),
+        ci_green_head=row["ci_green_head"] or "",
         next_heal_at=row["next_heal_at"] or None,
         next=row["next"] or "",
         last_plan_at=row["last_plan_at"] or None,

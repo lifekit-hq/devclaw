@@ -33,6 +33,8 @@ from . import evaluator as _evaluator
 from . import issue_ref as _issue_ref
 from . import merge_on_close as _merge
 from . import remote_checks as _remote_checks
+from . import tick_guards as _tick_guards
+from .tick_guards import _ci_hold_text, _read_rollup
 from . import self_deploy as _self_deploy
 from .. import project_manifest as _manifest
 from . import slice_guard as _slice_guard
@@ -376,15 +378,13 @@ async def _resolve_done_gate(
     done-check dispatched on a PRIOR tick) pass nothing — their steering
     wasn't read this turn, so there is nothing of theirs to consume.
 
-    An ``achieved`` verdict additionally has to survive the grounded
-    remote-checks verification (when a checker is bound and the goal works on
-    a shared goal branch): the branch's REAL CI state is queried and a
-    failing / never-ran / still-running check surface converts the verdict to
-    ``off_track`` with a steering correction. The 2026-07-06 benchmark closed
-    a goal whose 32 GitHub Actions runs had all failed at startup — the
-    sandbox gate was green and nothing ever looked at the repo's actual
-    checks. ``unknown`` / ``no_workflows`` do NOT block (fail-open on infra
-    uncertainty, fail-closed on evidence of a problem) but are logged."""
+    The project's CI is a fact consulted BEFORE this point (spec 032 US1:
+    :func:`_open_done_gate` reads the delivered PR's rollup before the review
+    is even dispatched, so a red or pending CI never reaches the evaluator).
+    Here it is read once more, immediately before the merge: an ``achieved``
+    verdict merges only when the rollup is still green for the SAME head the
+    gate opened on — a head that moved (or a check that flipped) re-holds the
+    goal and re-opens the gate on the new head."""
     goal, blocked = await _live_contract(
         goal_id, goal, status, store=store, notifier=notifier,
         issue_fetcher=issue_fetcher, consume_steering=consume_steering,
@@ -430,66 +430,6 @@ async def _resolve_done_gate(
         store.update_status_fields(goal_id, last_tick_at=store.now_iso())
         await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] done-gate eval failed: {exc}")
         return Outcome.ERROR
-    if ev.verdict == "achieved" and remote_checker is not None and goal.repo_url:
-        # Only goal-branch goals accumulate work on a shared branch whose
-        # check surface is meaningful at close time; per-action PRs
-        # were already merged (or reviewed) one by one.
-        branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
-        if branch is not None:
-            try:
-                rc = await remote_checker(goal.repo_url, branch)
-            except Exception as exc:  # noqa: BLE001 — checker trouble must not wedge the gate
-                rc = _remote_checks.RemoteChecksResult(
-                    "unknown", f"{exc.__class__.__name__}: {exc}",
-                )
-            store.append_log(
-                goal_id, f"done-gate remote checks ({branch}): {rc.state} — {rc.detail[:200]}",
-            )
-            if rc.blocks_done(_remote_checks.CI_GATE_MODE):
-                correction = {
-                    "failing": (
-                        f"the target repo's REAL CI for {branch} is failing "
-                        f"({rc.detail}). The sandbox gate is not CI — fix the "
-                        f"workflows/runs until the branch's checks are green, "
-                        f"then re-propose done."
-                    ),
-                    "none": (
-                        f"the target repo has workflows but CI produced ZERO "
-                        f"runs for {branch}'s head commit ({rc.detail}). Find "
-                        f"out why Actions never ran (triggers, permissions, "
-                        f"billing) and get a green run before re-proposing done."
-                    ),
-                    "infra_broken": (
-                        f"every CI run for {branch} died at startup "
-                        f"({rc.detail}) — Actions never executed a step "
-                        f"(permissions/billing). Fix the repo's CI "
-                        f"infrastructure, then re-propose done."
-                    ),
-                    "pending": (
-                        f"remote checks for {branch} are still running "
-                        f"({rc.detail}). Let them settle green, then re-propose "
-                        f"done."
-                    ),
-                }[rc.state]
-                ev = replace(
-                    ev, verdict="off_track",
-                    rationale=(
-                        f"all done_when clauses pass but the branch's real CI "
-                        f"contradicts the close: remote checks are {rc.state}."
-                    ),
-                    corrections=[f"[remote-checks] {correction}"],
-                )
-            elif rc.state in ("infra_broken", "none"):
-                # Flexible ci-gate: broken CI infrastructure must not wedge a
-                # verified goal, but the close must never masquerade as
-                # CI-green — annotate the verdict the owner will read.
-                ev = replace(
-                    ev, rationale=(
-                        f"{ev.rationale} [ci-gate flexible: remote CI is "
-                        f"{rc.state} ({rc.detail[:120]}) — close honored on the "
-                        f"internal verify gate only]"
-                    ),
-                )
     now = store.now_iso()
     base = replace(
         status, last_eval_verdict=ev.verdict, last_eval_at=now,
@@ -505,6 +445,22 @@ async def _resolve_done_gate(
         branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
         merge = None
         if branch is not None:
+            # Spec 032 US1: the merge requires the green head the gate opened
+            # on. Re-read right before merging — zero cognition, one gh read.
+            read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
+            if read is not None:
+                hold = _ci_hold_before_merge(status, read[0], read[1])
+                if hold is not None:
+                    store.append_log(goal_id, f"merge-on-close deferred: {hold}")
+                    store.transition(
+                        goal_id, Event.BLOCK,
+                        replace(base, phase="blocked", blocked_on=hold,
+                                blocked_kind="mechanical:ci", pending_done_proposal=True,
+                                ci_green_head="", next=""),
+                        expect=status, consume_steering=consume_steering,
+                    )
+                    await _notify(notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] merge deferred — {hold[:200]}")
+                    return Outcome.BLOCKED
             merge = await _attempt_merge(goal.workspace_dir, branch)
             store.append_log(
                 goal_id,
@@ -584,7 +540,8 @@ async def _resolve_done_gate(
         store.transition(
             goal_id, Event.ACHIEVE,
             replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,
-                    pending_merge_pr="", merge_heal_attempted=False),
+                    pending_merge_pr="", merge_heal_attempted=False,
+                    pending_done_proposal=False, ci_green_head=""),
             expect=status, consume_steering=consume_steering,
         )
         # Convergence ledger (spec 018 US1) — after the CAS'd close, so a
@@ -725,6 +682,63 @@ async def _resolve_done_gate(
     return Outcome.SLEPT
 
 
+def _ci_hold_before_merge(
+    status: GoalStatus, branch: str, rc: "_remote_checks.RemoteChecksResult",
+) -> "str | None":
+    """Why the merge must wait, or ``None`` when it may proceed: the rollup
+    must still say green (or no PR) and the head must be the one the gate
+    opened on (``ci_green_head``; an empty record — a hold that predates the
+    column, or a checker bound after the open — requires green only)."""
+    if not rc.proceeds:
+        return _ci_hold_text(branch, rc)
+    if status.ci_green_head and rc.head_sha and rc.head_sha != status.ci_green_head:
+        return (
+            f"the PR head moved after its CI was read green "
+            f"({status.ci_green_head[:7]} → {rc.head_sha[:7]}); the done-gate re-opens on the new head"
+        )
+    return None
+
+
+async def _block_on_ci_definition(
+    goal_id: str, goal: Goal, base: GoalStatus, branch: str,
+    rc: "_remote_checks.RemoteChecksResult", *,
+    store: GoalStore, notifier: Notifier, summarize: "ClaudeCaller | None",
+    consume_steering: "list[int] | None",
+) -> Outcome:
+    """The project's CI definition is absent or broken — a fact no worker may
+    fix (a CI workflow is a gate input, spec 032 US3) and the pipeline cannot
+    verify without. A typed Problem for the owner (spec 031): supply the CI
+    definition (onboarding writes one) or cancel; nothing defaults to a close."""
+    if rc.state == "no_workflows":
+        what = (
+            f"{goal.repo_url} has no CI definition on its default branch — "
+            f"there is no verification environment to read"
+        )
+        why = "a project without CI cannot prove a change; onboarding writes the workflow (spec 032)"
+    else:
+        what = f"the CI definition on {branch} is broken: {rc.detail[:300]}"
+        why = (
+            "every check died at startup — the project's own CI must execute before a "
+            "change can be judged, and a worker never edits the CI definition"
+        )
+    prob = _problems.new_problem(
+        goal_id, kind="env", raised_by="done_gate", what=what, clause="", why=why,
+        options=(_problems.SUPPLY, _problems.CANCEL), default_key="supply", timebox_s=0,
+    )
+    with store.transaction():
+        _problems.raise_problem(store, prob)
+        store.transition(
+            goal_id, Event.BLOCK,
+            replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
+                    blocked_kind="needs_answer", problem_id=prob.id,
+                    pending_done_proposal=True, ci_green_head="", next=""),
+            expect=base, consume_steering=consume_steering,
+        )
+    await _notify(notifier, NotifyLevel.OWNER,
+                  f"🟡 [{goal_id}] {_problems.render_for_human(prob)}", summarize=summarize)
+    return Outcome.BLOCKED
+
+
 async def _open_done_gate(
     goal_id: str, goal: Goal, base: GoalStatus,
     *, store: GoalStore, engine: GoalEngine, evaluator_caller: ClaudeCaller,
@@ -751,6 +765,44 @@ async def _open_done_gate(
     )
     if blocked is not None:
         return blocked
+    # Spec 032 US1: the project's CI is a fact consulted BEFORE any review
+    # sandbox or evaluator call is spent. Red ⇒ the failing checks are the
+    # next correction (no gate round counted); pending/unknown ⇒ hold at zero
+    # cognition; no CI / broken CI ⇒ a typed Problem; green ⇒ remember the
+    # head so merge-on-close can require the same one.
+    read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
+    if read is not None:
+        branch, rc = read
+        if rc.state == "failing":
+            store.transition(
+                goal_id, Event.RESUME_IDLE,
+                replace(base, phase="idle", next="CI red — fix the failing checks",
+                        pending_done_proposal=False, ci_green_head=""),
+                expect=base, consume_steering=consume_steering,
+            )
+            store.append_steering(goal_id, [_tick_guards._ci_correction(branch, rc)], source="auto-ci")
+            await _notify(
+                notifier, NotifyLevel.TASK,
+                f"🔴 [{goal_id}] CI red on {branch} — "
+                f"{', '.join(rc.failing_names) or rc.detail[:120]}; steering the fix",
+            )
+            return Outcome.SLEPT
+        if rc.state in ("pending", "unknown"):
+            hold = _ci_hold_text(branch, rc)
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=hold, blocked_kind="mechanical:ci",
+                        pending_done_proposal=True, ci_green_head="", next=""),
+                expect=base, consume_steering=consume_steering,
+            )
+            await _notify(notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] {hold[:200]}")
+            return Outcome.BLOCKED
+        if rc.state in ("no_workflows", "infra_broken"):
+            return await _block_on_ci_definition(
+                goal_id, goal, base, branch, rc, store=store, notifier=notifier,
+                summarize=summarize, consume_steering=consume_steering,
+            )
+        base = replace(base, ci_green_head=rc.head_sha, pending_done_proposal=False)
     if verify_done:
         # In checklist mode the done-gate reviewer needs to see the goal's
         # accumulated work — read the goal branch, not the default branch
@@ -820,6 +872,7 @@ async def _finalize_pending_merge(
     store: GoalStore, notifier: Notifier,
     summarize: "ClaudeCaller | None" = None,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
+    remote_checker: "_remote_checks.RemoteChecker | None" = None,
 ) -> Outcome:
     """A goal carries ``pending_merge_pr`` — a done-gate ``achieved`` verdict
     already stands and only the MERGE is owed (the goal parked
@@ -827,6 +880,25 @@ async def _finalize_pending_merge(
     the merge and close on success; re-park on failure. ZERO cognition on
     this path — the verdict is never re-derived."""
     branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
+    # Spec 032 US1: the retried merge requires green CI for the head the
+    # verdict was given on. A moved head hands the proposal back to the gate
+    # (the verdict was for another head); a not-yet-green same head waits.
+    read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
+    if read is not None:
+        hold = _ci_hold_before_merge(status, read[0], read[1])
+        if hold is not None:
+            moved = "moved after" in hold
+            store.append_log(goal_id, f"pending-merge deferred: {hold}")
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(status, phase="blocked", blocked_on=hold, blocked_kind="mechanical:ci",
+                        last_tick_at=store.now_iso(),
+                        pending_merge_pr=("" if moved else status.pending_merge_pr),
+                        pending_done_proposal=moved, ci_green_head="", next=""),
+                expect=status,
+            )
+            await _notify(notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] merge deferred — {hold[:200]}")
+            return Outcome.BLOCKED
     merge = await _attempt_merge(goal.workspace_dir, branch or f"goal/{goal_id}")
     store.append_log(
         goal_id,
@@ -841,7 +913,8 @@ async def _finalize_pending_merge(
         store.transition(
             goal_id, Event.ACHIEVE,
             replace(base, phase="done", next=rationale[:200], donegate_rounds=0, donegate_progress=0,
-                    pending_merge_pr="", merge_heal_attempted=False),
+                    pending_merge_pr="", merge_heal_attempted=False,
+                    pending_done_proposal=False, ci_green_head=""),
             expect=status,
         )
         store.record_convergence(goal_id, "achieved", goal.workspace_dir)

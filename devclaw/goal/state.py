@@ -120,6 +120,8 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin, GoalStateProblemsMi
                   envcap_redispatches   INTEGER NOT NULL DEFAULT 0,
                   pending_merge_pr      TEXT NOT NULL DEFAULT '',
                   merge_heal_attempted  INTEGER NOT NULL DEFAULT 0,
+                  pending_done_proposal INTEGER NOT NULL DEFAULT 0,
+                  ci_green_head         TEXT NOT NULL DEFAULT '',
                   next                  TEXT,
                   last_plan_at          TEXT,
                   last_tick_at          TEXT,
@@ -314,6 +316,8 @@ class GoalState(GoalStateStatusMixin, GoalStateContentMixin, GoalStateProblemsMi
                 "ALTER TABLE goal_status ADD COLUMN slice_hold_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN pending_merge_pr TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE goal_status ADD COLUMN merge_heal_attempted INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE goal_status ADD COLUMN pending_done_proposal INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE goal_status ADD COLUMN ci_green_head TEXT NOT NULL DEFAULT ''",
             ):
                 try:
                     self._store._db.execute(sql)

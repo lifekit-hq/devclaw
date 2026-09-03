@@ -1742,7 +1742,8 @@ class GoalService:
                 self._goal_store.supersede_open_problems(goal_id)
             self._goal_store.transition(
                 goal_id, Event.CANCEL,
-                replace(s, phase="cancelled", in_flight=None, problem_id=""), expect=s,
+                replace(s, phase="cancelled", in_flight=None, problem_id="",
+                        pending_done_proposal=False, ci_green_head=""), expect=s,
             )
         # Convergence ledger (spec 018 US1): a cancel is the abandoned
         # terminal. After the CAS'd transition, same as the achieved close.

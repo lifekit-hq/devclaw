@@ -94,6 +94,7 @@ from .tick_context import (  # noqa: F401 (re-exported)
 )
 from .tick_guards import (  # noqa: F401 (re-exported)
     PREP_HEAL_CAP,
+    _autoheal_ci,
     _autoheal_env_cap,
     _autoheal_prep,
     _block_on_env_cap,
@@ -387,6 +388,13 @@ async def _tick_goal_impl(
             healed = await _autoheal_env_cap(
                 goal_id, goal, status, store=store, notifier=notifier,
                 project_caps=project_caps,
+            )
+        elif status.blocked_kind == "mechanical:ci":
+            # spec 032 US1: one bounded gh read per heartbeat window; green
+            # lifts the hold and the pending proposal re-opens the gate below.
+            healed = await _autoheal_ci(
+                goal_id, goal, status, store=store, notifier=notifier,
+                remote_checker=remote_checker,
             )
         if healed is not None:
             status = healed
@@ -688,7 +696,25 @@ async def _handle_long_lived_advance(
         return await _donegate_finalize_pending_merge(
             goal_id, goal, status,
             store=store, notifier=ctx.notifier, summarize=ctx.summary_caller,
-            autodeploy=ctx.autodeploy,
+            autodeploy=ctx.autodeploy, remote_checker=ctx.remote_checker,
+        )
+
+    # Spec 032 US1: a done proposal that was held on CI (mechanical:ci) and
+    # healed has no settle to be detected from — the persisted flag re-drives
+    # the gate. Zero cognition until the gate's own review dispatch; before
+    # the project hold for the same reason as the pending merge: the goal is
+    # finishing work it already owns, not starting new work.
+    if status.pending_done_proposal and status.phase != "blocked":
+        now = store.now_iso()
+        base = replace(status, last_plan_at=now, last_tick_at=now)
+        store.append_log(goal_id, "ci settled — re-opening the done-gate")
+        return await _open_done_gate(
+            goal_id, goal, base,
+            store=store, engine=ctx.engine, evaluator_caller=ctx.evaluator_caller,
+            notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
+            verify_done=ctx.verify_done, note="ci settled",
+            summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+            autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
         )
 
     # Single-writer project hold (spec 010 P1). THE dispatch choke point: a

@@ -422,6 +422,32 @@ def test_missing_merge_columns_detected(env):
     assert "pending_merge_pr" in f.evidence and "restart" in f.remedy
 
 
+# ---- instance: CI-hold state shape (spec 032 US1) --------------------------
+
+
+@pytest.mark.parametrize("column,check_id", [
+    ("pending_done_proposal", "instance.ci.goal_status_pending_done_proposal"),
+    ("ci_green_head", "instance.ci.goal_status_ci_green_head"),
+])
+def test_missing_ci_hold_column_detected(env, column, check_id):
+    """Seeded fault: a DB predating spec 032 — without ``pending_done_proposal``
+    a done proposal held on CI is never re-driven; without ``ci_green_head``
+    merge-on-close cannot prove it merges the head whose CI was green."""
+    db = env["store"]._db
+    db.execute(f"ALTER TABLE goal_status DROP COLUMN {column}")
+    db.commit()
+    (f,) = _findings(_run(env), check_id)
+    assert f.verdict is Verdict.FAIL
+    assert column in f.evidence and "restart" in f.remedy
+
+
+def test_ci_hold_columns_present_is_ok(env):
+    for check_id in ("instance.ci.goal_status_pending_done_proposal",
+                     "instance.ci.goal_status_ci_green_head"):
+        (f,) = _findings(_run(env), check_id)
+        assert f.verdict is Verdict.OK
+
+
 def test_missing_suppressed_pings_table_detected(env):
     """Seeded fault: a DB predating spec 025 US3 — arming quiet mode would
     DROP pings instead of recording them."""
