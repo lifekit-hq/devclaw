@@ -2072,6 +2072,12 @@ def test_done_gate_review_brief_forbids_existence_only_test_evidence(tmp_path):
     ))
     assert "merely EXIST" in brief
     assert "does NOT satisfy" in brief
+    # spec 032 US3: gate inputs are never evidence — stated to the reviewer
+    # (the brief) and to the judge (the evaluator prompt), both proven on the
+    # raw sources so a template edit cannot silently drop the rule.
+    assert "never evidence for a clause" in brief
+    from devclaw.prompts import load_prompt
+    assert "never evidence for a clause" in load_prompt("goal-evaluator")
 
 
 # ---- standing-goal done-gate (the 2026-07-06 benchmark fix) -----------------

@@ -249,6 +249,15 @@ When the tick decides to *do* something (not just think):
    bookkeeping — but the gate does not arrange that itself: materialization
    (below) hands it a span that is already complete, so an increment cannot
    escape its declared scope by declining to commit a file (#630 / spec 013).
+   **Change classification (spec 032 US3)** rides the same object: every path
+   in the materialized span carries a class — product, gate input (CI
+   workflows, AGENTS.md, test-runner/build configuration, install scripts,
+   toolchain pins) or environment declaration (`devclaw.json`,
+   `.devcontainer/`) — computed once in `task_change.py`, and the always-hard
+   `change_class` gate fails a gate-input edit or a committed binary in both
+   dial positions without a retry. A ticket that is about those files declares
+   the path in scope with a backticked path or glob. Gate inputs are never
+   evidence for a `done_when` clause (stated to the reviewer and the evaluator).
    **Materialization (spec 013)** is the step that makes every gate above read
    the same thing. The moment the agent's run ends, the host stages everything
    left in the workspace and writes it into a commit; the change is then the

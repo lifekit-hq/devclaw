@@ -129,6 +129,73 @@ async def test_the_gate_chain_captures_the_span_exactly_once(store, tmp_path, mo
     await q.drain()
     assert store.get_task(tid).status == "done"
     assert len(calls) == 1
+    # spec 032 US3: the classification rides the ONE captured object — every
+    # consumer reads it from the same span, none re-derives it
+    change = __import__("json").loads(store.get_task(tid).result_json or "{}").get("change", {})
+    assert change.get("gate_input_paths") == [] and change.get("binary_paths") == []
+
+
+@pytest.mark.parametrize("what", ["gate_input", "binary"])
+@pytest.mark.parametrize("dial", ["trust", "strict"])
+async def test_a_gate_input_edit_or_a_binary_fails_the_task_closed_in_both_dial_positions_without_retry(
+    store, tmp_path, monkeypatch, what, dial,
+):
+    """Spec 032 US3: sandbox lore reached product repos through the worker —
+    committed binaries, LD_LIBRARY_PATH in a Playwright config, AGENTS.md
+    workarounds. The span classifies every path ONCE (task_change) and the
+    always-hard ``change_class`` gate fails a gate-input edit or a binary in
+    BOTH dial positions, fast (no retry: the same span re-classifies the
+    same), naming the paths and the worker's two legitimate moves."""
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 3)  # available, must not be used
+    ws = _repo(tmp_path)
+    calls: list = []
+
+    async def runner(req: EngineRequest):
+        calls.append(1)
+        (ws / "feature.py").write_text("X = 1\n")
+        if what == "gate_input":
+            (ws / "AGENTS.md").write_text("# agents\nrun with --no-verify\n")
+        else:
+            (ws / "libfix.so").write_bytes(b"\x7fELF\x00\x01\x02\x03\xff\xfe")
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "verify": _gate(True)}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="add X",
+                   verify_cmd="pytest", strictness=dial, deliver=True)
+    await q.drain()
+
+    row = store.get_task(tid)
+    assert row.status == "failed" and row.pr_url is None
+    assert len(calls) == 1                                # no retry
+    err = row.error or ""
+    assert "change_class:" in err and "BLOCKED: env" in err
+    assert ("AGENTS.md" in err) if what == "gate_input" else ("libfix.so" in err)
+    assert "change_class" in ALWAYS_HARD
+    assert gate_consequence("change_class", dial) is Consequence.BLOCK
+
+
+async def test_an_issue_declared_gate_input_path_classifies_as_product(store, tmp_path):
+    """Spec 032 FR-008: a ticket that IS about CI names the path in scope in
+    its text (a backticked path or glob); the classifier honours it for that
+    task only, so the workflow edit ships."""
+    ws = _repo(tmp_path)
+    (ws / ".github" / "workflows").mkdir(parents=True)
+
+    async def runner(req: EngineRequest):
+        (ws / ".github" / "workflows" / "verify.yml").write_text("name: verify\non: [push]\n")
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "verify": _gate(True)}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(
+        kind="implement_feature", workspace_dir=str(ws),
+        goal="### Issue #9: add CI\nCreate `.github/workflows/verify.yml` running the verify command.",
+        verify_cmd="pytest", strictness="strict",
+    )
+    await q.drain()
+    row = store.get_task(tid)
+    assert row.status == "done", row.error
+    change = __import__("json").loads(row.result_json or "{}").get("change", {})
+    assert change.get("gate_input_paths") == []
 
 
 async def test_a_task_whose_span_cannot_be_determined_never_settles_done(

@@ -184,6 +184,11 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       consumer below reads THAT object (spec 013, #630)     │                      │
      │  │     • undeterminable ⇒ the always-hard `materialize` gate   │                      │
      │  │       fails CLOSED; empty ⇒ explicit no-change, no publish  │                      │
+     │  │     • every path carries a CLASS (product / gate_input /    │                      │
+     │  │       env_decl); the always-hard `change_class` gate fails  │                      │
+     │  │       a gate-input edit or a binary in both dial positions  │                      │
+     │  │       (spec 032 US3) — no retry; an issue may declare a     │                      │
+     │  │       gate-input path in scope with a backticked path/glob  │                      │
      │  │                                                             │                      │
      │  │  Step I — review gate (quality/review_gate):                │                      │
      │  │     • the MATERIALIZED span, not a fresh working-tree diff  │                      │

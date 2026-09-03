@@ -20,8 +20,8 @@ from devclaw.quality.gate_policy import (
 @pytest.mark.parametrize("gate_id", sorted(ALWAYS_HARD))
 @pytest.mark.parametrize("strictness", ["trust", "strict"])
 def test_always_hard_gates_block_in_both_modes(gate_id, strictness):
-    # test_integrity / delivery_trust / done_gate / verify guard against the
-    # model gaming its own evidence — the dial must NEVER loosen them.
+    # test_integrity / delivery_trust / done_gate / verify / change_class guard
+    # against the model gaming its own evidence — the dial must NEVER loosen them.
     assert gate_consequence(gate_id, strictness) is Consequence.BLOCK
 
 

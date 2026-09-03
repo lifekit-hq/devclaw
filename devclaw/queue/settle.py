@@ -37,6 +37,8 @@ from ..quality.change_advisories import change_advisories
 from ..quality.gate_policy import Consequence, gate_consequence
 from ..quality.gate_pipeline import GateInput, GateOutcome, run_pipeline
 from ..quality.task_gates import (
+    _CHANGE_CLASS_MARKER,
+    _ChangeClassGate,
     _BrowserGate,
     _IntegrityGate,
     _MaterializeGate,
@@ -68,6 +70,9 @@ from ..task_git import (
     branch_staleness_sync as _branch_staleness_sync,
 )
 from ..task_change import (
+    build_paths as _build_paths,
+    changed_entries_sync as _changed_entries_sync,
+    in_scope_from_text as _in_scope_from_text,
     ERROR as _CHANGE_ERROR,
     NO_CHANGE as _CHANGE_NONE,
     NO_REPO as _CHANGE_NO_REPO,
@@ -171,6 +176,12 @@ class _PausedSentinel:
 _PAUSED = _PausedSentinel()
 
 
+async def _git_name_status(host_dir: str, base: str, head: str) -> "list[tuple[str, str]]":
+    """Async wrapper — the span's ``(status, path)`` entries for classification
+    (spec 032 US3); module-global so tests patch it here. Raises on failure."""
+    return await asyncio.to_thread(_changed_entries_sync, host_dir, base, head)
+
+
 async def _git_diff(host_dir: str, base: str = "", head: str = "") -> "str | None":
     """Async wrapper — runs the blocking git diff in a thread so it never blocks
     the event loop or trips the asyncio-subprocess child-watcher hang. Looks up
@@ -192,7 +203,7 @@ async def _materialize_worktree(
 
 
 async def _capture_change(
-    workspace_dir: str, base: str, *, task_id: str, message: str
+    workspace_dir: str, base: str, *, task_id: str, message: str, brief: str = "",
 ) -> ChangeSet:
     """**The** answer to "what did the agent change?" (spec 013, #630).
 
@@ -257,7 +268,22 @@ async def _capture_change(
             reason=mat["reason"] or f"{workspace_dir} is not a git repository",
         )
     status = _CHANGE_SOME if diff.strip() else _CHANGE_NONE
-    return ChangeSet(status=status, diff=diff, **common)
+    paths: tuple = ()
+    if status == _CHANGE_SOME:
+        # spec 032 US3: classify every path ONCE, here — the gate, the
+        # advisories and the done-gate brief all read this. A span whose
+        # paths cannot be named cannot be classified: fail closed, never a
+        # silently unclassified change.
+        try:
+            entries = await _git_name_status(workspace_dir, base, head)
+            paths = _build_paths(entries, diff, _in_scope_from_text(brief))
+        except Exception as err:  # noqa: BLE001 — undeterminable ⇒ loud, not silent
+            return ChangeSet(
+                status=_CHANGE_ERROR, diff=diff,
+                reason=f"the changed paths could not be classified: {err.__class__.__name__}: {err}",
+                **common,
+            )
+    return ChangeSet(status=status, diff=diff, paths=paths, **common)
 
 
 def _diff_stats(diff: str) -> dict | None:
@@ -327,6 +353,15 @@ def _attach_change(
         }
         if change.reason:
             result["change"]["reason"] = change.reason
+        if change.paths:
+            result["change"]["gate_input_paths"] = list(change.gate_input_paths)
+            result["change"]["binary_paths"] = list(change.binary_paths)
+            result["change"]["env_decl_paths"] = list(change.env_decl_paths)
+        if change.env_decl_paths:
+            result.setdefault("hook_warnings", []).append(
+                "[change-class] environment declaration changed: "
+                + ", ".join(change.env_decl_paths)
+            )
         if change.is_no_change and kind in _CODE_WRITING_KINDS:
             # Explicit, distinguishable outcome: the task settles successfully,
             # publishes nothing, and is reported upstream as NO PROGRESS rather
@@ -1168,12 +1203,12 @@ class SettleMixin:
                         ),
                         change_fn=lambda: _capture_change(
                             workspace_dir, pre_run_sha,
-                            task_id=task_id, message=materialize_msg,
+                            task_id=task_id, message=materialize_msg, brief=goal,
                         ),
                         project_id=project_id,
                     )
                     salvage_gates: list = [
-                        _VerifyGate(), _MaterializeGate(), _IntegrityGate(),
+                        _VerifyGate(), _MaterializeGate(), _ChangeClassGate(), _IntegrityGate(),
                     ]
                     if strictness != "trust":
                         salvage_gates.append(_ReviewGate(self))
@@ -1303,7 +1338,7 @@ class SettleMixin:
                         ),
                         change_fn=lambda: _capture_change(
                             workspace_dir, pre_run_sha,
-                            task_id=task_id, message=materialize_msg,
+                            task_id=task_id, message=materialize_msg, brief=goal,
                         ),
                         project_id=project_id,
                     )
@@ -1318,7 +1353,7 @@ class SettleMixin:
                     # gate_pipeline's "policy never lives in a gate". verify /
                     # test_integrity stay always-hard; browser stays dial-able.
                     gates: list = [
-                        _VerifyGate(), _MaterializeGate(), _IntegrityGate(),
+                        _VerifyGate(), _MaterializeGate(), _ChangeClassGate(), _IntegrityGate(),
                     ]
                     if strictness != "trust":
                         gates.append(_ReviewGate(self))
@@ -1531,6 +1566,16 @@ class SettleMixin:
             # REAL for this wording) with an actionable reason, same treatment
             # as the review-crash fast-fail above. Substring match: the marker
             # rides mid-string inside the engine's error, not as our prefix.
+            if _CHANGE_CLASS_MARKER in last_failure:
+                # spec 032 US3: the same span reproduces the same classification —
+                # a retry only burns the budget. Fails CLOSED, names the paths and
+                # the worker's two legitimate moves (already in the reason).
+                self._store.mark_failed(
+                    task_id,
+                    f"{last_failure} Not auto-retried: re-running reproduces the same span.",
+                )
+                self._check_and_trip_breaker(workspace_dir, task_id)
+                return None
             if _PROMPT_TOO_LONG_MARKER in last_failure:
                 # Spec 021 FR-008: when the runner's slice watcher named the
                 # active slice, say so — the goal layer's next brief demands a
