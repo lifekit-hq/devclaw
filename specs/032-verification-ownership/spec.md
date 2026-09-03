@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-03
 
-**Status**: Draft — awaiting `/speckit-clarify` (3 questions for Denys, listed at the end)
+**Status**: Clarified 2026-09-03 (3 questions walked with Denys) — ready for `/speckit-plan`
 
 **Input**: User description: "Verification ownership: the pipeline verifies a change in the
 project's declared environment, never in devclaw's generic sandbox, and the worker never
@@ -124,25 +124,26 @@ At delivery, every changed path is classified: **product**, **gate-input** (AGEN
 CI workflow files, test-runner and build configs such as Playwright/Angular/pytest
 configs, install and postinstall scripts, lockfile toolchain pins, `.devcontainer`,
 committed binaries), or **environment declaration** (the project manifest's environment
-section). Gate-input edits ship only as a flagged advisory under `trust` and fail the
-task under `strict`; a committed binary fails in both modes; and no gate-input file is
-ever evidence for a done_when clause. An issue may declare a gate-input path as in scope
-(a ticket that *is* about CI), which lifts the classification for that goal only.
+section). A gate-input edit fails the task in both strictness modes, with the path named
+and no retry; the worker's legitimate moves are `BLOCKED: env` (US2) or a contract-level
+Problem, never the edit. No gate-input file is ever evidence for a done_when clause. An
+issue may declare a gate-input path or category as in scope (a ticket that *is* about
+CI), which classifies those paths as product for that goal only.
 
 **Why this priority**: it is the structural guard that makes root 2 impossible to
 reintroduce by a future skill edit; it is independent of US1/US2 and ships alone.
 
 **Independent Test**: materialize a span touching `AGENTS.md` and a `.so`; assert the
-advisory names the AGENTS.md path, the binary fails the task in both modes, and the
-done-gate's evidence input excludes both paths.
+task fails in both modes naming both paths, no retry is scheduled, and the done-gate's
+evidence input never sees them.
 
 **Acceptance Scenarios**:
 
 1. **Given** a span that edits `playwright.config.ts` and `src/app/x.ts`, **When** it
-   settles under `trust`, **Then** the PR body carries a gate-input advisory naming the
-   config, and the evidence handed to the done-gate lists only `src/app/x.ts`.
-2. **Given** the same span under `strict`, **Then** the task fails with the gate-input
-   path named and no retry.
+   settles under `trust`, **Then** the task fails with the config path named, no retry
+   is scheduled, and nothing from the span is delivered.
+2. **Given** the same span under `strict`, **Then** the outcome is identical — the rule
+   does not ride the strictness dial.
 3. **Given** the goal's issue declares "CI workflow" in scope, **Then** the workflow
    edit classifies as product and no advisory is raised.
 
@@ -161,8 +162,9 @@ and whose fail still fails the task.
 
 **Why this priority**: it is the completion of ADR 0005's "the toolchain is the
 project's fact" to "the *environment* is the project's fact", and it is what lets
-integration-class checks run before CI rather than only in CI. It is the costliest
-story and depends on the answer to Q1.
+integration-class checks run before CI rather than only in CI. Ruled 2026-09-03 (Q1):
+it lands AFTER US1–US3 have a track record on the live instance; until then the sandbox
+stays generic (ADR 0005) and the CI rollup is the sole verdict of record.
 
 **Independent Test**: register a project declaring a service the instance cannot
 provide; tick; assert no dispatch, a hold naming the service, zero LLM calls. Declare
@@ -202,10 +204,10 @@ non-worker commit; assert the metric reads 1.0 and each term is itemized.
 
 ### Edge Cases
 
-- **Project with no CI at all**: see Q3. Default proposed: a project without a CI
-  definition has no verification environment and is not dispatchable until onboarding
-  produces one; onboarding already writes `.devcontainer/Dockerfile` and gains the CI
-  definition as a sibling artifact.
+- **Project with no CI at all** (ruled 2026-09-03, Q3): a project without a CI
+  definition has no verification environment and is not dispatchable; it holds on
+  `mechanical:env` naming the gap until onboarding produces one. Onboarding already
+  writes `.devcontainer/Dockerfile` and gains the CI definition as a sibling artifact.
 - **Flaky CI**: a check that fails and passes on re-run is a project fact, not an
   environment gap. The loop re-runs failed checks once, mechanically; a second failure
   is a correction for the worker ("fix or quarantine the flaky test"), never a bypass.
@@ -252,8 +254,8 @@ non-worker commit; assert the metric reads 1.0 and each term is itemized.
   mechanism that conflicts with the ticket MUST become a contract-level Problem.
 - **FR-006**: Delivery MUST classify every path in the materialized span as product,
   gate-input, or environment declaration, using one classifier that every consumer
-  reads (the one-definition-of-change rule). Gate-input edits ship as a flagged advisory
-  under `trust` and fail the task under `strict`; a committed binary fails in both modes.
+  reads (the one-definition-of-change rule). A gate-input edit or a committed binary
+  MUST fail the task in both strictness modes, naming the paths, with no retry.
 - **FR-007**: The evidence input to the done-gate MUST exclude gate-input paths, and the
   evaluator prompt MUST state that AGENTS.md, CI configuration, test-runner configuration
   and install scripts are never evidence for a clause.
@@ -303,8 +305,8 @@ non-worker commit; assert the metric reads 1.0 and each term is itemized.
 - **SC-002**: The fs-432 class is unreproducible: a migration that never applies fails the
   project's CI, and that failure reaches the goal as a named correction within one tick
   of the rollup turning red, with no merge attempted.
-- **SC-003**: Zero gate-input edits reach a product repository unflagged, and zero
-  committed binaries reach one at all, across every goal in the window.
+- **SC-003**: Zero undeclared gate-input edits and zero committed binaries reach a
+  product repository across every goal in the window.
 - **SC-004**: Zero worker sessions are spent improvising around an environment gap: every
   such gap ends the session as `BLOCKED: env` within that session and appears once in
   the problems catalog.
@@ -344,8 +346,11 @@ non-worker commit; assert the metric reads 1.0 and each term is itemized.
   reproducibility reasons that apply doubly to services; devclaw would own every
   project's environment forever.
 - **Ask the human on every gate-input edit** (a Problem per edit): rejected — it adds a
-  human stage where a mechanical classification exists; the advisory/fail split under
-  the strictness dial is the same shape the browser gate already uses (ADR 0007).
+  human stage where a mechanical classification exists.
+- **Ship gate-input edits as an advisory under `trust`** (the browser gate's ADR 0007
+  shape): rejected 2026-09-03 (Q2) — an advisory is a post-merge human stage by another
+  name; the worker has two legitimate moves (`BLOCKED: env`, a contract Problem) and a
+  ticket that is about CI declares its paths in scope.
 - **Patch the instances** (a Designer-file check here, a `.so` check there, a Playwright
   config lint): rejected — each is one more keyword against one more symptom; the
   classifier and the outlet close the class. The Designer-attribute test shipped in
@@ -354,23 +359,20 @@ non-worker commit; assert the metric reads 1.0 and each term is itemized.
   the fast pre-check catches the cheap failures before a push and keeps the session's
   own feedback loop short; only its *authority* is removed.
 
-## Open questions for `/speckit-clarify` (max 3, walked with Denys one at a time)
+## Clarifications (2026-09-03, walked with Denys one at a time)
 
-- **Q1 — Where the verification environment comes from** [NEEDS CLARIFICATION: US4
-  scope]. (A) CI rollup is the sole verdict of record; the sandbox stays generic and
-  provisions nothing beyond ADR 0005 — cheapest, ships US1–US3 alone. (B) The project
-  declares a full environment (devcontainer + services + tools) and the pipeline
-  provisions sibling service containers before the agent starts — integration-class
-  checks run in-session, heavier engine work. (C) A now, B as the P2 story after A has
-  a track record (the spec as written).
-- **Q2 — Gate-input edits under `trust`** [NEEDS CLARIFICATION: US3 consequence].
-  (A) Ship flagged as an advisory, never evidence (as written, mirrors the browser gate).
-  (B) Fail the task in both modes; the worker must report `BLOCKED: env` or raise a
-  contract Problem instead — stricter, no human, but a legitimate ticket touching CI
-  must always declare it. (C) Raise a Problem with default "reject" — adds a human
-  stage; least consistent with the principle.
-- **Q3 — A project with no CI definition** [NEEDS CLARIFICATION: admission rule].
-  (A) Not dispatchable until onboarding writes one (as written). (B) Fall back to the
-  sandbox verify as the verdict of record for that project only, flagged on every
-  close. (C) Dispatchable, but the goal can never close achieved — it parks on a
-  Problem "no verification environment".
+- **Q1 — Where the verification environment comes from**: C — the CI rollup is the
+  sole verdict of record now (US1–US3 ship first); the project-declared environment
+  with services (US4) lands as P2 once that has a track record. Rejected: A (drop US4
+  for good — leaves the integration class CI-only forever) and B (provision services
+  in-sandbox in this arc — the costliest engine work before the cheap fact has proven
+  itself).
+- **Q2 — Gate-input edits under `trust`**: B — fail the task in both modes; the worker
+  reports `BLOCKED: env` or raises a contract Problem; an issue that is about CI
+  declares its paths in scope. Rejected: A (advisory — a human post-merge stage by
+  another name) and C (a Problem per edit — a human stage where a classification
+  exists).
+- **Q3 — A project with no CI definition**: A — not dispatchable until onboarding
+  writes one; held on `mechanical:env` naming the gap. Rejected: B (sandbox verify as
+  the verdict for that project — keeps the two-environments smell alive) and C
+  (dispatchable but never closes — a human stage at every close).

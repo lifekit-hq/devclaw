@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain — 3 remain by design (Q1 environment source, Q2 gate-input consequence, Q3 no-CI projects); walked with Denys in `/speckit-clarify`
+- [x] No [NEEDS CLARIFICATION] markers remain — the 3 questions were walked with Denys on 2026-09-03 and encoded in the Clarifications section
 - [x] Requirements are testable and unambiguous — FR-001…FR-014 each name an observable outcome
 - [x] Success criteria are measurable — SC-001…SC-006 carry counts or byte-identity
 - [x] Success criteria are technology-agnostic
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- The three open questions are the only incomplete item; the spec is otherwise ready for `/speckit-clarify`, then `/speckit-plan`.
+- All items pass; ready for `/speckit-plan`.
 - FR-013 amends the constitution (Principle V) and CLAUDE.md in the same arc, as governance requires.
