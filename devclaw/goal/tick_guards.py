@@ -335,6 +335,9 @@ def _declared_caps_for(
     project present in the map with NO capabilities is authoritative — it
     declares none — and must not fall through to a second, divergent read.
 
+    The fallback branch reads the manifest off disk, so async callers must run
+    this through ``asyncio.to_thread`` rather than block the heartbeat loop.
+
     Never raises: an unreadable manifest degrades to "declares nothing", which
     is fail-open by FR-007. A malformed manifest fails loud on the paths that
     own that (prep/doctor), not here.
@@ -433,7 +436,7 @@ async def _autoheal_env_cap(
     # hold set from the project registry on an unprepared workspace would
     # otherwise read "declares nothing" here and clear itself every tick,
     # re-dispatching straight back into the red capability.
-    declared = _declared_caps_for(goal, project_caps)
+    declared = await asyncio.to_thread(_declared_caps_for, goal, project_caps)
     if not declared:
         # No declared capabilities → the hold should not have been set; clear it
         # defensively so the goal is not permanently wedged.

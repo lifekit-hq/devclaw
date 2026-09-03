@@ -161,3 +161,23 @@ text; doctor output for the same probe uses the same id.
 - **Q3 — v1 set**: `registry:npm-github` + `sandbox:image`. Rejected:
   docker-daemon probe (a dead daemon already fails loudly today);
   claude-auth (owned by the existing usage/auth pause brake).
+
+## Accepted deviation from FR-004 (owner ruling 2026-09-03)
+
+FR-004 says probes refresh "only when at least one **registered project**
+declares the capability". The shipped sweep is deliberately WIDER: after the
+registry map, it also scans non-terminal live goals' prepared workspaces, for
+goals whose project the registry could not answer for — an unregistered
+project, an absent checkout, or a repo with no `devclaw.json`. A capability
+declared only by such a goal is therefore probed even though no *registered*
+project declares it.
+
+That widening is what makes the brake cover an ad-hoc goal pointed straight at
+a checkout; narrowing it to the registry alone would fail those goals OPEN,
+which is the SC-002 hole T020/T023 closed from the other side. The cost is
+bounded — the scan is skipped for terminal goals, the probes stay TTL-cached
+and once-per-sweep, and the per-goal tick path still never probes.
+
+**Denys ruled 2026-09-03: accept the gap and close.** Do not re-litigate it;
+if the cost ever shows up, the fix is to require registration, not to remove
+the fallback.

@@ -307,10 +307,11 @@ async def _tick_goal_impl(
     # longer holds — no LLM, ever (the mirror of the quota pause's
     # timestamp-compare auto-resume in tick_all), damped by the persisted
     # per-goal heal budget so a flapping condition can't turn the zero-token
-    # blocked steady-state into a plan + ping per cycle. One healable kind:
+    # blocked steady-state into a plan + ping per cycle. Two healable kinds:
     # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs
-    # on the persisted next_heal_at exponential backoff, not every tick. A
-    # human-gated: resume_goal clears it.
+    # on the persisted next_heal_at exponential backoff, not every tick — and
+    # ``env`` (spec 030), whose recheck is a persisted-row read, hence no
+    # backoff window. Both are also human-clearable: resume_goal clears them.
     # needs_answer / bug / lost_ref / dispatch_cap stay human-gated (see the
     # heal guards' docstrings). A refused heal (budget spent / window closed /
     # still broken) leaves the blocked status untouched and the tick idles

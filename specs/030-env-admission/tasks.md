@@ -1,7 +1,10 @@
 # Tasks — spec 030 environment-capability admission
 
-**Status**: IMPLEMENTED — all user stories and FRs done (#800), plus the
-post-landing correction rounds below.
+**Status**: COMPLETE — all user stories and FRs done (#800), plus the
+post-landing correction rounds below. FR-004's one remaining deviation (the
+live-goal workspace fallback probes for capabilities no *registered* project
+declares) was ruled accepted by Denys on 2026-09-03 and is recorded in
+spec.md; nothing in this spec is outstanding.
 
 ## US1 — A broken capability holds the project (P1)
 
@@ -25,8 +28,10 @@ post-landing correction rounds below.
 ## US2 — Auto-resume when the capability heals (P2)
 
 - [x] T006 `devclaw/goal/tick.py::tick_all`: refresh stale probes ONCE per
-      sweep, before the per-goal loop, and only for capabilities a registered
-      project declares; best-effort, never wedges the sweep (FR-004)
+      sweep, before the per-goal loop, and only for capabilities some project
+      declares — the registry first, then the live-goal workspace fallback for
+      projects the registry cannot answer for (see spec.md's accepted FR-004
+      deviation); best-effort, never wedges the sweep (FR-004)
 - [x] T007 `devclaw/goal/tick_guards.py::_autoheal_env_cap`: lift the hold when
       no declared capability is red — persisted-row read, zero LLM, no backoff
       window needed; heal budget (`ENV_HEAL_CAP`) parks a FLAPPING capability
@@ -191,3 +196,19 @@ post-landing correction rounds below.
       the parametrized `_BRAKE_COLUMNS` seeded-fault test. T015's class test is
       parametrized over the prior-heal count (nonzero / past `ENV_HEAL_CAP`)
       and now asserts the resume too — never a sibling test.
+
+## Close-out (2026-09-03)
+
+- [x] T027 The env auto-heal resolved the declaration with a blocking
+      `load_manifest` straight on the heartbeat's event loop, while its sibling
+      call site (`tick_dispatch.py`) already ran the same resolver through
+      `asyncio.to_thread`. One resolver, one calling convention — both are now
+      off-loop, and `_declared_caps_for`'s docstring states the constraint so
+      the next caller does not have to rediscover it.
+- [x] T028 `devclaw/goal/tick.py`'s mechanical-auto-heal comment still read
+      "One healable kind: `prep`" after spec 030 added `env` — the second
+      healable kind, with a deliberately different recheck shape (persisted-row
+      read, hence no backoff window). Corrected in place.
+- [x] T029 FR-004's accepted deviation recorded in `spec.md` as direction
+      memory (owner ruling 2026-09-03: accept the gap and close), so the
+      registry-only reading is not re-litigated into a fail-open regression.
