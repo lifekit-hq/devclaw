@@ -60,11 +60,11 @@ def _verifying_status(base: "GoalStatus | None" = None) -> GoalStatus:
     )
 
 
-async def _tick(store, goal_id, evaluator, engine, notifier):
+async def _tick(store, goal_id, evaluator, engine, notifier, fetcher=None):
     return await tick_goal(
         goal_id, store=store, engine=engine, evaluator_caller=evaluator,
         notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
-        verify_done=True,
+        verify_done=True, issue_fetcher=fetcher,
     )
 
 
@@ -272,3 +272,46 @@ async def test_no_pr_close_is_an_explicit_no_change_success(tmp_path):
 
     assert out is Outcome.DONE
     assert any("no PR to merge" in m for m in notifier.sent)
+
+
+@pytest.mark.asyncio
+async def test_merge_conflict_heal_survives_closed_referenced_issues(tmp_path, monkeypatch):
+    """Tripwire (brake machinery): the ONE bounded conflict-resolution
+    increment dispatches even when every referenced issue is closed.
+
+    The heal returns the goal to idle with ``donegate_rounds`` reset to 0 —
+    exactly the state the dispatch-boundary freshness guard's "all issues
+    closed → propose done without a worker" shortcut keys on. It took that
+    shortcut, the increment never ran, and the second CONFLICT parked the
+    goal with the heal budget spent but never used (issue-443, 2026-09-03).
+    """
+    from devclaw.goal.issue_ref import IssueSnapshot
+    from tests.goal_fakes import FakeIssueFetcher
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g", issue_refs=[7], done_when="")
+    store.save_status("g", _verifying_status())
+    fake = ScriptedMerge(moc.MergeResult(moc.MergeOutcome.CONFLICT, pr_url=PR_URL,
+                                         detail="not mergeable"))
+    monkeypatch.setattr(tick_donegate, "_attempt_merge", fake)
+    notifier = RecordingNotifier()
+    closed = FakeIssueFetcher({7: IssueSnapshot(
+        number=7, title="t", body="ctx\n## Acceptance\n- /health returns 200",
+        state="closed")})
+
+    # close attempt 1: CONFLICT with the budget available → idle + heal owed
+    out = await _tick(store, "g", FakeClaude(ACHIEVED),
+                      FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="r")),
+                      notifier, closed)
+    assert out is Outcome.SLEPT
+    assert store.load_status("g").merge_heal_attempted is True
+
+    # next tick: every referenced issue is closed — the guard must still
+    # dispatch the resolution increment, never re-propose done into the
+    # same conflict
+    engine = FakeEngine()
+    out = await _tick(store, "g", FakeClaude(ACHIEVED), engine, notifier, closed)
+    assert out is Outcome.DISPATCHED
+    (action, _g, _u), = engine.dispatched
+    assert "[merge-conflict]" in action.goal and PR_URL in action.goal
+    assert len(fake.branches) == 1  # no second merge attempt before the increment
