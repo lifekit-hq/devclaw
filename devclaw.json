@@ -2,6 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/lifekit-hq/devclaw/main/docs/reference/devclaw-manifest.schema.json",
   "schemaVersion": 1,
   "boilerplateRevision": 1,
+  "strictnessDefault": "strict",
   "stack": ["python"],
   "verifyCmd": "pip install -e '.[dev]' && python -m pytest -q && ruff check . && mypy"
 }
