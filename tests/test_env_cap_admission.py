@@ -303,21 +303,26 @@ async def test_a_declared_capability_with_no_credential_at_all_is_red(tmp_path, 
     assert f"set {REGISTRY_TOKEN_VAR}" in st.blocked_on      # the remedy is actionable
     assert engine.dispatched == [] and evaluator.calls == 0
 
-    # Doctor tells the SAME story on the same state (US3): the instance check
-    # keeps its unset-is-a-supported-posture verdict only while no project
-    # declares the capability.
+    # Doctor tells the SAME story on the same state (US3). Since tinyspec
+    # durable-container-secrets (2026-09-04) the credential is required
+    # instance-wide: doctor FAILs on absence under the production engine
+    # whether or not any project declares the capability — "unset is a
+    # supported posture unless declared" is how finance-sentry (declaring
+    # nothing) burned a session while doctor said OK.
+    from devclaw import config as _config
     from devclaw.doctor import checks_instance as ci
 
+    monkeypatch.setattr(_config, "ENGINE", "")
     ctx = SimpleNamespace(registry=SimpleNamespace(list=lambda: [
         SimpleNamespace(id="proj", workspace_dir=store.load_goal("g").workspace_dir,
                         status="active"),
     ]))
     (finding,) = ci.check_registry_token(ctx)  # type: ignore[arg-type]
     assert finding.verdict.value == "fail" and REGISTRY in finding.evidence
-    (ok,) = ci.check_registry_token(
+    (undeclared,) = ci.check_registry_token(
         SimpleNamespace(registry=SimpleNamespace(list=list)),  # type: ignore[arg-type]
     )
-    assert ok.verdict.value == "ok"
+    assert undeclared.verdict.value == "fail"  # required regardless of declarations
 
 
 @pytest.mark.parametrize("block,ok", [

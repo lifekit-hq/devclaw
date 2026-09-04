@@ -18,6 +18,7 @@ from devclaw.goal.store import GoalStore
 from devclaw.project_registry import ProjectRegistry
 from devclaw.state_store import StateStore
 
+from devclaw import config as _config
 from tests.goal_fakes import FakeClaude, register_tmp_project, seed_goal
 
 NOW_MS = int(time.time() * 1000)
@@ -42,6 +43,11 @@ def env(tmp_path, monkeypatch):
     # path, so the suite can never reach the network from a dev machine
     # that happens to carry a real token.
     monkeypatch.delenv("NODE_AUTH_TOKEN", raising=False)
+    # The suite IS the stubbed engine. Both credentials are required only by
+    # the production engine (tinyspec durable-container-secrets); with them
+    # deleted above, a clean instance stays healthy only under a dev/test
+    # engine — the production seeded faults set ENGINE="" explicitly.
+    monkeypatch.setattr(_config, "ENGINE", "stub")
 
     store = StateStore(str(tmp_path / "devclaw.db"))
     goals_dir = tmp_path / "goals"
@@ -711,17 +717,34 @@ def _patch_probe(monkeypatch, status):
     return called
 
 
-def test_registry_token_unset_warns_and_never_probes(env, monkeypatch):
+@pytest.mark.parametrize("engine, verdict", [("", Verdict.FAIL), ("host", Verdict.OK), ("stub", Verdict.OK)])
+def test_registry_token_unset_fails_in_production_never_probes(env, monkeypatch, engine, verdict):
+    """Required instance-wide (tinyspec durable-container-secrets): unset is
+    FAIL under the production engine — the 2026-09-03 recreate left it blank
+    while doctor said OK and a worker burned a session on an `npm ci` 401.
+    Dev/test engines need no credential. The unset path never probes."""
     def _boom(token, timeout_s=5.0):  # pragma: no cover - must not run
         raise AssertionError("probed on the unset path")
 
     from devclaw.doctor import checks_instance as ci
 
     monkeypatch.setattr(ci, "_probe_registry_token", _boom)
+    monkeypatch.setattr(_config, "ENGINE", engine)
     (f,) = _findings(_run(env), _REG_CID)
-    # unset is a supported posture (pre-token deployment), so it stays OK and
-    # a clean instance still reports healthy — only malformed/rejected fails.
-    assert f.verdict is Verdict.OK and "not set" in f.evidence
+    assert f.verdict is verdict and "not set" in f.evidence
+    if verdict is Verdict.FAIL:
+        assert "deploy" in f.remedy  # the same fix the boot guard names
+
+
+@pytest.mark.parametrize("engine, verdict", [("", Verdict.FAIL), ("host", Verdict.OK), ("stub", Verdict.OK)])
+def test_setup_token_unset_fails_in_production(env, monkeypatch, engine, verdict):
+    """Same rule for the OAuth setup-token: absence in production is the
+    revocable-mounted-login posture, never OK."""
+    monkeypatch.setattr(_config, "ENGINE", engine)
+    (f,) = _findings(_run(env), "instance.auth.setup_token")
+    assert f.verdict is verdict and "not set" in f.evidence
+    if verdict is Verdict.FAIL:
+        assert "deploy" in f.remedy
 
 
 def test_registry_token_malformed_fails_without_probing(env, monkeypatch):

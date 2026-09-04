@@ -45,6 +45,25 @@ two externally-declared seams: the `lifekit-shared` network and the
   host-fact duplication is the price of entity independence), the operator-set
   `DEVCLAW_*` knobs, `DEVCLAW_TOKEN` for ops-agent, and on the cutover host
   `DEVCLAW_STATE_VOLUME=compose_devclaw-state`.
+- **The secrets file** the compose fragment declares as its `env_file`
+  (`DEVCLAW_SECRETS_FILE`, default `/srv/devclaw/secrets.env`) exists, is
+  owned by the deploy user and is mode 0600. It is the ONE durable home of
+  `CLAUDE_CODE_OAUTH_TOKEN` and `NODE_AUTH_TOKEN` (tinyspec
+  `durable-container-secrets`, 2026-09-04): `deploy-devclaw.sh` writes it
+  from the repo's Actions secrets on every workflow run and reads it back on
+  a hand run, so every creation path — workflow, rollback, a hand
+  `docker compose up` from the box — yields the same container. `/srv/devclaw`
+  is root-owned, so create the file once (the deploy then writes through its
+  inode):
+  ```bash
+  sudo install -m 0600 -o lifekit -g lifekit /dev/null /srv/devclaw/secrets.env
+  ```
+  A missing or blank credential fails the deploy before the box is touched, a
+  missing file fails `docker compose up`, and the container refuses to start
+  without both (`devclaw/boot_guard.py`) — nothing runs degraded. Why: on
+  2026-09-03 a hand recreate after an env-file edit resolved both to blank,
+  the instance reported healthy for ~20h on the revocable mounted login, and a
+  worker burned a session on an `npm ci` 401 before a project-wide hold fired.
 - The incident output dir exists (else ops-agent writes into a phantom mount):
   ```bash
   sudo mkdir -p /srv/memory/projects/ops-agent
@@ -98,7 +117,7 @@ docker compose -p compose rm -f devclaw-mcp ops-agent
 
 # bring devclaw up as its own project (pulls the tag, recreates, health-gates)
 cd /path/to/devclaw
-bash deploy/deploy-devclaw.sh "$SHA"   # reads /srv/devclaw/.env by default
+bash deploy/deploy-devclaw.sh "$SHA"   # reads /srv/devclaw/.env + secrets.env by default
 ```
 
 **5. Attach the OpenClaw seam services to the shared network** so the waiter

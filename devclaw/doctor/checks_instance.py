@@ -29,6 +29,8 @@ _EXPIRY_WARN_MS = 48 * 3600 * 1000
 #: re-imported, not restated).
 from ..engine.sandcastle import OAUTH_TOKEN_VAR as _OAUTH_TOKEN_VAR  # noqa: E402
 from ..engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR  # noqa: E402
+#: the credentials' one home (one home for the path too: boot_guard).
+from ..boot_guard import SECRETS_FILE_DEFAULT as _SECRETS_FILE_DEFAULT  # noqa: E402
 
 
 def _ro_db(db_path: str) -> sqlite3.Connection:
@@ -215,13 +217,40 @@ def check_auth_claude_json(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "claude identity file parseable with oauthAccount")]
 
 
+#: Both credential checks name the same fix the boot guard names — one story
+#: (tinyspec durable-container-secrets): the credentials' one home is the
+#: on-box secrets file the compose file declares, written by the deploy.
+_SECRETS_REMEDY = (
+    "redeploy through the Deploy workflow (`gh workflow run deploy.yml -f "
+    "tag=<sha>`): deploy-devclaw.sh writes both credentials from the repo's "
+    f"Actions secrets into {_SECRETS_FILE_DEFAULT}, the env_file the compose "
+    "file declares"
+)
+
+
 def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
+    """The subscription setup-token is present — REQUIRED in production.
+
+    Unset used to be OK ("rides the mounted /login credential"), which is how
+    a container recreated with blank credentials reported healthy for ~20h on
+    2026-09-03 while running on the revocable interactive login. The boot
+    guard now refuses to start without it; doctor says the same thing.
+    """
     cid = "instance.auth.setup_token"
     present = bool(os.environ.get(_OAUTH_TOKEN_VAR, "").strip())
     # presence only — the value is never echoed into a report.
     if present:
-        return [Finding(cid, Verdict.OK, f"{_OAUTH_TOKEN_VAR} set (sandbox auth rides the setup-token)")]
-    return [Finding(cid, Verdict.OK, f"{_OAUTH_TOKEN_VAR} not set (sandbox auth rides the mounted /login credential)")]
+        return [Finding(cid, Verdict.OK,
+                        f"{_OAUTH_TOKEN_VAR} set (host cognition + sandbox auth ride the setup-token)")]
+    if _config.ENGINE != "":
+        return [Finding(cid, Verdict.OK,
+                        f"{_OAUTH_TOKEN_VAR} not set — not required under "
+                        f"DEVCLAW_ENGINE={_config.ENGINE!r} (dev/test engine)")]
+    return [Finding(cid, Verdict.FAIL,
+                    f"{_OAUTH_TOKEN_VAR} not set — the production engine refuses to "
+                    "start without it (boot_guard), so this process is stale or "
+                    "running degraded on the revocable mounted /login credential",
+                    remedy=_SECRETS_REMEDY)]
 
 
 #: Shape rules and the live probe are owned by ``devclaw.env_cap`` — the
@@ -231,27 +260,7 @@ def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
 #: the probe HERE, in the calling module (the collector convention).
 from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY  # noqa: E402
 from ..env_cap import GH_TOKEN_PREFIXES as _GH_TOKEN_PREFIXES  # noqa: E402
-from ..env_cap import REGISTRY_UNSET_REMEDY as _REGISTRY_UNSET_REMEDY  # noqa: E402
 from ..env_cap import probe_registry_token as _probe_registry_token  # noqa: E402
-
-
-def _projects_declaring_registry_cap(ctx: "InstanceContext") -> list[str]:
-    """Ids of registered projects whose ``devclaw.json`` declares the registry
-    capability. Best-effort: an unreadable manifest is already reported by the
-    project manifest checks, and must never crash this instance check."""
-    from ..project_manifest import load_manifest
-
-    out: list[str] = []
-    for proj in ctx.registry.list():
-        if getattr(proj, "status", "active") == "archived":
-            continue
-        try:
-            manifest = load_manifest(getattr(proj, "workspace_dir", "") or "")
-        except Exception:  # noqa: BLE001 — see docstring
-            continue
-        if manifest and _CAP_REGISTRY in manifest.capabilities:
-            out.append(proj.id)
-    return out
 
 
 def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
@@ -276,24 +285,21 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
     )
     token = os.environ.get(_REGISTRY_TOKEN_VAR, "").strip()
     if not token:
-        # Unset is a supported posture (the pre-token deployment) only while
-        # nothing NEEDS it — same convention as check_auth_setup_token. Once a
-        # project declares the capability, the same absence is a declared
-        # dependency that is missing: the spec-030 probe calls it red and holds
-        # that project's dispatch, so doctor must not answer OK on the state
-        # the operator is being held by (US3: ONE story, not two).
-        declaring = _projects_declaring_registry_cap(ctx)
-        if declaring:
-            return [Finding(cid, Verdict.FAIL,
-                            f"{_REGISTRY_TOKEN_VAR} not set, but project(s) "
-                            f"{', '.join(sorted(declaring))} declare "
-                            f"'{_CAP_REGISTRY}' — their dispatch is held until a "
-                            "credential exists",
-                            remedy=_REGISTRY_UNSET_REMEDY)]
-        return [Finding(cid, Verdict.OK,
-                        f"{_REGISTRY_TOKEN_VAR} not set (no registry credential "
-                        "crosses into the sandbox; `npm ci` on a GitHub-Packages "
-                        "repo cannot resolve in there)")]
+        # Required instance-wide since tinyspec durable-container-secrets
+        # (ruled 2026-09-04): "unset is a supported posture unless a project
+        # declares the capability" is how finance-sentry — which declares
+        # nothing — burned a session on an `npm ci` 401 while doctor said OK.
+        # The boot guard refuses to start without it; doctor says the same.
+        if _config.ENGINE != "":
+            return [Finding(cid, Verdict.OK,
+                            f"{_REGISTRY_TOKEN_VAR} not set — not required under "
+                            f"DEVCLAW_ENGINE={_config.ENGINE!r} (dev/test engine)")]
+        return [Finding(cid, Verdict.FAIL,
+                        f"{_REGISTRY_TOKEN_VAR} not set — required: the production "
+                        "engine refuses to start without it (boot_guard); every "
+                        "sandbox `npm ci` against GitHub Packages 401s in there and "
+                        f"any project declaring '{_CAP_REGISTRY}' is held",
+                        remedy=_SECRETS_REMEDY)]
     if not token.startswith(_GH_TOKEN_PREFIXES):
         return [Finding(cid, Verdict.FAIL,
                         f"{_REGISTRY_TOKEN_VAR} is set but is not a GitHub token "

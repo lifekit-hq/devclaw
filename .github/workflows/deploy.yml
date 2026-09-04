@@ -92,17 +92,17 @@ jobs:
       # Scoped deploy — pulls the tag, recreates ONLY the devclaw project,
       # verifies /health, fails loud. OpenClaw-side containers are untouched.
       - name: Deploy (scoped, readiness-gated)
-        # The instance's subscription OAuth credential (`claude setup-token`)
-        # rides in from the repo secret, making THIS the single source of truth
-        # for it — the box is never hand-edited to carry auth. Compose resolves
-        # ${CLAUDE_CODE_OAUTH_TOKEN} from the shell environment in preference to
-        # --env-file, so nothing is written to disk on the VPS and the secret
-        # exists only for the life of this step. Unset ⇒ the script says so
-        # loudly and the instance falls back to the mounted ~/.claude credential.
+        # Both credentials the instance cannot run without ride in from the
+        # repo secrets — the source of truth. deploy-devclaw.sh writes them into
+        # the on-box secrets file the compose file declares as its env_file
+        # (/srv/devclaw/secrets.env, 0600), so a later recreate from the box —
+        # by ANY path — reads the same values instead of resolving to blank
+        # (2026-09-03). Unset/blank or malformed ⇒ the script dies BEFORE
+        # touching the box; the container refuses to start without them.
         env:
+          # subscription OAuth setup-token: host cognition + sandbox auth
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # read:packages-scoped registry token for in-sandbox `npm ci` on
-          # @lifekit-hq-consuming repos — same never-touches-disk contract.
+          # read:packages registry token: in-sandbox `npm ci` on @lifekit-hq
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
           # the auto lane's instance-dead relay ping target (optional secret;
           # unset ⇒ the wrapper skips the ping, everything else unchanged)

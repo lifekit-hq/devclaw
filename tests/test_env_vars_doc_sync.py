@@ -108,9 +108,10 @@ def test_every_sandbox_dial_reaches_the_deployed_container():
     """A dial the container launcher reads must be forwarded by the production
     compose file — otherwise it is documented, settable, and silently inert.
 
-    The compose file forwards ONLY the vars it names; there is no ``env_file``.
-    So a knob an operator sets in ``/srv/devclaw/.env`` never reaches the
-    process unless a line exists here. That trap is called out in the compose
+    The compose file forwards ONLY the vars it names; its one ``env_file`` is
+    the secrets file (the two credentials, no ``DEVCLAW_*`` dial). So a knob an
+    operator sets in ``/srv/devclaw/.env`` never reaches the process unless a
+    line exists here. That trap is called out in the compose
     file itself for ``DEVCLAW_MAX_CONCURRENT`` — and was fixed for that one var
     only. ``DEVCLAW_EXEC_MODEL`` (documented as "the token/quota bulk") was
     among five that stayed inert, so the deployed worker could not be moved off

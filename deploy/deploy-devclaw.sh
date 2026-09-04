@@ -13,8 +13,10 @@
 #   DEVCLAW_ALLOW_VOLUME_CREATE=1 deploy-devclaw.sh   # cold first-deploy only
 #
 # Env:
-#   DEVCLAW_ENV_FILE   compose --env-file (default /srv/devclaw/.env — devclaw-owned)
-#   DEVCLAW_REGISTRY   image registry prefix (default ghcr.io/lifekit-hq)
+#   DEVCLAW_ENV_FILE      compose --env-file (default /srv/devclaw/.env — devclaw-owned)
+#   DEVCLAW_SECRETS_FILE  the credentials' one home, the compose env_file
+#                         (default /srv/devclaw/secrets.env, 0600; written HERE)
+#   DEVCLAW_REGISTRY      image registry prefix (default ghcr.io/lifekit-hq)
 #
 # Rollback: re-run with a prior SHA tag — images are tagged by commit SHA, so
 # no source revert is needed (SC-007).
@@ -34,44 +36,69 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 [[ -f "$COMPOSE_FILE" ]] || die "compose file not found: $COMPOSE_FILE"
 [[ -f "$ENV_FILE" ]]     || die "env file not found: $ENV_FILE (set DEVCLAW_ENV_FILE)"
 
-# ─── Cognition credential: present, or say so LOUDLY ───────────────────────
-# CLAUDE_CODE_OAUTH_TOKEN is the instance's own subscription OAuth credential.
-# Its home is the repo's Actions secret, injected into this script's env by
-# .github/workflows/deploy.yml; compose prefers the shell env over --env-file,
-# so it needs no line in $ENV_FILE. Absent from BOTH, the deploy still succeeds
-# — the containers fall back to the bind-mounted ~/.claude/.credentials.json —
-# but that is the revocable interactive login whose expiry has taken this box
-# down overnight, so it must never be a silent fallback. Never echo the value.
-if [[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
-  say "cognition credential: CLAUDE_CODE_OAUTH_TOKEN supplied by the environment"
-elif grep -qE '^CLAUDE_CODE_OAUTH_TOKEN=.+' "$ENV_FILE" 2>/dev/null; then
-  say "cognition credential: CLAUDE_CODE_OAUTH_TOKEN present in $ENV_FILE"
-else
-  printf '\033[1;33m⚠ no CLAUDE_CODE_OAUTH_TOKEN (env or %s) — this instance will run on the mounted ~/.claude login, which an interactive login elsewhere on the account can revoke mid-run. Set the repo Actions secret and deploy from the workflow.\033[0m\n' "$ENV_FILE" >&2
+# ─── Credentials: ONE durable home, written here, never blank ──────────────
+# The two credentials the instance cannot run without — CLAUDE_CODE_OAUTH_TOKEN
+# (the `claude setup-token` subscription credential: host cognition + sandbox
+# auth) and NODE_AUTH_TOKEN (read:packages, in-sandbox `npm ci`) — live in ONE
+# place on the box: $SECRETS_FILE, the env_file the compose file declares.
+# This script is that file's only writer. Under the workflow the values come
+# from the repo's Actions secrets (the source of truth); on a hand run from
+# the box (a rollback, an emergency recreate) they are read back from the file
+# itself — so no creation path can yield a container different from the one
+# the last deploy made. A required value missing or blank at any stage stops
+# the deploy HERE, before the box is touched: the previous file is left
+# intact, never overwritten with blank. Set-but-malformed stays fatal (the
+# 2026-08-31 class). The container refuses to start without them
+# (devclaw/boot_guard.py), so nothing can run degraded. Never echo a value.
+# (2026-09-03: a hand recreate resolved both `${VAR:-}` to blank; the
+# instance reported healthy for ~20h and a worker burned a session on a 401.)
+SECRETS_FILE="${DEVCLAW_SECRETS_FILE:-/srv/devclaw/secrets.env}"
+export DEVCLAW_SECRETS_FILE="$SECRETS_FILE"   # compose resolves the same path
+
+# `|| true`: a key absent from the file is "not found", not a script error —
+# under `set -e -o pipefail` the bare pipeline would abort the deploy SILENTLY.
+_from_file() { { grep -E "^$1=" "$SECRETS_FILE" 2>/dev/null || true; } | tail -1 | cut -d= -f2-; }
+_resolve_secret() {   # $1 = name → sets _RESOLVED from the env, else the file
+  local name="$1"
+  # tokens carry no whitespace, so strip ALL of it: a whitespace-only value
+  # (a pasted secret with a stray newline) is blank, and blank is missing.
+  _RESOLVED="$(printf '%s' "${!name:-}" | tr -d '[:space:]')"
+  if [[ -z "$_RESOLVED" ]]; then
+    if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+      die "$name is not supplied by the workflow — the repo Actions secret is unset or blank. \`gh secret set $name\` and re-run; $SECRETS_FILE was left untouched."
+    fi
+    _RESOLVED="$(_from_file "$name" | tr -d '[:space:]')"
+  fi
+  [[ -n "$_RESOLVED" ]] || die "$name is not set (neither in the environment nor in $SECRETS_FILE). The instance cannot run without it: set the repo Actions secret and deploy through the workflow, or add a $name=… line to $SECRETS_FILE and re-run."
+}
+
+_resolve_secret CLAUDE_CODE_OAUTH_TOKEN; _oauth="$_RESOLVED"
+_resolve_secret NODE_AUTH_TOKEN;         _reg="$_RESOLVED"
+unset _RESOLVED
+if [[ ! "$_reg" =~ ^(ghp_|github_pat_|ghs_|gho_) ]]; then
+  unset _oauth _reg
+  die "NODE_AUTH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). A malformed registry token reaches every sandbox and 401s there. Regenerate a read:packages-only classic PAT, \`gh secret set NODE_AUTH_TOKEN\`, and redeploy."
 fi
 
-# ─── Registry credential: if SET it must be WELL-FORMED ────────────────────
-# NODE_AUTH_TOKEN is the read:packages credential forwarded into every
-# sandbox for `npm ci` on a GitHub-Packages repo. Unset is a supported
-# posture (no -e forward; frontend builds simply cannot run) so it only
-# warns. Set-but-malformed is FATAL: the sandbox spec only ever considered
-# the unset case, and a wrong value is strictly worse than none — it rides
-# the whole plumbing in and surfaces as an `npm ci` 401 inside a container,
-# after it has already eaten a goal's dispatch budget. Catch it here, at the
-# gate, where the fix is obvious. Never echo the value.
-_reg_tok="${NODE_AUTH_TOKEN:-}"
-if [[ -z "$_reg_tok" ]] && grep -qE '^NODE_AUTH_TOKEN=.+' "$ENV_FILE" 2>/dev/null; then
-  _reg_tok="$(grep -E '^NODE_AUTH_TOKEN=' "$ENV_FILE" | tail -1 | cut -d= -f2-)"
+# The home must pre-exist with the right ownership — /srv/devclaw is root-owned
+# and this runs as the deploy user, so the file is created ONCE by hand and
+# rewritten through its inode here (docs/runbooks/devclaw-self-deploy.md §1).
+if [[ ! -f "$SECRETS_FILE" ]]; then
+  unset _oauth _reg
+  die "secrets file absent: $SECRETS_FILE. One-time provisioning (as root): install -m 0600 -o $(id -un) -g $(id -gn) /dev/null $SECRETS_FILE — then re-run."
 fi
-if [[ -z "$_reg_tok" ]]; then
-  printf '\033[1;33m⚠ no NODE_AUTH_TOKEN (env or %s) — sandboxes carry no registry credential, so `npm ci` on a GitHub-Packages repo cannot resolve and no real frontend build or e2e evidence is possible in there.\033[0m\n' "$ENV_FILE" >&2
-elif [[ ! "$_reg_tok" =~ ^(ghp_|github_pat_|ghs_|gho_) ]]; then
-  unset _reg_tok
-  die "NODE_AUTH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). A malformed registry token reaches every sandbox and 401s there. Regenerate a read:packages-only classic PAT, \`gh secret set NODE_AUTH_TOKEN\`, and redeploy."
-else
-  say "registry credential: NODE_AUTH_TOKEN present and well-formed"
+if [[ ! -w "$SECRETS_FILE" ]]; then
+  unset _oauth _reg
+  die "secrets file not writable by $(id -un): $SECRETS_FILE — chown it to the deploy user (mode 0600) and re-run."
 fi
-unset _reg_tok
+_mode="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || stat -f '%Lp' "$SECRETS_FILE" 2>/dev/null || echo '?')"
+if [[ "$_mode" != "600" ]]; then
+  unset _oauth _reg
+  die "secrets file mode is $_mode, expected 600: chmod 600 $SECRETS_FILE — a credential file readable by others is not a home."
+fi
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\nNODE_AUTH_TOKEN=%s\n' "$_oauth" "$_reg" > "$SECRETS_FILE"
+unset _oauth _reg _mode
+say "credentials: CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN present, well-formed, written to ${SECRETS_FILE} (the one home)"
 
 export DEVCLAW_MCP_IMAGE="${REGISTRY}/devclaw-mcp:${TAG}"
 export DEVCLAW_SANDBOX_IMAGE="${REGISTRY}/devclaw-sandbox:${TAG}"
