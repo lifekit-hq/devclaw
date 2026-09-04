@@ -70,6 +70,17 @@ A concrete failure is an instance of a class; change the rule, not the case
 that hurt today. Domain specifics (code, PRs, Playwright) stay at the edges
 so layers 1–4 remain domain-agnostic.
 
+### VIII. Cognitive guardrails are shed, structural invariants are kept
+A mechanism that does thinking the model should do — a classifier, a
+heuristic gate, a prompt-scaffold that compensates for the model — is a shed
+candidate and must say so in its plan, naming the A/B seam that turns it off
+and the instrument that measures it. A structural invariant (fail-closed
+verification, test-integrity, the OAuth strip, single-writer/CAS,
+done-is-a-proposal, the brakes) is never shed and never A/B-tested for
+shedding. The split and the 2×2 shed rule are ADR 0004
+(`docs/decisions/0004-eval-workbench.md`, 2026-07-20); this principle makes
+them a plan-time Constitution Check gate rather than a retrospective audit.
+
 ## Development Workflow
 
 - ALL behavior-changing work starts with the speckit pipeline —
@@ -105,8 +116,12 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.6.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-03
-(2.6.0 — Principle V amended for spec 032 verification ownership: "the human
+**Version**: 2.7.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-04
+(2.7.0 — Principle VIII added: cognitive guardrails are shed, structural
+invariants are kept, and every plan answers which it adds. Ruled by Denys
+2026-09-04 on the devclaw design audit (a firstmate scout's evidence check),
+on the finding that ADR 0004's shed rule had no enforcement point while 32
+specs landed in 21 days. Prior: 2.6.0 — Principle V amended for spec 032 verification ownership: "the human
 reviews merged work post-merge, revert is the remedy" is replaced by "the
 project's own verification environment is the verdict of record; the
 validation lane is the backstop; the human is not a stage". Ruled by Denys

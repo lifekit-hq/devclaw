@@ -40,7 +40,16 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+One line per principle in `.specify/memory/constitution.md`; answer each, do not delete any.
+
+- [ ] **I. OAuth only** — no path lets a stray `ANTHROPIC_API_KEY` reach a spawn site.
+- [ ] **II. Model-agnostic worker layer** — skills stay plain markdown in `runner/skills/`; only the ACP seam knows the agent.
+- [ ] **III. Zero-token idle** — no tick-path cognition fires on an idle or blocked goal.
+- [ ] **IV. Single writer** — task rows via TaskQueue, goal state via `GoalStore` CAS; no view is read back.
+- [ ] **V. Fail-closed verification / done is a proposal** — a consulted gate that cannot verdict never ships; close stays with the done-gate.
+- [ ] **VI. Loud failure** — every failure, block, and bounded coverage says so; nothing degrades silently.
+- [ ] **VII. Fix the class** — the change names the class it fixes, not the instance that surfaced it.
+- [ ] **VIII. Cognitive guardrail?** — Does this plan add or keep a cognitive guardrail? If yes: name it, name its off-switch (A/B seam) and its instrument, and say why it is not shed (ADR 0004).
 
 ## Project Structure
 
