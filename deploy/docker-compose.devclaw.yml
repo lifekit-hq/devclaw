@@ -4,6 +4,10 @@
 #   docker compose -p devclaw --env-file /srv/devclaw/.env \
 #       -f deploy/docker-compose.devclaw.yml up -d
 #
+# (The two credentials come from the secrets file declared below, NOT from
+# the shell or --env-file — so that command yields the same container the
+# deploy workflow made. See docs/runbooks/devclaw-self-deploy.md §1.)
+#
 # vs. lifekit-stack, which keeps the OpenClaw project (gateway, cli, dashboard,
 # notify-relay, google-workspace-mcp). The two projects stay integrated at
 # RUNTIME through shared, externally-declared seams — the `lifekit-shared`
@@ -47,6 +51,20 @@ services:
     # GID must match the host's `docker` group (990 on lifekit-vps).
     group_add:
       - "${LIFEKIT_DOCKER_GID:-999}"
+    # The two credentials the instance cannot run without — the subscription
+    # OAuth setup-token (host cognition + sandbox auth) and the read:packages
+    # registry token (in-sandbox `npm ci`) — have ONE durable home: the on-box
+    # secrets file declared here. deploy/deploy-devclaw.sh writes it from the
+    # repo's Actions secrets on every run; a hand `docker compose up` from the
+    # box reads the same file, so every creation path yields the same
+    # container. Declared in THIS file (not as a --env-file flag) so no
+    # invocation can omit it; a missing file fails `up` (a declared env_file
+    # is required). They are deliberately NOT in the `environment:` block:
+    # `${VAR:-}` there resolves to blank without a shell env and OVERRIDES the
+    # file — the 2026-09-03 recreate that wiped both. And devclaw refuses to
+    # start without them (devclaw/boot_guard.py), so nothing runs degraded.
+    env_file:
+      - ${DEVCLAW_SECRETS_FILE:-/srv/devclaw/secrets.env}
     environment:
       DEVCLAW_TRANSPORT: http
       DEVCLAW_PORT: "8000"
@@ -62,19 +80,8 @@ services:
       FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
-      # Long-lived subscription OAuth token (`claude setup-token`, ~1 year),
-      # supplied from /srv/devclaw/.env — NEVER committed. Ranks above the
-      # mounted /login credential, so an interactive login elsewhere on the
-      # account can no longer revoke this box's cognition mid-night. Still
-      # OAuth, still the Pro/Max subscription: not a metered key. Blank/unset
-      # ⇒ the mounted ~/.claude credential stays the only auth path.
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      # Registry-read token (read:packages ONLY — no push/PR capability),
-      # forwarded into each sandbox so `npm ci` on @lifekit-hq-consuming repos
-      # can resolve GitHub Packages. Same home as the OAuth token: the repo's
-      # NODE_AUTH_TOKEN Actions secret via the deploy step env; an env-file
-      # line is the operator fallback. Blank/unset ⇒ no forward at all.
-      NODE_AUTH_TOKEN: ${NODE_AUTH_TOKEN:-}
+      # CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN: see env_file above — never
+      # here (an `environment:` entry would override the file with blank).
       # The per-task sandbox image, pulled from ghcr by tag (built from the same
       # source as this MCP image — no md5-verify crutch; both are this commit).
       DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}

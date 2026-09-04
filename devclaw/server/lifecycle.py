@@ -13,6 +13,7 @@ from starlette.responses import JSONResponse
 from .. import __version__
 from .. import config as _config
 from .. import intake as intake_mod
+from ..boot_guard import assert_required_env
 from ..claude_trust import config_path_for, ensure_trusted_in_place
 from ._state import (
     AUTH_TOKEN,
@@ -144,6 +145,12 @@ def main() -> None:
     transport = _config.transport()
     if transport not in ("stdio", "http"):
         raise SystemExit(f'Unknown DEVCLAW_TRANSPORT={transport}; expected "stdio" or "http"')
+
+    # Fail closed at boot: the production engine refuses to start without its
+    # credentials, so a recreate that lost them never answers /health
+    # (tinyspec durable-container-secrets, 2026-09-04). Before crash recovery,
+    # before either transport — a guard after the first side effect is no guard.
+    assert_required_env()
 
     # Crash recovery before anything serves: reset tasks left 'running' by a
     # dead process so the heartbeat resumes them. Sync — runs before the loop.
