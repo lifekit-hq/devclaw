@@ -266,6 +266,16 @@ class GoalContentMixin:
         """Current (non-superseded) Decisions, oldest first."""
         return self._goal_state.current_decisions(goal_id)
 
+    # ---- pinned done-gate rubric (spec 035) — called only from the
+    # done-gate round path; raises clause_pin.PinCorrupt on an unreadable
+    # row so the gate recovers loudly (FR-006).
+
+    def read_contract_pin(self, goal_id: str, revision: str):
+        return self._goal_state.read_contract_pin(goal_id, revision)
+
+    def write_contract_pin(self, pin):
+        return self._goal_state.write_contract_pin(pin)
+
     def supersede_open_problems(self, goal_id: str) -> int:
         return self._goal_state.supersede_open_problems(goal_id, _now_ms())
 

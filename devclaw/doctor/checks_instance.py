@@ -833,7 +833,64 @@ def check_suppressed_pings_table(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "suppressed_pings table present")]
 
 
+def check_contract_pins(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 035 (per spec-016 FR-014): the pinned done-gate rubric lives in
+    ``goal_contract_pins`` — one row per (goal, revision). Three invariants a
+    live DB can drift on that the stubbed suite cannot see: the table exists
+    post-migration, every row keys to a real goal, and every row's clause
+    JSON parses with unique non-empty ids (a corrupt pin makes the next gate
+    round re-decompose loudly — recurring corruption here means something is
+    writing the table outside the GoalStore seam)."""
+    cid = "instance.donegate.contract_pins"
+    from ..goal.clause_pin import PinCorrupt, pin_from_row
+
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
+        if "goal_contract_pins" not in tables:
+            return [Finding(
+                cid, Verdict.FAIL,
+                "goal_contract_pins absent — the DB predates spec 035; every "
+                "done-gate round re-decomposes the contract (the rubric-drift "
+                "class the pin exists to kill)",
+                remedy="restart devclaw (GoalState bootstraps the table at construction)",
+            )]
+        goal_ids = {r["goal_id"] for r in db.execute("SELECT goal_id FROM goal_status")}
+        rows = db.execute(
+            "SELECT goal_id, revision, clauses, ceremony_drops, pinned_at_ms,"
+            " pinned_by_round, recovery FROM goal_contract_pins"
+        ).fetchall()
+    orphans = sorted({r["goal_id"] for r in rows} - goal_ids)
+    if orphans:
+        return [Finding(
+            cid, Verdict.FAIL,
+            f"pin row(s) for unknown goal(s): {', '.join(orphans[:5])} — "
+            "something wrote the table outside the GoalStore seam",
+            remedy="inspect and delete the orphan rows by hand",
+        )]
+    for r in rows:
+        try:
+            pin_from_row(
+                r["goal_id"], r["revision"], r["clauses"], r["ceremony_drops"],
+                int(r["pinned_at_ms"] or 0), int(r["pinned_by_round"] or 0),
+                r["recovery"] or "",
+            )
+        except PinCorrupt as exc:
+            return [Finding(
+                cid, Verdict.FAIL,
+                f"unparseable pin for goal {r['goal_id']} revision {r['revision']}: {exc}",
+                remedy="the next done-gate round re-decomposes and re-pins loudly; "
+                       "recurring corruption means a second writer — investigate",
+            )]
+    return [Finding(
+        cid, Verdict.OK,
+        f"goal_contract_pins present; {len(rows)} pin(s), all parse with unique ids",
+    )]
+
+
 INSTANCE_CHECKS: tuple = (
+    check_contract_pins,
     check_goal_interventions_table,
     check_goal_status_pending_done_proposal,
     check_goal_status_ci_green_head,

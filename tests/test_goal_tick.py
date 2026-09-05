@@ -4042,3 +4042,152 @@ async def test_dispatch_cap_reason_is_honest_when_nothing_was_delivered(tmp_path
     assert st.blocked_kind == "mechanical:dispatch_cap"
     assert "NO delivered increment" in st.blocked_on
     assert "review the open PRs" not in st.blocked_on
+
+
+# ---------------------------------------------------------------------------
+# Spec 035 — pinned done-gate clauses (fail-closed-gate tripwire class).
+# One decomposition per contract revision; later rounds judge exactly the
+# pinned ids; a malformed verdict fails closed WITHOUT charging the churn
+# brake. The fs-479 signature (4→6→8 clauses under one revision) must be
+# structurally impossible.
+
+import hashlib as _hashlib
+
+from devclaw.goal.clause_pin import assign_ids as _assign_ids
+
+_PIN_REV = _hashlib.sha256("all backlog items merged".encode()).hexdigest()[:12]
+
+
+def _arm_done_check(store, goal_id, ref):
+    """Put the goal back at the done-gate settle point (a finished
+    review_repository done-check), preserving all counters."""
+    s = store.load_status(goal_id)
+    store.save_status(goal_id, replace(
+        s, phase="verifying",
+        in_flight=InFlight("devclaw", "review_repository", ref, "task", "verify", is_done_check=True),
+    ))
+
+
+@pytest.mark.asyncio
+async def test_donegate_pins_rubric_once_per_revision(tmp_path):
+    """US1: round 1 harvests the pin from its own decomposition (ceremony
+    drops recorded with it); round 2 judges EXACTLY the pinned ids — the
+    prompt carries the pinned list, the clause count cannot change, and the
+    pin row is written exactly once."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ran"))
+    notifier = RecordingNotifier()
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "test clause open",
+        "corrections": ["[clause 2] add the test"],
+        "clauses": [
+            {"clause": "/health returns 200", "satisfied": True, "evidence": "Health.cs:12"},
+            {"clause": "/health is tested", "satisfied": False, "evidence": "missing"},
+        ],
+        "dropped_ceremony": ["merged to main by the owner"],
+    }))
+    _arm_done_check(store, "g", "rev1")
+    out = await _tick(store, "g", evaluator, engine, notifier)
+    assert out is Outcome.SLEPT
+    assert "## Pinned clauses" not in evaluator.last_prompt  # round 1 decomposes
+    pin = store.read_contract_pin("g", _PIN_REV)
+    assert [c.id for c in pin.clauses] == ["c1", "c2"]
+    assert pin.clauses[0].text == "/health returns 200"
+    assert pin.ceremony_drops == ("merged to main by the owner",)
+
+    # Round 2: the model "re-decomposes" into a different shape at its peril —
+    # it never gets the chance: the prompt pins the rubric and the verdict
+    # must reference the pinned ids.
+    evaluator.response = json.dumps({
+        "verdict": "off_track", "rationale": "still open",
+        "corrections": ["[c2] add the test"],
+        "clauses": [
+            {"id": "c1", "satisfied": True, "evidence": "Health.cs:12"},
+            {"id": "c2", "satisfied": False, "evidence": "missing"},
+        ],
+    })
+    _arm_done_check(store, "g", "rev2")
+    out = await _tick(store, "g", evaluator, engine, notifier)
+    assert out is Outcome.SLEPT
+    assert "## Pinned clauses" in evaluator.last_prompt
+    assert "[c1] /health returns 200" in evaluator.last_prompt
+    pin2 = store.read_contract_pin("g", _PIN_REV)
+    assert [(c.id, c.text) for c in pin2.clauses] == [(c.id, c.text) for c in pin.clauses]
+    # exactly ONE pin write across both rounds
+    assert store.recent_log("g").count("pinned contract revision") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_clauses, marker", [
+    # unknown id — the model invented a clause
+    ([{"id": "c1", "satisfied": True, "evidence": "e"},
+      {"id": "c99", "satisfied": False, "evidence": "x"}], "unknown clause id"),
+    # omitted id — the model dropped a pinned clause from the rubric
+    ([{"id": "c1", "satisfied": True, "evidence": "e"}], "omitted pinned clause"),
+    # duplicate id — one clause judged twice
+    ([{"id": "c1", "satisfied": True, "evidence": "e"},
+      {"id": "c1", "satisfied": False, "evidence": "x"}], "twice"),
+])
+async def test_donegate_pinned_id_violation_fails_closed_without_churn_charge(
+    tmp_path, bad_clauses, marker,
+):
+    """FR-002/FR-006: a verdict that adds, drops, or duplicates a pinned id is
+    a MECHANISM failure — the round fails closed (never ships, never pins
+    garbage) and does NOT increment the churn counter (a formatting failure
+    must never park a healthy goal as donegate_churn)."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.write_contract_pin(_assign_ids("g", _PIN_REV, ["/health returns 200", "/health is tested"]))
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ran"))
+    notifier = RecordingNotifier()
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "r", "corrections": ["[c2] x"],
+        "clauses": bad_clauses,
+    }))
+    _arm_done_check(store, "g", "rev1")
+    rounds_before = store.load_status("g").donegate_rounds
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.ERROR
+    s = store.load_status("g")
+    assert s.donegate_rounds == rounds_before      # no churn charge
+    assert s.phase != "done"                        # fail closed
+    assert marker in store.recent_log("g")
+    # the pin itself is untouched
+    pin = store.read_contract_pin("g", _PIN_REV)
+    assert [c.id for c in pin.clauses] == ["c1", "c2"]
+
+
+@pytest.mark.asyncio
+async def test_donegate_corrupt_pin_recovers_loudly(tmp_path):
+    """FR-006: an unreadable pin row never judges a half-read rubric and never
+    wedges — the round re-decomposes, re-pins with the recovery reason
+    recorded, and says so in the goal log."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.write_contract_pin(_assign_ids("g", _PIN_REV, ["a", "b"]))
+    db = store._goal_state._store._db
+    db.execute(
+        "UPDATE goal_contract_pins SET clauses = '{not json' WHERE goal_id = 'g'"
+    )
+    store._goal_state._store._commit()
+    engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review ran"))
+    notifier = RecordingNotifier()
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "open",
+        "corrections": ["[clause 1] do it"],
+        "clauses": [{"clause": "/health returns 200", "satisfied": False, "evidence": "missing"}],
+    }))
+    _arm_done_check(store, "g", "rev1")
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.SLEPT
+    log = store.recent_log("g")
+    assert "pinned rubric unreadable" in log
+    assert "recovery re-pin" in log
+    pin = store.read_contract_pin("g", _PIN_REV)
+    assert [c.id for c in pin.clauses] == ["c1"]
+    assert pin.recovery != ""

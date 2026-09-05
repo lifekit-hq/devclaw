@@ -1073,7 +1073,10 @@ def test_evaluator_prompt_excludes_delivery_mechanics_from_clauses():
         "**2. For EACH clause, find SPECIFIC evidence.**"
     )
     # the dropped text is surfaced, not silently swallowed (loud over silent)
-    assert "Name what you dropped in `rationale`" in raw
+    # — since spec 035 it is RECORDED with the pin (`dropped_ceremony`), not
+    # only named in prose
+    assert "Record each dropped span verbatim in `dropped_ceremony`" in raw
+    assert "name\nthe drop in `rationale`" in raw
     # the named ceremony forms from the three incidents
     for ceremony in ("how many PRs", "whether it is merged", "who merges it"):
         assert ceremony in raw

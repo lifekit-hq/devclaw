@@ -32,6 +32,7 @@ import re
 from typing import Awaitable, Callable, Optional, cast
 
 from .. import config as _config
+from .clause_pin import PinnedClause
 from .models import ClauseVerdict, EvalResult, EvalVerdict, Goal, GoalStatus, Strictness, is_standing
 from .prompt_budget import cap_deliveries, cap_log
 
@@ -139,6 +140,7 @@ def build_prompt(
     repo_context: Optional[str] = None,
     lean_done_gate: bool = False,
     decisions: Optional[str] = None,
+    pinned_clauses: "Optional[list[PinnedClause]]" = None,
 ) -> str:
     from ..prompts import load_prompt
     from ..loom.untrusted import UNTRUSTED_NOTE, fence_untrusted
@@ -222,6 +224,23 @@ def build_prompt(
                 "validator converts a stray ``achieved`` to ``needs_human`` — "
                 "don't invite it.)"
             )
+    if at_done_gate and pinned_clauses:
+        # Spec 035: the rubric of record. This contract revision was
+        # decomposed once (the pin); the model judges exactly that list —
+        # evidence fresh each round, the rubric never re-derived.
+        listing = "\n".join(f"  - [{c.id}] {c.text}" for c in pinned_clauses)
+        parts.append(
+            "\n## Pinned clauses (the decomposition of record for this "
+            "contract revision)\n"
+            "Skip procedure steps 1/1a — the decomposition already happened "
+            "and is fixed. Judge EXACTLY the clauses below: never add, "
+            "remove, merge, split, or rename one, and do not emit "
+            "`dropped_ceremony`. Every entry in your `clauses` array MUST "
+            "carry its pinned `id` (e.g. \"id\": \"c1\"), and every pinned id "
+            "MUST appear exactly once. The pinned text is authoritative — "
+            "gather fresh evidence for each clause as usual.\n"
+            + listing
+        )
     if repo_context and repo_context.strip():
         parts += [
             "\n## Repository context (facts from the actual workspace — the "
@@ -278,19 +297,45 @@ def extract_json(text: str) -> str:
     raise GoalEvalError("No JSON object found in evaluator response", text)
 
 
-def _parse_clauses(raw: object) -> list[ClauseVerdict]:
+def _parse_clauses(
+    raw: object, pinned: "Optional[dict[str, str]]" = None,
+) -> list[ClauseVerdict]:
     """Parse the model's ``clauses`` array. Tolerant of shape drift: drops
     entries that aren't dicts, coerces bool-ish ``satisfied`` values
-    (true/false, "yes"/"no", "partial" → False)."""
+    (true/false, "yes"/"no", "partial" → False).
+
+    ``pinned`` (spec 035, id → verbatim text) switches on the pinned-rubric
+    contract: every entry MUST carry a known ``id`` exactly once and every
+    pinned id MUST be judged. The pinned text is substituted as the clause
+    text — renaming is impossible by construction. Violations raise
+    :class:`GoalEvalError` (a malformed verdict fails the round closed and
+    is a mechanism failure, never a judgment — FR-002/FR-006)."""
     if not isinstance(raw, list):
+        if pinned:
+            raise GoalEvalError("pinned-mode verdict carries no clauses array")
         return []
+    seen_ids: set[str] = set()
     out: list[ClauseVerdict] = []
     for entry in raw:
         if not isinstance(entry, dict):
+            if pinned:
+                raise GoalEvalError("pinned-mode clauses entry is not an object")
             continue
-        clause = str(entry.get("clause", "")).strip()
-        if not clause:
-            continue
+        if pinned is not None:
+            cid = str(entry.get("id", "")).strip()
+            if cid not in pinned:
+                raise GoalEvalError(
+                    f"verdict references unknown clause id {cid or '(missing)'!r} — "
+                    f"the pinned rubric has only {sorted(pinned)}"
+                )
+            if cid in seen_ids:
+                raise GoalEvalError(f"verdict judges pinned clause id {cid!r} twice")
+            seen_ids.add(cid)
+            clause = pinned[cid]
+        else:
+            clause = str(entry.get("clause", "")).strip()
+            if not clause:
+                continue
         sat_raw = entry.get("satisfied")
         if isinstance(sat_raw, bool):
             satisfied = sat_raw
@@ -313,6 +358,13 @@ def _parse_clauses(raw: object) -> list[ClauseVerdict]:
         out.append(ClauseVerdict(
             clause=clause, satisfied=satisfied, evidence=evidence, resolved_by=resolved_by,
         ))
+    if pinned is not None:
+        missing = set(pinned) - seen_ids
+        if missing:
+            raise GoalEvalError(
+                f"verdict omitted pinned clause id(s) {sorted(missing)} — "
+                f"every pinned clause must be judged each round"
+            )
     return out
 
 
@@ -475,6 +527,7 @@ def validate(
     standing: bool = False,
     strictness: Strictness = "strict",
     verified_execution: bool = False,
+    pinned_clauses: "Optional[list[PinnedClause]]" = None,
 ) -> EvalResult:
     """Validate + normalize the model's evaluation. When ``at_done_gate=True``,
     ``achieved`` requires (a) every clause in ``clauses`` to be ``satisfied=True``
@@ -504,7 +557,11 @@ def validate(
     raw_corr = parsed.get("corrections") or []
     corrections = [str(c).strip() for c in raw_corr if str(c).strip()] if isinstance(raw_corr, list) else []
     question = str(parsed.get("question", "")).strip()
-    clauses = _parse_clauses(parsed.get("clauses"))
+    # Spec 035: in pinned mode the id contract is enforced here — an unknown,
+    # duplicate, or omitted pinned id raises out of this call (the round fails
+    # closed as a mechanism failure, never a judgment).
+    pinned_map = {c.id: c.text for c in pinned_clauses} if pinned_clauses else None
+    clauses = _parse_clauses(parsed.get("clauses"), pinned_map)
     structural_health, structural_concerns = _parse_structural(parsed)
     if verdict == "needs_human" and not question:
         # tolerate a model that put the ask in rationale rather than question
@@ -708,6 +765,7 @@ async def evaluate(
     lean_done_gate: Optional[bool] = None,
     strictness: Optional[Strictness] = None,
     decisions: Optional[str] = None,
+    pinned_clauses: "Optional[list[PinnedClause]]" = None,
 ) -> EvalResult:
     """Run the direction evaluation. ``claude_caller`` is injected so tests stub
     the LLM. Pass ``review_report`` + ``at_done_gate`` when judging a done proposal;
@@ -721,7 +779,7 @@ async def evaluate(
         goal, status, recent_log, deliveries,
         review_report=review_report, at_done_gate=at_done_gate, spec=spec,
         repo_context=repo_context, lean_done_gate=lean,
-        decisions=decisions,
+        decisions=decisions, pinned_clauses=pinned_clauses,
     )
     raw = await claude_caller(prompt)
     try:
@@ -731,12 +789,26 @@ async def evaluate(
     # ``strictness`` (spec 016 FR-008): the caller passes the LIVE resolved
     # dial (explicit goal > manifest default) — falling back to the goal's
     # resolved field keeps every pre-016 caller byte-identical.
-    return validate(
+    result = validate(
         parsed, at_done_gate=at_done_gate, stub_acceptable=goal.stub_acceptable,
         standing=is_standing(goal.done_when),
         strictness=strictness or goal.strictness,
         verified_execution=_deliveries_verified_execution(deliveries),
+        pinned_clauses=pinned_clauses,
     )
+    # Spec 035 pin harvest: the ceremony spans step 1a dropped, recorded once
+    # with the pin. Only meaningful on a decomposition-mode done-gate round;
+    # a pinned round was told not to emit the field, and a stray emission is
+    # ignored (an undocumented-for-this-mode output field is never honoured).
+    if at_done_gate and not pinned_clauses:
+        raw_drops = parsed.get("dropped_ceremony") or []
+        if isinstance(raw_drops, list):
+            drops = [str(d).strip() for d in raw_drops if str(d).strip()]
+            if drops:
+                from dataclasses import replace as _dc_replace
+
+                result = _dc_replace(result, dropped_ceremony=drops)
+    return result
 
 
 def default_caller() -> ClaudeCaller:

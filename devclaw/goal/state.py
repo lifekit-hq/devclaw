@@ -60,6 +60,7 @@ import sqlite3
 from typing import TYPE_CHECKING
 
 from .state_content import GoalStateContentMixin
+from .state_pins import GoalStatePinsMixin
 from .state_problems import GoalStateProblemsMixin
 from .state_interventions import GoalStateInterventionsMixin
 from .state_status import GoalStateStatusMixin
@@ -70,7 +71,7 @@ if TYPE_CHECKING:
 
 class GoalState(
     GoalStateStatusMixin, GoalStateContentMixin, GoalStateProblemsMixin,
-    GoalStateInterventionsMixin,
+    GoalStateInterventionsMixin, GoalStatePinsMixin,
 ):
     """Owns the goal-state tables inside a shared :class:`StateStore`.
 
@@ -283,6 +284,23 @@ class GoalState(
                 );
                 CREATE INDEX IF NOT EXISTS idx_goal_decisions_goal_clause
                   ON goal_decisions(goal_id, clause);
+                -- Pinned done-gate rubric (spec 035): the FIRST round's
+                -- decomposition of a contract revision, judged by every later
+                -- round. One row per (goal, revision) — the PK IS the
+                -- "at most one decomposition per revision" invariant; prior
+                -- revisions' rows are retained for audit. clauses holds the
+                -- per-clause accounting (id, verbatim text, satisfied,
+                -- evidence, via_decision, carried_from) as JSON.
+                CREATE TABLE IF NOT EXISTS goal_contract_pins (
+                  goal_id         TEXT NOT NULL,
+                  revision        TEXT NOT NULL,
+                  clauses         TEXT NOT NULL,
+                  ceremony_drops  TEXT NOT NULL DEFAULT '[]',
+                  pinned_at_ms    INTEGER NOT NULL,
+                  pinned_by_round INTEGER NOT NULL DEFAULT 0,
+                  recovery        TEXT NOT NULL DEFAULT '',
+                  PRIMARY KEY (goal_id, revision)
+                );
                 CREATE TABLE IF NOT EXISTS goal_interventions (
                   id      INTEGER PRIMARY KEY AUTOINCREMENT,
                   goal_id TEXT NOT NULL,

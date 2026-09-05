@@ -29,6 +29,7 @@ from .tick_context import (
     _notify,
     _run_atomic,
 )
+from . import clause_pin as _clause_pin
 from . import evaluator as _evaluator
 from . import issue_ref as _issue_ref
 from . import merge_on_close as _merge
@@ -394,6 +395,28 @@ async def _resolve_done_gate(
     )
     if blocked is not None:
         return blocked
+    # Pinned rubric (spec 035): the revision is the content digest of the
+    # contract this round judges — the same digest _live_contract logs for
+    # referenced goals; an explicit done_when hashes identically, so both
+    # contract shapes ride one key. A pin hit means the decomposition of
+    # record exists: the evaluator receives it and never re-derives. A
+    # corrupt row recovers LOUDLY — this round re-decomposes and re-pins
+    # with the reason recorded (FR-006), never judges a half-read rubric.
+    revision = (
+        hashlib.sha256(goal.done_when.encode()).hexdigest()[:12]
+        if goal.done_when.strip() else ""
+    )
+    pin: "_clause_pin.ContractPin | None" = None
+    pin_recovery = ""
+    if revision:
+        try:
+            pin = store.read_contract_pin(goal_id, revision)
+        except _clause_pin.PinCorrupt as exc:
+            pin_recovery = str(exc)
+            store.append_log(
+                goal_id,
+                f"pinned rubric unreadable — re-decomposing this round: {exc}",
+            )
     # Ground the evaluator in the goal's ACTUAL workspace (triage F3, the
     # evaluator sibling of #227): on the verify_done=False fallthrough
     # review_report is empty and the prompt otherwise carries ZERO first-hand
@@ -427,12 +450,34 @@ async def _resolve_done_gate(
             # spec 031 US4: the owner's recorded rulings — a clause with a
             # current Decision is graded resolved_by_decision, never re-asked
             decisions=_decisions.render(store.decisions(goal_id)),
+            pinned_clauses=list(pin.clauses) if pin is not None else None,
         )
     except _evaluator.GoalEvalError as exc:
+        # A malformed/unreviewable round is a mechanism failure, not a
+        # judgment: it fails closed and does NOT touch donegate_rounds — the
+        # churn brake counts judgments only (spec 035 FR-006/research D4;
+        # this path never incremented the counter, and the named tripwire
+        # test now pins that).
         store.append_log(goal_id, f"done-gate eval error: {exc}")
         store.update_status_fields(goal_id, last_tick_at=store.now_iso())
         await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] done-gate eval failed: {exc}")
         return Outcome.ERROR
+    if revision and pin is None and ev.clauses:
+        # Harvest (spec 035 US1): the first judged round of a revision IS the
+        # decomposition of record — persist it; every later round of this
+        # revision judges exactly this list. Zero extra cognition calls.
+        new_pin = _clause_pin.assign_ids(
+            goal_id, revision, [c.clause for c in ev.clauses],
+            ceremony_drops=ev.dropped_ceremony,
+            pinned_by_round=status.donegate_rounds + 1,
+            recovery=pin_recovery,
+        )
+        store.write_contract_pin(new_pin)
+        store.append_log(
+            goal_id,
+            f"pinned contract revision {revision} ({len(new_pin.clauses)} clauses)"
+            + (" — recovery re-pin" if pin_recovery else ""),
+        )
     now = store.now_iso()
     base = replace(
         status, last_eval_verdict=ev.verdict, last_eval_at=now,

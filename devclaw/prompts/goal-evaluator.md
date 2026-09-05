@@ -39,7 +39,8 @@ not completion criteria: how the work ships, how many PRs it takes, which
 branch it lands on, whether it is merged, who merges it, and which issues or
 pull requests get closed or labelled. Drop such text at this step — it never
 becomes a numbered clause, never appears in `clauses`, and never holds a
-goal open. Name what you dropped in `rationale` so the owner sees it.
+goal open. Record each dropped span verbatim in `dropped_ceremony` and name
+the drop in `rationale` so the owner sees it.
 Judge the behaviour the repository must exhibit; devclaw's delivery layer
 and the owner own everything after that.
 
@@ -104,13 +105,21 @@ Respond with STRICT JSON ONLY — no prose, no markdown fences. Schema:
   "verdict": "achieved" | "on_track" | "off_track" | "stalled" | "needs_human",
   "rationale": "<2-4 sentences citing the evidence you based this on>",
   "clauses": [
-    // REQUIRED at the done-gate. One entry per clause from step 1.
+    // REQUIRED at the done-gate. One entry per clause from step 1 — or,
+    // when a `Pinned clauses` block is present, exactly one entry per
+    // pinned clause, each carrying its pinned "id".
     {{
+      "id": "<the pinned id, e.g. c1 — ONLY when a Pinned clauses block is present>",
       "clause": "<the clause text from done_when>",
       "satisfied": true | false,
       "evidence": "<specific file/symbol/test names from the repo review, OR 'missing — should live in <where>' when unsatisfied>",
       "resolved_by": "<the Decisions-block id that settles this clause; present ONLY for a clause graded resolved_by_decision>"
     }}
+  ],
+  "dropped_ceremony": [
+    // done-gate, step-1a decomposition only: each delivery-ceremony span you
+    // dropped, verbatim. Empty when none. Omit when a `Pinned clauses` block
+    // is present.
   ],
   "structural_health": "clean" | "concerns" | "poor",
     // REQUIRED at the done-gate; mirrors the review's ``## Structural health``.

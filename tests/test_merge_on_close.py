@@ -31,6 +31,18 @@ ACHIEVED = json.dumps({
     ],
 })
 
+#: spec 035: the first close round pins the rubric (id c1 for the one clause
+#: above), so a SECOND close round of the same contract revision must judge
+#: by pinned id — the decomposition-shape response would fail closed.
+ACHIEVED_PINNED = json.dumps({
+    "verdict": "achieved",
+    "rationale": "/health exists and is tested",
+    "clauses": [
+        {"id": "c1", "satisfied": True,
+         "evidence": "src/Health.cs:12 returns OK; HealthTests.cs:8 asserts 200"},
+    ],
+})
+
 PR_URL = "https://github.com/o/r/pull/7"
 
 
@@ -171,9 +183,11 @@ async def test_merge_conflict_dispatches_one_resolution_increment_then_parks(tmp
     (action, _g, _u), = engine.dispatched
     assert "[merge-conflict]" in action.goal and PR_URL in action.goal
 
-    # close attempt 2: CONFLICT again with the budget spent → park loudly
+    # close attempt 2: CONFLICT again with the budget spent → park loudly.
+    # Same contract revision ⇒ the rubric is pinned now; the verdict judges
+    # by pinned id (spec 035).
     store.save_status("g", _verifying_status(store.load_status("g")))
-    out = await _tick(store, "g", FakeClaude(ACHIEVED),
+    out = await _tick(store, "g", FakeClaude(ACHIEVED_PINNED),
                       FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="r")),
                       notifier)
     assert out is Outcome.BLOCKED
