@@ -45,6 +45,42 @@ class GoalStatePinsMixin:
             row["recovery"] or "",
         )
 
+    def update_pin_accounting(
+        self,
+        goal_id: str,
+        revision: str,
+        verdicts: "dict[str, tuple[bool, str, str]]",
+        round_no: int,
+    ) -> Optional[ContractPin]:
+        """Fold one judgment round into the pin's per-clause accounting
+        (spec 035 US2). ``verdicts`` maps clause id → (satisfied, evidence,
+        via_decision). A clause absent from ``verdicts`` keeps its state; a
+        clause newly satisfied stamps ``satisfied_round``; a flip back to
+        open clears it (the FR-011 cause already rode in through the parse —
+        it lives in the evidence). Single-writer: only the done-gate round
+        path calls this, so plain read-modify-write is race-free."""
+        from dataclasses import replace as _replace
+
+        pin = self.read_contract_pin(goal_id, revision)
+        if pin is None:
+            return None
+        out = []
+        for c in pin.clauses:
+            v = verdicts.get(c.id)
+            if v is None:
+                out.append(c)
+                continue
+            sat, evidence, via = v
+            if sat:
+                sr = c.satisfied_round if c.satisfied else round_no
+            else:
+                sr = None
+            out.append(_replace(
+                c, satisfied=sat, evidence=evidence, satisfied_round=sr,
+                via_decision=via,
+            ))
+        return self.write_contract_pin(_replace(pin, clauses=tuple(out)))
+
     def write_contract_pin(self, pin: ContractPin) -> ContractPin:
         """Persist a pin (INSERT OR REPLACE: the only legal overwrite of an
         existing (goal, revision) row is the FR-006 corrupt-pin recovery,

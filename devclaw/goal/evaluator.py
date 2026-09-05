@@ -227,8 +227,15 @@ def build_prompt(
     if at_done_gate and pinned_clauses:
         # Spec 035: the rubric of record. This contract revision was
         # decomposed once (the pin); the model judges exactly that list —
-        # evidence fresh each round, the rubric never re-derived.
-        listing = "\n".join(f"  - [{c.id}] {c.text}" for c in pinned_clauses)
+        # evidence fresh each round, the rubric never re-derived. Prior
+        # satisfied state is shown so the flip rule (FR-011) is judgeable:
+        # un-satisfying a ✓ clause requires a cited cause.
+        listing = "\n".join(
+            f"  - [{c.id}]"
+            + (f" ✓ satisfied (round {c.satisfied_round})" if c.satisfied else "")
+            + f" {c.text}"
+            for c in pinned_clauses
+        )
         parts.append(
             "\n## Pinned clauses (the decomposition of record for this "
             "contract revision)\n"
@@ -238,7 +245,12 @@ def build_prompt(
             "`dropped_ceremony`. Every entry in your `clauses` array MUST "
             "carry its pinned `id` (e.g. \"id\": \"c1\"), and every pinned id "
             "MUST appear exactly once. The pinned text is authoritative — "
-            "gather fresh evidence for each clause as usual.\n"
+            "gather fresh evidence for each clause as usual. A clause marked "
+            "✓ was satisfied with cited evidence in an earlier round: to mark "
+            "it unsatisfied now, its entry MUST also carry \"flip_cause\" — "
+            "the repo change since that evidence, or the specific defect in "
+            "it; never flip without one. Tag each correction with its pinned "
+            "id (e.g. \"[c2] add the test\").\n"
             + listing
         )
     if repo_context and repo_context.strip():
@@ -299,6 +311,7 @@ def extract_json(text: str) -> str:
 
 def _parse_clauses(
     raw: object, pinned: "Optional[dict[str, str]]" = None,
+    prior_satisfied: "Optional[set[str]]" = None,
 ) -> list[ClauseVerdict]:
     """Parse the model's ``clauses`` array. Tolerant of shape drift: drops
     entries that aren't dicts, coerces bool-ish ``satisfied`` values
@@ -309,7 +322,14 @@ def _parse_clauses(
     pinned id MUST be judged. The pinned text is substituted as the clause
     text — renaming is impossible by construction. Violations raise
     :class:`GoalEvalError` (a malformed verdict fails the round closed and
-    is a mechanism failure, never a judgment — FR-002/FR-006)."""
+    is a mechanism failure, never a judgment — FR-002/FR-006).
+
+    ``prior_satisfied`` (spec 035 US2, FR-011): the ids the pin records as
+    satisfied-with-evidence. Un-satisfying one requires a non-empty
+    ``flip_cause`` — the repo change since that evidence, or its named
+    defect — folded into the clause's evidence so every downstream consumer
+    (corrections, log, pin accounting) carries the cause; a causeless flip
+    is a malformed verdict."""
     if not isinstance(raw, list):
         if pinned:
             raise GoalEvalError("pinned-mode verdict carries no clauses array")
@@ -355,6 +375,26 @@ def _parse_clauses(
         if resolved_by:
             satisfied = True
             evidence = evidence or f"resolved by decision {resolved_by}"
+        # FR-011 (spec 035 US2): un-satisfying a clause the pin records as
+        # satisfied requires a cited cause — a repo change since the
+        # satisfying evidence, or its named defect. The cause rides in the
+        # evidence so corrections, the goal log, and the pin accounting all
+        # carry it. Causeless flip ⇒ malformed round (fails closed, no churn
+        # charge). Free flips were half the fs-479 incident: satisfied at
+        # 11:06, the sole failure at 12:24, no repo change in between.
+        if (
+            pinned is not None and prior_satisfied and not satisfied
+            and cid in prior_satisfied
+        ):
+            fc = entry.get("flip_cause")
+            flip_cause = fc.strip() if isinstance(fc, str) else ""
+            if not flip_cause:
+                raise GoalEvalError(
+                    f"verdict flips previously-satisfied clause {cid!r} to "
+                    f"unsatisfied without a flip_cause — cite the repo change "
+                    f"since its evidence, or the specific defect in it"
+                )
+            evidence = (f"{evidence} " if evidence else "") + f"[flip cause: {flip_cause}]"
         out.append(ClauseVerdict(
             clause=clause, satisfied=satisfied, evidence=evidence, resolved_by=resolved_by,
         ))
@@ -558,10 +598,14 @@ def validate(
     corrections = [str(c).strip() for c in raw_corr if str(c).strip()] if isinstance(raw_corr, list) else []
     question = str(parsed.get("question", "")).strip()
     # Spec 035: in pinned mode the id contract is enforced here — an unknown,
-    # duplicate, or omitted pinned id raises out of this call (the round fails
-    # closed as a mechanism failure, never a judgment).
+    # duplicate, or omitted pinned id, or a causeless flip of a satisfied
+    # clause (FR-011), raises out of this call (the round fails closed as a
+    # mechanism failure, never a judgment).
     pinned_map = {c.id: c.text for c in pinned_clauses} if pinned_clauses else None
-    clauses = _parse_clauses(parsed.get("clauses"), pinned_map)
+    prior_satisfied = (
+        {c.id for c in pinned_clauses if c.satisfied} if pinned_clauses else None
+    )
+    clauses = _parse_clauses(parsed.get("clauses"), pinned_map, prior_satisfied)
     structural_health, structural_concerns = _parse_structural(parsed)
     if verdict == "needs_human" and not question:
         # tolerate a model that put the ask in rationale rather than question
