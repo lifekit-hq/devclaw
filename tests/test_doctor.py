@@ -899,3 +899,50 @@ def test_no_repo_url_short_circuits_without_listing(env, tmp_path, monkeypatch):
     monkeypatch.setattr(checks_project, "_list_ready_issues", _boom)
     (f,) = _findings(_run(env), _READY_CID)
     assert f.verdict is Verdict.OK and "no repo_url" in f.evidence
+
+
+def test_contract_pins_table_absent_detected(env):
+    """Seeded fault (spec-016 FR-014, spec 035): goal_contract_pins dropped →
+    the DB predates the pin; every done-gate round re-decomposes the contract
+    (the rubric-drift class the pin exists to kill)."""
+    db = env["store"]._db
+    db.execute("DROP TABLE goal_contract_pins")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.donegate.contract_pins")
+    assert f.verdict is Verdict.FAIL
+    assert "goal_contract_pins" in f.evidence and "restart" in f.remedy
+
+
+def test_contract_pins_corrupt_row_detected(env):
+    """Seeded fault (spec 035 FR-008): an unparseable pin row — recurring
+    corruption means a second writer outside the GoalStore seam."""
+    db = env["store"]._db
+    db.execute(
+        "INSERT INTO goal_status (goal_id, version, updated_at) VALUES ('g-pin', 1, 1)"
+    )
+    db.execute(
+        "INSERT INTO goal_contract_pins (goal_id, revision, clauses, pinned_at_ms)"
+        " VALUES ('g-pin', 'abc123', 'not json', 1)"
+    )
+    db.commit()
+    (f,) = _findings(_run(env), "instance.donegate.contract_pins")
+    assert f.verdict is Verdict.FAIL
+    assert "unparseable" in f.evidence and "g-pin" in f.evidence
+
+
+def test_contract_pins_orphan_goal_detected(env):
+    """Seeded fault (spec 035 FR-008): a pin row keyed to no goal_status row."""
+    db = env["store"]._db
+    db.execute(
+        "INSERT INTO goal_contract_pins (goal_id, revision, clauses, pinned_at_ms)"
+        " VALUES ('g-ghost', 'abc123', '[{\"id\": \"c1\", \"text\": \"t\"}]', 1)"
+    )
+    db.commit()
+    (f,) = _findings(_run(env), "instance.donegate.contract_pins")
+    assert f.verdict is Verdict.FAIL
+    assert "g-ghost" in f.evidence
+
+
+def test_contract_pins_present_is_ok(env):
+    (f,) = _findings(_run(env), "instance.donegate.contract_pins")
+    assert f.verdict is Verdict.OK

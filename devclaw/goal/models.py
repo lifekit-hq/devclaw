@@ -494,6 +494,11 @@ class EvalResult:
     #: ``clean``. When ``poor`` or a substantive ``concerns``, each entry becomes
     #: a correction on the downgrade path.
     structural_concerns: list[str] = field(default_factory=list)
+    #: spec 035 (pin harvest): the delivery-ceremony text the model dropped at
+    #: decomposition (prompt step 1a), recorded with the pin so the drop
+    #: happens once per revision, never re-discovered per round. Populated
+    #: only on a decomposition-mode done-gate round; empty in pinned mode.
+    dropped_ceremony: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

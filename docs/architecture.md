@@ -156,6 +156,18 @@ re-opens the gate. The project's own verification environment is the verdict
 of record; the in-sandbox `verify_cmd` is a fast pre-check whose pass is
 never evidence.
 
+Since spec 035 (2026-09-05) the done-gate's rubric is **pinned per contract
+revision**: the first judged round of a revision decomposes `done_when` into
+clauses (its own evaluator output — no extra cognition call) and persists
+them with mechanical ids (`goal_contract_pins`, one row per goal+revision,
+history retained); every later round judges exactly that list — evidence
+fresh, rubric fixed. A verdict that adds, drops, duplicates, or invents a
+clause id is a malformed round: it fails closed (#186) and does NOT charge
+the churn brake (a formatting failure is a mechanism failure, never a
+judgment). A corrupt pin re-decomposes loudly with the recovery recorded;
+the only re-pin trigger is an amended contract (a new revision digest) —
+there is no operator verb for it.
+
 Two properties make the heartbeat cheap and safe, and both are load-bearing:
 
 1. **Zero-token idle guard.** An idle goal, or one whose work is still in
