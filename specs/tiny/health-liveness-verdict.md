@@ -34,8 +34,8 @@ now"). Ground truth in the code makes the verdict clean:
 ## Requirements
 
 - `/health` (and `/node.json`'s shared `freshness` block) carries
-  `stale: bool`, `stale_reason: str | null`, `stale_after_seconds: int |
-  null`. All existing fields keep their shape.
+  `stale: bool`, `stale_reason: str | null`. All existing fields keep
+  their shape.
 - `stale_reason` names the true condition distinctly:
   `heartbeat_stale` (the loop ticked once but the stamp now exceeds the
   threshold) vs `loop_never_ticked` (process start never completed a

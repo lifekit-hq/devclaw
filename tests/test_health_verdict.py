@@ -105,7 +105,7 @@ def test_dispatch_held_but_ticking_is_not_stale(monkeypatch):
     assert out["stale_reason"] is None
 
 
-def test_freshness_carries_verdict_and_self_described_threshold(monkeypatch):
+def test_freshness_carries_verdict(monkeypatch):
     from devclaw.state_store import _now_ms
 
     now = _now_ms()
@@ -116,7 +116,6 @@ def test_freshness_carries_verdict_and_self_described_threshold(monkeypatch):
     )
     assert out["stale"] is True
     assert out["stale_reason"] == "heartbeat_stale"
-    assert out["stale_after_seconds"] == 3 * TICK
 
 
 def _get_health(query_string: bytes):

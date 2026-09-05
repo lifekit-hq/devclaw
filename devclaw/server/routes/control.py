@@ -105,11 +105,9 @@ def _health_freshness() -> dict:
         "dispatch_open": not blocked,
         "dispatch_hold_reason": why or None,
         # The liveness verdict (audit B3a) — the field the dead-man watcher
-        # acts on; the threshold is self-described so consumers never
-        # duplicate config.
+        # acts on.
         "stale": stale,
         "stale_reason": stale_reason,
-        "stale_after_seconds": (stale_ticks * int(tick_seconds)) if tick_seconds else None,
     }
 
 
@@ -122,7 +120,7 @@ async def health(request: Request) -> Response:
     verdict answers 503 with ``ok: false`` so a bare ``curl -f`` can detect a
     wedged loop, not only a dead process."""
     body = {"ok": True, "name": SERVER_NAME, "version": __version__, **_health_freshness()}
-    strict = request.query_params.get("strict") in ("1", "true", "yes")
+    strict = request.query_params.get("strict") == "1"
     if strict and body["stale"]:
         body["ok"] = False
         return JSONResponse(body, status_code=503)
