@@ -373,6 +373,19 @@ def health_stale_ws_warn() -> int:
         return 20
 
 
+def health_stale_ticks() -> int:
+    """Heartbeat-staleness multiplier for the /health liveness verdict: the
+    loop is judged stale when ``last_tick_at`` (or process start, before the
+    first completed pass) is older than this many tick intervals.
+    ``DEVCLAW_HEALTH_STALE_TICKS``, default 3. Non-positive/unparseable → 3."""
+    raw = os.environ.get("DEVCLAW_HEALTH_STALE_TICKS", "3")
+    try:
+        v = int(raw)
+        return v if v > 0 else 3
+    except (ValueError, TypeError):
+        return 3
+
+
 def health_check_interval_s() -> int:
     """Minimum seconds between health drift probe runs.
     ``DEVCLAW_HEALTH_INTERVAL_S``, default 3600. Returns 3600 on bad/non-positive input."""

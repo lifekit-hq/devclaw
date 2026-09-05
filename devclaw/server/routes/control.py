@@ -22,6 +22,41 @@ from starlette.responses import JSONResponse, Response
 from ... import __version__
 from .._state import SERVER_NAME, goals, mcp, store
 
+def _liveness_verdict(
+    *,
+    started_at_ms: "int | None",
+    last_tick_at_ms: "int | None",
+    tick_seconds: "int | None",
+    stale_ticks: int,
+    now_ms: int,
+) -> "tuple[bool, str | None]":
+    """The staleness verdict over the heartbeat freshness stamp (audit B3a):
+    ``(stale, reason)``. ``tick_all`` stamps only on a COMPLETED pass, and the
+    quota pause / operator hold / run-window all gate INSIDE the tick while the
+    loop keeps stamping — so a stale stamp means the loop is wedged or dead,
+    never "held on purpose". Dispatch-held is deliberately not an input here:
+    it is its own surfaced condition (``dispatch_open``), and an alarm that
+    named the wrong condition would train its reader to distrust it.
+
+    Reasons name the true failing condition distinctly:
+    ``heartbeat_stale`` — the loop completed a pass once, but the stamp now
+    exceeds ``stale_ticks`` × ``tick_seconds``; ``loop_never_ticked`` — the
+    process started that long ago and never completed a FIRST pass (startup
+    recovery hung, or the loop never started). Unknown inputs (no
+    ``tick_seconds`` / ``started_at``) render no alarm — unknown is not an
+    alarm."""
+    if not tick_seconds or not started_at_ms:
+        return False, None
+    window_ms = stale_ticks * int(tick_seconds) * 1000
+    if last_tick_at_ms:
+        if now_ms - int(last_tick_at_ms) > window_ms:
+            return True, "heartbeat_stale"
+        return False, None
+    if now_ms - int(started_at_ms) > window_ms:
+        return True, "loop_never_ticked"
+    return False, None
+
+
 def _health_freshness() -> dict:
     """Heartbeat freshness + build identity (#494) — one truth shared by
     ``/health`` and ``/node.json``, so the external dead-man watcher and the
@@ -49,24 +84,49 @@ def _health_freshness() -> dict:
     # tell "held" from "stalled" (O3-class false positive) without auth.
     # Same computation get_run_schedule serves — not sensitive: it says
     # WHETHER dispatch is open, not what is being dispatched.
-    blocked, why = operator_block(store.operator_hold(), store.get_run_schedule(), _now_ms())
+    now_ms = _now_ms()
+    blocked, why = operator_block(store.operator_hold(), store.get_run_schedule(), now_ms)
+    tick_seconds = getattr(goals, "tick_seconds", None)
+    stale_ticks = _config.health_stale_ticks()
+    stale, stale_reason = _liveness_verdict(
+        started_at_ms=getattr(goals, "started_at_ms", None),
+        last_tick_at_ms=getattr(goals, "last_tick_at_ms", None),
+        tick_seconds=tick_seconds,
+        stale_ticks=stale_ticks,
+        now_ms=now_ms,
+    )
     return {
         "git_sha": _config.git_sha(),
         "built_at": _config.built_at(),
         "started_at": _iso(getattr(goals, "started_at_ms", None)),
         "last_tick_at": _iso(getattr(goals, "last_tick_at_ms", None)),
         "last_cycle_report_at": _iso(last_report_ms),
-        "tick_seconds": getattr(goals, "tick_seconds", None),
+        "tick_seconds": tick_seconds,
         "dispatch_open": not blocked,
         "dispatch_hold_reason": why or None,
+        # The liveness verdict (audit B3a) — the field the dead-man watcher
+        # acts on; the threshold is self-described so consumers never
+        # duplicate config.
+        "stale": stale,
+        "stale_reason": stale_reason,
+        "stale_after_seconds": (stale_ticks * int(tick_seconds)) if tick_seconds else None,
     }
 
 
 @mcp.custom_route("/health", methods=["GET"])
-async def health(_request: Request) -> Response:
-    return JSONResponse(
-        {"ok": True, "name": SERVER_NAME, "version": __version__, **_health_freshness()}
-    )
+async def health(request: Request) -> Response:
+    """Liveness + the staleness verdict. Top-level ``ok`` keeps meaning "the
+    HTTP process is serving" so existing consumers (compose healthcheck curl,
+    ops-agent poll) see today's shape; the verdict rides ``stale`` /
+    ``stale_reason``. ``?strict=1`` opts in to exit-code semantics: a stale
+    verdict answers 503 with ``ok: false`` so a bare ``curl -f`` can detect a
+    wedged loop, not only a dead process."""
+    body = {"ok": True, "name": SERVER_NAME, "version": __version__, **_health_freshness()}
+    strict = request.query_params.get("strict") in ("1", "true", "yes")
+    if strict and body["stale"]:
+        body["ok"] = False
+        return JSONResponse(body, status_code=503)
+    return JSONResponse(body)
 
 
 def _resolve_env_doc() -> Path:

@@ -168,6 +168,7 @@ nothing — unknown is not an alarm.
 | `DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN` | `10` | Count of docker toolchain volumes (`devclaw-toolchains-*`) with no registered project workspace above which an `orphan_docker_volumes` problem is recorded. Negative/unparseable → 10. Docker probe failure → no record. |
 | `DEVCLAW_HEALTH_STALE_WS_WARN` | `20` | Count of sweep-eligible workspace directories (terminal goal, past retention, still on disk) above which a `stale_workspaces` problem is recorded. Negative/unparseable → 20. |
 | `DEVCLAW_HEALTH_INTERVAL_S` | `3600` | Minimum wall-clock seconds between health drift probe runs. The gate is a cheap meta-key timestamp compare; probes (including the docker subprocess) only fire when the interval has elapsed. Non-positive/unparseable → 3600. |
+| `DEVCLAW_HEALTH_STALE_TICKS` | `3` | Heartbeat-staleness multiplier for the `/health` liveness verdict: the loop is judged `stale` when `last_tick_at` (or process start, before the first completed pass) is older than this many `DEVCLAW_GOAL_TICK_SECONDS` intervals. `stale_reason` names the condition (`heartbeat_stale` vs `loop_never_ticked`); a held/paused-but-ticking instance is never stale. `GET /health?strict=1` turns a stale verdict into a 503 for curl-based checks. Non-positive/unparseable → 3. |
 
 ## Deploy hosting
 
