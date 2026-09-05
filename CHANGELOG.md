@@ -2,6 +2,65 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [1.1.0](https://github.com/lifekit-hq/devclaw/compare/v1.0.0...v1.1.0) (2026-09-05)
+
+
+### Features
+
+* **cognition:** make the host-cognition cap a live operator dial ([#775](https://github.com/lifekit-hq/devclaw/issues/775)) ([aa89c1d](https://github.com/lifekit-hq/devclaw/commit/aa89c1d93b55428b3ae622de1dffd9f28d40787c))
+* **doctor:** flag a tracked .specify/feature.json as merge-conflict fuel ([#810](https://github.com/lifekit-hq/devclaw/issues/810)) ([08ecef3](https://github.com/lifekit-hq/devclaw/commit/08ecef3815426e48616d2ff4ca7f0eea5e4686d2))
+* **evals:** profile the token burn, then tell workers tool output is permanent context ([#801](https://github.com/lifekit-hq/devclaw/issues/801)) ([64d2524](https://github.com/lifekit-hq/devclaw/commit/64d252487caa3fd902ca84500c6e2cc20ba41f85))
+* **gates:** spec 032 US3 — every changed path carries a class; gate-input edits and binaries fail the task ([#813](https://github.com/lifekit-hq/devclaw/issues/813)) ([7c37b4a](https://github.com/lifekit-hq/devclaw/commit/7c37b4a99f7f951cb9195556bc5a0bf492545287))
+* **goal:** spec 031 P1 — a human-gated block carries a typed Problem; two verbs resolve it ([#803](https://github.com/lifekit-hq/devclaw/issues/803)) ([91c6ba7](https://github.com/lifekit-hq/devclaw/commit/91c6ba764954facc2cad5f1557b1bdb593229f37))
+* **goal:** spec 031 P2a — Decisions fed forward as fact; the done-gate never re-asks a decided clause ([#805](https://github.com/lifekit-hq/devclaw/issues/805)) ([9eb93a0](https://github.com/lifekit-hq/devclaw/commit/9eb93a025b1ceefcec362092abff267a613a0842))
+* **goal:** spec 031 P2b — the done_when admission lint refuses, rewrites, or raises a Problem at creation ([#806](https://github.com/lifekit-hq/devclaw/issues/806)) ([0c84b39](https://github.com/lifekit-hq/devclaw/commit/0c84b3948060d00c02526764d897ed6d33df7e65))
+* **goal:** spec 032 P1 — the project's CI is a fact read before the done-gate, never after it ([#811](https://github.com/lifekit-hq/devclaw/issues/811)) ([1358ec9](https://github.com/lifekit-hq/devclaw/commit/1358ec91086126128bf21021c510cc61af1050ab))
+* **goal:** spec 032 US2 — a worker's environment gap is the pipeline's fact, never the owner's question ([#812](https://github.com/lifekit-hq/devclaw/issues/812)) ([89b2b11](https://github.com/lifekit-hq/devclaw/commit/89b2b110859999149983e8d4d8c22dcf4c9f63b6))
+* **goal:** spec 035 US1 — the done-gate rubric is pinned per contract revision ([#824](https://github.com/lifekit-hq/devclaw/issues/824)) ([29c95e7](https://github.com/lifekit-hq/devclaw/commit/29c95e7179552358544ef49c7588a4d64548ae9f))
+* **goal:** spec 035 US2 — monotonic done-gate accounting with the flip rule ([#825](https://github.com/lifekit-hq/devclaw/issues/825)) ([aa954d9](https://github.com/lifekit-hq/devclaw/commit/aa954d9e4cf63351a4055ce5e91eddd4562bdda3))
+* **goal:** spec 035 US3 — an amendment re-pins once, with carry-forward ([#826](https://github.com/lifekit-hq/devclaw/issues/826)) ([8499fb6](https://github.com/lifekit-hq/devclaw/commit/8499fb6eb0cd5ed1ba0e83be81afd1f28feec9fc))
+* **intake:** grade staleness — an ask the repo already satisfies is not ready (spec 028 US2) ([#770](https://github.com/lifekit-hq/devclaw/issues/770)) ([01d9611](https://github.com/lifekit-hq/devclaw/commit/01d9611c90ce4285d1f09c413bb14c48759c1788))
+* **queue:** make the concurrency cap a live operator dial, not a redeploy ([#773](https://github.com/lifekit-hq/devclaw/issues/773)) ([49215f7](https://github.com/lifekit-hq/devclaw/commit/49215f77cbf8964077f3f884fd032009152850aa))
+* **scorecard:** spec 032 US5 + doctrine — human interventions per achieved goal; the human is not a stage ([#814](https://github.com/lifekit-hq/devclaw/issues/814)) ([0c50678](https://github.com/lifekit-hq/devclaw/commit/0c50678448122df3c777f3baca9e60866c6011b3))
+
+
+### Bug Fixes
+
+* **ci:** stage the pytest TMPDIR under RUNNER_TEMP, not the host tmpfs ([#794](https://github.com/lifekit-hq/devclaw/issues/794)) ([5e7ff52](https://github.com/lifekit-hq/devclaw/commit/5e7ff526bf1828df7949e0fd77673ba7f9c09a23))
+* **cognition:** contract-truth hygiene — ask on design conflicts, refuse current-code claims in acceptance ([#789](https://github.com/lifekit-hq/devclaw/issues/789)) ([6ff6f4a](https://github.com/lifekit-hq/devclaw/commit/6ff6f4a5e5232e28283cbda97e7d71ccfc2123f0))
+* **console:** add 'resolve' to the busy-state union — the P1 deploy build failed on it ([#804](https://github.com/lifekit-hq/devclaw/issues/804)) ([aa58915](https://github.com/lifekit-hq/devclaw/commit/aa58915e264db303bed6b758155236d84395ee29))
+* **console:** tell the operator what the store already knows — the empty-page cluster ([#783](https://github.com/lifekit-hq/devclaw/issues/783)) ([8e51846](https://github.com/lifekit-hq/devclaw/commit/8e51846bc6a258d8f56b633d7cfcee043e580505))
+* **delivery:** an issue-number scope never becomes a repo label ([#790](https://github.com/lifekit-hq/devclaw/issues/790)) ([b1edcf1](https://github.com/lifekit-hq/devclaw/commit/b1edcf1a53b0e5315dd6fd81a1a7f367e2b2512c))
+* **deploy:** forward the sandbox dials the compose file was dropping ([#799](https://github.com/lifekit-hq/devclaw/issues/799)) ([1d98653](https://github.com/lifekit-hq/devclaw/commit/1d986531b59aa61fe622b96f602b65e88f9325e2))
+* **deploy:** pass DEVCLAW_MAX_CONCURRENT through to the container ([#772](https://github.com/lifekit-hq/devclaw/issues/772)) ([fd78aba](https://github.com/lifekit-hq/devclaw/commit/fd78abad86ba7fa795b960c4f6549f26c605c042))
+* **deploy:** the container's credentials get ONE durable home; absence fails loud ([#816](https://github.com/lifekit-hq/devclaw/issues/816)) ([cec3aa8](https://github.com/lifekit-hq/devclaw/commit/cec3aa8016650eedd48ffd9e9e49b597aaced9e2))
+* **goal:** a context-tripwire landing settles `partial`, not `failed` ([#797](https://github.com/lifekit-hq/devclaw/issues/797)) ([b5b6794](https://github.com/lifekit-hq/devclaw/commit/b5b6794f12626fff87d6a66a1c886eb015240275))
+* **goal:** GoalStore.record_problem passthrough — the T044 lint-miss record never fired ([#807](https://github.com/lifekit-hq/devclaw/issues/807)) ([c77d8ce](https://github.com/lifekit-hq/devclaw/commit/c77d8cea9c60712d6f02998f0d52b38c5559e5f3))
+* **goal:** re-drive an interrupted done-gate close on the next tick ([#784](https://github.com/lifekit-hq/devclaw/issues/784)) ([#785](https://github.com/lifekit-hq/devclaw/issues/785)) ([4619053](https://github.com/lifekit-hq/devclaw/commit/4619053f25639513f6e4198a80f9d3d27952c0fc))
+* **goal:** runnable-head lane selection — head-of-line blocking is a bug, not a policy ([#786](https://github.com/lifekit-hq/devclaw/issues/786)) ([9bedda2](https://github.com/lifekit-hq/devclaw/commit/9bedda2971fc556b53f270ccb961de60256e4c14))
+* **goal:** the churn brake counts flat rounds, not rounds ([#802](https://github.com/lifekit-hq/devclaw/issues/802)) ([4dfa0b9](https://github.com/lifekit-hq/devclaw/commit/4dfa0b95e07dbe977071795d019b4a17eadee9dd))
+* **goal:** the merge-conflict heal survives the closed-issues freshness guard ([#809](https://github.com/lifekit-hq/devclaw/issues/809)) ([1e1daa4](https://github.com/lifekit-hq/devclaw/commit/1e1daa4e907d39c6e218b3b298fe45ae5e778272))
+* **harness:** judge the docs against the repository, not the mounted filesystem ([#782](https://github.com/lifekit-hq/devclaw/issues/782)) ([8e70489](https://github.com/lifekit-hq/devclaw/commit/8e704898b46ae2b886e4a81ab144a691b91866f9))
+* **health:** close the three advisory findings from the issue-596 close ([#779](https://github.com/lifekit-hq/devclaw/issues/779)) ([58e0b41](https://github.com/lifekit-hq/devclaw/commit/58e0b41e9cb95edeca3f882ccebd6c745d005943))
+* **health:** probe every instance-critical filesystem, not just the goals dir ([#776](https://github.com/lifekit-hq/devclaw/issues/776)) ([92a4df0](https://github.com/lifekit-hq/devclaw/commit/92a4df0f317d0fe510a188be7fd9e644e01bafd1))
+* **tripwire:** the blocked short-circuit drops the context-budget fields; gate the partial on a measured span ([#798](https://github.com/lifekit-hq/devclaw/issues/798)) ([9c7ce8e](https://github.com/lifekit-hq/devclaw/commit/9c7ce8ed0eb7367adb92b9c3807b2d51ce648db0))
+
+
+### Hardening
+
+* **doctor:** ready-labeled issues must carry a parseable acceptance contract ([#796](https://github.com/lifekit-hq/devclaw/issues/796)) ([4f1b5d6](https://github.com/lifekit-hq/devclaw/commit/4f1b5d6b694d54fd443faf3d8e1d3e7784c55ab1))
+* **queue:** fail-loud on direct-dispatch fetch failure when origin… ([#777](https://github.com/lifekit-hq/devclaw/issues/777)) ([eccb16d](https://github.com/lifekit-hq/devclaw/commit/eccb16df03998696194d2cf208c9e4832b6bfbb1))
+
+
+### Documentation
+
+* **claude:** remove dead .claude/ backtick paths from harness doc ([#781](https://github.com/lifekit-hq/devclaw/issues/781)) ([0967de8](https://github.com/lifekit-hq/devclaw/commit/0967de841a9b007402af116315ae410c18696b75))
+* **constitution:** make ADR 0004's shed rule a plan-time Constitution Check gate (2.7.0) ([#821](https://github.com/lifekit-hq/devclaw/issues/821)) ([4c0a41f](https://github.com/lifekit-hq/devclaw/commit/4c0a41f78e21decb38b2082721629b7d10e7379a))
+* **harness:** add the root-cause skill — fix the class, never the instance ([#808](https://github.com/lifekit-hq/devclaw/issues/808)) ([8c9c6bd](https://github.com/lifekit-hq/devclaw/commit/8c9c6bd9e4aade160db4137d58f9456ae41fb3f8))
+* **spec 032:** stamp the implemented status; US4 provisioning is the one open item ([#815](https://github.com/lifekit-hq/devclaw/issues/815)) ([677f290](https://github.com/lifekit-hq/devclaw/commit/677f2907f0dd4949f4938816b0a06706a2351b98))
+* **spec:** spec 030 — environment-capability admission (clarified) ([#791](https://github.com/lifekit-hq/devclaw/issues/791)) ([8f92936](https://github.com/lifekit-hq/devclaw/commit/8f929366b39fe9fa8a5a8708edaaf433a3e7dfc0))
+* **spec:** spec 034 — worker file memory, committed as clarified draft ([#822](https://github.com/lifekit-hq/devclaw/issues/822)) ([7bf37f0](https://github.com/lifekit-hq/devclaw/commit/7bf37f0a789c37f7e9a49e20a65862898b539d62))
+
 ## [1.0.0](https://github.com/lifekit-hq/devclaw/compare/v0.6.0...v1.0.0) (2026-08-31)
 
 
