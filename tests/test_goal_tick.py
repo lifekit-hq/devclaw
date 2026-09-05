@@ -4305,3 +4305,77 @@ async def test_donegate_decision_satisfies_clause_in_pinned_denominator(tmp_path
     assert c2.satisfied and c2.via_decision == "dec_42"
     assert "dec_42" in c2.evidence
     assert store.load_status("g").donegate_progress == 1
+
+
+@pytest.mark.asyncio
+async def test_donegate_amendment_repins_once_with_carry_forward(tmp_path):
+    """US3 (FR-003/FR-007): a changed contract revision re-decomposes exactly
+    once, the log names the revision change, byte-identical clauses inherit
+    their satisfied/evidence/Decision state (carried_from lineage), changed
+    clauses start open — and rounds continuing under the new revision are
+    pinned again (no further decomposition)."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    engine_ok = lambda: FakeEngine(  # noqa: E731
+        poll_result=PollResult(terminal=True, status="done", detail="review ran"))
+    notifier = RecordingNotifier()
+
+    # round 1 on revision A: decompose; c1 satisfied by evidence, c2 by a
+    # recorded Decision, c3 open
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "docs open", "corrections": ["[clause 3] update docs"],
+        "clauses": [
+            {"clause": "/health returns 200", "satisfied": True, "evidence": "Health.cs:12"},
+            {"clause": "uses cookie auth", "satisfied": True, "resolved_by": "dec_42", "evidence": ""},
+            {"clause": "docs updated", "satisfied": False, "evidence": "missing"},
+        ],
+    }))
+    _arm_done_check(store, "g", "r1")
+    assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.SLEPT
+    assert store.read_contract_pin("g", _PIN_REV).satisfied_count() == 2
+
+    # the owner amends the contract: same first two requirements, the third
+    # becomes a changelog entry → new revision digest
+    amended = "all backlog items merged\nplus a changelog entry"
+    seed_goal(tmp_path, "g", done_when=amended)
+    new_rev = _hashlib.sha256(amended.encode()).hexdigest()[:12]
+
+    evaluator.response = json.dumps({
+        "verdict": "off_track", "rationale": "changelog open", "corrections": ["[clause 3] add it"],
+        "clauses": [
+            {"clause": "/health returns 200", "satisfied": True, "evidence": "Health.cs:12"},
+            {"clause": "uses cookie auth", "satisfied": True, "resolved_by": "dec_42", "evidence": ""},
+            {"clause": "a changelog entry exists", "satisfied": False, "evidence": "missing"},
+            {"clause": "release notes linked", "satisfied": False, "evidence": "missing"},
+        ],
+    })
+    _arm_done_check(store, "g", "r2")
+    assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.SLEPT
+    log = store.recent_log("g")
+    assert "contract revision changed" in log
+    assert log.count("pinned contract revision") == 2      # one pin per revision
+    pin2 = store.read_contract_pin("g", new_rev)
+    c1, c2, c3, c4 = pin2.clauses
+    assert c1.satisfied and c1.carried_from == "c1" and c1.satisfied_round == 1
+    assert c2.satisfied and c2.via_decision == "dec_42" and c2.carried_from == "c2"
+    assert not c3.satisfied and c3.carried_from == ""      # changed clause starts open
+    assert not c4.satisfied and c4.carried_from == ""
+    # the prior revision's pin is retained for audit
+    assert store.read_contract_pin("g", _PIN_REV) is not None
+
+    # a further round under the amended revision is pinned — no third
+    # decomposition ever happens for it (progress rises, so the churn brake
+    # correctly stays out of the way)
+    evaluator.response = json.dumps({
+        "verdict": "off_track", "rationale": "notes open", "corrections": ["[c4] link them"],
+        "clauses": [
+            {"id": "c1", "satisfied": True, "evidence": "Health.cs:12"},
+            {"id": "c2", "satisfied": True, "resolved_by": "dec_42", "evidence": ""},
+            {"id": "c3", "satisfied": True, "evidence": "CHANGELOG.md added"},
+            {"id": "c4", "satisfied": False, "evidence": "missing"},
+        ],
+    })
+    _arm_done_check(store, "g", "r3")
+    assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.SLEPT
+    assert "## Pinned clauses" in evaluator.last_prompt
+    assert store.recent_log("g").count("pinned contract revision") == 2

@@ -54,15 +54,15 @@
 
 **Independent test**: quickstart Scenario 4.
 
-- [ ] T017 [US3] devclaw/goal/tick_donegate.py: digest ≠ pinned revision ⇒ decomposition mode for the new revision; harvest via `clause_pin.carry_forward` (satisfied/evidence/via_decision inherited for byte-identical text, carried_from set); rationale names the revision change as the cause (FR-003)
-- [ ] T018 [US3] Verify-and-pin Decisions across re-pin: a decided clause present in the amended contract is not re-asked (spec 031 semantics; FR-007) — covered in the evaluator's Decisions block rendering for the new pin
-- [ ] T019 [US3] Tests (extend the same named cases): quickstart S4 — one new pin row, carry-forward fields, Decision survival, changed clauses start open
-- [ ] T020 [US3] /ship ritual; PR 3
+- [X] T017 [US3] devclaw/goal/tick_donegate.py: digest ≠ pinned revision ⇒ decomposition mode for the new revision; harvest via `clause_pin.carry_forward` (satisfied/evidence/via_decision inherited for byte-identical text, carried_from set); rationale names the revision change as the cause (FR-003)
+- [X] T018 [US3] Verify-and-pin Decisions across re-pin: a decided clause present in the amended contract is not re-asked (spec 031 semantics; FR-007) — covered in the evaluator's Decisions block rendering for the new pin
+- [X] T019 [US3] Tests (extend the same named cases): quickstart S4 — one new pin row, carry-forward fields, Decision survival, changed clauses start open
+- [X] T020 [US3] /ship ritual; PR 3
 
 ## Final Phase: Polish & cross-cutting
 
-- [ ] T021 Stamp spec status: specs/035-pin-donegate-clauses/spec.md Status → Implemented (all three stories) in PR 3; note the eval-set companion remains open work
-- [ ] T022 Remove worktrees; verify main green; deploy stays Denys's button — note in the PR 3 body that the pin activates per-goal on the next done-gate round with no migration
+- [X] T021 Stamp spec status: specs/035-pin-donegate-clauses/spec.md Status → Implemented (all three stories) in PR 3; note the eval-set companion remains open work
+- [X] T022 Remove worktrees; verify main green; deploy stays Denys's button — note in the PR 3 body that the pin activates per-goal on the next done-gate round with no migration
 
 ## Dependencies
 
