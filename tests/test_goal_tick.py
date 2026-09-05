@@ -4111,7 +4111,9 @@ async def test_donegate_pins_rubric_once_per_revision(tmp_path):
     out = await _tick(store, "g", evaluator, engine, notifier)
     assert out is Outcome.SLEPT
     assert "## Pinned clauses" in evaluator.last_prompt
-    assert "[c1] /health returns 200" in evaluator.last_prompt
+    # round 1 satisfied c1, so the listing carries its prior state (US2)
+    assert "[c1] ✓ satisfied (round 1) /health returns 200" in evaluator.last_prompt
+    assert "[c2] /health is tested" in evaluator.last_prompt
     pin2 = store.read_contract_pin("g", _PIN_REV)
     assert [(c.id, c.text) for c in pin2.clauses] == [(c.id, c.text) for c in pin.clauses]
     # exactly ONE pin write across both rounds
@@ -4191,3 +4193,115 @@ async def test_donegate_corrupt_pin_recovers_loudly(tmp_path):
     pin = store.read_contract_pin("g", _PIN_REV)
     assert [c.id for c in pin.clauses] == ["c1"]
     assert pin.recovery != ""
+
+
+@pytest.mark.asyncio
+async def test_donegate_accounting_is_monotonic_with_flip_rule(tmp_path):
+    """US2 (FR-004/FR-011): the satisfied set persists on the pin round over
+    round against a stable denominator; a causeless flip of a satisfied
+    clause is a malformed round (fail-closed, no churn charge, accounting
+    untouched); a flip WITH a cited cause is accepted and carries the cause."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.write_contract_pin(_assign_ids(
+        "g", _PIN_REV, ["/health returns 200", "/health is tested", "docs updated"]))
+    engine_ok = lambda: FakeEngine(  # noqa: E731 — local factory, one shape
+        poll_result=PollResult(terminal=True, status="done", detail="review ran"))
+    notifier = RecordingNotifier()
+
+    # round 1: c1 satisfied
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "c2/c3 open", "corrections": ["[c2] add the test"],
+        "clauses": [
+            {"id": "c1", "satisfied": True, "evidence": "Health.cs:12"},
+            {"id": "c2", "satisfied": False, "evidence": "missing"},
+            {"id": "c3", "satisfied": False, "evidence": "missing"},
+        ],
+    }))
+    _arm_done_check(store, "g", "r1")
+    assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.SLEPT
+    s = store.load_status("g")
+    pin = store.read_contract_pin("g", _PIN_REV)
+    assert s.donegate_progress == 1 == pin.satisfied_count()
+    assert pin.by_id()["c1"].satisfied and pin.by_id()["c1"].evidence == "Health.cs:12"
+
+    # round 2: c1 stays satisfied (prompt shows the ✓ marker), c2 joins —
+    # progress 2 against the SAME denominator of 3
+    evaluator.response = json.dumps({
+        "verdict": "off_track", "rationale": "c3 open", "corrections": ["[c3] update docs"],
+        "clauses": [
+            {"id": "c1", "satisfied": True, "evidence": "Health.cs:12"},
+            {"id": "c2", "satisfied": True, "evidence": "HealthTests.cs:8 passes"},
+            {"id": "c3", "satisfied": False, "evidence": "missing"},
+        ],
+    })
+    _arm_done_check(store, "g", "r2")
+    assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.SLEPT
+    assert "✓ satisfied" in evaluator.last_prompt          # prior state rendered
+    s = store.load_status("g")
+    pin = store.read_contract_pin("g", _PIN_REV)
+    assert s.donegate_progress == 2 == pin.satisfied_count()
+    assert len(pin.clauses) == 3                            # denominator stable
+
+    # round 3: causeless flip of c1 → malformed round: ERROR, no churn
+    # charge, accounting untouched
+    evaluator.response = json.dumps({
+        "verdict": "off_track", "rationale": "changed my mind", "corrections": ["[c1] redo"],
+        "clauses": [
+            {"id": "c1", "satisfied": False, "evidence": "on reflection, weak"},
+            {"id": "c2", "satisfied": True, "evidence": "HealthTests.cs:8 passes"},
+            {"id": "c3", "satisfied": False, "evidence": "missing"},
+        ],
+    })
+    _arm_done_check(store, "g", "r3")
+    rounds_before = store.load_status("g").donegate_rounds
+    assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.ERROR
+    assert store.load_status("g").donegate_rounds == rounds_before
+    assert "without a flip_cause" in store.recent_log("g")
+    assert store.read_contract_pin("g", _PIN_REV).by_id()["c1"].satisfied is True
+
+    # round 4: the same flip WITH a cited cause is a legitimate judgment —
+    # accepted, and the cause rides the accounting
+    evaluator.response = json.dumps({
+        "verdict": "off_track", "rationale": "regression", "corrections": ["[c1] fix the regression"],
+        "clauses": [
+            {"id": "c1", "satisfied": False, "evidence": "route deleted",
+             "flip_cause": "commit f00 removed the /health route after round 1"},
+            {"id": "c2", "satisfied": True, "evidence": "HealthTests.cs:8 passes"},
+            {"id": "c3", "satisfied": False, "evidence": "missing"},
+        ],
+    })
+    _arm_done_check(store, "g", "r4")
+    assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.SLEPT
+    c1 = store.read_contract_pin("g", _PIN_REV).by_id()["c1"]
+    assert c1.satisfied is False
+    assert "flip cause: commit f00" in c1.evidence
+
+
+@pytest.mark.asyncio
+async def test_donegate_decision_satisfies_clause_in_pinned_denominator(tmp_path):
+    """US2 (FR-007 arithmetic, clarify Q4): a clause settled by a recorded
+    Decision stays in the pinned denominator, counted satisfied with the
+    Decision as its evidence — never removed from the rubric."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    store.write_contract_pin(_assign_ids("g", _PIN_REV, ["/health returns 200", "uses cookie auth"]))
+    notifier = RecordingNotifier()
+    evaluator = FakeClaude(json.dumps({
+        "verdict": "off_track", "rationale": "c1 open", "corrections": ["[c1] build it"],
+        "clauses": [
+            {"id": "c1", "satisfied": False, "evidence": "missing"},
+            {"id": "c2", "resolved_by": "dec_42", "satisfied": True, "evidence": ""},
+        ],
+    }))
+    _arm_done_check(store, "g", "r1")
+    out = await _tick(store, "g", evaluator,
+                      FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="r")),
+                      notifier)
+    assert out is Outcome.SLEPT
+    pin = store.read_contract_pin("g", _PIN_REV)
+    assert len(pin.clauses) == 2                       # denominator unchanged
+    c2 = pin.by_id()["c2"]
+    assert c2.satisfied and c2.via_decision == "dec_42"
+    assert "dec_42" in c2.evidence
+    assert store.load_status("g").donegate_progress == 1

@@ -166,7 +166,14 @@ clause id is a malformed round: it fails closed (#186) and does NOT charge
 the churn brake (a formatting failure is a mechanism failure, never a
 judgment). A corrupt pin re-decomposes loudly with the recovery recorded;
 the only re-pin trigger is an amended contract (a new revision digest) —
-there is no operator verb for it.
+there is no operator verb for it. Round accounting rides the pin (US2): the
+satisfied set, each clause's evidence, and any Decision that settled it are
+folded in per round, so `donegate_progress` counts against a stable
+denominator — and a round may flip a previously-satisfied clause only by
+citing what changed (`flip_cause`: the repo change since that evidence, or
+its named defect); a causeless flip is a malformed round, closing the other
+half of the fs-479 incident (satisfied at 11:06, sole failure at 12:24, no
+repo change between).
 
 Two properties make the heartbeat cheap and safe, and both are load-bearing:
 

@@ -42,11 +42,11 @@
 
 **Independent test**: quickstart Scenario 3 — progress 1→2 against constant denominator; causeless flip malformed; cited flip accepted.
 
-- [ ] T012 [US2] devclaw/goal/evaluator.py + devclaw/prompts/goal-evaluator.md: `flip_cause` contract — a clause entry flipping a previously-satisfied id carries a cited cause (repo change in the span since the satisfying evidence, or a named defect in it); absent ⇒ `GoalEvalError` (FR-011); prompt states the rule once
-- [ ] T013 [US2] devclaw/goal/tick_donegate.py: after each judgment round, `update_pin_accounting` — satisfied/evidence/satisfied_round per clause id; `donegate_progress` computed as |satisfied| against the pinned denominator (feeds the existing churn brake unchanged); pass the prior satisfied set into `_parse_clauses` as the flip-rule base
-- [ ] T014 [US2] devclaw/goal/tick_donegate.py: refusal rationales name only pinned ids with verbatim text (FR-004); a clause satisfied via a recorded Decision is counted satisfied with `via_decision` set and the Decision cited as evidence (FR-007 arithmetic, clarify Q4)
-- [ ] T015 [US2] Tests (extend T010's named cases, parametrize — never siblings): quickstart S3 monotonic accounting + flip rule; decided-clause-counted-satisfied; churn brake fed by stable denominator (a converging goal never parks)
-- [ ] T016 [US2] /ship ritual; PR 2
+- [X] T012 [US2] devclaw/goal/evaluator.py + devclaw/prompts/goal-evaluator.md: `flip_cause` contract — a clause entry flipping a previously-satisfied id carries a cited cause (repo change in the span since the satisfying evidence, or a named defect in it); absent ⇒ `GoalEvalError` (FR-011); prompt states the rule once
+- [X] T013 [US2] devclaw/goal/tick_donegate.py: after each judgment round, `update_pin_accounting` — satisfied/evidence/satisfied_round per clause id; `donegate_progress` computed as |satisfied| against the pinned denominator (feeds the existing churn brake unchanged); pass the prior satisfied set into `_parse_clauses` as the flip-rule base
+- [X] T014 [US2] devclaw/goal/tick_donegate.py: refusal rationales name only pinned ids with verbatim text (FR-004); a clause satisfied via a recorded Decision is counted satisfied with `via_decision` set and the Decision cited as evidence (FR-007 arithmetic, clarify Q4)
+- [X] T015 [US2] Tests (extend T010's named cases, parametrize — never siblings): quickstart S3 monotonic accounting + flip rule; decided-clause-counted-satisfied; churn brake fed by stable denominator (a converging goal never parks)
+- [X] T016 [US2] /ship ritual; PR 2
 
 ## Phase 5: User Story 3 — amendment re-pins once, with carry-forward (P3)
 

@@ -462,21 +462,37 @@ async def _resolve_done_gate(
         store.update_status_fields(goal_id, last_tick_at=store.now_iso())
         await _notify(notifier, NotifyLevel.TASK, f"⚠️ [{goal_id}] done-gate eval failed: {exc}")
         return Outcome.ERROR
+    active_pin = pin
     if revision and pin is None and ev.clauses:
         # Harvest (spec 035 US1): the first judged round of a revision IS the
         # decomposition of record — persist it; every later round of this
         # revision judges exactly this list. Zero extra cognition calls.
-        new_pin = _clause_pin.assign_ids(
+        active_pin = _clause_pin.assign_ids(
             goal_id, revision, [c.clause for c in ev.clauses],
             ceremony_drops=ev.dropped_ceremony,
             pinned_by_round=status.donegate_rounds + 1,
             recovery=pin_recovery,
         )
-        store.write_contract_pin(new_pin)
+        store.write_contract_pin(active_pin)
         store.append_log(
             goal_id,
-            f"pinned contract revision {revision} ({len(new_pin.clauses)} clauses)"
+            f"pinned contract revision {revision} ({len(active_pin.clauses)} clauses)"
             + (" — recovery re-pin" if pin_recovery else ""),
+        )
+    if active_pin is not None and ev.clauses:
+        # Accounting (spec 035 US2): fold this round's per-clause verdicts
+        # into the pin, keyed on clause id — the satisfied set, its evidence
+        # (a flip's cause rides inside it, FR-011), and any Decision that
+        # settled a clause. donegate_progress below equals the pin's
+        # satisfied count by construction (every pinned id is judged every
+        # round), so the churn brake's denominator is stable for free.
+        inv = {c.text: c.id for c in active_pin.clauses}
+        verdicts = {
+            inv[c.clause]: (c.satisfied, c.evidence, c.resolved_by)
+            for c in ev.clauses if c.clause in inv
+        }
+        store.update_pin_accounting(
+            goal_id, revision, verdicts, status.donegate_rounds + 1,
         )
     now = store.now_iso()
     base = replace(
