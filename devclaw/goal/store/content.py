@@ -279,6 +279,9 @@ class GoalContentMixin:
     def update_pin_accounting(self, goal_id: str, revision: str, verdicts, round_no: int):
         return self._goal_state.update_pin_accounting(goal_id, revision, verdicts, round_no)
 
+    def latest_contract_pin(self, goal_id: str):
+        return self._goal_state.latest_contract_pin(goal_id)
+
     def supersede_open_problems(self, goal_id: str) -> int:
         return self._goal_state.supersede_open_problems(goal_id, _now_ms())
 

@@ -45,6 +45,26 @@ class GoalStatePinsMixin:
             row["recovery"] or "",
         )
 
+    def latest_contract_pin(self, goal_id: str) -> Optional[ContractPin]:
+        """The goal's most recently written pin regardless of revision — the
+        carry-forward source when an amendment re-pins (spec 035 US3). Raises
+        ``PinCorrupt`` like :meth:`read_contract_pin`; the caller's recovery
+        for a corrupt PRIOR pin is simply to carry nothing forward."""
+        with self._store._lock:
+            row = self._store._db.execute(
+                "SELECT revision, clauses, ceremony_drops, pinned_at_ms,"
+                " pinned_by_round, recovery FROM goal_contract_pins"
+                " WHERE goal_id = ? ORDER BY pinned_at_ms DESC, revision DESC LIMIT 1",
+                (goal_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return pin_from_row(
+            goal_id, row["revision"], row["clauses"], row["ceremony_drops"],
+            int(row["pinned_at_ms"] or 0), int(row["pinned_by_round"] or 0),
+            row["recovery"] or "",
+        )
+
     def update_pin_accounting(
         self,
         goal_id: str,

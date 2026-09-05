@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-05
 
-**Status**: Draft
+**Status**: Implemented 2026-09-05 — all three user stories (PRs #824 US1, #825 US2, +US3); the done-gate calibration eval set remains the named companion workstream, not part of this spec
 
 **Input**: User description: "Done-gate: decompose the completion contract ONCE per contract revision and pin the clauses — re-decomposing every round makes closing a moving target (lifekit-hq/devclaw issue #793, the fs-479 two-hour-close class)"
 

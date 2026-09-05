@@ -473,10 +473,31 @@ async def _resolve_done_gate(
             pinned_by_round=status.donegate_rounds + 1,
             recovery=pin_recovery,
         )
+        # US3 (FR-003): an amendment re-pins exactly once, and never resets
+        # accounting it did not touch — clauses byte-identical to the prior
+        # revision's inherit their satisfied/evidence/Decision state
+        # (carried_from set); only genuinely changed clauses start open. A
+        # corrupt PRIOR pin simply carries nothing forward (the loud recovery
+        # already happened when it was the active pin).
+        amended_from = ""
+        if not pin_recovery:
+            try:
+                prev = store.latest_contract_pin(goal_id)
+            except _clause_pin.PinCorrupt:
+                prev = None
+            if prev is not None and prev.revision != revision:
+                active_pin = _clause_pin.carry_forward(prev, active_pin)
+                amended_from = prev.revision
         store.write_contract_pin(active_pin)
+        carried = sum(1 for c in active_pin.clauses if c.carried_from)
         store.append_log(
             goal_id,
             f"pinned contract revision {revision} ({len(active_pin.clauses)} clauses)"
+            + (
+                f" — contract revision changed {amended_from} → {revision}, "
+                f"re-decomposed once; {carried} clause(s) carried forward"
+                if amended_from else ""
+            )
             + (" — recovery re-pin" if pin_recovery else ""),
         )
     if active_pin is not None and ev.clauses:
