@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: Draft — awaiting `/speckit-clarify` with Denys (three open questions below). Supersedes the closed 037 calibration-corpus draft (PR #841).
+**Status**: Ruled 2026-09-06 — direction memory only. Executed through the tinyspec lane (Denys: "demolition without a spec"); no plan.md, no tasks.md. The three questions below were settled in the same session. Supersedes the closed 037 calibration-corpus draft (PR #841).
 
 **Input**: User description: "Does the current devclaw workflow make sense, with all those review gates after each task? devclaw is a wrapper of claude — it should structure the working agent, not make it stupid." (Denys, 2026-09-06; ruled "do it" on the four cuts below)
 
@@ -49,36 +49,12 @@ consumer are deleted outright.
 
 ## Clarifications
 
-### Open for the clarify session (in priority order)
+### Session 2026-09-06
 
-- **Q1 — The host's independent done-check after the worker self-reviews.**
-  Today a done proposal dispatches a separate `review_repository` sandbox
-  session whose report the `--print` evaluator judges against the pinned
-  clauses. Options: (A) keep it — one independent read per proposal, the
-  #630 class (the agent chooses what to record) stays covered, and the
-  expectation is that it passes first time because the worker already
-  closed the findings; (B) drop the second sandbox and let the evaluator
-  judge the worker's own self-review report plus CI — cheaper by one
-  session per proposal, but the only grounded read is the worker's own
-  claim, which the harness doctrine explicitly refuses as evidence.
-  [NEEDS CLARIFICATION: keep the independent review session (A) or judge the worker's self-report (B)]
-- **Q2 — Is the in-session self-review an instruction or a protocol field?**
-  Constitution IX closes a gap with an instruction first and a brake only
-  inside the five domains; the protocol IS one of the five. Options: (A)
-  instruction only — one skill section, checked by the scorecard's rounds
-  number; (B) the worker's result payload carries a `self_review` record
-  (findings found, findings closed) and the host refuses a done proposal
-  without one — a protocol brake, mechanical, zero cognition.
-  [NEEDS CLARIFICATION: instruction only (A) or a required protocol field (B)]
-- **Q3 — The `evaluate_goal` verb.** The on-demand direction evaluation is
-  the fourth role being cut; the MCP tool is what the ops agent's nightly
-  cron calls, and every nightly call on a pointer goal has written
-  "done_when is literally unspecified" since spec 019 (the #795 class).
-  Options: (A) delete the verb and the tool — the nightly cron on the
-  OpenClaw side is retired with it; (B) keep the tool name as a zero-cognition
-  status read (phase, in-flight, last done-gate verdict) so the cron keeps
-  working and costs nothing.
-  [NEEDS CLARIFICATION: delete the verb (A) or keep it as a mechanical read (B)]
+- Q: After the worker self-reviews in-session, does the host still run its own independent review session before judging a done proposal? → A: Yes — one `review_repository` read per proposal, as today, expected to pass first time now that the worker closes its own findings; the #630 class (the agent chooses what to record) stays covered. Dropping it later is a follow-up tinyspec with the scorecard as evidence.
+- Q: Is the in-session self-review an instruction or a protocol field? → A: Instruction only — one section in the code-writing skill, measured by the scorecard's rounds number (constitution IX: instruction before brake). A protocol field is the next step only if the number does not move.
+- Q: The `evaluate_goal` verb and tool? → A: Deleted with the role; the ops agent's nightly cron that called it is retired on the OpenClaw side in the same arc.
+- Q: Full speckit pipeline or the tinyspec lane? → A: Tinyspec lane. Every cut is a mechanical removal or a one-line instruction; this file is the direction memory and the rejected-alternatives record, nothing else is generated from it.
 
 ### Rejected alternatives (direction memory)
 

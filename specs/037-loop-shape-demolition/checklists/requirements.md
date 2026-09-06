@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain — three open for the clarify session (Q1 independent done-check, Q2 instruction vs protocol field, Q3 the evaluate_goal verb)
+- [x] No [NEEDS CLARIFICATION] markers remain — settled 2026-09-06 (Q1 keep the independent read, Q2 instruction only, Q3 delete the verb, Q4 tinyspec lane)
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -32,4 +32,4 @@
 ## Notes
 
 - FR-003 names config flags and tool names because the removal target must be unambiguous; that is the removal list, not a design.
-- Items marked incomplete require spec updates before `/speckit-plan`; `/speckit-clarify` is next, run WITH Denys one question at a time.
+- Executed through the tinyspec lane by ruling; no plan/tasks generated.
