@@ -7,6 +7,7 @@ reader knows what to trust. Tags:
 - **DECISION RECORD** — a frozen ADR in `decisions/`: the decision stands, the
   point-in-time system descriptions are not maintained for drift.
 - **STALE — see note** — contains at least one claim the code contradicts; note says what.
+- **SNAPSHOT** — a dated point-in-time record under `audits/`; never updated for drift, superseded by the next snapshot.
 
 Currency is verified by grepping each doc's load-bearing claims against the code, not
 by trusting the doc's own "Status:" line. When you change behavior that a doc
@@ -62,6 +63,17 @@ pipeline — see `.claude/rules/speckit-workflow.md`); specs under
 | [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | Deploying the OpenClaw waiter + devclaw to the VPS; the waiter's tool menu. | **CURRENT** — *audited 2026-07-13*: all menu tools exist; `resume_goal` added to the Goals line (#228). *Updated 2026-07-19*: `start_program` menu line marked as the deprecated one-shot-goal alias (ADR 0003 stage 2b — poll with `get_goal`, not `get_program`). *Updated 2026-08-29*: spec 022 US3 — `start_program` removed from the menu (retired; use `create_goal(mode='one_shot')`). *Updated 2026-08-10*: `delete_repo` added to the Tasks menu line. *Updated 2026-08-22*: spec 012 US2 — the grill→file flow carries the saga slots through to `create_goal`, which now requires them. *Updated 2026-08-29 (prune)*: the scope-grill porch, saga-slot arguments, and kind-alias task tools are removed — the ticket is the contract (spec 024); examples now file issue-backed goals via `create_goal(issues=[…])` / `dispatch_task`. |
 | [`runbooks/project-reference-key-cutover.md`](./runbooks/project-reference-key-cutover.md) | Deploying the `project_id` dispatch cutover (#520): the CI-driven redeploy mechanism, the one-shot P3 startup backfill, the run-window-persists correction, and the waiter lockstep. | **CURRENT** — 2026-08-22: written from the first cutover deploy (P1 #522 · P2 #525 · P3 #528), all steps executed + verified live on the VPS; step 4 updated for the #616 marker guard (the backfill now runs once per database, not every boot). |
 | [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy cutover (spec 005): from-source `deploy/Dockerfile` → ghcr push → own `devclaw` compose project; the goal-safe volume-adoption order, the lifekit-stack companion change, rollback, and cold first-deploy. | **CURRENT** — 2026-08-16: first real cutover executed on lifekit-vps (workflow run 31967714716 @ `1a3da69`): images built from source + pushed to ghcr by SHA, `compose_devclaw-state` adopted in place with zero goal loss (32/32 rows), seams over `lifekit-shared` verified both directions, old monolith containers removed. Env-file ownership fixed same day (#541): default is the devclaw-owned `/srv/devclaw/.env` (template: `deploy/.env.example`). *Updated 2026-09-04*: tinyspec `durable-container-secrets` — §1 gains the one-time secrets-file provisioning (`/srv/devclaw/secrets.env`, 0600) and the credential contract: the deploy writes it, every `docker compose up` reads it, nothing runs without it. |
+
+## Audits (SNAPSHOT — dated, never updated for drift)
+
+Point-in-time reads of the loop and the codebase, kept as self-contained HTML
+so the visual form (score tiles, night strips, tables) survives. Each is
+superseded by the next; git history is the series.
+
+| Doc | Purpose | Currency |
+|---|---|---|
+| [`audits/2026-09-05-scorecard.html`](./audits/2026-09-05-scorecard.html) | The production-readiness ratchet read on 2026-09-05: decided-merge 1.00 PASS, first-pass 0.36 FAIL, wedge-free 2/5 FAIL; fourteen-night strip, done-gate grade distribution, smells by discipline, next moves (#793, #817, calibration evals, spec 034). | **SNAPSHOT 2026-09-05** — computed from `get_scorecard_metrics` + `evals/cycles.json` at instance `cec3aa8`. |
+| [`audits/2026-09-06-engineering-audit.html`](./audits/2026-09-06-engineering-audit.html) | Engineering-practice audit of the tree at `8499fb6`: separation of concerns 6, lean/noise 6, prompt engineering 6, harness 7, context management 6; findings with file:line evidence, brake inventory, and the proposed recurring `eng-health` ratchet skill. | **SNAPSHOT 2026-09-06** — four independent read-throughs, highest-stakes findings re-verified by hand; the first baseline for the proposed eng-health ratchet. |
 
 ## Decision records (FROZEN 2026-08-13 — historical record only)
 

@@ -1,0 +1,251 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Devclaw Engineering Audit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#f4f6f8;--surface:#ffffff;--ink:#151a21;--muted:#5d6672;--line:#d9dfe6;--line-soft:#e9edf1;
+  --accent:#1e5c78;--accent-ink:#ffffff;--tint:#e8f0f4;
+  --good:#2b7a4b;--good-bg:#e6f3ea;--warn:#a86f13;--warn-bg:#faf0dc;--bad:#b0372d;--bad-bg:#f8e6e3;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --body:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --display:"Bricolage Grotesque","Instrument Sans",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0f1318;--surface:#161c24;--ink:#e6eaef;--muted:#9aa5b2;--line:#2a333e;--line-soft:#1f272f;
+    --accent:#72b6d6;--accent-ink:#0f1318;--tint:#182630;
+    --good:#6fc08e;--good-bg:#17301f;--warn:#e0b25a;--warn-bg:#33270f;--bad:#ee8b80;--bad-bg:#3a1c18;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1318;--surface:#161c24;--ink:#e6eaef;--muted:#9aa5b2;--line:#2a333e;--line-soft:#1f272f;
+  --accent:#72b6d6;--accent-ink:#0f1318;--tint:#182630;
+  --good:#6fc08e;--good-bg:#17301f;--warn:#e0b25a;--warn-bg:#33270f;--bad:#ee8b80;--bad-bg:#3a1c18;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.55;-webkit-font-smoothing:antialiased}
+.page{max-width:920px;margin:0 auto;padding:40px 24px 96px}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:2.2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.45rem;font-weight:700;margin-top:56px;padding-top:20px;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;font-weight:600;margin-top:28px}
+p{margin:12px 0;max-width:68ch}
+.eyebrow{font-family:var(--mono);font-size:.74rem;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.lede{font-size:1.08rem;color:var(--muted);max-width:66ch}
+code{font-family:var(--mono);font-size:.86em;background:var(--tint);padding:1px 5px;border-radius:3px}
+.meta{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:14px;font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+.scores{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:28px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:14px 14px 12px;min-width:0}
+.tile .dim{font-size:.8rem;color:var(--muted);font-weight:500}
+.tile .n{font-family:var(--display);font-size:2.4rem;font-weight:700;line-height:1;margin:6px 0 4px;font-variant-numeric:tabular-nums}
+.tile .n small{font-size:.9rem;color:var(--muted);font-weight:500}
+.tile .v{font-size:.8rem;line-height:1.35;color:var(--muted)}
+.tile[data-band="mid"] .n{color:var(--warn)}
+.tile[data-band="ok"] .n{color:var(--good)}
+.overall{display:flex;align-items:baseline;gap:14px;margin-top:22px;padding:14px 18px;background:var(--surface);border-left:3px solid var(--accent);border-radius:0 6px 6px 0}
+.overall .n{font-family:var(--display);font-size:1.9rem;font-weight:700;font-variant-numeric:tabular-nums}
+.overall p{margin:0;max-width:none}
+ol.findings{padding-left:0;list-style:none;counter-reset:f;margin:16px 0 0}
+ol.findings li{counter-increment:f;display:grid;grid-template-columns:34px minmax(0,1fr);gap:0 10px;padding:14px 0;border-top:1px solid var(--line-soft)}
+ol.findings li::before{content:counter(f,decimal-leading-zero);font-family:var(--mono);font-size:.8rem;color:var(--muted);padding-top:3px}
+ol.findings b{font-weight:600}
+ol.findings .where{display:block;font-family:var(--mono);font-size:.76rem;color:var(--muted);margin-top:6px;word-break:break-word}
+.sev{display:inline-block;font-family:var(--mono);font-size:.68rem;letter-spacing:.06em;text-transform:uppercase;padding:2px 7px;border-radius:3px;margin-right:6px;vertical-align:2px}
+.sev.bad{background:var(--bad-bg);color:var(--bad)}
+.sev.warn{background:var(--warn-bg);color:var(--warn)}
+.sev.info{background:var(--tint);color:var(--accent)}
+.good-list{margin:12px 0 0;padding-left:20px}
+.good-list li{margin:6px 0}
+.tablewrap{overflow-x:auto;margin-top:14px;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+th{font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;background:var(--tint)}
+tr:last-child td{border-bottom:0}
+td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+td code{white-space:nowrap}
+.skill{margin-top:20px;display:grid;gap:12px}
+.phase{display:grid;grid-template-columns:110px minmax(0,1fr);gap:14px;padding:14px 16px;background:var(--surface);border:1px solid var(--line);border-radius:6px}
+.phase .k{font-family:var(--mono);font-size:.76rem;color:var(--accent);letter-spacing:.04em;padding-top:3px}
+.phase p{margin:0;max-width:none}
+.phase ul{margin:8px 0 0;padding-left:18px}
+.phase li{margin:4px 0}
+.rule{background:var(--tint);border-radius:6px;padding:14px 18px;margin-top:18px}
+.rule p{margin:0;max-width:none}
+.first{counter-reset:s;padding-left:0;list-style:none;margin-top:12px}
+.first li{counter-increment:s;padding:10px 0 10px 40px;position:relative;border-top:1px solid var(--line-soft)}
+.first li::before{content:counter(s);position:absolute;left:0;top:9px;width:26px;height:26px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-family:var(--mono);font-size:.78rem;display:flex;align-items:center;justify-content:center}
+@media (max-width:600px){.phase{grid-template-columns:1fr}h1{font-size:1.8rem}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="eyebrow">devclaw · engineering audit · 2026-09-06</div>
+  <h1>Devclaw Engineering Audit</h1>
+  <p class="lede">Scored against software-engineering practice (separation of concerns, duplication, noise) and AI-engineering practice (prompts, context, harness). Four independent read-throughs of the tree at <code>8499fb6</code>, highest-stakes findings re-verified by hand.</p>
+  <div class="meta">
+    <span>47,634 LOC devclaw/ + runner/</span><span>26,805 LOC tests (1,189 tests)</span><span>35 specs · 44 tinyspecs</span><span>48 docs · 729 commits</span>
+  </div>
+
+  <div class="scores">
+    <div class="tile" data-band="mid"><div class="dim">Separation of concerns</div><div class="n">6<small>/10</small></div><div class="v">Macro layers real and enforced. Meso level is file-splits of one procedure.</div></div>
+    <div class="tile" data-band="mid"><div class="dim">Lean / low noise</div><div class="n">6<small>/10</small></div><div class="v">Almost no dead code. A lot of narration: history in comments, docs, spec headers.</div></div>
+    <div class="tile" data-band="mid"><div class="dim">Prompt engineering</div><div class="n">6<small>/10</small></div><div class="v">Senior plumbing around mid prompts. Evals measure the parser, not the model.</div></div>
+    <div class="tile" data-band="ok"><div class="dim">Harness design</div><div class="n">7<small>/10</small></div><div class="v">Typed failures, cheap-first settle, real brakes. Sandbox hardening is thin.</div></div>
+    <div class="tile" data-band="mid"><div class="dim">Context management</div><div class="n">6<small>/10</small></div><div class="v">Budgets exist, by char count. Worker prompt and usage never recorded.</div></div>
+  </div>
+
+  <div class="overall"><span class="n">6.2</span><p>A system whose <em>invariants</em> are engineered better than its <em>modules</em>. Everything the constitution names is enforced by a test or an AST guard. Everything it does not name (function size, helper duplication, prompt-schema drift, sandbox flags) has drifted, because nothing measures it.</p></div>
+
+  <h2>The one-paragraph verdict</h2>
+  <p>Devclaw is unusually honest about failure: fail direction is declared at every parse site, the zero-token idle guard is a real test, single-writer is structurally true, and config has exactly one doorway. That is rarer than it sounds and it is the reason the loop runs unattended at all. The debt is elsewhere. Four modules of 1.5k to 2k lines hide 700-line and 400-line functions with 16 to 22 keyword parameters; the same helper (git wrapper, JSON extractor, clock) is written 5 to 9 times; source comments carry 270 issue references and docs are two-thirds frozen history; the most important prompt is half markdown and half Python literals whose schema disagrees with the parser; and the expensive path, the worker, is the one whose prompt and token usage the system cannot show you afterwards. None of this is tangled enough to trap a refactor. All of it is the kind that accumulates silently, which is why the second half of this page proposes a recurring measurement rather than a one-off cleanup.</p>
+
+  <h2>Software engineering</h2>
+  <h3>Separation of concerns · 6/10</h3>
+  <p>An actual import graph across 200+ files shows no runtime cycles and the layer arrows point downward. The problems are inside the layers, not between them.</p>
+  <ol class="findings">
+    <li><div><span class="sev warn">design</span><b>The mixin split is a file split, not a decomposition.</b> <code>TaskQueue</code> composes three mixins that share one mutable state; <code>GoalState</code> composes five, then <code>GoalStore</code> wraps it with two more, so one storage concern has two parallel class hierarchies and 10 one-line pass-through methods. Comments in both still say the SQLite tables are "unused", which is false.<span class="where">devclaw/task_queue.py:138 · devclaw/goal/state.py:72,84 · devclaw/goal/store/base.py:97,107 · devclaw/goal/store/content.py</span></div></li>
+    <li><div><span class="sev warn">design</span><b>Giant procedures with keyword-bag signatures.</b> <code>_run_and_settle</code> is 710 lines; the long-lived advance handler 362 with 24 section comments and 6 returns; the done-gate resolver 403; runner <code>main</code> 484. <code>tick_all</code> takes 22 parameters, <code>tick_goal</code> 17, even though a <code>TickContext</code> bag exists. 27 functions over 80 lines in the seven biggest modules.<span class="where">devclaw/queue/settle.py:950-1660 · devclaw/goal/tick.py:183,295,1003 · devclaw/goal/tick_donegate.py · runner/runner.py</span></div></li>
+    <li><div><span class="sev warn">layering</span><b>Layer 2 shells out to docker and gh itself.</b> The goal layer runs <code>docker info</code> and <code>docker volume ls</code>, imports two private engine helpers, and spawns <code>gh</code> for mergeability and merge-on-close. The rule says layer 2 goes through the engine. Delivery also imports an engine private.<span class="where">devclaw/goal/health_drift.py:30,72,102 · devclaw/goal/mergeability.py:63 · devclaw/goal/merge_on_close.py</span></div></li>
+    <li><div><span class="sev warn">layering</span><b>The gate library reaches back into the queue's privates.</b> <code>task_gates.py</code> types its collaborator as <code>SettleMixin</code> and calls <code>queue._review_failure</code> and <code>queue._browser_reachability_clears</code>. A gate cannot be tested without a queue instance. Layer 1 also calls <code>queue.submit</code> and the engine's workspace prep directly for read-only kinds.<span class="where">devclaw/quality/task_gates.py:307-343 · devclaw/server/tools/tasks.py:230 · devclaw/server/tools/_common.py:80</span></div></li>
+    <li><div><span class="sev info">structure</span><b>Top-level <code>devclaw/</code> is a 30-module drawer.</b> Twelve modules have one or two importers (<code>trend_signals</code> is 808 lines with one importer and no tests). Natural homes exist: observability, git, intake, host. The storage package imports a policy module for a default schedule.<span class="where">devclaw/trend_signals.py · devclaw/state_store/control.py → dispatch_gate</span></div></li>
+    <li><div><span class="sev info">doctrine</span><b>"Loud over silent" holds at the gates and nowhere else.</b> 220 broad excepts, 143 with no raise and no log in the handler. Most carry a <code>noqa</code> reason ("must never wedge the heartbeat"), so they are deliberate. The doctrine should say so: loud at gates, best-effort around them.<span class="where">devclaw/goal/tick.py (16) · devclaw/goal/service.py (12) · devclaw/env_cap.py (10)</span></div></li>
+  </ol>
+  <h3>What is genuinely good here</h3>
+  <ul class="good-list">
+    <li>Single-writer is real: every production status change goes through the CAS'd <code>transition()</code>; the raw writers have zero callers outside the store.</li>
+    <li>The config doorway is an AST guard, not a convention. 95 variables, one file, one test.</li>
+    <li>Cognition callers are pure. None writes to a store or touches the queue.</li>
+  </ul>
+
+  <h3>Duplication, redundancy, noise · 6/10</h3>
+  <p>Vulture at 80% confidence finds three unused imports. The 2026-08-29 prune worked. What is left is repetition of small helpers and a large amount of narration.</p>
+  <ol class="findings">
+    <li><div><span class="sev warn">dup</span><b>Five JSON-from-model extractors, four near-identical.</b> Same body, different docstring and exception class. The fifth, in admission lint, is a greedy brace regex with no fence handling. The cognition rule says this class must be tolerant; five copies means five places to get it wrong.<span class="where">devclaw/llm_call.py:236 · devclaw/intake_readiness.py:172 · devclaw/goal/evaluator.py:299 · devclaw/goal/triage.py:71 · devclaw/goal/admission_lint.py:129</span></div></li>
+    <li><div><span class="sev warn">dup</span><b>Nine git subprocess wrappers</b> with timeouts of 8, 10 and 60 seconds and four different failure contracts (empty string, None, an error string, raise). <code>procutil.run</code> exists and nine modules use it. Seven clock helpers plus 15 inline <code>int(time.time()*1000)</code>.<span class="where">devclaw/task_git.py:49 · devclaw/task_change.py:257 · devclaw/project_manifest.py:238 · devclaw/trend_signals.py:49 · devclaw/bookmark.py:26 · devclaw/server/routes/goals.py:538 · devclaw/goal/slice_guard.py</span></div></li>
+    <li><div><span class="sev warn">noise</span><b>270 issue references in source across 83 files.</b> Of 20 sampled, about 6 explain a reversal a reader would otherwise reinvent; the rest are provenance. The cognition-prompts rule already says the war story goes in the commit message. Python is not held to it. 116 "Tranche/PR3/T0.5" markers and 115 "used to / formerly / was deleted" phrases.<span class="where">devclaw/goal/service.py (18) · devclaw/queue/settle.py (12) · devclaw/quality/__init__.py (11)</span></div></li>
+    <li><div><span class="sev warn">noise</span><b>Direction memory rots at the header.</b> Seven spec headers still say Draft although the work shipped (018, 019, 020, 021, 022, 025, 029). Spec 021 is five merged PRs. The spec is claimed as "the direction memory" and the one field a reader checks first is the one nobody maintains.<span class="where">specs/021-worker-context-budget/spec.md:7 · specs/018 · 019 · 020 · 022 · 025 · 029</span></div></li>
+    <li><div><span class="sev info">noise</span><b>Docs are two-thirds frozen.</b> 33 of 48 files (5,769 of 8,602 lines) are FROZEN proposals and decisions. The INDEX row for architecture.md is a 10 KB changelog inside a table cell; 83 inline "Updated" stamps. The currency-tag scheme works; the changelog-in-a-cell defeats it.<span class="where">docs/INDEX.md · docs/proposals/ · docs/decisions/</span></div></li>
+    <li><div><span class="sev info">dead</span><b>156 lines of confirmed-dead methods and dead vocabulary.</b> Twelve methods with zero references in source, tests or evals. "planner" appears 116 times and <code>PlannerError</code> is imported by 14 modules; the planner was removed in the 008 shrink. "pre-022 legacy program ref" branches guard a table the schema already drops.<span class="where">devclaw/issue_doorway.py:166 · devclaw/goal/state_content.py · devclaw/llm_call.py:230,252 · devclaw/goal/engine.py:139</span></div></li>
+    <li><div><span class="sev info">tests</span><b>The tripwire doctrine is not yet reflected in the suite.</b> One file is 4,381 lines and 16% of the suite. A four-line store fixture is pasted into 22 files instead of conftest. 102 assertions pin literal prompt strings, the brittle class the doctrine says not to grow.<span class="where">tests/test_goal_tick.py · tests/test_delivery.py (32) · tests/test_goal_evaluator.py (31)</span></div></li>
+  </ol>
+  <h3>What is genuinely good here</h3>
+  <ul class="good-list">
+    <li>The OAuth strip is duplicated eight times on purpose, at eight distinct trust boundaries, and each copy is correct. Do not consolidate it.</li>
+    <li><code>cognition.py</code> versus <code>llm_call.py</code>, and telemetry versus trace versus trace_view, are distinct roles, not redundancy. The only true double is GoalState/GoalStore.</li>
+    <li>The symmetric ratchet is visible in the tree: removed behavior took its tests with it.</li>
+  </ul>
+
+  <h2>AI engineering</h2>
+  <h3>Prompt engineering · 6/10</h3>
+  <p>The machinery around the prompts is senior work: strict JSON contracts, a declared fail direction at every parse site, an instruction/data fence for worker-authored text, and budget markers that tell the model what was cut. The prompts themselves are where the score is lost.</p>
+  <ol class="findings">
+    <li><div><span class="sev bad">contract</span><b>The done-gate prompt lives in two files and its schema is incomplete in the one humans review.</b> The markdown template is 1,226 words; about 500 more are appended from Python literals. The pinned-clauses block introduces a required field, <code>flip_cause</code>, that the JSON schema in the markdown never lists, yet the parser raises when it is missing. The done-gate review-worker instruction, 600 words, is also a Python literal.<span class="where">devclaw/prompts/goal-evaluator.md:104-138 · devclaw/goal/evaluator.py:187-280,389-394 · devclaw/goal/tick_donegate.py:140-190</span></div></li>
+    <li><div><span class="sev bad">fail-open</span><b>Admission lint fails open.</b> A greedy brace regex parses the response, and every exception, including a parse failure, returns "admitted without it". This is the only cognition caller whose failure lands on the permissive side, and it guards the seam the harness contract blames for unclosable goals. It also has zero examples for the hardest discrimination it is asked to make.<span class="where">devclaw/goal/admission_lint.py:129-143</span></div></li>
+    <li><div><span class="sev warn">calibration</span><b>Two mechanical flips toward achieved the model is never told about.</b> An <code>off_track</code> whose clauses are all satisfied becomes <code>achieved</code> with corrections demoted to structural concerns; a bare <code>off_track</code> with no corrections becomes <code>on_track</code>. Combined with the spec 035 flip rule, the rubric ratchets toward close. There is one worked example in the prompt and it is finance-flavoured, the canned-prior class the rules already name.<span class="where">devclaw/goal/evaluator.py:613-650 · devclaw/prompts/goal-evaluator.md:56-57,89-91</span></div></li>
+    <li><div><span class="sev warn">style</span><b>The prompts break the repo's own prompt rule.</b> Rules restated in markdown and again in Python; an incident anecdote ("App.tsx grew to 1827 LOC through 4 PRs") in the evaluator; ALL-CAPS emphasis density; the same "never build ahead" sentence in a worker skill and in <code>tick.py</code>.<span class="where">devclaw/goal/evaluator.py:205-210 · runner/skills/_writes-code/05-speckit-memory.md:32 · devclaw/goal/tick.py:512</span></div></li>
+    <li><div><span class="sev warn">grounding</span><b>The grounding block cannot answer what two prompts ask of it.</b> It carries remote, branch, HEAD, a few file probes and up to 40 directory names. Intake readiness asks for "component not found" and staleness verdicts; browser reachability asks for the route table. Neither is supplied, so the escape valve is <code>unknown</code> by construction, or the model fills in from priors.<span class="where">devclaw/task_git.py:66-98 · devclaw/prompts/intake-readiness.md:65-84 · devclaw/quality/prompts/browser-reachability.md:38</span></div></li>
+    <li><div><span class="sev warn">protocol</span><b>The worker's return protocol has three phrasings and a stale doctrine.</b> <code>BLOCKED</code> is specified in a skill, in a Python return-contract literal, and in the gate module; the runner regex tolerates all three. One skill still says verify_cmd "is the single command the done-gate runs", which spec 032 reversed, and cites a field that does not exist. Three refactor policies get concatenated into one fix_bug brief.<span class="where">runner/runner.py:191-194,881 · runner/skills/_writes-code/50-repo-gate-conflict.md · runner/skills/_writes-code/20-verify-gate-coverage.md:3-5 · devclaw/quality/task_gates.py:284</span></div></li>
+    <li><div><span class="sev info">params</span><b>No system prompt, no sampling control, unpinned aliases.</b> The CLI path sends the whole prompt on stdin with no system prompt; tiers are <code>haiku</code>/<code>sonnet</code>/<code>opus</code> aliases that move with releases. The output schema sits mid-prompt with up to 48 KB of diary after it.<span class="where">devclaw/llm_call.py:252-270 · devclaw/config.py:259-261 · devclaw/goal/evaluator.py:282-295</span></div></li>
+    <li><div><span class="sev bad">evals</span><b>The evals measure the parser.</b> Five evaluator fixtures feed canned model output through <code>validate()</code>. The live run is opt-in with no pass/fail. Zero fixtures for intake readiness, admission lint, reachability or triage. The vault note calling the done-gate calibration set "the highest-value unbuilt measurement" is correct.<span class="where">tests/cognition/test_evaluator_evals.py:76-90 · tests/cognition/fixtures/evaluator/ · evals/validate_review_gate.py</span></div></li>
+  </ol>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Prompt</th><th>Est. tokens (static)</th><th>Schema</th><th>Grounding</th><th>Parse robustness</th></tr></thead>
+    <tbody>
+      <tr><td>goal-evaluator.md</td><td class="num">1,600 + 650 py + ≤12k diary</td><td>JSON, missing <code>flip_cause</code></td><td>yes</td><td class="num">4 · fails closed</td></tr>
+      <tr><td>intake-readiness.md</td><td class="num">1,160</td><td>JSON</td><td>yes</td><td class="num">4 · fails to not-ready</td></tr>
+      <tr><td>admission-lint.md</td><td class="num">225</td><td>JSON</td><td>none by design</td><td class="num">2 · fails open</td></tr>
+      <tr><td>owner-summary.md</td><td class="num">220</td><td>prose</td><td>n/a</td><td class="num">3</td></tr>
+      <tr><td>self-triage.md</td><td class="num">510</td><td>JSON</td><td>yes</td><td class="num">4 · best-effort</td></tr>
+      <tr><td>review-gate.md</td><td class="num">800 + ≤60 KB diff</td><td>JSON</td><td>yes</td><td class="num">5 · reconciled, per-file degrade</td></tr>
+      <tr><td>browser-reachability.md</td><td class="num">580 + ≤60 KB diff</td><td>JSON</td><td>yes</td><td class="num">5 · off-enum → unknown</td></tr>
+      <tr><td>worker brief (implement / fix_bug)</td><td class="num">3,000 – 4,000</td><td>text, regex</td><td>in-repo</td><td class="num">3 · three phrasings</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Harness design · 7/10 · Context management · 6/10</h3>
+  <p>The turn loop is the best-engineered part of the AI side: one prompt turn over a zero-dependency ACP client, every failure class typed, a mechanical change span, and a settle cascade that runs cheap checks first and reaches for an LLM only under strict or when a browser gate would otherwise fail.</p>
+  <ol class="findings">
+    <li><div><span class="sev bad">safety</span><b>The production sandbox runs on host networking with no capability hardening.</b> Flags are network host, memory, memory-swap, cpus. No pids limit, no cap-drop, no no-new-privileges, no read-only root. The container can reach every localhost service on the VPS including devclaw's own MCP port. The "tighten later" comment has aged.<span class="where">devclaw/engine/sandcastle.py:527-532</span></div></li>
+    <li><div><span class="sev bad">telemetry</span><b>Worker token usage is never recorded, so cost telemetry silently covers host cognition only.</b> The client scavenges <code>update.usage</code>; the live agent emits <code>usage_update{used,size}</code> at the root. Spec 021's own research note says so. <code>worker_tasks_with_usage</code> stays at zero and the cost estimate is presented as a total.<span class="where">runner/acp_client.py:100-118 · devclaw/telemetry.py:148-163 · specs/021-worker-context-budget/research.md:6-15</span></div></li>
+    <li><div><span class="sev warn">observability</span><b>The worker's actual initial prompt is unrecoverable host-side.</b> Skills, repo notes, brief and return contract are concatenated inside the container and never emitted as an event. Host cognition is fully reconstructible; the expensive path shows tool calls and messages but not what the agent was told. Skills are versioned only by image tag.<span class="where">runner/runner.py:1524 · devclaw/goal/tick_dispatch.py:319 · devclaw/server/tools/goals.py:315</span></div></li>
+    <li><div><span class="sev warn">budget</span><b>Budgets are per-section char caps with no whole-prompt ceiling and no tokenizer.</b> 24K, 24K, 6K, 4K, 1.2K, 4K characters per slot; 4K head-kept per issue body with no cap on issue count. Truncation policy is sane, but a long issue's Done-when section can be cut at 4K.<span class="where">devclaw/goal/prompt_budget.py:48-161 · devclaw/goal/issue_ref.py:120 · devclaw/goal/repo_brief.py:31</span></div></li>
+    <li><div><span class="sev warn">memory</span><b>Repo notes are append-only agent prose injected every dispatch.</b> Dedupe is byte-identical lines only; spec 034 documents the same fact appearing 15 times in a 9.4 KB brief and is deliberately unarmed. Increment feed-forward is otherwise mechanical (devclaw-generated lines only), so drift is confined to this one slot.<span class="where">devclaw/goal/repo_brief.py:40-62 · specs/034-worker-file-memory/spec.md:7</span></div></li>
+    <li><div><span class="sev warn">brakes</span><b>Idle-hang detection resets on any stderr byte.</b> A looping build that streams to stderr is caught only by the 3600 s wall clock. There is no max-tool-call or max-turn brake; the slice watcher and 75% tripwire both depend on the agent cooperating with a follow-up prompt.<span class="where">runner/acp_client.py:420-426 · devclaw/queue/settle.py:1127</span></div></li>
+    <li><div><span class="sev info">supply</span><b>Playwright MCP is fetched unpinned per session and its approval path is unverified.</b> <code>npx -y @playwright/mcp@latest</code> in the dropped config while <code>session/new</code> sends an empty server list; only the trust dialog flag is pre-set. Nothing proves the server loads.<span class="where">runner/sandbox-mcp.json:5 · runner/acp_client.py:237 · devclaw/claude_trust.py:32</span></div></li>
+    <li><div><span class="sev info">cache</span><b>Prompt caching is unexploited.</b> The static skills bundle lands first by accident; cache read and creation counts are recorded but no prompt is structured around them, and the evaluator embeds 24 KB of tail-kept log that changes every tick.<span class="where">runner/runner.py:239 · devclaw/llm_call.py:349-350</span></div></li>
+  </ol>
+
+  <div class="tablewrap"><table>
+    <thead><tr><th>Brake</th><th>Where</th><th>Value</th><th>Typed reason on trip</th></tr></thead>
+    <tbody>
+      <tr><td>task wall clock</td><td><code>queue/settle.py:1127</code></td><td class="num">3600 s</td><td>failed, salvage if commits + verify green</td></tr>
+      <tr><td>ACP idle timeout</td><td><code>runner/acp_client.py:406</code></td><td class="num">1800 s silence</td><td>AcpError idle timeout</td></tr>
+      <tr><td>verify_cmd timeout</td><td><code>runner/runner.py:272</code></td><td class="num">900 s</td><td>verify gate fails</td></tr>
+      <tr><td>context tripwire</td><td><code>runner/runner.py:680</code></td><td class="num">75% of window</td><td>ContextTripwire, lands partial</td></tr>
+      <tr><td>task retries</td><td><code>config.py:136</code></td><td class="num">1</td><td>failed after N attempts</td></tr>
+      <tr><td>done-gate rounds flat</td><td><code>goal/tick_donegate.py:68</code></td><td class="num">3</td><td>donegate_churn park</td></tr>
+      <tr><td>no-progress watchdog</td><td><code>config.py:210</code></td><td class="num">21600 s</td><td>owner ping</td></tr>
+      <tr><td>review diff cap</td><td><code>quality/__init__.py:47</code></td><td class="num">60 K chars</td><td>truncated; crash fails closed, no retry</td></tr>
+      <tr><td>sandbox memory / cpus</td><td><code>config.py:272</code></td><td class="num">2 g / 2.0</td><td>OOM-killed via cgroup counter</td></tr>
+      <tr><td>quota / auth pause</td><td><code>loom/limits.py:51</code></td><td class="num">1800–7200 s, ≤7 d</td><td>global pause, zero tokens</td></tr>
+    </tbody>
+  </table></div>
+  <h3>What is genuinely good here</h3>
+  <ul class="good-list">
+    <li>Zero-token idle is a tripwire, not a docstring: <code>FakeClaude.calls == 0</code> is asserted on idle, in-flight, blocked and mechanical paths.</li>
+    <li>One LLM primitive with a typed failure ladder (auth over quota over rate over transient over real), retries only on transient, quota wording preserved verbatim for the classifier.</li>
+    <li>Settle is single-span and cheap-first; CI rollup is read mechanically before the done-gate LLM is ever dispatched.</li>
+  </ul>
+
+  <h2>What I would do first</h2>
+  <ol class="first">
+    <li><b>Close the two fail-open seams.</b> Admission lint to fail closed on parse failure (raise, not "admitted without it"), and the sandbox to add pids-limit, cap-drop all, no-new-privileges. Both are tinyspec-sized and both touch a tripwire class, so each ships one guard test.</li>
+    <li><b>Reunite the done-gate prompt.</b> Move the Python-appended blocks into the markdown as conditional sections; add <code>flip_cause</code> to the schema; delete the anecdote. Then build the calibration eval set the vault already names as the highest-value unbuilt measurement.</li>
+    <li><b>Record what the worker was told and what it cost.</b> Emit the assembled initial prompt as a runner event and parse root-level usage in the ACP client. Without these, the scorecard's first-pass 0.36 cannot be diagnosed per task.</li>
+    <li><b>One extractor, one git wrapper, one clock.</b> Three mechanical dedups under the tiny lane, roughly 200 lines net removed. Leave the OAuth strip alone.</li>
+    <li><b>Apply the prompt comment rule to Python</b> and fix the seven spec headers. Both are noise findings that a script can flag, which is the point of the next section.</li>
+  </ol>
+
+  <h2>A recurring review: the eng-health skill</h2>
+  <p>Every finding above has the same shape: an invariant the constitution does not name, drifting because nothing measures it. The named invariants did not drift, because a test or an AST guard holds them. So the recurring review should not be "re-read 47k lines with an LLM every month". It should be a ratchet, in the same shape as the scorecard, whose job is to turn judgment findings into mechanical guards until the review itself is small.</p>
+
+  <div class="rule"><p><b>Design rule.</b> The skill measures mechanically, judges only what moved, and disposes of every finding into exactly one of four bins. Its success metric is how many of its own metrics have graduated into tripwire tests. A review that reports the same finding twice has failed.</p></div>
+
+  <h3>Shape</h3>
+  <div class="skill">
+    <div class="phase"><div class="k">1 · measure</div><div><p>A zero-LLM script, <code>evals/measure_eng_health.py</code>, prints one JSON blob of metrics. Runs in seconds, runs in CI as informational.</p>
+      <ul>
+        <li>Structure: functions over 80 and over 200 lines; modules over 1,000 lines; parameter counts over 8; cross-package imports of underscore names; imports that violate a declared layer allow-graph; <code>os.environ</code> reads outside the doorway.</li>
+        <li>Duplication: AST-normalised function-body hashes shared across modules; vulture at 80%; broad excepts with no raise, log or trace in the handler.</li>
+        <li>Noise: issue-reference density per module; "formerly / used to / legacy" phrase count; spec headers whose status disagrees with their tasks checkboxes and merged PRs; INDEX rows over 1,500 chars; CLAUDE.md line count.</li>
+        <li>Prompts: estimated tokens per template including Python-appended literals; schema keys in the markdown versus keys the parser reads; templates lacking the grounding clause; parse sites lacking a declared fail direction; eval fixtures per prompt.</li>
+        <li>Harness: docker flags versus a hardening allowlist; worker tasks with recorded usage as a share of all; brief size distribution from recent traces; brake table extracted from config.</li>
+      </ul></div></div>
+    <div class="phase"><div class="k">2 · delta</div><div><p>Compare against the previous run, read from git history of the keep-latest report. Report only metrics that regressed, crossed a threshold, or are new. Absolute numbers stay in the table; the narrative is the delta.</p></div></div>
+    <div class="phase"><div class="k">3 · judge</div><div><p>One deep read per run, rotating through four lenses: layering, duplication and noise, prompts, harness and context. Each lens has a fixed question list, the ones this audit used. A full deep read happens every four runs; each run costs one lens plus the deltas. The judge is told the mechanical numbers first so it argues from evidence, not impression.</p></div></div>
+    <div class="phase"><div class="k">4 · dispose</div><div><p>Every finding leaves in exactly one bin, recorded in the report:</p>
+      <ul>
+        <li><b>fix now</b>: mechanical, tinyspec-sized, done in the same session. Never becomes an issue.</li>
+        <li><b>promote to guard</b>: write the tripwire test that makes the metric unable to regress, then drop the metric from the script. This is the bin the skill exists for.</li>
+        <li><b>spec</b>: a class-level design change. Opens <code>/speckit-specify</code> with the finding as the problem statement.</li>
+        <li><b>accept</b>: carries an owner and a regrade date on the same line, per the vault's clock rule. A bare accept is refused.</li>
+      </ul></div></div>
+    <div class="phase"><div class="k">5 · capture</div><div><p>Overwrite <code>docs/audits/eng-health.md</code> (keep-latest, git is the archive) with the metrics table, the deltas, the findings and their bins. One dated line in the vault log. No session exhaust anywhere else.</p></div></div>
+  </div>
+
+  <h3>Trigger</h3>
+  <p>Not a calendar. The trigger is mechanical and surfaced where Denys already looks: <code>/morning-status</code> prints "eng-health due" when merged PRs since the last report exceed 15, or when any spec header flips to Implemented. The weekly Monday release is the natural backstop. The skill is invoked by Denys, never by cron, because phase 4 needs a human on the spec and accept bins.</p>
+
+  <h3>Why this and not a plain review skill</h3>
+  <p>A plain review skill re-reads the tree and re-discovers the same nine git wrappers next month. It scales with the codebase and its findings scale with the model's mood that day. The ratchet shape scales with what changed, its numbers are comparable across runs, and every finding it promotes to a guard is a finding it never has to make again. That is also the only version that fits the repo's own doctrine: the suite is a tripwire net, and this is the machine that grows the net from evidence instead of diligence.</p>
+
+  <h3>The first run is this report</h3>
+  <p>Seed the baseline with the numbers on this page. Candidates for the first "promote to guard" batch, because each is a hard rule already stated somewhere in the repo: no <code>DEVCLAW_*</code> read outside the doorway (exists), no private import across packages, no function over 200 lines, every prompt schema key read by its parser is declared in the template, every cognition caller's parse failure lands closed, and the sandbox flag set is exactly the allowlist.</p>
+</div>
+</body>
+</html>
