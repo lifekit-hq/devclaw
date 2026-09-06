@@ -24,7 +24,6 @@ general so a future ``needs_answer`` wire is one allowlist entry away.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
@@ -34,6 +33,7 @@ _VALID_CONFIDENCE = {"high", "medium", "low"}
 
 #: the self-triage model tier (bounded JSON, dedupe + propose a minimal fix →
 #: the standard judgment tier, same as goal_planner/goal_eval).
+from ..llm_call import extract_json
 from ..model_tiers import model_for as _model_for
 TRIAGE_MODEL = _model_for("triage")
 
@@ -66,21 +66,6 @@ def build_prompt(problem: str, catalog: str, repo_context: str) -> str:
         catalog=catalog.strip() or "(catalog empty — no prior problems recorded)",
         repo_context=repo_context.strip() or "(no repository context available)",
     )
-
-
-def extract_json(text: str) -> str:
-    """Pull the JSON object out of a raw model response — same shape as the
-    planner's extractor (bare object, fenced block, or first/last brace)."""
-    trimmed = text.strip()
-    if trimmed.startswith("{"):
-        return trimmed
-    fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", trimmed)
-    if fence and fence.group(1):
-        return fence.group(1)
-    first, last = trimmed.find("{"), trimmed.rfind("}")
-    if first >= 0 and last > first:
-        return trimmed[first : last + 1]
-    raise TriageError("No JSON object found in triage response", text)
 
 
 def validate(parsed: object) -> TriageProposal:

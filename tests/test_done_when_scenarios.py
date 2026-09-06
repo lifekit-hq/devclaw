@@ -215,6 +215,9 @@ async def test_creation_with_explicit_done_when_skips_the_scenario_check(tmp_pat
     try:
         fetcher = FakeIssueFetcher({7: _snap(7, body="no section")})
         svc._issue_fetcher = fetcher
+        # an explicit done_when runs the admission lint's undecided-choice
+        # judge (fail-closed, live caller) — inject it, never reach `claude`
+        svc._evaluator_caller = FakeClaude('{"undecided": []}')
         await svc.create_goal_async(
             "g", issues=[7], done_when="the endpoint returns 200", **_KW)
         # US4's readiness read still fetched once, but the section-less body

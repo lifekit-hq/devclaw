@@ -699,7 +699,8 @@ informs; under `strict` a default that would close the goal parks instead.
 admission lint (`devclaw/goal/admission_lint.py`) refuses sandbox-impossible
 clauses, rewrites baseline-less absolutes, and raises an undecided design
 choice as a Problem before any dispatch — its one cognition call runs at
-creation, never on the tick.
+creation, never on the tick, and fails closed: a judge reply outside the
+protocol, or a caller that raises, refuses creation with nothing persisted.
 
 ## Testability (one stub at every seam)
 

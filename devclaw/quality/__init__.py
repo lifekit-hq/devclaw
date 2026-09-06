@@ -201,6 +201,13 @@ def build_review_prompt(
     return "\n\n".join(parts)
 
 
+def _blocking_issues(issues: list[dict]) -> list[dict]:
+    """The blocker/major subset — the ONE definition of "blocking". Issues are
+    the evidence; the verdict, the feedback and the per-file union all derive
+    from this list, never from a key the model was asked for."""
+    return [i for i in issues if i["severity"] in ("blocker", "major")]
+
+
 def validate_review(parsed: object) -> dict:
     """Validate + normalize the model's review into a verdict dict. Enforces the
     invariant that request_changes ⇔ there is a blocker/major issue, so the
@@ -231,7 +238,7 @@ def validate_review(parsed: object) -> dict:
                     "fix": str(it.get("fix", "")).strip(),
                 }
             )
-    blocking = [i for i in issues if i["severity"] in ("blocker", "major")]
+    blocking = _blocking_issues(issues)
     # Reconcile verdict with the issue list — the issues are the evidence, so they
     # win: a "request_changes" with no blocking issue is downgraded; an "approve"
     # that nonetheless lists a blocker/major is upgraded to request_changes.
@@ -250,7 +257,7 @@ def format_feedback(review: dict) -> str:
     lines = ["code review requested changes before this can ship:"]
     if review.get("summary"):
         lines.append(review["summary"])
-    for i in review.get("blocking", []):
+    for i in _blocking_issues(review.get("issues", [])):
         loc = f" [{i['location']}]" if i.get("location") else ""
         fix = f" — fix: {i['fix']}" if i.get("fix") else ""
         lines.append(f"- ({i['severity']}){loc} {i['problem']}{fix}")
@@ -478,7 +485,7 @@ def _aggregate_file_reviews(results: list[dict], *, n_files: int) -> dict:
     fail-closed guarantee (a sub-review that can't produce a verdict still raises →
     the whole diff fails closed) is preserved."""
     merged_issues = _dedup_issues([i for r in results for i in r.get("issues", [])])
-    blocking = [i for i in merged_issues if i["severity"] in ("blocker", "major")]
+    blocking = _blocking_issues(merged_issues)
     verdict = "request_changes" if blocking else "approve"
     summary = (
         f"degraded per-file review — the full diff exceeded the review budget, so "
