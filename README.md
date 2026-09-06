@@ -12,7 +12,7 @@ Coding agents are excellent at *tasks* and unreliable at *goals*. Prompting one 
 
 *Both screenshots are the live operator console (`/console`) driving real repositories — not a mockup.*
 
-**Measured, not vibes.** The first pass-rate probe — real docker sandbox, real `claude`, one production .NET repo (`lifekit-dashboard`) — shipped **5/5 tickets gate-verified**: four net-new API features and one hardening fix, delivered as PRs, **+19 net-new tests, zero existing tests deleted/skipped/weakened, zero regressions**. That is a single-repo, n=5, gate-verified-**at-ship** measurement — the precursor to the formal **v0.1 proof** (10 tickets across ≥2 repos, scored *merged-without-rework* ≥6/10), whose verdict is still **pending** (see [`docs/ROADMAP.md`](./docs/ROADMAP.md) and `evals/`). Honest scope: small-to-medium machine-verifiable backend tasks; UI and ambiguous specs still need a human.
+**Measured, not vibes.** The first pass-rate probe — real docker sandbox, real `claude`, one production .NET repo (`lifekit-dashboard`) — shipped **5/5 tickets gate-verified**: four net-new API features and one hardening fix, delivered as PRs, **+19 net-new tests, zero existing tests deleted/skipped/weakened, zero regressions**. That is a single-repo, n=5, gate-verified-**at-ship** measurement — the precursor to the formal **v0.1 proof** (10 tickets across ≥2 repos, scored *merged-without-rework* ≥6/10); direction now lives in the `Status` headers of `specs/` and the `P1`/`P2` issue labels, with [`docs/ROADMAP.md`](./docs/ROADMAP.md) kept as the frozen 2026-07 version-ladder record (measurement: `evals/`). Honest scope: small-to-medium machine-verifiable backend tasks; UI and ambiguous specs still need a human.
 
 > **DevClaw is the chef.** The waiter — an [OpenClaw](https://openclaw.ai) chat agent, the user-facing assistant — takes orders and translates chat into structured MCP tool calls; devclaw cooks. It owns the **craft of software development as a service**: durable goals, sandbox execution (a `claude-code` session driven over ACP by devclaw's own zero-dependency worker harness), pre-PR adversarial review, gate verification, and grounded direction evaluation — planning happens in-sandbox, where the worker scopes each advance with speckit (`specs/*/` artifacts committed to the repo). (An experimental Tailscale deploy path exists but is not yet load-bearing — it can't yet host the owner's stack; see #401.) devclaw never talks to the user directly.
 
@@ -48,7 +48,7 @@ Five distinct layers below the user, and only one of them is an agent harness in
 |---|---|---|
 | **MCP surface** (`devclaw.server`) | HTTP/stdio protocol exposing tools (`create_goal`, `get_goal`, `steer_goal`, …) | No — protocol |
 | **GoalService + heartbeat** (`devclaw.goal`) | State machine + scheduler; owns the lifecycle (goals are `executing` from birth — spec 008); ticks every ~15 min; reads goal state (SQLite, since Tranche 1 — `.md`/`.yaml` files are generated views) and decides the next move per goal | No — orchestrator |
-| **Cognition callers** (evaluator, summarizer, scope grill) | One-shot `claude --print` invocations with baked prompts + goal state; return structured output the loop parses | Borderline — Claude as a reasoning API, not an interactive agent |
+| **Cognition callers** (evaluator, summarizer, self-triage, intake readiness, admission lint) | One-shot `claude --print` invocations with baked prompts + goal state; return structured output the loop parses | Borderline — Claude as a reasoning API, not an interactive agent |
 | **TaskQueue + sandcastle engine** (`devclaw.engine`) | Receives "do task X" → `docker run devclaw-sandbox(-dotnet):local <payload>`; streams stdout events back | No — container launcher |
 | **Worker harness** (`runner.py` → `claude-agent-acp` → `claude-code` CLI + MCP servers, e.g. Playwright MCP) | The actual agent turn-loop. Tool calls (Read/Edit/Bash/browser), edits the repo, commits, exits | **Yes — the only true harness in the stack** |
 
@@ -105,7 +105,7 @@ devclaw/
 │   ├── service.py      #   GoalService — the facade the server wires up
 │   ├── tick.py         #   one heartbeat: check → advance-dispatch → done-gate (zero per-tick planner)
 │   ├── evaluator.py    #   direction evaluation, grounded in deliveries.md
-│   ├── store/          #   GoalStore — goal.yaml (facts) + SQLite status/steering/log/deliveries/docs (base · status · content)
+│   ├── store/          #   GoalStore — goal.yaml (facts) + SQLite status/steering/log/deliveries (base · status · content)
 │   ├── engine.py       #   in-process dispatch into the task queue
 │   ├── mergeability.py · notify.py · summary.py · models.py
 ├── engine/             # everything that EXECUTES the work:
@@ -130,11 +130,11 @@ devclaw/
 │   └── trace.py        #   run-trace recorder (cognition, ticks, dispatches, deliveries)
 ├── advance_brief.py    # the mechanical (zero-LLM) brief each advance dispatch carries — the worker plans in-sandbox
 ├── cognition.py        # the LLM seam — Cognition protocol + Claude/Stub impls
-├── state_store/       # SQLite: programs, tasks, append-only events (rows · control · core)
+├── state_store/       # SQLite: tasks, append-only events, eval_outcomes, problems (rows · control · core)
 ├── task_queue.py       # async task lifecycle, concurrency, on-settle hook → goal poke
 ├── queue/              # TaskQueue's mixins: settle (execute/settle path), admission (memory + breaker)
 ├── project_registry.py # control plane: repos → driving goals → live status rollup
-└── cli.py              # devclaw projects/trace/scorecard/schedule/cognition … (terminal face of the control plane)
+└── cli.py              # devclaw projects/trace/scorecard/schedule/evals/doctor … (terminal face of the control plane)
 runner/runner.py  # worker harness inside the sandbox; emits event/result lines
 .sandcastle/Dockerfile      # per-task sandbox image
 tests/                      # pytest — stubbed engine; no docker, no claude
@@ -147,7 +147,7 @@ DevClaw is all Python. The only language boundary left is the process boundary: 
 
 | Tool | Does |
 |---|---|
-| `dispatch_task(kind, project_id, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository`. `project_id` names a registered project — devclaw resolves its workspace/repo from the registry (never a raw path), rejects an unknown project, and preflights the workspace before dispatch: a real git checkout runs; an absent one is auto-cloned from the project's `repo_url`; anything else is rejected loud (#520 P1 + #523 P2) |
+| `dispatch_task(kind, project_id, goal, …)` | One-shot task; `kind` ∈ `implement_feature` / `fix_bug` / `review_repository` / `validate_product`. `project_id` names a registered project — devclaw resolves its workspace/repo from the registry (never a raw path), rejects an unknown project, and preflights the workspace before dispatch: a real git checkout runs; an absent one is auto-cloned from the project's `repo_url`; anything else is rejected loud (#520 P1 + #523 P2) |
 | `onboard(project_id, …)` | Analyze a repo and deliver the draft onboarding doc set as a reviewable PR — a thin `AGENTS.md` pointer (marker-delimited), `README.md`, `ARCHITECTURE.md`, plus `.devcontainer/Dockerfile` when absent |
 | `create_repo(name, …)` | Stand up a fresh GitHub repo for a from-scratch goal |
 | `delete_repo(name, confirm)` | Tear down a repo **devclaw itself created** (create_repo records provenance in a managed-repo ledger; anything else — e.g. a pre-existing human-owned repo — is refused). Irreversible, so `confirm` must also echo the exact `owner/name`, no registered project may still reference it, and the gh token needs the `delete_repo` scope |
@@ -192,14 +192,6 @@ In both modes the **worker plans in-sandbox** — speckit `specs/*/` artifacts c
 
 The zero-token idle guard is load-bearing: an idle goal and an in-flight-still-running goal cost **0 `claude` calls** (the heartbeat is mechanism; cognition runs only when there's real work). Canonical: [`docs/architecture.md`](./docs/architecture.md) §Invariants.
 
-### Dry-run cognition (debug — pure, no side effects)
-
-Each runs ONE cognition pass exactly as the goal layer would — same prompts, same
-parsers — but files nothing, dispatches nothing, and touches no goal state. For
-previewing what the loop *would* think before committing a goal.
-
-| Tool | Does |
-|---|---|
 ### The project registry (control plane)
 
 The single source of truth for **"which repos is devclaw working on, and what's the status of each"** — one entity above the tasks/programs/goals primitives, drivable from chat, API, *and* CLI. A `Project` is a thin record (repo · workspace · status · the goal(s) driving it); it links goals **by id** and joins their live status on read, so it never caches phase and never rots.
@@ -269,7 +261,7 @@ Built to run unattended, and to ship code worth merging:
 - **Mechanical blocks self-heal.** Every block carries a structured kind; the re-checkable mechanical ones (a corrupt contract file, an unreachable repo) auto-heal at zero LLM cost, damped so a flapping condition can't burn quota. Question / bug blocks stay human-gated: `resume_goal` re-attempts the same contract once you've fixed the blocker; `steer_goal` changes direction.
 - **No-progress watchdog.** An executing goal that ships nothing for a bounded wall-clock window pings the owner once — a zero-token check that complements the per-task timeout.
 - **In-house quality gate (no third-party QC).** The engineer is briefed to *audit before extending*, and the verify gate runs a **test-integrity** check that fails on deleted / skipped / weakened tests, closing the "go green by gutting the tests" path.
-- **Pre-PR review gate — green means *reviewed*.** A green gate proves behaviour, not quality; it can't see a dead-code line or a frontend change it never exercised. So before the PR opens, a separate `claude` pass *reads the diff* against the ticket + quality bar and returns `approve` / `request_changes`, feeding located issues back through the retry loop (then escalating).
+- **Pre-PR review gate — green means *reviewed*.** A green gate proves behaviour, not quality; it can't see a dead-code line or a frontend change it never exercised. So before the PR opens, a separate `claude` pass *reads the diff* against the ticket + quality bar and returns `approve` / `request_changes`, feeding located issues back through the retry loop (then escalating). Consulted under `strict`; under the default `trust` the goal-level done-gate carries the review (spec 001).
 
 Canonical statement of these as fail-closed invariants — with the enforcing call sites and issue history: [`docs/architecture.md`](./docs/architecture.md) §Invariants.
 
@@ -322,7 +314,7 @@ For the full table (~60 vars), see [`docs/reference/env-vars.md`](./docs/referen
 
 ```bash
 pip install -e ".[dev]"
-pytest          # state store + queue/DAG + goal layer + gates, all stubbed — no docker, no claude
+pytest          # state store + queue + goal layer + gates, all stubbed — no docker, no claude
 ```
 
 To validate the **real** pipeline (a logged-in `claude` driven over ACP in a docker sandbox), follow the layered runbook in [`docs/runbooks/live-shakedown.md`](./docs/runbooks/live-shakedown.md).

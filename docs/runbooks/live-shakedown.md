@@ -1,8 +1,7 @@
 # DevClaw — live shakedown runbook
 
 Everything in the test suite runs against **stubs** (no `claude`, no docker). This
-runbook exercises the real pipeline against the **actual engine**: a logged-in
-the runner driving `claude` (via claude-agent-acp) inside a real docker sandbox. Work top-to-bottom — each
+runbook exercises the real pipeline against the **actual engine**: the runner driving a logged-in `claude` (via claude-agent-acp) inside a real docker sandbox. Work top-to-bottom — each
 layer builds on the last, so a failure tells you exactly which seam broke.
 
 > **Cost note.** Every real run spends your Claude Pro/Max session (no API key —
@@ -40,8 +39,11 @@ docker build -t devclaw-sandbox:latest -f .sandcastle/Dockerfile .
 docker image ls devclaw-sandbox:latest   # confirm it exists
 ```
 
-The image bakes a pinned `claude` CLI + `claude-agent-acp`; the host mounts your
-`~/.claude` read-only into it at runtime, so auth flows without an API key.
+The image bakes a pinned `claude` CLI + `claude-agent-acp`; the host binds an allowlisted
+subset of your `~/.claude` into it at runtime — the identity pair
+(`.claude.json`, credentials) as per-task disposable trusted copies
+(`devclaw/claude_trust.py`, `engine/sandcastle.py`), never the host files
+themselves — so auth flows without an API key.
 
 ---
 
@@ -93,8 +95,10 @@ Prove one agent run works in a sandbox before anything fancy.
 
 ```bash
 mkdir -p /tmp/sc-l1 && cd /tmp/sc-l1 && git init -q && cd -
-python drive.py implement_feature \
-  '{"workspace_dir":"/tmp/sc-l1","goal":"create a file hello.txt containing the text: hello from devclaw"}'
+python drive.py register_project \
+  '{"project_id":"sc-l1","name":"L1 shakedown","workspace_dir":"/tmp/sc-l1"}'
+python drive.py dispatch_task \
+  '{"kind":"implement_feature","project_id":"sc-l1","goal":"create a file hello.txt containing the text: hello from devclaw"}'
 # → {"task_id":"…","status":"pending"}
 ```
 
@@ -118,9 +122,12 @@ mkdir -p /tmp/sc-l2 && cd /tmp/sc-l2 && git init -q && cd -
 python drive.py register_project \
   '{"project_id":"sc-l2","name":"L2 shakedown","workspace_dir":"/tmp/sc-l2"}'
 python drive.py create_goal \
-  '{"goal_id":"sc-l2-mathx","project_id":"sc-l2","mode":"one_shot","objective":"create a Python package mathx with an add() and a mul() function, each in its own module, plus a tests/ file that imports both","done_when":"mathx exposes add() and mul() in separate modules with a tests/ file importing both"}'
+  '{"goal_id":"sc-l2-mathx","project_id":"sc-l2","mode":"one_shot","objective":"create the mathx package","issues":[1]}'
 # → {"goal_id":"…","mode":"one_shot",…}   (the start_program alias was retired by spec 022 US3)
 ```
+
+`create_goal` takes no `done_when` and refuses a non-`qa` goal without
+`issues`: the referenced issue's `## Done when` section is the contract.
 
 ```bash
 python drive.py get_goal '{"goal_id":"<id>"}'         # goals are born executing; watch phase idle → running
@@ -258,6 +265,6 @@ Replay an archived run in the console any time:
 
 ## Note on CI
 
-CI Lint is red on every PR because the GitHub Actions account is billing-locked —
-no job starts, regardless of code. That's infrastructure, not a code failure; this
-runbook is how you actually validate behavior until Actions is restored.
+CI (`.github/workflows/ci.yml`) runs on the self-hosted `lifekit-vps` runner and
+gates the stubbed suite + ruff + mypy. It never runs docker or `claude`; this
+runbook is how you validate real behavior.

@@ -4,8 +4,9 @@
 
 A small, **human-owned** JSON file at the root of every operated repo: what
 devclaw used to infer, declared and PR-reviewed. Devclaw reads it through one
-doorway (`devclaw/project_manifest.py`) and writes it exactly once — a
-mechanical seed on the speckit install PR. Runtime never writes it; the
+doorway (`devclaw/project_manifest.py`) and writes it only through two PR-only writers —
+`seed_manifest` (the mechanical seed on the speckit install PR) and
+`migrate_manifest` (the boilerplate-revision migration PR). Runtime never writes it; the
 onboarding agent is instructed not to touch it.
 
 ```json
@@ -34,6 +35,7 @@ Machine schema: [`devclaw-manifest.schema.json`](./devclaw-manifest.schema.json)
 | `verifyCmd` | string | verify-command fallback tier |
 | `stack` | list of strings | informational (v1) |
 | `capabilities` | list of capability ids | environment-capability admission (spec 030): the project is not dispatched while one of these is provably broken |
+| `validation` | object | the live-validation contract (spec 015): `boot` + `suites` (required, non-empty strings) and `smokePath` (default `/`, must start with `/`); absent ⇒ the repo is not opted into the validation lane |
 
 Unknown keys are tolerated (forward-compat within a schema version).
 
@@ -65,8 +67,9 @@ CI-rollup fact (US1) has a live track record.
 
 The explicit, complete list of environment capabilities this project's verify
 contract depends on — nothing is inferred. v1 ids: `registry:npm-github` (the
-GitHub Packages npm credential) and `sandbox:image` (the per-task sandbox image
-is present/pullable). A project that declares none is admitted exactly as
+GitHub Packages npm credential), `sandbox:image` (the per-task sandbox image
+is present/pullable) and `ci:definition` (the default branch carries a CI
+workflow). A project that declares none is admitted exactly as
 before. Ids are **value-validated at the parse**, like `strictnessDefault` and
 `surface`: an id this instance cannot probe fails the manifest loud, because a
 typo would otherwise read as protection while the brake is silently off.
@@ -123,8 +126,8 @@ Every **gate-relevant** read (strictness, surface, verifyCmd) comes from the
 repo's **remote default-branch tip** — the human-merged truth — never from
 the worktree or the goal branch, both of which the sandboxed worker can write
 to. A worker-side edit to `devclaw.json` therefore has NO effect on any gate
-until a human merges it (named regression:
-`tests/test_manifest_gates.py::test_manifest_edit_inside_run_does_not_change_gate_inputs`).
+until a human merges it (the enforcing read is
+`load_manifest_at_base` in `devclaw/project_manifest.py`).
 Workspaces with no remote (dev/stub) fall back to the worktree — there the
 worktree is the only truth.
 

@@ -28,7 +28,7 @@ Only layer 5 is an agent harness in the technical sense.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`executing` only since the 008 shrink), the ~15-min tick |
-| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink; the scope-grill porch died with the prose lane, 2026-08-29 prune) |
+| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/intake_readiness.py`; `devclaw/goal/admission_lint.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, intake readiness, admission lint — planning cognition was relocated into the worker's speckit run, spec 008 shrink; the scope-grill porch died with the prose lane, 2026-08-29 prune) |
 | 4 | **TaskQueue + engine** | `devclaw/task_queue.py` (+ its `devclaw/queue/` mixins), `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
 
@@ -243,7 +243,7 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~1150 tripwire tests, all stubbed — no docker, no claude; ~23s (-n auto)
+pytest        # ~1400 tripwire tests, all stubbed — no docker, no claude; ~23s (-n auto)
 ruff check .  # pyflakes + syntax errors only; CI gates it
 mypy          # type check (config in pyproject [tool.mypy]); CI gates it too
 ```
@@ -307,8 +307,8 @@ are frozen history),
 `.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
 escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit,
-live-shakedown, root-cause — the fix-the-class procedure, applied before any
-behaviour-changing fix).
+devclaw-status, live-shakedown, root-cause — the fix-the-class procedure, applied
+before any behaviour-changing fix — plus the vendored `speckit-*` command skills).
 
 ## Where to look next
 

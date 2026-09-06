@@ -15,8 +15,9 @@ agent, chat or Telegram or A2A — the ask becomes a labeled GitHub issue on the
 target registered project's repo, and the returned issue URL is the asker's
 durable receipt. `file_intake` can only create issues; turning an issue into
 execution (stage 2) is a separate act by the authorized dispatcher (today:
-Denys, via any interface), whose dispatch references the intake issue so the
-delivery PR closes it.
+Denys, via any interface): the goal is filed as `create_goal(issues=[N])` and
+the issue's acceptance section IS the contract, read live per dispatch
+(spec 024), so the delivery PR closes it.
 
 Non-human askers never call dispatch tools. The mediating agent (e.g. the
 OpenClaw devclaw agent receiving an A2A ask from Ledger) MAY call `file_intake`
@@ -44,7 +45,11 @@ the `devclaw-intake` label (created idempotently on first use per repo).
 Readiness answers *is this ask well-formed*. It says nothing about *how big* it
 is, which is why the same graded issue used to produce different execution
 shapes depending on who dispatched it (#600). The extent is a second,
-independent axis, recorded at the doorway and checked at grading.
+independent axis, recorded at the doorway and checked at grading; a third,
+staleness (spec 028), lands `needs-refinement` with a `stale` verdict when the
+repository already satisfies the ask. A hand-written issue whose body carries
+no `## Done when` / `## Acceptance` heading fails closed to `needs-refinement`
+before any cognition runs.
 
 - **The filer claims it, and the claim is the record.** `expected_increments` +
   `increment_basis` are rendered into an `## Expected increments` section of
@@ -78,6 +83,10 @@ the issue and re-grade to settle it.
   expected_increments}`. The URL is the
   receipt; a filing failure raises with an actionable message instead — there
   is no receipt unless the issue really exists.
+- **Graded** (async) → `file_intake` schedules a readiness grade after the
+  receipt; exactly one of `devclaw-ready` / `needs-refinement` lands as a label.
+  Re-run by `regrade_intake`, by the serve-start `recover_pending_grades` sweep,
+  or by a spec-023 webhook delivery.
 - **Open** → the ask is pending. The asker follows up on its own cadence
   (pull; there is no push notification in P1).
 - **Closed by a merged PR** → shipped. The dispatcher references the intake
@@ -88,6 +97,6 @@ the issue and re-grade to settle it.
 Not a dispatch surface (stage 2 is human-gated; auto-pickup of
 `devclaw-intake` issues is a named, scorecard-gated future upgrade). Not a
 state store (issues are intent; execution state stays in SQLite — see the
-single-writer invariant in [`../architecture.md`](../architecture.md)). Not an
-LLM call — filing is mechanical (`gh` subprocess with a `GITHUB_TOKEN`
-credential, never `ANTHROPIC_*`).
+single-writer invariant in [`../architecture.md`](../architecture.md)). Filing is
+mechanical (`gh` subprocess with a `GITHUB_TOKEN` credential, never
+`ANTHROPIC_*`); the one LLM call is the async grade, never on the heartbeat.

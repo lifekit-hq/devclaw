@@ -16,7 +16,7 @@ Use this when:
 The three nodes (Node 1 = openclaw waiter / TS, Node 2 = devclaw-mcp /
 Python, Node 3 = ephemeral sandbox / per task) are defined in
 [`decisions/0001-openhands-engine.md`](../decisions/0001-openhands-engine.md) and in
-`~/memory/projects/devclaw/architecture.md`. This doc assumes you've read
+[`../architecture.md`](../architecture.md). This doc assumes you've read
 one of those.
 
 ## The full sequence
@@ -49,8 +49,9 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       naming it (out_of_scope/invariants/established,       │
      │  │       spec 012 US2 — [] declares one empty, omitting        │
      │  │       one is a rejection, never a silent default)           │
-     │  │     • write /var/lib/devclaw/goals/<id>/goal.yaml (facts,   │
-     │  │       incl. the authored saga slots) + the first            │
+     │  │     • write $DEVCLAW_GOALS_DIR/<id>/goal.yaml (deploy:      │
+     │  │       /var/lib/devclaw/goals/) — facts incl. the authored   │
+     │  │       saga slots — + the first                              │
      │  │       goal_status SQLite row                                │
      │  │       (STATUS.md is rendered alongside as a generated view) │
      │  │     • lifecycle="executing", phase="idle"                   │
@@ -191,20 +192,25 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       (spec 032 US3) — no retry; an issue may declare a     │                      │
      │  │       gate-input path in scope with a backticked path/glob  │                      │
      │  │                                                             │                      │
-     │  │  Step I — review gate (quality/review_gate):                │                      │
+     │  │  Step I — gate pipeline (quality/task_gates.py →            │                      │
+     │  │     quality/gate_pipeline.run_pipeline): verify →           │                      │
+     │  │     materialize → change_class → test_integrity, then       │                      │
+     │  │     `review` / `browser` only as consulted by the dial      │                      │
+     │  │     (review is dropped under `trust`):                      │                      │
      │  │     • the MATERIALIZED span, not a fresh working-tree diff  │                      │
-     │  │     • feed diff to `claude --print` for adversarial check   │                      │
-     │  │     • + workspace snapshot as REPOSITORY CONTEXT (#227)     │                      │
+     │  │     • review: feed diff to `claude --print` for adversarial │                      │
+     │  │       check, + workspace snapshot as REPO CONTEXT (#227)    │                      │
      │  │     • single adversarial reviewer over the diff,            │                      │
      │  │       wrapped in the cognition-timeout degrade ladder       │                      │
      │  │       (oversized diff → per-file split + union)             │                      │
-     │  │     • test-integrity guard: were tests deleted/weakened?    │                      │
+     │  │     • test_integrity is its own always-hard gate            │                      │
+     │  │       (`_IntegrityGate`): were tests deleted/weakened?      │                      │
      │  │     • either: ok / needs revision (kicked back to engineer) │                      │
      │  │                                                             │                      │
      │  │  Step J — delivery (delivery.deliver_change):               │                      │
      │  │     • publishes the JUDGED head — no discovery of its own;  │                      │
      │  │       a drifted workspace fails loud (spec 013 FR-005)      │                      │
-     │  │     • git push to branch goal/<slug>                        │                      │
+     │  │     • git push to branch goal/<goal-id>                     │                      │
      │  │     • gh pr create  (conventional commit + diffstat body)   │                      │
      │  │     • record PR URL                                         │                      │
      │  │                                                             │                      │
@@ -241,14 +247,14 @@ Problem for the owner, spec 031) or `STATUS: BLOCKED: env — <item>` (the
 sandbox lacks a tool, service, credential or access). The runner types the
 form on the wire (`block_kind`, `block_item`); the settle fails the task
 closed and un-retried in both cases, but the env form is the PIPELINE's:
-one problems-catalog row per item (`block/env_deficiency`, self-filed as
+one problems-catalog row per item (`category="block", kind="env_deficiency"`, self-filed as
 devclaw work when `DEVCLAW_SELF_REPO` is set), and the goal's whole project
 holds on `mechanical:env` (a red `worker:<item>` capability row, read at
 admission by every goal on the project) until the instance's environment
 changes — a new sandbox image or build — when it heals with no operator verb.
 The worker never patches the repo around its environment.
 
-## How the 2026-06-25 cascade maps onto these steps
+## Historical (2026-06) — how the 2026-06-25 cascade maps onto these steps
 
 | Failure | Step | Symptom seen upstream | Real fix |
 |---|---|---|---|
@@ -260,7 +266,7 @@ All three were silent-timeout failures because the engine output in Step H
 couldn't distinguish *"the docker run from Step C never happened"* from
 *"the sandbox started but exited 1"*.
 
-## Open improvements (queue, not yet built)
+## Historical (2026-06) — open improvements (queue, not yet built)
 
 1. **Failure-mode disambiguation in Step H.** Distinct error strings for:
    "the `docker run` in Step C never returned a container ID" vs "the
