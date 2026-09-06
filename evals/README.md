@@ -135,7 +135,6 @@ harness can pass itself).
    DEVCLAW_SANDBOX_IMAGE=<img> DEVCLAW_EXEC_MODEL=<model> \
      .venv/bin/python evals/measure_passrate.py --basket evals/baskets/v01-proof.json
    ```
-   Optional control run for the trend-detector value question: prepend `DEVCLAW_TREND_ENABLED=0`.
 4. **Render the verdict** — review each PR on GitHub and fill the #178 scorecard:
    merged-without-rework/10 + a `harness | model | spec` bucket per miss. *A green gate is
    not "merged without rework."* The tool prints this reminder at the end.

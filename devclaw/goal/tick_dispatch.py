@@ -35,7 +35,6 @@ from . import repo_brief as _repo_brief
 from .engine import GoalEngine
 from .models import Action, Goal, GoalStatus
 from .notify import Notifier
-from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
 from ..advance_brief import display_goal as _display_goal
@@ -77,7 +76,6 @@ async def _dispatch_action(
     goal_id: str, goal: Goal, base: GoalStatus, action: Action,
     *, store: GoalStore, engine: GoalEngine, notifier: Notifier,
     notify_url: str, prepare_ws: WorkspacePrep,
-    summarize: "ClaudeCaller | None" = None,
     consume_steering: "list[int] | None" = None,
     project_caps: "dict[str, tuple[str, ...]] | None" = None,
 ) -> Outcome:
@@ -123,7 +121,7 @@ async def _dispatch_action(
                     blocked_kind="mechanical:dispatch_cap"),
             expect=base, consume_steering=consume_steering,
         )
-        await _notify(notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] dispatch cap ({cap}) reached — paused for your review", summarize=summarize)
+        await _notify(notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] dispatch cap ({cap}) reached — paused for your review")
         return Outcome.BLOCKED
     # Admission prep: prove the workspace is placeable on the goal branch —
     # clone/fetch/checkout ``goal/<id>`` so each increment's commits STACK on
@@ -151,7 +149,7 @@ async def _dispatch_action(
         await prepare_ws(checkout, goal.repo_url, branch_for_dispatch)
     except WorkspaceError as exc:
         return await _block_on_prep_failure(
-            goal_id, base, exc, store=store, notifier=notifier, summarize=summarize,
+            goal_id, base, exc, store=store, notifier=notifier,
         )
     action = replace(action, branch=branch_for_dispatch)
     # Staleness probe (goal-branch mode only): skip dispatch only when the goal
@@ -218,8 +216,7 @@ async def _dispatch_action(
         if _red:
             return await _block_on_env_cap(
                 goal_id, base, _red,
-                store=store, notifier=notifier,
-                summarize=summarize, consume_steering=consume_steering,
+                store=store, notifier=notifier, consume_steering=consume_steering,
             )
     # ---- speckit contract enforcement at the dispatch boundary (issue #679) --
     # (a) block when spec dirs exist but none are graded (no tasks.md — the plan
@@ -280,7 +277,6 @@ async def _dispatch_action(
                             f"🛑 [{goal_id}] dispatch permanently held"
                             f" ({_SLICE_HOLD_CAP} ticks) — features with pending"
                             f" tasks: {_dirs_str}",
-                            summarize=summarize,
                         )
                         return Outcome.BLOCKED
                     store.update_status_fields(goal_id, slice_hold_count=_hold_count)

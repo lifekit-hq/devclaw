@@ -81,8 +81,7 @@ async def _resolve_polling_done_gate(
     ctx.store.render_mirrors(goal_id)
     return await _resolve_done_gate(
         goal_id, goal, new_status, review_report,
-        store=ctx.store, evaluator_caller=ctx.evaluator_caller, notifier=ctx.notifier,
-        summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+        store=ctx.store, evaluator_caller=ctx.evaluator_caller, notifier=ctx.notifier, remote_checker=ctx.remote_checker,
         autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
     )
 
@@ -363,7 +362,7 @@ async def _resolve_polling_action(
         item = item.split(" — the sandbox lacks", 1)[0].strip() or "unspecified environment gap"
         return await _block_on_env_deficiency(
             goal_id, goal, new_status, item, task_id=ref.id,
-            store=ctx.store, notifier=ctx.notifier, summarize=ctx.summary_caller,
+            store=ctx.store, notifier=ctx.notifier,
         )
 
     # ---- worker honest-block → typed Problem, immediately (spec 031 R4) ----
@@ -426,7 +425,7 @@ async def _resolve_polling_action(
         return await _block_on_prep_failure(
             goal_id, new_status,
             WorkspaceError(poll.detail or "mechanical setup failure"),
-            store=ctx.store, notifier=ctx.notifier, summarize=ctx.summary_caller,
+            store=ctx.store, notifier=ctx.notifier,
         )
 
     # ---- speckit tasks.md build-ahead guardrail (SDLC pipeline) -------------
@@ -482,7 +481,6 @@ async def _resolve_polling_action(
                 ctx.store.append_log(goal_id, reason)
                 await _notify(
                     ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {reason}",
-                    summarize=ctx.summary_caller,
                 )
                 return Outcome.BLOCKED
             # ADVISE — loud in the goal log, ship anyway (trust mode). The
@@ -524,7 +522,6 @@ async def _resolve_polling_action(
                 f"⚠️ [{goal_id}] delivered PR cannot land — {_action_label(ref)} "
                 f"shipped, but its PR conflicts with the base branch and will not "
                 f"merge as-is. It needs a rebase or hand-resolution: {poll.pr_url}",
-                summarize=ctx.summary_caller,
             )
 
     # Tells the planner the PR's REAL state instead of letting it infer one.

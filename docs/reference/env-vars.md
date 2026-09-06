@@ -79,7 +79,7 @@ session quota, not a bill.**
 | Var | Default | Runs |
 |---|---|---|
 | `DEVCLAW_MODEL_DEEP` | `opus` | Reserved for rare, high-leverage calls — currently **no live role maps to this tier** (read by `config.py`, consumed by nothing since the 008 shrink moved planning into the sandbox). |
-| `DEVCLAW_MODEL_STANDARD` | `sonnet` | Judgment at volume: direction evaluator, intake readiness, self-triage, review gate, reachability judge, trend classification. |
+| `DEVCLAW_MODEL_STANDARD` | `sonnet` | Judgment at volume: the done-gate evaluator, intake readiness, review gate, reachability judge. |
 | `DEVCLAW_MODEL_LIGHT` | `haiku` | Mechanical prose: per-delivery summaries. |
 | `DEVCLAW_EXEC_MODEL` | `claude-sonnet-4-6` | **The in-sandbox coding agent — the token/quota bulk.** Full id, not alias. Set `claude-opus-4-8` to opt a run up to Opus. Empty → ACP server's default. |
 | `DEVCLAW_ACP_COMMAND` | *(unset)* → `claude-agent-acp` | **The ACP agent command the worker session runs on** — the layer-5 replaceability seam. A string like `my-acp --profile x`; the runner shlex-splits it. Read host-side and threaded via the runner JSON payload (host env does NOT cross the container boundary; the runner's own env read only serves manual `docker run` / host-engine runs). Scope caveat: this swaps the *command only* — the `acp_env` (CLAUDE_* vars), the `~/.claude` auth mounts, `DEVCLAW_EXEC_MODEL`'s claude model ids, and the auth/rate-limit classifiers are still claude-shaped, and the alternate binary must be baked into the sandbox image. |
@@ -143,7 +143,6 @@ pure library gets no preview container unless its project pins `autodeploy=on`.
 | `DEVCLAW_GOAL_BROWSER_GATE` | `1` | Whether the settle path enforces the browser-E2E gate: a change touching a web-UI path must carry a passing real-browser Playwright run (proven via the runner's `browser_report` counts) before it ships. `0` disables — UI changes are gated by verify + review only (the pre-2026-07-17 behaviour). The gate *stance* (`flexible`/`strict`) and the reachability escape valve are no longer env-tuned: stance is `task_queue.BROWSER_GATE_MODE` (fleet default `flexible`, per-project overridable via the registry's `browser_gate_mode`); the reachability valve is always on (strictly safe — can only relax a would-be block). |
 | `DEVCLAW_GOAL_NO_PROGRESS_S` | `21600` | Wall-clock seconds an executing goal may go without a delivery before the watchdog pings the owner once. Zero-token check; complements the per-task timeout. `0` disables. |
 | `DEVCLAW_GOAL_NOTIFY_URL` | — | Notify-relay endpoint for goal-level Telegram messages (free-text `/text` passthrough). |
-| `DEVCLAW_GOAL_PLAIN_SUMMARY` | `1` | One-line plain-prose summary per delivery for `deliveries.md` (quota lever — one `claude` call per delivery). |
 | `DEVCLAW_NOTIFY_ALTITUDE` | `owner` | Floor for goal-layer notifications: `owner` (only real blockers / direction questions / completions) or `task` (also includes per-task chatter). |
 | `DEVCLAW_RUN_CYCLE_START` | `22:00` | Open time (`HH:MM`, in `DEVCLAW_RUN_CYCLE_TZ`) of the recurring run cycle (nightly by default) whose close fires the continuous-eval **cycle report** (ADR 0006): a mechanical, zero-LLM heartbeat edge that pushes the cycle's clean/wedge/pause slice through the notifier once per cycle. |
 | `DEVCLAW_RUN_CYCLE_END` | `05:00` | Close time (`HH:MM`) of the run cycle — the heartbeat emits the report on the first wakeup after this instant (once per `cycle_key`; the `cycle_reports` PK dedupes). |
@@ -182,18 +181,6 @@ nothing — unknown is not an alarm.
 | `DEVCLAW_DEPLOY_QUIESCENCE_S` | `21600` | Spec 025 US2 (self-deploy on merge): how long a pending instance self-deploy may wait for task quiescence (`count_running() == 0`) before it expires loudly (`deploy_last.outcome = expired`; re-armed by the next devclaw-repo close or operator resume). The trigger fires `gh workflow run deploy.yml -f auto=true`; the workflow's auto lane (`deploy/deploy-devclaw-auto.sh`) owns the health probe and the ONE automatic rollback. |
 | `DEVCLAW_DEPLOY_CPUS` | `1.0` | Per-deploy CPU limit. |
 | `DEVCLAW_DEPLOY_MAX` | `5` | Max concurrent durable deploys on the VPS. |
-
-## Trend detection (self-observation)
-
-Detects recurring failure/friction patterns across goals (e.g. the same class of
-steer landing repeatedly) and writes them to the owner's vault for review — a
-zero-token-by-default background signal, not a cognition role.
-
-| Var | Default | Purpose |
-|---|---|---|
-| `DEVCLAW_TREND_ENABLED` | `1` | Master switch for trend detection. `0` disables entirely. |
-| `DEVCLAW_TREND_DISABLE` | — | Comma-separated signal ids to mute individually (e.g. `R2,H4`) while a signal is being calibrated, without disabling the rest. |
-| `DEVCLAW_TREND_HARNESS_SELF_FILE` | `~/memory/projects/devclaw/trends.md` | Where detected trends are appended for Denys to review. |
 
 ## What's NOT here on purpose
 

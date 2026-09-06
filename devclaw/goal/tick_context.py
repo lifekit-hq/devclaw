@@ -22,7 +22,6 @@ from .. import config as _config
 from . import issue_ref as _issue_ref
 from . import mergeability as _mergeability
 from . import remote_checks as _remote_checks
-from . import summary as _goal_summary
 from .engine import GoalEngine
 from .models import EvalResult, GoalStatus
 from .notify import Notifier
@@ -106,10 +105,9 @@ def _notify_floor() -> NotifyLevel:
 
 def _action_label(ref) -> str:
     """A SHORT human label for an action — its first line, trimmed. An action's
-    full ``goal`` is a long instruction prompt; putting it in a notification (which
-    happens when the plain-language summarizer is quota-blocked and falls back to
-    the raw text) spams the owner with the entire prompt. Keep the notification
-    terse BY CONSTRUCTION so it reads well even without the summarizer."""
+    full ``goal`` is a long instruction prompt; owner messages go out as written,
+    so putting it in a notification spams the owner with the entire prompt. Keep
+    the notification terse BY CONSTRUCTION."""
     text = (getattr(ref, "goal", None) or getattr(ref, "tool", "") or "change").strip()
     first = text.splitlines()[0].strip() if text else "change"
     return (first[:90].rstrip() + "…") if len(first) > 90 else first
@@ -117,14 +115,11 @@ def _action_label(ref) -> str:
 
 async def _notify(
     notifier: Notifier, level: NotifyLevel, text: str,
-    *, summarize: "ClaudeCaller | None" = None, critical: bool = False,
+    *, critical: bool = False,
 ) -> None:
     """Send a notification only if it's at/above the configured altitude floor.
-    When a ``summarize`` caller is supplied, OWNER-level messages are first
-    rewritten into plain language for a non-technical owner (best-effort — the
-    summarizer never loses or blocks a notification). The altitude gate itself
-    is mechanism (zero tokens); cognition runs only for owner-facing sends that
-    actually clear the gate, never on the idle path.
+    The altitude gate is mechanism (zero tokens): the text goes out as written,
+    never through a rewriter.
 
     ``critical`` marks the instance-dead class (spec 025 US3): it pierces
     quiet mode via the notifier's ``send_critical`` when one exists (the
@@ -132,8 +127,6 @@ async def _notify(
     decision, not a convenience. A plain notifier (tests) just sends."""
     if level < _notify_floor():
         return
-    if summarize is not None and level >= NotifyLevel.OWNER:
-        text = await _goal_summary.plain_summary(text, caller=summarize)
     _trace.record_notify(level=level.name, text=text)
     if critical:
         send_critical = getattr(notifier, "send_critical", None)
@@ -141,56 +134,6 @@ async def _notify(
             await send_critical(text)
             return
     await notifier.send(text)
-
-
-#: The self-triage allowlist (slice 1). Only owner pings whose ``kind`` is in
-#: this set route through the propose-only triage interceptor; every other ping
-#: stays on the raw path, byte-identical. Trigger granularity is deliberately an
-#: ALLOWLIST, not "every owner ping" — the blast radius stays tiny and each new
-#: trigger is an explicit, reviewed addition. Slice 1 registers exactly one key;
-#: a future ``needs_answer`` wire adds "needs_answer" here and calls
-#: :func:`triaged_notify` from the block path.
-TRIAGE_ELIGIBLE = {"db_size"}
-
-
-async def triaged_notify(
-    notifier: Notifier, level: NotifyLevel, raw_text: str,
-    *, kind: str, triage_caller: "ClaudeCaller | None",
-    catalog: str = "", repo_context: str = "",
-    summarize: "ClaudeCaller | None" = None,
-) -> None:
-    """The propose-only interception choke point (self-triage slice 1).
-
-    Before an OWNER ping goes out, if its ``kind`` is on the :data:`TRIAGE_ELIGIBLE`
-    allowlist AND a ``triage_caller`` is wired, route it through the bounded
-    triage cognition step: dedupe against the ``problems`` catalog + draft a
-    proposed fix, then deliver "problem + proposed fix + how to approve" instead
-    of the bare alert. Otherwise (no caller, or an ineligible kind) this is
-    byte-identical to a plain :func:`_notify`.
-
-    Fails toward the owner: triage never raises, and if it returns no proposal
-    (LLM error, invalid JSON, empty fix) the ORIGINAL raw ping is delivered
-    unchanged — loud, not silent. Zero-token idle guard intact: this only runs
-    when the caller already decided a real ping should fire (never on idle).
-
-    ``summarize`` is applied ONLY to the raw fallback path — an enriched proposal
-    is already plain owner-facing prose and must not be re-summarized (that would
-    risk dropping the proposed fix / approve line)."""
-    if triage_caller is None or kind not in TRIAGE_ELIGIBLE:
-        await _notify(notifier, level, raw_text, summarize=summarize)
-        return
-    try:
-        from . import triage as _triage  # lazy — avoids any import cycle
-        proposal = await _triage.triage(
-            raw_text, catalog=catalog, repo_context=repo_context, caller=triage_caller,
-        )
-    except Exception:  # noqa: BLE001 — interception must never break the heartbeat
-        proposal = None
-    if proposal is None:
-        await _notify(notifier, level, raw_text, summarize=summarize)
-        return
-    from . import triage as _triage  # (cached import) render the enriched message
-    await _notify(notifier, level, _triage.render(proposal, raw_text))
 
 
 class Phase(str, Enum):
@@ -247,7 +190,6 @@ class TickContext:
     #: deploy iff the workspace has an app surface (resolved at the done-gate).
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED
     no_progress_s: int = NO_PROGRESS_S
-    summary_caller: "ClaudeCaller | None" = None
     #: grounded remote-checks verification at the done-gate (the 2026-07-06
     #: benchmark fix: ``achieved`` is only honored when the goal branch's REAL
     #: CI doesn't contradict it). None → skipped (the test seam);
@@ -296,7 +238,7 @@ class TickContext:
 # race it already lost the moment it started.
 #
 # Deliberately scoped to tick_goal ONLY — steer_goal / cancel_goal /
-# evaluate_goal stay lock-free on purpose. They are synchronous, loop-atomic
+# cancel_goal stay lock-free on purpose. They are synchronous, loop-atomic
 # MCP calls that must never wait behind a minutes-long cognition await; CAS
 # remains their guard, unchanged. This is the design's decision, verbatim:
 # "one per-goal asyncio.Lock around tick_goal only; steer/cancel stay sync +

@@ -78,7 +78,7 @@ Available via `devclaw__*` MCP tools:
 - **Tasks** (single dishes): `dispatch_task(kind=implement_feature|fix_bug|review_repository|validate_product, …)`, `onboard`, `create_repo` (+ `delete_repo` teardown — confirm-gated, refuses repos devclaw didn't create). The kind-specific alias tools and the scope-grill porch were removed by the 2026-08-29 prune — the ticket is the contract (spec 024): scope is authored in a GitHub issue (the template carries the saga sections), then `create_goal(issues=[…])` or `dispatch_task` files the work; `dispatch_task` auto-files an intake issue for a prose ask. Status: `get_status`, `list_tasks`, `cancel_task`.
 - **Deploy**: `deploy_project`, `deploy_status`, `stop_deploy`, `list_deploys`.
 - **Problems** (spec 031): `list_problems`, `decide`, `correct_implementation`.
-- **Intake + evaluation**: `file_intake`, `regrade_intake`, `grade_backlog`, `evaluate_goal`, `doctor`.
+- **Intake + evaluation**: `file_intake`, `regrade_intake`, `grade_backlog`, `doctor`.
 - **Instance knobs**: `get_run_schedule` / `set_run_schedule`, `set_operator_hold`, `clear_usage_pause`.
 
 ## Scoping a new ask — the ticket is the contract

@@ -46,16 +46,13 @@ PROMPT_CALLERS = {
     "devclaw/prompts/goal-evaluator.md": "devclaw/goal/evaluator.py",
     "devclaw/prompts/admission-lint.md": "devclaw/goal/admission_lint.py",
     "devclaw/prompts/intake-readiness.md": "devclaw/intake_readiness.py",
-    "devclaw/prompts/self-triage.md": "devclaw/goal/triage.py",
     "devclaw/quality/prompts/review-gate.md": "devclaw/quality/__init__.py",
     "devclaw/quality/prompts/browser-reachability.md": "devclaw/quality/reachability.py",
 }
 GROUNDED_PROMPTS = set(PROMPT_CALLERS) - {"devclaw/prompts/admission-lint.md"}
 # keys a caller reads from its INPUT rows (rendered into the prompt), not from
 # the model's output — excluded from the schema-vs-parser check
-INPUT_KEYS = {
-    "devclaw/prompts/self-triage.md": {"category", "kind", "summary", "count", "terminal_count", "fingerprint", "last_seen"},
-}
+INPUT_KEYS: dict[str, set[str]] = {}
 
 # direction in which a metric gets WORSE
 WORSE = {

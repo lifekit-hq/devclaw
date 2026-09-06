@@ -378,7 +378,6 @@ async def _live_contract(
 async def _resolve_done_gate(
     goal_id: str, goal: Goal, status: GoalStatus, review_report: str,
     *, store: GoalStore, evaluator_caller: ClaudeCaller, notifier: Notifier,
-    summarize: "ClaudeCaller | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
@@ -611,7 +610,7 @@ async def _resolve_done_gate(
                         pending_merge_pr=merge.pr_url or "", next=""),
                 expect=status, consume_steering=consume_steering,
             )
-            await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}", summarize=summarize)
+            await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}")
             return Outcome.BLOCKED
         merged_note = ""
         if merge is not None and merge.outcome in _merge.SUCCESS_OUTCOMES:
@@ -694,7 +693,7 @@ async def _resolve_done_gate(
             f" — {len(ev.structural_concerns)} advisory follow-up(s) in the goal log"
             if ev.structural_concerns else ""
         )
-        await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label}{merged_note} — {ev.rationale[:200]}{followups}{live}{summary_suffix}", summarize=summarize)
+        await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label}{merged_note} — {ev.rationale[:200]}{followups}{live}{summary_suffix}")
         return Outcome.DONE
     if ev.verdict in ("stalled", "needs_human"):
         # Spec 031 US1: the block carries a typed Problem — what, clause, why,
@@ -718,8 +717,7 @@ async def _resolve_done_gate(
                 expect=status, consume_steering=consume_steering,
             )
         await _notify(notifier, NotifyLevel.OWNER,
-                      f"🟡 [{goal_id}] not done — {_problems.render_for_human(prob)}",
-                      summarize=summarize)
+                      f"🟡 [{goal_id}] not done — {_problems.render_for_human(prob)}")
         return Outcome.BLOCKED
     # on_track / off_track → not done yet. Count the round: a gate that
     # refuses to close the same goal DONEGATE_ROUND_CAP times in a row is a
@@ -767,7 +765,7 @@ async def _resolve_done_gate(
             )
         _apply_corrections(store, goal_id, ev)  # visible in inbox for the owner's decision
         await _notify(notifier, NotifyLevel.OWNER,
-                      f"🟡 [{goal_id}] {_problems.render_for_human(prob)}", summarize=summarize)
+                      f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
         return Outcome.BLOCKED
     store.transition(
         goal_id, Event.RESUME_IDLE,
@@ -800,7 +798,7 @@ def _ci_hold_before_merge(
 async def _block_on_ci_definition(
     goal_id: str, goal: Goal, base: GoalStatus, branch: str,
     rc: "_remote_checks.RemoteChecksResult", *,
-    store: GoalStore, notifier: Notifier, summarize: "ClaudeCaller | None",
+    store: GoalStore, notifier: Notifier,
     consume_steering: "list[int] | None",
 ) -> Outcome:
     """The project's CI definition is absent or broken — a fact no worker may
@@ -833,7 +831,7 @@ async def _block_on_ci_definition(
             expect=base, consume_steering=consume_steering,
         )
     await _notify(notifier, NotifyLevel.OWNER,
-                  f"🟡 [{goal_id}] {_problems.render_for_human(prob)}", summarize=summarize)
+                  f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
     return Outcome.BLOCKED
 
 
@@ -841,7 +839,7 @@ async def _open_done_gate(
     goal_id: str, goal: Goal, base: GoalStatus,
     *, store: GoalStore, engine: GoalEngine, evaluator_caller: ClaudeCaller,
     notifier: Notifier, notify_url: str, prepare_ws: WorkspacePrep, verify_done: bool,
-    note: str, summarize: "ClaudeCaller | None" = None,
+    note: str,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     consume_steering: "list[int] | None" = None,
@@ -897,8 +895,7 @@ async def _open_done_gate(
             return Outcome.BLOCKED
         if rc.state in ("no_workflows", "infra_broken"):
             return await _block_on_ci_definition(
-                goal_id, goal, base, branch, rc, store=store, notifier=notifier,
-                summarize=summarize, consume_steering=consume_steering,
+                goal_id, goal, base, branch, rc, store=store, notifier=notifier, consume_steering=consume_steering,
             )
         base = replace(base, ci_green_head=rc.head_sha, pending_done_proposal=False)
     if verify_done:
@@ -964,8 +961,7 @@ async def _open_done_gate(
     # verify disabled → artifact-only done evaluation now.
     return await _resolve_done_gate(
         goal_id, goal, base, review_report="",  # no review run; artifact-only
-        store=store, evaluator_caller=evaluator_caller, notifier=notifier,
-        summarize=summarize, remote_checker=remote_checker, autodeploy=autodeploy,
+        store=store, evaluator_caller=evaluator_caller, notifier=notifier, remote_checker=remote_checker, autodeploy=autodeploy,
         consume_steering=consume_steering, issue_fetcher=issue_fetcher,
     )
 
@@ -973,7 +969,6 @@ async def _open_done_gate(
 async def _finalize_pending_merge(
     goal_id: str, goal: Goal, status: GoalStatus, *,
     store: GoalStore, notifier: Notifier,
-    summarize: "ClaudeCaller | None" = None,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
 ) -> Outcome:
@@ -1032,7 +1027,6 @@ async def _finalize_pending_merge(
             notifier, NotifyLevel.OWNER,
             f"✅ [{goal_id}] goal complete — merge completed on retry ({merged}). "
             f"{rationale[:200]}",
-            summarize=summarize,
         )
         return Outcome.DONE
     # NO_PR here is NOT success: the marker says a PR existed when we parked.
@@ -1048,5 +1042,5 @@ async def _finalize_pending_merge(
                 pending_merge_pr=status.pending_merge_pr or merge.pr_url, next=""),
         expect=status,
     )
-    await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}", summarize=summarize)
+    await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}")
     return Outcome.BLOCKED
