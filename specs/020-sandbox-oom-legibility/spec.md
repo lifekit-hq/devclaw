@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-26
 
-**Status**: Draft
+**Status**: Implemented 2026-08-31 — shipped in #703, #704, #705, #706, #773 (tasks 30/30); the deploy remainder (T029/T030 — sandbox-image rebuild + live proofs) is owned by open issue #717. Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped).
 
 **Input**: User description: "Implement devclaw issue #702 — sandbox OOM legibility + prevention. An OOM-killed sandbox settles as a deterministic environment failure with an actionable reason and no identical auto-retry; the runner shields the supervisor so memory exhaustion kills the workload visibly instead of the agent; the sandbox env carries the real memory/CPU allocation so the worker can bound its tooling (/proc/meminfo and nproc lie inside cgroups); the project registry accepts per-project sandbox sizing alongside ADR 0005's sandbox_image. Operator constraint (ruled 2026-08-26): bounded-memory-first, wall-clock second."
 
