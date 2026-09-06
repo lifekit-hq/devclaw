@@ -22,6 +22,38 @@ if TYPE_CHECKING:  # pragma: no cover
     from .context import InstanceContext
 
 
+def _grounded_workspace(
+    project: "Project", cid: str
+) -> "tuple[Path | None, list[Finding]]":
+    """The project's workspace as a real directory, or the UNKNOWN finding
+    saying this check cannot judge it.
+
+    Every check that reads the workspace goes through here. The naive
+    ``Path(project.workspace_dir or "")`` is ``Path(".")`` — the devclaw
+    process's OWN checkout, which carries an ``AGENTS.md``, a ``.specify/``, a
+    ``.git`` and a ``devclaw.json``. A workspace-less project row is legal (the
+    registry accepts one registered before its clone exists), so those checks
+    were reporting confident OKs that actually described devclaw itself.
+
+    UNKNOWN, not FAIL: :func:`check_workspace_preflight` already emits the one
+    loud verdict for this condition, and one root cause should not shout five
+    times.
+    """
+    # Blankness is tested on the stripped value but the path is used RAW —
+    # exactly what workspace_is_dispatchable does, so a padded row (the
+    # registry validates stripped but stores the original) cannot be rejected
+    # by preflight and accepted here.
+    ws = project.workspace_dir or ""
+    if not ws.strip() or not Path(ws).is_dir():
+        return None, [Finding(
+            cid, Verdict.UNKNOWN,
+            "workspace not on disk — cannot judge this project",
+            remedy="update_project (or restore the workspace checkout)",
+            project_id=project.id,
+        )]
+    return Path(ws), []
+
+
 def check_workspace_preflight(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     cid = "project.workspace.preflight"
     reason = workspace_is_dispatchable(project.workspace_dir)
@@ -86,11 +118,10 @@ def check_manifest(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     Worktree read on purpose — doctor reports the repo's CURRENT state; the
     gate reads stay pinned to the merged base (FR-009)."""
     pid = project.id
-    ws = project.workspace_dir or ""
-    if not ws or not Path(ws).exists():
-        return [Finding("project.manifest.presence", Verdict.UNKNOWN,
-                        "workspace not on disk — manifest state unknowable",
-                        project_id=pid)]
+    root, unknown = _grounded_workspace(project, "project.manifest.presence")
+    if root is None:
+        return unknown
+    ws = str(root)
     try:
         manifest = _manifest.load_manifest(ws)
     except _manifest.ManifestError as exc:
@@ -124,7 +155,10 @@ def check_manifest(ctx: "InstanceContext", project: "Project") -> list[Finding]:
 def check_marker_integrity(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     cid = "project.markers.integrity"
     pid = project.id
-    agents = Path(project.workspace_dir or "") / "AGENTS.md"
+    root, unknown = _grounded_workspace(project, cid)
+    if root is None:
+        return unknown
+    agents = root / "AGENTS.md"
     if not agents.exists():
         return [Finding(cid, Verdict.OK, "no AGENTS.md (nothing to bound)",
                         project_id=pid)]
@@ -145,7 +179,9 @@ def check_scaffold_drift(ctx: "InstanceContext", project: "Project") -> list[Fin
     fine; a canonical file that is missing or differs is drift."""
     cid = "project.scaffold.drift"
     pid = project.id
-    ws = Path(project.workspace_dir or "")
+    ws, unknown = _grounded_workspace(project, cid)
+    if ws is None:
+        return unknown
     dest = ws / ".specify"
     if not dest.is_dir():
         return [Finding(cid, Verdict.OK, "no .specify/ scaffold (not onboarded yet)",
@@ -191,7 +227,9 @@ def check_tracked_checkout_state(ctx: "InstanceContext", project: "Project") -> 
     ``git ls-files`` read, zero cognition."""
     cid = "project.scaffold.tracked_state"
     pid = project.id
-    ws = Path(project.workspace_dir or "")
+    ws, unknown = _grounded_workspace(project, cid)
+    if ws is None:
+        return unknown
     if not (ws / ".specify").is_dir():
         return [Finding(cid, Verdict.OK, "no .specify/ scaffold (not onboarded yet)",
                         project_id=pid)]
@@ -413,7 +451,9 @@ def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> 
     subdirectories, no network, no cognition.
     """
     cid = "project.capabilities.undeclared"
-    ws = Path(project.workspace_dir or "")
+    ws, unknown = _grounded_workspace(project, cid)
+    if ws is None:
+        return unknown
     try:
         manifest = _manifest.load_manifest(str(ws))
     except _manifest.ManifestError as exc:

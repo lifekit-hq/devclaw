@@ -236,6 +236,35 @@ def test_undispatchable_workspace_reason_surfaced(env, tmp_path):
     assert f.verdict is Verdict.FAIL and ".git" in f.evidence
 
 
+# Checks that read the workspace resolved it as ``Path(workspace_dir or "")``,
+# which is ``Path(".")`` — the devclaw process's OWN checkout, carrying an
+# AGENTS.md, a .specify/, a .git and a devclaw.json. A workspace-less project
+# row is legal (registered before its clone exists), so those checks answered
+# OK about devclaw itself under another project's id. Absent ⇒ UNKNOWN, never a
+# verdict inferred from the host's tree.
+@pytest.mark.parametrize("workspace_dir", [None, "/nonexistent/never-cloned"])
+def test_workspaceless_project_is_never_judged_from_the_host_checkout(
+    env, workspace_dir
+):
+    env["registry"].create(id="no-ws", name="no-ws", workspace_dir=workspace_dir)
+    mine = [f for f in _run(env).findings if f.project_id == "no-ws"]
+    assert mine, "a registered project must still be reported on"
+
+    # The one loud verdict for this condition stays with preflight alone.
+    (pre,) = [f for f in mine if f.check_id == "project.workspace.preflight"]
+    assert pre.verdict is Verdict.FAIL
+
+    # The defect was affirmative health, not the wording: every check that
+    # reads the workspace must decline to judge rather than claim OK. Checks
+    # sourced from the registry/goal store (links, issue refs, backlog) read no
+    # workspace and stay legitimately OK — they are not in this set.
+    for cid in ("project.manifest.presence", "project.markers.integrity",
+                "project.scaffold.drift", "project.scaffold.tracked_state",
+                "project.capabilities.undeclared"):
+        (f,) = [x for x in mine if x.check_id == cid]
+        assert f.verdict is Verdict.UNKNOWN, f"{cid} judged a workspace-less project"
+
+
 def test_project_id_scoping_limits_project_section(env, tmp_path):
     a = register_tmp_project(env["registry"], str(tmp_path / "wsA"), project_id="proj-a")
     register_tmp_project(env["registry"], str(tmp_path / "wsB"), project_id="proj-b")

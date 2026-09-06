@@ -2,7 +2,7 @@
 
 **Branch**: fix/issue-819-nested-npmrc
 **Date**: 2026-09-06
-**Status**: done (companion finance-sentry PR outstanding)
+**Status**: done
 **Complexity**: small
 
 ## What
@@ -81,8 +81,10 @@ the capability. An advisory that cannot see `frontend/.npmrc` is why, on
       workspace-relative path
 - [x] Extend `test_undeclared_private_registry_dependency_is_advisory_only`
       with the nested (`frontend/.npmrc`) and `verifyCmd` shapes
-- [ ] **Companion (finance-sentry repo, separate PR)**: `devclaw.json` declares
-      `"capabilities": ["registry:npm-github"]`
+- [x] **Companion (finance-sentry repo, separate PR)**: `devclaw.json` declares
+      `"capabilities": ["registry:npm-github"]` — landed outside this
+      repository: lifekit-hq/finance-sentry PR #585, commit `c78e691`, merged
+      2026-09-06 on `main` (owner decision, 2026-09-06)
 
 ## Done When
 
