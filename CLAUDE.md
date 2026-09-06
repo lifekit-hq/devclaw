@@ -90,6 +90,14 @@ spawn containers itself — it goes through the engine).
   is the CAS'd choke point (`devclaw/goal/transitions.py`'s `LEGAL` table) that makes
   that safe: a stale-snapshot write raises `TransitionConflict` and is abandoned rather
   than silently clobbering the other writer. No upstream layer caches either.
+- **One goal, one checkout** (2026-09-06). A goal's tasks run in
+  `<project workspace>/.goals/<goal_id>` (`engine/workspace.py`
+  `goal_checkout_dir`), a clone no other goal's task can move; the branch is
+  placed at run start and the change baseline captured right after it. The
+  project checkout is the goal's identity and the seed mirror, never the tree
+  a goal task runs in. Two goals on one directory handed each other's commits
+  to the gates as "the change" (2026-09-06); the lane serializes plans, the
+  checkout serializes files.
 - **"Done" is a proposal, gated on grounded evaluation.** The planner's `done` triggers
   a read-only `review_repository` against the firmed `done_when` + `stub_acceptable`; the
   goal closes **only if the evaluator confirms `achieved`**. Never gate completion on

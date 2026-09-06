@@ -120,6 +120,32 @@ def check_manifest(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     return findings
 
 
+def check_goal_checkouts_ignored(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """Boilerplate revision 2 (2026-09-06): the repo's root ``.gitignore`` must
+    carry ``.goals/`` — a goal's tasks run in ``<project>/.goals/<goal_id>``
+    and a direct task's materialize (``git add -A``) on the project checkout
+    would otherwise stage another goal's nested clone. ``.git/info/exclude``
+    shields the live checkout meanwhile, so this is WARN, not FAIL."""
+    cid = "project.goal_checkouts.ignored"
+    pid = project.id
+    ws = project.workspace_dir or ""
+    if not ws or not Path(ws).exists():
+        return [Finding(cid, Verdict.UNKNOWN,
+                        "workspace not on disk — .gitignore state unknowable",
+                        project_id=pid)]
+    gi = Path(ws) / ".gitignore"
+    lines = gi.read_text(encoding="utf-8").splitlines() if gi.exists() else []
+    if any(line.strip().rstrip("/") in (".goals", "/.goals") for line in lines):
+        return [Finding(cid, Verdict.OK, ".goals/ ignored at the repo root", project_id=pid)]
+    return [Finding(
+        cid, Verdict.WARN,
+        "root .gitignore does not ignore .goals/ — per-goal checkouts under the "
+        "project workspace are visible to the project's own git",
+        remedy="onboard (the install/migrate PR appends .goals/ to .gitignore)",
+        project_id=pid,
+    )]
+
+
 def check_marker_integrity(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     cid = "project.markers.integrity"
     pid = project.id
@@ -393,6 +419,7 @@ PROJECT_CHECKS: tuple = (
     check_dangling_links,
     check_unstamped_goals,
     check_manifest,
+    check_goal_checkouts_ignored,
     check_marker_integrity,
     check_scaffold_drift,
     check_tracked_checkout_state,

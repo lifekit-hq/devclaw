@@ -102,6 +102,20 @@ reclaims it at the next sweep where nothing is in flight. Goal-less direct
 dispatches (`dispatch_task`/`fix_bug`/`implement_feature`) are exempt because
 they are operator-present, and say loudly that a goal holds the project.
 
+**One goal, one checkout** (2026-09-06). The lane serializes *plans*; it never
+made two goals' *directories* disjoint, and on 2026-09-06 two goals on one
+project workspace captured each other's tips as change baselines. A goal's
+tasks now run in `<project workspace>/.goals/<goal_id>` — a full clone seeded
+locally from the project checkout (`engine/workspace.py`
+`ensure_goal_checkout`, hardlinked objects) with `origin` pointed at the real
+remote; the task row's `workspace_dir` is that path. The project checkout stays
+the goal's identity (manifest-at-base reads, project docs, trends, deploy,
+doctor, the toolchain cache key) and is what direct tasks run in; its pristine
+clean keeps `.goals/`, onboarding boilerplate revision 2 ignores `.goals/` in
+the repo, and `.git/info/exclude` covers the checkout until that PR merges. A
+terminal goal's checkout is removed by a zero-token sweep at the end of each
+heartbeat, derived from the store like the lane itself.
+
 ---
 
 # Part I — the mental model
@@ -209,7 +223,8 @@ When the tick decides to *do* something (not just think):
    executing goals accumulate every increment's commits on one shared
    `goal/<id>` branch (one cumulative PR); legacy goals with no recorded
    lifecycle deliver each action as its own branch + PR.
-2. **Prepare the workspace** — `prepare_workspace()` proves the workspace is
+2. **Prepare the workspace** — `prepare_workspace()` proves the goal's own
+   checkout (`<project>/.goals/<goal_id>`, one goal, one checkout) is
    placeable on the chosen branch (a bad `repo_url` or unreachable origin
    blocks legibly here). The branch itself rides on the action
    (`Action.branch` → the task row's `target_branch`): the **queue places it

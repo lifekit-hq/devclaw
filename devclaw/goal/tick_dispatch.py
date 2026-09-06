@@ -39,6 +39,7 @@ from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
 from ..advance_brief import display_goal as _display_goal
+from ..engine import workspace as _workspace
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
@@ -138,8 +139,16 @@ async def _dispatch_action(
     branch_for_dispatch: str | None = None
     if action.tool != "review_repository":
         branch_for_dispatch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
+    # One goal, one checkout: the goal's tasks run in <project>/.goals/<id>
+    # (seeded locally from the project checkout; best-effort, never raises —
+    # prepare_ws clones from repo_url itself when there is nothing to seed
+    # from). Every checkout-state read below (staleness, speckit feature
+    # state, the ARCHITECTURE.md pointer) reads THIS tree; the project path
+    # stays the identity key (project docs, trends, manifest-at-base).
+    checkout = _workspace.goal_checkout_dir(goal.workspace_dir, goal_id)
+    await _workspace.ensure_goal_checkout(goal.workspace_dir, goal.repo_url, goal_id)
     try:
-        await prepare_ws(goal.workspace_dir, goal.repo_url, branch_for_dispatch)
+        await prepare_ws(checkout, goal.repo_url, branch_for_dispatch)
     except WorkspaceError as exc:
         return await _block_on_prep_failure(
             goal_id, base, exc, store=store, notifier=notifier, summarize=summarize,
@@ -157,7 +166,7 @@ async def _dispatch_action(
     # so the branch stays 0-ahead forever — invariant-guard finding on #439).
     # Best-effort: a probe hiccup (None) lets dispatch proceed unchanged.
     if branch_for_dispatch is not None:
-        staleness = await _branch_staleness(goal.workspace_dir, goal_id)
+        staleness = await _branch_staleness(checkout, goal_id)
         if (
             staleness is not None
             and staleness["commits_ahead"] == 0
@@ -181,7 +190,7 @@ async def _dispatch_action(
     # merges and lands. Read-only reviews are exempt.
     if action.tool != "review_repository":
         try:
-            hold_reason = await _speckit.feature_block_reason(goal.workspace_dir)
+            hold_reason = await _speckit.feature_block_reason(checkout)
         except Exception:  # noqa: BLE001 — a probe hiccup must never wedge dispatch
             hold_reason = None
         if hold_reason:
@@ -225,7 +234,7 @@ async def _dispatch_action(
     if action.tool != "review_repository":
         try:
             _total, _graded, _active = await asyncio.to_thread(
-                _slice_guard.speckit_feature_state_sync, goal.workspace_dir
+                _slice_guard.speckit_feature_state_sync, checkout
             )
             if _total > 0 and _graded == 0:
                 store.append_log(
@@ -240,11 +249,11 @@ async def _dispatch_action(
                 # and must not block new dispatch. Only concurrent dirs (same or
                 # newer mtime as the current one) indicate genuine build-ahead.
                 _current = await asyncio.to_thread(
-                    _slice_guard.current_feature_dir_sync, goal.workspace_dir
+                    _slice_guard.current_feature_dir_sync, checkout
                 )
                 _offending = await asyncio.to_thread(
                     _slice_guard.speckit_offending_dirs_sync,
-                    goal.workspace_dir, _current,
+                    checkout, _current,
                 )
                 if _offending:
                     _dirs_str = ", ".join(_offending)
@@ -303,7 +312,7 @@ async def _dispatch_action(
     # file-existence probe — best-effort, never-raises, zero LLM, zero token.
     brief_prefix = ""
     if action.tool != "review_repository":
-        arch_ptr = _repo_brief.architecture_map_pointer(goal.workspace_dir)
+        arch_ptr = _repo_brief.architecture_map_pointer(checkout)
         scope = _repo_brief.scope_key_for(goal.workspace_dir)
         notes_prefix = ""
         if scope:
@@ -381,7 +390,7 @@ async def _dispatch_action(
     if action.tool != "review_repository":
         try:
             feature_dir = await asyncio.to_thread(
-                _slice_guard.current_feature_dir_sync, goal.workspace_dir
+                _slice_guard.current_feature_dir_sync, checkout
             )
             store.write_executing_feature(goal_id, feature_dir)
         except Exception:  # noqa: BLE001 — recording is best-effort, never a gate

@@ -195,6 +195,30 @@ def scaffold_specify(workspace_dir: str) -> list[str]:
 #: INSTALL_BRANCH: findable by head with no persisted state.
 MIGRATE_BRANCH = "devclaw/migrate-manifest"
 
+#: One goal, one checkout (2026-09-06): a goal's tasks run in
+#: ``<project>/.goals/<goal_id>``, a nested clone the project's own git must
+#: never see. Boilerplate revision 2 puts this line in the repo's root
+#: ``.gitignore`` through the same reviewable install/migrate PR as the
+#: manifest; ``.git/info/exclude`` covers the checkout until that PR merges.
+GOAL_CHECKOUTS_IGNORE = ".goals/"
+
+
+def ensure_goal_checkouts_ignored(workspace_dir: str) -> "str | None":
+    """Append ``.goals/`` to the repo's root ``.gitignore`` when absent.
+    Returns ``".gitignore"`` when the file changed, else None. Called ONLY from
+    the reviewable-PR paths — never a silent runtime write."""
+    path = Path(workspace_dir) / ".gitignore"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if any(line.strip().rstrip("/") in (".goals", "/.goals") for line in existing.splitlines()):
+        return None
+    sep = "" if not existing or existing.endswith("\n") else "\n"
+    path.write_text(
+        f"{existing}{sep}# devclaw: per-goal checkouts (one goal, one checkout)\n"
+        f"{GOAL_CHECKOUTS_IGNORE}\n",
+        encoding="utf-8",
+    )
+    return ".gitignore"
+
 
 def manifest_needs_upkeep(workspace_dir: str) -> bool:
     """True when the repo's devclaw.json is absent or mechanically behind
@@ -239,6 +263,9 @@ async def migrate_manifest_pr(workspace_dir: str, *, project_id: str | None = No
             changed.append(seeded)
         elif migrate_manifest(workspace_dir):
             changed.append("devclaw.json")
+        ignored = ensure_goal_checkouts_ignored(workspace_dir)
+        if ignored:
+            changed.append(ignored)
         if not changed:
             return {"delivered": False, "pr_url": None, "branch": MIGRATE_BRANCH,
                     "error": None, "changed": [], "note": "manifest already current"}
@@ -293,6 +320,9 @@ async def install_speckit_pr(workspace_dir: str, *, project_id: str | None = Non
         seeded = seed_manifest(workspace_dir)
         if seeded:
             created.append(seeded)
+        ignored = ensure_goal_checkouts_ignored(workspace_dir)
+        if ignored:
+            created.append(ignored)
 
         result = await deliver_change(
             workspace_dir=workspace_dir,

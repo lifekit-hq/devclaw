@@ -189,7 +189,9 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
     # seed_goal now sets a fake repo_url so the investigating phase takes the
     # repo-research path (vs world-research, which fires for from-scratch only).
     # every goal is goal-branch (#616 retired the per-action selection rule)
-    assert calls == [("/repos/demo", "https://example.com/demo.git", "goal/g")]
+    # One goal, one checkout: prep places <project>/.goals/<goal_id>, never
+    # the shared project checkout.
+    assert calls == [("/repos/demo/.goals/g", "https://example.com/demo.git", "goal/g")]
     assert len(engine.dispatched) == 1
     # The tick's prep is admission; the RUN places the branch itself — so the
     # action carries it (Action.branch → the row's target_branch → queue prep

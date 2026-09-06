@@ -61,6 +61,7 @@ from . import decisions as _decisions
 from ..loom import trace as _trace
 from ..loom.limits import FailureKind, classify_failure, pause_seconds
 from ..state_store import _now_ms
+from ..engine import workspace as _workspace
 from ..engine.workspace import prepare_workspace
 from .. import config as _config
 from .prompt_budget import cap_steering as _cap_steering
@@ -830,7 +831,9 @@ async def _handle_long_lived_advance(
     # mechanical:corrupt_doc kind self-heals when the condition clears
     # (restore the file on the goal branch, or resume_goal after fixing).
     if increment_rows:
-        corrupt = await asyncio.to_thread(_chunk_plan_corruption, goal.workspace_dir)
+        corrupt = await asyncio.to_thread(
+            _chunk_plan_corruption, _workspace.goal_checkout_dir(goal.workspace_dir, goal_id)
+        )
         if corrupt:
             q = (
                 f"chunk-plan artifact unreadable: {corrupt} — the committed "
@@ -1301,7 +1304,32 @@ async def tick_all(
             except Exception:  # noqa: BLE001 — telemetry must not break the heartbeat
                 pass
 
+    # One goal, one checkout: a terminal goal's <project>/.goals/<id> is
+    # removed here, derived from the store every sweep — no bookkeeping row,
+    # self-healing, zero LLM, a stat per terminal goal. Never breaks the
+    # heartbeat.
+    try:
+        sweep_goal_checkouts(store)
+    except Exception:  # noqa: BLE001 — housekeeping must not break the heartbeat
+        pass
+
     return outcomes
+
+
+def sweep_goal_checkouts(store: GoalStore) -> list[str]:
+    """Remove the goal checkouts of terminal goals. Returns the goal ids
+    whose directory was removed this sweep."""
+    removed: list[str] = []
+    for gid in store.list_goal_ids():
+        try:
+            if not _project_hold.is_terminal(store.load_status(gid)):
+                continue
+            g = store.load_goal(gid)
+        except Exception:  # noqa: BLE001 — one bad goal must not stop the sweep
+            continue
+        if _workspace.remove_goal_checkout(g.workspace_dir, gid):
+            removed.append(gid)
+    return removed
 
 
 def _engine_pause(engine: GoalEngine) -> tuple[int, str]:

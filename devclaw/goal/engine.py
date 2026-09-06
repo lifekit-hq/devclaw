@@ -29,6 +29,7 @@ from ..state_store.core import _now_ms
 #: Watermark for the daily goal-workspace retention sweep (#595).
 _WORKSPACE_SWEEP_META_KEY = "workspace_sweep_last_ms"
 from ..task_queue import TaskQueue
+from ..engine import workspace as _workspace
 
 _TASK_TERMINAL = {"done", "failed", "cancelled"}
 
@@ -86,7 +87,15 @@ class InProcessEngine:
         a rollback cannot undo (a phantom container running against a row
         that no longer exists). The caller (tick.py) explicitly kicks the
         queue via ``kick()`` AFTER its transaction commits."""
-        ws = goal.workspace_dir
+        # One goal, one checkout (2026-09-06): the task runs in
+        # <project>/.goals/<goal_id>, not in the shared project checkout. A
+        # qa goal's validation runs read the product in the qa goal's own
+        # workspace and keep it.
+        ws = (
+            goal.workspace_dir
+            if action.tool == "validate_product" or goal.mode == "qa"
+            else _workspace.goal_checkout_dir(goal.workspace_dir, goal.id)
+        )
         nu = notify_url or None
         # Spec 016 US2: resolve the per-project manifest tiers ONCE per
         # dispatch — strictness (explicit goal > devclaw.json strictnessDefault

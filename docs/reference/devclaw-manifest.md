@@ -12,7 +12,7 @@ onboarding agent is instructed not to touch it.
 {
   "$schema": "https://raw.githubusercontent.com/lifekit-hq/devclaw/main/docs/reference/devclaw-manifest.schema.json",
   "schemaVersion": 1,
-  "boilerplateRevision": 1,
+  "boilerplateRevision": 2,
   "strictnessDefault": "trust",
   "surface": "app",
   "verifyCmd": "dotnet test",
@@ -28,7 +28,7 @@ Machine schema: [`devclaw-manifest.schema.json`](./devclaw-manifest.schema.json)
 | key | values | consumer |
 |---|---|---|
 | `schemaVersion` (required) | int ≥ 1 | the doorway — a version newer than the instance fails loud ("instance too old"), never a partial parse |
-| `boilerplateRevision` | int | doctor (US3): compared to the instance's `BOILERPLATE_REVISION`; re-onboard migrates |
+| `boilerplateRevision` | int | doctor (US3): compared to the instance's `BOILERPLATE_REVISION`; re-onboard migrates. Revision 2 (2026-09-06): the install/migrate PR also appends `.goals/` to the repo's root `.gitignore` (per-goal checkouts live under the project workspace) |
 | `strictnessDefault` | `trust` \| `strict` | gate-strictness default for goals that never explicitly chose |
 | `surface` | `app` \| `library` | browser-E2E gate applicability — declaration instead of path-glob heuristics |
 | `verifyCmd` | string | verify-command fallback tier |

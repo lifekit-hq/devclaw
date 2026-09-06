@@ -33,6 +33,7 @@ from . import remote_checks as goal_remote_checks
 from . import self_deploy as _self_deploy
 from . import summary as goal_summary
 from . import triage as goal_triage
+from ..engine import workspace as _workspace
 from ..engine.workspace import prepare_workspace
 from .engine import InProcessEngine
 from .evaluator import ClaudeCaller
@@ -1739,7 +1740,10 @@ class GoalService:
         # + the agreed spec. The on-demand eval used to omit BOTH — its
         # "corrections" could describe the wrong repo and ignore the contract
         # the tick-path evaluator judges against.
-        repo_context = await goal_evaluator._repo_context(g.workspace_dir)
+        _co = _workspace.goal_checkout_dir(g.workspace_dir, goal_id) if g.workspace_dir else ""
+        repo_context = await goal_evaluator._repo_context(
+            _co if _co and Path(_co).is_dir() else g.workspace_dir
+        )
         ev = await goal_evaluator.evaluate(
             g, s, self._goal_store.recent_log(goal_id),
             self._goal_store.recent_deliveries(goal_id),

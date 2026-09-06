@@ -77,7 +77,8 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • host_bind = _translate_workspace_path(     │                                 │
      │  │         workspace_dir )                          │                                 │
      │  │     • docker run --rm --name devclaw-XXXX        │ ──┐                             │
-     │  │         -v <host_bind>:/workspace                │   │                             │ docker run fails here
+     │  │         -v <host_bind>:/workspace                │   │  host_bind = the goal's     │ docker run fails here
+     │  │           (<project>/.goals/<goal_id>)           │   │  own checkout (2026-09-06)  │
      │  │         -v devclaw-toolchains-<proj>:            │   │                             │ if Node 2 lacks GID 990
      │  │            /home/agent/.local/share/mise         │   │  per-project toolchain      │
      │  │         -v ~/.claude/.credentials.json:RO        │   │  cache (ADR 0005)           │
