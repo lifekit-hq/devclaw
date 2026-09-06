@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from collections.abc import Iterator
 from pathlib import Path
 
 from .. import project_manifest as _manifest
@@ -344,6 +345,61 @@ _REGISTRY_EVIDENCE_FILES: tuple[tuple[str, int], ...] = (
 #: taxonomy.
 _PRIVATE_REGISTRY_HOSTS: tuple[str, ...] = ("npm.pkg.github.com",)
 
+#: Subdirectories that never carry a project's own registry config.
+_REGISTRY_SCAN_SKIP: frozenset[str] = frozenset(
+    {"node_modules", "vendor", "dist", "build", "out", "target"})
+
+#: Ceiling on scanned directories, so a wide monorepo root cannot turn this
+#: advisory into a tree walk.
+_REGISTRY_SCAN_MAX_ROOTS = 64
+
+
+def _registry_scan_roots(ws: Path) -> list[Path]:
+    """The workspace plus its immediate subdirectories.
+
+    Depth ONE on purpose (#819): finance-sentry's npm project is ``frontend/``,
+    not the repo root, so a root-only read reported "nothing visible" for a repo
+    that depends on GitHub Packages. Deeper recursion is not worth what this
+    check costs on every project of every report.
+    """
+    roots = [ws]
+    try:
+        entries = sorted(ws.iterdir())
+    except OSError:
+        return roots
+    for entry in entries:
+        if len(roots) >= _REGISTRY_SCAN_MAX_ROOTS:
+            break
+        if entry.name.startswith(".") or entry.name in _REGISTRY_SCAN_SKIP:
+            continue
+        if entry.is_symlink() or not entry.is_dir():
+            continue
+        roots.append(entry)
+    return roots
+
+
+def _registry_evidence_sources(
+    ws: Path, manifest: "_manifest.Manifest | None"
+) -> "Iterator[tuple[str, str]]":
+    """Lazily yield ``(label, text)`` for each place a private registry can show.
+
+    Lazy so the head-read budget is spent only until the first hit. Files come
+    before the ``verifyCmd`` so the evidence names a concrete path when one
+    exists.
+    """
+    for root in _registry_scan_roots(ws):
+        for name, budget in _REGISTRY_EVIDENCE_FILES:
+            try:
+                with (root / name).open("r", encoding="utf-8", errors="replace") as fh:
+                    head = fh.read(budget)
+            except OSError:
+                continue  # absent or unreadable — no evidence, not a finding
+            yield (name if root == ws else f"{root.name}/{name}"), head
+    # A repo can point `npm ci` at a private registry with no checked-in
+    # .npmrc; the verify contract is then the declaration's own evidence.
+    if manifest is not None and manifest.verify_cmd:
+        yield "devclaw.json verifyCmd", manifest.verify_cmd
+
 
 def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     """ADVISORY (spec 030 FR-005a): the repo visibly depends on a private npm
@@ -353,7 +409,8 @@ def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> 
     instance can trust and costs write-and-forget — a repo that grows a private
     dependency never gets the admission brake. This check is that cost's
     backstop and NOTHING more: it is a report line, never a hold. Mechanical
-    and bounded — a couple of head reads, no network, no cognition.
+    and bounded — bounded head reads over the root and its immediate
+    subdirectories, no network, no cognition.
     """
     cid = "project.capabilities.undeclared"
     ws = Path(project.workspace_dir or "")
@@ -368,17 +425,12 @@ def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> 
     if any(c.startswith("registry:") for c in declared):
         return [Finding(cid, Verdict.OK, "registry capability declared",
                         project_id=project.id)]
-    for name, budget in _REGISTRY_EVIDENCE_FILES:
-        try:
-            with (ws / name).open("r", encoding="utf-8", errors="replace") as fh:
-                head = fh.read(budget)
-        except OSError:
-            continue  # absent or unreadable — no evidence, not a finding
+    for label, text in _registry_evidence_sources(ws, manifest):
         for host in _PRIVATE_REGISTRY_HOSTS:
-            if host in head:
+            if host in text:
                 return [Finding(
                     cid, Verdict.WARN,
-                    f"{name} resolves against {host} but devclaw.json declares no "
+                    f"{label} resolves against {host} but devclaw.json declares no "
                     "registry:* capability — a broken registry credential will "
                     "burn worker sessions instead of holding dispatch",
                     remedy=f'add "capabilities": ["{_CAP_REGISTRY}"] to devclaw.json',

@@ -412,15 +412,45 @@ def test_undeclared_private_registry_dependency_is_advisory_only(env, tmp_path):
     (ok,) = _findings(_run(env), "project.capabilities.undeclared")
     assert ok.verdict is Verdict.OK
 
+    # #819 — the finance-sentry shape: the npm project is one level down, so a
+    # root-only read reported "nothing visible" while the repo depended on
+    # GitHub Packages. The nested file is evidence and names its own path.
+    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
+    (ws / ".npmrc").unlink()
+    (ws / "frontend").mkdir()
+    (ws / "frontend" / ".npmrc").write_text(
+        "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n")
+    (nested,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert nested.verdict is Verdict.WARN
+    assert "frontend/.npmrc" in nested.evidence
+    assert "registry:npm-github" in nested.remedy
+
+    # A verify contract pointed at the private registry with no checked-in
+    # .npmrc anywhere is the same undeclared dependency.
+    (ws / "frontend" / ".npmrc").unlink()
+    (ws / "devclaw.json").write_text(
+        '{"schemaVersion": 1, "boilerplateRevision": 1, '
+        '"verifyCmd": "npm ci --registry=https://npm.pkg.github.com && npm test"}'
+    )
+    (via_cmd,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert via_cmd.verdict is Verdict.WARN
+    assert "verifyCmd" in via_cmd.evidence
+
 
 def test_no_private_registry_dependency_is_ok(env, tmp_path):
     """A repo with no visible private-registry dependency declares nothing and
     is clean — the advisory must not nag every public-registry project."""
     ws = tmp_path / "ws-cap2"
     register_tmp_project(env["registry"], str(ws))
-    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
-    (ws / "package-lock.json").write_text('{"packages": {"": {"name": "x"}}}')
+    (ws / "devclaw.json").write_text(
+        '{"schemaVersion": 1, "boilerplateRevision": 1, '
+        '"verifyCmd": "cd frontend && npm ci && npm test"}'
+    )
+    (ws / "frontend").mkdir()
+    (ws / "frontend" / "package-lock.json").write_text('{"packages": {"": {"name": "x"}}}')
 
+    # Running `npm ci` is not itself evidence — the public registry needs no
+    # capability, and the remedy would be wrong advice.
     (f,) = _findings(_run(env), "project.capabilities.undeclared")
     assert f.verdict is Verdict.OK
 

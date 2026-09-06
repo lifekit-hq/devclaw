@@ -212,3 +212,15 @@ spec.md; nothing in this spec is outstanding.
 - [x] T029 FR-004's accepted deviation recorded in `spec.md` as direction
       memory (owner ruling 2026-09-03: accept the gap and close), so the
       registry-only reading is not re-litigated into a fail-open regression.
+
+## Post-landing correction (2026-09-06, devclaw #819)
+
+- [x] T030 FR-005a's advisory read only `<workspace>/.npmrc` and
+      `<workspace>/package-lock.json`, so finance-sentry's `frontend/.npmrc`
+      was invisible and the write-and-forget backstop reported "nothing
+      visible" for a repo depending on GitHub Packages. The scan now covers the
+      root plus its immediate subdirectories (depth 1, capped, dependency dirs
+      skipped) and the manifest `verifyCmd` text. Tinyspec:
+      `specs/tiny/undeclared-registry-nested-npmrc.md`; the seeded-fault test
+      `test_undeclared_private_registry_dependency_is_advisory_only` grew the
+      nested and verifyCmd shapes rather than gaining a sibling.
