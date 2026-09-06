@@ -1340,7 +1340,9 @@ class GoalService:
             "workspace_dir": g.workspace_dir,
             "backlog": g.backlog,
             "mode": g.mode,
-            "strictness": g.strictness,
+            # EFFECTIVE dial (explicit > devclaw.json strictnessDefault >
+            # trust) — what dispatch actually resolves, not the stored default.
+            "strictness": self._effective_strictness(g),
             "phase": s.phase,
             # RAW stored lifecycle (#496): report what is stored, never a
             # coalesced guess. The #493 bug lived exactly in that gap — a
@@ -1462,6 +1464,7 @@ class GoalService:
         # Account-wide hold (quota pause / manual hold / global window) computed
         # ONCE — per-goal windows are get_goal detail, not worth N reads here.
         hold = self._dispatch_hold()
+        _strict_memo: dict[str, str] = {}
         for gid in self._goal_store.list_goal_ids():
             g = self._goal_store.load_goal(gid)
             s = self._goal_store.load_status(gid)
@@ -1479,7 +1482,7 @@ class GoalService:
                 "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
                 "direction": s.last_eval_verdict,
                 "actions_dispatched": s.actions_dispatched,
-                "strictness": g.strictness,
+                "strictness": self._effective_strictness(g, memo=_strict_memo),
                 "dispatch_hold": hold,
             })
         return out
@@ -1624,7 +1627,34 @@ class GoalService:
         g = self._goal_store.set_strictness(goal_id, strictness)
         self._goal_store.append_log(goal_id, f"strictness set to {strictness}")
         self.poke()
-        return {"goal_id": goal_id, "strictness": g.strictness}
+        return {"goal_id": goal_id, "strictness": self._effective_strictness(g)}
+
+    def _effective_strictness(self, g, memo: "dict[str, str] | None" = None) -> str:
+        """The dial dispatch will actually use (``engine._manifest_tiers``):
+        explicit per-goal setting > the project's ``devclaw.json``
+        ``strictnessDefault`` > ``trust``. A display read: never raises — a
+        malformed or unreadable manifest shows the stored value (dispatch
+        itself fails loud on it). ``memo`` dedups the manifest read across a
+        list of goals sharing one workspace. On 2026-09-06 the surfaces said
+        ``trust`` for goals whose every task ran ``strict`` from the manifest,
+        and the review-gate behaviour read as a dial bug."""
+        from ..project_manifest import effective_strictness, load_manifest_at_base
+
+        if g.strictness_explicit is not None:
+            return str(effective_strictness(g.strictness_explicit, None))
+        ws = (g.workspace_dir or "").strip()
+        if not ws:
+            return str(g.strictness)
+        if memo is not None and ws in memo:
+            return memo[ws]
+        try:
+            manifest = load_manifest_at_base(ws)
+            value = str(effective_strictness(None, manifest.strictness_default if manifest else None))
+        except Exception:  # noqa: BLE001 — a display read never raises
+            value = str(g.strictness)
+        if memo is not None:
+            memo[ws] = value
+        return value
 
     def set_verify_cmd(self, goal_id: str, verify_cmd: Optional[str]) -> dict:
         """Override the goal's verification command (issue #711) — the verb
