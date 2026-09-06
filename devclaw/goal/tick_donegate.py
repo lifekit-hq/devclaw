@@ -908,6 +908,9 @@ async def _open_done_gate(
             engine="devclaw", tool="review_repository",
             goal=_done_gate_review_brief(goal),
             open_pr=False,
+            # The done-check reads the goal's accumulated work: the queue
+            # places this branch at run start (see Action.branch).
+            branch=done_gate_branch,
         )
         # Atomic dispatch (PR7) — same shape as _dispatch_action's; see that
         # function's comment for the dispatch_exc/txn-nesting rationale.
