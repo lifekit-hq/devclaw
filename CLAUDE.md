@@ -121,7 +121,10 @@ spawn containers itself — it goes through the engine).
   cannot have is **refused** (nothing persisted); a baseline-less absolute
   predicate ("all tests pass") is **rewritten** to "no new failures relative
   to the default branch" and recorded as an admission Decision; an undecided
-  design choice becomes a Problem to the author **before any dispatch**.
+  design choice becomes a Problem to the author **before any dispatch**. The
+  undecided-choice judge is a gate, so it **fails closed** (2026-09-06): a
+  reply outside the protocol or a caller that raises refuses creation with
+  nothing persisted — never "admitted without it".
 
 ## Hardening philosophy (Tranche 0 — baked in, not in the README yet)
 

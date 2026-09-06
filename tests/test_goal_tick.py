@@ -3299,6 +3299,40 @@ async def test_admission_rewrite_is_recorded_as_a_decision(tmp_path, monkeypatch
         db.close()
 
 
+@pytest.mark.parametrize("reply", [
+    "I could not find any undecided clauses in this contract.",  # prose, no object
+    '{"undecided": "none"}',                                     # wrong shape
+    '{"verdict": "ok"}',                                         # missing key
+    '{"undecided": [{"clause": "x", "choice": "y", "options": ["only one"]}]}',  # malformed entry
+])
+@pytest.mark.asyncio
+async def test_admission_lint_fails_closed_on_a_malformed_judge_reply(tmp_path, reply):
+    """(c) is a gate, so it fails CLOSED (constitution V): a reply the protocol
+    cannot read — and a caller that raises — refuses creation with nothing
+    persisted, never "admitted without it". The judge runs against the LIVE
+    evaluator caller, so a fresh process cannot skip it either."""
+    svc, db, _ = _resume_service(tmp_path)
+    try:
+        ws = tmp_path / "ws"; ws.mkdir()
+        kw = dict(objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+                  done_when="The scan holds red projects.")
+        judge = FakeClaude(reply)
+        svc._evaluator_caller = judge
+        with pytest.raises(ValueError) as ei:
+            await svc.create_goal_async("g-malformed", **kw)
+        assert "not admitted" in str(ei.value) and judge.calls == 1
+        assert not svc._goal_store.exists("g-malformed")
+
+        async def boom(_prompt):
+            raise RuntimeError("claude exited 1")
+        svc._evaluator_caller = boom
+        with pytest.raises(ValueError, match="not admitted"):
+            await svc.create_goal_async("g-raised", **kw)
+        assert not svc._goal_store.exists("g-raised")
+    finally:
+        db.close()
+
+
 @pytest.mark.asyncio
 async def test_resume_goal_resets_the_donegate_round_count(tmp_path):
     """A human vouching for a parked goal (resume/steer) restores the full

@@ -146,3 +146,29 @@ def test_plain_failure_still_emits_status_error(runner, monkeypatch):
     assert result["status"] == "error"
     assert result["error"] == "boom: the agent crashed"
     assert "retry_after" not in result  # plain errors keep the pre-existing shape
+
+
+# ---- the vendored copy is pinned to the host -------------------------------
+
+
+@pytest.mark.parametrize("text", [
+    "Rate limited. Please try again in 5 minutes.",
+    "usage limit reached — resets in about 2 hours",
+    "wait 90 seconds",
+    "Retry-After: 30",
+    "retry after 3m",
+    "You've hit your session limit · resets 10pm (UTC)",  # absolute: neither parses it
+    "",
+])
+def test_vendored_retry_after_parser_matches_the_host(runner, text):
+    """The runner is stdlib-only (spec 011) and cannot import devclaw, so it
+    carries a vendored copy of loom's relative retry-after parser. If the two
+    drift, the sandbox and the host disagree on how long a stated limit lasts
+    — the pause machinery is a tripwire class, so the copy is pinned
+    identical: same patterns, same unit table, same answer on every input."""
+    from devclaw.loom import limits
+
+    assert runner._LIMIT_RETRY_AFTER_UNIT.pattern == limits._RETRY_AFTER_UNIT.pattern
+    assert runner._LIMIT_RETRY_AFTER_HEADER.pattern == limits._RETRY_AFTER_HEADER.pattern
+    assert runner._LIMIT_UNITS == limits._UNITS
+    assert runner._parse_retry_after(text) == limits._parse_retry_after(text)

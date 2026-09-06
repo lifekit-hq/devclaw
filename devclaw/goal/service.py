@@ -833,7 +833,14 @@ class GoalService:
             mech = _lint.lint_mechanical(done_when)
             if mech.refused:
                 raise ValueError(_lint.refusal_message(mech))
-            undecided, note = await _judge_undecided(mech.done_when, self._evaluator_caller)
+            try:
+                undecided, note = await _judge_undecided(mech.done_when, self._evaluator())
+            except _lint.AdmissionLintError as exc:
+                raise ValueError(
+                    f"done_when not admitted: {exc} — nothing persisted; resubmit "
+                    "once cognition answers (constitution V: a lint that cannot "
+                    "judge admits nothing)"
+                ) from exc
             if mech.rewrites:
                 kwargs["done_when"] = mech.done_when
                 admission["rewrites"] = [

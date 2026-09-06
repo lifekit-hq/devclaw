@@ -113,7 +113,8 @@ Respond with STRICT JSON ONLY — no prose, no markdown fences. Schema:
       "clause": "<the clause text from done_when>",
       "satisfied": true | false,
       "evidence": "<specific file/symbol/test names from the repo review, OR 'missing — should live in <where>' when unsatisfied>",
-      "resolved_by": "<the Decisions-block id that settles this clause; present ONLY for a clause graded resolved_by_decision>"
+      "resolved_by": "<the Decisions-block id that settles this clause; present ONLY for a clause graded resolved_by_decision>",
+      "flip_cause": "<pinned mode only, when un-satisfying a ✓ clause: the repo change since its evidence, or the specific defect in it>"
     }}
   ],
   "dropped_ceremony": [

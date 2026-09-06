@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from devclaw.goal.evaluator import GoalEvalError, build_prompt, evaluate, extract_json, validate
+from devclaw.goal.evaluator import GoalEvalError, build_prompt, evaluate, validate
+from devclaw.llm_call import extract_json
 from devclaw.goal.models import Goal, GoalStatus
 
 

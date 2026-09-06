@@ -119,7 +119,8 @@ class Classification:
 # NB: a vendored subset of these patterns (AUTH/QUOTA/RATE + the relative
 # retry-after parser) lives in runner/runner.py — the in-sandbox
 # runner can't import devclaw, so it carries its own copy to emit a structured
-# status="rate_limited" result. Keep the two in sync when editing.
+# status="rate_limited" result. The retry-after half is pinned identical by
+# tests/test_runner_limits.py::test_vendored_retry_after_parser_matches_the_host.
 # AUTH first: harness-shaped auth wording must classify as AUTH even when the
 # text also mentions a rate-limit-shaped code — an expired login is never a
 # quota event. "authentication required" is the ACP/worker wording from the

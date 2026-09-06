@@ -39,6 +39,7 @@ from .prompt_budget import cap_deliveries, cap_log
 # The review gate's workspace-snapshot collector (#227), reused to ground the
 # evaluator. Imported as a module global so tests patch it on THIS module —
 # same convention as task_queue's re-export of the git ``_sync`` helpers.
+from ..llm_call import PlannerError, extract_json
 from ..task_git import _review_repo_context_sync  # noqa: F401
 
 ClaudeCaller = Callable[[str], Awaitable[str]]
@@ -294,19 +295,6 @@ def build_prompt(
         ]
     parts.append("\nReturn the JSON now.")
     return "\n".join(parts)
-
-
-def extract_json(text: str) -> str:
-    trimmed = text.strip()
-    if trimmed.startswith("{"):
-        return trimmed
-    fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", trimmed)
-    if fence and fence.group(1):
-        return fence.group(1)
-    first, last = trimmed.find("{"), trimmed.rfind("}")
-    if first >= 0 and last > first:
-        return trimmed[first : last + 1]
-    raise GoalEvalError("No JSON object found in evaluator response", text)
 
 
 def _parse_clauses(
@@ -828,7 +816,7 @@ async def evaluate(
     raw = await claude_caller(prompt)
     try:
         parsed = json.loads(extract_json(raw))
-    except json.JSONDecodeError as exc:
+    except (PlannerError, json.JSONDecodeError) as exc:
         raise GoalEvalError(f"evaluator emitted invalid JSON: {exc}", raw) from exc
     # ``strictness`` (spec 016 FR-008): the caller passes the LIVE resolved
     # dial (explicit goal > manifest default) — falling back to the goal's
