@@ -3630,6 +3630,33 @@ async def test_blocked_goal_releases_project_lane_for_queued_successor(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_ci_held_head_with_a_pending_done_proposal_keeps_the_lane(tmp_path):
+    """The one block that is NOT skipped over: a ``mechanical:ci`` hold on a
+    head with a held done proposal. Its heal re-drives the done-gate in the
+    same sweep, ahead of the hold gate — so if the sweep-wide holder map had
+    already handed the lane to the successor, two goals dispatch against one
+    directory in one sweep (2026-09-06: issue-817 healed and re-opened its
+    done-gate one second before issue-819 dispatched an increment; both
+    then captured each other's tips as change baselines)."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "head", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "succ", created_at_ms=2_000)
+    store.save_status("head", GoalStatus(
+        phase="blocked", lifecycle="executing",
+        blocked_on="waiting for CI on goal/head@abc", blocked_kind="mechanical:ci",
+        pending_done_proposal=True,
+    ))
+    engine = FakeEngine()
+    evaluator = FakeClaude()
+
+    out = await _tick(store, "succ", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.QUEUED           # the head still owns the lane
+    assert engine.dispatched == []
+    assert evaluator.calls == 0            # a queued tick costs nothing
+
+
+@pytest.mark.asyncio
 async def test_idle_head_with_nothing_to_do_releases_lane_to_runnable_successor(tmp_path):
     """Runnable-head rule (owner ruling 2026-09-01, generalizing spec 025's
     blocked skip-over): a head that cannot act this sweep — idle, nothing in

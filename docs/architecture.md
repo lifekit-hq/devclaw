@@ -90,7 +90,12 @@ machinery is needed for a state that cannot occur. "Can actually act" is the
 blocked skip-over): a blocked goal, a goal owing only its merge, and an idle
 goal with no unread steering and no due cadence are all skipped as candidates —
 head-of-line blocking is a bug, not a policy (2026-08-31: one cadence-idle head
-stranded 7 runnable successors for a night). The single-writer invariant is
+stranded 7 runnable successors for a night). Two holds are NOT skipped because
+the goal is finishing work it already owns and re-drives it ahead of the hold
+gate in the same sweep: a `mechanical:ci` hold and a held done proposal
+(`pending_done_proposal`) keep the lane (2026-09-06: dropping a ci-held head
+handed its lane to a successor for the very sweep the hold cleared, and two
+goals ran on one directory). The single-writer invariant is
 untouched: at most one goal dispatches per project, a successor mid-task keeps
 the lane against a newly-runnable elder (in-flight outranks age), and the elder
 reclaims it at the next sweep where nothing is in flight. Goal-less direct
