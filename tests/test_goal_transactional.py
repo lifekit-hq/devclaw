@@ -473,3 +473,7 @@ async def test_dispatch_threads_the_placement_branch_onto_the_row(tmp_path):
         )
     assert state.get_task(ref.id).target_branch == "goal/g"
     assert state.get_task(review.id).target_branch == "goal/g"
+    # …and both run in the goal's own checkout, not the project's (one goal,
+    # one checkout — the project path stays the goal's identity).
+    assert state.get_task(ref.id).workspace_dir == "/repos/demo/.goals/g"
+    assert state.get_task(review.id).workspace_dir == "/repos/demo/.goals/g"

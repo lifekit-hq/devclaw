@@ -46,7 +46,7 @@ SCHEMA_VERSION = 1
 #: the current vintage of the boilerplate ``onboard`` installs. Bump when the
 #: installed boilerplate content changes; doctor compares it against each
 #: repo's manifest (spec 016 US3) and re-onboard migrates.
-BOILERPLATE_REVISION = 1
+BOILERPLATE_REVISION = 2
 
 #: published schema URL, referenced from seeded manifests for editor validation.
 SCHEMA_URL = (

@@ -13,6 +13,8 @@ merged since the last action.
 from __future__ import annotations
 
 import re
+import os
+import shutil
 from pathlib import Path
 from ..procutil import run as _run
 
@@ -51,6 +53,89 @@ def workspace_is_dispatchable(workspace_dir: str | None) -> str | None:
         )
     return None
 
+
+
+#: One goal, one checkout (2026-09-06). A goal's tasks run in
+#: ``<project workspace>/.goals/<goal_id>`` — a full clone seeded locally from
+#: the project's checkout (hardlinked objects, seconds) with ``origin`` pointed
+#: at the real remote — so no other goal's task can ever move the directory a
+#: task is about to run in. The project checkout stays the identity anchor
+#: (manifest-at-base reads, project docs, trends, deploy, doctor) and a
+#: mirror to seed from; nothing runs in it any more except direct tasks.
+GOAL_CHECKOUTS_DIRNAME = ".goals"
+#: The pristine-tree clean, with the goal checkouts kept: ``clean -fdx``
+#: removes IGNORED files too, so without the exclude a direct task's prep on
+#: the project checkout would delete every in-flight goal's clone.
+_CLEAN_CMD = ("git", "clean", "-fdx", "-e", GOAL_CHECKOUTS_DIRNAME)
+
+
+def goal_checkout_dir(project_workspace: str, goal_id: str) -> str:
+    """Where a goal's tasks run: ``<project_workspace>/.goals/<goal_id>``.
+    Pure path arithmetic — derived, never stored (the row's ``workspace_dir``
+    carries it per task; the goal keeps the project path as its identity)."""
+    return os.path.join(project_workspace, GOAL_CHECKOUTS_DIRNAME, goal_id)
+
+
+def project_workspace_for(path: str) -> str:
+    """The identity axis for a bind path: a goal checkout maps back to its
+    project workspace (``…/.goals/<id>`` → ``…``); any other path is itself.
+    Used to key per-project resources (the toolchain cache volume) so every
+    goal of a project shares one cache, exactly as before."""
+    parent, leaf = os.path.split(path.rstrip("/"))
+    grand, marker = os.path.split(parent)
+    if leaf and marker == GOAL_CHECKOUTS_DIRNAME and grand:
+        return grand
+    return path
+
+
+async def ensure_goal_checkout(project_workspace: str, repo_url: "str | None", goal_id: str) -> None:
+    """Best-effort seeding of ``<project>/.goals/<goal_id>`` — never raises.
+
+    When the project checkout is a git repo: refresh its refs (the
+    manifest-at-base reads depend on them), keep ``.goals/`` out of its index
+    via ``.git/info/exclude`` (belt to the onboarding ``.gitignore`` braces),
+    and, if the goal checkout does not exist yet, ``git clone --local`` it
+    from the project checkout and point ``origin`` at the real remote.
+    :func:`prepare_workspace` then owns fetch + branch placement in the goal
+    checkout; when this seeding cannot happen (no project checkout yet) it
+    clones from ``repo_url`` itself and blocks loudly on failure."""
+    mirror = Path(project_workspace) if project_workspace else None
+    if mirror is None or not (mirror / ".git").exists():
+        return
+    try:
+        exclude = mirror / ".git" / "info" / "exclude"
+        exclude.parent.mkdir(parents=True, exist_ok=True)
+        existing = exclude.read_text() if exclude.exists() else ""
+        if f"{GOAL_CHECKOUTS_DIRNAME}/" not in existing.split():
+            exclude.write_text(existing.rstrip("\n") + f"\n{GOAL_CHECKOUTS_DIRNAME}/\n")
+    except OSError:
+        pass
+    await _run("git", "fetch", "origin", "--prune", cwd=str(mirror))
+    checkout = Path(goal_checkout_dir(project_workspace, goal_id))
+    if (checkout / ".git").exists():
+        return
+    rc, url = await _run("git", "remote", "get-url", "origin", cwd=str(mirror))
+    origin = url.strip() if rc == 0 and url.strip() else (repo_url or "")
+    checkout.parent.mkdir(parents=True, exist_ok=True)
+    rc, _ = await _run("git", "clone", "--quiet", "--local", str(mirror), str(checkout))
+    if rc != 0:
+        shutil.rmtree(checkout, ignore_errors=True)
+        return
+    if origin:
+        await _run("git", "remote", "set-url", "origin", origin, cwd=str(checkout))
+        await _run("git", "remote", "set-head", "origin", "-a", cwd=str(checkout))
+
+
+def remove_goal_checkout(project_workspace: str, goal_id: str) -> bool:
+    """Delete a goal's checkout (a terminal goal owns nothing any more).
+    Returns True when a directory was removed. Never raises."""
+    if not project_workspace or not goal_id:
+        return False
+    d = goal_checkout_dir(project_workspace, goal_id)
+    if not os.path.isdir(d):
+        return False
+    shutil.rmtree(d, ignore_errors=True)
+    return not os.path.isdir(d)
 
 
 async def _default_branch(workspace_dir: str) -> str:
@@ -238,7 +323,7 @@ async def prepare_workspace(
         for cmd in (
             ("git", "checkout", "-f", default_branch),
             ("git", "reset", "--hard", f"origin/{default_branch}"),
-            ("git", "clean", "-fdx"),
+            _CLEAN_CMD,
         ):
             rc, out = await _run(*cmd, cwd=workspace_dir)
             if rc != 0:
@@ -248,7 +333,7 @@ async def prepare_workspace(
     # Goal-branch path. Start clean (drop any untracked debris from a prior
     # task), then either fast-forward the existing branch to its remote tip
     # OR create it fresh from the default branch.
-    rc, _ = await _run("git", "clean", "-fdx", cwd=workspace_dir)
+    rc, _ = await _run(*_CLEAN_CMD, cwd=workspace_dir)
     if rc != 0:
         # clean failure is rare and not load-bearing here — log via the error
         # below if a subsequent op trips on residue.

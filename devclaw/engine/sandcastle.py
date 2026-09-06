@@ -44,6 +44,7 @@ from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
 from ..claude_trust import write_trusted_copy
 from .. import config as _config
+from . import workspace as _workspace
 from ..git_identity import git_identity_env
 
 SANDBOX_IMAGE = _config.SANDBOX_IMAGE
@@ -366,10 +367,13 @@ def _toolchain_volume_name(host_bind_path: str) -> str:
     (ADR 0005). Keyed on the HOST workspace path — the project identity axis —
     so every task of a project shares one cache and no project can touch
     another's (per-project isolation was an explicit lock decision, over a
-    shared cross-project cache). Deterministic; docker auto-creates the volume
-    on first mount."""
-    slug = re.sub(r"[^a-z0-9]+", "-", Path(host_bind_path).name.lower()).strip("-")[:40]
-    digest = hashlib.sha256(host_bind_path.encode("utf-8")).hexdigest()[:8]
+    shared cross-project cache). A goal checkout (``<project>/.goals/<id>``,
+    2026-09-06) keys on its PROJECT workspace, so per-goal directories share
+    the project's cache and mint no volumes of their own. Deterministic;
+    docker auto-creates the volume on first mount."""
+    key = _workspace.project_workspace_for(host_bind_path)
+    slug = re.sub(r"[^a-z0-9]+", "-", Path(key).name.lower()).strip("-")[:40]
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
     return f"devclaw-toolchains-{slug or 'workspace'}-{digest}"
 
 
