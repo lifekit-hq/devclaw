@@ -30,6 +30,11 @@ _ROW_RE = re.compile(r"^\| `(DEVCLAW_[A-Z_]+)`", re.MULTILINE)
 
 _COMPOSE = _REPO / "deploy" / "docker-compose.devclaw.yml"
 _SANDCASTLE = _REPO / "devclaw" / "engine" / "sandcastle.py"
+# The launcher stamps the worker's git identity through this module, so its
+# config reads are sandbox dials too (DEVCLAW_GIT_NAME/EMAIL were documented,
+# read, and inert in production until 2026-09-06 because the scan stopped at
+# sandcastle.py).
+_GIT_IDENTITY = _REPO / "devclaw" / "git_identity.py"
 _CONFIG = _REPO / "devclaw" / "config.py"
 #: a `_config.<NAME>` reference in the container launcher
 _CFG_REF_RE = re.compile(r"_config\.([A-Za-z_]+)")
@@ -80,7 +85,7 @@ def _sandcastle_env_vars() -> set[str]:
     back to the env var its binding in ``config.py`` reads. A new sandbox dial
     is therefore covered the moment sandcastle reads it — no list to remember.
     """
-    src = _SANDCASTLE.read_text(encoding="utf-8")
+    src = _SANDCASTLE.read_text(encoding="utf-8") + _GIT_IDENTITY.read_text(encoding="utf-8")
     names = set(_CFG_REF_RE.findall(src))
     config_src = _CONFIG.read_text(encoding="utf-8")
     found: set[str] = set()

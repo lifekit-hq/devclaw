@@ -30,12 +30,12 @@ _DEFAULT_EMAIL = "devclaw@local"
 
 def git_name() -> str:
     v = _config.git_name()
-    return v if v is not None else _DEFAULT_NAME
+    return v if v and v.strip() else _DEFAULT_NAME
 
 
 def git_email() -> str:
     v = _config.git_email()
-    return v if v is not None else _DEFAULT_EMAIL
+    return v if v and v.strip() else _DEFAULT_EMAIL
 
 
 def git_identity_env() -> dict[str, str]:
