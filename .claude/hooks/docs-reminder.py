@@ -19,7 +19,7 @@ import time
 DOC_MAP = [
     ("devclaw/server/", ["docs/architecture.md (layer 1: MCP surface)"]),
     ("devclaw/goal/", ["docs/architecture.md (layers 2-3)", "docs/flows/task-execution.md"]),
-    ("devclaw/engine/", ["docs/flows/task-execution.md", "docs/decisions/0002-engine-mode.md", "docs/runbooks/live-shakedown.md"]),
+    ("devclaw/engine/", ["docs/flows/task-execution.md", "docs/runbooks/live-shakedown.md"]),
     ("runner/", ["docs/flows/task-execution.md (layer 5)", "docs/runbooks/live-shakedown.md"]),
     (".sandcastle/", ["docs/runbooks/live-shakedown.md"]),
     ("devclaw/delivery/", ["docs/flows/delivery.md"]),

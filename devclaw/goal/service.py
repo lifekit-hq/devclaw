@@ -625,7 +625,7 @@ class GoalService:
             # notifier-less run still leaves a trace.
             sys.stderr.write(f"goal-layer: cycle report {cycle_key} (log-only):\n{report.summary}\n")
 
-        # Self-issue-filing Stage 1 (docs/proposals/self-issue-filing.md): at this
+        # Self-issue-filing Stage 1 (``goal/self_issue.py`` docstring): at this
         # SAME once-per-cycle edge (past the cycle_report_exists idempotency gate,
         # so it fires once per cycle, never per tick), turn recurring problems into
         # GitHub issues on the devclaw repo and age out stale ones. ZERO LLM.

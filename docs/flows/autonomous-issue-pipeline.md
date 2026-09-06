@@ -1,25 +1,25 @@
-# Flow — the autonomous issue-driven pipeline (PLANNED)
+# Flow — the issue-driven pipeline
 
-> **STATUS: PLANNED — not yet built.** This describes the target-state flow once
-> the P1–P3 arc lands. It is the narrative companion to the specs, not a trace of
-> current behavior. Do not trust it as CURRENT until the specs below are implemented
-> and this banner is removed.
+> **STATUS (2026-09-06): mostly LIVE; one stage parked, one story unbuilt.**
+> Each step below is tagged with what the code does today. The specs behind it:
 >
-> - **P1** — `specs/006-intake-readiness-gate` (specify + clarify done)
-> - **P2** — `specs/007-autonomous-issue-dispatch` (scoped + clarify done, unsized)
-> - **P3** — `specs/008-speckit-execution-substrate` (substrate LANDED — speckit drives execution, host planning chain removed; label-routing still open)
-> - **Adoption** — `specs/009-universal-issue-adoption` (**SHIPPED**): the grade accepts
->   ANY open issue — hand-written backlogs included — via `regrade_intake`, plus a
->   batch-capped `grade_backlog` for onboarding a whole backlog. The door below is
->   no longer the only entrance to Stage 1.
->
-> Interactive version: an Artifact was generated from this doc (ask the owner for the link).
+> - `specs/006-intake-readiness-gate` — **SHIPPED**: the door grades every ask.
+> - `specs/007-autonomous-issue-dispatch` — **PARKED** (direction memory only;
+>   none of its machinery — operator flag, CAS'd claim, provenance wall,
+>   promotion — exists in the tree; review by 2026-10-01).
+> - `specs/008-speckit-execution-substrate` — **SHIPPED** for the substrate
+>   (speckit drives execution in-sandbox, host planning chain removed);
+>   **US3 label-routed ceremony is NOT BUILT**.
+> - `specs/009-universal-issue-adoption` — **SHIPPED**: the grade accepts ANY
+>   open issue via `regrade_intake`, plus a batch-capped `grade_backlog`.
+> - `specs/023` (webhooks) — **ACTIVE** when `DEVCLAW_WEBHOOK_SECRET` is set.
+> - `specs/025` (merge-on-close) — **SHIPPED**: see [delivery.md](./delivery.md).
 
 The one-line shape: **an ask enters one door (or an existing issue is adopted
-as-is — spec 009), is graded for readiness, is dispatched
-(by a human, or autonomously once you flip a flag), is scoped by speckit, built one
-slice per PR, gated, and merged by a human — with the GitHub issue as the source of
-truth throughout and PLAN.md gone.**
+as-is), is graded for readiness, is filed as a goal by a human (self-fix pickup
+is the one autonomous entrance), is planned by speckit in the sandbox, built one
+slice per dispatch, gated, and squash-merged by the confirmed-achieved close —
+with the GitHub issue as the source of truth throughout and PLAN.md gone.**
 
 ---
 
@@ -33,12 +33,13 @@ truth throughout and PLAN.md gone.**
     structural gate: what + done_when≥20 + provenance
     + the filer's expected_increments claim & its basis
       (optional; a count with no basis rejects) [spec 012 US3]
-    → GitHub issue created = receipt
+    → GitHub issue created = receipt, label devclaw-intake
                  │
                  ▼
-  STAGE 1 · READINESS GRADE                                [P1]  (async)
-    also enters here: any EXISTING open issue, any format,
-    via regrade_intake / grade_backlog (spec 009)  [exists]
+  STAGE 1 · READINESS GRADE                                [exists]  (async)
+    scheduled by file_intake itself; also enters here:
+    any EXISTING open issue via regrade_intake / grade_backlog
+    (spec 009), or an `issues opened/edited` webhook (spec 023)
     ONE cognition call, THREE independent axes:
     (a) ground the ask vs the repo: locatable surface +
         concrete change + verifiable intent?  fail-closed →
@@ -55,46 +56,50 @@ truth throughout and PLAN.md gone.**
             makes an ask stale.
                                             │
                                             ▼
-  STAGE 2 · DISPATCH                                        [P2]
-    flag OFF (default) → a human dispatches
-    flag ON → the tick claims (guard-safe):
-      • cheap SQLite check BEFORE any cognition/network
-      • provenance wall: self-filed needs human promotion;
-        human/external flows
-      • triage: priority label, then oldest
-      • CAS claim (no double-dispatch), dispatch cap held
-    → create_goal(issue)          label: in-progress
+  STAGE 2 · DISPATCH                                        [spec 007 PARKED]
+    a human files the goal: create_goal(issues=[…])
+    the one autonomous entrance is self-fix pickup [exists]:
+      • a human puts `accepted` on a devclaw:self-filed issue
+        (or on a human-filed issue marked devclaw:pickup)
+      • the cycle edge opens ONE one_shot goal per accepted
+        issue (zero LLM to detect; DEVCLAW_SELF_FIX_CONCURRENCY,
+        default 1; gated on DEVCLAW_SELF_REPO) → label devclaw:fixing
+    nothing claims a devclaw-ready issue on its own
                                             │
                                             ▼
-  STAGE 3 · SCOPE via SPECKIT                               [P3]
+  STAGE 3 · PLAN via SPECKIT, in-sandbox                    [exists]
     goal lifecycle: executing (goals are born executing)
-    label-routed:
-      feature/enhancement → specify→plan→tasks (specs/NNN/)
-      bug/chore/docs       → direct-advance, no spec
-    no interactive clarify; can't scope → bounce needs-human
+    every dispatch runs the speckit flow (specs/NNN/ in the repo)
+    label-routed ceremony (feature → full cycle, bug → direct)
+                                    [spec 008 US3 NOT BUILT]
+    can't narrow to one feature → dispatch held at the boundary;
+      5 consecutive holds → blocked mechanical:slice_hold
     NO PLAN.md (speckit is universal: adopt, or install via PR)
                                             │
                                             ▼
-  STAGE 4 · IMPLEMENT, one slice per PR
+  STAGE 4 · IMPLEMENT, one slice per dispatch               [exists]
     worker does the CURRENT tasks.md slice only
-    slice-guard reads tasks.md checkbox flips [P3] (not PLAN.md)
-    gate chain [exists]: verify → test-integrity → scope → review(dial) → delivery
+    slice-guard reads tasks.md checkbox flips (not PLAN.md)
+    gate chain: verify → materialize → change_class →
+      test_integrity → review (strict only) → browser (dial)
                                             │
                                             ▼
   STAGE 5 · DELIVER                                         [exists]
-    commit → branch → push → PR (devclaw label + Summary/Testing body)
+    commit → goal branch → push → ONE cumulative PR
+      (devclaw label + Summary/Testing body + Closes #N)
     broken delivery = fail, never "done without a PR"
                                             │
                                             ▼
-  STAGE 6 · GATE & DONE
-    ⟵ YOU MERGE (backstop; devclaw never self-merges)
-    goal proposes done → grounded done-gate vs done_when [exists]:
-      achieved → close the issue
-      not      → re-steer / needs-human
+  STAGE 6 · GATE, DONE & MERGE                              [exists]
+    goal proposes done → grounded done-gate vs done_when:
+      achieved → CI green on the same head → squash-merge
+                 (spec 025) → GitHub closes the issue (Closes #N)
+      not      → re-advance; needs_human → typed Problem;
+                 3 flat rounds → donegate_churn park
 ```
 
-Tags: **[P1]/[P2]/[P3]** = the slice that delivers the step; **[exists]** = current
-devclaw machinery reused unchanged.
+Tags: **[exists]** = live machinery; **[spec 007 PARKED]** / **[spec 008 US3
+NOT BUILT]** = the step is not automated today.
 
 ---
 
@@ -106,24 +111,24 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
 1. **Door.** `file_intake(finance-sentry, what=…, done_when="backend computes a 30-day
    forecast; a shortfall sentinel is exposed via the API; tests cover
    income/expenses/low-cash")`. Structural gate passes → **issue #430 created**, receipt
-   URL returned. *[exists]*
+   URL returned, grade scheduled. *[exists]*
 2. **Grade.** The readiness validator snapshots the repo and checks: locatable surface
    (the Wealth/Alerts modules), concrete change (a forecast service + endpoint +
-   sentinel), verifiable intent (the done_when) → **`devclaw-ready`.** *[P1]*
-3. **Dispatch.** Flag is ON. The tick's cheap check sees a claimable ready issue,
-   human-filed (no promotion needed), highest priority → **claims it (CAS)** →
-   `create_goal(#430)`, label → **in-progress**. *[P2]*
-4. **Scope.** The `feature` label routes the worker's first advance to **speckit**:
+   sentinel), verifiable intent (the done_when) → **`devclaw-ready`.** *[exists]*
+3. **Dispatch.** You file `create_goal(issues=[#430])`; the goal's contract is read
+   live from the issue. *[human — spec 007 parked]*
+4. **Plan.** The worker's first advance runs speckit in the sandbox:
    `specs/030-cashflow-forecast/` with spec.md, plan.md, and a `tasks.md` — T001 forecast
-   service, T002 sentinel rule, T003 API endpoint, T004 tests (some marked `[P]`). *[P3]*
+   service, T002 sentinel rule, T003 API endpoint, T004 tests. *[exists]*
 5. **Implement.** The worker does **T001 only**; the slice-guard watches `tasks.md` and
-   blocks any attempt to also complete T003. T001 → verify → review → **PR #1**. Next
-   dispatch: T002. One coherent slice, one reviewable PR each. *[P3 + exists]*
-6. **Deliver + merge.** Each PR lands with the devclaw label and a Summary/Testing body.
-   **You review and merge** — devclaw cannot merge itself. *[exists]*
-7. **Done.** The goal proposes done → the done-gate re-checks against the done_when
-   (forecast computes? sentinel exposed? tests present?). Achieved → **issue #430
-   closes.** Otherwise it bounces to **needs-human** with the gap. *[exists]*
+   holds dispatch if pending tasks sprawl beyond the current feature. T001 → gate
+   chain → **the cumulative PR**. Next dispatch: T002, stacked on the same PR. *[exists]*
+6. **Deliver.** Every increment pushes to the goal branch; the one PR stays open for
+   the whole goal (#486). *[exists]*
+7. **Done + merge.** The goal proposes done → the done-gate re-checks against the
+   done_when (forecast computes? sentinel exposed? tests present?). Achieved, and the
+   PR's CI is green on that head → **squash-merged, issue #430 closes.** Otherwise it
+   re-advances, or raises a **typed Problem** for you. *[exists]*
 
 ---
 
@@ -131,7 +136,7 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
 
 - **Ungroundable ask** ("make finance-sentry better") → Stage 1 → **`needs-refinement`**
   with "no locatable surface / no concrete change." Never looks dispatchable. You
-  sharpen it and re-trigger the grade. *[P1]*
+  sharpen it and re-trigger the grade. *[exists]*
 - **Disputed or unrecorded extent** → Stage 1 axis (b) → **`needs-sizing`** naming the
   reason. Orthogonal to readiness: a `devclaw-ready` + `needs-sizing` issue is
   dispatchable, it just has an extent a human should settle first. The count sizes
@@ -140,50 +145,51 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
   **`needs-refinement` (stale)**, naming "the described condition appears to be already
   resolved in the repository." Overrides a clean grounding verdict: close the issue, or
   rewrite it to describe what is still missing, then re-grade. *[spec 028 US2]*
-- **Self-filed ask** (devclaw's own self-issue-filing) → graded ready, but at Stage 2 the
-  **provenance wall** holds it until *you* promote it. No self-dealing. *[P2]*
-- **A bug** (`fix: forecast off-by-one`) → Stage 3 routes it **direct-advance, no spec** —
-  no speckit ceremony on a one-liner. *[P3]*
-- **Can't scope cleanly** → the scope step fails → **needs-human**, never a garbage plan. *[P3]*
-- **Flag OFF** (today, and until you trust it) → Stage 2 is just *you* dispatching a
-  `devclaw-ready` issue. Everything else identical.
+- **Self-filed ask** (devclaw's own self-issue-filing, `devclaw:self-filed`) → nothing
+  picks it up until *you* add `accepted`; then the cycle edge opens one self-fix goal.
+  No self-dealing. *[exists]*
+- **A bug** (`fix: forecast off-by-one`) → runs the same speckit flow as a feature;
+  the direct-advance shortcut is spec 008 US3. *[NOT BUILT]*
+- **Can't narrow the scope** → the slice-guard holds the dispatch; five consecutive
+  holds park the goal **`mechanical:slice_hold`**, never a garbage plan. *[exists]*
+- **Merge fails at close** → `mechanical:merge_failed` after one bounded conflict
+  self-heal; the lane skips over to the queued successor. *[exists, spec 025]*
 
 ---
 
 ## The label state machine (GitHub-native = source of truth AND dashboard)
 
 ```
-intake ─▶ [P1 grade] ─▶ devclaw-ready ──▶ [P2 claim] ─▶ devclaw-in-progress ─▶ closed (done)
-                    └─▶ needs-refinement                                     └─▶ needs-human
+devclaw-intake ─▶ [grade] ─▶ devclaw-ready ──▶ [human create_goal] ─▶ closed (Closes #N on merge)
+                         └─▶ needs-refinement          (needs-sizing rides orthogonally)
+
+devclaw:self-filed ─┐
+devclaw:pickup ─────┴▶ + accepted (human) ─▶ [cycle-edge pickup] ─▶ devclaw:fixing ─▶ closed
 ```
 
 ---
 
-## Where you sit — and how it shrinks
+## Where you sit
 
 | Control point | Stays yours? |
 |---|---|
 | Filing / refining asks | Shared (you or agents) |
-| **Promoting self-filed issues** | **Always yours** — the anti-busywork wall |
-| **Flipping the autonomy flag** | **Always yours** — off by default |
-| **Merging every PR** | **Always yours** — the merge backstop |
-| Handling needs-human bounces | Yours |
-| Picking which ready issue to dispatch | Yours until the flag flips, then the tick's |
-
-Autonomy grows by flipping **one flag**, and even fully on, **three hard human gates
-remain**: promotion, activation, merge. That is the "companion → autonomy,
-evidence-gated" arc made concrete.
+| **Accepting self-filed / pickup issues** | **Always yours** — the anti-busywork wall |
+| **Filing goals for `devclaw-ready` issues** | **Yours** — spec 007's autonomous claim is parked |
+| Merging the cumulative PR | The confirmed-achieved close (spec 025); your review moves post-merge |
+| Resolving typed Problems | Yours — `correct_implementation` / `decide` |
 
 ---
 
-## The phased reality (what's live when)
+## What's live when
 
-- **After P1:** the door grades everything; you still dispatch by hand. *Value: a
-  trustworthy backlog.*
-- **After P2:** flip the flag → the loop pulls `devclaw-ready` work itself, walled from
-  self-dealing, you merge. *Value: hands-off execution of human-filed work.*
-- **After P3:** execution runs on speckit per-feature, PLAN.md is gone, plans never
-  bloat. *Value: it scales to many features without the monolith.*
+- **Now:** the door grades everything (spec 006/009, webhooks optional); you file
+  goals; execution runs on speckit in-sandbox (spec 008); the done-gate closes and
+  merges (spec 025), with CI as the verdict of record (spec 032).
+- **Parked:** the heartbeat claiming `devclaw-ready` issues itself (spec 007) —
+  resume condition: the autonomy ratchet (`DEVCLAW_RATCHET_*`, informational only)
+  reads ready and Denys rules the unattended weeks earned it.
+- **Unbuilt:** label-routed ceremony (spec 008 US3).
 
 ---
 
@@ -198,3 +204,5 @@ evidence-gated" arc made concrete.
 - **Auto-enabling autonomy on a metric** — rejected; the human flips the flag (spec 007).
 - **Async-clarify inside P2** — deferred to its own slice; P2 only dispatches
   already-graded work (spec 007).
+- **A pre-merge cumulative review gate** — rejected; `done_when` is the sole pre-merge
+  authority, human review moves post-merge (spec 025 FR-006).

@@ -1,6 +1,9 @@
 """Self-issue-filing — Stage 1: FILE + CLOSE (the self-improving cycle's safe half).
 
-Proposal: ``docs/proposals/self-issue-filing.md`` (Stage 1 LOCKED 2026-07-22).
+Direction (2026-07-22 proposal, now in git history; the FILE edge generalized by
+spec 014): the cycle is GATHER -> FILE -> FIX -> CLOSE. FILE and CLOSE are the
+mechanical half below; FIX never self-dispatches — a self-filed issue is picked
+up only after a human ``accepted`` label (``select_for_pickup``).
 
 At run-cycle close — the same mechanical, ZERO-LLM edge that assembles the cycle
 report — devclaw turns its OWN recurring failures into GitHub issues on its own

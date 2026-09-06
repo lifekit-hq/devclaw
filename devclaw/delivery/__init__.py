@@ -553,7 +553,7 @@ async def deliver_change(
     ``_resolve_title``.
 
     ``base_branch`` / ``target_branch`` are the v1-helper-resurface delivery
-    seam (docs/proposals/v1-helper-resurface.md §3): ``base_branch`` is a
+    seam (ADR 0011, git history): ``base_branch`` is a
     caller-chosen PR base — it becomes the ahead-count/diff base ref and the
     ``gh pr create --base``; ``target_branch`` pins the delivery branch — when
     the workspace is already ON it, delivery stays there and reuses its single
