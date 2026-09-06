@@ -217,8 +217,6 @@ def ratchet_window_days() -> int:
 #: no-progress watchdog pings the owner once. 0 disables. Default 6h.
 NO_PROGRESS_S = int(os.environ.get("DEVCLAW_GOAL_NO_PROGRESS_S", "21600"))
 REMOTE_CHECKS_ENABLED = os.environ.get("DEVCLAW_GOAL_REMOTE_CHECKS", "1") not in ("0", "false", "")
-#: on by default; 0 sends raw text instead of the plain-language rewrite.
-PLAIN_SUMMARY_ENABLED = os.environ.get("DEVCLAW_GOAL_PLAIN_SUMMARY", "1") not in ("0", "false", "")
 DONEGATE_LEAN = os.environ.get("DEVCLAW_DONEGATE_LEAN", "0") == "1"
 
 #: nightly run-cycle window (cycle reports group by it).
@@ -390,12 +388,3 @@ def health_check_interval_s() -> int:
         return v if v > 0 else 3600
     except (ValueError, TypeError):
         return 3600
-
-
-# ---- trend detector ------------------------------------------------------
-
-TREND_ENABLED = os.environ.get("DEVCLAW_TREND_ENABLED", "1") != "0"
-TREND_DISABLE_RAW = os.environ.get("DEVCLAW_TREND_DISABLE", "")
-TREND_HARNESS_SELF_FILE = os.environ.get(
-    "DEVCLAW_TREND_HARNESS_SELF_FILE", "~/memory/projects/devclaw/trends.md"
-)

@@ -330,7 +330,6 @@ def _evaluate_expect(expect: dict, tracer: Tracer, goal_dir: Optional[Path], ext
 def _wire_env(goals_dir: Path) -> None:
     os.environ["DEVCLAW_ENGINE"] = "stub"
     os.environ["DEVCLAW_GOALS_DIR"] = str(goals_dir)
-    os.environ.setdefault("DEVCLAW_GOAL_PLAIN_SUMMARY", "0")  # skip the summary call for clean traces
 
 
 def _patch_for_sandbox() -> None:

@@ -1,6 +1,6 @@
 """Control-plane meta wrappers — the typed helpers over the ``meta`` key/value
 table: the account-wide quota pause, the operator hold, per-goal run windows,
-per-workspace circuit-breakers, and the trend-detector cooldown/fingerprint/
+per-workspace circuit-breakers, and the
 bookmark state.
 
 Split out of ``StateStore`` as a mixin on the SAME instance — every method here
@@ -416,33 +416,6 @@ class ControlPlaneMixin:
     def clear_workspace_break(self, workspace_dir: str) -> None:
         self.delete_meta(f"workspace_break:{workspace_dir}")
 
-    def set_trend_cooldown(self, scope: str, signal_id: str, until_ms_str: str) -> None:
-        """Persist the cooldown for one (scope, signal) pair. ``until_ms_str``
-        is epoch milliseconds as a string — same shape as ``pause_until_ms``,
-        so the trend detector reuses the meta table instead of inventing a
-        per-repo JSON file that would recreate the write-concurrency cliff
-        WAL already solved."""
-        self.set_meta(f"trend_cooldown:{scope}:{signal_id}", until_ms_str)
-
-    def get_trend_cooldown(self, scope: str, signal_id: str) -> Optional[str]:
-        """The cooldown for one (scope, signal) pair, or ``None`` if no
-        cooldown was set / has been cleared."""
-        return self.get_meta(f"trend_cooldown:{scope}:{signal_id}")
-
-    def set_trend_fingerprint(self, scope: str, signal_id: str, fp: str) -> None:
-        """Persist the fingerprint (identity hash of the situation) of the
-        LAST successful fire for one (scope, signal) pair. Added 2026-07-03
-        after audit found R2 firing 4 days consecutively on identical evidence
-        because the time-cooldown expired without any new data. The detector
-        now compares new fires against this fingerprint and suppresses when
-        the story hasn't changed. Distinct from cooldown (which is a wall-
-        clock timer); this is content identity."""
-        self.set_meta(f"trend_fingerprint:{scope}:{signal_id}", fp)
-
-    def get_trend_fingerprint(self, scope: str, signal_id: str) -> Optional[str]:
-        """The last-fire fingerprint for one (scope, signal) pair. ``None``
-        when the signal has never fired at that scope (fresh fire allowed)."""
-        return self.get_meta(f"trend_fingerprint:{scope}:{signal_id}")
 
     def prune_stale_trend_meta(self, live_workspaces: "set[str]") -> int:
         """Delete trend cooldown/fingerprint/bookmark meta keys whose project

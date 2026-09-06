@@ -58,7 +58,6 @@ from .goals import (  # noqa: F401
     correct_implementation,
     create_goal,
     decide,
-    evaluate_goal,
     get_goal,
     get_trace,
     list_goals,
@@ -80,7 +79,6 @@ from .observability import (  # noqa: F401
     get_status,
     list_problems,
     list_tasks,
-    review_trends,
 )
 from .projects import (  # noqa: F401
     delete_project,

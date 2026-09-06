@@ -19,7 +19,6 @@ from .tick_context import NotifyLevel, Outcome, TickContext, _notify
 from .engine import GoalEngineError
 from .models import Goal, GoalStatus, Phase
 from .notify import Notifier
-from ..llm_call import ClaudeCaller
 from .store import GoalStore
 from .transitions import Event
 from ..engine.workspace import WorkspaceError
@@ -44,7 +43,6 @@ def _progress_window_active(status: GoalStatus) -> bool:
 async def _check_no_progress(
     goal_id: str, goal: Goal, status: GoalStatus,
     *, store: GoalStore, notifier: Notifier, window_s: int,
-    summarize: "ClaudeCaller | None" = None,
 ) -> GoalStatus:
     """Zero-token wall-clock watchdog. Self-initializes the progress baseline the
     first time it sees an executing goal, then fires exactly one OWNER ping if the
@@ -52,7 +50,7 @@ async def _check_no_progress(
     status so the caller carries the baseline/flag forward instead of clobbering it.
 
     Pure mechanism: it reads timestamps and never calls cognition on the measuring
-    path (the summarizer only runs for the one ping that actually clears the gate)."""
+    path."""
     if goal.mode == "qa":
         # A qa goal never ships (spec 015 US3) — "no delivery in N hours" is
         # its healthy steady state, not a stall; the watchdog would ping the
@@ -79,14 +77,13 @@ async def _check_no_progress(
         notifier, NotifyLevel.OWNER,
         f"🐢 [{goal_id}] no progress in ~{hours}h on \"{goal.objective}\" — "
         f"it's still working but nothing has shipped; you may want to take a look",
-        summarize=summarize,
     )
     return status
 
 
 async def _block_on_prep_failure(
     goal_id: str, status: GoalStatus, exc: "WorkspaceError",
-    *, store: GoalStore, notifier: Notifier, summarize: "ClaudeCaller | None",
+    *, store: GoalStore, notifier: Notifier,
 ) -> Outcome:
     """A workspace couldn't be prepared — a bad/missing ``repo_url``, a clone
     that 404s (the repo doesn't exist *or* is private and unreadable — GitHub
@@ -113,7 +110,6 @@ async def _block_on_prep_failure(
     await _notify(
         notifier, NotifyLevel.OWNER,
         f"🟡 [{goal_id}] I couldn't set up the workspace, so I've paused — {msg}",
-        summarize=summarize,
     )
     return Outcome.BLOCKED
 
@@ -166,7 +162,6 @@ async def _block_on_lost_ref(
         ctx.notifier, NotifyLevel.OWNER,
         f"🟡 [{goal_id}] I lost track of the in-flight work ({ref.ref_kind} {ref.id}) — "
         "paused; steer me to continue",
-        summarize=ctx.summary_caller,
     )
     return Outcome.BLOCKED
 
@@ -425,7 +420,7 @@ async def _heal_give_up(
     sentinel bump one past the cap — a column-only write, the goal stays
     blocked, so this must not be a phase transition; it is what keeps the
     ping to exactly one, the pause_notified pattern), then log, then ONE
-    plain owner ping — never through the summarizer LLM.
+    plain owner ping — zero cognition.
 
     ``counter_field`` names the budget being parked, so each brake's sentinel
     lands on its own column."""
@@ -480,7 +475,6 @@ async def _block_on_env_cap(
     goal_id: str, status: GoalStatus,
     red_caps: "list[tuple[str, _env_cap.CapProbeResult]]",
     *, store: GoalStore, notifier: Notifier,
-    summarize: "ClaudeCaller | None" = None,
     consume_steering: "list[int] | None" = None,
 ) -> Outcome:
     """Block the goal because one or more required capability probes are red.
@@ -522,7 +516,6 @@ async def _block_on_env_cap(
             notifier, NotifyLevel.OWNER,
             f"🔴 [{goal_id}] dispatch held — environment not ready: {cap_lines}; "
             "devclaw auto-resumes when the probe turns green",
-            summarize=summarize,
         )
     return Outcome.BLOCKED
 
@@ -530,7 +523,6 @@ async def _block_on_env_cap(
 async def _block_on_env_deficiency(
     goal_id: str, goal: Goal, status: GoalStatus, item: str,
     *, task_id: str = "", store: GoalStore, notifier: Notifier,
-    summarize: "ClaudeCaller | None" = None,
 ) -> Outcome:
     """Spec 032 US2: a worker reported ``BLOCKED: env — <item>``. Record the
     deficiency as a red capability row for the goal's PROJECT (so every goal on
@@ -544,7 +536,7 @@ async def _block_on_env_deficiency(
     )
     store.append_log(goal_id, f"worker environment deficiency → project hold ({cap_id}): {item}")
     return await _block_on_env_cap(
-        goal_id, status, [(cap_id, result)], store=store, notifier=notifier, summarize=summarize,
+        goal_id, status, [(cap_id, result)], store=store, notifier=notifier,
     )
 
 
