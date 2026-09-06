@@ -123,7 +123,10 @@ on a second real consumer (ruled 2026-09-06).
   this when you AUTHOR a goal — the gate's drop is a backstop, not a licence.
   Since spec 031 (2026-09-02) creation runs the **admission lint**
   (`devclaw/goal/admission_lint.py`): a clause needing a capability the sandbox
-  cannot have is **refused** (nothing persisted); a baseline-less absolute
+  cannot have — a credential, a human, a change in **another repository** — is
+  **refused** (nothing persisted), and since #847 (2026-09-06) that refusal
+  covers a pointer goal's live-fetched acceptance sections too, not only an
+  explicit `done_when`; a baseline-less absolute
   predicate ("all tests pass") is **rewritten** to "no new failures relative
   to the default branch" and recorded as an admission Decision; an undecided
   design choice becomes a Problem to the author **before any dispatch**. The

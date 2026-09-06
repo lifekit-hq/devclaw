@@ -702,7 +702,9 @@ steer's budget-restoring shape. A timed-out Problem takes its default and
 informs; under `strict` a default that would close the goal parks instead.
 `steer_goal` is refused while a Problem is open. At creation the `done_when`
 admission lint (`devclaw/goal/admission_lint.py`) refuses sandbox-impossible
-clauses, rewrites baseline-less absolutes, and raises an undecided design
+clauses — a credential, a human, a change in another repository — in an
+explicit `done_when` and in a pointer goal's referenced acceptance sections
+alike (#847), rewrites baseline-less absolutes, and raises an undecided design
 choice as a Problem before any dispatch — its one cognition call runs at
 creation, never on the tick, and fails closed: a judge reply outside the
 protocol, or a caller that raises, refuses creation with nothing persisted.
