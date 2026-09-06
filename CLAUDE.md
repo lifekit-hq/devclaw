@@ -170,6 +170,10 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   (#189/#190/#191). Zero tokens while paused. Auth failures (expired login) ride
   the same pause since the 2026-07-20 night incident — actionable "re-login"
   ping, fixed re-probe cadence, auto-resume after the human fixes the login.
+  **Provenance before wording** (2026-09-06): only agent- or harness-origin
+  text is ever classified; a gate verdict or a worker self-report is REAL by
+  origin, whatever words it carries — a verify log or a test file named
+  `test_rate_limit_pause.py` must never pause the account.
 - **Mechanical blocks auto-heal; recovery is a verb, not a fake steer.** Blocks
   carry a structured `blocked_kind`; `mechanical:corrupt_doc` and
   `mechanical:prep` self-heal when their condition clears (zero LLM, damped by

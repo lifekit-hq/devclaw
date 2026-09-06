@@ -31,7 +31,7 @@ from .. import validation_loop as _validation
 from ..procutil import run as _proc_run
 from ..delivery import deliver_change, delivery_failed
 from ..engine import EngineEvent, EngineRequest
-from ..loom.limits import classify_failure, pause_seconds
+from ..loom.limits import Classification, FailureKind, classify_failure, pause_seconds
 from ..quality.browser_gate import browser_run_verdict
 from ..quality.change_advisories import change_advisories
 from ..quality.gate_policy import Consequence, gate_consequence
@@ -166,6 +166,18 @@ BROWSER_REACHABILITY_ENABLED = True
 #: becomes a `failed` row). The global pause is still set either way: the
 #: account really is limited; only the doomed task stops riding it.
 MAX_PAUSE_REQUEUES = 5
+
+#: Where a failed attempt's text CAME FROM. The pause brake keys on this before
+#: any wording check: only text the provider or a harness subprocess produced
+#: may be classified as a usage limit. A gate verdict and a worker self-report
+#: are prose ABOUT the repository under development — they can contain any
+#: word (a verify log, a test file named ``test_rate_limit_pause.py``, a review
+#: finding quoting an issue title) and are REAL by construction, never a limit.
+_ORIGIN_AGENT = "agent"      # the runner's result: the ACP agent's own error
+_ORIGIN_HARNESS = "harness"  # a devclaw engine exception or subprocess failure
+_ORIGIN_GATE = "gate"        # a gate verdict's reason
+_ORIGIN_WORKER = "worker"    # the worker's honest BLOCKED self-report
+_CLASSIFIABLE_ORIGINS = frozenset({_ORIGIN_AGENT, _ORIGIN_HARNESS})
 
 #: _run_and_settle returns this when a task was paused for a quota limit (not
 #: settled): the task is back to 'pending' and the global pause holds dispatch.
@@ -965,7 +977,10 @@ class SettleMixin:
         #      only if integrity passed; browser only if both passed. Flattening
         #      it recomputes the diff and surfaces lower-priority findings.
         #    Axis 2 — FAILURE-STRING CLASSIFICATION: classify_failure() reads the
-        #      terminal failure text to pause on quota/auth (usage-limit path).
+        #      terminal failure text to pause on quota/auth (usage-limit path) —
+        #      ONLY when the text's origin is the agent or the harness
+        #      (``last_origin``); gate verdicts and worker self-reports are
+        #      REAL by origin and never reach the classifier.
         #    Axis 3 — MARKER-BASED FAST-FAIL ROUTING: _WORKER_BLOCKED_MARKER,
         #      _REVIEW_CRASH_MARKER and _PROMPT_TOO_LONG_MARKER route specific
         #      failures without a retry.
@@ -1055,6 +1070,7 @@ class SettleMixin:
         # NOT retried — a stuck run would likely just hang again — they escalate now.
         attempts = 1 + max(0, TASK_MAX_RETRIES)
         last_failure = "unknown error"
+        last_origin = _ORIGIN_HARNESS
         # Every prior failed attempt this run, in order. The retry prompt used
         # to carry only the single most-recent failure (an overwritten string),
         # so attempt 3 never learned what attempt 1 tried — and could burn its
@@ -1249,6 +1265,7 @@ class SettleMixin:
                 return None
             except Exception as err:
                 last_failure = str(err)  # unexpected runner error — retryable
+                last_origin = _ORIGIN_HARNESS
             else:
                 # Context-tripwire firing (spec 021 US2): the runner landed
                 # (or tried to land) the session before a context overflow.
@@ -1274,6 +1291,7 @@ class SettleMixin:
                     )
                 if result.get("status") != "ok":
                     last_failure = result.get("error", "unknown error")
+                    last_origin = _ORIGIN_AGENT
                     if result.get("status") == "rate_limited" and result.get("retry_after"):
                         # the engineer parsed an explicit reset hint — prefer it
                         last_failure = f"rate limit; retry-after: {result['retry_after']}s"
@@ -1291,6 +1309,7 @@ class SettleMixin:
                             # devclaw work on the existing cadence.
                             item = (result.get("block_item") or reason).strip()
                             last_failure = f"{_WORKER_ENV_MARKER} {item}"
+                            last_origin = _ORIGIN_WORKER
                             self._store.record_problem(
                                 category="block", kind="env_deficiency", message=item,
                                 recovered=False,
@@ -1299,6 +1318,7 @@ class SettleMixin:
                             )
                         else:
                             last_failure = f"{_WORKER_BLOCKED_MARKER} {reason}"
+                            last_origin = _ORIGIN_WORKER
                 else:
                     # "done" means the verify gate passed, not that the agent said
                     # so — then the checks that READ the change. Axis 1 (the gate
@@ -1387,6 +1407,14 @@ class SettleMixin:
                         # test_integrity) never set dialable, so the dial can never
                         # loosen them.
                         last_failure = verdict.reason or "gate failed (no reason recorded)"
+                        # A review-gate CRASH relays a `claude --print` failure, so
+                        # its text is harness-origin (a quota-shaped crash must still
+                        # pause). Every other verdict is prose about the repo.
+                        last_origin = (
+                            _ORIGIN_HARNESS
+                            if last_failure.startswith(_REVIEW_CRASH_MARKER)
+                            else _ORIGIN_GATE
+                        )
                         if verdict.dialable:
                             dialable_finding = (verdict.gate_id, last_failure)
                             last_gate_result = result
@@ -1490,7 +1518,12 @@ class SettleMixin:
             # login dooms every call exactly like a cap, so requeue + pause; the
             # kind routes it onto the fixed AUTH_PAUSE_S re-probe cadence and
             # the goal layer words the owner ping as "re-login needed".
-            cls = classify_failure(last_failure, now_utc=datetime.now(timezone.utc))
+            # Provenance first, wording second: gate and worker text is never
+            # classified — it is REAL by origin, whatever words it contains.
+            if last_origin in _CLASSIFIABLE_ORIGINS:
+                cls = classify_failure(last_failure, now_utc=datetime.now(timezone.utc))
+            else:
+                cls = Classification(FailureKind.REAL, None, "")
             if cls.is_pausing:
                 backoff = pause_seconds(cls.retry_after_s, stated=cls.stated, kind=cls.kind)
                 self._store.set_global_pause(
