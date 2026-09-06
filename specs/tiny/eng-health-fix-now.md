@@ -55,6 +55,7 @@ constitution IX (verdict of record, protocol) or is a pure de-duplication.
 | `tests/test_goal_tick.py` | `test_admission_lint_fails_closed_on_a_malformed_judge_reply` (fail-closed gate class, extends the existing admission tests) |
 | `tests/test_runner_limits.py` | `test_vendored_retry_after_parser_matches_the_host` (pause/brake class) |
 | `tests/test_goal_evaluator.py`, `tests/test_review_gate.py` | import moved to the leaf; feedback test feeds `issues` (symmetric ratchet) |
+| `tests/conftest.py` | the hermeticity guard now also blocks the real `claude` binary (structural-guard class; opt-in live evals lift it) — fail-closed made a silent skip visible: `test_done_when_scenarios` reached the real CLI on a dev box and died in CI; it now injects `FakeClaude` |
 
 ## Requirements
 
@@ -68,6 +69,8 @@ constitution IX (verdict of record, protocol) or is a pure de-duplication.
    2 → 1 (the pinned runner pair remains, by design).
 4. No cognition-caller behaviour changes beyond the exception class seen at
    each call site.
+5. No test can spawn the real `claude` binary: the suite's hermeticity
+   guard fails such a test loudly, the way it already does for docker.
 
 ## Plan
 

@@ -36,6 +36,7 @@ os.environ.setdefault(
         / f"devclaw-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}.db"),
 )
 
+from devclaw import llm_call as _llm_call_mod
 from devclaw import task_queue
 from devclaw.delivery import deploy as _deploy_mod
 from devclaw.engine import sandcastle as _sandcastle_mod
@@ -101,6 +102,25 @@ _CONTAINER_BINARIES = frozenset(
     )
 )
 
+#: The cognition binary — the quota. A test that reaches it burns a real
+#: `claude --print` call on an authenticated dev machine and fails in CI
+#: (no binary), and the two outcomes disagree, which is how a silent skip
+#: turned fail-closed hid for a day (2026-09-06: the admission lint's judge).
+#: Injected fakes (``FakeClaude``, a patched ``_judge_undecided``) never reach
+#: the spawn; the opt-in live cognition evals lift the guard themselves.
+_COGNITION_BINARIES = frozenset(
+    os.path.basename(b) for b in ("claude", _llm_call_mod.CLAUDE_BIN)
+)
+
+_COGNITION_GUARD_HINT = (
+    "The pytest suite is fully stubbed — a test must NEVER spawn the real "
+    "`claude` CLI (it is the account's quota, and CI has no binary). Inject a "
+    "caller at the seam your test reaches: `svc._evaluator_caller = "
+    "FakeClaude(...)`, `evaluator_caller=`, `claude_caller=`, or patch the "
+    "module-global (`service._judge_undecided`, `evaluator.default_caller`). "
+    "Live cognition evals opt in with DEVCLAW_RUN_COGNITION_EVALS=1."
+)
+
 _GUARD_HINT = (
     "The pytest suite is fully stubbed — a test must NEVER launch real "
     "docker/tailscale (a 2026-07-14 pytest run leaked a live, "
@@ -131,11 +151,19 @@ def _block_real_docker(monkeypatch):
     """
     real_exec = asyncio.create_subprocess_exec
 
+    live_cognition = os.environ.get("DEVCLAW_RUN_COGNITION_EVALS", "0") not in ("0", "", "false", "False")
+
     async def guarded_exec(program, *args, **kwargs):
-        if os.path.basename(str(program)) in _CONTAINER_BINARIES:
+        base = os.path.basename(str(program))
+        if base in _CONTAINER_BINARIES:
             pytest.fail(
                 f"BLOCKED: test tried to spawn a real container-daemon subprocess: "
                 f"{program} {' '.join(str(a) for a in args[:8])} ...\n{_GUARD_HINT}"
+            )
+        if base in _COGNITION_BINARIES and not live_cognition:
+            pytest.fail(
+                f"BLOCKED: test tried to spawn the real cognition binary: "
+                f"{program} {' '.join(str(a) for a in args[:6])} ...\n{_COGNITION_GUARD_HINT}"
             )
         return await real_exec(program, *args, **kwargs)
 
