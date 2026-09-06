@@ -1,0 +1,431 @@
+{
+  "head": "4c583c2",
+  "generated_by": "evals/measure_eng_health.py",
+  "source_loc": 47966,
+  "functions_over_80": 55,
+  "functions_over_200": [
+    {
+      "fn": "devclaw/queue/settle.py:_run_and_settle",
+      "lines": 738
+    },
+    {
+      "fn": "runner/runner.py:main",
+      "lines": 484
+    },
+    {
+      "fn": "devclaw/telemetry.py:compute_scorecard",
+      "lines": 415
+    },
+    {
+      "fn": "devclaw/goal/tick_donegate.py:_resolve_done_gate",
+      "lines": 403
+    },
+    {
+      "fn": "devclaw/state_store/schema.py:bootstrap",
+      "lines": 379
+    },
+    {
+      "fn": "devclaw/goal/tick.py:_handle_long_lived_advance",
+      "lines": 364
+    },
+    {
+      "fn": "devclaw/goal/tick_settle.py:_resolve_polling_action",
+      "lines": 352
+    },
+    {
+      "fn": "devclaw/goal/tick_dispatch.py:_dispatch_action",
+      "lines": 335
+    },
+    {
+      "fn": "devclaw/goal/tick.py:tick_all",
+      "lines": 311
+    },
+    {
+      "fn": "devclaw/delivery/__init__.py:deliver_change",
+      "lines": 295
+    },
+    {
+      "fn": "devclaw/goal/state.py:_bootstrap",
+      "lines": 267
+    },
+    {
+      "fn": "devclaw/goal/evaluator.py:validate",
+      "lines": 234
+    },
+    {
+      "fn": "devclaw/queue/settle.py:_execute",
+      "lines": 225
+    }
+  ],
+  "modules_over_1000": [
+    {
+      "file": "runner/runner.py",
+      "lines": 1949
+    },
+    {
+      "file": "devclaw/goal/service.py",
+      "lines": 1813
+    },
+    {
+      "file": "devclaw/queue/settle.py",
+      "lines": 1757
+    },
+    {
+      "file": "devclaw/goal/tick.py",
+      "lines": 1563
+    },
+    {
+      "file": "devclaw/telemetry.py",
+      "lines": 1080
+    },
+    {
+      "file": "devclaw/goal/tick_donegate.py",
+      "lines": 1052
+    }
+  ],
+  "signatures_over_8_params": [
+    {
+      "fn": "devclaw/goal/tick.py:tick_all",
+      "params": 22
+    },
+    {
+      "fn": "devclaw/goal/service.py:create_goal",
+      "params": 18
+    },
+    {
+      "fn": "devclaw/goal/store/base.py:create_goal",
+      "params": 18
+    },
+    {
+      "fn": "devclaw/goal/tick.py:tick_goal",
+      "params": 17
+    },
+    {
+      "fn": "devclaw/goal/tick.py:_tick_goal_impl",
+      "params": 16
+    },
+    {
+      "fn": "devclaw/goal/tick_donegate.py:_open_done_gate",
+      "params": 16
+    },
+    {
+      "fn": "devclaw/project_registry.py:create",
+      "params": 16
+    },
+    {
+      "fn": "devclaw/project_registry.py:update",
+      "params": 16
+    },
+    {
+      "fn": "devclaw/state_store/core.py:create_task",
+      "params": 15
+    },
+    {
+      "fn": "devclaw/task_queue.py:submit",
+      "params": 15
+    },
+    {
+      "fn": "devclaw/server/tools/projects.py:update_project",
+      "params": 14
+    },
+    {
+      "fn": "devclaw/goal/evaluator.py:evaluate",
+      "params": 13
+    },
+    {
+      "fn": "devclaw/engine/sandcastle.py:_build_docker_args",
+      "params": 12
+    },
+    {
+      "fn": "devclaw/goal/tick_dispatch.py:_dispatch_action",
+      "params": 12
+    },
+    {
+      "fn": "devclaw/goal/tick_donegate.py:_resolve_done_gate",
+      "params": 12
+    },
+    {
+      "fn": "devclaw/intake.py:grade_and_label",
+      "params": 12
+    },
+    {
+      "fn": "devclaw/state_store/evals.py:record_basket_outcome",
+      "params": 12
+    },
+    {
+      "fn": "devclaw/delivery/__init__.py:deliver_change",
+      "params": 11
+    },
+    {
+      "fn": "devclaw/goal/admission.py:verify_goal",
+      "params": 11
+    },
+    {
+      "fn": "devclaw/goal/evaluator.py:build_prompt",
+      "params": 11
+    },
+    {
+      "fn": "devclaw/goal/service.py:verify_goal",
+      "params": 11
+    },
+    {
+      "fn": "devclaw/intake.py:file_intake",
+      "params": 11
+    },
+    {
+      "fn": "devclaw/loom/trace.py:record_cognition",
+      "params": 11
+    },
+    {
+      "fn": "devclaw/goal/health_drift.py:run_health_drift_checks",
+      "params": 10
+    },
+    {
+      "fn": "devclaw/goal/problems.py:new_problem",
+      "params": 10
+    },
+    {
+      "fn": "devclaw/goal/self_issue.py:run_self_issue_filing",
+      "params": 10
+    },
+    {
+      "fn": "devclaw/intake.py:issue_body",
+      "params": 10
+    },
+    {
+      "fn": "devclaw/server/tools/tasks.py:dispatch_task",
+      "params": 10
+    },
+    {
+      "fn": "devclaw/state_store/evals.py:record_cycle_report",
+      "params": 10
+    },
+    {
+      "fn": "devclaw/goal/service.py:__init__",
+      "params": 9
+    },
+    {
+      "fn": "devclaw/goal/service.py:dispatch_issue",
+      "params": 9
+    },
+    {
+      "fn": "devclaw/goal/tick_donegate.py:_block_on_ci_definition",
+      "params": 9
+    },
+    {
+      "fn": "devclaw/loom/trace.py:write_transcript",
+      "params": 9
+    },
+    {
+      "fn": "devclaw/loom/trace.py:write_transcript",
+      "params": 9
+    },
+    {
+      "fn": "devclaw/server/tools/goals.py:create_goal",
+      "params": 9
+    },
+    {
+      "fn": "devclaw/server/tools/projects.py:register_project",
+      "params": 9
+    },
+    {
+      "fn": "devclaw/state_store/observability.py:read_traces",
+      "params": 9
+    }
+  ],
+  "private_cross_imports": [
+    "devclaw/cli.py <- devclaw.dispatch_gate._parse_hhmm",
+    "devclaw/delivery/deploy.py <- devclaw.engine.sandcastle._translate_workspace_path",
+    "devclaw/doctor/checks_instance.py <- devclaw.host_resources._parse_mem",
+    "devclaw/doctor/checks_project.py <- devclaw.speckit_setup._SCAFFOLD_DIRS,_SCAFFOLD_FILES,_speckit_source",
+    "devclaw/env_cap.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/engine.py <- devclaw.state_store.core._now_ms",
+    "devclaw/goal/evaluator.py <- devclaw.task_git._review_repo_context_sync",
+    "devclaw/goal/health_drift.py <- devclaw.engine.sandcastle._toolchain_volume_name,_translate_workspace_path",
+    "devclaw/goal/repo_brief.py <- devclaw.project_registry._normalize_workspace",
+    "devclaw/goal/service.py <- devclaw.project_registry._normalize_workspace",
+    "devclaw/goal/service.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/state_content.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/state_interventions.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/state_pins.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/state_problems.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/state_status.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/store/base.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/store/content.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/store/status.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/tick.py <- devclaw.state_store._now_ms",
+    "devclaw/goal/tick_dispatch.py <- devclaw.task_git._default_branch_sync",
+    "devclaw/goal/tick_guards.py <- devclaw.task_git._ls_remote_ok_sync",
+    "devclaw/host_resources.py <- devclaw.engine.sandcastle._toolchain_volume_name,_translate_workspace_path",
+    "devclaw/host_resources.py <- devclaw.project_registry._normalize_workspace",
+    "devclaw/intake_readiness.py <- devclaw.task_git._review_repo_context_sync",
+    "devclaw/issue_doorway.py <- devclaw.state_store.rows._now_ms",
+    "devclaw/project_registry.py <- devclaw.host_resources._parse_mem",
+    "devclaw/queue/admission.py <- devclaw.host_resources._parse_mem",
+    "devclaw/queue/admission.py <- devclaw.state_store._now_ms",
+    "devclaw/queue/settle.py <- devclaw.engine.workspace._default_branch",
+    "devclaw/queue/settle.py <- devclaw.quality.task_gates._CHANGE_CLASS_MARKER,_ChangeClassGate,_BrowserGate,_IntegrityGate,_MaterializeGate,_ReviewGate,_VerifyGate,_has_playwright_config",
+    "devclaw/queue/settle.py <- devclaw.state_store._now_ms",
+    "devclaw/queue/settle.py <- devclaw.task_git._base_branch_error_sync,_check_no_result_evidence_sync,_git_commit_exists_sync,_git_diff_sync,_git_head_sync,_push_interrupted_work_sync,_review_repo_context_sync,_wip_snapshot_sync",
+    "devclaw/server/routes/control.py <- devclaw.dispatch_gate._parse_hhmm",
+    "devclaw/server/routes/control.py <- devclaw.state_store._now_ms",
+    "devclaw/server/routes/goals.py <- devclaw.goal.slice_guard._TASKS_PATH_RE",
+    "devclaw/server/routes/projects.py <- devclaw.project_registry._IMAGE_REF_RE",
+    "devclaw/server/tools/control.py <- devclaw.dispatch_gate._parse_hhmm",
+    "devclaw/server/tools/control.py <- devclaw.llm_call._max_host_cognition_from_env",
+    "devclaw/server/tools/control.py <- devclaw.state_store._now_ms",
+    "devclaw/server/tools/intake.py <- devclaw.state_store._now_ms",
+    "devclaw/server/tools/tasks.py <- devclaw.state_store._now_ms",
+    "devclaw/task_queue.py <- devclaw.host_resources._parse_mem",
+    "devclaw/task_queue.py <- devclaw.queue.settle._PAUSED,_PausedSentinel,_REVIEW_CRASH_MARKER,_capture_change,_diff_stats,_review_repo_context",
+    "devclaw/task_queue.py <- devclaw.state_store._now_ms",
+    "devclaw/task_queue.py <- devclaw.task_git._base_branch_error_sync,_git_commit_exists_sync,_git_diff_sync,_git_head_sync,_review_repo_context_sync,_wip_snapshot_sync",
+    "devclaw/task_queue.py <- devclaw.task_notify._NotifyMixin"
+  ],
+  "layer_violations": [
+    "devclaw/quality/task_gates.py -> queue"
+  ],
+  "duplicate_body_groups": [
+    [
+      "devclaw/goal/evaluator.py:extract_json",
+      "devclaw/goal/triage.py:extract_json"
+    ],
+    [
+      "devclaw/loom/limits.py:_parse_retry_after",
+      "runner/runner.py:_parse_retry_after"
+    ]
+  ],
+  "silent_broad_excepts": 79,
+  "silent_broad_excepts_top": [
+    [
+      "devclaw/queue/settle.py",
+      7
+    ],
+    [
+      "devclaw/goal/tick.py",
+      6
+    ],
+    [
+      "devclaw/intake.py",
+      6
+    ],
+    [
+      "devclaw/goal/health_drift.py",
+      5
+    ],
+    [
+      "devclaw/env_cap.py",
+      4
+    ],
+    [
+      "devclaw/goal/notify.py",
+      3
+    ]
+  ],
+  "issue_refs_in_source": 270,
+  "issue_refs_top": [
+    [
+      "devclaw/goal/service.py",
+      18
+    ],
+    [
+      "devclaw/queue/settle.py",
+      12
+    ],
+    [
+      "devclaw/quality/__init__.py",
+      11
+    ],
+    [
+      "devclaw/goal/tick_dispatch.py",
+      9
+    ],
+    [
+      "devclaw/goal/tick_settle.py",
+      9
+    ],
+    [
+      "devclaw/goal/store/base.py",
+      8
+    ]
+  ],
+  "legacy_phrases": 133,
+  "spec_status_mismatches": [],
+  "index_bytes": 13875,
+  "index_rows_over_1500": [],
+  "claude_md_lines": 338,
+  "prompt_static_tokens_total": 4864,
+  "prompt_python_literal_chars": 22512,
+  "parser_keys_missing_from_schema": [
+    "devclaw/prompts/goal-evaluator.md: flip_cause",
+    "devclaw/quality/prompts/review-gate.md: blocking"
+  ],
+  "prompts_missing_grounding": [],
+  "prompts_without_eval_fixtures": [
+    "devclaw/prompts/admission-lint.md",
+    "devclaw/prompts/intake-readiness.md",
+    "devclaw/prompts/self-triage.md",
+    "devclaw/quality/prompts/review-gate.md",
+    "devclaw/quality/prompts/browser-reachability.md"
+  ],
+  "prompts": [
+    {
+      "prompt": "devclaw/prompts/goal-evaluator.md",
+      "tokens": 1593,
+      "schema_keys": 14,
+      "python_literal_chars_in_caller": 9065,
+      "fixtures": 5
+    },
+    {
+      "prompt": "devclaw/prompts/admission-lint.md",
+      "tokens": 223,
+      "schema_keys": 4,
+      "python_literal_chars_in_caller": 1348,
+      "fixtures": 0
+    },
+    {
+      "prompt": "devclaw/prompts/intake-readiness.md",
+      "tokens": 1160,
+      "schema_keys": 8,
+      "python_literal_chars_in_caller": 3131,
+      "fixtures": 0
+    },
+    {
+      "prompt": "devclaw/prompts/self-triage.md",
+      "tokens": 512,
+      "schema_keys": 5,
+      "python_literal_chars_in_caller": 2124,
+      "fixtures": 0
+    },
+    {
+      "prompt": "devclaw/quality/prompts/review-gate.md",
+      "tokens": 799,
+      "schema_keys": 7,
+      "python_literal_chars_in_caller": 4786,
+      "fixtures": 0
+    },
+    {
+      "prompt": "devclaw/quality/prompts/browser-reachability.md",
+      "tokens": 577,
+      "schema_keys": 2,
+      "python_literal_chars_in_caller": 2058,
+      "fixtures": 0
+    }
+  ],
+  "sandbox_flags": {
+    "--pids-limit": false,
+    "--cap-drop": false,
+    "--security-opt": false,
+    "--read-only": false,
+    "--memory": true,
+    "--cpus": true
+  },
+  "sandbox_network": "host",
+  "sandbox_hardening_missing": [
+    "--pids-limit",
+    "--cap-drop",
+    "--security-opt",
+    "--read-only"
+  ],
+  "config_env_vars": 84
+}

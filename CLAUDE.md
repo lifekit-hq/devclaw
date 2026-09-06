@@ -326,9 +326,9 @@ statement specs are checked against; the pre-speckit proposals + ADRs were
 removed from the tree 2026-09-06 — git history (`git log -- docs/decisions docs/proposals`); only ADR 0004, cited by the constitution, stays),
 `.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
-escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit,
-devclaw-status, live-shakedown, root-cause — the fix-the-class procedure, applied
-before any behaviour-changing fix — plus the vendored `speckit-*` command skills).
+escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit, live-shakedown, root-cause, devclaw-status,
+eng-health — the engineering-health ratchet over `evals/measure_eng_health.py`,
+plus the vendored speckit-* command skills).
 
 ## Where to look next
 

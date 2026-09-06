@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-25
 
-**Status**: Draft
+**Status**: Implemented 2026-08-25 — shipped in #686, #688, #689, #690, #694 (tasks 30/30). Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped).
 
 **Input**: User description: "Fix the L8 scorecard so its headline metrics measure what the autonomy thresholds ratchet on: per-PR ground-truth merge rate, per-goal first-pass rate, a steering split (machine correction vs human steers), and the 'finished' threshold values surfaced as pass/fail — so the spec 007 autonomy flip is decided by numbers that are actually true."
 
