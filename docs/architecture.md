@@ -537,8 +537,10 @@ renders + delivers. Auto-resolve on top is a deliberate follow-up. See
   code; the box is the isolation boundary. devclaw owns the box — it issues
   `docker run --rm` itself in `engine/sandcastle.py` and hosts the agent
   inside it, rather than delegating container lifecycle, mounts, the read-only
-  `~/.claude` allowlist and teardown to the agent runtime. Swapping the agent
-  inside leaves the box unchanged.
+  `~/.claude` allowlist, the kernel-side fence (`--pids-limit`, `--cap-drop
+  ALL`, `no-new-privileges`; network stays host, root stays writable) and
+  teardown to the agent runtime. Swapping the agent inside leaves the box
+  unchanged.
 - **Allowed to call:** docker socket (sandcastle only), the workspace
   filesystem.
 - **Forbidden:** reading the goal store (the orchestrator passes everything the

@@ -84,6 +84,8 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │         -v ~/.claude/.credentials.json:RO        │   │  cache (ADR 0005)           │
      │  │         -v <pre-trusted .claude.json>:RO         │   │
      │  │         --tmpfs /home/agent/.claude/session-env  │   │
+     │  │         --pids-limit 4096 --cap-drop ALL         │   │
+     │  │         --security-opt no-new-privileges         │   │
      │  │         --network host                           │   │
      │  │         devclaw-sandbox:local                    │   │
      │  │         '<JSON payload>'                         │   │
