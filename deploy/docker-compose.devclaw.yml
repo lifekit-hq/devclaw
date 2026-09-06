@@ -124,6 +124,12 @@ services:
       DEVCLAW_SELF_ISSUE_QUIET_DAYS: ${DEVCLAW_SELF_ISSUE_QUIET_DAYS:-3}
       DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE: ${DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE:-3}
       DEVCLAW_PLANNER_TIMEOUT_MS: ${DEVCLAW_PLANNER_TIMEOUT_MS:-1200000}
+      # Git author/committer identity for every commit devclaw produces
+      # (devclaw/git_identity.py, forwarded into each sandbox). Blank ⇒ the
+      # code default (`devclaw <devclaw@local>`); point DEVCLAW_GIT_EMAIL at a
+      # bot's GitHub noreply address to link the commits to a real profile.
+      DEVCLAW_GIT_NAME: ${DEVCLAW_GIT_NAME:-}
+      DEVCLAW_GIT_EMAIL: ${DEVCLAW_GIT_EMAIL:-}
       DEVCLAW_HOST_CLAUDE_DIR: ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}
       DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
       DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
