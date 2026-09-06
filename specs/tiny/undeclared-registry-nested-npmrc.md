@@ -2,7 +2,7 @@
 
 **Branch**: fix/issue-819-nested-npmrc
 **Date**: 2026-09-06
-**Status**: in progress
+**Status**: done (companion finance-sentry PR outstanding)
 **Complexity**: small
 
 ## What
