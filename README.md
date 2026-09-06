@@ -89,7 +89,7 @@ The day we swap claude-code for another harness, the entire skill/hook system su
 | Durable hosting / handoff | DevClaw deploy (Tailscale) — **experimental**, not yet hosting the owner's stack (#401) |
 | Interface to the waiter | DevClaw FastMCP server |
 
-The full rationale — including why the agent and sandbox isolation are **orthogonal** layers (the agent vs. the box it runs in), and why this calls `docker run` directly instead of depending on `@ai-hero/sandcastle` — lives in [`docs/decisions/0001-openhands-engine.md`](./docs/decisions/0001-openhands-engine.md) (frozen: written when the in-sandbox agent was the OpenHands SDK, replaced by the ACP runner in spec 011; the sandbox-isolation reasoning is unchanged).
+The full rationale — including why the agent and sandbox isolation are **orthogonal** layers (the agent vs. the box it runs in), and why this calls `docker run` directly instead of depending on `@ai-hero/sandcastle` — lives in [`docs/architecture.md`](./docs/architecture.md) (engine section; the original ADR 0001 is in git history (`git log -- docs/decisions docs/proposals`) — written when the in-sandbox agent was the OpenHands SDK, replaced by the ACP runner in spec 011; the sandbox-isolation reasoning is unchanged).
 
 ## Layout
 

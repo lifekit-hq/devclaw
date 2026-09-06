@@ -1,7 +1,7 @@
 """The compounding scorecard — does a durable goal build on itself across nights?
 
-The instrument for the compounding experiment (docs/proposals/
-compounding-experiment.md, P1 LOCKED #483). Each night, after the goal's work
+The instrument for the compounding experiment (the compounding-experiment proposal,
+P1 LOCKED #483, now in git history; superseded by spec 018). Each night, after the goal's work
 merges, the hidden checklist (evals/ledger_checklist/) is run against the target
 repo at HEAD → a criteria vector. This module records those vectors and reads
 the trajectory across nights: is the green-count **monotonically non-decreasing

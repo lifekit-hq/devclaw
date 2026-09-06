@@ -2,7 +2,7 @@
 
 A step-by-step trace of what happens when devclaw runs ONE task (an
 `implement_feature`, `fix_bug`, `review_repository`, etc.). Sibling
-reference to [`decisions/0001-openhands-engine.md`](../decisions/0001-openhands-engine.md): that file
+reference to the engine section of [`../architecture.md`](../architecture.md): that
 describes the *structural* choice (why three layers); this one walks the
 *temporal* sequence (what each layer does, in order, for one task).
 
@@ -15,8 +15,7 @@ Use this when:
 
 The three nodes (Node 1 = openclaw waiter / TS, Node 2 = devclaw-mcp /
 Python, Node 3 = ephemeral sandbox / per task) are defined in
-[`decisions/0001-openhands-engine.md`](../decisions/0001-openhands-engine.md) and in
-[`../architecture.md`](../architecture.md). This doc assumes you've read
+[`../architecture.md`](../architecture.md) (ADR 0001 itself lives in git history (`git log -- docs/decisions docs/proposals`)). This doc assumes you've read
 one of those.
 
 ## The full sequence
@@ -281,7 +280,7 @@ couldn't distinguish *"the docker run from Step C never happened"* from
    `docker version` to the test so a broken-but-running orchestrator flips
    unhealthy in 30s instead of being discovered by the first task.
 4. **Sandbox image selection by detected stack.** SUPERSEDED by
-   [ADR 0005](../decisions/0005-generic-sandbox-toolchain.md): there is no
+   ADR 0005 (specs 020/030; git history (`git log -- docs/decisions docs/proposals`)): there is no
    per-stack image to select — one lean image, and the toolchain is a
    project-declared fact provisioned by mise in the runner pre-step (Step D).
    (Historically we planned to reuse a `_detect_stack()` helper to pick the
@@ -297,7 +296,7 @@ couldn't distinguish *"the docker run from Step C never happened"* from
 Everything above traces a task the GOAL layer dispatched. The same sequence
 also runs for a **direct task** (`dispatch_task` at layer 1 → `queue.submit`
 → Steps C–K) with no goal and no heartbeat — the v1-helper path
-re-surfaced by [ADR 0011](../decisions/0011-branch-target-delivery-seam.md).
+re-surfaced by ADR 0011 (git history (`git log -- docs/decisions docs/proposals`)).
 Two optional inputs shape ONLY Step J (delivery) and a new pre-step:
 
 - `base_branch` — grounds the ahead-count/diff range and becomes

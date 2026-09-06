@@ -1,10 +1,10 @@
 # ADR 0004 — Eval-driven guardrail proportioning + the living eval workbench
 
 - **Status:** accepted 2026-07-20 (Denys). Tranche scheduled same day —
-  graduated from [`../proposals/archived/eval-workbench.md`](../proposals/archived/eval-workbench.md)
+  graduated from the `eval-workbench` proposal (git history: `git log -- docs/proposals/archived/eval-workbench.md`)
   under the spec lifecycle. This record freezes the *decision and rationale*;
   system snapshots inside reflect their writing date.
-- **Amended 2026-07-21 by [ADR 0006](./0006-continuous-eval-projection.md):**
+- **Amended 2026-07-21 by ADR 0006 (git history):**
   step 2's artifact is reshaped — a two-source (`live|basket`) outcome
   projection written at task settle replaces the basket-only `eval_runs`
   table, and the Evals tab gains the clean-night headline. Steps 1/3/4/5 and
@@ -131,4 +131,4 @@ console, not a separate app.
   invariant (never on the table); rebuilding what exists (wire, don't build).
 
 Full narrative, resolved-decision log, and the honest small-model tension:
-[`../proposals/archived/eval-workbench.md`](../proposals/archived/eval-workbench.md) (GRADUATED).
+the `eval-workbench` proposal (GRADUATED; in git history).

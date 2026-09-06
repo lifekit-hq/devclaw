@@ -1,6 +1,6 @@
 # `evals/ledger_checklist/` — the hidden grader for the compounding experiment
 
-Part of the **compounding experiment** ([`docs/proposals/compounding-experiment.md`](../../docs/proposals/compounding-experiment.md),
+Part of the **compounding experiment** (the 2026-08 compounding-experiment proposal, in git history, superseded by spec 018,
 P1 LOCKED). This directory is the **hidden acceptance checklist** for the "Ledger"
 target app — the grader that answers, mechanically, *which features actually
 work* against the target repo at a given moment.

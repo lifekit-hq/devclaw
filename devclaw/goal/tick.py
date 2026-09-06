@@ -10,7 +10,7 @@ The evaluation tiers (mechanism gates cognition):
   1. progress check          — Python, every tick, 0 tokens (poll in-flight)
   2. per-delivery evidence    — in-proc, 0 tokens (write the grounded deliveries.md)
      (the per-tick direction eval that used to sit here was removed — demolition
-      P1, docs/proposals/cognition-demolition.md; direction is judged only at the
+      P1 → spec 008; direction is judged only at the
       done-gate now, backed by the mechanical no-progress watchdog mid-flight.)
   3. done-gate                — the planner's "done" is a proposal; it triggers a
                                 read-only review whose report the evaluator judges;

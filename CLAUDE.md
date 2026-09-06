@@ -218,6 +218,9 @@ surfaced them. Apply this while triaging, planning, and fixing:
   iterate) is domain-agnostic. Keep domain specifics (code, PRs, repos,
   Playwright) at the edges — worker skills, gates, prompts — so the loop could
   someday drive a second domain without rewiring layers 1–4.
+- **Put each decision at the layer that can enforce it** (Denys, 2026-08-08):
+  an invariant → Python, a judgment → model reasoning, the standard → the
+  prompt. Prompts frame but never enforce; a rule that must hold is code.
 
 ```
 devclaw/
@@ -302,8 +305,8 @@ speckit-workflow is the anti-drift pipeline since 2026-08-13: every
 behavior-changing change starts `/speckit-specify` → `/speckit-clarify` →
 plan → tasks → implement, specs landing in `specs/` and the machinery in `.specify/`, no implementation before clarify,
 with the constitution (`.specify/memory/constitution.md`) as the invariant
-statement specs are checked against; `docs/proposals/` + `docs/decisions/`
-are frozen history),
+statement specs are checked against; the pre-speckit proposals + ADRs were
+removed from the tree 2026-09-06 — git history (`git log -- docs/decisions docs/proposals`); only ADR 0004, cited by the constitution, stays),
 `.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
 escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit,

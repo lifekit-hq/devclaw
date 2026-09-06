@@ -88,8 +88,8 @@ them a plan-time Constitution Check gate rather than a retrospective audit.
   time) → `/speckit-plan` → `/speckit-tasks` → implement
   (see `.claude/rules/speckit-workflow.md`). No implementation before the
   clarify step is done. The spec records rejected alternatives — it is the
-  direction memory; the retired proposal→ADR pipeline
-  (`docs/proposals/` + `docs/decisions/`) is frozen history.
+  direction memory; the retired proposal→ADR pipeline's artifacts live in
+  git history (`git log -- docs/decisions docs/proposals`); ADR 0004 stays.
 - The test suite is a tripwire net, not a coverage instrument (ruled by Denys
   2026-08-29): a PR ships a test only when it touches an autonomous-operation
   invariant (zero-token idle, fail-closed gates, CAS/single-writer, OAuth

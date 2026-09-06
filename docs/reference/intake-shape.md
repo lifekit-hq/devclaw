@@ -4,7 +4,7 @@ The canonical narrative for how an ask enters devclaw. Enforcement lives in
 code (`devclaw/intake.py`, surfaced as the `file_intake` MCP tool in
 `devclaw/server/tools/intake.py`); this page is the human-readable reference. The
 direction it implements is locked in
-[`../proposals/single-intake-doorway.md`](../proposals/single-intake-doorway.md).
+spec 014 (`specs/014-issue-doorway/`); the original proposal is in git history (`git log -- docs/decisions docs/proposals`).
 There are deliberately **no per-repo issue templates** — the tool renders the
 issue body from one place, so the shape cannot drift per repo.
 

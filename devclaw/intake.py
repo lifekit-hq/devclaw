@@ -1,6 +1,6 @@
 """Single intake doorway — Stage 1: ``file_intake`` (the intent half).
 
-Proposal: ``docs/proposals/single-intake-doorway.md`` (LOCKED 2026-08-13).
+Direction: spec 014 (``specs/014-issue-doorway/``); the 2026-08-13 proposal is in git history.
 
 Every ask from every source — human or agent — enters devclaw here: the shape
 is validated synchronously, provenance is stamped server-side, and the ask is

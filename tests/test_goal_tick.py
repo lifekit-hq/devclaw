@@ -983,7 +983,7 @@ async def test_done_gate_verified_wording_kept_when_review_grounded(tmp_path, mo
 
 
 # ---- periodic direction evaluation: CUT (demolition P1) --------------------
-# docs/proposals/cognition-demolition.md — the per-tick mid-flight direction
+# spec 008 (the cognition demolition) — the per-tick mid-flight direction
 # evaluator (`_run_mid_flight_eval`) is removed. Direction is no longer re-judged
 # by an LLM on a delivery cadence; the mechanical brakes stand (no-progress
 # watchdog, done-gate, per-item circuit breaker). The old fires-and-steers /
