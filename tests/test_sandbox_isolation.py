@@ -101,6 +101,13 @@ def test_docker_args_posture():
         f"{CLAUDE_DIR}/.credentials.json:{sc.CONTAINER_CLAUDE_DIR}/.credentials.json:ro",
         f"{CLAUDE_DIR}/.claude.json:{sc.CONTAINER_CLAUDE_DIR}/.claude.json:ro",
     ]
+    # kernel-side fence: process-count bound, empty capability bounding set,
+    # no privilege escalation — while the network stays host (OAuth refresh
+    # egress) and the root stays writable (toolchain provisioning)
+    assert args[args.index("--pids-limit") + 1] == sc.SANDBOX_PIDS_LIMIT
+    assert args[args.index("--cap-drop") + 1] == "ALL"
+    assert args[args.index("--security-opt") + 1] == "no-new-privileges"
+    assert args[args.index("--network") + 1] == "host" and "--read-only" not in args
     # writable scratch overlays survive the curation
     assert f"{sc.CONTAINER_CLAUDE_DIR}/session-env:rw,exec" in args
     assert f"{sc.CONTAINER_CLAUDE_DIR}/shell-snapshots:rw,exec" in args
