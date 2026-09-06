@@ -46,7 +46,8 @@ data source.
 
 ## Outside this repo (Denys)
 
-- `deploy/docker-compose.devclaw.yml` still defines the `ops-agent` service,
+- *(Done 2026-09-06, tinyspec `deadman-metrics`: the stanza is deleted and
+  the watcher is Prometheus + Grafana.)* `deploy/docker-compose.devclaw.yml` still defines the `ops-agent` service,
   whose only method is `evaluate_goal` (lifekit-stack `ops-agent/README.md`:
   "one method: evaluate_goal"). It now calls a tool that does not exist —
   loud, zero cognition. Retire the service on the box / in lifekit-stack.

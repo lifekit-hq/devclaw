@@ -22,6 +22,7 @@ from __future__ import annotations
 from .routes import control as _routes_control  # noqa: F401
 from .routes import evals as _routes_evals  # noqa: F401
 from .routes import goals as _routes_goals  # noqa: F401
+from .routes import metrics as _routes_metrics  # noqa: F401
 from .routes import observability as _routes_observability  # noqa: F401
 from .routes import projects as _routes_projects  # noqa: F401
 from .routes import tasks as _routes_tasks  # noqa: F401
