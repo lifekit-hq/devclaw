@@ -191,6 +191,10 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
     # every goal is goal-branch (#616 retired the per-action selection rule)
     assert calls == [("/repos/demo", "https://example.com/demo.git", "goal/g")]
     assert len(engine.dispatched) == 1
+    # The tick's prep is admission; the RUN places the branch itself — so the
+    # action carries it (Action.branch → the row's target_branch → queue prep
+    # at run start, right before the baseline capture).
+    assert engine.dispatched[0][0].branch == "goal/g"
 
 
 @pytest.mark.asyncio
@@ -211,7 +215,12 @@ async def test_finished_action_records_delivery_and_proposes_done(tmp_path):
 
     # A successful settle proposes done: the done-gate review is dispatched.
     assert out is Outcome.VERIFYING
-    assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
+    reviews = [a for a, _g, _u in engine.dispatched if a.tool == "review_repository"]
+    assert reviews
+    # The done-check reads the goal's accumulated work: it carries the goal
+    # branch for placement at run start (2026-09-06: a done-check that ran
+    # on whatever HEAD a prior task left "removed 5 tests" from another goal).
+    assert reviews[0].branch == "goal/g"
     # grounded delivery captured + PR logged
     assert "added /health" in store.recent_deliveries("g")
     assert "PR https://github.com/o/r/pull/9" in store.recent_log("g")

@@ -209,8 +209,13 @@ When the tick decides to *do* something (not just think):
    executing goals accumulate every increment's commits on one shared
    `goal/<id>` branch (one cumulative PR); legacy goals with no recorded
    lifecycle deliver each action as its own branch + PR.
-2. **Prepare the workspace** — `prepare_workspace()` gives the engine a pristine
-   checkout on the chosen branch.
+2. **Prepare the workspace** — `prepare_workspace()` proves the workspace is
+   placeable on the chosen branch (a bad `repo_url` or unreachable origin
+   blocks legibly here). The branch itself rides on the action
+   (`Action.branch` → the task row's `target_branch`): the **queue places it
+   again at run start**, immediately before it captures the change baseline,
+   because a pending task may wait behind other work on the same directory
+   and whatever moved HEAD meanwhile must never become its base (2026-09-06).
 3. **Atomic dispatch** — the task-row creation + the `DISPATCH_ACTION`
    transition + the log line commit as **one** SQLite transaction. A crash or
    CAS conflict rolls the whole unit back, so "task dispatched but the in-flight

@@ -120,6 +120,9 @@ class InProcessEngine:
                 scaffold=False if is_review else action.scaffold,
                 strictness=strictness,
                 project_id=goal.project_id,
+                # Placement at run start (Action.branch): the queue re-preps this
+                # branch right before it captures the change baseline.
+                target_branch=action.branch,
                 pump=False,
             )
             return InFlight("devclaw", action.tool, task_id, "task", action.goal)

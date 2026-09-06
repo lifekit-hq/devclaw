@@ -261,3 +261,85 @@ async def test_every_read_the_change_gate_sees_the_materialized_span(
     assert store.get_task(tid).status == "done"
     assert integrity_seen and "never_recorded.py" in integrity_seen[0]
     assert "never_recorded.py" in seen["review"]
+
+
+# ---- the baseline is captured after placement (2026-09-06) -------------------
+# One definition of the change means one definition of its BASE. The base is
+# the tip of the branch the task lands on, read right after the queue places
+# that branch — never whatever HEAD a prior task on the same directory left.
+# On 2026-09-06 two goals shared one workspace: a done-check captured another
+# goal's discarded attempt as its base and "removed 5 tests" it never touched.
+
+
+def _git_o(d, *args) -> str:
+    return subprocess.run(["git", "-C", str(d), *args], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _origin_with_two_branches(tmp_path):
+    """A clone whose HEAD sits on main while origin carries goal/x at a
+    different tip — the state a shared directory is in when the previous
+    task belonged to someone else."""
+    ws = _repo(tmp_path)
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(origin)], check=True)
+    _git_o(ws, "remote", "add", "origin", str(origin))
+    _git_o(ws, "push", "-q", "-u", "origin", "main")
+    _git_o(ws, "checkout", "-q", "-b", "goal/x")
+    (ws / "x.txt").write_text("x\n")
+    _git_o(ws, "add", "-A"); _git_o(ws, "commit", "-q", "-m", "x")
+    _git_o(ws, "push", "-q", "-u", "origin", "goal/x")
+    goal_tip = _git_o(ws, "rev-parse", "HEAD")
+    _git_o(ws, "checkout", "-q", "main")
+    (ws / "m.txt").write_text("m\n")
+    _git_o(ws, "add", "-A"); _git_o(ws, "commit", "-q", "-m", "m")
+    _git_o(ws, "push", "-q", "origin", "main")
+    assert _git_o(ws, "rev-parse", "HEAD") != goal_tip
+    return ws, goal_tip
+
+
+async def test_baseline_is_the_placed_branch_tip_not_the_prior_head(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+    ws, goal_tip = _origin_with_two_branches(tmp_path)
+
+    async def runner(req: EngineRequest):
+        (tmp_path / "ws" / "new.py").write_text("y = 1\n")
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "verify": _gate(True)}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="g",
+                   verify_cmd="pytest", target_branch="goal/x")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done", t.error
+    assert t.pre_run_sha == goal_tip          # the placed branch's tip
+    assert _git_o(ws, "branch", "--show-current") == "goal/x"
+    # and the judged span is exactly the agent's change on that branch
+    assert "new.py" in _git_o(ws, "diff", "--name-only", f"{goal_tip}..HEAD")
+
+
+async def test_baseline_is_recaptured_per_run_unless_resumed(store, tmp_path, monkeypatch):
+    """A persisted baseline from an earlier run is NOT reused on a fresh run:
+    only a pause-resume (pause_count > 0) keeps it, because that run skips
+    placement on purpose. Pinned alongside the resume case in
+    tests/test_rate_limit_pause.py."""
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+    ws = _repo(tmp_path)
+    older = _git_o(ws, "rev-parse", "HEAD")
+    (ws / "f2.txt").write_text("2\n")
+    _git_o(ws, "add", "-A"); _git_o(ws, "commit", "-q", "-m", "second")
+    head = _git_o(ws, "rev-parse", "HEAD")
+
+    async def runner(req: EngineRequest):
+        (ws / "new.py").write_text("y = 1\n")
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "verify": _gate(True)}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws), goal="g", verify_cmd="pytest")
+    store.set_task_pre_run_sha(tid, older)     # a resolvable but stale baseline
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "done", t.error
+    assert t.pre_run_sha == head               # recaptured at run start, not inherited

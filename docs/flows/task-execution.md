@@ -299,6 +299,11 @@ Two optional inputs shape ONLY Step J (delivery) and a new pre-step:
 - `target_branch` — the queue preps the workspace ON that branch
   (`prepare_workspace(branch=target_branch)`, created off `base_branch` if
   new), and Step J reuses its single PR (the widened goal-mode reuse path).
+  Every goal-path row carries it too (`Action.branch` = `goal/<id>`, the
+  done-check review included): placement happens at RUN start, right before
+  the baseline `pre_run_sha` is captured — the baseline is re-read on every
+  run and reused only on a pause-resume (2026-09-06, the shared-workspace
+  class).
   If delivery lands anywhere else, the task settles `failed` — the
   "continue this branch" contract never silently degrades.
 

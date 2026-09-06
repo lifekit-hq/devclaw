@@ -721,9 +721,13 @@ class SettleMixin:
             )
             return
         deliver = bool(row and row.deliver)
-        # Branch-target wire (v1-helper-resurface P1, PR-2) — DIRECT path only:
-        # goal-path rows never carry these, so for them every
-        # line below is inert (no prep subprocess, unpinned deliver_change call).
+        # Branch-target wire (v1-helper-resurface P1, PR-2). ``base_branch`` is
+        # DIRECT-path only. ``target_branch`` is carried by direct tasks that
+        # pin a branch AND by every goal-path task (Action.branch → the goal
+        # branch; a done-check review carries it too): the queue PLACES the
+        # workspace on it here, at run start, so the change baseline captured
+        # below is that branch's tip and not whatever HEAD a prior task on the
+        # same directory left behind (2026-09-06, the shared-workspace class).
         base_branch = (row.base_branch or None) if row else None
         target_branch = (row.target_branch or None) if row else None
         # Owning project's reference key (#524 P3) — the per-project knobs
@@ -733,8 +737,8 @@ class SettleMixin:
 
         prep_failure: Optional[str] = None
         if (base_branch or target_branch) and not (row and row.pause_count > 0):
-            # Validate the base + prep the pinned branch BEFORE the engine runs
-            # (mirrors the goal layer prepping goal/<id> at dispatch). Skipped
+            # Validate the base + place the branch BEFORE the engine runs (the
+            # goal layer's dispatch-time prep only proved it placeable). Skipped
             # on a pause-resume re-run: the workspace deliberately survives a
             # requeue untouched (see _run_and_settle's resume brief) — re-prep
             # would reset the branch to its origin tip and wipe the wip
@@ -750,8 +754,9 @@ class SettleMixin:
             # Direct dispatch (no branch params, no goal parent, not a resume):
             # reset to origin/<default> so the worker sees the current state of
             # the default branch rather than whatever a prior task left behind.
-            # Goal-path tasks (parent_goal_id set) skip this — the goal tick
-            # already called prepare_workspace with the goal branch.
+            # A goal-path task without a branch (a read-only review on the
+            # default branch) skips this — the tick prepped the default branch
+            # at dispatch and a read-only run captures no change.
             #
             # Pre-check whether origin is configured. A local-only workspace
             # (no origin remote) is expected to fail the fetch; treat that as
@@ -1054,9 +1059,16 @@ class SettleMixin:
         # Dispatch prompt is never a source for this message (spec 017 FR).
         materialize_msg = materialization_message(task_id)
 
+        # The baseline is captured HERE, after placement, on every run. The
+        # persisted row value is reused ONLY on a pause-resume (pause_count >
+        # 0): that run deliberately skipped placement, the wip snapshot moved
+        # HEAD, and the original base must stay the base. Any other run that
+        # reused it would inherit a baseline captured under a different
+        # placement — the shared-workspace class (2026-09-06).
         pre_run_sha = ""
         stored_base = row.pre_run_sha if row else None
-        if stored_base and await _git_commit_exists(workspace_dir, stored_base):
+        resumed = bool(row and row.pause_count > 0)
+        if resumed and stored_base and await _git_commit_exists(workspace_dir, stored_base):
             pre_run_sha = stored_base
         if not pre_run_sha:
             pre_run_sha = await _git_head(workspace_dir)

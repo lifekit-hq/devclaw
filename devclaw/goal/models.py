@@ -374,6 +374,14 @@ class Action:
     #: row so the queue skips the adversarial review gate for it. SAFETY:
     #: skips review ONLY — verify + test-integrity still run.
     scaffold: bool = False
+    #: The branch this action's change lands on (``goal/<id>``; None = the
+    #: default branch). The queue places the workspace on it at RUN start,
+    #: immediately before the change baseline is captured — the tick's own
+    #: prep at dispatch time only proves the workspace is placeable. Between
+    #: dispatch and run another task on the same directory may have moved
+    #: HEAD (2026-09-06: two goals sharing one workspace gave each other's
+    #: commits as baselines, so a read-only review "removed 5 tests").
+    branch: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -124,13 +124,17 @@ async def _dispatch_action(
         )
         await _notify(notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] dispatch cap ({cap}) reached — paused for your review", summarize=summarize)
         return Outcome.BLOCKED
-    # Give the engine a pristine checkout. Per-action mode resets to
-    # origin/<default> for freshness; goal-branch mode checks out ``goal/<id>``
-    # instead so each increment's commits STACK on the prior ones rather than
-    # fork off main and re-implement the foundation (the 2026-06-26
-    # finance-sentry-mcp-v3 PR-fan-out failure). Read-only
-    # ``review_repository`` actions always run on the default branch — they
-    # don't write.
+    # Admission prep: prove the workspace is placeable on the goal branch —
+    # clone/fetch/checkout ``goal/<id>`` so each increment's commits STACK on
+    # the prior ones (the 2026-06-26 finance-sentry-mcp-v3 PR-fan-out failure)
+    # and so a bad repo_url / unreachable origin blocks LEGIBLY here
+    # (mechanical:prep, self-healing) instead of as a task failure. Read-only
+    # ``review_repository`` actions run on the default branch — they don't
+    # write. This is NOT the placement the run uses: the branch rides on the
+    # action (``Action.branch`` → the task row's ``target_branch``) and the
+    # queue re-places it at run start, immediately before the change baseline
+    # is captured — the task may sit pending behind other work on the same
+    # directory, and whatever moved HEAD meanwhile must not become its base.
     branch_for_dispatch: str | None = None
     if action.tool != "review_repository":
         branch_for_dispatch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
@@ -140,6 +144,7 @@ async def _dispatch_action(
         return await _block_on_prep_failure(
             goal_id, base, exc, store=store, notifier=notifier, summarize=summarize,
         )
+    action = replace(action, branch=branch_for_dispatch)
     # Staleness probe (goal-branch mode only): skip dispatch only when the goal
     # branch is HARD-STALE — 0 commits ahead of the default branch AND at least
     # BRANCH_STALE_THRESHOLD commits behind it (created off a very old base, so a
