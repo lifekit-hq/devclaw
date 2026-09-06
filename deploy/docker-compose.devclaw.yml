@@ -15,8 +15,10 @@
 #
 # Images are pulled by tag from ghcr.io (built + pushed by devclaw's
 # .github/workflows/deploy.yml). No `build:` here — deploy pulls, never builds.
-# ops-agent's image is still BUILT by lifekit-stack (build-only there) and
-# RUN here (spec 005 clarify: referenced by tag this slice).
+# The former ops-agent watchdog is gone (tinyspec deadman-metrics, 2026-09-06):
+# devclaw-mcp exposes /metrics and the box's Prometheus + Grafana (lifekit-stack)
+# hold the dead-man alert. Its docker-socket mount and read-only state mounts
+# went with it; devclaw-mcp's own socket mount (sandbox spawning) stays.
 #
 # The `devclaw-state` volume (devclaw.db + goals) and the `lifekit-shared`
 # network are declared `external` so they keep their identity across the
@@ -181,68 +183,6 @@ services:
       retries: 5
       start_period: 60s
 
-  ops-agent:
-    <<: *policy
-    # Resident watchdog for stuck devclaw goals. Runs in THIS (devclaw) project;
-    # its image is still built by lifekit-stack (build-only there) and pulled/
-    # tagged here. Separate process from devclaw-mcp by design.
-    image: ${OPS_AGENT_IMAGE:-ops-agent:local}
-    depends_on:
-      - devclaw-mcp
-    group_add:
-      - "${LIFEKIT_DOCKER_GID:-999}"
-    deploy:
-      resources:
-        limits:
-          memory: 2g
-    environment:
-      OPS_AGENT_GOALS_DIR: /data/goals
-      OPS_AGENT_INCIDENTS_DIR: /data/incidents
-      OPS_AGENT_POLL_INTERVAL_S: ${OPS_AGENT_POLL_INTERVAL_S:-60}
-      OPS_AGENT_DEDUP_WINDOW_S: ${OPS_AGENT_DEDUP_WINDOW_S:-86400}
-      OPS_AGENT_CLAUDE_MODEL: ${OPS_AGENT_CLAUDE_MODEL:-sonnet}
-      OPS_AGENT_CLAUDE_TIMEOUT_S: ${OPS_AGENT_CLAUDE_TIMEOUT_S:-60}
-      CLAUDE_CONFIG_DIR: /home/node/.claude
-      OPS_AGENT_DEVCLAW_MCP_URL: ${OPS_AGENT_DEVCLAW_MCP_URL:-http://devclaw-mcp:8000/mcp}
-      OPS_AGENT_DEVCLAW_MCP_TOKEN: ${DEVCLAW_TOKEN:-}
-      OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S: ${OPS_AGENT_DEVCLAW_MCP_TIMEOUT_S:-30}
-      OPS_AGENT_VERIFYING_STALL_HOURS: ${OPS_AGENT_VERIFYING_STALL_HOURS:-4}
-      # docker_restart allowlist — devclaw-mcp's container name is now project-
-      # scoped to `devclaw` (was `compose-devclaw-mcp-1` under the shared
-      # project). Override in .env if the compose project name differs.
-      OPS_AGENT_DOCKER_RESTART_ALLOWLIST: ${OPS_AGENT_DOCKER_RESTART_ALLOWLIST:-devclaw-devclaw-mcp-1}
-      OPS_AGENT_DOCKER_TIMEOUT_S: ${OPS_AGENT_DOCKER_TIMEOUT_S:-30}
-      OPS_AGENT_WORKSPACES_DIR: /data/workspaces
-      OPS_AGENT_TREND_REPEAT_THRESHOLD: ${OPS_AGENT_TREND_REPEAT_THRESHOLD:-3}
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      # devclaw's goal store, READ-ONLY (ops-agent never mutates devclaw state).
-      - devclaw-state:/data/devclaw-state:ro
-      - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/data/workspaces:ro
-      # Incident output — host source dir MUST exist first (see runbook):
-      #   sudo mkdir -p /srv/memory/projects/ops-agent
-      #   sudo chown 1000:1000 /srv/memory/projects/ops-agent
-      - ${LIFEKIT_OPS_AGENT_DIR:-/srv/memory/projects/ops-agent}:/data/incidents
-      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude:ro
-      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json:ro
-      # Host docker socket — the docker_restart action (allowlisted above).
-      - /var/run/docker.sock:/var/run/docker.sock
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
-    command: ["ops-agent"]
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        export OPS_AGENT_GOALS_DIR=/data/devclaw-state/goals
-        exec "$$@"
-      - --
-    networks:
-      - default
-      - lifekit-shared
 
 volumes:
   # Durable goal state. Declared external so the two-project split does NOT

@@ -43,7 +43,7 @@ two externally-declared seams: the `lifekit-shared` network and the
   the fragment reads: the `LIFEKIT_*` host facts (docker GID, claude home,
   vault dir, workspaces dir — duplicated from the host on purpose; a little
   host-fact duplication is the price of entity independence), the operator-set
-  `DEVCLAW_*` knobs, `DEVCLAW_TOKEN` for ops-agent, and on the cutover host
+  `DEVCLAW_*` knobs, `DEVCLAW_TOKEN`, and on the cutover host
   `DEVCLAW_STATE_VOLUME=compose_devclaw-state`.
 - **The secrets file** the compose fragment declares as its `env_file`
   (`DEVCLAW_SECRETS_FILE`, default `/srv/devclaw/secrets.env`) exists, is
@@ -64,11 +64,11 @@ two externally-declared seams: the `lifekit-shared` network and the
   2026-09-03 a hand recreate after an env-file edit resolved both to blank,
   the instance reported healthy for ~20h on the revocable mounted login, and a
   worker burned a session on an `npm ci` 401 before a project-wide hold fired.
-- The incident output dir exists (else ops-agent writes into a phantom mount):
-  ```bash
-  sudo mkdir -p /srv/memory/projects/ops-agent
-  sudo chown 1000:1000 /srv/memory/projects/ops-agent
-  ```
+- The box's Prometheus (lifekit-stack) can reach `devclaw-mcp:8000/metrics`
+  over `lifekit-shared` — that scrape is the dead-man watcher since the
+  ops-agent was retired (tinyspec `deadman-metrics`, 2026-09-06); the
+  Grafana rule on `devclaw_tick_age_seconds` is what pings when the
+  heartbeat hangs.
 
 ---
 
@@ -112,10 +112,10 @@ docker volume inspect compose_devclaw-state >/dev/null && echo "volume OK"
 only moment the MCP server bounces (same as any redeploy — crash-recovery reaps
 and resumes in-flight sandboxes; keep this off a live overnight run):
 ```bash
-# stop just devclaw + ops-agent in the shared project (leaves gateway et al. up)
+# stop just devclaw in the shared project (leaves gateway et al. up)
 cd /srv/lifekit-stack/compose
-docker compose -p compose stop devclaw-mcp ops-agent
-docker compose -p compose rm -f devclaw-mcp ops-agent
+docker compose -p compose stop devclaw-mcp
+docker compose -p compose rm -f devclaw-mcp
 
 # bring devclaw up as its own project (pulls the tag, recreates, health-gates)
 cd /path/to/devclaw
@@ -160,9 +160,9 @@ the image is referenced by tag (spec FR-007):
 
 - **Delete** `compose/devclaw-mcp/Dockerfile` and `compose/devclaw-sandbox/Dockerfile`.
 - **Remove** the `devclaw-mcp`, `devclaw-sandbox`, and `ops-agent` *run/build*
-  stanzas from `compose/docker-compose.yml` — except keep `ops-agent` as a
-  **build-only** service (so its image is still produced here; devclaw's project
-  runs it).
+  stanzas from `compose/docker-compose.yml`. (The `ops-agent` build-only
+  service this step used to keep is gone too — the watchdog was retired on
+  2026-09-06, tinyspec `deadman-metrics`.)
 - **Attach** `openclaw-gateway` + `notify-relay` to the external
   `lifekit-shared` network (in addition to their default).
 - **Strip** the devclaw block from `scripts/deploy.sh`: the `--no-cache` rebuild
