@@ -19,17 +19,22 @@ fixes it — doctor executes none of them.
 
 ## What it checks (v1, spec 016 US1)
 
+Later check families, by home — instance (`devclaw/doctor/checks_instance.py`):
+registry token, gate consultation, schedule dispatch, pr_ledger, sandbox
+sizing, problems/decisions tables, merge-on-close columns, contract pins;
+project (`devclaw/doctor/checks_project.py`): tracked checkout, issue-ref
+shape, backlog-ready contract, capability declaration.
+
 Instance section:
 
-- one-shot migration markers present (view migration, legacy cutoff #616,
-  trace migration; project-id backfill as a warn — it stamps at server boot)
-- legacy row shapes the cutoffs should have erased (pre-008 `lifecycle`,
+- legacy row shapes the boot migrations should have erased (the marker
+  modules were deleted; checks guard shapes directly: pre-008 `lifecycle`,
   NULL/nullable `goal_deliveries.ref_id`, lingering `goal_docs` /
   `inbox_ingest_cursor`)
 - OAuth credential file presence + `expiresAt` horizon (fails before the
   2 a.m. auth death, mechanically — no live probe), `.claude.json` identity,
   `CLAUDE_CODE_OAUTH_TOKEN` presence, active usage/auth pause
-- skills bundle resolvability for all four worker kinds (the host-side
+- skills bundle resolvability for every kind in `runner._KNOWN_KINDS` (the host-side
   pre-dispatch check the `skills_missing` class never had, #610/#613)
 - run-window **raw** meta key: absent (lost on redeploy) vs corrupt vs valid —
   `get_run_schedule` alone cannot tell "operator disabled" from "row gone"

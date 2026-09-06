@@ -17,7 +17,7 @@ Use:
 
     from devclaw.prompts import load_prompt
     prompt = load_prompt("goal-evaluator")
-    prompt = load_prompt("scope-grill")
+    prompt = load_prompt("admission-lint")
 """
 
 from __future__ import annotations

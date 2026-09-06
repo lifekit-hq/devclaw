@@ -27,6 +27,12 @@ DOC_MAP = [
     ("devclaw/task_git.py", ["docs/flows/task-execution.md", "docs/flows/delivery.md"]),
     ("devclaw/state_store/", ["docs/architecture.md (single-writer invariant)"]),
     ("devclaw/cli.py", ["README.md (usage narrative)"]),
+    ("devclaw/queue/", ["docs/flows/task-execution.md (settle/gate path)", "docs/architecture.md (layer 4)"]),
+    ("devclaw/quality/", ["docs/architecture.md (gates)", "docs/flows/task-execution.md (Step I)"]),
+    ("devclaw/loom/", ["docs/architecture.md (limits, test integrity, trace)"]),
+    ("devclaw/prompts/", ["docs/architecture.md (layer 3)", ".claude/rules/cognition-prompts.md"]),
+    ("devclaw/doctor/", ["docs/runbooks/doctor.md"]),
+    ("deploy/", ["docs/runbooks/devclaw-self-deploy.md"]),
 ]
 
 

@@ -1,6 +1,6 @@
 # Testing — how to run and write tests in this repo
 
-The suite is **fully stubbed** — no docker, no `claude` binary, ~1150 tests in
+The suite is **fully stubbed** — no docker, no `claude` binary, ~1400 tests in
 ~23s (pytest-xdist, `-n auto` in `addopts`). Anything needing real
 docker/claude is an integration concern: `/live-shakedown`, never pytest.
 

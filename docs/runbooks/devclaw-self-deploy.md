@@ -25,7 +25,7 @@ two externally-declared seams: the `lifekit-shared` network and the
 | Image build | lifekit-stack `Dockerfile`, `git clone devclaw@main` at build | devclaw `deploy/Dockerfile`, `COPY` checked-out source |
 | Cache | forced `--no-cache` every deploy + md5-verify crutch | normal cache-respecting build |
 | Where it runs | `compose` project (with gateway, dashboard, …) | own `devclaw` project |
-| Deploy trigger | `ci.yml` deploy job auto-fires on every push to main | `deploy.yml` `workflow_dispatch` only |
+| Deploy trigger | `ci.yml` deploy job auto-fires on every push to main | `deploy.yml` `workflow_dispatch`, two lanes: manual, and `auto=true` self-triggered by devclaw after a devclaw-repo merge-on-close via `deploy/deploy-devclaw-auto.sh` (probe + one rollback, spec 025 US2) |
 | Blast radius | full-stack rebuild SIGKILLs in-flight goals | devclaw-only recreate; OpenClaw untouched |
 
 ---
@@ -94,6 +94,8 @@ docker push ghcr.io/lifekit-hq/devclaw-mcp:$SHA   # + :latest, + both sandbox ta
 docker network inspect lifekit-shared >/dev/null 2>&1 || docker network create lifekit-shared
 ```
 
+> Steps 3–5 completed 2026-08-16 — kept as the cutover record.
+
 **3. Adopt the existing state volume — the critical step.** The live volume is
 `compose_devclaw-state` (owned by the shared `compose` project). Rather than
 copy it, adopt it in place by pointing the external volume name at it. Add to
@@ -150,6 +152,8 @@ Success = new SHA on `/health`, goal count unchanged, OpenClaw uptimes unbroken.
 ---
 
 ## 4. lifekit-stack companion change
+
+> Completed 2026-08-16 — kept as the cutover record.
 
 In the lifekit-stack repo (separate branch), the devclaw build is removed and
 the image is referenced by tag (spec FR-007):
