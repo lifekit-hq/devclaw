@@ -228,6 +228,36 @@ async def test_creation_with_explicit_done_when_skips_the_scenario_check(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_on_demand_direction_reads_the_same_live_contract(tmp_path):
+    """The on-demand surface (``evaluate_goal``) is a SECOND reader of the
+    completion contract. A pointer goal is graded against the issue's live
+    acceptance text there too — never against ``(not specified)`` — and the
+    read is load-bearing on this surface as on the gate: an unreadable
+    contract raises to the caller before any cognition runs."""
+    svc, db = _service(tmp_path)
+    try:
+        svc._issue_fetcher = FakeIssueFetcher({7: _snap(7, body=BODY_V1)})
+        await svc.create_goal_async("g", issues=[7], done_when="", **_KW)
+        ev = FakeClaude(json.dumps({"verdict": "on_track", "rationale": "grounded"}))
+        svc._evaluator_caller = ev
+        out = await svc.evaluate_goal("g")
+        assert out["verdict"] == "on_track"
+        assert ev.calls == 1
+        assert "the widget parses the new shape" in ev.last_prompt
+        assert "(not specified)" not in ev.last_prompt
+
+        svc._issue_fetcher = FakeIssueFetcher({7: IssueRefError("scripted: tracker 502")})
+        ev2 = FakeClaude(json.dumps({"verdict": "on_track", "rationale": "x"}))
+        svc._evaluator_caller = ev2
+        with pytest.raises(ValueError) as exc:
+            await svc.evaluate_goal("g")
+        assert "completion contract could not be read" in str(exc.value)
+        assert ev2.calls == 0   # never evaluated against emptiness
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
 async def test_done_gate_logs_the_judged_issue_revision(tmp_path):
     """Spec 024 FR-005: the ticket is live-editable, so every gate round
     records WHICH revision it judged — a content hash in the goal log, so

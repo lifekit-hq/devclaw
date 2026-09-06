@@ -1743,6 +1743,23 @@ class GoalService:
             raise KeyError(goal_id)
         g = self._goal_store.load_goal(goal_id)
         s = self._goal_store.load_status(goal_id)
+        # A referenced goal's contract is its issues' acceptance sections, read
+        # LIVE (spec 019) — the done-gate resolves it before judging, and this
+        # surface must too, or it grades against "(not specified)" and steers
+        # on a verdict the contract never saw. LOAD-BEARING, not a best-effort
+        # collector: an unreadable contract raises to the caller; the
+        # evaluator never runs against emptiness.
+        if g.issue_refs and not g.done_when.strip():
+            try:
+                contract = await _issue_ref.scenarios_contract(
+                    g.repo_url or "", g.issue_refs, self._issue_fetcher,
+                )
+            except (_issue_ref.IssueRefError, _issue_ref.MissingAcceptance) as exc:
+                raise ValueError(
+                    f"the completion contract could not be read: {exc} — a "
+                    "referenced goal is judged only against live issue state"
+                ) from exc
+            g = replace(g, done_when=contract)
         # Same grounding as the tick paths (triage F3): the workspace snapshot
         # + the agreed spec. The on-demand eval used to omit BOTH — its
         # "corrections" could describe the wrong repo and ignore the contract

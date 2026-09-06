@@ -309,6 +309,8 @@ async def evaluate_goal(goal_id: str) -> str:
         return json.dumps(await goals.evaluate_goal(goal_id), indent=2)
     except KeyError:
         raise ToolError(f"unknown goal_id: {goal_id}")
+    except ValueError as exc:
+        raise ToolError(str(exc))
 
 
 @mcp.tool
