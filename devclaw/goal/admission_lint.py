@@ -53,6 +53,51 @@ _IMPOSSIBLE: tuple[tuple[str, str], ...] = (
     (r"\bproduction (?:account|credentials|database|data)\b", "production access"),
 )
 
+#: (a), continued — a clause whose change lands in ANOTHER repository. The
+#: worker holds exactly one checkout, so this is capability-impossible for the
+#: whole class however it is worded (#847: "Companion (finance-sentry repo,
+#: separate PR)" reached the done-gate and parked the goal). Three shapes:
+#: an adjective marking the repo as not-this-one; a companion PR; a repo
+#: named outright (``finance-sentry repo``, ``lifekit-hq/finance-sentry``)
+#: that is not the goal's own — the last two need ``own_repo`` and are
+#: skipped without it, so a repo merely MENTIONED as context by a name that
+#: is the goal's own never refuses.
+_CROSS_REPO_CAPABILITY = "a change in another repository"
+_CROSS_REPO_MARKED = re.compile(
+    r"\b(?:separate|another|other|different|companion|sibling|external|second)"
+    r" (?:repo|repository|pr|pull request)\b"
+    r"|\bcompanion (?:change|commit)\b"
+)
+_NAMED_REPO = re.compile(r"\b([a-z0-9][\w.-]*) (?:repo|repository)\b")
+_REPO_SLUG = re.compile(r"\b([a-z0-9][\w.-]*)/([a-z0-9][\w.-]*)\b")
+#: Words that precede "repo" without naming one.
+_NOT_A_REPO_NAME = frozenset({
+    "this", "the", "a", "an", "our", "same", "that", "its", "own", "each",
+    "every", "any", "one", "per", "target", "local", "remote", "git", "current",
+    "whole", "entire", "project", "source", "upstream", "main", "default",
+    "bare", "package", "npm", "private", "public", "github", "gitlab", "mono",
+    "code", "product", "consuming", "consumer", "downstream", "parent", "child",
+})
+
+
+def _cross_repo(clause_low: str, own_repo: Optional[str]) -> bool:
+    """Does the clause put its change in a repository other than ``own_repo``
+    (an ``owner/name`` slug, or None when unknown)?"""
+    if _CROSS_REPO_MARKED.search(clause_low):
+        return True
+    if not own_repo or "/" not in own_repo:
+        return False
+    own_owner, own_name = own_repo.lower().split("/", 1)
+    for m in _NAMED_REPO.finditer(clause_low):
+        name = m.group(1)
+        if name not in _NOT_A_REPO_NAME and name != own_name and name != own_owner:
+            return True
+    for m in _REPO_SLUG.finditer(clause_low):
+        if m.group(1) == own_owner and m.group(2) != own_name:
+            return True
+    return False
+
+
 #: (b) — absolute repository-wide predicates that need a baseline.
 _ABSOLUTE = re.compile(
     r"\b(all|every|100%|zero|no)\s+(?:existing\s+)?(tests?|specs?|checks?|warnings?|lint(?:er)? (?:errors?|warnings?)|failures?)\b"
@@ -115,14 +160,18 @@ def clauses_of(done_when: str) -> list[str]:
     return out
 
 
-def lint_mechanical(done_when: str) -> LintResult:
-    """Classes (a) and (b). Pure, deterministic, never raises."""
+def lint_mechanical(done_when: str, *, own_repo: Optional[str] = None) -> LintResult:
+    """Classes (a) and (b). Pure, deterministic, never raises. ``own_repo`` is
+    the goal's own ``owner/name`` slug, which lets (a) tell a repository named
+    as context from one named as where the change lands."""
     refusals: list[Refusal] = []
     rewrites: list[Rewrite] = []
     new_clauses: list[str] = []
     for clause in clauses_of(done_when):
         low = clause.lower()
         hit = next((cap for pat, cap in _IMPOSSIBLE if re.search(pat, low)), None)
+        if hit is None and _cross_repo(low, own_repo):
+            hit = _CROSS_REPO_CAPABILITY
         if hit:
             refusals.append(Refusal(clause=clause, capability=hit))
             new_clauses.append(clause)
@@ -172,10 +221,13 @@ async def judge_undecided(done_when: str, claude_caller: Optional[ClaudeCaller])
     return tuple(found), ""
 
 
-async def lint(done_when: str, *, claude_caller: Optional[ClaudeCaller] = None) -> LintResult:
+async def lint(
+    done_when: str, *, claude_caller: Optional[ClaudeCaller] = None,
+    own_repo: Optional[str] = None,
+) -> LintResult:
     """All three classes. A refusal short-circuits — nothing else is judged
     (the author fixes and resubmits; the cognition call is not spent)."""
-    mech = lint_mechanical(done_when)
+    mech = lint_mechanical(done_when, own_repo=own_repo)
     if mech.refused:
         return mech
     undecided, note = await judge_undecided(mech.done_when, claude_caller)

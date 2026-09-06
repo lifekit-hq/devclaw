@@ -697,6 +697,9 @@ class GoalService:
         done_when = (kwargs.get("done_when") or "").strip()
         repo_url = kwargs.get("repo_url")
         refs = _issue_ref.validate_refs(issues, repo_url=repo_url)
+        # The goal's own ``owner/name`` — what lets the admission lint tell a
+        # repository named as context from one named as where a change lands.
+        own_repo = goal_remote_checks.parse_owner_repo(repo_url or "")
         if refs:
             # Every referenced creation fetches its refs once (existence) and
             # requires the earned readiness state (spec 019 US4): grooming
@@ -735,6 +738,23 @@ class GoalService:
                         "the issue to carry an acceptance section (the "
                         "readiness convention), or pass an explicit done_when."
                     )
+                # #847: the referenced contract gets the same class-(a)
+                # refusal an explicit done_when gets — a clause the sandbox
+                # can never satisfy (a change in another repository, a
+                # credential, a human) refuses creation HERE, at the author,
+                # not as a done-gate Problem after the goal's real work is
+                # done. Only (a): the contract is the ticket's, read live at
+                # the gate, so a rewrite (b) has nowhere to persist and the
+                # readiness grader already judged the ticket's choices (c).
+                mech = _lint.lint_mechanical(
+                    _issue_ref.acceptance_contract(snaps), own_repo=own_repo)
+                if mech.refused:
+                    raise ValueError(
+                        _lint.refusal_message(mech)
+                        + "\n(the contract is the referenced issue's acceptance "
+                        "section — edit the issue, then re-file; companion work "
+                        "in another repository is its own issue there)"
+                    )
         # Spec 031 US3 — the done_when admission lint, after the referenced-
         # contract readiness check and BEFORE anything persists. (a) a clause
         # the sandbox can never satisfy refuses creation (Q3 → A, nothing
@@ -745,7 +765,7 @@ class GoalService:
         done_when = (kwargs.get("done_when") or "").strip()
         admission: dict = {}
         if done_when:
-            mech = _lint.lint_mechanical(done_when)
+            mech = _lint.lint_mechanical(done_when, own_repo=own_repo)
             if mech.refused:
                 raise ValueError(_lint.refusal_message(mech))
             try:

@@ -212,15 +212,23 @@ async def scenarios_contract(
     :class:`IssueRefError` on any fetch failure and
     :class:`MissingAcceptance` when a body carries no section — both
     LOAD-BEARING: a completion contract is never silently empty."""
+    return acceptance_contract([await fetcher(repo_url, n) for n in refs])
+
+
+def acceptance_contract(snaps: "list[IssueSnapshot]") -> str:
+    """The contract text for already-fetched snapshots — the one formatting
+    of "acceptance sections in goal order", shared by the live read above and
+    the creation doorway's admission lint (#847), so the lint judges exactly
+    the text the gate will. Raises :class:`MissingAcceptance` for any body
+    without a section."""
     parts: list[str] = []
     missing: list[int] = []
-    for n in refs:
-        snap = await fetcher(repo_url, n)
+    for snap in snaps:
         acc = extract_acceptance(snap.body)
         if acc is None:
-            missing.append(n)
+            missing.append(snap.number)
             continue
-        parts.append(f"Acceptance scenarios of issue #{n} ({snap.title.strip()}):\n{acc}")
+        parts.append(f"Acceptance scenarios of issue #{snap.number} ({snap.title.strip()}):\n{acc}")
     if missing:
         raise MissingAcceptance(missing)
     return "\n\n".join(parts)

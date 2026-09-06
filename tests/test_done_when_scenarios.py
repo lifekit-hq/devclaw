@@ -209,6 +209,52 @@ async def test_creation_accepts_default_when_sections_present(tmp_path):
         db.close()
 
 
+#: #847 — the admission lint's class-(a) refusal is a fail-closed gate at
+#: creation, and it must cover the contract a POINTER goal is actually judged
+#: against (the referenced issue's acceptance section), not only an explicit
+#: done_when. Cases: (clause, explicit?, refused?).
+_ADMISSION_CASES = [
+    # the 2026-09-06 clause verbatim, via the issue → refused, nothing persisted
+    ("Companion (finance-sentry repo, separate PR): `devclaw.json` declares "
+     '`"capabilities": ["registry:npm-github"]`.', False, True),
+    # a sibling repo named by slug under the goal's own owner, via the issue
+    ("o/other-repo's `devclaw.json` declares the capability.", False, True),
+    # the same shape typed as an explicit done_when → refused the same way
+    ("A companion PR in the o/other-repo repository adds the flag.", True, True),
+    # a repository merely MENTIONED as context is not where the change lands
+    ("The advisory sees a nested `.npmrc` like other-repo's `frontend/.npmrc` shape.",
+     False, False),
+    # the goal's own repository named outright is fine
+    ("The r repo's doctor check warns on a nested `.npmrc`.", False, False),
+    # a plain in-repo clause (the pre-#847 accepted path, unchanged)
+    ("The doctor check warns on a nested `.npmrc`.", False, False),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("clause,explicit,refused", _ADMISSION_CASES)
+async def test_creation_refuses_a_sandbox_impossible_clause_wherever_the_contract_comes_from(
+    tmp_path, clause, explicit, refused,
+):
+    svc, db = _service(tmp_path)
+    try:
+        body = f"context\n## Acceptance\n- {clause}\n## Notes\nx"
+        svc._issue_fetcher = FakeIssueFetcher({7: _snap(7, body=body if not explicit else BODY_V1)})
+        svc._evaluator_caller = FakeClaude('{"undecided": []}')
+        kw = dict(_KW, done_when=clause if explicit else "")
+        if refused:
+            with pytest.raises(ValueError) as exc:
+                await svc.create_goal_async("g", issues=[7], **kw)
+            assert "another repository" in str(exc.value)
+            with pytest.raises(KeyError):
+                svc.get_goal("g")   # nothing persisted
+        else:
+            await svc.create_goal_async("g", issues=[7], **kw)
+            assert svc.get_goal("g")["issue_refs"] == [7]
+    finally:
+        db.close()
+
+
 @pytest.mark.asyncio
 async def test_creation_with_explicit_done_when_skips_the_scenario_check(tmp_path):
     svc, db = _service(tmp_path)
