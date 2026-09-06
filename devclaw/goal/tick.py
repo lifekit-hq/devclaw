@@ -29,7 +29,7 @@ import re
 
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Callable
 
 from . import issue_ref as _issue_ref
 from . import slice_guard as _slice_guard
@@ -38,7 +38,6 @@ from . import prior_increments as _prior_increments
 from . import saga_framing as _saga_framing
 from . import project_hold as _project_hold
 from . import remote_checks as _remote_checks
-from . import triage as _triage
 # _deploy stays at tick.py level even though only tick_donegate._auto_deploy calls
 # it: tests monkeypatch ``devclaw.goal.tick._deploy.deploy_project`` and both
 # modules bind the SAME ..delivery.deploy module object, so patching it here is
@@ -91,7 +90,6 @@ from .tick_context import (  # noqa: F401 (re-exported)
     _run_atomic,
     _TICK_LOCKS,
     _tick_lock,
-    triaged_notify,
 )
 from .tick_guards import (  # noqa: F401 (re-exported)
     PREP_HEAL_CAP,
@@ -122,16 +120,6 @@ from .tick_settle import (  # noqa: F401 (re-exported)
     _resolve_polling_done_gate,
     sweep_orphaned_refs,
 )
-
-
-class TrendDetector(Protocol):
-    """The two hooks the heartbeat drives on :class:`devclaw.trend_detector.TrendDetector`
-    — a Protocol (not an import) because the concrete class imports goal-layer
-    types and a direct import here would cycle."""
-
-    async def run_per_goal(self, *, goal_id: str, workspace_dir: str) -> None: ...
-    async def run_harness_self(self) -> None: ...
-    def prune_stale_scopes(self, live_workspaces: "set[str]") -> int: ...
 
 
 
@@ -193,8 +181,6 @@ async def tick_goal(
     verify_done: bool = VERIFY_DONE,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
-    summary_caller: "ClaudeCaller | None" = None,
-    trend_detector: "TrendDetector | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
@@ -205,11 +191,6 @@ async def tick_goal(
     incoming (lifecycle, phase) and outgoing outcome — the only place the trace
     sees a tick. All the cognition / dispatch / delivery / notify events fired
     during the body land between this tick and the next.
-
-    ``trend_detector`` (typed as ``object`` to avoid an import cycle with
-    ``devclaw.trend_detector``): when set, runs per-project trend signals after
-    the tick body settles. Telemetry-shaped: a detector exception NEVER breaks
-    the tick — it is recorded as a note and swallowed.
 
     The ENTIRE body runs under this goal's :func:`_tick_lock` (PR8) — a
     concurrent tick for the SAME goal (tick_one racing tick_all's sweep) waits
@@ -229,7 +210,6 @@ async def tick_goal(
                 notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
                 verify_done=verify_done, autodeploy=autodeploy,
                 no_progress_s=no_progress_s,
-                summary_caller=summary_caller,
                 remote_checker=remote_checker,
                 mergeability_probe=mergeability_probe,
                 holders=holders,
@@ -250,7 +230,6 @@ async def tick_goal(
             await _notify(
                 notifier, NotifyLevel.OWNER,
                 f"🟥 [{goal_id}] internal state error — I've paused this goal; steer to resume: {exc}",
-                summarize=summary_caller,
             )
             outcome = Outcome.BLOCKED
         except TransitionConflict as exc:
@@ -267,25 +246,6 @@ async def tick_goal(
             # for steer_goal/cancel_goal, which stay lock-free by design.
             store.append_log(goal_id, f"tick abandoned — state changed mid-tick: {exc}")
             outcome = Outcome.CONFLICT
-        if trend_detector is not None:
-            try:
-                # Volume hygiene (2026-07-15): a terminal goal gets no trend
-                # sweep — production showed ~350 trend_check rows per goal per
-                # night across 17 goals of which 15 were cancelled/done. The
-                # skip lives HERE (where the sweep selects goals), not inside
-                # the detector; re-read the status so a goal that went terminal
-                # DURING this very tick (done-gate closed it, cancel raced in)
-                # is skipped too. Cheap SQLite read — zero LLM either way.
-                if store.load_status(goal_id).phase not in ("done", "cancelled"):
-                    goal = store.load_goal(goal_id)
-                    await trend_detector.run_per_goal(
-                        goal_id=goal_id, workspace_dir=goal.workspace_dir,
-                    )
-            except Exception as exc:  # noqa: BLE001 — telemetry must not break ticks
-                _trace.record_note(
-                    f"trend_detector.run_per_goal failed for {goal_id}: "
-                    f"{exc.__class__.__name__}: {exc}"
-                )
         _trace.record_tick(
             goal_id=goal_id, lifecycle=lifecycle_before,
             phase=phase_before.value, outcome=outcome.value,
@@ -305,7 +265,6 @@ async def _tick_goal_impl(
     verify_done: bool = VERIFY_DONE,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
-    summary_caller: "ClaudeCaller | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     holders: "dict[str, str] | None" = None,
@@ -330,7 +289,6 @@ async def _tick_goal_impl(
         notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
         verify_done=verify_done, autodeploy=autodeploy,
         no_progress_s=no_progress_s,
-        summary_caller=summary_caller,
         remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
         holders=holders,
@@ -406,7 +364,7 @@ async def _tick_goal_impl(
     # transitions phase.
     status = await _check_no_progress(
         goal_id, goal, status,
-        store=store, notifier=notifier, window_s=no_progress_s, summarize=summary_caller,
+        store=store, notifier=notifier, window_s=no_progress_s,
     )
 
     # Polling phases — settle in-flight work first.
@@ -624,8 +582,7 @@ async def _handle_qa_goal(
         return await _dispatch_action(
             goal_id, goal, base, validation_action(goal),
             store=store, engine=ctx.engine, notifier=ctx.notifier,
-            notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
-            summarize=ctx.summary_caller, consume_steering=[],
+            notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws, consume_steering=[],
             project_caps=ctx.project_caps,
         )
 
@@ -682,8 +639,7 @@ async def _handle_long_lived_advance(
             goal_id, goal, base,
             store=store, engine=ctx.engine, evaluator_caller=ctx.evaluator_caller,
             notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
-            verify_done=ctx.verify_done, note="thin: advance session settled",
-            summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+            verify_done=ctx.verify_done, note="thin: advance session settled", remote_checker=ctx.remote_checker,
             autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
         )
 
@@ -696,7 +652,7 @@ async def _handle_long_lived_advance(
     if status.pending_merge_pr and status.phase != "blocked":
         return await _donegate_finalize_pending_merge(
             goal_id, goal, status,
-            store=store, notifier=ctx.notifier, summarize=ctx.summary_caller,
+            store=store, notifier=ctx.notifier,
             autodeploy=ctx.autodeploy, remote_checker=ctx.remote_checker,
         )
 
@@ -713,8 +669,7 @@ async def _handle_long_lived_advance(
             goal_id, goal, base,
             store=store, engine=ctx.engine, evaluator_caller=ctx.evaluator_caller,
             notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
-            verify_done=ctx.verify_done, note="ci settled",
-            summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+            verify_done=ctx.verify_done, note="ci settled", remote_checker=ctx.remote_checker,
             autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
         )
 
@@ -941,8 +896,7 @@ async def _handle_long_lived_advance(
                     evaluator_caller=ctx.evaluator_caller,
                     notifier=ctx.notifier, notify_url=ctx.notify_url,
                     prepare_ws=ctx.prepare_ws, verify_done=ctx.verify_done,
-                    note="all referenced issues closed",
-                    summarize=ctx.summary_caller, remote_checker=ctx.remote_checker,
+                    note="all referenced issues closed", remote_checker=ctx.remote_checker,
                     autodeploy=ctx.autodeploy, consume_steering=consume_ids,
                     issue_fetcher=ctx.issue_fetcher,
                 )
@@ -993,8 +947,7 @@ async def _handle_long_lived_advance(
     return await _dispatch_action(
         goal_id, goal, base, action,
         store=store, engine=ctx.engine, notifier=ctx.notifier,
-        notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
-        summarize=ctx.summary_caller, consume_steering=consume_ids,
+        notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws, consume_steering=consume_ids,
         project_caps=ctx.project_caps,
     )
 
@@ -1014,13 +967,10 @@ async def tick_all(
     verify_done: bool = VERIFY_DONE,
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     no_progress_s: int = NO_PROGRESS_S,
-    summary_caller: "ClaudeCaller | None" = None,
     verify_done_resolver: "Callable[[Goal], bool] | None" = None,
     autodeploy_resolver: "Callable[[Goal], bool | None] | None" = None,
     tracer_factory: "Callable[[str], _trace.Tracer | None] | None" = None,
-    trend_detector: "TrendDetector | None" = None,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    triage_caller: "ClaudeCaller | None" = None,
     mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
     project_workspaces: "Callable[[], set[str]] | None" = None,
     project_capabilities: "Callable[[], dict[str, tuple[str, ...]]] | None" = None,
@@ -1039,12 +989,6 @@ async def tick_all(
     re-check flag and the on-complete deploy flag FRESH per goal (a project's
     override must not leak from one goal onto another in the same sweep), each
     taking precedence over its flat counterpart.
-
-    ``trend_detector`` (typed as ``object`` to avoid the import cycle with
-    ``devclaw.trend_detector``): when set, runs per-project signals inside each
-    per-goal tracer scope, and runs harness-self signals once after the loop
-    inside a sentinel-keyed (``_harness_self_``) tracer scope. Telemetry-shaped
-    catches: a detector exception NEVER breaks the heartbeat.
     """
     outcomes: dict[str, Outcome] = {}
 
@@ -1085,11 +1029,10 @@ async def tick_all(
                 # The instance-dead class (spec 025 US3): an auth failure only
                 # a human re-login fixes must pierce quiet mode — an unsent
                 # auth ping silently kills an unattended week.
-                await _notify(notifier, NotifyLevel.OWNER, msg,
-                              summarize=summary_caller, critical=True)
+                await _notify(notifier, NotifyLevel.OWNER, msg, critical=True)
             else:
                 msg = f"⏸️ paused on a usage limit — {reason}; resuming ~{resume_hhmm} UTC"
-                await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summary_caller)
+                await _notify(notifier, NotifyLevel.OWNER, msg)
             kind = (
                 FailureKind.AUTH.value
                 if reason.startswith(FailureKind.AUTH.value) else "limit"
@@ -1120,7 +1063,6 @@ async def tick_all(
             await _notify(
                 notifier, NotifyLevel.OWNER,
                 "▶️ usage limit lifted — resuming work",
-                summarize=summary_caller,
             )
         _engine_set_pause_notified(engine, False)
 
@@ -1156,8 +1098,8 @@ async def tick_all(
     # Loud-not-silent DB-size alarm: if the .db has grown past the threshold
     # despite retention+VACUUM, ping the owner ONCE (re-armed when it drops back
     # under) — a silent disk-fill wedge is the failure mode this whole tranche
-    # exists to prevent. Zero LLM (raw owner ping, no summarizer).
-    await _maybe_alert_db_size(engine, notifier, triage_caller=triage_caller)
+    # exists to prevent. Zero LLM (raw owner ping).
+    await _maybe_alert_db_size(engine, notifier)
 
     # Single-writer project hold (spec 010 P1): derive who holds each project
     # ONCE for the whole sweep. The derivation reads every goal, so deriving it
@@ -1264,8 +1206,6 @@ async def tick_all(
                     notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
                     verify_done=goal_verify_done,
                     autodeploy=goal_autodeploy, no_progress_s=no_progress_s,
-                    summary_caller=summary_caller,
-                    trend_detector=trend_detector,
                     remote_checker=remote_checker,
                     mergeability_probe=mergeability_probe,
                     holders=holders,
@@ -1282,27 +1222,6 @@ async def tick_all(
             else:
                 store.append_log(goal_id, f"tick error (isolated): {str(exc)[:160]}")
                 outcomes[goal_id] = Outcome.ERROR
-
-    # Harness-self trend pass — runs ONCE per heartbeat after the per-goal loop.
-    # Sentinel goal_id keeps the trace events in the same table for replay via
-    # get_trace; the detector observes devclaw itself, not any specific goal.
-    if trend_detector is not None:
-        harness_tracer = (
-            tracer_factory("_harness_self_") if tracer_factory else None
-        )
-        try:
-            with _trace.tracer_scope(harness_tracer):
-                await trend_detector.run_harness_self()
-        except Exception:  # noqa: BLE001 — telemetry must not break the heartbeat
-            pass
-        # Trend state expires WITH the project: drop cooldown/fingerprint/
-        # bookmark keys for workspaces no longer registered (2026-08-30 DB
-        # audit — 215 keys pinned to weeks-dead workspaces). Zero LLM.
-        if project_workspaces is not None:
-            try:
-                trend_detector.prune_stale_scopes(project_workspaces())
-            except Exception:  # noqa: BLE001 — telemetry must not break the heartbeat
-                pass
 
     # One goal, one checkout: a terminal goal's <project>/.goals/<id> is
     # removed here, derived from the store every sweep — no bookkeeping row,
@@ -1443,26 +1362,14 @@ def _engine_vacuum(engine: GoalEngine) -> None:
         pass
 
 
-async def _maybe_alert_db_size(
-    engine: GoalEngine, notifier: Notifier, *, triage_caller: "ClaudeCaller | None" = None,
-) -> None:
+async def _maybe_alert_db_size(engine: GoalEngine, notifier: Notifier) -> None:
     """Check the DB-size alarm via the engine and, if it just crossed the
-    threshold, ping the owner ONCE. Best-effort on both legs: a stat failure or
-    a notifier outage must never break the heartbeat.
+    threshold, ping the owner ONCE with the raw alert. Best-effort on both
+    legs: a stat failure or a notifier outage must never break the heartbeat.
 
-    Zero-token idle guard: ``check_db_size_alert`` returns a message ONLY on the
-    tick the .db crosses the threshold (deduped by the ``db_size_alerted`` meta
-    flag). On every idle / under-threshold tick it returns ``None`` and this
-    function returns before any cognition — so the guarantee holds regardless of
-    whether triage is wired.
-
-    When ``triage_caller`` is set (production, via GoalService), the alert routes
-    through the propose-only self-triage interceptor (:func:`triaged_notify`,
-    ``kind="db_size"``): it dedupes against the ``problems`` catalog and proposes
-    a grounded retention fix, delivering "problem + proposed fix + how to
-    approve" instead of the bare alert. ``triage_caller=None`` (the default, and
-    every existing test) keeps the RAW owner send, byte-identical to before. A
-    triage failure falls back to the raw alert — loud, not silent."""
+    Zero-token: ``check_db_size_alert`` returns a message ONLY on the tick the
+    .db crosses the threshold (deduped by the ``db_size_alerted`` meta flag);
+    every other tick returns ``None`` here. No cognition on this path."""
     fn = getattr(engine, "check_db_size_alert", None)
     if not callable(fn):
         return
@@ -1472,28 +1379,7 @@ async def _maybe_alert_db_size(
         return
     if not msg:
         return
-    if triage_caller is None:
-        await _notify(notifier, NotifyLevel.OWNER, msg)
-        return
-    # A real problem fired — enrich it. Catalog + size read through the engine
-    # seam (never the StateStore directly); both best-effort so a hiccup degrades
-    # to the raw ping rather than swallowing the alarm.
-    catalog = ""
-    size_bytes = 0
-    try:
-        lp = getattr(engine, "list_problems", None)
-        if callable(lp):
-            catalog = _triage.format_catalog(lp())
-        sb = getattr(engine, "db_size_bytes", None)
-        if callable(sb):
-            size_bytes = sb()
-    except Exception:  # noqa: BLE001 — grounding is best-effort
-        catalog, size_bytes = "", 0
-    await triaged_notify(
-        notifier, NotifyLevel.OWNER, msg,
-        kind="db_size", triage_caller=triage_caller,
-        catalog=catalog, repo_context=_triage.retention_context(size_bytes),
-    )
+    await _notify(notifier, NotifyLevel.OWNER, msg)
 
 
 def _engine_clear_pause(engine: GoalEngine) -> None:

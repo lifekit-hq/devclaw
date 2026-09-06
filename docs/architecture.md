@@ -109,7 +109,7 @@ tasks now run in `<project workspace>/.goals/<goal_id>` — a full clone seeded
 locally from the project checkout (`engine/workspace.py`
 `ensure_goal_checkout`, hardlinked objects) with `origin` pointed at the real
 remote; the task row's `workspace_dir` is that path. The project checkout stays
-the goal's identity (manifest-at-base reads, project docs, trends, deploy,
+the goal's identity (manifest-at-base reads, project docs, deploy,
 doctor, the toolchain cache key) and is what direct tasks run in; its pristine
 clean keeps `.goals/`, onboarding boilerplate revision 2 ignores `.goals/` in
 the repo, and `.git/info/exclude` covers the checkout until that PR merges. A
@@ -129,7 +129,7 @@ the technical sense — the rest is orchestration.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | tools, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | the goal state machine + the ~15-min tick |
-| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`, `devclaw/goal/summary.py`, `devclaw/goal/triage.py`, `devclaw/goal/admission_lint.py`, `devclaw/intake_readiness.py` | one-shot `claude --print` prompt/parse calls (planning cognition relocated into the worker's speckit run — spec 008 shrink) |
+| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`, `devclaw/goal/admission_lint.py`, `devclaw/intake_readiness.py` | one-shot `claude --print` prompt/parse calls (planning cognition relocated into the worker's speckit run — spec 008 shrink; summarizer / self-triage / trend detector / on-demand direction retired by spec 037) |
 | 4 | **TaskQueue + engine** | `task_queue.py` (+ its `devclaw/queue/` mixins), `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (inside the sandbox) | the in-sandbox agent turn-loop, skills, hooks, `verify_cmd` |
 
@@ -444,19 +444,13 @@ tool and the console `/problems.json` — carries that linkage plus a derived
 so it points at the canonical Issue rather than inviting independent triage. See
 `devclaw/state_store/problems.py` and the tool in `devclaw/server/tools/observability.py`.
 
-**Self-triage — the propose-only interceptor (slice 1, 2026-07-18).** The first
-consumer of that catalog. Before an **eligible** owner ping fires (an allowlist,
-`tick_context.TRIAGE_ELIGIBLE` — slice 1 registers exactly one key, `db_size`,
-the DB-size alarm), a bounded layer-3 triage cognition step (`goal/triage.py`,
-prompt `prompts/self-triage.md`) dedupes the problem against `list_problems` and
-drafts a **proposed** resolution, so the owner receives "problem + proposed fix +
-how to approve" instead of a bare "there's a problem" — an approver, not the sole
-diagnostician. It is **propose-only** (never auto-acts) and **fails toward the
-owner**: it runs only when a real ping fires (never idle — the zero-token guard
-holds), and any triage failure delivers the original raw ping unchanged. The
-caller returns parsed output only; layer 2 (`tick_context.triaged_notify`)
-renders + delivers. Auto-resolve on top is a deliberate follow-up. See
-`goal/triage.py`.
+**Self-triage retired (spec 037, 2026-09-06).** The propose-only triage
+interceptor, the plain-language owner summarizer, the trend detector and the
+on-demand direction evaluation (`evaluate_goal`) were removed: four
+`claude --print` roles with no measured consumer, whose own failures
+(OOM, timeouts, unparseable replies) outnumbered anything they caught. Owner
+pings go out raw; the problems catalog and GitHub Issues carry triage; the
+evaluator has exactly one caller, the done-gate on a done proposal.
 
 ---
 
@@ -494,7 +488,7 @@ renders + delivers. Auto-resolve on top is a deliberate follow-up. See
 ### Layer 2 — Orchestrator (GoalService + heartbeat)
 
 - **Public surface:** `GoalService` methods (`create_goal`, `get_goal`,
-  `steer_goal`, `resume_goal`, `evaluate_goal`, `cancel_goal`, …). Plus the
+  `steer_goal`, `resume_goal`, `cancel_goal`, …). Plus the
   heartbeat sweep, `GoalService.tick_all`.
 - **Internal state:** `GoalStore`, backed by the goal-state tables inside the
   SAME `StateStore`/`devclaw.db` the task queue uses (see "Where state lives").

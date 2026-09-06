@@ -17,7 +17,7 @@ used to play this role is gone, demolition P3b).
 Named regression tests, each with a one-line comment naming the property it
 proves. See ``devclaw/goal/tick.py``'s ``_TICK_LOCKS`` / ``_tick_lock`` /
 ``tick_goal`` (the lock's own comment has the full rationale, including WHY
-``steer_goal`` / ``cancel_goal`` / ``evaluate_goal`` stay lock-free).
+``steer_goal`` / ``cancel_goal`` stay lock-free).
 """
 
 from __future__ import annotations

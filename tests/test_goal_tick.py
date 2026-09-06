@@ -52,12 +52,12 @@ def _store(tmp_path, clock):
     return GoalStore(tmp_path, now=clock)
 
 
-async def _tick(store, goal_id, evaluator, engine, notifier, *, verify_done=True, summary_caller=None, remote_checker=None, mergeability_probe=None):
+async def _tick(store, goal_id, evaluator, engine, notifier, *, verify_done=True, remote_checker=None, mergeability_probe=None):
     return await tick_goal(
         goal_id, store=store, engine=engine,
         evaluator_caller=evaluator, notifier=notifier,
         notify_url="http://relay", prepare_ws=fake_prepare,
-        verify_done=verify_done, summary_caller=summary_caller,
+        verify_done=verify_done,
         remote_checker=remote_checker,
         mergeability_probe=mergeability_probe,
     )
@@ -75,19 +75,6 @@ class RecordingProbe:
     async def __call__(self, pr_url: str):
         self.asked.append(pr_url)
         return self._verdict
-
-
-class RecordingSummarizer:
-    """A fake plain-language summarizer caller: records prompts and returns a
-    fixed plain rewrite, so tests can assert WHICH notifications get summarized."""
-
-    def __init__(self, rewrite="PLAIN: here is what is happening"):
-        self.prompts: list[str] = []
-        self._rewrite = rewrite
-
-    async def __call__(self, prompt: str) -> str:
-        self.prompts.append(prompt)
-        return self._rewrite
 
 
 # ---- the guardrail ---------------------------------------------------------
@@ -1020,68 +1007,6 @@ async def test_midflight_eval_cut_no_evaluator_call_and_never_blocks(tmp_path):
     assert store.load_status("g").phase != "blocked"
     # momentum: the settled session proposed done — the done-gate review is out
     assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
-
-
-# ---- plain-language summarizer (owner messages rewritten; best-effort) ------
-
-
-@pytest.mark.asyncio
-async def test_owner_notification_is_plain_summarized(tmp_path, monkeypatch):
-    """An OWNER-level message (a blocker — here a workspace-prep failure) is
-    rewritten by the summarizer before it reaches the notifier; the owner sees
-    the plain text, not the raw line."""
-    monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-    summarizer = RecordingSummarizer("🟡 The repo could not be cloned; I paused the goal for you.")
-
-    out = await tick_goal(
-        "g", store=store, engine=engine,
-        evaluator_caller=evaluator, notifier=notifier,
-        notify_url="http://relay", prepare_ws=_failing_prepare,
-        summary_caller=summarizer,
-    )
-
-    assert out is Outcome.BLOCKED
-    assert len(summarizer.prompts) == 1                       # summarizer ran once
-    assert "Repository not found" in summarizer.prompts[0]    # raw line fed in
-    assert notifier.sent == ["🟡 The repo could not be cloned; I paused the goal for you."]  # plain text sent
-
-
-@pytest.mark.asyncio
-async def test_summarizer_not_invoked_for_suppressed_task_dispatch(tmp_path, monkeypatch):
-    """A per-task dispatch is suppressed at the default floor — the summarizer
-    must not be called for it (no wasted tokens on a message nobody sees)."""
-    monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g")
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-    summarizer = RecordingSummarizer()
-
-    out = await _tick(store, "g", evaluator, engine, notifier, summary_caller=summarizer)
-
-    assert out is Outcome.DISPATCHED
-    assert summarizer.prompts == []          # never summarized a suppressed message
-    assert notifier.sent == []
-
-
-@pytest.mark.asyncio
-async def test_idle_tick_never_invokes_summarizer(tmp_path, monkeypatch):
-    """The zero-token guardrail extends to the summarizer: an idle tick must not
-    call it."""
-    monkeypatch.delenv("DEVCLAW_NOTIFY_ALTITUDE", raising=False)
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "g", cadence="1d")
-    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
-    summarizer = RecordingSummarizer()
-
-    out = await _tick(store, "g", evaluator, engine, notifier, summary_caller=summarizer)
-
-    assert out is Outcome.IDLE
-    assert summarizer.prompts == []
-    assert evaluator.calls == 0
 
 
 # ---- auto-merge on gate-green (hands-off; gated + best-effort) --------------
@@ -2654,49 +2579,6 @@ async def test_prep_heal_checks_workspace_git_when_no_repo_url(tmp_path, monkeyp
     assert s.blocked_kind == "" and s.heal_attempts == 2 and s.next_heal_at is None
 
 # ---- trace volume hygiene (harden/trace-retention, 2026-07-15) --------------
-
-
-class RecordingTrendDetector:
-    """Trend-detector double — records which goals got a per-goal sweep."""
-
-    def __init__(self):
-        self.per_goal: list[str] = []
-        self.harness_self = 0
-
-    async def run_per_goal(self, *, goal_id: str, workspace_dir: str) -> None:
-        self.per_goal.append(goal_id)
-
-    async def run_harness_self(self) -> None:
-        self.harness_self += 1
-
-
-@pytest.mark.asyncio
-async def test_trend_sweep_skips_cancelled_and_done_goals(tmp_path):
-    """Dead goals get no trend sweep. Production 2026-07-15: the detector wrote
-    ~350 trend rows per goal per night across 17 goals of which 15 were
-    cancelled/done — the sweep must select only live goals. The harness-self
-    pass (which observes devclaw itself, not any goal) still runs once."""
-    store = _store(tmp_path, Clock())
-    seed_goal(tmp_path, "live", workspace_dir="/repos/live")
-    seed_goal(tmp_path, "dead", workspace_dir="/repos/dead")
-    seed_goal(tmp_path, "finished", workspace_dir="/repos/finished")
-    store.save_status("live", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
-    store.save_status("dead", GoalStatus(phase="cancelled"))
-    store.save_status("finished", GoalStatus(phase="done"))
-
-    td = RecordingTrendDetector()
-    evaluator = FakeClaude()
-    engine, notifier = FakeEngine(), RecordingNotifier()
-
-    await tick_all(
-        store=store, engine=engine, evaluator_caller=evaluator,
-        notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
-        trend_detector=td,
-    )
-
-    assert td.per_goal == ["live"]      # terminal goals not swept
-    assert td.harness_self == 1         # the global pass still ran
-    assert evaluator.calls == 0
 
 
 class PruningEngine(FakeEngine):

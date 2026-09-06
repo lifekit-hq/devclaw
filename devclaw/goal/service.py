@@ -31,9 +31,6 @@ from . import issue_ref as _issue_ref
 from . import project_hold as _project_hold
 from . import remote_checks as goal_remote_checks
 from . import self_deploy as _self_deploy
-from . import summary as goal_summary
-from . import triage as goal_triage
-from ..engine import workspace as _workspace
 from ..engine.workspace import prepare_workspace
 from .engine import InProcessEngine
 from .evaluator import ClaudeCaller
@@ -52,7 +49,6 @@ from ..dispatch_gate import next_window_open_ms, operator_block, schedule_blocks
 from ..loom import trace as _trace
 from ..state_store import StateStore, _now_ms
 from ..task_queue import TaskQueue
-from .. import trend_detector as _trend_detector_mod
 
 
 def _iso_utc(ms: int) -> str:
@@ -95,10 +91,10 @@ class GoalConfig:
 def _should_repoke(outcomes: "dict[str, str]") -> bool:
     """Whether the heartbeat should immediately re-tick after this sweep:
     only on ``conflict`` (T1/PR4+) — a tick's write was abandoned because
-    another writer landed mid-tick. The writers that matter most (steer_goal,
-    evaluate_goal with corrections) poke the loop themselves, but a writer
-    that doesn't (e.g. evaluate_goal returning no corrections, whose
-    telemetry write still bumps the version) would otherwise leave the
+    another writer landed mid-tick. The writers that matter most (steer_goal
+    and the done-gate's corrections) poke the loop themselves, but a writer
+    that doesn't (a telemetry-only column write that still bumps the
+    version) would otherwise leave the
     conflicted goal's pending work — steering, a just-finished action's
     detail — waiting out the full interval. Retrying immediately is bounded:
     the retry re-reads fresh state, and a successful re-tick consumes the
@@ -115,8 +111,6 @@ class GoalService:
         config: Optional[GoalConfig] = None,
         *,
         evaluator_caller: Optional[ClaudeCaller] = None,
-        summary_caller: Optional[ClaudeCaller] = None,
-        triage_caller: Optional[ClaudeCaller] = None,
         notifier: Optional[Notifier] = None,
         project_registry: "Optional[ProjectRegistry]" = None,
     ) -> None:
@@ -132,8 +126,6 @@ class GoalService:
         self._store = store  # task/event store — read by tail_goal for live events
         self._engine = InProcessEngine(queue, store)
         self._evaluator_caller = evaluator_caller
-        self._summary_caller = summary_caller
-        self._triage_caller = triage_caller
         #: used to resolve per-project overrides (verify_done, autodeploy).
         #: None is fine — each falls back to its devclaw-wide default.
         self._project_registry = project_registry
@@ -150,10 +142,6 @@ class GoalService:
         #: the goal heartbeat task + its in-process wake event
         self._loop_task: Optional[asyncio.Task] = None
         self._wake: Optional[asyncio.Event] = None
-        #: trend detector — lazily constructed on first heartbeat that needs it
-        #: so tests (which set DEVCLAW_TREND_ENABLED=0 or stub differently) and
-        #: cold-starts don't import claude bindings prematurely.
-        self._trend_detector_inst: "Optional[_trend_detector_mod.TrendDetector]" = None
         #: heartbeat freshness (#494) — stamped by tick_all on every completed
         #: full pass, read by /health + /node.json. In-memory on purpose: the
         #: signal is "THIS process's loop completed a pass", so it must die
@@ -275,26 +263,6 @@ class GoalService:
             self._evaluator_caller = goal_evaluator.default_caller()
         return self._evaluator_caller
 
-    def _summary(self) -> "Optional[ClaudeCaller]":
-        """Cheap plain-language summarizer for owner-facing notifications. Off if
-        DEVCLAW_GOAL_PLAIN_SUMMARY=0 (then owner messages send raw). Bound lazily."""
-        if not goal_summary.PLAIN_SUMMARY_ENABLED:
-            return None
-        if self._summary_caller is None:
-            self._summary_caller = goal_summary.default_caller()
-        return self._summary_caller
-
-    def _triage(self) -> "Optional[ClaudeCaller]":
-        """Cognition caller for the propose-only self-triage interceptor. Off
-        (returns None → every eligible owner ping stays on the raw path) when
-        DEVCLAW_SELF_TRIAGE=0. Bound lazily so tests / cold-starts don't import
-        the claude bindings prematurely — same shape as _summary()."""
-        if not goal_triage.enabled():
-            return None
-        if self._triage_caller is None:
-            self._triage_caller = goal_triage.default_caller()
-        return self._triage_caller
-
     def _remote_checker(self) -> "Optional[goal_remote_checks.RemoteChecker]":
         """Grounded remote-checks verification at the done-gate (the 2026-07-06
         benchmark fix). On by default; DEVCLAW_GOAL_REMOTE_CHECKS=0 disables —
@@ -342,54 +310,6 @@ class GoalService:
         """Per-goal ``autodeploy`` for tick_all's sweep (same reason as
         :meth:`_verify_done_resolver`)."""
         return self._autodeploy
-
-    def _trend_detector(self) -> "Optional[_trend_detector_mod.TrendDetector]":
-        """The cross-session trend detector. ``None`` when disabled via
-        ``DEVCLAW_TREND_ENABLED=0``. Constructed lazily so tests / cold starts
-        don't import the claude bindings until something actually needs them.
-
-        The detector is wired with narrow handles — it can write only to
-        ``trends.md``, the sqlite ``meta`` table (cooldown timestamps), the
-        ``traces`` table (observability), and the notifier. It has no handle
-        to ``GoalStore`` writes, ``TaskQueue.submit``, or any other surface
-        that would let it modify goals or AGENTS.md. The boundary is
-        structural — see ``devclaw/trend_detector.py`` for the rule."""
-        if not _trend_detector_mod.TREND_ENABLED:
-            return None
-        if self._trend_detector_inst is None:
-            from ..cognition import claude_with_model
-
-            claude_caller = claude_with_model(
-                _trend_detector_mod.TREND_MODEL, role="trend-detector",
-            )
-
-            self._trend_detector_inst = _trend_detector_mod.TrendDetector(
-                state_store=self._store,
-                goals_dir=self._cfg.goals_dir,
-                claude_caller=claude_caller,
-            )
-        return self._trend_detector_inst
-
-    def read_trends(self, scope: str = "harness_self", limit_chars: int = 5000) -> dict:
-        """Read recent trend observations from ``trends.md`` for a given scope.
-
-        ``scope='harness_self'`` → the global harness-self file (defaults into
-        Denys's vault per ``DEVCLAW_TREND_HARNESS_SELF_FILE``).
-
-        Anything else is treated as a workspace path → reads
-        ``<scope>/.devclaw/trends.md``.
-
-        The actual read is delegated to ``trend_detector.read_trends_text`` so
-        the same primitive feeds both this MCP wrapper and the per-tick prompt
-        injection in ``goal/tick.py``."""
-        from ..trend_detector import HARNESS_SELF_TRENDS_PATH, read_trends_text
-
-        if scope == "harness_self":
-            path = HARNESS_SELF_TRENDS_PATH
-        else:
-            path = Path(scope) / ".devclaw" / "trends.md"
-        text = read_trends_text(scope, limit_chars)
-        return {"scope": scope, "path": str(path), "trends": text}
 
     # ---- the heartbeat -----------------------------------------------------
 
@@ -498,12 +418,9 @@ class GoalService:
             verify_done=self._cfg.verify_done,
             verify_done_resolver=self._verify_done_resolver(),
             autodeploy=self._cfg.autodeploy, autodeploy_resolver=self._autodeploy_resolver(),
-            summary_caller=self._summary(),
             tracer_factory=self._make_tracer,
-            trend_detector=self._trend_detector(),
             remote_checker=self._remote_checker(),
             issue_fetcher=_issue_ref.fetch_issue,
-            triage_caller=self._triage(),
             mergeability_probe=goal_mergeability.pr_conflicting,
             project_workspaces=self._registered_workspaces,
             project_capabilities=self._registered_capabilities,
@@ -525,8 +442,6 @@ class GoalService:
                 notifier=self._notifier, notify_url="",
                 verify_done=self._verify_done(goal),
                 autodeploy=self._autodeploy(goal),
-                summary_caller=self._summary(),
-                trend_detector=self._trend_detector(),
                 remote_checker=self._remote_checker(),
                 mergeability_probe=goal_mergeability.pr_conflicting,
                 project_caps=self._registered_capabilities(),
@@ -761,7 +676,7 @@ class GoalService:
                 gid, g, base, validation_action(g),
                 store=self._goal_store, engine=self._engine,
                 notifier=self._notifier, notify_url="",
-                prepare_ws=prepare_workspace, summarize=self._summary(),
+                prepare_ws=prepare_workspace,
                 project_caps=self._registered_capabilities(),
             )
             return gid
@@ -1735,43 +1650,6 @@ class GoalService:
         )
         self.poke()
         return {"goal_id": goal_id, "resumed": True, "was_blocked_on": was_blocked_on}
-
-    async def evaluate_goal(self, goal_id: str) -> dict:
-        """Force a direction evaluation NOW (artifact-grounded) and return the
-        verdict. Reports + steers (corrections → inbox); does not block on demand."""
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        g = self._goal_store.load_goal(goal_id)
-        s = self._goal_store.load_status(goal_id)
-        # Same grounding as the tick paths (triage F3): the workspace snapshot
-        # + the agreed spec. The on-demand eval used to omit BOTH — its
-        # "corrections" could describe the wrong repo and ignore the contract
-        # the tick-path evaluator judges against.
-        _co = _workspace.goal_checkout_dir(g.workspace_dir, goal_id) if g.workspace_dir else ""
-        repo_context = await goal_evaluator._repo_context(
-            _co if _co and Path(_co).is_dir() else g.workspace_dir
-        )
-        ev = await goal_evaluator.evaluate(
-            g, s, self._goal_store.recent_log(goal_id),
-            self._goal_store.recent_deliveries(goal_id),
-            claude_caller=self._evaluator(),
-            spec=self._goal_store.read_spec(goal_id),
-            repo_context=repo_context,
-        )
-        now = self._goal_store.now_iso()
-        # Telemetry-only (verdict/note) — column-only path, not a transition.
-        self._goal_store.update_status_fields(
-            goal_id, last_eval_verdict=ev.verdict, last_eval_at=now, last_eval_note=ev.rationale[:300],
-        )
-        self._goal_store.append_log(goal_id, f"on-demand direction: {ev.verdict} — {ev.rationale[:200]}")
-        if ev.corrections:
-            self._goal_store.append_steering(goal_id, ev.corrections, source="auto-eval")
-            self.poke()
-        return {
-            "goal_id": goal_id, "verdict": ev.verdict,
-            "rationale": ev.rationale, "corrections": ev.corrections,
-            "question": ev.question,
-        }
 
     def cancel_goal(self, goal_id: str) -> dict:
         """Abort a durable goal. Sets phase to 'cancelled' (terminal — skipped on

@@ -72,7 +72,7 @@ the cognitive half is the movable part).
 - Cost: zero LLM, ~200 LOC of hardcoded taste a model could judge in one pass. Self-flagged "length-only heuristic, intentionally simple".
 - A/B: no env flag — off-switch means guarding the shape checks (presence checks stay). Medium effort.
 
-### B7. Self-triage interceptor — **C**
+### B7. Self-triage interceptor — **RETIRED 2026-09-06** (spec 037 loop-shape demolition)
 - `devclaw/goal/triage.py` (~210 LOC). 1 Claude call only when a real owner ping fires (zero-token idle preserved). A/B: `DEVCLAW_SELF_TRIAGE=0`. Telemetry-measured only.
 
 ### B8. Item asserts (reality-anchored acceptance) — **H / S-leaning**
