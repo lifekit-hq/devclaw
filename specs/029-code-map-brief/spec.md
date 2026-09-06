@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-31
 
-**Status**: Draft
+**Status**: Implemented 2026-08-31 — shipped in #759 (tasks 8/8). Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped).
 
 **Issue**: lifekit-hq/devclaw#591
 

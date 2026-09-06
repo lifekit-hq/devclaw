@@ -408,3 +408,19 @@ def bind(
         )
 
     return _caller
+
+def claude_with_model(
+    model: Optional[str],
+    *,
+    role: str = "unknown",
+    timeout_ms: Optional[int] = None,
+) -> Callable[[str], Awaitable[str]]:
+    """A one-argument cognition caller bound to a model + role label. Routes
+    through the configured :class:`~devclaw.cognition.Cognition` (claude by
+    default; ``DEVCLAW_COGNITION=stub`` for offline harnesses). ``timeout_ms``
+    overrides the default ceiling for this role — pass it when the role's
+    expected output volume routinely exceeds the global default (decomposer).
+    Lives beside :func:`bind` because it IS the swap point's public face —
+    it used to sit in ``llm_call`` and lazily import this module, the one
+    upward edge that broke the leaf contract (tinyspec ``import-contracts``)."""
+    return bind(model, role=role, timeout_ms=timeout_ms)

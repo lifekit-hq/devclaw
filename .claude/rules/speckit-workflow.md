@@ -3,8 +3,9 @@
 Ruled by Denys 2026-08-13: the homegrown proposal→ADR spec lifecycle is
 **retired in full** (including the `invariant-guard` agent). The speckit
 pipeline in `.specify/` is the only way behavior-changing work starts.
-`docs/proposals/` and `docs/decisions/` are frozen history — read them,
-never write there.
+The pre-speckit proposals and ADRs were removed from the tree on 2026-09-06
+(only ADR 0004 stays, cited by the constitution); read them via
+`git log -- docs/decisions docs/proposals`. Never recreate those folders.
 
 ## The pipeline
 
@@ -85,9 +86,9 @@ The testing, git-workflow, and cognition-prompts rules are untouched.
 
 ## What happened to the old pipeline (2026-08-13)
 
-- `docs/proposals/` + `docs/decisions/` — frozen in place as historical
-  record (INDEX marks them FROZEN). In-flight DRAFT proposals become speckit
-  specs if/when their work is picked up.
+- `docs/proposals/` + `docs/decisions/` — frozen in place 2026-08-13, then
+  removed from the tree 2026-09-06 (git is the archive; ADR 0004 kept). A
+  DRAFT proposal whose work is picked up becomes a speckit spec.
 - `.claude/rules/spec-lifecycle.md` — deleted (this file replaces it).
 - `.claude/agents/invariant-guard.md` — deleted. Invariant enforcement =
   the constitution checked by the speckit pipeline + code review + the named

@@ -110,8 +110,17 @@ def holder_map(store) -> "dict[str, str]":
                 continue
             # Skip-over (spec 025 FR-015): a blocked goal is not a candidate —
             # the queued successor takes the lane instead of idling behind a
-            # park that only a human can clear.
-            if str(getattr(status, "phase", "") or "") == "blocked":
+            # park that only a human can clear. EXCEPT a ``mechanical:ci``
+            # hold: that goal is finishing work it already owns (a done
+            # proposal waiting on the PR's checks, minutes) and its heal
+            # re-drives the done-gate in the very sweep it clears — BEFORE
+            # the hold gate, by design. Dropping it as a candidate handed
+            # its lane to a successor for the same sweep, and two goals then
+            # ran on one directory (2026-09-06, issue-817 / issue-819).
+            if (
+                str(getattr(status, "phase", "") or "") == "blocked"
+                and str(getattr(status, "blocked_kind", "") or "") != "mechanical:ci"
+            ):
                 continue
             goal = store.load_goal(goal_id)
             scope = scope_key(goal)
@@ -135,11 +144,18 @@ def holder_map(store) -> "dict[str, str]":
         # would silently thin candidacy, which is how single-writer switches
         # itself off. (scope is None already skipped qa goals, whose empty
         # cadence never parses.)
-        if status.in_flight is None and (
-            status.pending_merge_pr
-            or (
-                not store.unread_steering_rows(goal_id)
-                and not store.cadence_due(goal, status)
+        # A held done proposal (``pending_done_proposal``) is runnable work the
+        # goal already owns: the ci-settled re-drive dispatches its done-check
+        # ahead of the hold gate, so the head must keep the lane for it.
+        if (
+            status.in_flight is None
+            and not status.pending_done_proposal
+            and (
+                status.pending_merge_pr
+                or (
+                    not store.unread_steering_rows(goal_id)
+                    and not store.cadence_due(goal, status)
+                )
             )
         ):
             continue

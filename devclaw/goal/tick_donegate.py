@@ -50,6 +50,7 @@ from . import problems as _problems
 from . import decisions as _decisions
 from ..delivery import deploy as _deploy
 
+from ..engine import workspace as _workspace
 from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 
@@ -58,6 +59,17 @@ from ..loom import trace as _trace
 #: (_finalize_pending_merge) go through these two names.
 _attempt_merge = _merge.attempt_merge
 _sync_workspace = _merge.sync_workspace_to_default
+
+
+def _grounding_tree(goal: Goal, goal_id: str) -> str:
+    """The tree a best-effort grounding read looks at: the goal's own checkout
+    (one goal, one checkout) when it exists, else the project checkout — a
+    goal that never dispatched (artifact-only done path) has no checkout yet,
+    and grounding is best-effort by convention, never a gate."""
+    if not goal.workspace_dir:
+        return goal.workspace_dir
+    checkout = _workspace.goal_checkout_dir(goal.workspace_dir, goal_id)
+    return checkout if Path(checkout).is_dir() else goal.workspace_dir
 
 
 #: Done-gate treadmill brake: consecutive done-proposal rounds the gate refused
@@ -207,6 +219,7 @@ def _feature_spec_grounding(goal: "Goal", store: GoalStore, goal_id: str) -> str
     fallback = store.read_spec(goal_id)
     if not goal.workspace_dir:
         return fallback
+    checkout = _grounding_tree(goal, goal_id)
     try:
         rel = store.read_executing_feature(goal_id).strip()
     except Exception:  # noqa: BLE001 — grounding is best-effort
@@ -216,13 +229,13 @@ def _feature_spec_grounding(goal: "Goal", store: GoalStore, goal_id: str) -> str
         # did not exist to record pre-session). Ground on the feature the
         # increment actually landed in.
         try:
-            rel = _slice_guard.current_feature_dir_sync(goal.workspace_dir)
+            rel = _slice_guard.current_feature_dir_sync(checkout)
         except Exception:  # noqa: BLE001 — derivation is best-effort
             rel = ""
     if not rel:
         return fallback
     try:
-        spec_path = Path(goal.workspace_dir) / rel / "spec.md"
+        spec_path = Path(checkout) / rel / "spec.md"
         if spec_path.is_file():
             return spec_path.read_text(encoding="utf-8", errors="replace")
     except Exception:  # noqa: BLE001 — a workspace hiccup falls back, never fails
@@ -423,7 +436,7 @@ async def _resolve_done_gate(
     # repo facts. Best-effort and collected OUTSIDE the try — it never raises,
     # so a git hiccup can't read as an eval error. No zero-token concern: this
     # path already runs cognition; the git subprocess adds no LLM call.
-    repo_context = await _evaluator._repo_context(goal.workspace_dir)
+    repo_context = await _evaluator._repo_context(_grounding_tree(goal, goal_id))
     # Ground the gate on the executing feature's speckit spec (FR-006 / D6),
     # falling back to the goal's scope spec / done_when when none is recorded.
     spec = _feature_spec_grounding(goal, store, goal_id)
@@ -893,8 +906,10 @@ async def _open_done_gate(
         # accumulated work — read the goal branch, not the default branch
         # (otherwise it judges done_when against an empty diff).
         done_gate_branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
+        checkout = _workspace.goal_checkout_dir(goal.workspace_dir, goal_id)
+        await _workspace.ensure_goal_checkout(goal.workspace_dir, goal.repo_url, goal_id)
         try:
-            await prepare_ws(goal.workspace_dir, goal.repo_url, done_gate_branch)
+            await prepare_ws(checkout, goal.repo_url, done_gate_branch)
         except WorkspaceError as exc:
             store.append_log(goal_id, f"done-gate workspace prep failed: {exc}")
             store.transition(
@@ -908,6 +923,9 @@ async def _open_done_gate(
             engine="devclaw", tool="review_repository",
             goal=_done_gate_review_brief(goal),
             open_pr=False,
+            # The done-check reads the goal's accumulated work: the queue
+            # places this branch at run start (see Action.branch).
+            branch=done_gate_branch,
         )
         # Atomic dispatch (PR7) — same shape as _dispatch_action's; see that
         # function's comment for the dispatch_exc/txn-nesting rationale.

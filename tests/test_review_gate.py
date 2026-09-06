@@ -220,10 +220,12 @@ def test_validate_rejects_garbage():
 def test_format_feedback_lists_blocking_issues_with_fixes():
     fb = format_feedback({
         "summary": "dead code present",
-        "blocking": [
+        "issues": [
+            {"severity": "minor", "location": "main.py:2", "problem": "nit", "fix": "later"},
             {"severity": "major", "location": "main.py:48", "problem": "no-op check", "fix": "remove it"},
         ],
     })
+    assert "main.py:2" not in fb  # feedback carries the blocking subset only
     assert "requested changes" in fb and "main.py:48" in fb and "remove it" in fb
     assert "weaken tests" in fb or "re-verify" in fb
 

@@ -1,6 +1,7 @@
 # Spec 028 — Stale worker inputs
 
 **Issue:** lifekit-hq/devclaw#592
+**Status:** Implemented 2026-08-31 — shipped in #758 (US1), #770 (US2); follow-up fix #777 (tasks 18/18). Header added 2026-09-06 by the docs audit (the spec carried none).  
 
 ## What
 

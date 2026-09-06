@@ -1,5 +1,13 @@
 """Classify an agent/planner failure so a usage-limit is never mistaken for a bug.
 
+INPUT CONTRACT: the text must come from the provider or a harness subprocess
+(the ACP agent's error, ``claude --print`` output/stderr). Never hand it prose
+about the repository under development — a gate verdict, a verify log, a
+worker's self-report, review findings. Those can contain any word (a test file
+named ``test_rate_limit_pause.py`` paused the whole account on 2026-09-06) and
+the caller decides REAL by origin before this function is consulted
+(``devclaw/queue/settle.py`` ``_CLASSIFIABLE_ORIGINS``).
+
 The load-bearing distinction: a model **usage/rate limit** must NOT be treated like
 a code failure. Today a quota hit surfaces as a generic error → the queue retries
 immediately → it burns the remaining quota on the same doomed call → the task fails
@@ -142,7 +150,8 @@ class Classification:
 # NB: a vendored subset of these patterns (AUTH/QUOTA/RATE + the relative
 # retry-after parser) lives in runner/runner.py — the in-sandbox
 # runner can't import devclaw, so it carries its own copy to emit a structured
-# status="rate_limited" result. Keep the two in sync when editing.
+# status="rate_limited" result. The retry-after half is pinned identical by
+# tests/test_runner_limits.py::test_vendored_retry_after_parser_matches_the_host.
 # AUTH first: harness-shaped auth wording must classify as AUTH even when the
 # text also mentions a rate-limit-shaped code — an expired login is never a
 # quota event. "authentication required" is the ACP/worker wording from the

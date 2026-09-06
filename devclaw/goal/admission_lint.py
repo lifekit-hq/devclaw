@@ -21,6 +21,12 @@ author, instead of surfacing to a worker hours later:
 the ONE cognition call this lint makes — at creation, never on the tick
 (constitution III). Grounding: the prompt sees only the contract text; it is
 told absent ⇒ unknown and forbidden to infer repository facts (#227 shape).
+
+(c) fails CLOSED (constitution V): a caller that raises, or a reply the
+protocol cannot read, is :class:`AdmissionLintError` and the goal is NOT
+admitted — nothing persists, the author resubmits once cognition answers.
+The one deliberate skip is a deployment with no caller configured, said out
+loud in ``LintResult.note``.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
+from ..llm_call import PlannerError, extract_json
 from ..prompts import load_prompt
 
 ClaudeCaller = Callable[[str], Awaitable[str]]
@@ -54,6 +61,12 @@ _ABSOLUTE = re.compile(
 )
 _HAS_BASELINE = re.compile(r"\b(new|relative to|vs\.?|compared to|against|baseline|regression|since)\b", re.IGNORECASE)
 _REWRITE = "no new failures relative to the default branch"
+
+
+class AdmissionLintError(Exception):
+    """The undecided-choice judge produced no usable verdict — the caller
+    raised, or the reply is not ``{"undecided": [...]}`` with well-formed
+    entries. Creation refuses on it (fail closed); nothing is persisted."""
 
 
 @dataclass(frozen=True)
@@ -81,7 +94,7 @@ class LintResult:
     rewrites: tuple[Rewrite, ...] = ()
     undecided: tuple[Undecided, ...] = ()
     done_when: str = ""
-    #: the cognition call for (c) was skipped or failed — said out loud (VI)
+    #: the cognition call for (c) was skipped (no caller configured) — said out loud (VI)
     note: str = ""
     _extra: dict = field(default_factory=dict, compare=False)
 
@@ -126,31 +139,36 @@ def lint_mechanical(done_when: str) -> LintResult:
     )
 
 
-def _extract_json(text: str) -> object:
-    m = re.search(r"\{[\s\S]*\}", text or "")
-    return json.loads(m.group(0)) if m else {}
-
-
 async def judge_undecided(done_when: str, claude_caller: Optional[ClaudeCaller]) -> tuple[tuple[Undecided, ...], str]:
-    """Class (c) via ONE cognition call. Returns (undecided, note). Never
-    raises: a failed or absent caller yields no findings and a loud note."""
+    """Class (c) via ONE cognition call. Returns (undecided, note).
+
+    Fails CLOSED: a caller that raises or a reply outside the protocol raises
+    :class:`AdmissionLintError` — a lint that cannot judge admits nothing. The
+    only skip is an absent caller, reported in ``note``."""
     if claude_caller is None:
         return (), "undecided-choice check skipped: no cognition caller configured"
     try:
         raw = await claude_caller(load_prompt("admission-lint", done_when=done_when.strip()))
-        parsed = _extract_json(raw)
-    except Exception as exc:  # noqa: BLE001 — creation must not wedge on the judge
-        return (), f"undecided-choice check failed ({exc.__class__.__name__}); admitted without it"
+    except Exception as exc:  # noqa: BLE001 — one typed refusal, never a wedge
+        raise AdmissionLintError(
+            f"undecided-choice check failed: {exc.__class__.__name__}: {exc}"
+        ) from exc
+    try:
+        parsed = json.loads(extract_json(raw))
+    except (PlannerError, json.JSONDecodeError) as exc:
+        raise AdmissionLintError(f"undecided-choice check returned no JSON object: {exc}") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("undecided"), list):
+        raise AdmissionLintError('undecided-choice check reply is not {"undecided": [...]}')
     found: list[Undecided] = []
-    items = parsed.get("undecided") if isinstance(parsed, dict) else None
-    for it in (items or []) if isinstance(items, list) else []:
+    for it in parsed["undecided"]:
         if not isinstance(it, dict):
-            continue
+            raise AdmissionLintError("undecided-choice entry is not an object")
         clause = str(it.get("clause", "")).strip()
         choice = str(it.get("choice", "")).strip()
         opts = tuple(str(o).strip() for o in (it.get("options") or []) if str(o).strip())
-        if clause and choice and len(opts) >= 2:
-            found.append(Undecided(clause=clause[:400], choice=choice[:400], options=opts[:4]))
+        if not (clause and choice and len(opts) >= 2):
+            raise AdmissionLintError("undecided-choice entry lacks a clause, a choice, or two options")
+        found.append(Undecided(clause=clause[:400], choice=choice[:400], options=opts[:4]))
     return tuple(found), ""
 
 

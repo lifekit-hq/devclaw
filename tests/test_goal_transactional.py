@@ -22,7 +22,7 @@ import json
 import pytest
 
 from devclaw.goal.engine import InProcessEngine
-from devclaw.goal.models import GoalStatus, InFlight, PollResult
+from devclaw.goal.models import Action, GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import (
     Outcome,
@@ -448,3 +448,32 @@ async def test_run_atomic_rejects_yielding_coroutine(tmp_path):
     s = store.load_status("g")
     assert s.in_flight is None
     assert s.phase == "idle"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_threads_the_placement_branch_onto_the_row(tmp_path):
+    """Action.branch reaches the task row as target_branch — the seam the
+    queue's run-start placement reads. Without it the run would use whatever
+    HEAD the previous task on the same directory left behind (2026-09-06:
+    two goals on one workspace captured each other's tips as baselines)."""
+    state, queue, engine, goal_store, goals_dir = _wired(tmp_path)
+    seed_goal(goals_dir, "g")
+    goal = goal_store.load_goal("g")
+
+    with state.transaction():
+        ref = await engine.dispatch(
+            Action(engine="devclaw", tool="implement_feature", goal="add /health",
+                   open_pr=False, branch="goal/g"),
+            goal, "",
+        )
+        review = await engine.dispatch(
+            Action(engine="devclaw", tool="review_repository", goal="verify",
+                   open_pr=False, branch="goal/g"),
+            goal, "",
+        )
+    assert state.get_task(ref.id).target_branch == "goal/g"
+    assert state.get_task(review.id).target_branch == "goal/g"
+    # …and both run in the goal's own checkout, not the project's (one goal,
+    # one checkout — the project path stays the goal's identity).
+    assert state.get_task(ref.id).workspace_dir == "/repos/demo/.goals/g"
+    assert state.get_task(review.id).workspace_dir == "/repos/demo/.goals/g"

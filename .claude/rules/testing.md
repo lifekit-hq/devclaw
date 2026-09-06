@@ -1,6 +1,6 @@
 # Testing — how to run and write tests in this repo
 
-The suite is **fully stubbed** — no docker, no `claude` binary, ~1150 tests in
+The suite is **fully stubbed** — no docker, no `claude` binary, ~1400 tests in
 ~23s (pytest-xdist, `-n auto` in `addopts`). Anything needing real
 docker/claude is an integration concern: `/live-shakedown`, never pytest.
 
@@ -26,7 +26,7 @@ its regression surface, and cognition quality is measured by evals
   you need `pdb`, live output, or ordered failures — xdist swallows all three.
   A test that passes at `-n0` and fails at `-n auto` is a test with hidden
   shared state (a fixed path, a global, a port), not an xdist problem.
-- **`ruff check .` AND `mypy` before you open a PR** — CI gates both (mypy
+- **`ruff check .`, `mypy` AND `lint-imports` before you open a PR** — CI gates all three (mypy
   config lives in pyproject `[tool.mypy]`; default strictness, zero-error
   baseline — ratchet up, never loosen). The rule set is narrow
   on purpose (`select = ["F", "E9"]` in `pyproject.toml`): pyflakes and syntax

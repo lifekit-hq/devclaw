@@ -33,6 +33,7 @@ from . import remote_checks as goal_remote_checks
 from . import self_deploy as _self_deploy
 from . import summary as goal_summary
 from . import triage as goal_triage
+from ..engine import workspace as _workspace
 from ..engine.workspace import prepare_workspace
 from .engine import InProcessEngine
 from .evaluator import ClaudeCaller
@@ -356,7 +357,7 @@ class GoalService:
         if not _trend_detector_mod.TREND_ENABLED:
             return None
         if self._trend_detector_inst is None:
-            from ..llm_call import claude_with_model
+            from ..cognition import claude_with_model
 
             claude_caller = claude_with_model(
                 _trend_detector_mod.TREND_MODEL, role="trend-detector",
@@ -624,7 +625,7 @@ class GoalService:
             # notifier-less run still leaves a trace.
             sys.stderr.write(f"goal-layer: cycle report {cycle_key} (log-only):\n{report.summary}\n")
 
-        # Self-issue-filing Stage 1 (docs/proposals/self-issue-filing.md): at this
+        # Self-issue-filing Stage 1 (``goal/self_issue.py`` docstring): at this
         # SAME once-per-cycle edge (past the cycle_report_exists idempotency gate,
         # so it fires once per cycle, never per tick), turn recurring problems into
         # GitHub issues on the devclaw repo and age out stale ones. ZERO LLM.
@@ -832,7 +833,14 @@ class GoalService:
             mech = _lint.lint_mechanical(done_when)
             if mech.refused:
                 raise ValueError(_lint.refusal_message(mech))
-            undecided, note = await _judge_undecided(mech.done_when, self._evaluator_caller)
+            try:
+                undecided, note = await _judge_undecided(mech.done_when, self._evaluator())
+            except _lint.AdmissionLintError as exc:
+                raise ValueError(
+                    f"done_when not admitted: {exc} — nothing persisted; resubmit "
+                    "once cognition answers (constitution V: a lint that cannot "
+                    "judge admits nothing)"
+                ) from exc
             if mech.rewrites:
                 kwargs["done_when"] = mech.done_when
                 admission["rewrites"] = [
@@ -1340,7 +1348,9 @@ class GoalService:
             "workspace_dir": g.workspace_dir,
             "backlog": g.backlog,
             "mode": g.mode,
-            "strictness": g.strictness,
+            # EFFECTIVE dial (explicit > devclaw.json strictnessDefault >
+            # trust) — what dispatch actually resolves, not the stored default.
+            "strictness": self._effective_strictness(g),
             "phase": s.phase,
             # RAW stored lifecycle (#496): report what is stored, never a
             # coalesced guess. The #493 bug lived exactly in that gap — a
@@ -1462,6 +1472,7 @@ class GoalService:
         # Account-wide hold (quota pause / manual hold / global window) computed
         # ONCE — per-goal windows are get_goal detail, not worth N reads here.
         hold = self._dispatch_hold()
+        _strict_memo: dict[str, str] = {}
         for gid in self._goal_store.list_goal_ids():
             g = self._goal_store.load_goal(gid)
             s = self._goal_store.load_status(gid)
@@ -1479,7 +1490,7 @@ class GoalService:
                 "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
                 "direction": s.last_eval_verdict,
                 "actions_dispatched": s.actions_dispatched,
-                "strictness": g.strictness,
+                "strictness": self._effective_strictness(g, memo=_strict_memo),
                 "dispatch_hold": hold,
             })
         return out
@@ -1624,7 +1635,34 @@ class GoalService:
         g = self._goal_store.set_strictness(goal_id, strictness)
         self._goal_store.append_log(goal_id, f"strictness set to {strictness}")
         self.poke()
-        return {"goal_id": goal_id, "strictness": g.strictness}
+        return {"goal_id": goal_id, "strictness": self._effective_strictness(g)}
+
+    def _effective_strictness(self, g, memo: "dict[str, str] | None" = None) -> str:
+        """The dial dispatch will actually use (``engine._manifest_tiers``):
+        explicit per-goal setting > the project's ``devclaw.json``
+        ``strictnessDefault`` > ``trust``. A display read: never raises — a
+        malformed or unreadable manifest shows the stored value (dispatch
+        itself fails loud on it). ``memo`` dedups the manifest read across a
+        list of goals sharing one workspace. On 2026-09-06 the surfaces said
+        ``trust`` for goals whose every task ran ``strict`` from the manifest,
+        and the review-gate behaviour read as a dial bug."""
+        from ..project_manifest import effective_strictness, load_manifest_at_base
+
+        if g.strictness_explicit is not None:
+            return str(effective_strictness(g.strictness_explicit, None))
+        ws = (g.workspace_dir or "").strip()
+        if not ws:
+            return str(g.strictness)
+        if memo is not None and ws in memo:
+            return memo[ws]
+        try:
+            manifest = load_manifest_at_base(ws)
+            value = str(effective_strictness(None, manifest.strictness_default if manifest else None))
+        except Exception:  # noqa: BLE001 — a display read never raises
+            value = str(g.strictness)
+        if memo is not None:
+            memo[ws] = value
+        return value
 
     def set_verify_cmd(self, goal_id: str, verify_cmd: Optional[str]) -> dict:
         """Override the goal's verification command (issue #711) — the verb
@@ -1709,7 +1747,10 @@ class GoalService:
         # + the agreed spec. The on-demand eval used to omit BOTH — its
         # "corrections" could describe the wrong repo and ignore the contract
         # the tick-path evaluator judges against.
-        repo_context = await goal_evaluator._repo_context(g.workspace_dir)
+        _co = _workspace.goal_checkout_dir(g.workspace_dir, goal_id) if g.workspace_dir else ""
+        repo_context = await goal_evaluator._repo_context(
+            _co if _co and Path(_co).is_dir() else g.workspace_dir
+        )
         ev = await goal_evaluator.evaluate(
             g, s, self._goal_store.recent_log(goal_id),
             self._goal_store.recent_deliveries(goal_id),

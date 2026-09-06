@@ -19,10 +19,23 @@ from a genuine no-op instead of quietly becoming one.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 
 from . import config as _config
 from .git_identity import git_identity_env
+
+
+def repo_slug(repo_url: str | None) -> str | None:
+    """``owner/name`` from a registry row's ``repo_url`` (https or ssh, with or
+    without ``.git``). None when the URL is absent or not GitHub-shaped."""
+    url = (repo_url or "").strip().rstrip("/")
+    if not url:
+        return None
+    m = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$", url)
+    if not m:
+        return None
+    return f"{m.group(1)}/{m.group(2)}"
 
 #: Generic manifest / entrypoint files worth grounding the reviewer on — one per
 #: common ecosystem (Python, Node, .NET, Go, Rust, Java) plus the repo's own

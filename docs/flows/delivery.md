@@ -3,9 +3,15 @@
 How a goal's dispatches turn into PRs, how those PRs reach `main`, and where
 the dispatch-cap backstop sits.
 
-**devclaw never merges.** Every PR it opens is landed by a human. Auto-merge,
-the per-action delivery topology it keyed off, and the program PR-stack
-reconciler were all deleted in #641 — see "Why nothing merges" below.
+**Nothing merges mid-flight; the confirmed-achieved close merges.** A goal's
+cumulative PR stays open for the goal's entire life (#486). When the done-gate
+confirms `achieved`, the close squash-merges that PR into the default branch
+(spec 025, `goal/merge_on_close.py`) — the one seam where devclaw merges. A
+close that cannot merge does not happen: the goal parks
+`mechanical:merge_failed` after one bounded, pipeline-dispatched conflict
+self-heal, and the parked goal releases its project lane to the queued
+successor. The merge also requires the PR's CI rollup to be green on the same
+head the done-gate opened on (spec 032).
 
 ## The shape: one goal = one shared branch = one cumulative PR
 
@@ -33,7 +39,9 @@ repo); the shared goal branch is the delivery surface.
         for the one cumulative PR
                         |
                         v
-        the HUMAN merges
+        confirmed achieved → the close
+        squash-merges the PR  (spec 025)
+        cannot merge → mechanical:merge_failed
 ```
 
 Increments never overlap by construction, so there is nothing to merge
@@ -42,6 +50,45 @@ whether the PR has gone CONFLICTING with its base
 (`goal/mergeability.py:pr_conflicting`). A CONFLICTING verdict logs and pages
 the owner — the next increment would otherwise stack onto a branch that can no
 longer land. An unknown verdict says nothing; it never reads as "all clear".
+
+## Merge-on-close (spec 025)
+
+`goal/tick_donegate.py` runs the merge between the evaluator's `achieved`
+verdict and the `ACHIEVE` transition — nothing on the settle path merges, and
+`mergeability.py` stays read-only. The sequence, all mechanical (`gh`
+subprocesses, zero cognition):
+
+1. **Same-green-head check** (`_ci_hold_before_merge`, spec 032 US1). The
+   PR's CI rollup is re-read right before merging. It must be green (or the
+   goal has no PR), and the head must equal `ci_green_head` — the head the
+   done-gate opened on. Otherwise the goal blocks `mechanical:ci` with
+   `pending_done_proposal=True`: a moved head re-opens the done-gate on the
+   new head; a pending rollup waits, zero-token.
+2. **`attempt_merge`** (`merge_on_close.py`) finds the open PR for
+   `goal/<id>` and runs `gh pr merge --squash`. Outcomes: `merged`;
+   `already_merged` (an operator merged by hand — success); `no_pr` (a
+   no-change goal — the close proceeds); `conflict`; `closed_unmerged` (a
+   human rejected the PR — closing as achieved would discard the work); or
+   `error` (forge/network/branch protection).
+3. **One bounded conflict self-heal** (FR-017). On the first `conflict` the
+   goal returns to `idle` with `merge_heal_attempted=True` and a machine
+   steering row (`source="auto-conflict"`); the next tick's advance dispatches
+   the resolution increment through the normal pipeline — verify gate and a
+   fresh done-gate round included — and the close re-attempts the merge. A
+   second conflict is not healed.
+4. **Failure posture.** Any non-success outcome blocks the goal
+   `mechanical:merge_failed` with `pending_merge_pr` set and an owner ping.
+   `resume_goal` re-attempts the MERGE only (step 1 included), never the
+   done-gate — the achieved verdict stands (FR-003). A blocked goal is not a
+   lane holder (`goal/project_hold.py`, skip-over): the queued successor
+   starts instead of waiting.
+5. **After a merge** the workspace is fast-forwarded to the default branch
+   (best-effort; the next goal's `prepare_ws` is the guarantee), a
+   devclaw-repo merge records a pending self-deploy (spec 025 US2), and the
+   goal transitions to `done`.
+
+`done_when` is the sole pre-merge authority; there is no additional pre-merge
+review, and human review moves post-merge (FR-006).
 
 ## Programs (removed by spec 022 US3)
 
@@ -55,22 +102,13 @@ CRUD) were pruned once nothing could write a row — a pre-retirement
 has exactly one shape: one
 increment at a time on the goal branch, one push, one cumulative PR.
 
-## Why nothing merges (#641)
+## History
 
-Auto-merge fired only for a **per-action** delivery, and nothing has selected
-per-action since the spec 008 shrink stamped `executing` on every goal at
-creation. It had been unreachable in production for months, hidden by tests
-that reached it by seeding a goal shape production had stopped writing.
-
-The program PR-stack reconciler went with it. It existed to shepherd a stack of
-per-action PRs to main and close the superseded ones; goal-branch delivery
-never makes a stack. What was left was a hazard
-rather than a capability: a reconcile that merged the cumulative
-goal-branch PR would have re-created the amnesia
-bug through a path that bypassed the goal-branch skip.
-
-The through-line: in companion mode a human reviews and merges every PR.
-Machinery that merges without one is compensating for an absent reviewer.
+#641 deleted auto-merge (reachable only by the per-action delivery topology
+nothing had selected since the 008 shrink) and the program PR-stack
+reconciler; `merge.py` became the read-only `mergeability.py`. Spec 025
+(2026-08-29) reversed that doctrine at exactly one seam — the
+confirmed-achieved close — and nowhere else.
 
 ## The dispatch cap (runaway backstop)
 
@@ -80,7 +118,7 @@ is gone with the host planning chain). Progress-aware since #172/#173:
 ```
    dispatch            -> counter +1
    settle SUCCESSFUL   -> counter -1   (done; gate passed OR gateless —
-                                        reviews, programs, no-gate tasks)
+                                        reviews, no-gate tasks)
    settle FAILED       -> stays        (failed run, or gate FAILED)
 
    counter >= cap      -> goal BLOCKED, owner notified

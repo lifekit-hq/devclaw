@@ -325,6 +325,18 @@ def test_boilerplate_revision_behind_names_both_revisions(env, tmp_path, monkeyp
     assert "onboard" in f.remedy
 
 
+def test_goal_checkouts_not_ignored_warns_with_onboard_remedy(env, tmp_path):
+    """Boilerplate revision 2: the repo root must ignore .goals/ (per-goal
+    checkouts live under the project workspace)."""
+    ws = tmp_path / "ws-gc"
+    register_tmp_project(env["registry"], str(ws))
+    (f,) = _findings(_run(env), "project.goal_checkouts.ignored")
+    assert f.verdict is Verdict.WARN and "onboard" in f.remedy
+    (ws / ".gitignore").write_text("node_modules/\n.goals/\n")
+    (f,) = _findings(_run(env), "project.goal_checkouts.ignored")
+    assert f.verdict is Verdict.OK
+
+
 def test_unpaired_managed_marker_is_a_fail(env, tmp_path):
     ws = tmp_path / "ws-m5"
     register_tmp_project(env["registry"], str(ws))

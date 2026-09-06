@@ -2,7 +2,7 @@
 
 A step-by-step trace of what happens when devclaw runs ONE task (an
 `implement_feature`, `fix_bug`, `review_repository`, etc.). Sibling
-reference to [`decisions/0001-openhands-engine.md`](../decisions/0001-openhands-engine.md): that file
+reference to the engine section of [`../architecture.md`](../architecture.md): that
 describes the *structural* choice (why three layers); this one walks the
 *temporal* sequence (what each layer does, in order, for one task).
 
@@ -15,8 +15,7 @@ Use this when:
 
 The three nodes (Node 1 = openclaw waiter / TS, Node 2 = devclaw-mcp /
 Python, Node 3 = ephemeral sandbox / per task) are defined in
-[`decisions/0001-openhands-engine.md`](../decisions/0001-openhands-engine.md) and in
-`~/memory/projects/devclaw/architecture.md`. This doc assumes you've read
+[`../architecture.md`](../architecture.md) (ADR 0001 itself lives in git history (`git log -- docs/decisions docs/proposals`)). This doc assumes you've read
 one of those.
 
 ## The full sequence
@@ -49,8 +48,9 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       naming it (out_of_scope/invariants/established,       │
      │  │       spec 012 US2 — [] declares one empty, omitting        │
      │  │       one is a rejection, never a silent default)           │
-     │  │     • write /var/lib/devclaw/goals/<id>/goal.yaml (facts,   │
-     │  │       incl. the authored saga slots) + the first            │
+     │  │     • write $DEVCLAW_GOALS_DIR/<id>/goal.yaml (deploy:      │
+     │  │       /var/lib/devclaw/goals/) — facts incl. the authored   │
+     │  │       saga slots — + the first                              │
      │  │       goal_status SQLite row                                │
      │  │       (STATUS.md is rendered alongside as a generated view) │
      │  │     • lifecycle="executing", phase="idle"                   │
@@ -77,12 +77,15 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • host_bind = _translate_workspace_path(     │                                 │
      │  │         workspace_dir )                          │                                 │
      │  │     • docker run --rm --name devclaw-XXXX        │ ──┐                             │
-     │  │         -v <host_bind>:/workspace                │   │                             │ docker run fails here
+     │  │         -v <host_bind>:/workspace                │   │  host_bind = the goal's     │ docker run fails here
+     │  │           (<project>/.goals/<goal_id>)           │   │  own checkout (2026-09-06)  │
      │  │         -v devclaw-toolchains-<proj>:            │   │                             │ if Node 2 lacks GID 990
      │  │            /home/agent/.local/share/mise         │   │  per-project toolchain      │
      │  │         -v ~/.claude/.credentials.json:RO        │   │  cache (ADR 0005)           │
      │  │         -v <pre-trusted .claude.json>:RO         │   │
      │  │         --tmpfs /home/agent/.claude/session-env  │   │
+     │  │         --pids-limit 4096 --cap-drop ALL         │   │
+     │  │         --security-opt no-new-privileges         │   │
      │  │         --network host                           │   │
      │  │         devclaw-sandbox:local                    │   │
      │  │         '<JSON payload>'                         │   │
@@ -190,20 +193,25 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │       (spec 032 US3) — no retry; an issue may declare a     │                      │
      │  │       gate-input path in scope with a backticked path/glob  │                      │
      │  │                                                             │                      │
-     │  │  Step I — review gate (quality/review_gate):                │                      │
+     │  │  Step I — gate pipeline (quality/task_gates.py →            │                      │
+     │  │     quality/gate_pipeline.run_pipeline): verify →           │                      │
+     │  │     materialize → change_class → test_integrity, then       │                      │
+     │  │     `review` / `browser` only as consulted by the dial      │                      │
+     │  │     (review is dropped under `trust`):                      │                      │
      │  │     • the MATERIALIZED span, not a fresh working-tree diff  │                      │
-     │  │     • feed diff to `claude --print` for adversarial check   │                      │
-     │  │     • + workspace snapshot as REPOSITORY CONTEXT (#227)     │                      │
+     │  │     • review: feed diff to `claude --print` for adversarial │                      │
+     │  │       check, + workspace snapshot as REPO CONTEXT (#227)    │                      │
      │  │     • single adversarial reviewer over the diff,            │                      │
      │  │       wrapped in the cognition-timeout degrade ladder       │                      │
      │  │       (oversized diff → per-file split + union)             │                      │
-     │  │     • test-integrity guard: were tests deleted/weakened?    │                      │
+     │  │     • test_integrity is its own always-hard gate            │                      │
+     │  │       (`_IntegrityGate`): were tests deleted/weakened?      │                      │
      │  │     • either: ok / needs revision (kicked back to engineer) │                      │
      │  │                                                             │                      │
      │  │  Step J — delivery (delivery.deliver_change):               │                      │
      │  │     • publishes the JUDGED head — no discovery of its own;  │                      │
      │  │       a drifted workspace fails loud (spec 013 FR-005)      │                      │
-     │  │     • git push to branch goal/<slug>                        │                      │
+     │  │     • git push to branch goal/<goal-id>                     │                      │
      │  │     • gh pr create  (conventional commit + diffstat body)   │                      │
      │  │     • record PR URL                                         │                      │
      │  │                                                             │                      │
@@ -240,14 +248,14 @@ Problem for the owner, spec 031) or `STATUS: BLOCKED: env — <item>` (the
 sandbox lacks a tool, service, credential or access). The runner types the
 form on the wire (`block_kind`, `block_item`); the settle fails the task
 closed and un-retried in both cases, but the env form is the PIPELINE's:
-one problems-catalog row per item (`block/env_deficiency`, self-filed as
+one problems-catalog row per item (`category="block", kind="env_deficiency"`, self-filed as
 devclaw work when `DEVCLAW_SELF_REPO` is set), and the goal's whole project
 holds on `mechanical:env` (a red `worker:<item>` capability row, read at
 admission by every goal on the project) until the instance's environment
 changes — a new sandbox image or build — when it heals with no operator verb.
 The worker never patches the repo around its environment.
 
-## How the 2026-06-25 cascade maps onto these steps
+## Historical (2026-06) — how the 2026-06-25 cascade maps onto these steps
 
 | Failure | Step | Symptom seen upstream | Real fix |
 |---|---|---|---|
@@ -259,7 +267,7 @@ All three were silent-timeout failures because the engine output in Step H
 couldn't distinguish *"the docker run from Step C never happened"* from
 *"the sandbox started but exited 1"*.
 
-## Open improvements (queue, not yet built)
+## Historical (2026-06) — open improvements (queue, not yet built)
 
 1. **Failure-mode disambiguation in Step H.** Distinct error strings for:
    "the `docker run` in Step C never returned a container ID" vs "the
@@ -274,7 +282,7 @@ couldn't distinguish *"the docker run from Step C never happened"* from
    `docker version` to the test so a broken-but-running orchestrator flips
    unhealthy in 30s instead of being discovered by the first task.
 4. **Sandbox image selection by detected stack.** SUPERSEDED by
-   [ADR 0005](../decisions/0005-generic-sandbox-toolchain.md): there is no
+   ADR 0005 (specs 020/030; git history (`git log -- docs/decisions docs/proposals`)): there is no
    per-stack image to select — one lean image, and the toolchain is a
    project-declared fact provisioned by mise in the runner pre-step (Step D).
    (Historically we planned to reuse a `_detect_stack()` helper to pick the
@@ -290,7 +298,7 @@ couldn't distinguish *"the docker run from Step C never happened"* from
 Everything above traces a task the GOAL layer dispatched. The same sequence
 also runs for a **direct task** (`dispatch_task` at layer 1 → `queue.submit`
 → Steps C–K) with no goal and no heartbeat — the v1-helper path
-re-surfaced by [ADR 0011](../decisions/0011-branch-target-delivery-seam.md).
+re-surfaced by ADR 0011 (git history (`git log -- docs/decisions docs/proposals`)).
 Two optional inputs shape ONLY Step J (delivery) and a new pre-step:
 
 - `base_branch` — grounds the ahead-count/diff range and becomes
@@ -299,6 +307,11 @@ Two optional inputs shape ONLY Step J (delivery) and a new pre-step:
 - `target_branch` — the queue preps the workspace ON that branch
   (`prepare_workspace(branch=target_branch)`, created off `base_branch` if
   new), and Step J reuses its single PR (the widened goal-mode reuse path).
+  Every goal-path row carries it too (`Action.branch` = `goal/<id>`, the
+  done-check review included): placement happens at RUN start, right before
+  the baseline `pre_run_sha` is captured — the baseline is re-read on every
+  run and reused only on a pause-resume (2026-09-06, the shared-workspace
+  class).
   If delivery lands anywhere else, the task settles `failed` — the
   "continue this branch" contract never silently degrades.
 

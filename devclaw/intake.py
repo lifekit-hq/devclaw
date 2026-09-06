@@ -1,6 +1,6 @@
 """Single intake doorway — Stage 1: ``file_intake`` (the intent half).
 
-Proposal: ``docs/proposals/single-intake-doorway.md`` (LOCKED 2026-08-13).
+Direction: spec 014 (``specs/014-issue-doorway/``); the 2026-08-13 proposal is in git history.
 
 Every ask from every source — human or agent — enters devclaw here: the shape
 is validated synchronously, provenance is stamped server-side, and the ask is
@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Optional, Protocol
 from .goal.issue_ref import CONTRACT_HEADING, extract_acceptance
 from .procutil import run as _run
+from .task_git import repo_slug
 
 #: the intake marker label every filed ask carries (proposal §5).
 INTAKE_LABEL = "devclaw-intake"
@@ -81,18 +82,6 @@ class IntakeError(ValueError):
 
 
 # ---- pure decisions (no DB, no clock, no network) ---------------------------
-
-def repo_slug(repo_url: Optional[str]) -> Optional[str]:
-    """``owner/name`` from a registry row's ``repo_url`` (https or ssh, with or
-    without ``.git``). None when the URL is absent or not GitHub-shaped."""
-    url = (repo_url or "").strip().rstrip("/")
-    if not url:
-        return None
-    m = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$", url)
-    if not m:
-        return None
-    return f"{m.group(1)}/{m.group(2)}"
-
 
 def validate_shape(
     *,

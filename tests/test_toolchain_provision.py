@@ -367,6 +367,11 @@ def test_toolchain_volume_name_is_deterministic_and_project_scoped():
     # per-project isolation was the lock decision, over a shared cache
     b = sc._toolchain_volume_name("/elsewhere/finance-sentry")
     assert b != a
+    # a goal checkout under the project keys on the PROJECT: every goal of a
+    # project shares one cache and mints no volume of its own (2026-09-06)
+    assert sc._toolchain_volume_name(
+        "/srv/devclaw/workspaces/finance-sentry/.goals/fs-421-asset-dossier"
+    ) == a
     # docker volume name grammar
     import re
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-26
 
-**Status**: Draft
+**Status**: Implemented 2026-09-02 — shipped in #708, #712, #713; follow-up fixes #797, #798 (tasks 22/22). Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped).
 
 **Input**: User description: "Worker context-budget invariant — the two-axis class fix for 'Prompt is too long' (devclaw#707, folds in the worker-side lane of #668). Establish structurally that no worker session's input scales with the size of the ask or the size of the repo. Axis A (chunked delivery): one worker session executes one small chunk; the plan, task list, and done-ness live as durable artifacts on the goal branch (workspace-as-memory); sessions are disposable and the next dispatch continues from the workspace, not from conversation history. Axis B (read-side diet): the build session resolves reads through distilled workspace artifacts — the repo brief (project_docs), scout-session output, per-area maps — instead of raw exploration; read amplification never meets write work in one context window. Includes the runner-side usage_update tripwire (~75% threshold → land-what's-coherent nudge over ACP) as graceful degradation plus the measurement of when A+B are done."
 

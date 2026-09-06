@@ -31,7 +31,7 @@ from .. import validation_loop as _validation
 from ..procutil import run as _proc_run
 from ..delivery import deliver_change, delivery_failed
 from ..engine import EngineEvent, EngineRequest
-from ..loom.limits import classify_failure, pause_seconds
+from ..loom.limits import Classification, FailureKind, classify_failure, pause_seconds
 from ..quality.browser_gate import browser_run_verdict
 from ..quality.change_advisories import change_advisories
 from ..quality.gate_policy import Consequence, gate_consequence
@@ -166,6 +166,18 @@ BROWSER_REACHABILITY_ENABLED = True
 #: becomes a `failed` row). The global pause is still set either way: the
 #: account really is limited; only the doomed task stops riding it.
 MAX_PAUSE_REQUEUES = 5
+
+#: Where a failed attempt's text CAME FROM. The pause brake keys on this before
+#: any wording check: only text the provider or a harness subprocess produced
+#: may be classified as a usage limit. A gate verdict and a worker self-report
+#: are prose ABOUT the repository under development — they can contain any
+#: word (a verify log, a test file named ``test_rate_limit_pause.py``, a review
+#: finding quoting an issue title) and are REAL by construction, never a limit.
+_ORIGIN_AGENT = "agent"      # the runner's result: the ACP agent's own error
+_ORIGIN_HARNESS = "harness"  # a devclaw engine exception or subprocess failure
+_ORIGIN_GATE = "gate"        # a gate verdict's reason
+_ORIGIN_WORKER = "worker"    # the worker's honest BLOCKED self-report
+_CLASSIFIABLE_ORIGINS = frozenset({_ORIGIN_AGENT, _ORIGIN_HARNESS})
 
 #: _run_and_settle returns this when a task was paused for a quota limit (not
 #: settled): the task is back to 'pending' and the global pause holds dispatch.
@@ -709,9 +721,13 @@ class SettleMixin:
             )
             return
         deliver = bool(row and row.deliver)
-        # Branch-target wire (v1-helper-resurface P1, PR-2) — DIRECT path only:
-        # goal-path rows never carry these, so for them every
-        # line below is inert (no prep subprocess, unpinned deliver_change call).
+        # Branch-target wire (v1-helper-resurface P1, PR-2). ``base_branch`` is
+        # DIRECT-path only. ``target_branch`` is carried by direct tasks that
+        # pin a branch AND by every goal-path task (Action.branch → the goal
+        # branch; a done-check review carries it too): the queue PLACES the
+        # workspace on it here, at run start, so the change baseline captured
+        # below is that branch's tip and not whatever HEAD a prior task on the
+        # same directory left behind (2026-09-06, the shared-workspace class).
         base_branch = (row.base_branch or None) if row else None
         target_branch = (row.target_branch or None) if row else None
         # Owning project's reference key (#524 P3) — the per-project knobs
@@ -721,8 +737,8 @@ class SettleMixin:
 
         prep_failure: Optional[str] = None
         if (base_branch or target_branch) and not (row and row.pause_count > 0):
-            # Validate the base + prep the pinned branch BEFORE the engine runs
-            # (mirrors the goal layer prepping goal/<id> at dispatch). Skipped
+            # Validate the base + place the branch BEFORE the engine runs (the
+            # goal layer's dispatch-time prep only proved it placeable). Skipped
             # on a pause-resume re-run: the workspace deliberately survives a
             # requeue untouched (see _run_and_settle's resume brief) — re-prep
             # would reset the branch to its origin tip and wipe the wip
@@ -738,8 +754,9 @@ class SettleMixin:
             # Direct dispatch (no branch params, no goal parent, not a resume):
             # reset to origin/<default> so the worker sees the current state of
             # the default branch rather than whatever a prior task left behind.
-            # Goal-path tasks (parent_goal_id set) skip this — the goal tick
-            # already called prepare_workspace with the goal branch.
+            # A goal-path task without a branch (a read-only review on the
+            # default branch) skips this — the tick prepped the default branch
+            # at dispatch and a read-only run captures no change.
             #
             # Pre-check whether origin is configured. A local-only workspace
             # (no origin remote) is expected to fail the fetch; treat that as
@@ -965,7 +982,10 @@ class SettleMixin:
         #      only if integrity passed; browser only if both passed. Flattening
         #      it recomputes the diff and surfaces lower-priority findings.
         #    Axis 2 — FAILURE-STRING CLASSIFICATION: classify_failure() reads the
-        #      terminal failure text to pause on quota/auth (usage-limit path).
+        #      terminal failure text to pause on quota/auth (usage-limit path) —
+        #      ONLY when the text's origin is the agent or the harness
+        #      (``last_origin``); gate verdicts and worker self-reports are
+        #      REAL by origin and never reach the classifier.
         #    Axis 3 — MARKER-BASED FAST-FAIL ROUTING: _WORKER_BLOCKED_MARKER,
         #      _REVIEW_CRASH_MARKER and _PROMPT_TOO_LONG_MARKER route specific
         #      failures without a retry.
@@ -1039,9 +1059,16 @@ class SettleMixin:
         # Dispatch prompt is never a source for this message (spec 017 FR).
         materialize_msg = materialization_message(task_id)
 
+        # The baseline is captured HERE, after placement, on every run. The
+        # persisted row value is reused ONLY on a pause-resume (pause_count >
+        # 0): that run deliberately skipped placement, the wip snapshot moved
+        # HEAD, and the original base must stay the base. Any other run that
+        # reused it would inherit a baseline captured under a different
+        # placement — the shared-workspace class (2026-09-06).
         pre_run_sha = ""
         stored_base = row.pre_run_sha if row else None
-        if stored_base and await _git_commit_exists(workspace_dir, stored_base):
+        resumed = bool(row and row.pause_count > 0)
+        if resumed and stored_base and await _git_commit_exists(workspace_dir, stored_base):
             pre_run_sha = stored_base
         if not pre_run_sha:
             pre_run_sha = await _git_head(workspace_dir)
@@ -1055,6 +1082,7 @@ class SettleMixin:
         # NOT retried — a stuck run would likely just hang again — they escalate now.
         attempts = 1 + max(0, TASK_MAX_RETRIES)
         last_failure = "unknown error"
+        last_origin = _ORIGIN_HARNESS
         # Every prior failed attempt this run, in order. The retry prompt used
         # to carry only the single most-recent failure (an overwritten string),
         # so attempt 3 never learned what attempt 1 tried — and could burn its
@@ -1249,6 +1277,7 @@ class SettleMixin:
                 return None
             except Exception as err:
                 last_failure = str(err)  # unexpected runner error — retryable
+                last_origin = _ORIGIN_HARNESS
             else:
                 # Context-tripwire firing (spec 021 US2): the runner landed
                 # (or tried to land) the session before a context overflow.
@@ -1274,6 +1303,7 @@ class SettleMixin:
                     )
                 if result.get("status") != "ok":
                     last_failure = result.get("error", "unknown error")
+                    last_origin = _ORIGIN_AGENT
                     if result.get("status") == "rate_limited" and result.get("retry_after"):
                         # the engineer parsed an explicit reset hint — prefer it
                         last_failure = f"rate limit; retry-after: {result['retry_after']}s"
@@ -1291,6 +1321,7 @@ class SettleMixin:
                             # devclaw work on the existing cadence.
                             item = (result.get("block_item") or reason).strip()
                             last_failure = f"{_WORKER_ENV_MARKER} {item}"
+                            last_origin = _ORIGIN_WORKER
                             self._store.record_problem(
                                 category="block", kind="env_deficiency", message=item,
                                 recovered=False,
@@ -1299,6 +1330,7 @@ class SettleMixin:
                             )
                         else:
                             last_failure = f"{_WORKER_BLOCKED_MARKER} {reason}"
+                            last_origin = _ORIGIN_WORKER
                 else:
                     # "done" means the verify gate passed, not that the agent said
                     # so — then the checks that READ the change. Axis 1 (the gate
@@ -1387,6 +1419,14 @@ class SettleMixin:
                         # test_integrity) never set dialable, so the dial can never
                         # loosen them.
                         last_failure = verdict.reason or "gate failed (no reason recorded)"
+                        # A review-gate CRASH relays a `claude --print` failure, so
+                        # its text is harness-origin (a quota-shaped crash must still
+                        # pause). Every other verdict is prose about the repo.
+                        last_origin = (
+                            _ORIGIN_HARNESS
+                            if last_failure.startswith(_REVIEW_CRASH_MARKER)
+                            else _ORIGIN_GATE
+                        )
                         if verdict.dialable:
                             dialable_finding = (verdict.gate_id, last_failure)
                             last_gate_result = result
@@ -1490,7 +1530,12 @@ class SettleMixin:
             # login dooms every call exactly like a cap, so requeue + pause; the
             # kind routes it onto the fixed AUTH_PAUSE_S re-probe cadence and
             # the goal layer words the owner ping as "re-login needed".
-            cls = classify_failure(last_failure, now_utc=datetime.now(timezone.utc))
+            # Provenance first, wording second: gate and worker text is never
+            # classified — it is REAL by origin, whatever words it contains.
+            if last_origin in _CLASSIFIABLE_ORIGINS:
+                cls = classify_failure(last_failure, now_utc=datetime.now(timezone.utc))
+            else:
+                cls = Classification(FailureKind.REAL, None, "")
             if cls.is_pausing:
                 backoff = pause_seconds(cls.retry_after_s, stated=cls.stated, kind=cls.kind)
                 self._store.set_global_pause(

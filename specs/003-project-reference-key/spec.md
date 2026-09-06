@@ -6,7 +6,7 @@
 
 **Status**: SHIPPED — `ProjectRegistry.resolve_dispatch()` in `devclaw/project_registry.py`
 
-**Tracking issue**: lifekit-hq/devclaw#520 · **Direction memory**: `docs/proposals/project-reference-key.md` (frozen DRAFT #504)
+**Tracking issue**: lifekit-hq/devclaw#520 · **Direction memory**: `docs/proposals/project-reference-key.md` in git history (frozen DRAFT #504)
 
 **Delivery log**:
 - **P1 (#522)** — `project_id` mandatory dispatch contract; raw `workspace_dir` removed; server-side resolution + direct-path reject-loud preflight + write-time path validation. 8 files, full suite green.

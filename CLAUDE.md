@@ -28,13 +28,18 @@ Only layer 5 is an agent harness in the technical sense.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | a tool/endpoint, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | goal state machine, lifecycle (`executing` only since the 008 shrink), the ~15-min tick |
-| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/intake_readiness.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, intake readiness — planning cognition was relocated into the worker's speckit run, spec 008 shrink; the scope-grill porch died with the prose lane, 2026-08-29 prune) |
+| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`; `devclaw/goal/summary.py`; `devclaw/goal/triage.py`; `devclaw/intake_readiness.py`; `devclaw/goal/admission_lint.py` | a one-shot `claude --print` prompt/parse (done-gate evaluation, owner summary, self-triage, intake readiness, admission lint — planning cognition was relocated into the worker's speckit run, spec 008 shrink; the scope-grill porch died with the prose lane, 2026-08-29 prune) |
 | 4 | **TaskQueue + engine** | `devclaw/task_queue.py` (+ its `devclaw/queue/` mixins), `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (runs *inside* the sandbox) | the in-sandbox agent turn-loop, skills/hooks, verify_cmd — the only true harness |
 
 The chain is strict: `1 → 2 → 3` (cognition) or `1 → 2 → 4 → 5` (execution). No
 layer reaches through another (layer 1 must not dispatch tasks; layer 2 must not
-spawn containers itself — it goes through the engine).
+spawn containers itself — it goes through the engine). The import direction is a
+declared fact, not a convention: `[tool.importlinter]` in `pyproject.toml` states
+the layer order and the leaf packages (`loom`, `llm_call`, `config`,
+`dispatch_gate`, `state_store`, `runner/`), and `lint-imports` fails a new upward
+edge in CI. The repo is a modular monolith on purpose; a package leaves it only
+on a second real consumer (ruled 2026-09-06).
 
 ## Load-bearing invariants — DO NOT VIOLATE
 
@@ -90,6 +95,14 @@ spawn containers itself — it goes through the engine).
   is the CAS'd choke point (`devclaw/goal/transitions.py`'s `LEGAL` table) that makes
   that safe: a stale-snapshot write raises `TransitionConflict` and is abandoned rather
   than silently clobbering the other writer. No upstream layer caches either.
+- **One goal, one checkout** (2026-09-06). A goal's tasks run in
+  `<project workspace>/.goals/<goal_id>` (`engine/workspace.py`
+  `goal_checkout_dir`), a clone no other goal's task can move; the branch is
+  placed at run start and the change baseline captured right after it. The
+  project checkout is the goal's identity and the seed mirror, never the tree
+  a goal task runs in. Two goals on one directory handed each other's commits
+  to the gates as "the change" (2026-09-06); the lane serializes plans, the
+  checkout serializes files.
 - **"Done" is a proposal, gated on grounded evaluation.** The planner's `done` triggers
   a read-only `review_repository` against the firmed `done_when` + `stub_acceptable`; the
   goal closes **only if the evaluator confirms `achieved`**. Never gate completion on
@@ -113,7 +126,10 @@ spawn containers itself — it goes through the engine).
   cannot have is **refused** (nothing persisted); a baseline-less absolute
   predicate ("all tests pass") is **rewritten** to "no new failures relative
   to the default branch" and recorded as an admission Decision; an undecided
-  design choice becomes a Problem to the author **before any dispatch**.
+  design choice becomes a Problem to the author **before any dispatch**. The
+  undecided-choice judge is a gate, so it **fails closed** (2026-09-06): a
+  reply outside the protocol or a caller that raises refuses creation with
+  nothing persisted — never "admitted without it".
 
 ## Hardening philosophy (Tranche 0 — baked in, not in the README yet)
 
@@ -176,6 +192,10 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   was classified retry-now. Only provider-shaped wording qualifies (the AUTH
   strong/weak discipline): ambiguous 5xx prose from the app under development
   stays retry-now, because an account-wide pause is an expensive false positive.
+  **Provenance before wording** (2026-09-06): only agent- or harness-origin
+  text is ever classified; a gate verdict or a worker self-report is REAL by
+  origin, whatever words it carries — a verify log or a test file named
+  `test_rate_limit_pause.py` must never pause the account.
 - **Mechanical blocks auto-heal; recovery is a verb, not a fake steer.** Blocks
   carry a structured `blocked_kind`; `mechanical:corrupt_doc` and
   `mechanical:prep` self-heal when their condition clears (zero LLM, damped by
@@ -212,6 +232,26 @@ surfaced them. Apply this while triaging, planning, and fixing:
   iterate) is domain-agnostic. Keep domain specifics (code, PRs, repos,
   Playwright) at the edges — worker skills, gates, prompts — so the loop could
   someday drive a second domain without rewiring layers 1–4.
+- **Put each decision at the layer that can enforce it** (Denys, 2026-08-08):
+  an invariant → Python, a judgment → model reasoning, the standard → the
+  prompt. Prompts frame but never enforce; a rule that must hold is code.
+- **Instruct thin, verify thick, verify mechanically** (Denys, 2026-09-06 —
+  constitution IX). Software owns exactly five things: **safety** (sandbox,
+  OAuth strip), **money** (tokens, pauses), **state** (single writer, CAS),
+  **the verdict of record** (the project's CI, the materialize span), and
+  **the protocol** (what goes in, what comes out). The agent owns everything
+  that varies per repo — how to build, how to test, what a good change looks
+  like, how to read an issue; devclaw never encodes knowledge about a
+  project's code, it supplies facts and tools and reads the mechanical
+  verdict. Close a gap in this order: a missing **fact** (environment or
+  tool) → a missing **instruction** (one line in a skill, checked by an
+  eval) → a software **brake**, and a brake only inside the five domains;
+  Python outside them needs a stated reason in the spec. Accept the price:
+  the agent's output is not predictable and we stop trying to make it so —
+  the harness's behaviour is, and verification is thick and mechanical
+  (spec 032's CI-is-the-verdict is this principle applied once). Adopt
+  standard practice; a devclaw-specific mechanism needs a reason the
+  standard one cannot give.
 
 ```
 devclaw/
@@ -237,9 +277,10 @@ evals/                       stub e2e suite + real-pipeline harnesses
 
 ```bash
 pip install -e ".[dev]"
-pytest        # ~1150 tripwire tests, all stubbed — no docker, no claude; ~23s (-n auto)
+pytest        # ~1400 tripwire tests, all stubbed — no docker, no claude; ~23s (-n auto)
 ruff check .  # pyflakes + syntax errors only; CI gates it
 mypy          # type check (config in pyproject [tool.mypy]); CI gates it too
+lint-imports  # the layer order + leaf packages as contracts (pyproject [tool.importlinter]); CI gates it
 ```
 
 Engine modes (`DEVCLAW_ENGINE`): **unset** = the worker runner in a per-task docker
@@ -269,7 +310,7 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
   class) gets a named check + seeded-fault test in the same PR. Checks live in
   `devclaw/doctor/checks_instance.py` / `checks_project.py`.
 - **Branch per change**; open a PR, don't push to `main`.
-- **`ruff check .` clean before the PR** — a narrow correctness gate (`F` + `E9`),
+- **`ruff check .`, `mypy` and `lint-imports` clean before the PR** — a narrow correctness gate (`F` + `E9`),
   not a style one. CI runs it alongside the suite.
 - **Keep `docs/` honest.** If a change makes a doc wrong, fix the doc in the same PR
   and update its currency tag in [`docs/INDEX.md`](./docs/INDEX.md). A stale doc that
@@ -296,13 +337,13 @@ speckit-workflow is the anti-drift pipeline since 2026-08-13: every
 behavior-changing change starts `/speckit-specify` → `/speckit-clarify` →
 plan → tasks → implement, specs landing in `specs/` and the machinery in `.specify/`, no implementation before clarify,
 with the constitution (`.specify/memory/constitution.md`) as the invariant
-statement specs are checked against; `docs/proposals/` + `docs/decisions/`
-are frozen history),
+statement specs are checked against; the pre-speckit proposals + ADRs were
+removed from the tree 2026-09-06 — git history (`git log -- docs/decisions docs/proposals`); only ADR 0004, cited by the constitution, stays),
 `.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
-escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit,
-live-shakedown, root-cause — the fix-the-class procedure, applied before any
-behaviour-changing fix).
+escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit, live-shakedown, root-cause, devclaw-status,
+eng-health — the engineering-health ratchet over `evals/measure_eng_health.py`,
+plus the vendored speckit-* command skills).
 
 ## Where to look next
 

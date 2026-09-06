@@ -189,8 +189,14 @@ async def test_workspace_prepped_before_dispatch(tmp_path):
     # seed_goal now sets a fake repo_url so the investigating phase takes the
     # repo-research path (vs world-research, which fires for from-scratch only).
     # every goal is goal-branch (#616 retired the per-action selection rule)
-    assert calls == [("/repos/demo", "https://example.com/demo.git", "goal/g")]
+    # One goal, one checkout: prep places <project>/.goals/<goal_id>, never
+    # the shared project checkout.
+    assert calls == [("/repos/demo/.goals/g", "https://example.com/demo.git", "goal/g")]
     assert len(engine.dispatched) == 1
+    # The tick's prep is admission; the RUN places the branch itself — so the
+    # action carries it (Action.branch → the row's target_branch → queue prep
+    # at run start, right before the baseline capture).
+    assert engine.dispatched[0][0].branch == "goal/g"
 
 
 @pytest.mark.asyncio
@@ -211,7 +217,12 @@ async def test_finished_action_records_delivery_and_proposes_done(tmp_path):
 
     # A successful settle proposes done: the done-gate review is dispatched.
     assert out is Outcome.VERIFYING
-    assert any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
+    reviews = [a for a, _g, _u in engine.dispatched if a.tool == "review_repository"]
+    assert reviews
+    # The done-check reads the goal's accumulated work: it carries the goal
+    # branch for placement at run start (2026-09-06: a done-check that ran
+    # on whatever HEAD a prior task left "removed 5 tests" from another goal).
+    assert reviews[0].branch == "goal/g"
     # grounded delivery captured + PR logged
     assert "added /health" in store.recent_deliveries("g")
     assert "PR https://github.com/o/r/pull/9" in store.recent_log("g")
@@ -972,7 +983,7 @@ async def test_done_gate_verified_wording_kept_when_review_grounded(tmp_path, mo
 
 
 # ---- periodic direction evaluation: CUT (demolition P1) --------------------
-# docs/proposals/cognition-demolition.md — the per-tick mid-flight direction
+# spec 008 (the cognition demolition) — the per-tick mid-flight direction
 # evaluator (`_run_mid_flight_eval`) is removed. Direction is no longer re-judged
 # by an LLM on a delivery cadence; the mechanical brakes stand (no-progress
 # watchdog, done-gate, per-item circuit breaker). The old fires-and-steers /
@@ -3288,6 +3299,40 @@ async def test_admission_rewrite_is_recorded_as_a_decision(tmp_path, monkeypatch
         db.close()
 
 
+@pytest.mark.parametrize("reply", [
+    "I could not find any undecided clauses in this contract.",  # prose, no object
+    '{"undecided": "none"}',                                     # wrong shape
+    '{"verdict": "ok"}',                                         # missing key
+    '{"undecided": [{"clause": "x", "choice": "y", "options": ["only one"]}]}',  # malformed entry
+])
+@pytest.mark.asyncio
+async def test_admission_lint_fails_closed_on_a_malformed_judge_reply(tmp_path, reply):
+    """(c) is a gate, so it fails CLOSED (constitution V): a reply the protocol
+    cannot read — and a caller that raises — refuses creation with nothing
+    persisted, never "admitted without it". The judge runs against the LIVE
+    evaluator caller, so a fresh process cannot skip it either."""
+    svc, db, _ = _resume_service(tmp_path)
+    try:
+        ws = tmp_path / "ws"; ws.mkdir()
+        kw = dict(objective="x", workspace_dir=str(ws), out_of_scope=[], invariants=[], established=[], backlog=["one step"],
+                  done_when="The scan holds red projects.")
+        judge = FakeClaude(reply)
+        svc._evaluator_caller = judge
+        with pytest.raises(ValueError) as ei:
+            await svc.create_goal_async("g-malformed", **kw)
+        assert "not admitted" in str(ei.value) and judge.calls == 1
+        assert not svc._goal_store.exists("g-malformed")
+
+        async def boom(_prompt):
+            raise RuntimeError("claude exited 1")
+        svc._evaluator_caller = boom
+        with pytest.raises(ValueError, match="not admitted"):
+            await svc.create_goal_async("g-raised", **kw)
+        assert not svc._goal_store.exists("g-raised")
+    finally:
+        db.close()
+
+
 @pytest.mark.asyncio
 async def test_resume_goal_resets_the_donegate_round_count(tmp_path):
     """A human vouching for a parked goal (resume/steer) restores the full
@@ -3627,6 +3672,33 @@ async def test_blocked_goal_releases_project_lane_for_queued_successor(tmp_path)
     assert await _tick(store, "parked", evaluator, engine, RecordingNotifier()) is Outcome.QUEUED
     assert store.load_status("parked").phase == "blocked"
     assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_ci_held_head_with_a_pending_done_proposal_keeps_the_lane(tmp_path):
+    """The one block that is NOT skipped over: a ``mechanical:ci`` hold on a
+    head with a held done proposal. Its heal re-drives the done-gate in the
+    same sweep, ahead of the hold gate — so if the sweep-wide holder map had
+    already handed the lane to the successor, two goals dispatch against one
+    directory in one sweep (2026-09-06: issue-817 healed and re-opened its
+    done-gate one second before issue-819 dispatched an increment; both
+    then captured each other's tips as change baselines)."""
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "head", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "succ", created_at_ms=2_000)
+    store.save_status("head", GoalStatus(
+        phase="blocked", lifecycle="executing",
+        blocked_on="waiting for CI on goal/head@abc", blocked_kind="mechanical:ci",
+        pending_done_proposal=True,
+    ))
+    engine = FakeEngine()
+    evaluator = FakeClaude()
+
+    out = await _tick(store, "succ", evaluator, engine, RecordingNotifier())
+
+    assert out is Outcome.QUEUED           # the head still owns the lane
+    assert engine.dispatched == []
+    assert evaluator.calls == 0            # a queued tick costs nothing
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@
 > testability): changes that violate it are architectural changes, not feature
 > changes. The code is the territory — when this doc and the code disagree,
 > trust the code, then fix this doc. Historical rationale (why this engine, why
-> Pro OAuth) lives in [`decisions/`](./decisions/), not here.
+> Pro OAuth) lives in git history (`git log -- docs/decisions`), not here.
 
 ## The one paragraph
 
@@ -33,9 +33,9 @@ knows the paradigm already knows the contract.
 | The milestone-level objective | **Saga** / long-running process | a goal — authored from five named slots, never prose (spec 012 US2: objective · done_when · out_of_scope · invariants · established) |
 | The execution atom | **Unit of Work** (Fowler) | one sandbox run → one atomic, verified, PR-able change-set |
 | The plan | **Task graph (DAG)** | `tasks.md`; `[P]` marks topological independence — parallelism is *data in the plan*, never executor control flow |
-| Parallel safety | **Hermetic action with declared I/O** (Bazel) | **not enforced** — the declared-scope gate was retired 2026-08-31 with the `[P]` lane spec 022 US3 deleted; nothing constrains an increment to a declared file scope (#762) |
+| Parallel safety | **Hermetic action with declared I/O** (Bazel) | **not enforced** — no gate constrains an increment to a declared file scope (#762); sandbox + worktree isolation stop mechanical collisions only |
 | Concurrency default | **Single-writer / actor-per-project** | at most one goal actively dispatching per project |
-| Integration | ~~**Merge queue** (Bors)~~ | *removed by spec 022 US3* — the dormant fan-out lane and its serial merge queue (`loom/merge_queue.py`, `DEVCLAW_FANOUT`) were demolished; every increment integrates sequentially on the goal branch |
+| Integration | **Merge queue** (Bors) | none — every increment integrates sequentially on the goal branch; the one merge is merge-on-close (spec 025) |
 
 ### A saga is authored against a schema
 
@@ -90,12 +90,31 @@ machinery is needed for a state that cannot occur. "Can actually act" is the
 blocked skip-over): a blocked goal, a goal owing only its merge, and an idle
 goal with no unread steering and no due cadence are all skipped as candidates —
 head-of-line blocking is a bug, not a policy (2026-08-31: one cadence-idle head
-stranded 7 runnable successors for a night). The single-writer invariant is
+stranded 7 runnable successors for a night). Two holds are NOT skipped because
+the goal is finishing work it already owns and re-drives it ahead of the hold
+gate in the same sweep: a `mechanical:ci` hold and a held done proposal
+(`pending_done_proposal`) keep the lane (2026-09-06: dropping a ci-held head
+handed its lane to a successor for the very sweep the hold cleared, and two
+goals ran on one directory). The single-writer invariant is
 untouched: at most one goal dispatches per project, a successor mid-task keeps
 the lane against a newly-runnable elder (in-flight outranks age), and the elder
 reclaims it at the next sweep where nothing is in flight. Goal-less direct
-dispatches (`dispatch_task`/`fix_bug`/`implement_feature`) are exempt because
+dispatches (`dispatch_task`, kinds `implement_feature`/`fix_bug`/…) are exempt because
 they are operator-present, and say loudly that a goal holds the project.
+
+**One goal, one checkout** (2026-09-06). The lane serializes *plans*; it never
+made two goals' *directories* disjoint, and on 2026-09-06 two goals on one
+project workspace captured each other's tips as change baselines. A goal's
+tasks now run in `<project workspace>/.goals/<goal_id>` — a full clone seeded
+locally from the project checkout (`engine/workspace.py`
+`ensure_goal_checkout`, hardlinked objects) with `origin` pointed at the real
+remote; the task row's `workspace_dir` is that path. The project checkout stays
+the goal's identity (manifest-at-base reads, project docs, trends, deploy,
+doctor, the toolchain cache key) and is what direct tasks run in; its pristine
+clean keeps `.goals/`, onboarding boilerplate revision 2 ignores `.goals/` in
+the repo, and `.git/info/exclude` covers the checkout until that PR merges. A
+terminal goal's checkout is removed by a zero-token sweep at the end of each
+heartbeat, derived from the store like the lane itself.
 
 ---
 
@@ -110,7 +129,7 @@ the technical sense — the rest is orchestration.
 |---|---|---|---|
 | 1 | **MCP surface** | `devclaw/server/` | tools, auth, console, transport — pure protocol |
 | 2 | **GoalService + heartbeat** | `devclaw/goal/` | the goal state machine + the ~15-min tick |
-| 3 | **Cognition callers** | `goal/{evaluator,summary,triage}.py`, `devclaw/elicitation.py`, `devclaw/intake_readiness.py` | one-shot `claude --print` prompt/parse calls (planning cognition relocated into the worker's speckit run — spec 008 shrink) |
+| 3 | **Cognition callers** | `devclaw/goal/evaluator.py`, `devclaw/goal/summary.py`, `devclaw/goal/triage.py`, `devclaw/goal/admission_lint.py`, `devclaw/intake_readiness.py` | one-shot `claude --print` prompt/parse calls (planning cognition relocated into the worker's speckit run — spec 008 shrink) |
 | 4 | **TaskQueue + engine** | `task_queue.py` (+ its `devclaw/queue/` mixins), `devclaw/engine/` | dispatch, concurrency, the container launcher, the settle/gate path |
 | 5 | **Worker harness** | `runner/runner.py` (inside the sandbox) | the in-sandbox agent turn-loop, skills, hooks, `verify_cmd` |
 
@@ -126,6 +145,15 @@ The chain is strict. Layer 1 must **not** dispatch tasks. Layer 2 must **not**
 spawn containers itself — it goes through the engine (layer 4). No layer reaches
 through another, and none of them cache another's state.
 
+The direction is enforced, not trusted: `[tool.importlinter]` in `pyproject.toml`
+declares the layer order (`server | cli` › `doctor` › `goal` › `task_queue : queue`
+› `delivery | quality` › `engine` › `state_store` › `loom | config`) and the leaf
+packages that must stay extraction-ready (`loom`, `llm_call`, `config`,
+`dispatch_gate`, `state_store`; `runner/` never imports devclaw), and
+`lint-imports` runs in CI beside ruff and mypy. Root-level single modules are
+unlayered until the PR that next touches one assigns it (tinyspec
+`import-contracts`, 2026-09-06).
+
 ## The heartbeat is the whole machine
 
 `devclaw/goal/tick.py` is the beating heart: one `tick_goal()` per goal, every
@@ -140,9 +168,8 @@ executing → (done-gate) → done
   settle them
 ```
 
-(The old `investigating → firming` prelude was removed by the spec 008
-shrink — the worker plans via speckit in-sandbox; legacy rows heal to
-`executing` loudly on first tick touch.)
+The worker plans via speckit in-sandbox; there is no host-side planning
+phase.
 
 Since spec 032 (2026-09-03) the done-gate is *preceded* by a mechanical read
 of the delivered PR's CI rollup for its exact head (`goal/remote_checks.py`,
@@ -204,8 +231,14 @@ When the tick decides to *do* something (not just think):
    executing goals accumulate every increment's commits on one shared
    `goal/<id>` branch (one cumulative PR); legacy goals with no recorded
    lifecycle deliver each action as its own branch + PR.
-2. **Prepare the workspace** — `prepare_workspace()` gives the engine a pristine
-   checkout on the chosen branch.
+2. **Prepare the workspace** — `prepare_workspace()` proves the goal's own
+   checkout (`<project>/.goals/<goal_id>`, one goal, one checkout) is
+   placeable on the chosen branch (a bad `repo_url` or unreachable origin
+   blocks legibly here). The branch itself rides on the action
+   (`Action.branch` → the task row's `target_branch`): the **queue places it
+   again at run start**, immediately before it captures the change baseline,
+   because a pending task may wait behind other work on the same directory
+   and whatever moved HEAD meanwhile must never become its base (2026-09-06).
 3. **Atomic dispatch** — the task-row creation + the `DISPATCH_ACTION`
    transition + the log line commit as **one** SQLite transaction. A crash or
    CAS conflict rolls the whole unit back, so "task dispatched but the in-flight
@@ -213,98 +246,73 @@ When the tick decides to *do* something (not just think):
 4. **Run in a sandbox** — `TaskQueue` claims the row and launches a per-task
    `docker run --rm` (`engine/sandcastle.py`); the worker harness runs the agent
    turn loop and writes line-delimited JSON back on stdout.
-5. **The verify gate decides, not the agent** — after the agent finishes, the
-   `verify_cmd` runs; its exit code settles done-vs-failed. The agent's
-   self-report is never trusted. **The gate fails CLOSED**: a crash *in* the
-   gate settles the task `failed`, not approved. A change touching an
-   app-surface web-UI path also passes a **browser-E2E gate**
-   (`quality/browser_gate.py`): it must carry a passing real-browser Playwright
-   run — proven via the runner's parsed JSON `browser_report` counts, never a
-   `verify_cmd` string-match — or it fails closed (flexible mode waves through
-   a project with no browser suite; strict forces adoption). A **library-only**
-   diff (every UI path under `*/src/lib/*`) is exempt from the trigger — it
-   wires nothing into a running app, so its proof is the story+spec the library
-   build/test gate already requires; evidence from a browser run that actually
-   executed still counts in full. This closes the "green unit tests + static
-   review, broken in the running app" hole without wedging library slices.
-   **The gate strictness dial (ADR 0007)** recalibrates *which* gates fail
-   closed: the two review-shaped gates — the browser-E2E gate and the pre-PR
-   adversarial review gate — are **dial-able**. Under a goal's `strict`
-   strictness they fail closed as above; under `trust` (the default) a finding
-   that survives every retry (including a browser suite that *ran and failed*)
-   **advises-and-ships** — recorded loud in the log + problems catalog and
-   surfaced in the PR body, with the validation lane (spec 015) as the
-   backstop (spec 025: the done-gate owns the close-and-merge; spec 032: the
-   project's own verification environment is the verdict of record and the
-   human is not a stage) — rather than wedging. The verify gate, test-integrity gate, the declared-scope gate
-   (below), and the done-gate stay **always-hard** in both modes — for the done-gate that means its
-   `done_when` clause grading: an unmet clause holds the goal open under
-   either dial. The done-gate's *structural* axis (the review's code-shape
-   concerns) rides the dial like the review-shaped gates: under `trust`
-   reported concerns advise-and-ship as follow-ups on the close, under
-   `strict` they hold it open. A done-gate that refuses to close the same
-   goal 3 rounds in a row *with the satisfied-clause count flat* parks it for
-   the owner (`donegate_churn`, carrying a typed Problem — spec 031) instead
-   of re-advancing forever; a round that
-   beats the best count seen restarts the counter
-   (`goal_status.donegate_progress`), so a converging goal is never parked as
-   churn. Every *unreviewable* case (a gate crash,
-   quota, worker-block) still fails closed regardless of the dial (#186 holds).
-   **The declared-scope gate (spec 010 FR-103)** is the hermetic-I/O half of
-   planned parallelism: a task graph may mark tasks topologically independent
-   (`[P]`) and declare the file paths each will touch, and this gate verifies at
-   settle that the increment's diff stayed inside its declaration. Pure
-   The declared-scope gate that lived here was RETIRED (2026-08-31): its
-   trigger was the spec 010 `[P]` scope claim, and spec 022 US3 deleted the
-   lane that emitted it, so the gate self-skipped on every real increment
-   while its own tests kept it green. `loom/diff_paths.py` keeps the two
-   general path helpers it left behind. See #762 for the containment gap
-   this leaves under `trust`.
-   An increment whose plan declared nothing is *not consulted*, so nothing about
-   an ordinary increment changes; one that declared a scope and left it fails
-   closed, in `trust` as well as `strict`, because a declared scope is what
-   makes concurrent execution safe rather than a finding to weigh at the merge
-   boundary. It is the mechanism, not a prompt, on purpose: workers route around
-   soft constraints (#358). The judged span is the WORKSPACE's, not the agent's
-   bookkeeping — but the gate does not arrange that itself: materialization
-   (below) hands it a span that is already complete, so an increment cannot
-   escape its declared scope by declining to commit a file (#630 / spec 013).
-   **Change classification (spec 032 US3)** rides the same object: every path
-   in the materialized span carries a class — product, gate input (CI
-   workflows, AGENTS.md, test-runner/build configuration, install scripts,
-   toolchain pins) or environment declaration (`devclaw.json`,
-   `.devcontainer/`) — computed once in `task_change.py`, and the always-hard
-   `change_class` gate fails a gate-input edit or a committed binary in both
-   dial positions without a retry. A ticket that is about those files declares
-   the path in scope with a backticked path or glob. Gate inputs are never
-   evidence for a `done_when` clause (stated to the reviewer and the evaluator).
-   **Materialization (spec 013)** is the step that makes every gate above read
-   the same thing. The moment the agent's run ends, the host stages everything
-   left in the workspace and writes it into a commit; the change is then the
-   range between the task's pinned `pre_run_sha` and that post-run sha, and
-   *every* consumer — each gate, the change-size projection, the advisory
-   checks, and delivery — reads that one object. Before it, two components
-   computed the change independently: delivery staged everything (so it could
-   not miss a file) while the gates diffed only what the agent had chosen to
-   record, and what made the agent record was a sentence in a worker skill. On
-   2026-08-22 delivery shipped 4 files / +179 lines that the gates had judged as
-   1 file / +32; a change made entirely of new unrecorded files reached every
-   gate as an EMPTY span and passed them all trivially. A `materialize` gate
-   sits between `verify` and every consumer and is **always-hard**: a span that
-   cannot be determined fails closed, because an empty span no longer means
-   "nothing changed" (#186). A worker that recorded all of its own work is
-   byte-unaffected — a clean tree writes no commit. An empty span is an explicit
-   no-change outcome: the task settles done, publishes nothing, and the goal
-   layer counts it as no progress rather than as a delivered increment. And
-   because the base is pinned and every attempt is judged in full against it, a
-   retry now KEEPS the workspace and iterates on its own output instead of being
-   rewound to a clean base.
-   *(Planned fan-out — spec 010 US3, the `DEVCLAW_FANOUT`-gated dispatch of a
-   `[P]` group as one program of concurrent lanes — was removed by spec 022
-   US3 along with the whole program/DAG lane: it never left its
-   off-by-default dormancy. The declared-scope gate survives it, enforcing an
-   increment's own claimed `[P]` scope; a worker still never spawns a worker —
-   the sandbox carries no devclaw MCP surface it could ask through.)*
+5. **The gates decide, not the agent** — after the agent finishes, the settle
+   path runs an ORDERED pipeline of pure verdict producers
+   (`quality/gate_pipeline.py`; the gates in `quality/task_gates.py`; assembled
+   in `queue/settle.py`). The first non-ok verdict short-circuits the chain and
+   is fed back through the retry loop; a gate never mutates a row. The agent's
+   self-report is never trusted, and a crash *in* a gate is a failure, never an
+   approval (#186). The order:
+   - `verify` — the runner's `verify_cmd` exit. Reads no diff, so a failure
+     short-circuits before any git call. A fast pre-check only: its pass is
+     never evidence (spec 032).
+   - `materialize` (spec 013) — the moment the run ends the host stages
+     everything left in the workspace and commits it; the change is the range
+     `pre_run_sha..post_run_sha` (`task_change.py`), and *every* consumer —
+     each gate below, the change-size projection, the advisory checks, and
+     delivery — reads that one object. A span that cannot be determined fails
+     closed; an empty span is an explicit no-change outcome (the task settles
+     done, publishes nothing, the goal counts no progress). A retry keeps the
+     workspace and iterates on its own output.
+   - `change_class` (spec 032 US3) — every path in the span carries a class:
+     product, gate input (CI workflows, `AGENTS.md`, test-runner/build
+     configuration, install scripts, toolchain pins) or environment
+     declaration (`devclaw.json`, `.devcontainer/`). A gate-input edit or a
+     committed binary fails without a retry; a ticket that is *about* those
+     files declares the path in scope. Gate inputs are never evidence for a
+     `done_when` clause.
+   - `test_integrity` — the diff is scanned for deleted, skipped or gutted
+     tests; a scanner crash fails closed; a removed test whose name still
+     exists elsewhere in the tree is credited as a move.
+   - `review` — the adversarial pre-PR diff review, consulted **only under
+     `strict`**; under `trust` (the default) it is not in the chain at all —
+     zero `claude` calls, no crash surface — and the done-gate re-catches its
+     findings (spec 001).
+   - `browser` — the browser-E2E gate (`quality/browser_gate.py`): an
+     app-surface web-UI change must carry a passing real-browser Playwright
+     run, proven via the runner's parsed `browser_report` counts, never a
+     `verify_cmd` string-match. A library-only diff (`*/src/lib/*`, or
+     `devclaw.json` `surface: library`) is exempt; a grounded reachability
+     judge may clear a block when the changed UI is not rendered in the app;
+     `flexible` mode waves through a project with no browser suite.
+
+   **Consequence is one pure function (ADR 0007, `quality/gate_policy.py`).**
+   `ALWAYS_HARD` = `verify`, `materialize`, `change_class`, `test_integrity`,
+   `delivery_trust`, `done_gate` — they block under both dials. `DIAL_ABLE` =
+   `browser`, `review`, `slice` — they block under `strict` and, under `trust`,
+   a finding that survives every retry **advises-and-ships**: recorded loud in
+   the log + problems catalog and surfaced in the PR body, with the validation
+   lane (spec 015) as the backstop. An unrecognized dial value is `strict`. An
+   *unreviewable* case in a consulted gate (crash, quota, worker-block) fails
+   closed regardless of the dial.
+
+   Three gates in that policy run at layer 2, not in the task pipeline:
+   `slice` (`goal/tick_settle.py`) — a delivered increment that advanced more
+   than one `[US<n>]` story-slice of `tasks.md` is a build-ahead, parked for a
+   re-slice under `strict`, advised under `trust`; `delivery_trust` — the
+   delivered PR's CI rollup read as a mechanical fact for the exact head
+   (`goal/remote_checks.py`, consumed by `tick_donegate` before the done-check
+   review and again by `merge_on_close`); and `done_gate` — `done_when` clause
+   grading, where an unmet clause holds the goal open under either dial while
+   the review's *structural* concerns ride the dial (advise as follow-ups
+   under `trust`, hold under `strict`). A done-gate that refuses to close the
+   same goal 3 rounds in a row with the satisfied-clause count flat parks it
+   (`donegate_churn`, carrying a typed Problem — spec 031); a round that beats
+   the best count seen restarts the counter (`goal_status.donegate_progress`).
+   The declared-scope gate (spec 010 FR-103) was retired 2026-08-31 — spec 022
+   US3 had deleted the `[P]` lane that produced its trigger, so it was never
+   consulted on a real increment (#762). A worker never spawns a worker: the
+   sandbox carries no devclaw MCP surface it could ask through.
 6. **Deliver, then settle** — for `deliver=True` tasks the change becomes a
    branch/PR *before* `done` is observable, so a poller never reads "done
    without a PR". A delivery that can't push/PR settles `failed`, never a silent
@@ -325,24 +333,18 @@ PRs in [`flows/delivery.md`](./flows/delivery.md).
 
 **SQLite (`devclaw.db`) is the single source of truth.** Since Tranche 1 the
 goal layer lives in the same DB as the task queue: `goal_status`,
-`goal_steering`, `goal_log`, `goal_deliveries`, `goal_docs`,
-`goal_phase_history`, plus the goal-transcending `project_docs` (the repo
+`goal_steering`, `goal_log`, `goal_deliveries`, `goal_phase_history`,
+`goal_contract_pins`, `goal_decisions`, plus the goal-transcending `project_docs` (the repo
 brief workers accumulate, keyed by normalized workspace path — it survives
 goal cancel+refile on purpose). The familiar files — `STATUS.md`, `log.md`, `inbox.md`,
 `deliveries.md` — are **generated views**: human- and rollback-readable,
 **never read back for decisions**. Only `goal.yaml` and `spec.md` stay plain
 files.
 
-Until #617 that last sentence was aspiration, not fact: the store parsed those
-views back into rows on eight read paths, framed as lazy migrations but with no
-cutoff — so a hand-edited `inbox.md` became steering and a corrupt
-`deliveries.md` became delivery history, outside the CAS choke point that makes
-single-writer true. The markdown that predates the rule is now ingested exactly
-once, by `devclaw/goal/store/view_migration.py` at store construction; after
-that the views are write-only. Steering enters through the `steer_goal` verb
-alone. `tests/test_views_never_read_back.py` holds the line, structurally: a
-production module outside the migration may not even NAME a view file unless it
-is a listed writer.
+The views are write-only (#617): steering enters through the `steer_goal`
+verb alone, and `tests/test_views_never_read_back.py` holds the line
+structurally — a production module may not even NAME a view file unless it is
+a listed writer.
 
 **Single writer.** Only the `TaskQueue` mutates task rows; `StateStore` is an
 append-only event log and its views are projections. Goal state is owned by
@@ -362,7 +364,7 @@ string bucketing** of the settle-path marker texts (`review_rejected`,
 `state_store/rows.derive_failure_class`), never an LLM call — zero extra
 tokens per settle. Basket runs (`evals/measure_passrate.py`) land in the SAME
 table as `source='basket'` rows via `devclaw evals ingest <file-or-dir>`,
-idempotent on (source, report_ref, ticket). See `tests/test_eval_outcomes.py`.
+idempotent on (source, report_ref, ticket).
 
 **Continuous-eval — the run-cycle window-close report (ADR 0006 decision 3).** When
 the run cycle (22:00–05:00 `Europe/London` by default — nightly, but the window is
@@ -379,7 +381,7 @@ cognition-timeout-terminal, and engine/gate **crash** classes; a genuine
 `needs_answer` and a **self-healed quota/auth pause** are surfaced but stay
 clean (a gate *verdict* is the gate doing its job, not a wedge). The write goes
 through the store (`StateStore.record_cycle_report`, single writer); no notifier
-→ `sent_at` NULL (log-only, never an error). See `tests/test_cycle_report.py`.
+→ `sent_at` NULL (log-only, never an error).
 
 **Self-observability — the `problems` catalog (capture/dedup layer).** Beside
 `traces`, a `problems` table turns "devclaw fails/stalls N times a day" into a
@@ -453,9 +455,8 @@ diagnostician. It is **propose-only** (never auto-acts) and **fails toward the
 owner**: it runs only when a real ping fires (never idle — the zero-token guard
 holds), and any triage failure delivers the original raw ping unchanged. The
 caller returns parsed output only; layer 2 (`tick_context.triaged_notify`)
-renders + delivers. `DEVCLAW_SELF_TRIAGE=0` reverts every eligible ping to the
-raw path. Auto-resolve on top is a deliberate follow-up. See `goal/triage.py`
-and `tests/test_self_triage.py`.
+renders + delivers. Auto-resolve on top is a deliberate follow-up. See
+`goal/triage.py`.
 
 ---
 
@@ -477,26 +478,24 @@ and `tests/test_self_triage.py`.
   readiness-grading verbs `regrade_intake`/`grade_backlog` (spec 009: any open
   issue, any format; grade labels only, still never dispatch)), and —
   for the **direct-task intake**
-  (`dispatch_task`, the v1 task-runner path re-surfaced by
-  [ADR 0011](./decisions/0011-branch-target-delivery-seam.md)) —
+  (`dispatch_task`, the v1 task-runner path re-surfaced by ADR 0011, git
+  history: `git log -- docs/decisions`) —
   `TaskQueue.submit`. The direct intake is a sanctioned second front door onto
   the same queue → engine → gates → delivery machinery, NOT a goal bypass: it
   carries no goal, so there is no `GoalService` to bypass.
 - **Forbidden:** touching goal state directly (must go through `GoalStore`),
   spawning engines/containers, or reaching queue *internals* — layer 1 talks
   to `submit`/read surfaces only; execution, gating, and settle stay layer 4's.
-- **Tested by:** `tests/test_dashboard.py`, `tests/test_console_prs_endpoint.py`
-  — full HTTP/tool requests against the FastMCP app (via the in-process client
-  in `conftest.py`) with the layers below stubbed. The general telemetry read
-  surface (`GET /traces.json` + the `devclaw trace list`/`trace report` CLI —
-  pure SELECTs over the `traces`/`tasks` tables, filters applied in SQL):
-  `tests/test_trace_read_surface.py`.
+- **Tested by:** structural guards — `tests/test_route_shadowing.py` (no HTTP
+  route shadows a more specific one) and `tests/test_tools_reexport_complete.py`
+  (every registered tool resolves via `getattr(tools, name)`); tool behaviour
+  with the layers below stubbed in `tests/test_dispatch_task.py`.
 
 ### Layer 2 — Orchestrator (GoalService + heartbeat)
 
 - **Public surface:** `GoalService` methods (`create_goal`, `get_goal`,
-  `answer_unknowns`, `steer_goal`, `resume_goal`, `evaluate_goal`,
-  `cancel_goal`, …). Plus the heartbeat loop owned by `serve_loop`.
+  `steer_goal`, `resume_goal`, `evaluate_goal`, `cancel_goal`, …). Plus the
+  heartbeat sweep, `GoalService.tick_all`.
 - **Internal state:** `GoalStore`, backed by the goal-state tables inside the
   SAME `StateStore`/`devclaw.db` the task queue uses (see "Where state lives").
 - **Allowed to call:** layer 3 (cognition callers) and layer 4 (via the
@@ -505,7 +504,7 @@ and `tests/test_self_triage.py`.
   `TaskQueue` + `Engine`); calling `claude` directly (must go through a
   cognition caller); mutating `goal_status`'s phase/lifecycle/in_flight outside
   `GoalStore.transition()` (the CAS'd choke point).
-- **The execution dial (ADR 0003):** a goal carries `mode:
+- **The execution dial (ADR 0003, git history: `git log -- docs/decisions`):** a goal carries `mode:
   long_lived | one_shot` in `goal.yaml`. Both modes ride ONE execution path
   since the spec 008 shrink — the speckit advance loop (the worker owns the
   plan in `specs/*/`), the done-gate proposal after each settled advance, and
@@ -513,9 +512,8 @@ and `tests/test_self_triage.py`.
   first advance fires immediately and the done-gate's corrections chain
   work-present advances until achieved.
 - **Tested by:** `tests/test_goal_*.py` (e.g. `test_goal_tick.py`,
-  `test_goal_engine.py`, `test_goal_reconcile.py`) — single ticks with stubbed
-  cognition + stubbed engine. The SQLite substrate: `tests/test_goal_state.py`,
-  `tests/test_goal_store.py`,
+  `test_goal_engine.py`) — single ticks with stubbed cognition + stubbed
+  engine. The SQLite substrate: `tests/test_goal_state.py`,
   `tests/test_goal_transitions.py` (the `LEGAL` table + CAS in isolation).
 
 ### Layer 3 — Cognition callers
@@ -532,9 +530,8 @@ and `tests/test_self_triage.py`.
   invariant below.
 - **Forbidden:** writing to the goal store directly (return parsed output, let
   layer 2 persist it); reaching into the task queue.
-- **Tested by:** `tests/test_cognition.py`,
-  `tests/test_goal_evaluator.py` — prompt rendering + response parsing in
-  isolation, LLM call stubbed.
+- **Tested by:** `tests/test_goal_evaluator.py` — prompt rendering + response
+  parsing in isolation, LLM call stubbed.
 
 ### Layer 4 — TaskQueue + Engine
 
@@ -542,19 +539,27 @@ and `tests/test_self_triage.py`.
   async callable: `(EngineRequest) → EngineResult`. `TaskQueue` lifecycle
   methods (`submit`, `cancel`, on-settle callbacks).
 - **Engine implementations:** `sandcastle.py` (production, docker per task),
-  `claude_sdk.py` (in-sandbox claude --print spike), `host.py` (host-side, no
-  sandbox — testing only), `stub.py` (deterministic, no LLM).
+  `host.py` (host-side, no sandbox — dev/CI only), `stub.py` (deterministic,
+  no LLM).
+- **The agent and its isolation are orthogonal layers** (ADR 0001, git
+  history: `git log -- docs/decisions`): the agent is what reasons and edits
+  code; the box is the isolation boundary. devclaw owns the box — it issues
+  `docker run --rm` itself in `engine/sandcastle.py` and hosts the agent
+  inside it, rather than delegating container lifecycle, mounts, the read-only
+  `~/.claude` allowlist, the kernel-side fence (`--pids-limit`, `--cap-drop
+  ALL`, `no-new-privileges`; network stays host, root stays writable) and
+  teardown to the agent runtime. Swapping the agent inside leaves the box
+  unchanged.
 - **Allowed to call:** docker socket (sandcastle only), the workspace
   filesystem.
 - **Forbidden:** reading the goal store (the orchestrator passes everything the
   engine needs in `EngineRequest`); writing event lines that aren't valid
   protocol.
-- **Tested by:** queue lifecycle in `tests/test_queue_dag.py`,
-  `tests/test_durability.py`, `tests/test_task_retry.py`,
-  `tests/test_task_timeout.py`, `tests/test_rate_limit_pause.py`;
-  engine/sandbox behavior in `tests/test_workspace_breaker.py`,
-  `tests/test_sandbox_isolation.py`, `tests/test_container_hygiene.py`,
-  `tests/test_stub_engine.py`, `tests/test_claude_sdk_engine.py`. The stub
+- **Tested by:** queue lifecycle in `tests/test_durability.py`,
+  `tests/test_task_retry.py`, `tests/test_task_timeout.py`,
+  `tests/test_rate_limit_pause.py`; engine/sandbox behavior in
+  `tests/test_workspace_breaker.py`, `tests/test_sandbox_isolation.py`,
+  `tests/test_container_hygiene.py`, `tests/test_stub_engine.py`. The stub
   engine also drives all higher-layer tests so they need no docker / no claude.
 
 ### Layer 5 — Worker harness
@@ -576,9 +581,9 @@ and `tests/test_self_triage.py`.
   container; cross-process boundary). Writing files outside `/workspace`. Using
   claude-code-specific harness features (skills/hooks `settings.json`) — see
   the model-agnostic invariants.
-- **Tested by:** `tests/test_runner_wrappers.py`, `tests/test_runner_skills.py`,
-  `tests/test_runner_io.py` — import the module file directly and exercise pure
-  functions with the SDK call stubbed.
+- **Tested by:** `tests/test_runner_skills.py`, `tests/test_runner_io.py` —
+  import the module file directly and exercise pure functions with the agent
+  call stubbed.
 
 ## Invariants
 
@@ -652,7 +657,7 @@ enforced by the fake-agent regression tests).
    (strictness is a goal.yaml fact, not a phase field).
 2. **Tasks are append-only events.** `StateStore`'s `events` table is an
    append-only log; state views are projections. (Goal-state tables:
-   `goal_status`/`goal_docs` are mutable single-row-per-key, CAS'd or upserted;
+   `goal_status` is mutable single-row-per-key, CAS'd;
    `goal_steering`/`goal_log`/`goal_deliveries`/`goal_phase_history` are
    append-only.)
 3. **Hooks may write best-effort.** Pre/post-run hooks may write scratch files;
@@ -705,17 +710,16 @@ informs; under `strict` a default that would close the goal parks instead.
 admission lint (`devclaw/goal/admission_lint.py`) refuses sandbox-impossible
 clauses, rewrites baseline-less absolutes, and raises an undecided design
 choice as a Problem before any dispatch — its one cognition call runs at
-creation, never on the tick.
+creation, never on the tick, and fails closed: a judge reply outside the
+protocol, or a caller that raises, refuses creation with nothing persisted.
 
 ## Testability (one stub at every seam)
 
 | Seam | Stub | Where |
 |---|---|---|
 | LLM call (cognition) | `StubCognition` | `devclaw/cognition.py` |
-| Engine | `StubEngine` | `devclaw/engine/stub.py` |
+| Engine | `stub_engine` | `devclaw/engine/stub.py` |
 | Notifier | `NullNotifier` | `devclaw/goal/notify.py` |
-| Phase handler registry | reset + register fakes | `devclaw/goal/phases/registry.py` |
-| MCP transport | in-process FastMCP client | `tests/conftest.py` |
 | Sandbox docker | (stub engine covers the seam above it) | — |
 | Worker harness | (no stub yet — runner.py exercised by module import) | gap |
 
@@ -728,11 +732,10 @@ pipeline.
 
 | Component | Implementations today | Proof |
 |---|---|---|
-| Engine (layer 4) | 4 (sandcastle, claude_sdk, host, stub) | ✅ strong |
+| Engine (layer 4) | 3 (sandcastle, host, stub) | ✅ strong |
 | Notifier | 2 (`HttpNotifier`, `NullNotifier`) | ✅ ok |
 | Cognition | 2 (Claude subprocess, Stub) | ⚠ weak — only stub-vs-real |
 | Worker harness (layer 5) | 1 shipped (claude-agent-acp + claude-code); command is a config seam (`DEVCLAW_ACP_COMMAND`, payload-threaded, shlex-split, tested) | ⚠ seam proven, no second implementation exercised — `acp_env`/auth mounts/model ids/limit classifiers still claude-shaped |
-| Phase handler | 1 (FirmingHandler) | n/a — registry exists, one handler |
 
 Closing the worker-harness replaceability gap is the highest-value next muscle.
 
@@ -775,6 +778,6 @@ runner/runner.py    layer 5 — the in-sandbox harness
 - **How one task flows end to end** → [`flows/task-execution.md`](./flows/task-execution.md).
 - **How a dispatch becomes a PR** → [`flows/delivery.md`](./flows/delivery.md).
 - **Every env var** → [`reference/env-vars.md`](./reference/env-vars.md).
-- **Why this engine shape** → [`decisions/0001-openhands-engine.md`](./decisions/0001-openhands-engine.md) (frozen: the in-sandbox agent it names was replaced by the ACP runner in spec 011; the orthogonality reasoning stands).
+- **Why this engine shape** → the orthogonality paragraph under Layer 4 (ADR 0001, git history: `git log -- docs/decisions`).
 - **Every doc, with a currency tag** → [`INDEX.md`](./INDEX.md) — read it before
   trusting any other doc.

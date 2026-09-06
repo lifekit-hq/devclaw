@@ -531,3 +531,84 @@ async def test_worker_auth_failure_requeues_and_pauses_not_terminal(store, monke
     assert until > _now_ms() and reason.startswith("auth")
     # AUTH's fixed re-probe cadence, not the quota default
     assert until - _now_ms() > (limits.AUTH_PAUSE_S - 60) * 1000
+
+
+# ---- provenance before wording (2026-09-06) ---------------------------------
+# The pause brake classifies ONLY agent/harness-origin text. A gate verdict is
+# prose about the repository under development and can contain any word — on
+# 2026-09-06 a test-integrity finding naming ``tests/test_rate_limit_pause.py``
+# matched the rate-limit regex and paused the whole account three times. Class
+# test: every pausing wording, arriving through a gate, settles REAL.
+
+_PAUSING_WORDINGS = [
+    "FAILED tests/test_rate_limit_pause.py::test_x",
+    "expected 200 got 429 Too Many Requests",
+    "Internal error: You're out of extra usage · resets 10pm (UTC)",
+    "API Error: 401 OAuth access token has expired",
+    "A 529 Overloaded burns the dispatch cap",
+    "usage limit — try again in 10 hours",
+]
+
+
+@pytest.mark.parametrize("wording", _PAUSING_WORDINGS)
+async def test_gate_origin_wording_never_pauses_the_account(store, monkeypatch, wording):
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+
+    async def verify_fails(req: EngineRequest):
+        return {"status": "ok", "workspaceDir": req.workspace_dir,
+                "verify": {"ran": True, "cmd": "pytest", "passed": False,
+                           "exit_code": 1, "timed_out": False, "output": wording}}
+
+    q = TaskQueue(store, runner=verify_fails)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g",
+                   verify_cmd="pytest")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"                  # REAL by origin — never requeued
+    assert t.pause_count == 0
+    assert store.global_pause()[0] == 0          # the account was never paused
+
+
+async def test_integrity_finding_naming_a_limit_file_never_pauses(store, tmp_path, monkeypatch):
+    """The 2026-09-06 incident, end to end: the agent deletes a test in a file
+    whose NAME matches the rate-limit regex; the integrity gate names the file;
+    the task must fail (test-integrity is always-hard) without pausing."""
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+    repo = _git_repo(tmp_path)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_rate_limit_pause.py").write_text("def test_a():\n    assert True\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-m", "add test")
+
+    async def deletes_test(req: EngineRequest):
+        os.remove(os.path.join(req.workspace_dir, "tests", "test_rate_limit_pause.py"))
+        return {"status": "ok", "workspaceDir": req.workspace_dir,
+                "verify": {"ran": True, "cmd": "pytest", "passed": True,
+                           "exit_code": 0, "timed_out": False, "output": ""}}
+
+    q = TaskQueue(store, runner=deletes_test)
+    tid = q.submit(kind="fix_bug", workspace_dir=str(repo), goal="g", verify_cmd="pytest")
+    await q.drain()
+
+    t = store.get_task(tid)
+    assert t.status == "failed"
+    assert "test-integrity" in (t.error or "") and "test_rate_limit_pause.py" in (t.error or "")
+    assert t.pause_count == 0
+    assert store.global_pause()[0] == 0
+
+
+async def test_agent_origin_limit_still_pauses_after_provenance_split(store, monkeypatch):
+    """The other side of the class: the SAME wording from the agent's own error
+    keeps pausing — provenance narrows the input, it does not weaken the brake."""
+    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
+
+    async def rl(req: EngineRequest):
+        return {"status": "error", "error": "FAILED tests/test_rate_limit_pause.py: 429 Too Many Requests"}
+
+    q = TaskQueue(store, runner=rl)
+    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
+    await q.drain()
+
+    assert store.get_task(tid).status == "pending"
+    assert store.global_pause()[0] > _now_ms()

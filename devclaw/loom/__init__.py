@@ -14,8 +14,8 @@ run-trace capture). These are the ONLY import paths: the re-export shims the
 extraction left at ``devclaw.limits`` / ``devclaw.test_integrity`` were deleted
 by the #616 cutoff — no production module ever imported them.
 
-loom is a LEAF by contract (pinned by ``tests/test_llm_call_leaf.py``): it
-imports nothing from the rest of devclaw. The goal domain types + store used to
+loom is a LEAF by contract (the import-linter contract in ``pyproject.toml``,
+``lint-imports`` gates it in CI): it imports nothing from the rest of devclaw. The goal domain types + store used to
 be re-exported here as a "curated surface", which made importing ``loom.trace``
 execute this facade and drag ``goal`` + ``state_store`` behind every consumer —
 the exact cycle the extraction seam exists to prevent. Import those from

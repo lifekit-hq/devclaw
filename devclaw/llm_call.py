@@ -2,8 +2,9 @@
 
 One `claude --print` subprocess call (:func:`call_claude`), its argv/envelope
 plumbing, the :class:`PlannerError` it raises, the :func:`extract_json` helper
-callers parse responses with, and the :func:`claude_with_model` factory that
-binds a model + role into a one-argument caller.
+callers parse responses with. (The factory that binds a model + role into a
+one-argument caller, ``claude_with_model``, lives at the cognition seam —
+it is the swap point's face, and a leaf cannot import upward to reach it.)
 
 Extracted from ``planner.py`` (2026-07-19) so the quality gate can depend on
 the call primitive without dragging the whole planner (and its
@@ -31,7 +32,7 @@ from .loom import trace as _trace
 from . import config as _config
 
 #: A bound, one-argument LLM caller: ``await caller(prompt) -> response``. The
-#: cognition callers are all this shape (``claude_with_model`` builds one). Lives
+#: cognition callers are all this shape (``cognition.claude_with_model`` builds one). Lives
 #: here in the leaf so goal-layer modules type against it without importing a
 #: heavier module. (Relocated from the deleted goal/planner.py — demolition P3b.)
 ClaudeCaller = Callable[[str], Awaitable[str]]
@@ -63,7 +64,7 @@ def _cognition_timeout_ms_from_env(raw: str | None) -> int:
 #: p90 hugging the cap, and five calls timed out at exactly 90s — each timeout
 #: burns a full model call plus a 15-minute tick. Each role's
 #: ``default_caller`` may still pass a larger value via
-#: :func:`claude_with_model` when its expected output volume warrants — the
+#: :func:`~devclaw.cognition.claude_with_model` when its expected output volume warrants — the
 #: decomposer is the canonical example (opus generating multi-KB YAML
 #: routinely needs more than the default).
 PLANNER_TIMEOUT_MS = _cognition_timeout_ms_from_env(_config.cognition_timeout_s_raw())
@@ -491,7 +492,7 @@ async def _spawn_claude_once(
     :data:`PLANNER_TIMEOUT_MS` for this call — roles whose output volume warrants
     a larger budget (decomposer) pass their own value. Injected into cognition
     roles so tests can stub the subprocess; each role binds its own
-    model+role+timeout via :func:`claude_with_model`."""
+    model+role+timeout via :func:`~devclaw.cognition.claude_with_model`."""
     effective_timeout_ms = timeout_ms if timeout_ms is not None else PLANNER_TIMEOUT_MS
     env = dict(os.environ)
     # Belt + suspenders: never let an API key override the OAuth session.
@@ -667,21 +668,3 @@ async def _spawn_claude_once(
         cost_usd=envelope.cost_usd,
     )
     return envelope.result_text
-
-
-def claude_with_model(
-    model: str | None,
-    *,
-    role: str = "unknown",
-    timeout_ms: int | None = None,
-) -> Callable[[str], Awaitable[str]]:
-    """A one-argument cognition caller bound to a model + role label. Routes
-    through the configured :class:`~devclaw.cognition.Cognition` (claude by
-    default; ``DEVCLAW_COGNITION=stub`` for offline harnesses). ``timeout_ms``
-    overrides the default ceiling for this role — pass it when the role's
-    expected output volume routinely exceeds the global default (decomposer).
-    Backend-swap happens at the cognition seam — this factory keeps its
-    historical name + signature so existing callers stay untouched."""
-    from .cognition import bind
-
-    return bind(model, role=role, timeout_ms=timeout_ms)

@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-27
 
-**Status**: Draft
+**Status**: Implemented 2026-08-31 — shipped in #723, #727, #743, #747, #754, #763 (tasks 15/15). Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped).
 
 **Input**: User description: "One execution lane: retire freeform direct dispatch, make dispatch_task sugar over a one_shot goal keyed to an issue. devclaw has two lanes for work with different guarantees; the direct-dispatch lane has no identity, no single-writer, no workspace prep. On 2026-08-27 this produced byte-identical PRs #715/#716 from two dispatches 9s apart, cross-contaminated increments from three concurrent dispatches sharing one workspace, and a context-overflow failure. Root cause: work can enter execution without an identity and outside the one primitive (ADR 0003)."
 

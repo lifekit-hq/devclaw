@@ -1,6 +1,7 @@
 # Spec 026 — Dispatch brief budget
 
 **Issue:** lifekit-hq/devclaw#729  
+**Status:** Implemented 2026-08-29 — shipped in #730 (issue #729 closed 2026-08-29; tasks 6/6). Header added 2026-09-06 by the docs audit (the spec carried none).  
 **Parent class:** #707 (worker-context overflow)
 
 ## What

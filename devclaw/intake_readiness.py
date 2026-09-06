@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
@@ -46,6 +45,7 @@ from typing import Awaitable, Callable, Optional
 # as the evaluator's re-export.
 from .task_git import _review_repo_context_sync  # noqa: F401
 
+from .llm_call import PlannerError, extract_json
 from .model_tiers import model_for as _model_for
 
 ClaudeCaller = Callable[[str], Awaitable[str]]
@@ -167,19 +167,6 @@ def build_prompt(
             expected_increments, increment_basis
         ),
     )
-
-
-def extract_json(text: str) -> str:
-    trimmed = (text or "").strip()
-    if trimmed.startswith("{"):
-        return trimmed
-    fence = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", trimmed)
-    if fence and fence.group(1):
-        return fence.group(1)
-    first, last = trimmed.find("{"), trimmed.rfind("}")
-    if first >= 0 and last > first:
-        return trimmed[first : last + 1]
-    raise ReadinessError("no JSON object found in readiness response", text)
 
 
 #: The concrete, asker-fixable reason a stale ask is not ready (spec 028
@@ -307,7 +294,7 @@ async def evaluate(
     raw = await claude_caller(prompt)
     try:
         parsed = json.loads(extract_json(raw))
-    except json.JSONDecodeError as exc:
+    except (PlannerError, json.JSONDecodeError) as exc:
         raise ReadinessError(f"readiness emitted invalid JSON: {exc}", raw) from exc
     return validate(parsed)
 
@@ -315,6 +302,6 @@ async def evaluate(
 def default_caller() -> ClaudeCaller:
     """Production cognition caller bound to the readiness tier (lazy import so
     tests that inject a fake never touch the subprocess)."""
-    from .llm_call import claude_with_model
+    from .cognition import claude_with_model
 
     return claude_with_model(READINESS_MODEL, role="intake_readiness")

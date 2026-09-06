@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-25
 
-**Status**: Draft
+**Status**: Implemented 2026-08-31 — shipped in #687, #691, #692, #693, #694; follow-up fixes #760 (tasks 26/26). Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped).
 
 **Input**: User description: "A goal that works an issue references it structurally instead of pasting it: first-class issue references fetched fresh at dispatch, done_when defaulting to the issues' acceptance scenarios, an enforced length budget on the goal's own text, readiness-gated references, an explicit lane for issue-less goals — relocation, not deletion."
 

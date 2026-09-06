@@ -44,6 +44,7 @@ from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
 from ..claude_trust import write_trusted_copy
 from .. import config as _config
+from . import workspace as _workspace
 from ..git_identity import git_identity_env
 
 SANDBOX_IMAGE = _config.SANDBOX_IMAGE
@@ -78,6 +79,14 @@ SANDBOX_CPUS = _config.SANDBOX_CPUS
 # Deploy containers use `devclaw.deploy=1` (delivery/deploy.py) — a deliberately
 # different label, outside the sweep's scope.
 SANDBOX_LABEL = "devclaw.sandbox=1"
+#: Process-count ceiling per sandbox (``--pids-limit``). The memory ceiling
+#: bounds bytes, not processes: a fork bomb or a runaway test-worker pool is
+#: otherwise the host's problem. Generous on purpose — a monorepo ``npm ci`` +
+#: a parallel test run + Playwright workers sit in the hundreds. A constant,
+#: not a DEVCLAW_* dial: nothing has needed to move it, and every dial is a
+#: compose-forwarding line + a doc row + a doctor surface (tinyspec
+#: ``sandbox-dials-not-plumbed``).
+SANDBOX_PIDS_LIMIT = "4096"
 # Owner-instance label key. Two devclaw processes legitimately share one docker
 # daemon (the live service + a one-off eval/measure run), so "any sandbox-labeled
 # container is orphaned at MY startup" is false across processes: an unscoped
@@ -366,10 +375,13 @@ def _toolchain_volume_name(host_bind_path: str) -> str:
     (ADR 0005). Keyed on the HOST workspace path — the project identity axis —
     so every task of a project shares one cache and no project can touch
     another's (per-project isolation was an explicit lock decision, over a
-    shared cross-project cache). Deterministic; docker auto-creates the volume
-    on first mount."""
-    slug = re.sub(r"[^a-z0-9]+", "-", Path(host_bind_path).name.lower()).strip("-")[:40]
-    digest = hashlib.sha256(host_bind_path.encode("utf-8")).hexdigest()[:8]
+    shared cross-project cache). A goal checkout (``<project>/.goals/<id>``,
+    2026-09-06) keys on its PROJECT workspace, so per-goal directories share
+    the project's cache and mint no volumes of their own. Deterministic;
+    docker auto-creates the volume on first mount."""
+    key = _workspace.project_workspace_for(host_bind_path)
+    slug = re.sub(r"[^a-z0-9]+", "-", Path(key).name.lower()).strip("-")[:40]
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
     return f"devclaw-toolchains-{slug or 'workspace'}-{digest}"
 
 
@@ -530,6 +542,20 @@ def _build_docker_args(
         "--memory", (sandbox_memory or SANDBOX_MEMORY),
         "--memory-swap", (sandbox_memory or SANDBOX_MEMORY),
         "--cpus", (sandbox_cpus or SANDBOX_CPUS),
+        # Kernel-side fence (tinyspec sandbox-kernel-fence, 2026-09-06). The
+        # container already runs as `agent`; these close what a non-root
+        # process can still reach. --pids-limit bounds process count (memory
+        # above bounds bytes only); --cap-drop ALL empties the bounding set so
+        # no file capability or setuid binary can hand one back; and
+        # no-new-privileges refuses setuid/setgid escalation outright. Nothing
+        # in the image needs any of it: toolchains provision under /home/agent
+        # without sudo, oom_score_adj is raised (unprivileged), and Playwright
+        # launches Chromium without its setuid sandbox by default. Deliberately
+        # NOT applied: --read-only (mise + npm write under /home/agent and
+        # /tmp) and a non-host network (claude's OAuth refresh needs egress).
+        "--pids-limit", SANDBOX_PIDS_LIMIT,
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
         "-v",
         f"{host_bind_path}:{CONTAINER_WORKSPACE}",
         # Shadow the repo's OWN vendor agent config with an empty tmpfs. Since

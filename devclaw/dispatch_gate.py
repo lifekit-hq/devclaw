@@ -17,8 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-#: Shape of a run_schedule; the disabled default returned when none is persisted.
-DEFAULT_SCHEDULE: dict = {"enabled": False, "start": "09:00", "end": "18:00", "tz": "Europe/Kyiv"}
+from .config import DEFAULT_RUN_SCHEDULE
 
 
 def _parse_hhmm(s: str) -> int | None:
@@ -53,14 +52,14 @@ def schedule_blocks(schedule: dict, now_utc_ms: int) -> tuple[bool, str]:
     A disabled schedule or an unknown timezone never blocks (fail-open)."""
     if not schedule.get("enabled"):
         return False, ""
-    tz = schedule.get("tz") or DEFAULT_SCHEDULE["tz"]
+    tz = schedule.get("tz") or DEFAULT_RUN_SCHEDULE["tz"]
     try:
         zone = ZoneInfo(tz)
     except Exception:  # noqa: BLE001 — any tz resolution failure fails open
         return False, ""
     local = datetime.fromtimestamp(now_utc_ms / 1000, tz=timezone.utc).astimezone(zone)
-    start = schedule.get("start") or DEFAULT_SCHEDULE["start"]
-    end = schedule.get("end") or DEFAULT_SCHEDULE["end"]
+    start = schedule.get("start") or DEFAULT_RUN_SCHEDULE["start"]
+    end = schedule.get("end") or DEFAULT_RUN_SCHEDULE["end"]
     if within_window(local.hour * 60 + local.minute, start, end):
         return False, ""
     return True, f"outside run window {start}–{end} {tz} (local {local:%H:%M})"
@@ -78,9 +77,9 @@ def next_window_open_ms(schedule: dict, now_utc_ms: int) -> int | None:
     if not blocked:
         return None
     # blocked=True implies the tz resolved and start/end parsed non-degenerate.
-    zone = ZoneInfo(schedule.get("tz") or DEFAULT_SCHEDULE["tz"])
+    zone = ZoneInfo(schedule.get("tz") or DEFAULT_RUN_SCHEDULE["tz"])
     local = datetime.fromtimestamp(now_utc_ms / 1000, tz=timezone.utc).astimezone(zone)
-    sm = _parse_hhmm(schedule.get("start") or DEFAULT_SCHEDULE["start"])
+    sm = _parse_hhmm(schedule.get("start") or DEFAULT_RUN_SCHEDULE["start"])
     if sm is None:  # unreachable given blocked=True; belt-and-braces fail-open
         return None
     target = local.replace(hour=sm // 60, minute=sm % 60, second=0, microsecond=0)

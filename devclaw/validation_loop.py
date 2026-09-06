@@ -17,7 +17,7 @@ import urllib.request
 from typing import Optional, Sequence
 
 from . import issue_doorway as _doorway
-from .intake import repo_slug as _repo_slug
+from .task_git import repo_slug as _repo_slug
 
 #: The two doorway sources this loop produces (spec 014 data-model names both).
 VALIDATOR_SOURCE = "validator"

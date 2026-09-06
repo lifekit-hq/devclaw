@@ -1,0 +1,399 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Devclaw Scorecard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#f6f7f8; --surface:#ffffff; --surface2:#eef1f3;
+    --ink:#1b2228; --muted:#5b6770; --faint:#8b98a3;
+    --line:#dde3e7; --line-strong:#c3ccd3;
+    --accent:#0e7490; --accent-ink:#0c5f77; --accent-soft:#e3f0f4;
+    --good:#1f883d; --good-soft:#e2f2e7; --good-ink:#176a30;
+    --fail:#cf222e; --fail-soft:#fbe9ea; --fail-ink:#a81c26;
+    --warn:#9a6700; --warn-soft:#f7efdc; --warn-ink:#7d5400;
+    --idle:#8b98a3; --idle-soft:#eef1f3;
+    --meter-track:#e4e9ec;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#11161b; --surface:#171e24; --surface2:#1e262e;
+      --ink:#e6ebee; --muted:#9aa7b1; --faint:#6e7b86;
+      --line:#2a343d; --line-strong:#3a4650;
+      --accent:#2fa8c9; --accent-ink:#5cc0da; --accent-soft:#12333d;
+      --good:#3fb950; --good-soft:#12301b; --good-ink:#57c968;
+      --fail:#f85149; --fail-soft:#3a1a1c; --fail-ink:#ff6b64;
+      --warn:#d29922; --warn-soft:#332912; --warn-ink:#e0ac3d;
+      --idle:#77828c; --idle-soft:#222b33;
+      --meter-track:#242e37;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#11161b; --surface:#171e24; --surface2:#1e262e;
+    --ink:#e6ebee; --muted:#9aa7b1; --faint:#6e7b86;
+    --line:#2a343d; --line-strong:#3a4650;
+    --accent:#2fa8c9; --accent-ink:#5cc0da; --accent-soft:#12333d;
+    --good:#3fb950; --good-soft:#12301b; --good-ink:#57c968;
+    --fail:#f85149; --fail-soft:#3a1a1c; --fail-ink:#ff6b64;
+    --warn:#d29922; --warn-soft:#332912; --warn-ink:#e0ac3d;
+    --idle:#77828c; --idle-soft:#222b33;
+    --meter-track:#242e37;
+  }
+  *{box-sizing:border-box}
+  body{
+    background:var(--ground); color:var(--ink);
+    font:400 15px/1.6 "IBM Plex Sans", -apple-system, "Segoe UI", sans-serif;
+    margin:0; padding:0 20px 72px;
+  }
+  .wrap{max-width:1060px; margin:0 auto}
+  h1,h2,h3{font-family:"IBM Plex Sans Condensed","IBM Plex Sans",sans-serif; text-wrap:balance; margin:0}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums}
+
+  header{padding:40px 0 20px; border-bottom:2px solid var(--ink); margin-bottom:26px}
+  .eyebrow{font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:600; font-size:12px;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--accent-ink)}
+  h1{font-size:42px; font-weight:700; letter-spacing:-.01em; line-height:1.1; margin-top:6px}
+  .subtitle{color:var(--muted); margin-top:8px; max-width:64ch}
+  .stamp{margin-top:12px; display:flex; flex-wrap:wrap; gap:8px 18px; font-size:12.5px; color:var(--faint)}
+  .stamp span{white-space:nowrap}
+
+  .verdict{display:flex; flex-wrap:wrap; align-items:center; gap:14px 22px;
+    background:var(--surface); border:1px solid var(--line); border-left:5px solid var(--fail);
+    border-radius:6px; padding:18px 22px; margin-bottom:14px}
+  .verdict .big{font-family:"IBM Plex Sans Condensed",sans-serif; font-weight:700; font-size:24px}
+  .verdict .why{color:var(--muted); font-size:14px; max-width:52ch}
+  .chip{display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:999px;
+    font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600; white-space:nowrap}
+  .chip.pass{background:var(--good-soft); color:var(--good-ink)}
+  .chip.fail{background:var(--fail-soft); color:var(--fail-ink)}
+  .chip.warn{background:var(--warn-soft); color:var(--warn-ink)}
+  .chip.neutral{background:var(--idle-soft); color:var(--muted)}
+
+  .checks{display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin-bottom:34px}
+  .check{background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:16px 18px; min-width:0}
+  .check h3{font-size:15px; font-weight:600; display:flex; justify-content:space-between; align-items:baseline; gap:10px}
+  .check .val{font-family:"IBM Plex Mono",monospace; font-size:28px; font-weight:600; margin:8px 0 2px}
+  .check .thr{font-size:12.5px; color:var(--faint)}
+  .meter{position:relative; height:10px; background:var(--meter-track); border-radius:5px; margin-top:12px; overflow:visible}
+  .meter .fill{position:absolute; inset:0 auto 0 0; border-radius:5px}
+  .meter .tick{position:absolute; top:-4px; bottom:-4px; width:2px; background:var(--ink); opacity:.65}
+  .meter .ticklabel{position:absolute; top:14px; font-size:11px; color:var(--faint); transform:translateX(-50%); font-family:"IBM Plex Mono",monospace}
+  .check .note{font-size:12.5px; color:var(--muted); margin-top:26px}
+
+  section{margin-bottom:38px}
+  .sechead{display:flex; align-items:baseline; gap:12px; border-bottom:1px solid var(--line-strong); padding-bottom:8px; margin-bottom:16px}
+  .sechead h2{font-size:21px; font-weight:700}
+  .sechead .hint{color:var(--faint); font-size:13px}
+
+  .strip{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px}
+  .night{width:60px; border-radius:5px; border:1px solid var(--line); background:var(--surface);
+    padding:7px 0 6px; text-align:center; flex:0 0 auto}
+  .night .g{font-size:15px; font-weight:700; line-height:1; font-family:"IBM Plex Mono",monospace}
+  .night .d{font-size:10.5px; color:var(--faint); margin-top:5px; font-family:"IBM Plex Mono",monospace}
+  .night.clean{border-color:var(--good); background:var(--good-soft)} .night.clean .g{color:var(--good-ink)}
+  .night.wedge{border-color:var(--fail); background:var(--fail-soft)} .night.wedge .g{color:var(--fail-ink)}
+  .night.idle .g{color:var(--faint)}
+  .striplegend{font-size:12.5px; color:var(--muted)}
+  .striplegend b{font-family:"IBM Plex Mono",monospace; font-weight:600}
+  .wedgenotes{margin:12px 0 0; padding:0; list-style:none; font-size:13px; color:var(--muted); display:grid; gap:3px}
+  .wedgenotes .mono{color:var(--ink)}
+
+  .tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:6px; background:var(--surface)}
+  table{border-collapse:collapse; width:100%; min-width:640px; font-size:14px}
+  th,td{text-align:left; padding:9px 16px; border-bottom:1px solid var(--line)}
+  thead th{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:12px; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--muted); background:var(--surface2); font-weight:600}
+  tbody tr:last-child td{border-bottom:none}
+  td.num{font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap}
+  td .sub{color:var(--faint); font-size:12px}
+
+  .gradebar{display:flex; height:34px; border-radius:5px; overflow:hidden; gap:2px; background:var(--ground); margin:6px 0 10px}
+  .gradebar .seg{display:flex; align-items:center; justify-content:center; min-width:0}
+  .gradebar .seg span{font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:600; color:#fff; white-space:nowrap; padding:0 6px}
+  .gradelegend{display:flex; flex-wrap:wrap; gap:8px 20px; font-size:13px; color:var(--muted); margin-bottom:14px}
+  .dot{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:6px; vertical-align:baseline}
+  .callout{background:var(--accent-soft); border-left:4px solid var(--accent); border-radius:0 6px 6px 0;
+    padding:12px 16px; font-size:14px; max-width:78ch}
+  .callout b{color:var(--accent-ink)}
+
+  .challenges{display:grid; gap:12px; counter-reset:ch}
+  .challenge{background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:16px 18px 16px 58px; position:relative}
+  .challenge::before{counter-increment:ch; content:counter(ch);
+    position:absolute; left:16px; top:15px; width:28px; height:28px; border-radius:6px;
+    background:var(--ink); color:var(--ground); font-family:"IBM Plex Mono",monospace; font-weight:600;
+    display:flex; align-items:center; justify-content:center; font-size:14px}
+  .challenge h3{font-size:15.5px; font-weight:600; margin-bottom:4px}
+  .challenge p{margin:0; color:var(--muted); font-size:14px; max-width:88ch}
+
+  .smellgrid{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:14px}
+  .smellcard{background:var(--surface); border:1px solid var(--line); border-radius:6px; padding:16px 18px; min-width:0}
+  .smellcard h3{font-size:16px; font-weight:700; margin-bottom:2px}
+  .smellcard .disc{font-size:12px; color:var(--faint); font-family:"IBM Plex Sans Condensed",sans-serif;
+    letter-spacing:.1em; text-transform:uppercase; font-weight:600}
+  .smell{padding:10px 0; border-bottom:1px dashed var(--line)}
+  .smell:last-child{border-bottom:none; padding-bottom:2px}
+  .smell .head{display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:2px}
+  .smell .name{font-weight:600; font-size:14px}
+  .smell p{margin:2px 0 0; font-size:13.5px; color:var(--muted)}
+  .smell .ev{font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--accent-ink)}
+
+  .credits{display:flex; flex-wrap:wrap; gap:8px}
+  .credit{background:var(--good-soft); color:var(--good-ink); border-radius:999px; padding:4px 14px;
+    font-size:13px; font-weight:500; white-space:nowrap}
+  .credit .mono{font-weight:600}
+  .next{display:grid; gap:10px}
+  .nextitem{display:flex; gap:14px; align-items:baseline; background:var(--surface); border:1px solid var(--line);
+    border-radius:6px; padding:12px 16px}
+  .nextitem .ref{font-family:"IBM Plex Mono",monospace; font-weight:600; font-size:13px; color:var(--accent-ink); white-space:nowrap}
+  .nextitem p{margin:0; font-size:14px; color:var(--muted)}
+  .nextitem p b{color:var(--ink); font-weight:600}
+
+  footer{margin-top:44px; padding-top:14px; border-top:1px solid var(--line); font-size:12.5px; color:var(--faint); max-width:88ch}
+  @media (max-width:640px){ h1{font-size:32px} .verdict .big{font-size:20px} }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="eyebrow">Autonomous loop · production-readiness ratchet</div>
+  <h1>Devclaw Scorecard</h1>
+  <p class="subtitle">Where the loop stands against its own "finished" bar — and the engineering smells still standing between here and unattended operation.</p>
+  <div class="stamp mono">
+    <span>computed 2026-09-05</span>
+    <span>windows: 7-day / 30-day</span>
+    <span>source: get_scorecard_metrics · /evals/cycles.json · problems catalog</span>
+  </div>
+</header>
+
+<div class="verdict">
+  <div>
+    <div class="big">Not finished — 1 of 3 ratchet checks pass</div>
+    <div class="why">Bar set 2026-08-25: first-pass ≥ 0.70 · decided-merge ≥ 0.80 · 14 days wedge-free. Merge quality is solved; <b>convergence is the product.</b></div>
+  </div>
+  <span class="chip fail">RATCHET FAIL</span>
+</div>
+
+<div class="checks">
+  <div class="check">
+    <h3>Decided-merge rate <span class="chip pass">✓ PASS</span></h3>
+    <div class="val mono">1.00</div>
+    <div class="thr mono">threshold ≥ 0.80 · 30-day: 0.94</div>
+    <div class="meter">
+      <div class="fill" style="width:100%; background:var(--good)"></div>
+      <div class="tick" style="left:80%"></div><div class="ticklabel" style="left:80%">0.80</div>
+    </div>
+    <div class="note">17 of 17 decided PRs merged this week, 0 rejected (32/34 over the month). The delivery machinery is production-grade.</div>
+  </div>
+  <div class="check">
+    <h3>First-pass convergence <span class="chip fail">✕ FAIL</span></h3>
+    <div class="val mono">0.36</div>
+    <div class="thr mono">threshold ≥ 0.70 · 30-day: 0.29</div>
+    <div class="meter">
+      <div class="fill" style="width:36%; background:var(--fail)"></div>
+      <div class="tick" style="left:70%"></div><div class="ticklabel" style="left:70%">0.70</div>
+    </div>
+    <div class="note">5 of 14 closed goals passed the done-gate first try. Median 2 rounds to close, tail out to 12. <b>The failing metric.</b></div>
+  </div>
+  <div class="check">
+    <h3>Wedge-free window <span class="chip fail">✕ FAIL</span></h3>
+    <div class="val mono">2 / 5</div>
+    <div class="thr mono">threshold: 14 days clean · 30-day: 9 / 22</div>
+    <div class="meter">
+      <div class="fill" style="width:40%; background:var(--fail)"></div>
+      <div class="tick" style="left:100%"></div><div class="ticklabel" style="left:96%">all</div>
+    </div>
+    <div class="note">A mechanism wedge roughly every other active night — though the two biggest recent classes are already killed at the root.</div>
+  </div>
+</div>
+
+<section>
+  <div class="sechead"><h2>Fourteen nights</h2><span class="hint">22:00–05:00 cycles · clean = zero mechanism-wedges (ADR 0006)</span></div>
+  <div class="strip">
+    <div class="night clean"><div class="g">✓</div><div class="d">08-22</div></div>
+    <div class="night clean"><div class="g">✓</div><div class="d">08-23</div></div>
+    <div class="night wedge"><div class="g">✕</div><div class="d">08-24</div></div>
+    <div class="night clean"><div class="g">✓</div><div class="d">08-25</div></div>
+    <div class="night clean"><div class="g">✓</div><div class="d">08-26</div></div>
+    <div class="night wedge"><div class="g">✕</div><div class="d">08-27</div></div>
+    <div class="night idle"><div class="g">–</div><div class="d">08-28</div></div>
+    <div class="night wedge"><div class="g">✕</div><div class="d">08-29</div></div>
+    <div class="night idle"><div class="g">–</div><div class="d">08-30</div></div>
+    <div class="night clean"><div class="g">✓</div><div class="d">08-31</div></div>
+    <div class="night clean"><div class="g">✓</div><div class="d">09-01</div></div>
+    <div class="night wedge"><div class="g">✕</div><div class="d">09-02</div></div>
+    <div class="night wedge"><div class="g">✕</div><div class="d">09-03</div></div>
+    <div class="night idle"><div class="g">–</div><div class="d">09-04</div></div>
+  </div>
+  <div class="striplegend"><b>✓ clean ×6</b> · <b>✕ wedged ×5</b> · <b>– idle ×3</b> (idle nights excluded from the clean rate; 09-04 idle by operator hold)</div>
+  <ul class="wedgenotes">
+    <li><span class="mono">✕ 08-24 / 08-27 / 08-29</span> — dispatch cap reached (the recurring class; 08-29 also trend-detector + summary crashes)</li>
+    <li><span class="mono">✕ 09-02</span> — merge-on-close conflict (tracked <span class="mono">.specify/feature.json</span> — root-fixed in fs#556) · still settled 25 tasks, 24 done</li>
+    <li><span class="mono">✕ 09-03</span> — sandbox missing NODE_AUTH_TOKEN after a hand container recreate — root-fixed in #816 (one durable home, boot guard)</li>
+  </ul>
+</section>
+
+<section>
+  <div class="sechead"><h2>The numbers</h2><span class="hint">7-day vs 30-day, same store</span></div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Metric</th><th>7-day</th><th>30-day</th><th>Reading</th></tr></thead>
+    <tbody>
+      <tr><td>Tasks settled done</td><td class="num">122 / 154 (79%)</td><td class="num">314 / 408 (77%)</td><td>Steady; failures are mostly env + overflow classes, not code quality</td></tr>
+      <tr><td>PRs opened → merged</td><td class="num">23 → 17</td><td class="num">40 → 32</td><td>0 rejected this week; 2 in 30 days</td></tr>
+      <tr><td>Done-gate rounds to close</td><td class="num">median 2 · max 12</td><td class="num">median 2 · max 12</td><td>The churn behind the failed first-pass check</td></tr>
+      <tr><td>Goals abandoned</td><td class="num">3</td><td class="num">9</td><td>Each one is direction memory lost mid-flight</td></tr>
+      <tr><td>Human steers</td><td class="num">12</td><td class="num">47</td><td>Against the "no babysitting" ruling — trending down but real</td></tr>
+      <tr><td>Interventions / achieved goal</td><td class="num">1.5</td><td class="num">1.0</td><td>Spec 032 US5 metric — includes <b>14 non-worker commits</b> this week</td></tr>
+      <tr><td>Tokens / merged PR</td><td class="num">29k</td><td class="num">60k</td><td>The honest cross-billing cost number (OAuth, no dollar meter)</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Done-gate calibration</h2><span class="hint">65 evaluator calls, 7-day · structural grade distribution</span></div>
+  <div class="gradebar" role="img" aria-label="Structural grades: 4 clean, 50 concerns, 9 poor of 63 graded">
+    <div class="seg" style="flex:4; background:var(--good)"><span>clean 4</span></div>
+    <div class="seg" style="flex:50; background:var(--warn)"><span>concerns 50</span></div>
+    <div class="seg" style="flex:9; background:var(--fail)"><span>poor 9</span></div>
+  </div>
+  <div class="gradelegend">
+    <span><span class="dot" style="background:var(--good)"></span>clean — no structural findings</span>
+    <span><span class="dot" style="background:var(--warn)"></span>concerns — advise-and-ship under trust</span>
+    <span><span class="dot" style="background:var(--fail)"></span>poor</span>
+    <span class="mono">verdicts: achieved 21 · off_track 36 · stalled 3 · needs_human 3 · unparseable 2</span>
+  </div>
+  <div class="callout"><b>A judge that finds concerns 90% of the time</b> is either judging a moving target or holds a miscalibrated bar — and today there is no eval set to tell which. This distribution is the single strongest argument for building the done-gate calibration evals before tuning anything else.</div>
+</section>
+
+<section>
+  <div class="sechead"><h2>The three biggest challenges</h2><span class="hint">ranked by distance to the ratchet</span></div>
+  <div class="challenges">
+    <div class="challenge">
+      <h3>Done-gate churn — the failing metric's direct cause</h3>
+      <p>Working code still takes 2–12 review rounds to close because the gate's criteria drift between rounds against the same contract. This is <b>#793</b> (pin done-gate clauses per contract revision — the "2-hour-close" class), named next P1 and still open.</p>
+    </div>
+    <div class="challenge">
+      <h3>Mechanism wedges every other active night</h3>
+      <p>41–45% clean rate. Credit where due: the credentials class (#816) and the merge-conflict fuel (fs#556) are killed at the root. The remaining named class is <b>#817</b> — a 529 Overloaded charged to the goal like a real failure.</p>
+    </div>
+    <div class="challenge">
+      <h3>The human is still a stage</h3>
+      <p>14 hand commits into goal branches in one week (8 into fs-421 alone) plus 3 steers, 3 resumes, 1 decision. Each hand commit is either the operator finishing the worker's job or routing around a deficiency the loop should have surfaced as a typed Problem. Spec 032 US5 now measures it; the number says the doctrine isn't yet reality.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Smells, by discipline</h2><span class="hint">against AI-engineering principles · live unless marked</span></div>
+  <div class="smellgrid">
+
+    <div class="smellcard">
+      <div class="disc">Context management</div>
+      <h3>The weakest discipline right now</h3>
+      <div class="smell">
+        <div class="head"><span class="name">Append-only pushed memory</span><span class="chip fail">LIVE</span></div>
+        <p>The repo-notes blob is re-injected into every dispatch: same fact ×15, ~2.5KB of a 9.4KB brief. Spec 034 (pull-based file memory) is clarified but unimplemented — the rot accrues every dispatch until it ships.</p>
+        <div class="ev">repo_brief.py merge_repo_notes · tick_dispatch.py:290</div>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Context overflow as a failure class</span><span class="chip fail">LIVE</span></div>
+        <p>"Prompt is too long" killed 16 tasks; the 75% tripwire fired ×12 (4 terminal). The budget bounds the brief, not the conversation — the root is task slicing producing work too big for one session.</p>
+        <div class="ev">problems: prompt-too-long ×16 · context_tripwire ×12</div>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Retries replay failure history</span><span class="chip warn">MITIGATED</span></div>
+        <p>A retry carries the whole prior conversation plus its failure — why overflow is deterministic. Correctly not auto-retried; the re-scope is still manual.</p>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Done well</span><span class="chip pass">CREDIT</span></div>
+        <p>Zero-token idle · pull-based code-map brief (029) · live issue fetch at dispatch — freshness by construction · brief-budget machinery (021).</p>
+      </div>
+    </div>
+
+    <div class="smellcard">
+      <div class="disc">Prompt engineering</div>
+      <h3>Good hygiene, unpinned judge</h3>
+      <div class="smell">
+        <div class="head"><span class="name">The judge's rubric isn't pinned</span><span class="chip fail">LIVE</span></div>
+        <p>Done-gate criteria drift between rounds against the same contract — the prompt-engineering equivalent of a flaky test, and the direct cause of the 0.36 first-pass rate.</p>
+        <div class="ev">#793 · donegate_churn brakes · rounds max 12</div>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Length-blind prompt assembly at gates</span><span class="chip warn">MITIGATED</span></div>
+        <p>claude --print stays the least reliable call class (historical exit −9 ×117 on review); oversized diffs crash gates rather than being budgeted before the call. Fails closed <em>and fast</em> — but not solved.</p>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Parse seam fragility</span><span class="chip warn">SMALL</span></div>
+        <p>2 unparseable evaluator responses this week. Small, but the seam is load-bearing.</p>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Done well</span><span class="chip pass">CREDIT</span></div>
+        <p>One home per rule, imperative style · the #227 grounding-block pattern · presence-AND-absence prompt tests · no incident history in templates.</p>
+      </div>
+    </div>
+
+    <div class="smellcard">
+      <div class="disc">Harness design</div>
+      <h3>Strong bones, two honesty gaps</h3>
+      <div class="smell">
+        <div class="head"><span class="name">Transient / terminal taxonomy incomplete</span><span class="chip fail">LIVE</span></div>
+        <p>A 529 Overloaded is charged to the goal's dispatch cap like real failure — "a counter where a measurement belongs," and the counter can't tell an outage from incompetence. Sep 3: six sessions burned, three human resumes.</p>
+        <div class="ev">#817 · 529 ×7 terminal</div>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Unverified action claims in owner-facing text</span><span class="chip fail">LIVE</span></div>
+        <p>A settle message said "filed as devclaw work" — no issue existed. Console honesty (#783) settled this class one layer up; this is the same smell one layer down.</p>
+        <div class="ev">#818</div>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">Sandbox lore leaking into product repos</span><span class="chip warn">CLEANUP</span></div>
+        <p>State of system A persisted in repo B — two active goals (fs-557, lkd-100) exist purely to remove committed workarounds, which means the leak already happened.</p>
+      </div>
+    </div>
+
+    <div class="smellcard">
+      <div class="disc">Evals</div>
+      <h3>The thinnest layer</h3>
+      <div class="smell">
+        <div class="head"><span class="name">One-fixture-per-incident coverage</span><span class="chip fail">LIVE</span></div>
+        <p>Cognition quality is <em>declared</em> to be measured by evals, but coverage is reactive (fs-479 fixture). The failing metric — done-gate calibration — has no eval set at all, so "90% concerns" can't be split between a strict judge and a broken one.</p>
+      </div>
+      <div class="smell">
+        <div class="head"><span class="name">If you build one eval this month</span><span class="chip neutral">→</span></div>
+        <p>Build the done-gate calibration set: known-good closes that must pass first try, known-bad closes that must be held, graded against pinned rubrics.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Fixed at the root recently</h2><span class="hint">credit — each of these was a named class, not an instance patch</span></div>
+  <div class="credits">
+    <span class="credit"><span class="mono">spec 032</span> — project CI is the verdict of record</span>
+    <span class="credit"><span class="mono">spec 013</span> — one definition of "what changed"</span>
+    <span class="credit"><span class="mono">#617</span> — views never read back</span>
+    <span class="credit"><span class="mono">spec 030</span> — env-capability admission</span>
+    <span class="credit"><span class="mono">spec 031</span> — typed Problems &amp; Decisions</span>
+    <span class="credit"><span class="mono">#816</span> — one durable home for credentials</span>
+    <span class="credit"><span class="mono">fs#556</span> — merge-conflict fuel untracked</span>
+  </div>
+</section>
+
+<section>
+  <div class="sechead"><h2>Next moves</h2><span class="hint">these four attack all three challenges</span></div>
+  <div class="next">
+    <div class="nextitem"><span class="ref">#793</span><p><b>Pin done-gate clauses per contract revision</b> — the rubric-drift class behind the 0.36 first-pass rate. Named next P1.</p></div>
+    <div class="nextitem"><span class="ref">#817</span><p><b>Server-side transients pause-and-resume</b> like quota/auth — stop charging outages to goals. Bumped to P1, contract written.</p></div>
+    <div class="nextitem"><span class="ref">evals</span><p><b>Done-gate calibration set</b> — the measurement without which the convergence work is tuning blind.</p></div>
+    <div class="nextitem"><span class="ref">spec 034</span><p><b>Worker file memory</b> — stop the context rot at the source; committed as a clarified draft, queued behind the correctness lane.</p></div>
+  </div>
+</section>
+
+<footer>
+  Data: <span class="mono">get_scorecard_metrics</span> (7-day and 30-day windows, computed 2026-09-05) · <span class="mono">/evals/cycles.json</span> nightly cycle reports · the deduplicated problems catalog · doctor findings on the live instance at <span class="mono">cec3aa8</span>. Ratchet thresholds are informational by design (DEVCLAW_RATCHET_*, never a gate). Idle nights are excluded from the clean-cycle rate; 09-04 was idle under the operator quota hold.
+</footer>
+</div>
+</body>
+</html>
