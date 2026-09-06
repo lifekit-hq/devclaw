@@ -1,51 +1,12 @@
-"""llm_call is a LEAF module — the quality gate imports it without the heavies.
+"""The OAuth-only invariant, pinned on the cognition subprocess path itself.
 
-The quality gate needed exactly three symbols (`PlannerError`,
-`claude_with_model`, `extract_json`) but historically imported them from the
-(now-deleted) `planner`, which dragged `state_store` + `task_git` and closed
-the ``quality → planner → loom → goal`` import cycle. The primitive lives in
-``llm_call.py`` (only internal dep: ``loom.trace``, itself pure stdlib).
-These pin the leaf-ness and the gate's rewiring so the cycle can't silently
-return via any heavy module.
+(The leaf-ness of ``llm_call`` that used to be pinned here by a fresh-interpreter
+import and a static source scan is now an import-linter contract in
+``pyproject.toml`` — tinyspec ``import-contracts``; the two tests were removed
+with it, symmetric ratchet.)
 """
 
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
-
-_REPO = Path(__file__).resolve().parents[1]
-
-
-def test_llm_call_imports_without_planner_or_state_store():
-    # Fresh interpreter: importing the leaf must not pull the heavy modules.
-    code = (
-        "import sys; import devclaw.llm_call; "
-        "heavy = [m for m in ('devclaw.state_store', "
-        "'devclaw.task_git', 'devclaw.task_queue', 'devclaw.goal') "
-        "if m in sys.modules]; "
-        "assert not heavy, f'leaf pulled heavy modules: {heavy}'; print('leaf-ok')"
-    )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, cwd=_REPO
-    )
-    assert out.returncode == 0, out.stderr
-    assert "leaf-ok" in out.stdout
-
-
-def test_quality_modules_import_llm_call_not_heavy_modules():
-    # Static source pin: the gate's modules take the LLM primitive from the
-    # leaf, never from a heavy module (task_queue/goal drag state_store +
-    # task_git and would re-close the old quality → planner-shaped cycle).
-    # Only the LLM-calling modules are listed — browser_gate.py is pure
-    # parsing and imports no caller at all.
-    for mod in ("__init__.py", "reachability.py"):
-        src = (_REPO / "devclaw" / "quality" / mod).read_text()
-        assert "from ..llm_call import" in src, mod
-        for heavy in ("from ..task_queue import", "from ..goal import",
-                      "from ..state_store import", "from ..task_git import"):
-            assert heavy not in src, f"{mod}: {heavy}"
 
 
 async def _no_spawn(*argv, **kwargs):  # pragma: no cover - must not be reached

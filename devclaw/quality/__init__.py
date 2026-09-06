@@ -22,7 +22,8 @@ import json
 import re
 from typing import Awaitable, Callable, Optional
 
-from ..llm_call import PlannerError, claude_with_model, extract_json
+from ..cognition import claude_with_model
+from ..llm_call import PlannerError, extract_json
 from ..loom.limits import SIGNAL_DEATH_PATTERN
 
 #: Adversarial code review is judgment-heavy — Sonnet is the right tier (matches

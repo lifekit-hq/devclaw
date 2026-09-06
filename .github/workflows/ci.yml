@@ -26,7 +26,7 @@ jobs:
           TMPDIR=$(mktemp -d -p "$RUNNER_TEMP") "$RUNNER_TEMP/venv/bin/python" -m pytest -q
 
   lint:
-    name: Lint (ruff + mypy + secrets + yaml)
+    name: Lint (ruff + mypy + import-linter + secrets + yaml)
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
@@ -47,6 +47,15 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/mypy-venv"
           "$RUNNER_TEMP/mypy-venv/bin/pip" install --quiet mypy pyyaml httpx
           "$RUNNER_TEMP/mypy-venv/bin/mypy"
+
+      # import-linter: the architecture half of the same gate (contracts in
+      # pyproject.toml [tool.importlinter]) — the layer order and the leaf
+      # packages are declared facts; a new upward import fails here.
+      - name: import-linter
+        run: |
+          python3 -m venv "$RUNNER_TEMP/importlinter-venv"
+          "$RUNNER_TEMP/importlinter-venv/bin/pip" install --quiet import-linter
+          "$RUNNER_TEMP/importlinter-venv/bin/lint-imports"
 
       # gitleaks via pinned binary (arm64) — exit code is the gate; scans the
       # working tree for secrets. Avoids the gitleaks-action's license + the

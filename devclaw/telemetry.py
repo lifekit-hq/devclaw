@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 # ``role`` labels used by the cognition tracer for evaluator calls. See the
-# ``role=`` arg on ``claude_with_model`` in ``goal/evaluator.py`` — the tracer
+# ``role=`` arg on ``cognition.claude_with_model`` in ``goal/evaluator.py`` — the tracer
 # stamps this into every CognitionEvent, so verdict counts can be scoped to
 # the evaluator only.
 _EVALUATOR_ROLE = "evaluator"

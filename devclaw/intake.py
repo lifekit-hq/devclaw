@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import Optional, Protocol
 from .goal.issue_ref import CONTRACT_HEADING, extract_acceptance
 from .procutil import run as _run
+from .task_git import repo_slug
 
 #: the intake marker label every filed ask carries (proposal §5).
 INTAKE_LABEL = "devclaw-intake"
@@ -81,18 +82,6 @@ class IntakeError(ValueError):
 
 
 # ---- pure decisions (no DB, no clock, no network) ---------------------------
-
-def repo_slug(repo_url: Optional[str]) -> Optional[str]:
-    """``owner/name`` from a registry row's ``repo_url`` (https or ssh, with or
-    without ``.git``). None when the URL is absent or not GitHub-shaped."""
-    url = (repo_url or "").strip().rstrip("/")
-    if not url:
-        return None
-    m = re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$", url)
-    if not m:
-        return None
-    return f"{m.group(1)}/{m.group(2)}"
-
 
 def validate_shape(
     *,

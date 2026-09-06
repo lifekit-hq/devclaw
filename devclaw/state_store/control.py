@@ -15,6 +15,8 @@ import json
 import re
 from typing import TYPE_CHECKING, Optional
 
+from .. import config as _config
+
 if TYPE_CHECKING:
     import sqlite3
     import threading
@@ -346,23 +348,22 @@ class ControlPlaneMixin:
     def get_run_schedule(self, goal_id: "str | None" = None) -> dict:
         """The run-schedule dict; a disabled 09:00–18:00 Europe/Kyiv default when
         none is set (or the stored value is corrupt). Shape mirrors
-        ``dispatch_gate.DEFAULT_SCHEDULE``. With ``goal_id`` set, returns that
+        ``config.DEFAULT_RUN_SCHEDULE``. With ``goal_id`` set, returns that
         goal's own window (disabled-default when it has none — the global window
         is applied separately at the outer gate, so an unset per-goal window must
         add no restriction)."""
-        from ..dispatch_gate import DEFAULT_SCHEDULE
         raw = self.get_meta(self._schedule_key(goal_id))
         if not raw:
-            return dict(DEFAULT_SCHEDULE)
+            return dict(_config.DEFAULT_RUN_SCHEDULE)
         try:
             data = json.loads(raw)
         except (ValueError, TypeError):
-            return dict(DEFAULT_SCHEDULE)
+            return dict(_config.DEFAULT_RUN_SCHEDULE)
         return {
             "enabled": bool(data.get("enabled")),
-            "start": str(data.get("start") or DEFAULT_SCHEDULE["start"]),
-            "end": str(data.get("end") or DEFAULT_SCHEDULE["end"]),
-            "tz": str(data.get("tz") or DEFAULT_SCHEDULE["tz"]),
+            "start": str(data.get("start") or _config.DEFAULT_RUN_SCHEDULE["start"]),
+            "end": str(data.get("end") or _config.DEFAULT_RUN_SCHEDULE["end"]),
+            "tz": str(data.get("tz") or _config.DEFAULT_RUN_SCHEDULE["tz"]),
         }
 
     def list_goal_schedules(self) -> dict[str, dict]:

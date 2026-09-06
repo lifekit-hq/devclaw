@@ -37,7 +37,8 @@ from __future__ import annotations
 from typing import Awaitable, Callable, Optional
 
 from ..model_tiers import model_for as _model_for
-from ..llm_call import PlannerError, claude_with_model, extract_json
+from ..cognition import claude_with_model
+from ..llm_call import PlannerError, extract_json
 
 import json
 
