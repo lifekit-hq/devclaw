@@ -81,6 +81,24 @@ shedding. The split and the 2×2 shed rule are ADR 0004
 (`docs/decisions/0004-eval-workbench.md`, 2026-07-20); this principle makes
 them a plan-time Constitution Check gate rather than a retrospective audit.
 
+### IX. Instruct thin, verify thick, verify mechanically
+Software owns exactly five things: safety (the sandbox, the OAuth strip),
+money (tokens, pauses), state (single writer, CAS), the verdict of record
+(the project's CI, the materialize span), and the protocol (what goes into
+the worker and what comes out). The agent owns everything that varies per
+repo — how to build, how to test, what a good change looks like, how to read
+an issue; devclaw never encodes knowledge about a project's code, it supplies
+facts and tools and reads the mechanical verdict. A gap is closed in this
+order: a missing fact (supplied through the environment or a tool), then a
+missing instruction (one line in a skill, checked by an eval), then a
+software brake — and a brake only inside the five domains. Python landing
+outside them is a smell the plan must argue for by name. The price is
+accepted: the agent's output is not predictable and is not made so; the
+harness's behaviour is, and verification is thick and mechanical. Standard
+practice is adopted, not re-invented: a devclaw-specific mechanism needs a
+reason the standard one cannot give. (Ruled by Denys 2026-09-06; spec 032's
+CI-is-the-verdict is this principle applied once.)
+
 ## Development Workflow
 
 - ALL behavior-changing work starts with the speckit pipeline —
@@ -116,8 +134,10 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.7.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-04
-(2.7.0 — Principle VIII added: cognitive guardrails are shed, structural
+**Version**: 2.8.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-06
+(2.8.0 — Principle IX added: instruct thin, verify thick, verify mechanically —
+the five software domains, the fact → instruction → brake order, standards
+over bespoke mechanisms; 2.7.0 — Principle VIII added: cognitive guardrails are shed, structural
 invariants are kept, and every plan answers which it adds. Ruled by Denys
 2026-09-04 on the devclaw design audit (a firstmate scout's evidence check),
 on the finding that ADR 0004's shed rule had no enforcement point while 32

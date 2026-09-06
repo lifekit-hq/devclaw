@@ -221,6 +221,23 @@ surfaced them. Apply this while triaging, planning, and fixing:
 - **Put each decision at the layer that can enforce it** (Denys, 2026-08-08):
   an invariant → Python, a judgment → model reasoning, the standard → the
   prompt. Prompts frame but never enforce; a rule that must hold is code.
+- **Instruct thin, verify thick, verify mechanically** (Denys, 2026-09-06 —
+  constitution IX). Software owns exactly five things: **safety** (sandbox,
+  OAuth strip), **money** (tokens, pauses), **state** (single writer, CAS),
+  **the verdict of record** (the project's CI, the materialize span), and
+  **the protocol** (what goes in, what comes out). The agent owns everything
+  that varies per repo — how to build, how to test, what a good change looks
+  like, how to read an issue; devclaw never encodes knowledge about a
+  project's code, it supplies facts and tools and reads the mechanical
+  verdict. Close a gap in this order: a missing **fact** (environment or
+  tool) → a missing **instruction** (one line in a skill, checked by an
+  eval) → a software **brake**, and a brake only inside the five domains;
+  Python outside them needs a stated reason in the spec. Accept the price:
+  the agent's output is not predictable and we stop trying to make it so —
+  the harness's behaviour is, and verification is thick and mechanical
+  (spec 032's CI-is-the-verdict is this principle applied once). Adopt
+  standard practice; a devclaw-specific mechanism needs a reason the
+  standard one cannot give.
 
 ```
 devclaw/

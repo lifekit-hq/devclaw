@@ -50,6 +50,7 @@ One line per principle in `.specify/memory/constitution.md`; answer each, do not
 - [ ] **VI. Loud failure** — every failure, block, and bounded coverage says so; nothing degrades silently.
 - [ ] **VII. Fix the class** — the change names the class it fixes, not the instance that surfaced it.
 - [ ] **VIII. Cognitive guardrail?** — Does this plan add or keep a cognitive guardrail? If yes: name it, name its off-switch (A/B seam) and its instrument, and say why it is not shed (ADR 0004).
+- [ ] **IX. Instruct thin, verify thick** — every new Python names which of the five software domains it serves (safety / money / state / verdict / protocol) or argues, by name, why a fact or an instruction could not close the gap; no project-code knowledge enters devclaw; standard practice over a bespoke mechanism.
 
 ## Project Structure
 
