@@ -236,6 +236,35 @@ def test_undispatchable_workspace_reason_surfaced(env, tmp_path):
     assert f.verdict is Verdict.FAIL and ".git" in f.evidence
 
 
+# Checks that read the workspace resolved it as ``Path(workspace_dir or "")``,
+# which is ``Path(".")`` — the devclaw process's OWN checkout, carrying an
+# AGENTS.md, a .specify/, a .git and a devclaw.json. A workspace-less project
+# row is legal (registered before its clone exists), so those checks answered
+# OK about devclaw itself under another project's id. Absent ⇒ UNKNOWN, never a
+# verdict inferred from the host's tree.
+@pytest.mark.parametrize("workspace_dir", [None, "/nonexistent/never-cloned"])
+def test_workspaceless_project_is_never_judged_from_the_host_checkout(
+    env, workspace_dir
+):
+    env["registry"].create(id="no-ws", name="no-ws", workspace_dir=workspace_dir)
+    mine = [f for f in _run(env).findings if f.project_id == "no-ws"]
+    assert mine, "a registered project must still be reported on"
+
+    # The one loud verdict for this condition stays with preflight alone.
+    (pre,) = [f for f in mine if f.check_id == "project.workspace.preflight"]
+    assert pre.verdict is Verdict.FAIL
+
+    # The defect was affirmative health, not the wording: every check that
+    # reads the workspace must decline to judge rather than claim OK. Checks
+    # sourced from the registry/goal store (links, issue refs, backlog) read no
+    # workspace and stay legitimately OK — they are not in this set.
+    for cid in ("project.manifest.presence", "project.markers.integrity",
+                "project.scaffold.drift", "project.scaffold.tracked_state",
+                "project.capabilities.undeclared"):
+        (f,) = [x for x in mine if x.check_id == cid]
+        assert f.verdict is Verdict.UNKNOWN, f"{cid} judged a workspace-less project"
+
+
 def test_project_id_scoping_limits_project_section(env, tmp_path):
     a = register_tmp_project(env["registry"], str(tmp_path / "wsA"), project_id="proj-a")
     register_tmp_project(env["registry"], str(tmp_path / "wsB"), project_id="proj-b")
@@ -424,15 +453,45 @@ def test_undeclared_private_registry_dependency_is_advisory_only(env, tmp_path):
     (ok,) = _findings(_run(env), "project.capabilities.undeclared")
     assert ok.verdict is Verdict.OK
 
+    # #819 — the finance-sentry shape: the npm project is one level down, so a
+    # root-only read reported "nothing visible" while the repo depended on
+    # GitHub Packages. The nested file is evidence and names its own path.
+    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
+    (ws / ".npmrc").unlink()
+    (ws / "frontend").mkdir()
+    (ws / "frontend" / ".npmrc").write_text(
+        "//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n")
+    (nested,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert nested.verdict is Verdict.WARN
+    assert "frontend/.npmrc" in nested.evidence
+    assert "registry:npm-github" in nested.remedy
+
+    # A verify contract pointed at the private registry with no checked-in
+    # .npmrc anywhere is the same undeclared dependency.
+    (ws / "frontend" / ".npmrc").unlink()
+    (ws / "devclaw.json").write_text(
+        '{"schemaVersion": 1, "boilerplateRevision": 1, '
+        '"verifyCmd": "npm ci --registry=https://npm.pkg.github.com && npm test"}'
+    )
+    (via_cmd,) = _findings(_run(env), "project.capabilities.undeclared")
+    assert via_cmd.verdict is Verdict.WARN
+    assert "verifyCmd" in via_cmd.evidence
+
 
 def test_no_private_registry_dependency_is_ok(env, tmp_path):
     """A repo with no visible private-registry dependency declares nothing and
     is clean — the advisory must not nag every public-registry project."""
     ws = tmp_path / "ws-cap2"
     register_tmp_project(env["registry"], str(ws))
-    (ws / "devclaw.json").write_text('{"schemaVersion": 1, "boilerplateRevision": 1}')
-    (ws / "package-lock.json").write_text('{"packages": {"": {"name": "x"}}}')
+    (ws / "devclaw.json").write_text(
+        '{"schemaVersion": 1, "boilerplateRevision": 1, '
+        '"verifyCmd": "cd frontend && npm ci && npm test"}'
+    )
+    (ws / "frontend").mkdir()
+    (ws / "frontend" / "package-lock.json").write_text('{"packages": {"": {"name": "x"}}}')
 
+    # Running `npm ci` is not itself evidence — the public registry needs no
+    # capability, and the remedy would be wrong advice.
     (f,) = _findings(_run(env), "project.capabilities.undeclared")
     assert f.verdict is Verdict.OK
 

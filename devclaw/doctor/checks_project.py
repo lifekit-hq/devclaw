@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from collections.abc import Iterator
 from pathlib import Path
 
 from .. import project_manifest as _manifest
@@ -19,6 +20,38 @@ from .model import Finding, Verdict
 if TYPE_CHECKING:  # pragma: no cover
     from ..project_registry import Project
     from .context import InstanceContext
+
+
+def _grounded_workspace(
+    project: "Project", cid: str
+) -> "tuple[Path | None, list[Finding]]":
+    """The project's workspace as a real directory, or the UNKNOWN finding
+    saying this check cannot judge it.
+
+    Every check that reads the workspace goes through here. The naive
+    ``Path(project.workspace_dir or "")`` is ``Path(".")`` — the devclaw
+    process's OWN checkout, which carries an ``AGENTS.md``, a ``.specify/``, a
+    ``.git`` and a ``devclaw.json``. A workspace-less project row is legal (the
+    registry accepts one registered before its clone exists), so those checks
+    were reporting confident OKs that actually described devclaw itself.
+
+    UNKNOWN, not FAIL: :func:`check_workspace_preflight` already emits the one
+    loud verdict for this condition, and one root cause should not shout five
+    times.
+    """
+    # Blankness is tested on the stripped value but the path is used RAW —
+    # exactly what workspace_is_dispatchable does, so a padded row (the
+    # registry validates stripped but stores the original) cannot be rejected
+    # by preflight and accepted here.
+    ws = project.workspace_dir or ""
+    if not ws.strip() or not Path(ws).is_dir():
+        return None, [Finding(
+            cid, Verdict.UNKNOWN,
+            "workspace not on disk — cannot judge this project",
+            remedy="update_project (or restore the workspace checkout)",
+            project_id=project.id,
+        )]
+    return Path(ws), []
 
 
 def check_workspace_preflight(ctx: "InstanceContext", project: "Project") -> list[Finding]:
@@ -85,11 +118,10 @@ def check_manifest(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     Worktree read on purpose — doctor reports the repo's CURRENT state; the
     gate reads stay pinned to the merged base (FR-009)."""
     pid = project.id
-    ws = project.workspace_dir or ""
-    if not ws or not Path(ws).exists():
-        return [Finding("project.manifest.presence", Verdict.UNKNOWN,
-                        "workspace not on disk — manifest state unknowable",
-                        project_id=pid)]
+    root, unknown = _grounded_workspace(project, "project.manifest.presence")
+    if root is None:
+        return unknown
+    ws = str(root)
     try:
         manifest = _manifest.load_manifest(ws)
     except _manifest.ManifestError as exc:
@@ -149,7 +181,10 @@ def check_goal_checkouts_ignored(ctx: "InstanceContext", project: "Project") -> 
 def check_marker_integrity(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     cid = "project.markers.integrity"
     pid = project.id
-    agents = Path(project.workspace_dir or "") / "AGENTS.md"
+    root, unknown = _grounded_workspace(project, cid)
+    if root is None:
+        return unknown
+    agents = root / "AGENTS.md"
     if not agents.exists():
         return [Finding(cid, Verdict.OK, "no AGENTS.md (nothing to bound)",
                         project_id=pid)]
@@ -170,7 +205,9 @@ def check_scaffold_drift(ctx: "InstanceContext", project: "Project") -> list[Fin
     fine; a canonical file that is missing or differs is drift."""
     cid = "project.scaffold.drift"
     pid = project.id
-    ws = Path(project.workspace_dir or "")
+    ws, unknown = _grounded_workspace(project, cid)
+    if ws is None:
+        return unknown
     dest = ws / ".specify"
     if not dest.is_dir():
         return [Finding(cid, Verdict.OK, "no .specify/ scaffold (not onboarded yet)",
@@ -216,7 +253,9 @@ def check_tracked_checkout_state(ctx: "InstanceContext", project: "Project") -> 
     ``git ls-files`` read, zero cognition."""
     cid = "project.scaffold.tracked_state"
     pid = project.id
-    ws = Path(project.workspace_dir or "")
+    ws, unknown = _grounded_workspace(project, cid)
+    if ws is None:
+        return unknown
     if not (ws / ".specify").is_dir():
         return [Finding(cid, Verdict.OK, "no .specify/ scaffold (not onboarded yet)",
                         project_id=pid)]
@@ -370,6 +409,61 @@ _REGISTRY_EVIDENCE_FILES: tuple[tuple[str, int], ...] = (
 #: taxonomy.
 _PRIVATE_REGISTRY_HOSTS: tuple[str, ...] = ("npm.pkg.github.com",)
 
+#: Subdirectories that never carry a project's own registry config.
+_REGISTRY_SCAN_SKIP: frozenset[str] = frozenset(
+    {"node_modules", "vendor", "dist", "build", "out", "target"})
+
+#: Ceiling on scanned directories, so a wide monorepo root cannot turn this
+#: advisory into a tree walk.
+_REGISTRY_SCAN_MAX_ROOTS = 64
+
+
+def _registry_scan_roots(ws: Path) -> list[Path]:
+    """The workspace plus its immediate subdirectories.
+
+    Depth ONE on purpose (#819): finance-sentry's npm project is ``frontend/``,
+    not the repo root, so a root-only read reported "nothing visible" for a repo
+    that depends on GitHub Packages. Deeper recursion is not worth what this
+    check costs on every project of every report.
+    """
+    roots = [ws]
+    try:
+        entries = sorted(ws.iterdir())
+    except OSError:
+        return roots
+    for entry in entries:
+        if len(roots) >= _REGISTRY_SCAN_MAX_ROOTS:
+            break
+        if entry.name.startswith(".") or entry.name in _REGISTRY_SCAN_SKIP:
+            continue
+        if entry.is_symlink() or not entry.is_dir():
+            continue
+        roots.append(entry)
+    return roots
+
+
+def _registry_evidence_sources(
+    ws: Path, manifest: "_manifest.Manifest | None"
+) -> "Iterator[tuple[str, str]]":
+    """Lazily yield ``(label, text)`` for each place a private registry can show.
+
+    Lazy so the head-read budget is spent only until the first hit. Files come
+    before the ``verifyCmd`` so the evidence names a concrete path when one
+    exists.
+    """
+    for root in _registry_scan_roots(ws):
+        for name, budget in _REGISTRY_EVIDENCE_FILES:
+            try:
+                with (root / name).open("r", encoding="utf-8", errors="replace") as fh:
+                    head = fh.read(budget)
+            except OSError:
+                continue  # absent or unreadable — no evidence, not a finding
+            yield (name if root == ws else f"{root.name}/{name}"), head
+    # A repo can point `npm ci` at a private registry with no checked-in
+    # .npmrc; the verify contract is then the declaration's own evidence.
+    if manifest is not None and manifest.verify_cmd:
+        yield "devclaw.json verifyCmd", manifest.verify_cmd
+
 
 def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> list[Finding]:
     """ADVISORY (spec 030 FR-005a): the repo visibly depends on a private npm
@@ -379,10 +473,13 @@ def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> 
     instance can trust and costs write-and-forget — a repo that grows a private
     dependency never gets the admission brake. This check is that cost's
     backstop and NOTHING more: it is a report line, never a hold. Mechanical
-    and bounded — a couple of head reads, no network, no cognition.
+    and bounded — bounded head reads over the root and its immediate
+    subdirectories, no network, no cognition.
     """
     cid = "project.capabilities.undeclared"
-    ws = Path(project.workspace_dir or "")
+    ws, unknown = _grounded_workspace(project, cid)
+    if ws is None:
+        return unknown
     try:
         manifest = _manifest.load_manifest(str(ws))
     except _manifest.ManifestError as exc:
@@ -394,17 +491,12 @@ def check_capability_declaration(ctx: "InstanceContext", project: "Project") -> 
     if any(c.startswith("registry:") for c in declared):
         return [Finding(cid, Verdict.OK, "registry capability declared",
                         project_id=project.id)]
-    for name, budget in _REGISTRY_EVIDENCE_FILES:
-        try:
-            with (ws / name).open("r", encoding="utf-8", errors="replace") as fh:
-                head = fh.read(budget)
-        except OSError:
-            continue  # absent or unreadable — no evidence, not a finding
+    for label, text in _registry_evidence_sources(ws, manifest):
         for host in _PRIVATE_REGISTRY_HOSTS:
-            if host in head:
+            if host in text:
                 return [Finding(
                     cid, Verdict.WARN,
-                    f"{name} resolves against {host} but devclaw.json declares no "
+                    f"{label} resolves against {host} but devclaw.json declares no "
                     "registry:* capability — a broken registry credential will "
                     "burn worker sessions instead of holding dispatch",
                     remedy=f'add "capabilities": ["{_CAP_REGISTRY}"] to devclaw.json',
