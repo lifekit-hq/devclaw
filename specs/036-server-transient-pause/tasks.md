@@ -24,17 +24,19 @@
 
 **Checkpoint**: US1 alone is the MVP — a provider outage costs zero dispatches and resumes itself; coverage is ~25 min of outage (5 requeues × 5 min) until US2 lands.
 
+**Checkpoint (US2, landed 2026-09-06)**: the same five requeues now span ~95 min (5/10/20/30/30). US3 remains: detection still depends on the 529 wording surviving the ACP → runner → settle hops.
+
 ## Phase 2: User Story 2 — a sustained outage escalates, bounded (P2)
 
 **Goal**: consecutive pauses in one episode double from 5 to 30 minutes and reset on success.
 
 **Independent test**: quickstart Scenario 4.
 
-- [ ] T008 [US2] `devclaw/loom/limits.py`: `escalated_pause_seconds(step)` — pure, doubling, clamped at `SERVER_ERROR_MAX_PAUSE_S`; a stated hint still wins (FR-009)
-- [ ] T009 [US2] `devclaw/state_store/control.py`: episode-step accessors beside `pause_notified` (bump, read, clear) — single writer, no new table
-- [ ] T010 [US2] `devclaw/queue/settle.py` + `devclaw/goal/tick.py`: bump the step when a `SERVER_ERROR` pause is set; clear it on a productive settle so the ladder cannot ratchet permanently (FR-010)
-- [ ] T011 [US2] Tests: extend T006's cases with the ladder sequence, the clamp, the stated-hint precedence, and the reset-on-success
-- [ ] T012 [US2] Docs + `/ship` ritual; PR 2
+- [x] T008 [US2] `devclaw/loom/limits.py`: `escalated_pause_seconds(step)` — pure, doubling, clamped at `SERVER_ERROR_MAX_PAUSE_S`; a stated hint still wins (FR-009), reached through a new `episode_step` kwarg on `pause_seconds` so the backoff policy keeps ONE home
+- [x] T009 [US2] `devclaw/state_store/control.py`: episode-step accessors beside `pause_notified` — `next_pause_episode_step` (reads-and-advances under the store lock), `pause_episode_step`, `clear_pause_episode`; single writer, no new table
+- [x] T010 [US2] `devclaw/queue/settle.py` + `devclaw/goal/tick.py` (+ the `devclaw/goal/engine.py` accessor seam): take the step when a `SERVER_ERROR` pause is set; clear it on a productive settle so the ladder cannot ratchet permanently (FR-010)
+- [x] T011 [US2] Tests: extend T006's cases with the ladder sequence, the clamp, the stated-hint precedence, and the reset-on-success
+- [x] T012 [US2] Docs + `/ship` ritual; PR 2
 
 ## Phase 3: User Story 3 — the sandbox reports the outage structurally (P3)
 
@@ -55,3 +57,8 @@
 - `devclaw/queue/settle.py` needed NO edit for US1: its pausing branch keys on `Classification.is_pausing` and returns `_PAUSED` before the retry loop's `continue`, so the first provider-shaped failure ends the attempt loop — that is what removes the observed "(failed after 2 attempts)" burn
 - The cap is protected by construction, not by new accounting: `actions_dispatched` is charged at dispatch (`tick_dispatch`) and refunded on a productive settle (`tick_settle`); a requeued task never settles, so the SAME dispatch resumes after the outage and keeps its refund, where the old failure path made the charge stick and let the goal spend another one
 - Never mint a sibling test: every case above extends the named pause-class test it belongs to
+- US2 PR (2026-09-06): **1437 passed, 5 skipped** (+24 over US1's 1413 — all parametrize rows on the three existing pause-class tests, no new module); `ruff check .` clean; `mypy` clean (144 files). `lint-imports` could not run in the sandbox (import-linter not installed) — the change adds no cross-package import: `loom` stays a pure leaf, the two callers reach the store through seams they already held
+- "A productive settle" is `StateStore.mark_done` — ONE choke point for all five settle sites, guarded by the same `rowcount == 1` exactly-once check the eval-outcomes projection uses, so a no-op re-settle cannot end an episode. Precedent for the cross-concern write: `set_global_pause` already records a problem from the control plane
+- `next_pause_episode_step` reads AND advances under the store lock: the queue pump and the heartbeat both write pauses, and two readers of a plain counter would hand out the same step and pause twice for the same length
+- A step is one PROBE ROUND, not one failure (found in self-review): up to `DEVCLAW_MAX_CONCURRENT` tasks are in flight when an outage starts and all fail within seconds, so counting each would put the FIRST round at the ceiling — and because the pause write is last-one-wins, the length actually applied could be any of the steps burned. A failure arriving while this episode's pause is still in force reuses the step already in force
+- **Known residual bound**: the episode ends only on a productive settle (FR-010's own words). A session that runs to a REAL failure, and a successful goal-cognition call, both prove the provider answered but leave the counter where it is — so an outage a week later can start at the 30-minute ceiling instead of 5. Bounded (the ceiling is the ceiling) and self-healing (the next task that settles `done` clears it); a second reset mechanism for it was rejected as more machinery than the 25-minute worst case is worth. Revisit if the live instance shows a long-lived high step

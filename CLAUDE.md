@@ -192,6 +192,9 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   was classified retry-now. Only provider-shaped wording qualifies (the AUTH
   strong/weak discipline): ambiguous 5xx prose from the app under development
   stays retry-now, because an account-wide pause is an expensive false positive.
+  An outage states no reset, so consecutive pauses of one episode escalate
+  (5→30 min, bounded) and the episode ends on the next productive settle —
+  five probes then span a real outage instead of ~25 minutes.
   **Provenance before wording** (2026-09-06): only agent- or harness-origin
   text is ever classified; a gate verdict or a worker self-report is REAL by
   origin, whatever words it carries — a verify log or a test file named

@@ -13,6 +13,7 @@ import json
 import pytest
 
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
+from devclaw.loom import limits
 from devclaw.goal.tick import Outcome, tick_all
 from devclaw.goal.store import GoalStore
 from devclaw.state_store import _now_ms
@@ -46,12 +47,19 @@ class PausableEngine:
     review so the tick reaches the evaluator; without it, poll refuses — and
     dispatch always refuses (these tests never legitimately get that far)."""
 
-    def __init__(self, poll_result: PollResult | None = None) -> None:
+    def __init__(self, poll_result: PollResult | None = None,
+                 episode_step: int = 0) -> None:
         self._pause: tuple[int, str] = (0, "")
         self.poll_result = poll_result
+        self.episode_step = episode_step
 
     def global_pause(self) -> tuple[int, str]:
         return self._pause
+
+    def next_pause_episode_step(self) -> int:
+        step = self.episode_step
+        self.episode_step += 1
+        return step
 
     def set_global_pause(self, until_ms: int, reason: str) -> None:
         self._pause = (until_ms, reason)
@@ -78,17 +86,24 @@ class RaisingClaude:
         raise RuntimeError(self.msg)
 
 
-@pytest.mark.parametrize("error_text,expected_kind", [
-    ("API Error: 429 Too Many Requests", "rate_limit"),
+@pytest.mark.parametrize("error_text,expected_kind,steps_before,backoff", [
+    ("API Error: 429 Too Many Requests", "rate_limit", 0, limits.RATE_LIMIT_PAUSE_S),
+    # a cap states its own reset, so the outage ladder never applies to it
+    ("API Error: 429 Too Many Requests", "rate_limit", 2, limits.RATE_LIMIT_PAUSE_S),
     # #817: a provider outage pauses the layer the same way — the cognition
     # lane has already spent its in-process retries by the time it lands here.
-    ("Internal error: API Error: 529 Overloaded", "server_error"),
+    ("Internal error: API Error: 529 Overloaded", "server_error", 0, 300),
+    # …and it climbs the SAME account-wide episode the task queue climbs: both
+    # layers pause as one, so they must escalate as one too.
+    ("Internal error: API Error: 529 Overloaded", "server_error", 2, 1200),
 ])
-async def test_goal_cognition_rate_limit_pauses_layer(tmp_path, error_text, expected_kind):
+async def test_goal_cognition_rate_limit_pauses_layer(
+    tmp_path, error_text, expected_kind, steps_before, backoff
+):
     """A rate limit hitting the done-gate evaluator pauses the whole layer."""
     store = GoalStore(tmp_path, now=Clock())
     _seed_settled_done_gate(store, tmp_path)
-    eng = PausableEngine(poll_result=_REVIEW_DONE)
+    eng = PausableEngine(poll_result=_REVIEW_DONE, episode_step=steps_before)
     evaluator = RaisingClaude(error_text)
 
     out = await tick_all(
@@ -99,7 +114,10 @@ async def test_goal_cognition_rate_limit_pauses_layer(tmp_path, error_text, expe
     assert out["g"] is Outcome.RATE_LIMITED
     assert evaluator.calls == 1  # the raise came from real cognition, not test plumbing
     until, reason = eng.global_pause()
-    assert until > _now_ms() and expected_kind in reason
+    assert expected_kind in reason
+    assert (
+        _now_ms() + backoff * 1000 - 5_000 <= until <= _now_ms() + backoff * 1000 + 5_000
+    )
 
 
 async def test_tick_all_skips_all_cognition_while_paused(tmp_path):

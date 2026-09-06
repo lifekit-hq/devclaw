@@ -122,12 +122,19 @@ Stubbed validation scenarios per story. See [quickstart.md](./quickstart.md).
   keys on `Classification.is_pausing` and already returns before the retry
   loop's `continue`, which is exactly what kills the "(failed after 2
   attempts)" burn.
-- **PR 2 (US2 — FR-009, FR-010)**: the escalation ladder. Files:
-  `devclaw/loom/limits.py` (pure `escalated_pause_seconds(step)`),
-  `devclaw/state_store/control.py` (episode counter, single writer),
-  `devclaw/queue/settle.py` + `devclaw/goal/tick.py` (bump on set, reset on a
-  productive settle). Constraint: the counter must reset on success, or a
-  long-lived instance ratchets to the 30-minute ceiling permanently.
+- **PR 2 (US2 — FR-009, FR-010)** — LANDED 2026-09-06. Files:
+  `devclaw/loom/limits.py` (pure `escalated_pause_seconds(step)`, reached via a
+  new `episode_step` kwarg on `pause_seconds` so the backoff policy keeps one
+  home), `devclaw/state_store/control.py` (episode counter, single writer),
+  `devclaw/state_store/core.py` (`mark_done` ends the episode),
+  `devclaw/queue/settle.py` + `devclaw/goal/tick.py` +
+  `devclaw/goal/engine.py` (take the step on set). Constraint held: the counter
+  resets on success, or a long-lived instance ratchets to the 30-minute ceiling
+  permanently — `mark_done` is the ONE choke point for "a successful session",
+  so the reset does not have to be repeated at five settle sites. Constraint
+  discovered while implementing: the counter is read-and-advanced in a single
+  locked call, because the queue pump and the heartbeat both set pauses and a
+  separate read+write would hand both the same step.
 - **PR 3 (US3 — FR-011)**: the structural tag. Files: `runner/runner.py`
   (vendored pattern + `_failure_result` branch), `devclaw/queue/settle.py`
   (honour the tag), `devclaw/engine/__init__.py` (document the status in the

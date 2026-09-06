@@ -1440,6 +1440,14 @@ def _engine_pause_notified_kind(engine: GoalEngine) -> str:
     return str(fn() or "") if callable(fn) else ""
 
 
+def _engine_next_pause_episode_step(engine: GoalEngine) -> int:
+    """The 0-based index of the provider-outage pause being set now, recorded
+    as it is read (see StateStore). A double without the accessor gets 0 — the
+    base backoff, i.e. exactly the pre-ladder behaviour."""
+    fn = getattr(engine, "next_pause_episode_step", None)
+    return int(fn() or 0) if callable(fn) else 0
+
+
 def _engine_operator_block(engine: GoalEngine) -> tuple[bool, str]:
     """Read the operator hold + run-window gate via the engine, if it exposes one
     (the in-process engine does; test doubles may not → treated as open)."""
@@ -1466,7 +1474,13 @@ def _maybe_pause(engine: GoalEngine, store: GoalStore, goal_id: str, err: str) -
     cls = classify_failure(err, now_utc=datetime.now(timezone.utc))
     if not (cls.is_pausing and hasattr(engine, "set_global_pause")):
         return None
-    backoff = pause_seconds(cls.retry_after_s, stated=cls.stated, kind=cls.kind)
+    step = (
+        _engine_next_pause_episode_step(engine)
+        if cls.kind is FailureKind.SERVER_ERROR else 0
+    )
+    backoff = pause_seconds(
+        cls.retry_after_s, stated=cls.stated, kind=cls.kind, episode_step=step,
+    )
     engine.set_global_pause(_now_ms() + backoff * 1000, f"{cls.kind.value} (goal cognition)")
     store.append_log(goal_id, f"paused — {cls.kind.value}; resuming in ~{backoff}s")
     return Outcome.RATE_LIMITED

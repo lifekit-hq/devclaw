@@ -13,11 +13,13 @@ from devclaw.loom.limits import (
     RATE_LIMIT_MAX_PAUSE_S,
     RATE_LIMIT_PAUSE_S,
     RATE_LIMIT_STATED_MAX_S,
+    SERVER_ERROR_MAX_PAUSE_S,
     SERVER_ERROR_PAUSE_S,
     FailureKind,
     _parse_retry_after,
     _seconds_until_reset,
     classify_failure,
+    escalated_pause_seconds,
     pause_seconds,
 )
 
@@ -137,9 +139,23 @@ def test_provider_outage_pauses_instead_of_burning_the_dispatch():
     assert c.kind is FailureKind.SERVER_ERROR
     assert c.is_pausing is True
     assert pause_seconds(c.retry_after_s, stated=c.stated, kind=c.kind) == SERVER_ERROR_PAUSE_S
-    # a stated hint still wins over the default backoff
+    # a stated hint still wins over the default backoff — and over the ladder
     stated = classify_failure("API Error: 529 Overloaded; retry-after: 45")
     assert pause_seconds(stated.retry_after_s, stated=stated.stated, kind=stated.kind) == 45
+    assert pause_seconds(
+        stated.retry_after_s, stated=stated.stated, kind=stated.kind, episode_step=3
+    ) == 45
+    # Consecutive pauses of ONE episode escalate, bounded: a flat base spans
+    # only ~25 minutes across the five requeues MAX_PAUSE_REQUEUES allows —
+    # less than the 35-minute outage above. Doubling spans ~95 for the same
+    # five doomed probes.
+    assert [escalated_pause_seconds(s) for s in range(5)] == [300, 600, 1200, 1800, 1800]
+    assert escalated_pause_seconds(10_000) == SERVER_ERROR_MAX_PAUSE_S
+    assert escalated_pause_seconds(-1) == SERVER_ERROR_PAUSE_S  # corrupt step → base
+    assert pause_seconds(None, kind=FailureKind.SERVER_ERROR, episode_step=2) == 1200
+    # the ladder is the outage kind's alone — a usage cap states its own reset
+    assert pause_seconds(None, kind=FailureKind.QUOTA, episode_step=2) == RATE_LIMIT_PAUSE_S
+    assert pause_seconds(None, kind=FailureKind.AUTH, episode_step=2) == AUTH_PAUSE_S
     # app-domain prose: never an account-wide pause
     for prose in (
         "review: the /health endpoint returns 503 Service Unavailable under load",

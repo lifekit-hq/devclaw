@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: Draft — US1 implemented 2026-09-06; US2/US3 specified, not implemented
+**Status**: Draft — US1 + US2 implemented 2026-09-06; US3 specified, not implemented
 
 **Input**: User description: "A 529 Overloaded burns the dispatch cap; a server-side transient should pause-and-resume like quota/auth (lifekit-hq/devclaw issue #817)"
 

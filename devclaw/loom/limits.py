@@ -78,13 +78,20 @@ RATE_LIMIT_STATED_MAX_S = 7 * 86_400
 #: broken night, ≤2h resume lag after the fix, ≤12 probe calls/day worst case.
 AUTH_PAUSE_S = 7200
 
-#: backoff for a provider-side outage with no stated reset. Short relative to
-#: a usage cap — an outage is minutes, not hours — but long enough that the
-#: re-probe (a whole sandbox session) isn't spent every few seconds. The
-#: per-task requeue bound (``MAX_PAUSE_REQUEUES``) is what makes it finite:
-#: five requeues at this base span ~25 minutes of outage today, which spec
-#: 036 US2 widens with an escalating ladder.
+#: backoff for the FIRST provider-outage pause of an episode, when the provider
+#: states no reset. Short relative to a usage cap — an outage is minutes, not
+#: hours — but long enough that the re-probe (a whole sandbox session) isn't
+#: spent every few seconds.
 SERVER_ERROR_PAUSE_S = 300
+#: ceiling of the escalating ladder below. The per-task requeue bound
+#: (``MAX_PAUSE_REQUEUES = 5``) is what makes an outage finite, so the ladder
+#: has to span a realistic one INSIDE five probes: 5/10/20/30/30 covers ~95
+#: minutes where a flat base covers 25 — less than the 35-minute outage that
+#: produced spec 036.
+SERVER_ERROR_MAX_PAUSE_S = 1800
+#: the ladder clamps at the ceiling anyway; bounding the exponent keeps a
+#: corrupt or absurd persisted step from building a giant int first.
+_MAX_ESCALATION_STEP = 16
 
 
 class FailureKind(str, Enum):
@@ -96,22 +103,42 @@ class FailureKind(str, Enum):
     REAL = "real"
 
 
+def escalated_pause_seconds(step: int) -> int:
+    """The provider-outage backoff for the ``step``-th pause of one episode
+    (0-based: 0 → 300s, 1 → 600s, 2 → 1200s, 3 and beyond → 1800s).
+
+    Pure like the rest of the module — the episode's step counter is persisted
+    state and lives beside the other pause-episode fields in
+    ``StateStore.control``, so this stays trivially testable. Escalating buys
+    outage coverage without spending more doomed probes; raising
+    ``MAX_PAUSE_REQUEUES`` instead would buy the same span at more sandbox
+    sessions."""
+    if step <= 0:
+        return SERVER_ERROR_PAUSE_S
+    return min(
+        SERVER_ERROR_PAUSE_S * 2 ** min(step, _MAX_ESCALATION_STEP),
+        SERVER_ERROR_MAX_PAUSE_S,
+    )
+
+
 def pause_seconds(
     retry_after_s: int | None, *, stated: bool = False,
-    kind: "FailureKind | None" = None,
+    kind: "FailureKind | None" = None, episode_step: int = 0,
 ) -> int:
     """The backoff to use for a pausing failure. Centralizes the policy so task +
     goal layers agree. ``stated=True`` means ``retry_after_s`` came from the
     provider's own text (see :class:`Classification`), so it's trusted up to the
     generous STATED cap; unstated hints keep the module default/cap. AUTH ignores
     hints entirely — there is no stated reset for a broken login, only the fixed
-    :data:`AUTH_PAUSE_S` re-probe cadence."""
+    :data:`AUTH_PAUSE_S` re-probe cadence. ``episode_step`` is how many
+    provider-outage pauses the current episode has already set; it climbs the
+    :func:`escalated_pause_seconds` ladder and is ignored by every other kind."""
     if kind is FailureKind.AUTH:
         return AUTH_PAUSE_S
     if stated and retry_after_s:
         return min(retry_after_s, RATE_LIMIT_STATED_MAX_S)
     if kind is FailureKind.SERVER_ERROR:
-        return SERVER_ERROR_PAUSE_S
+        return escalated_pause_seconds(episode_step)
     return min(retry_after_s or RATE_LIMIT_PAUSE_S, RATE_LIMIT_MAX_PAUSE_S)
 
 
