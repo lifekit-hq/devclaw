@@ -145,6 +145,15 @@ The chain is strict. Layer 1 must **not** dispatch tasks. Layer 2 must **not**
 spawn containers itself — it goes through the engine (layer 4). No layer reaches
 through another, and none of them cache another's state.
 
+The direction is enforced, not trusted: `[tool.importlinter]` in `pyproject.toml`
+declares the layer order (`server | cli` › `doctor` › `goal` › `task_queue : queue`
+› `delivery | quality` › `engine` › `state_store` › `loom | config`) and the leaf
+packages that must stay extraction-ready (`loom`, `llm_call`, `config`,
+`dispatch_gate`, `state_store`; `runner/` never imports devclaw), and
+`lint-imports` runs in CI beside ruff and mypy. Root-level single modules are
+unlayered until the PR that next touches one assigns it (tinyspec
+`import-contracts`, 2026-09-06).
+
 ## The heartbeat is the whole machine
 
 `devclaw/goal/tick.py` is the beating heart: one `tick_goal()` per goal, every

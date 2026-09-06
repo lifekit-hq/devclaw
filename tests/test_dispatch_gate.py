@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from devclaw import config
 from devclaw import dispatch_gate as gate
 from devclaw.state_store import StateStore
 
@@ -108,7 +109,7 @@ def test_operator_hold_roundtrip(store):
 
 
 def test_run_schedule_default_and_roundtrip(store):
-    assert store.get_run_schedule() == gate.DEFAULT_SCHEDULE
+    assert store.get_run_schedule() == config.DEFAULT_RUN_SCHEDULE
     store.set_run_schedule(True, "08:00", "20:00", "Europe/Kyiv")
     assert store.get_run_schedule() == {
         "enabled": True, "start": "08:00", "end": "20:00", "tz": "Europe/Kyiv",
@@ -117,7 +118,7 @@ def test_run_schedule_default_and_roundtrip(store):
 
 def test_run_schedule_corrupt_falls_back(store):
     store.set_meta("run_schedule", "{not valid json")
-    assert store.get_run_schedule() == gate.DEFAULT_SCHEDULE
+    assert store.get_run_schedule() == config.DEFAULT_RUN_SCHEDULE
 
 
 # ---- wiring: the real heartbeat gates honour the store flags --------------
@@ -166,19 +167,19 @@ def test_engine_operator_block_reflects_store(store):
 def test_per_goal_schedule_roundtrip_and_isolation(store):
     """A goal's own window is stored + read independently of the global one, and
     listing surfaces only the per-goal windows."""
-    assert store.get_run_schedule("g") == gate.DEFAULT_SCHEDULE   # unset → disabled default
+    assert store.get_run_schedule("g") == config.DEFAULT_RUN_SCHEDULE   # unset → disabled default
     store.set_run_schedule(True, "22:00", "06:00", "Europe/Kyiv", goal_id="g")
     assert store.get_run_schedule("g") == {
         "enabled": True, "start": "22:00", "end": "06:00", "tz": "Europe/Kyiv",
     }
-    assert store.get_run_schedule() == gate.DEFAULT_SCHEDULE      # global untouched
+    assert store.get_run_schedule() == config.DEFAULT_RUN_SCHEDULE      # global untouched
     assert store.list_goal_schedules() == {"g": store.get_run_schedule("g")}
 
 
 def test_per_goal_schedule_clear_falls_back(store):
     store.set_run_schedule(True, "22:00", "06:00", "UTC", goal_id="g")
     store.clear_run_schedule("g")
-    assert store.get_run_schedule("g") == gate.DEFAULT_SCHEDULE
+    assert store.get_run_schedule("g") == config.DEFAULT_RUN_SCHEDULE
     assert store.list_goal_schedules() == {}
 
 

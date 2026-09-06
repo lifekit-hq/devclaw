@@ -48,6 +48,14 @@ from ._env_loader import load_dotenv as _load_dotenv
 _load_dotenv()
 
 
+# ---- dispatch window -----------------------------------------------------
+
+#: Shape of a persisted run_schedule and the disabled default when none is set.
+#: One home: the store returns it for an unset/corrupt row and ``dispatch_gate``
+#: fills a partial schedule's gaps from it — the store must not import a gate.
+DEFAULT_RUN_SCHEDULE: dict = {"enabled": False, "start": "09:00", "end": "18:00", "tz": "Europe/Kyiv"}
+
+
 # ---- storage & identity --------------------------------------------------
 
 def db_path() -> str:

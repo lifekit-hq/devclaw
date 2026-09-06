@@ -34,7 +34,12 @@ Only layer 5 is an agent harness in the technical sense.
 
 The chain is strict: `1 → 2 → 3` (cognition) or `1 → 2 → 4 → 5` (execution). No
 layer reaches through another (layer 1 must not dispatch tasks; layer 2 must not
-spawn containers itself — it goes through the engine).
+spawn containers itself — it goes through the engine). The import direction is a
+declared fact, not a convention: `[tool.importlinter]` in `pyproject.toml` states
+the layer order and the leaf packages (`loom`, `llm_call`, `config`,
+`dispatch_gate`, `state_store`, `runner/`), and `lint-imports` fails a new upward
+edge in CI. The repo is a modular monolith on purpose; a package leaves it only
+on a second real consumer (ruled 2026-09-06).
 
 ## Load-bearing invariants — DO NOT VIOLATE
 
@@ -269,6 +274,7 @@ pip install -e ".[dev]"
 pytest        # ~1400 tripwire tests, all stubbed — no docker, no claude; ~23s (-n auto)
 ruff check .  # pyflakes + syntax errors only; CI gates it
 mypy          # type check (config in pyproject [tool.mypy]); CI gates it too
+lint-imports  # the layer order + leaf packages as contracts (pyproject [tool.importlinter]); CI gates it
 ```
 
 Engine modes (`DEVCLAW_ENGINE`): **unset** = the worker runner in a per-task docker
@@ -298,7 +304,7 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
   class) gets a named check + seeded-fault test in the same PR. Checks live in
   `devclaw/doctor/checks_instance.py` / `checks_project.py`.
 - **Branch per change**; open a PR, don't push to `main`.
-- **`ruff check .` clean before the PR** — a narrow correctness gate (`F` + `E9`),
+- **`ruff check .`, `mypy` and `lint-imports` clean before the PR** — a narrow correctness gate (`F` + `E9`),
   not a style one. CI runs it alongside the suite.
 - **Keep `docs/` honest.** If a change makes a doc wrong, fix the doc in the same PR
   and update its currency tag in [`docs/INDEX.md`](./docs/INDEX.md). A stale doc that
