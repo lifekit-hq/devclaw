@@ -31,6 +31,7 @@ from .limits import (
     Classification,
     FailureKind,
     PAUSING_KINDS,
+    RETRY_NOW_KINDS,
     classify_failure,
     pause_seconds,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "FailureKind",
     "Classification",
     "PAUSING_KINDS",
+    "RETRY_NOW_KINDS",
     # test-integrity guard
     "scan_diff",
     "IntegrityReport",

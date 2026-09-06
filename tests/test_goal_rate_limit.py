@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.tick import Outcome, tick_all
 from devclaw.goal.store import GoalStore
@@ -76,12 +78,18 @@ class RaisingClaude:
         raise RuntimeError(self.msg)
 
 
-async def test_goal_cognition_rate_limit_pauses_layer(tmp_path):
+@pytest.mark.parametrize("error_text,expected_kind", [
+    ("API Error: 429 Too Many Requests", "rate_limit"),
+    # #817: a provider outage pauses the layer the same way — the cognition
+    # lane has already spent its in-process retries by the time it lands here.
+    ("Internal error: API Error: 529 Overloaded", "server_error"),
+])
+async def test_goal_cognition_rate_limit_pauses_layer(tmp_path, error_text, expected_kind):
     """A rate limit hitting the done-gate evaluator pauses the whole layer."""
     store = GoalStore(tmp_path, now=Clock())
     _seed_settled_done_gate(store, tmp_path)
     eng = PausableEngine(poll_result=_REVIEW_DONE)
-    evaluator = RaisingClaude("API Error: 429 Too Many Requests")
+    evaluator = RaisingClaude(error_text)
 
     out = await tick_all(
         store=store, engine=eng, evaluator_caller=evaluator,
@@ -91,7 +99,7 @@ async def test_goal_cognition_rate_limit_pauses_layer(tmp_path):
     assert out["g"] is Outcome.RATE_LIMITED
     assert evaluator.calls == 1  # the raise came from real cognition, not test plumbing
     until, reason = eng.global_pause()
-    assert until > _now_ms() and "rate_limit" in reason
+    assert until > _now_ms() and expected_kind in reason
 
 
 async def test_tick_all_skips_all_cognition_while_paused(tmp_path):
@@ -161,33 +169,46 @@ async def _tick(store, eng, notifier, evaluator=None):
     )
 
 
-async def test_paused_tick_pings_owner_exactly_once(tmp_path):
+@pytest.mark.parametrize("reason,phrase,wrong_phrase", [
+    ("quota: You're out of extra usage", "paused on a usage limit", "server errors"),
+    # #817: an outage ping must not claim a usage limit the account doesn't
+    # have — the owner would go hunting a cap instead of waiting out weather.
+    ("server_error: API Error: 529 Overloaded",
+     "the model provider is returning server errors", "usage limit"),
+])
+async def test_paused_tick_pings_owner_exactly_once(tmp_path, reason, phrase, wrong_phrase):
     store = GoalStore(tmp_path, now=Clock())  # no goals needed — the gate is fleet-wide
     eng = FlaggedPausableEngine()
-    eng.set_global_pause(_now_ms() + 60_000, "quota: You're out of extra usage")
+    eng.set_global_pause(_now_ms() + 60_000, reason)
     notifier = RecordingNotifier()
 
     await _tick(store, eng, notifier)   # first paused tick → the ping
     await _tick(store, eng, notifier)   # still paused → NO second ping
 
-    pings = [m for m in notifier.sent if "paused on a usage limit" in m]
+    pings = [m for m in notifier.sent if phrase in m]
     assert len(pings) == 1
-    assert "quota: You're out of extra usage" in pings[0]   # the reason
-    assert "resuming ~" in pings[0] and "UTC" in pings[0]   # the computed reset time
+    assert reason in pings[0]                              # the reason
+    assert "resuming ~" in pings[0] and "UTC" in pings[0]  # the computed reset time
+    assert wrong_phrase not in pings[0]                    # never the other episode's words
 
 
-async def test_resume_pings_owner_once(tmp_path):
+@pytest.mark.parametrize("reason,resume_phrase", [
+    ("quota: weekly cap", "usage limit lifted"),
+    # the resume must name what actually lifted, matching its pause ping
+    ("server_error: API Error: 529 Overloaded", "provider server errors cleared"),
+])
+async def test_resume_pings_owner_once(tmp_path, reason, resume_phrase):
     store = GoalStore(tmp_path, now=Clock())
     eng = FlaggedPausableEngine()
-    eng.set_global_pause(_now_ms() + 60_000, "quota: weekly cap")
+    eng.set_global_pause(_now_ms() + 60_000, reason)
     notifier = RecordingNotifier()
 
     await _tick(store, eng, notifier)                    # pause ping
-    eng.set_global_pause(_now_ms() - 1000, "quota: weekly cap")  # window elapses
+    eng.set_global_pause(_now_ms() - 1000, reason)       # window elapses
     await _tick(store, eng, notifier)                    # resume ping
     await _tick(store, eng, notifier)                    # quiet afterwards
 
-    resumes = [m for m in notifier.sent if "usage limit lifted" in m]
+    resumes = [m for m in notifier.sent if resume_phrase in m]
     assert len(resumes) == 1
     assert len(notifier.sent) == 2                       # exactly pause + resume
     assert eng.global_pause()[0] == 0                    # pause cleared too

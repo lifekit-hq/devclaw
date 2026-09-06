@@ -1084,12 +1084,26 @@ async def tick_all(
                 # auth ping silently kills an unattended week.
                 await _notify(notifier, NotifyLevel.OWNER, msg,
                               summarize=summary_caller, critical=True)
+            elif reason.startswith(FailureKind.SERVER_ERROR.value):
+                # A provider outage is weather, not an account state: saying
+                # "usage limit" here would send the owner hunting a cap that
+                # isn't there (#817 — three goals parked on a 529 outage).
+                # Not `critical`: there is nothing for a human to do, and it
+                # auto-resumes.
+                msg = (
+                    f"⏸️ paused — the model provider is returning server errors "
+                    f"({reason}); nothing to do, resuming ~{resume_hhmm} UTC"
+                )
+                await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summary_caller)
             else:
                 msg = f"⏸️ paused on a usage limit — {reason}; resuming ~{resume_hhmm} UTC"
                 await _notify(notifier, NotifyLevel.OWNER, msg, summarize=summary_caller)
             kind = (
                 FailureKind.AUTH.value
-                if reason.startswith(FailureKind.AUTH.value) else "limit"
+                if reason.startswith(FailureKind.AUTH.value)
+                else FailureKind.SERVER_ERROR.value
+                if reason.startswith(FailureKind.SERVER_ERROR.value)
+                else "limit"
             )
             _engine_set_pause_notified(engine, True, kind=kind)
         return {gid: Outcome.RATE_LIMITED for gid in store.list_goal_ids()}
@@ -1114,9 +1128,18 @@ async def tick_all(
             or bool(until and reason.startswith(FailureKind.AUTH.value))
         )
         if not auth_episode:
+            # The resume must name what actually lifted — the pause ping told
+            # the owner "provider server errors", so "usage limit lifted"
+            # would contradict it. Same kind-first/reason-fallback read as the
+            # auth check above.
+            server_episode = (
+                _engine_pause_notified_kind(engine) == FailureKind.SERVER_ERROR.value
+                or bool(until and reason.startswith(FailureKind.SERVER_ERROR.value))
+            )
             await _notify(
                 notifier, NotifyLevel.OWNER,
-                "▶️ usage limit lifted — resuming work",
+                "▶️ provider server errors cleared — resuming work"
+                if server_episode else "▶️ usage limit lifted — resuming work",
                 summarize=summary_caller,
             )
         _engine_set_pause_notified(engine, False)

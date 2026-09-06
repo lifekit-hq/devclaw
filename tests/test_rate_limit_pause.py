@@ -22,13 +22,23 @@ def store(tmp_path):
     s.close()
 
 
-async def test_rate_limit_pauses_not_fails(store, monkeypatch):
+@pytest.mark.parametrize("error_text,expected_kind", [
+    ("API Error: 429 Too Many Requests", "rate_limit"),
+    # #817: a provider outage joins the class. On 2026-09-03 this exact wording
+    # was classified retry-now, so three goals each spent BOTH dispatches on a
+    # ~35-minute outage and parked on mechanical:dispatch_cap with zero agent
+    # work. Requeueing instead of failing is what protects the cap: a requeued
+    # task never settles, so the same dispatch resumes after the outage and
+    # keeps its refund instead of sticking as a failure.
+    ("session/prompt failed: Internal error: API Error: 529 Overloaded", "server_error"),
+])
+async def test_rate_limit_pauses_not_fails(store, monkeypatch, error_text, expected_kind):
     monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
 
     async def rl(req: EngineRequest):
         calls.append(req.goal)
-        return {"status": "error", "error": "API Error: 429 Too Many Requests"}
+        return {"status": "error", "error": error_text}
 
     q = TaskQueue(store, runner=rl)
     tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
@@ -38,7 +48,7 @@ async def test_rate_limit_pauses_not_fails(store, monkeypatch):
     assert t.status == "pending"          # requeued, NOT failed
     assert len(calls) == 1                # NOT retried — quota not burned
     until, reason = store.global_pause()
-    assert until > _now_ms() and "rate_limit" in reason
+    assert until > _now_ms() and expected_kind in reason
 
 
 async def test_real_error_still_fails(store, monkeypatch):

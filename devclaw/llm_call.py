@@ -35,7 +35,7 @@ from . import config as _config
 #: here in the leaf so goal-layer modules type against it without importing a
 #: heavier module. (Relocated from the deleted goal/planner.py — demolition P3b.)
 ClaudeCaller = Callable[[str], Awaitable[str]]
-from .loom.limits import FailureKind, classify_failure
+from .loom.limits import RETRY_NOW_KINDS, classify_failure
 
 #: fallback (seconds) for the default cognition ceiling when
 #: ``DEVCLAW_COGNITION_TIMEOUT_S`` is unset or unusable.
@@ -409,7 +409,7 @@ async def call_claude(
     timeout_ms: int | None = None,
 ) -> str:
     """Spawn ``claude --print`` and return the response text, with a bounded
-    retry on a TRANSIENT failure.
+    retry on a retry-now failure (:data:`RETRY_NOW_KINDS`).
 
     A single attempt is :func:`_call_claude_once` (the whole subprocess +
     envelope path). Wrapping it here is the clean-run fix (2026-07-30): a
@@ -420,10 +420,13 @@ async def call_claude(
     on when the machine was only momentarily overwhelmed.
 
     The fail-closed / pause invariants are untouched, by construction:
-    - ONLY a ``TRANSIENT`` classification retries. QUOTA / RATE / AUTH re-raise
-      on the FIRST failure so the caller's pause-and-resume machinery still fires
-      (retrying into a live usage cap would just burn it); a ``REAL`` bug fails
-      fast with its feedback.
+    - ONLY a retry-now classification retries: ``TRANSIENT`` (a local blip) and
+      ``SERVER_ERROR`` (a provider outage — a subprocess retry costs seconds, so
+      this cheap lane spends its budget before the outage reaches the fleet-wide
+      pause; spec 036 FR-005). QUOTA / RATE / AUTH re-raise on the FIRST failure
+      so the caller's pause-and-resume machinery still fires (retrying into a
+      live usage cap would just burn it); a ``REAL`` bug fails fast with its
+      feedback.
     - Classification is on the SAME ``str(exc)`` the downstream classifiers read,
       so the quota-guard wording (see :func:`_call_claude_once`) still routes a
       usage limit to a pause, never a retry.
@@ -440,11 +443,11 @@ async def call_claude(
             )
         except PlannerError as exc:
             cls = classify_failure(str(exc))
-            if cls.kind is not FailureKind.TRANSIENT or attempt >= COGNITION_MAX_RETRIES:
+            if cls.kind not in RETRY_NOW_KINDS or attempt >= COGNITION_MAX_RETRIES:
                 raise
             delay = _retry_backoff_s(attempt, cls.retry_after_s)
             sys.stderr.write(
-                f"devclaw.cognition.retry role={role} kind=transient "
+                f"devclaw.cognition.retry role={role} kind={cls.kind.value} "
                 f"matched={cls.matched or 'transient'} "
                 f"attempt={attempt + 1}/{COGNITION_MAX_RETRIES} backoff_s={delay:g}\n"
             )

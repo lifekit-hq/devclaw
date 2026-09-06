@@ -8,11 +8,22 @@ on a limit and resume when it resets, while real failures still fail and transie
 blips back off briefly.
 
 Kinds:
-  - RATE_LIMIT  short-term cap (per-minute / 5-hour) — pause, resume on reset
-  - QUOTA       longer cap (weekly / "usage limit reached") — pause, resume on reset
-  - AUTH        expired/broken login — pause + actionable owner ping, re-probe
-  - TRANSIENT   overloaded / 5xx / network blip — short backoff, then retry
-  - REAL        genuine code/agent failure — fail (with feedback), don't wait
+  - RATE_LIMIT    short-term cap (per-minute / 5-hour) — pause, resume on reset
+  - QUOTA         longer cap (weekly / "usage limit reached") — pause, resume on reset
+  - AUTH          expired/broken login — pause + actionable owner ping, re-probe
+  - SERVER_ERROR  provider-side outage (529 overloaded) — pause, resume on backoff
+  - TRANSIENT     local blip (timeout / reset socket / signal death) — retry now
+  - REAL          genuine code/agent failure — fail (with feedback), don't wait
+
+SERVER_ERROR was carved out of TRANSIENT (issue #817): on 2026-09-03 the API
+answered ``529 Overloaded`` for ~35 minutes and three goals each spent BOTH
+dispatches on the outage and parked on ``mechanical:dispatch_cap`` with zero
+agent work. A provider outage has the quota shape, not the blip shape —
+nothing the worker did caused it and no retry INSIDE it can succeed — so it
+belongs on the pause-and-resume brake. The rest of TRANSIENT (timeouts,
+``ECONNRESET``, a signal-killed ``claude --print``) recovers in seconds and
+keeps retrying now: pausing the whole fleet for a socket blip would trade a
+small burn for a large stall.
 
 Auth failures (401 / "failed to authenticate" / an expired OAuth session) used to
 be REAL ("surface, don't pause") — the 2026-07-20 unattended night proved that
@@ -59,11 +70,20 @@ RATE_LIMIT_STATED_MAX_S = 7 * 86_400
 #: broken night, ≤2h resume lag after the fix, ≤12 probe calls/day worst case.
 AUTH_PAUSE_S = 7200
 
+#: backoff for a provider-side outage with no stated reset. Short relative to
+#: a usage cap — an outage is minutes, not hours — but long enough that the
+#: re-probe (a whole sandbox session) isn't spent every few seconds. The
+#: per-task requeue bound (``MAX_PAUSE_REQUEUES``) is what makes it finite:
+#: five requeues at this base span ~25 minutes of outage today, which spec
+#: 036 US2 widens with an escalating ladder.
+SERVER_ERROR_PAUSE_S = 300
+
 
 class FailureKind(str, Enum):
     RATE_LIMIT = "rate_limit"
     QUOTA = "quota"
     AUTH = "auth"
+    SERVER_ERROR = "server_error"
     TRANSIENT = "transient"
     REAL = "real"
 
@@ -82,14 +102,25 @@ def pause_seconds(
         return AUTH_PAUSE_S
     if stated and retry_after_s:
         return min(retry_after_s, RATE_LIMIT_STATED_MAX_S)
+    if kind is FailureKind.SERVER_ERROR:
+        return SERVER_ERROR_PAUSE_S
     return min(retry_after_s or RATE_LIMIT_PAUSE_S, RATE_LIMIT_MAX_PAUSE_S)
 
 
 #: kinds that mean "the model is unavailable for a while — pause and resume", as
 #: opposed to retry-now (TRANSIENT) or fail (REAL). AUTH pauses too (2026-07-20
-#: night incident) — the difference is the ping wording + fixed re-probe, not
-#: the pause mechanics.
-PAUSING_KINDS = (FailureKind.RATE_LIMIT, FailureKind.QUOTA, FailureKind.AUTH)
+#: night incident) and SERVER_ERROR since #817 — the difference between them is
+#: the ping wording + the backoff, not the pause mechanics.
+PAUSING_KINDS = (
+    FailureKind.RATE_LIMIT, FailureKind.QUOTA, FailureKind.AUTH,
+    FailureKind.SERVER_ERROR,
+)
+
+#: kinds a CHEAP caller may retry in-process before letting the failure reach
+#: the pause path. One home for that policy: a ``claude --print`` retry costs
+#: seconds, so a provider outage is worth re-trying there first, while a
+#: dispatched session costs a sandbox and pauses on the first hit.
+RETRY_NOW_KINDS = (FailureKind.TRANSIENT, FailureKind.SERVER_ERROR)
 
 
 @dataclass(frozen=True)
@@ -155,10 +186,23 @@ _RATE = re.compile(
     r"slow down|requests per",
     re.IGNORECASE,
 )
-# TRANSIENT: overloaded / network — retry after a short backoff. We match PHRASES
-# (not bare 5xx codes): a bare "500"/"502" shows up in assertion messages like
-# "expected 200 got 500" and must NOT be mistaken for a server error. 529 is kept
-# because it's Anthropic's overloaded code and not a common assertion number.
+# SERVER_ERROR: the provider itself is down/overloaded — pause the account and
+# resume on a backoff. STRONG wording only, the same discipline the AUTH split
+# earned: an account-wide pause is an expensive false positive, so a sentence
+# about the app under development ("expected 200 got 503", "the endpoint
+# returns 502 under load") must never trigger one. What qualifies is provider
+# vocabulary (529 — Anthropic's overloaded code and not a plausible assertion
+# number; `overloaded`; the `server_error` error-kind token) or the harness's
+# own framing of a provider response ("API Error: 5xx"), which no app-domain
+# sentence produces. Ambiguous 5xx PHRASES stay in _TRANSIENT below.
+_SERVER = re.compile(
+    r"\b529\b|\boverloaded\b|overloaded_error|\bserver_error\b|"
+    r"api error:?\s*5\d\d",
+    re.IGNORECASE,
+)
+# TRANSIENT: local blip / ambiguous 5xx — retry after a short backoff. We match
+# PHRASES (not bare 5xx codes): a bare "500"/"502" shows up in assertion messages
+# like "expected 200 got 500" and must NOT be mistaken for a server error.
 #
 # SIGNAL DEATH ("claude --print exited -9"/"-15") is TRANSIENT too: a negative
 # exit code means the cognition subprocess was KILLED mid-call — a kernel OOM /
@@ -180,7 +224,7 @@ _RATE = re.compile(
 SIGNAL_DEATH_PATTERN = r"claude --print exited -\d+"
 
 _TRANSIENT = re.compile(
-    r"\boverloaded\b|overloaded_error|\b529\b|internal server error|"
+    r"internal server error|"
     r"service unavailable|temporarily unavailable|bad gateway|gateway timeout|"
     r"econnreset|connection reset|connection refused|timed? ?out|timeout|"
     r"network error|eai_again|temporary failure|" + SIGNAL_DEATH_PATTERN,
@@ -310,6 +354,9 @@ def classify_failure(text: str | None, *, now_utc: datetime | None = None) -> Cl
     if _RATE.search(t):
         h = _hint()
         return Classification(FailureKind.RATE_LIMIT, h, "rate_limit", stated=h is not None)
+    if _SERVER.search(t):
+        h = _hint()
+        return Classification(FailureKind.SERVER_ERROR, h, "server_error", stated=h is not None)
     if _TRANSIENT.search(t):
         h = _hint()
         return Classification(FailureKind.TRANSIENT, h, "transient", stated=h is not None)

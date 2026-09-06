@@ -13,6 +13,7 @@ from devclaw.loom.limits import (
     RATE_LIMIT_MAX_PAUSE_S,
     RATE_LIMIT_PAUSE_S,
     RATE_LIMIT_STATED_MAX_S,
+    SERVER_ERROR_PAUSE_S,
     FailureKind,
     _parse_retry_after,
     _seconds_until_reset,
@@ -38,10 +39,19 @@ from devclaw.loom.limits import (
     ("API Error: 429 Too Many Requests", FailureKind.RATE_LIMIT),
     ("rate limit exceeded, slow down", FailureKind.RATE_LIMIT),
     ("You have hit the 5-hour limit", FailureKind.RATE_LIMIT),
+    # --- SERVER_ERROR (provider outage → pause + resume, #817) ---
+    # the wording from the 2026-09-03 outage that parked three goals on the
+    # dispatch cap, exactly as it reached the classifier:
+    ("session/prompt failed: Internal error: API Error: 529 Overloaded", FailureKind.SERVER_ERROR),
+    ("API Error: 529 Overloaded", FailureKind.SERVER_ERROR),
+    ("overloaded_error: the service is temporarily overloaded", FailureKind.SERVER_ERROR),
+    ("errorKind: server_error", FailureKind.SERVER_ERROR),
+    ("API Error: 500 Internal Server Error", FailureKind.SERVER_ERROR),
     # --- TRANSIENT (retry-after-backoff) ---
-    ("API Error: 529 Overloaded", FailureKind.TRANSIENT),
-    ("overloaded_error: the service is temporarily overloaded", FailureKind.TRANSIENT),
+    # ambiguous 5xx PROSE stays retry-now: it is what app-domain feedback
+    # looks like, and an account-wide pause is an expensive false positive
     ("503 Service Unavailable", FailureKind.TRANSIENT),
+    ("502 bad gateway", FailureKind.TRANSIENT),
     ("ECONNRESET: connection reset by peer", FailureKind.TRANSIENT),
     ("the request timed out after 90s", FailureKind.TRANSIENT),
     # SIGNAL DEATH (#444 insight promoted from the review gate): a negative exit
@@ -99,8 +109,47 @@ def test_auth_beats_429_substring():
 def test_pausing_flag():
     assert classify_failure("429 too many requests").is_pausing is True
     assert classify_failure("usage limit reached").is_pausing is True
-    assert classify_failure("503 overloaded").is_pausing is False  # transient retries, not pauses
+    # #817: a provider outage pauses (nothing the worker did, no retry inside
+    # it can win); a local blip and ambiguous 5xx prose still retry-now
+    assert classify_failure("API Error: 529 Overloaded").is_pausing is True
+    assert classify_failure("503 Service Unavailable").is_pausing is False
+    assert classify_failure("the request timed out after 90s").is_pausing is False
     assert classify_failure("AssertionError").is_pausing is False
+
+
+def test_provider_outage_pauses_instead_of_burning_the_dispatch():
+    """Named regression for #817: on 2026-09-03 a ~35-minute ``529 Overloaded``
+    outage was classified TRANSIENT — retry-now — so three goals each spent
+    BOTH dispatches on it and parked on ``mechanical:dispatch_cap`` with zero
+    agent work. The class is "no agent cause, no retry that can succeed inside
+    it", which is the pause-and-resume brake's shape.
+
+    Two guards ride with it:
+    - app-domain 5xx prose must NOT pause the account (the AUTH strong/weak
+      lesson — a false pause stalls the whole fleet);
+    - a usage cap that also mentions overload keeps QUOTA's policy, because the
+      pausing kinds' priority order is unchanged.
+    """
+    c = classify_failure(
+        "session/prompt failed: Internal error: API Error: 529 Overloaded "
+        "(errorKind: server_error)"
+    )
+    assert c.kind is FailureKind.SERVER_ERROR
+    assert c.is_pausing is True
+    assert pause_seconds(c.retry_after_s, stated=c.stated, kind=c.kind) == SERVER_ERROR_PAUSE_S
+    # a stated hint still wins over the default backoff
+    stated = classify_failure("API Error: 529 Overloaded; retry-after: 45")
+    assert pause_seconds(stated.retry_after_s, stated=stated.stated, kind=stated.kind) == 45
+    # app-domain prose: never an account-wide pause
+    for prose in (
+        "review: the /health endpoint returns 503 Service Unavailable under load",
+        "AssertionError: expected 200 got 500",
+    ):
+        assert classify_failure(prose).is_pausing is False
+    # priority order: a cap that mentions overload is still a cap
+    assert classify_failure(
+        "You've reached your usage limit (the API is also overloaded)"
+    ).kind is FailureKind.QUOTA
 
 
 def test_expired_oauth_login_pauses_instead_of_terminal_spam():
