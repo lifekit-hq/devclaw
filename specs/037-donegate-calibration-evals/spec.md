@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: Draft — awaiting `/speckit-clarify` with Denys (three open questions below)
+**Status**: Clarified 2026-09-06 (3 questions, all resolved) — ready for `/speckit-plan`
 
 **Input**: User description: "Done-gate calibration eval set — a graded corpus of real done-gate rounds (contract + repo review + pinned clauses → the verdict a careful owner would give) so the judge's strictness can be measured, not guessed: first-pass convergence is 0.36 against the 0.70 ratchet and today nothing can tell a strict judge from a broken one. Fixtures for the other five prompts (admission lint, intake readiness, self-triage, review gate, browser reachability) ride the same spec."
 
@@ -46,34 +46,12 @@ symmetric and are never averaged into one score.
 
 ## Clarifications
 
-### Open for the clarify session (max 3, in priority order)
+### Session 2026-09-06
 
-- **Q1 — Where do real rounds come from?** Production persists a done-gate
-  round's verdict line in the goal log and a prompt *hash* in the trace,
-  never the round's full inputs (review report, pinned listing, decisions)
-  or the model's raw output. So "real rounds" need one of: (A) a capture
-  seam — every done-gate round persists its assembled inputs and raw
-  verdict, size-capped, so fixtures are *harvested* from the live instance
-  (the honest corpus; a new persisted surface, retention to decide);
-  (B) reconstruction by hand from goal logs and PR history, as the five
-  existing fixtures were (no new surface; each fixture costs an hour and
-  carries the reconstructor's memory of what the review said); (C) capture
-  only when an operator flag is on (a study mode, zero cost by default).
-  [NEEDS CLARIFICATION: capture seam (A) vs reconstruction (B) vs flag-gated capture (C) — this decides whether US2 exists]
-- **Q2 — What does a grade look like, and who can grade?** Default: the
-  owner grades each round once with a verdict plus per-clause
-  satisfied/unsatisfied and a one-line reason; a round the owner cannot
-  decide is marked `contested` and excluded from the agreement number but
-  kept in the corpus; grading is never delegated to a model. [NEEDS
-  CLARIFICATION: is a per-clause grade required for every round, or is a
-  verdict plus reason enough for the first corpus?]
-- **Q3 — Does the corpus gate prompt changes?** Default: it is a ratchet
-  number reported by `/eng-health` and the scorecard, run on Denys's button
-  (it burns quota, and CI has no `claude`); a PR that edits a cognition
-  prompt states the before/after agreement in its `/ship` body. The
-  alternative is a hard gate: no prompt change ships without a run showing
-  no regression. [NEEDS CLARIFICATION: informational ratchet vs a required
-  `/ship` step for prompt-editing PRs]
+- Q: Where do the real done-gate rounds in the corpus come from — production persists only a verdict line and a prompt hash per round, never the inputs or the raw output? → A: Every done-gate round persists its assembled inputs and raw verdict (size-capped, bounded retention) so fixtures are harvested, never remembered; a new persisted surface in the state domain, shipped with a doctor check. Rejected: hand reconstruction (the review report becomes the reconstructor's recollection) and flag-gated capture (the round that goes wrong is the one nobody flagged).
+- Q: What does the owner's grade on a round consist of, and is a per-clause grade required for every round? → A: Required: a verdict from the judge's own set (or `contested`) plus a one-line reason. Per-clause satisfied/unsatisfied is optional, recorded when the owner disagrees with the judge's clause reading. Grading is the owner's act, minutes per round, never delegated to a model. Rejected: per-clause on every round (triples grading, starves the corpus) and verdict-only (cannot locate a disagreement).
+
+- Q: Does a run of the calibration corpus gate prompt changes, or is it a ratchet number that prompt-editing PRs report? → A: A ratchet number: `/eng-health` and the scorecard carry the last run's three rates, and a PR that edits a cognition prompt states its before/after rates in its `/ship` body. Informational, never a merge gate; the run is on the owner's button (it spends quota; CI has no cognition binary). Rejected: a hard gate on prompt-editing PRs (moves quota spend into CI or gets skipped under pressure) and ratchet-then-gate (a promotion condition nobody would enforce).
 
 ### Rejected alternatives (direction memory)
 
@@ -138,7 +116,7 @@ false-hold rate is visibly worse.
 
 ---
 
-### User Story 2 - Real rounds are harvested, not remembered (Priority: P2, contingent on Q1)
+### User Story 2 - Real rounds are harvested, not remembered (Priority: P2)
 
 Every done-gate round on the live instance leaves behind the assembled
 inputs the judge saw and the raw verdict it returned, so a round that went
@@ -163,9 +141,12 @@ the harness and reproduces the round's verdict through the parser.
 2. **Given** a captured round, **When** an operator exports it, **Then**
    the result is a fixture file the harness loads unchanged, with
    `source: production-trace` and the goal, revision and round recorded.
-3. **Given** capture is disabled (or Q1 chooses C and the flag is off),
-   **When** rounds run, **Then** nothing extra is persisted and the goal
-   costs no extra cognition — capture is mechanism, never a call.
+3. **Given** a round runs, **When** capture persists it, **Then** the goal
+   costs no extra cognition and the tick spends nothing extra on an idle
+   goal — capture is mechanism, never a call.
+4. **Given** retention is exceeded, **When** the oldest captured rounds
+   age out, **Then** a round already exported as a fixture is unaffected
+   (the fixture is the durable copy; capture is the inbox).
 
 ---
 
@@ -210,8 +191,8 @@ owner grade vs verdict for each.
 - Two fixtures from the same goal and revision, different rounds: both
   kept — the second round's prior-satisfied state is part of its inputs.
 - The judge returns the right verdict for a wrong reason (rationale cites a
-  clause the owner did not): counts as agreement on the verdict; the
-  per-clause report shows the mismatch when Q2 chooses per-clause grades.
+  clause the owner did not): counts as agreement on the verdict; when the
+  owner recorded a per-clause grade the report shows the clause mismatch.
 
 ## Requirements *(mandatory)*
 
@@ -222,9 +203,11 @@ owner grade vs verdict for each.
   satisfied state, repo review report, decisions, strictness, the goal's
   stub allowances — plus the owner's grade, the grade's reason, the source
   (harvested or reconstructed) and the originating goal/revision/round.
-- **FR-002**: The owner's grade MUST be a verdict from the same set the
-  judge emits, optionally per-clause (Q2), plus `contested` as a grade
-  that excludes the round from every rate.
+- **FR-002**: The owner's grade MUST carry a verdict from the same set the
+  judge emits (or `contested`, which excludes the round from every rate)
+  and a one-line reason; a per-clause satisfied/unsatisfied grade is
+  OPTIONAL and, when present, the report MUST attribute the disagreement
+  to the clause.
 - **FR-003**: The calibration run MUST report agreement, false-hold rate
   (owner: achieved; judge: not) and false-close rate (owner: not achieved;
   judge: achieved) as separate numbers with denominators, plus a
@@ -245,8 +228,11 @@ owner grade vs verdict for each.
   read as a change.
 - **FR-008**: The report MUST be diffable between runs: a stable per-fixture
   ordering and a machine-readable summary beside the human one, so
-  `/eng-health` and the scorecard can cite the last run's three rates.
-- **FR-009** (US2, contingent on Q1): every done-gate round MUST persist its
+  `/eng-health` and the scorecard can cite the last run's three rates. The
+  rates are a ratchet, never a merge gate: a PR that edits a cognition
+  prompt states its before/after rates in its `/ship` body, and the run is
+  started by the owner, never by CI or a schedule.
+- **FR-009** (US2): every done-gate round MUST persist its
   assembled inputs and raw verdict, size-capped, keyed by goal id, contract
   revision and round; an export MUST produce a harness-loadable fixture
   with `source: production-trace`. Capture is mechanism only — zero
@@ -267,13 +253,16 @@ owner grade vs verdict for each.
 
 - **Round fixture**: one done-gate round as the judge saw it — inputs,
   provenance (goal, revision, round, source), and the owner's grade.
-- **Grade**: the owner's verdict for a round (+ optional per-clause), the
-  reason, the date graded, `contested` when undecidable.
+- **Grade**: the owner's verdict for a round, the one-line reason, the
+  date graded, `contested` when undecidable; optionally per-clause
+  satisfied/unsatisfied.
 - **Calibration report**: one run's per-fixture listing plus the three
   rates, the mechanism-failure count, the flakiness bound, the prompt
   digest judged, the corpus size and the date.
 - **Captured round** (US2): the persisted inputs and raw verdict of a live
-  round, exportable to a Round fixture.
+  round, keyed by goal id, contract revision and round; size-capped;
+  retained for a bounded window; exportable to a Round fixture. A new
+  persisted surface (state domain) — ships with its doctor check.
 
 ## Success Criteria *(mandatory)*
 
@@ -303,10 +292,15 @@ owner grade vs verdict for each.
   not a stage (spec 032).
 - The first corpus is seeded from the five existing fixtures plus
   reconstructed rounds from fs-479, fs-431, devclaw-030 and the 2026-09-05
-  night, whichever Q1 chooses for the long run.
+  night; every round after capture lands is harvested (`production-trace`),
+  and reconstruction is retired once SC-004 holds.
 - Quota for a calibration run is the owner's to spend; a run of 20–40
   rounds is a few dollars' worth of subscription quota and is never
   scheduled automatically.
+- Captured-round retention defaults to the last 30 days or the last 50
+  rounds per goal, whichever is smaller, with the per-round size cap equal
+  to the evaluator's own prompt budget; the plan may tighten these, the
+  fixture export is the durable copy either way.
 - The judge's own strictness dial (`trust`/`strict`) is part of a
   fixture's inputs; the corpus grades against the dial the round ran under.
 - Fixtures live beside the existing ones under `tests/cognition/fixtures/`

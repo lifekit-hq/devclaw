@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [ ] No [NEEDS CLARIFICATION] markers remain — three open, deliberately, for the clarify session with Denys (Q1 capture seam, Q2 grade shape, Q3 gate vs ratchet)
+- [x] No [NEEDS CLARIFICATION] markers remain — Q1 (capture seam), Q2 (grade shape), Q3 (gate vs ratchet) resolved in the 2026-09-06 clarify session
 - [x] Requirements are testable and unambiguous
 - [x] Success criteria are measurable
 - [x] Success criteria are technology-agnostic (no implementation details)
@@ -31,5 +31,5 @@
 
 ## Notes
 
-- FR-009 / US2 are contingent on Q1; the spec keeps them so the clarify session decides with the shape in view rather than adding it later.
-- Items marked incomplete require spec updates before `/speckit-plan`; `/speckit-clarify` is the next step and is run WITH Denys, one question at a time.
+- FR-009 / US2 confirmed by Q1 (capture every round).
+- All items pass; next step is `/speckit-plan`.
