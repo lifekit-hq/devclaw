@@ -24,8 +24,23 @@ measurable:
 | Failure | Question | Measurable today? |
 |---|---|---|
 | The loop **stopped** when it shouldn't have | why is it not running? | ❌ `cycle_reports.idle` is a boolean with no cause |
-| It **ran and produced garbage** | is the work any good? | ✅ first-pass rate (0.36), clean-cycle rate |
+| It **ran and produced garbage** | is the work any good? | ⚠️ first-pass rate (0.36) — see caveat, clean-cycle rate |
 | It **ran but needed the owner** | can it run unattended? | ❌ self-heal counters exist but are never aggregated |
+
+**Caveat on the one metric that looks healthy.** First-pass is the fraction of
+*achieved* goals that closed with `donegate_rounds <= 1`. But `done_when` covers
+the whole spec by rule, and the worker ships one story-slice per session — so
+for any multi-increment goal the first `done` proposal is **structurally
+guaranteed** to be rejected. That is the chaining mechanism working as designed,
+not a quality defect. First-pass may therefore be measuring goal SIZE much more
+than work quality, and a 5-increment goal cannot score first-pass however good
+its output is.
+
+This is a hypothesis, not a finding. It is settled by correlating done-gate
+rounds against increments actually delivered: if rounds ≈ increments + 1 the
+number is size; whatever rounds exceed that is real gate churn and is the part
+worth tracking as quality. US6 collects exactly that pairing — which is a second
+reason to build it rather than only its stated one.
 
 Separately, **cost history silently expires after 30 days**: token usage is read
 out of `tasks.result_json` (`devclaw/telemetry.py:245`), and that column is
@@ -152,12 +167,27 @@ still readable while the transcript itself is gone.
 ### User Story 4 — Know what a shipped increment costs (Priority: P4)
 
 The owner is on a constrained quota. He needs to know what a *merged* increment
-costs versus what is burned on runs that ship nothing — currently unanswerable,
-because ground-truth merge state and token usage are never joined.
+costs versus what is burned on runs that ship nothing.
+
+**A naive version of this number already exists** and is the thing to fix, not
+to build: `compute_scorecard` reports `tokens_per_merged_pr` and
+`cost_per_merged_pr_usd` as *all tokens spent in the window divided by the count
+of distinct merged PRs*. Three defects make it unfit for the question:
+
+1. It blends delivery shapes — a goal-cumulative PR carrying eight increments
+   and a one-task standalone PR are averaged together, so the figure moves with
+   the delivery mix rather than with cost (the flaw FR-014a exists to forbid).
+2. It charges ALL window tokens to merged PRs, including everything spent on
+   runs that shipped nothing — so it cannot answer the second half of the
+   question, and it silently overstates the first half.
+3. It is window-bounded over transcript-derived usage, so it inherits the
+   30-day amnesia and can never be trended.
 
 **Why this priority**: It is the number that converts "low quota" from a worry
 into a decision input. It depends on US3 for any window longer than a month, so
-it follows it.
+it follows it — but it is cheaper than a from-scratch story, because the join
+against ground-truth PR state already exists and only its denominator,
+segmentation and durability are wrong.
 
 **Independent Test**: With a set of settled tasks whose PRs carry known
 ground-truth states, read the health surface and confirm cost is partitioned
@@ -376,6 +406,12 @@ and the goal's lifetime done-gate rounds.
 - **FR-015**: PRs whose ground-truth state is unknown or stale MUST form an
   explicit third bucket, excluded from both rates — a state MUST NOT be inferred
   from the presence of a PR reference.
+- **FR-015a**: The existing window-bounded cost-per-merged-PR figures MUST be
+  REPLACED by the segmented, durable ones — never left in place alongside them.
+  Two cost-per-PR numbers computed differently would disagree in the console and
+  in any report, which is the failure class the repo already rules against
+  ("one definition of the change"). The corrected figures MUST also stop
+  charging tokens spent on runs that shipped nothing to the merged denominator.
 
 **Surfacing (US5)**
 

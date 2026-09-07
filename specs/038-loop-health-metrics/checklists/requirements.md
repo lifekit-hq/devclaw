@@ -54,6 +54,19 @@
 - **Carries a stated RISK section**, not an assumption: it is unverified whether
   the worker agent reports usage in production. US4 depends on it; US1–US3 do
   not. Flagged for verification before US4 is planned.
+- **Two corrections applied after the first commit** (grounding pass against the
+  code, 2026-09-06):
+  - US4 was described as building a missing number. It is not — a naive
+    `tokens_per_merged_pr` / `cost_per_merged_pr_usd` already exists in
+    `compute_scorecard`, blending delivery shapes, charging shipped-nothing
+    tokens to the merged denominator, and window-bounded. US4 now states the
+    three defects and FR-015a requires REPLACING it rather than adding a second
+    disagreeing figure.
+  - First-pass rate was presented as a clean quality signal. It may be measuring
+    goal SIZE instead: `done_when` covers the whole spec and the worker ships one
+    slice per session, so a multi-increment goal's first `done` proposal is
+    structurally rejected by design. Recorded as a stated hypothesis with the
+    test that settles it, which US6's data supplies.
 - **US6 (estimate calibration) was added after the clarify session** and has NOT
   been through clarify. Three decisions in it were taken as stated defaults and
   need the owner's ruling before it is planned: (a) both predictors are recorded
