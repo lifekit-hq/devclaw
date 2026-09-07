@@ -27,6 +27,7 @@ from .. import env_cap as _env_cap
 from .. import project_manifest as _manifest
 from .. import config as _config
 from . import env_issue as _env_issue
+from . import prompt_budget as _prompt_budget
 from . import remote_checks as _remote_checks
 from . import delivery_strategy as _delivery
 
@@ -235,14 +236,36 @@ def _ci_hold_text(branch: str, rc: "_remote_checks.RemoteChecksResult") -> str:
 
 
 def _ci_correction(branch: str, rc: "_remote_checks.RemoteChecksResult") -> str:
+    """The red verdict AND its evidence (specs/tiny/red-ci-log-to-worker.md):
+    the failing check names, then the bounded tail of each failing job's
+    log — the sandbox holds no GitHub credential, so the host delivers the
+    log rather than asking the worker to fetch it. A log that could not be
+    read is said so, in one line; the instruction comes first so the
+    steering cap only ever truncates the excerpt."""
     names = ", ".join(rc.failing_names) or rc.detail[:200]
     head = rc.head_sha[:7] or "the branch head"
-    return (
+    parts = [
         f"[remote-checks] {names} failing on {branch} at {head}. The sandbox gate is "
-        f"not CI: read the failing check's log, fix or quarantine the cause in the "
-        f"product code, and make the branch's checks green. Never bypass a check or "
-        f"edit the CI definition to go green."
-    )
+        f"not CI: the failing job's log is BELOW (the sandbox cannot fetch it — do not "
+        f"try); fix or quarantine the cause in the product code and make the branch's "
+        f"checks green. Never bypass a check or edit the CI definition to go green."
+    ]
+    # The steering section is tail-kept under STEERING_KEEP chars; a tail that
+    # outgrew it would push the instruction out, so the excerpts are bounded
+    # HERE to fit beside it — each keeps its own tail, where the runner's
+    # summary lives. The configured line count is the upper bound; the char
+    # budget is the binding one on a chatty log.
+    if rc.failing_logs:
+        budget = max(400, _prompt_budget.STEERING_KEEP - len(parts[0]) - 400)
+        per = max(200, budget // len(rc.failing_logs))
+        for name, excerpt in rc.failing_logs:
+            tail = excerpt[-per:]
+            if len(excerpt) > per:
+                tail = "…" + tail[tail.find("\n") + 1:] if "\n" in tail else "…" + tail
+            parts.append(f"--- {name}: last {len(tail.splitlines())} log line(s) ---\n{tail}")
+    if rc.log_note or not rc.failing_logs:
+        parts.append(f"--- log unavailable: {rc.log_note or 'not read'} ---")
+    return "\n".join(parts)
 
 
 async def _autoheal_ci(

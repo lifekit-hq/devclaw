@@ -1649,17 +1649,27 @@ def _settled_advance_proposing_done(store, tmp_path, goal_id="g"):
 
 
 @pytest.mark.asyncio
-async def test_red_rollup_on_a_done_proposal_spends_zero_cognition_and_steers_the_failing_check(tmp_path):
+@pytest.mark.parametrize("failing_logs, log_note, expect", [
+    # the log could not be read: the correction says so, the goal is not blocked
+    ((), "", "log unavailable"),
+    # the log was read: its tail rides in the correction (tinyspec red-ci-log-to-worker)
+    ((("Backend CI", "Failed! - Failed: 3, Passed: 240"),), "", "Failed: 3, Passed: 240"),
+])
+async def test_red_rollup_on_a_done_proposal_spends_zero_cognition_and_steers_the_failing_check(
+    tmp_path, failing_logs, log_note, expect,
+):
     """Spec 032 US1 (the fs-431 arc): a red CI on the delivered PR is a FACT the
     tick consumes before any review sandbox or evaluator call — the failing
-    check names become the next correction and no done-gate round is spent."""
+    check names become the next correction and no done-gate round is spent.
+    The correction carries the failing log's tail when the host could read it
+    and says so when it could not; neither case blocks or spends cognition."""
     from devclaw.goal.remote_checks import RemoteChecksResult
 
     store = _store(tmp_path, Clock())
     engine = _settled_advance_proposing_done(store, tmp_path)
     checker = FakeRemoteChecker(RemoteChecksResult(
         "failing", "1 failing: Backend CI", head_sha="abc1234def",
-        failing_names=("Backend CI",),
+        failing_names=("Backend CI",), failing_logs=failing_logs, log_note=log_note,
     ))
     evaluator, notifier = FakeClaude(_ACHIEVED_EVAL), RecordingNotifier()
 
@@ -1673,6 +1683,7 @@ async def test_red_rollup_on_a_done_proposal_spends_zero_cognition_and_steers_th
     assert s.phase == "idle" and s.donegate_rounds == 0 and not s.pending_done_proposal
     steering = store.unread_steering("g")
     assert "[remote-checks]" in steering and "Backend CI" in steering and "abc1234" in steering
+    assert expect in steering
     assert "remote checks (goal/g): failing" in store.recent_log("g")
 
 

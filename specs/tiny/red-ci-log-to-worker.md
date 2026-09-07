@@ -2,7 +2,7 @@
 
 **Branch**: feat/040-contract-to-actor (spec 040 US2, shrunk to this lane 2026-09-07)
 **Date**: 2026-09-07
-**Status**: draft — Denys reviews before implementation
+**Status**: done (approved by Denys 2026-09-07; implemented the same day)
 **Complexity**: small
 
 ## North-star case
@@ -39,7 +39,7 @@ When `_autoheal_ci` (`devclaw/goal/tick_guards.py`) steers a red rollup back, th
 2. Thread it through `_ci_correction(branch, rc, excerpts)`; call it from the red branch of `_autoheal_ci`.
 3. Config value + env-var doc row.
 4. Skill line + flow doc.
-5. No test: ordinary behavior (the rollup reader's fake already covers the red path); the live instance is the regression surface. If Denys wants a tripwire, it is "a log-read failure never blocks" — extend the existing CI heal test, no sibling.
+5. The existing red-path class test is parametrized over "log read" / "log unavailable" (the "never blocks" tripwire); no sibling. No text-redaction helper existed in the repo — `scrub_log` masks GitHub token shapes and Authorization headers on top of Actions' own `***` masking.
 
 ## Rejected alternatives
 
@@ -49,10 +49,10 @@ When `_autoheal_ci` (`devclaw/goal/tick_guards.py`) steers a red rollup back, th
 
 ## Tasks
 
-- [ ] `failed_job_log_tail` + config value
-- [ ] `_ci_correction` excerpt rendering, red path wired
-- [ ] Skill + docs
-- [ ] Live proof: one red rollup on the box, the next brief carries the tail
+- [X] `failed_check_logs` + `DEVCLAW_CI_LOG_TAIL_LINES` (the tail is read inside `check_pr` on the red path, so the fake checker seam covers it — no second injection)
+- [X] `_ci_correction` renders the excerpts, bounded to fit beside the instruction under the 4 000-char steering budget (plan-time fact: the char budget binds harder than 120 lines)
+- [X] Skill + docs (env-vars row, flow doc step M, INDEX tags)
+- [ ] Live proof: one red rollup on the box after deploy, the next brief carries the tail (owner reads the goal log)
 
 ## Done-When
 
