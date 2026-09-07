@@ -69,6 +69,10 @@ Five layers sit below the user, and only the last one is an agent harness in the
 
 **Surfaces.** The MCP tools, grouped: tasks (`dispatch_task`, `get_status`, `list_tasks`, `get_events`, `cancel_task`); goals (`create_goal`, `get_goal`, `list_goals`, `steer_goal`, `resume_goal`, `tail_goal`, `get_trace`, `cancel_goal`, `set_goal_strictness`, `set_goal_verify_cmd`); problems (`list_problems`, `decide`, `correct_implementation`); projects (`register_project`, `list_projects`, `project_status`, `update_project`, `link_goal`, `delete_project`, `onboard`, `create_repo`, `delete_repo`); intake (`file_intake`, `regrade_intake`, `grade_backlog`); operations (`doctor`, `get_scorecard_metrics`, `set_run_schedule`, `get_run_schedule`, `set_operator_hold`, `set_quiet_mode`, `set_max_concurrent`, `set_max_host_cognition`, `clear_usage_pause`, `list_suppressed_pings`); deploy (`deploy_project`, `deploy_status`, `list_deploys`, `stop_deploy`). The same control plane is reachable from the `devclaw` CLI and the React console under `console/` (`npm --prefix console run build`). Tool signatures live in `devclaw/server/tools/`; the waiter's menu is described in [`docs/runbooks/vps-waiter-deploy.md`](./docs/runbooks/vps-waiter-deploy.md).
 
+## Where it is going
+
+The north star: **devclaw runs 24/7 non-idle on planned work, nights come out clean, and it self-heals through stops instead of waiting for the owner** - a helping hand, not a second job. It can fail in exactly three ways - *stopped when it shouldn't*, *ran and produced garbage*, *ran but needed the owner* - and every change to this repository names the one it moves, the number that will show it, and the observation that deletes it again. The owner's job is decisions (`decide`, `correct_implementation`, direction); any other action the loop asks of a human is counted as a defect, per verb, on the scorecard below.
+
 ## Status
 
 Every capability claim carries its evidence tier where it is made: **production** = exercised live on the lifekit repositories; **experimental** = built, not load-bearing; **paper** = specified, not built.

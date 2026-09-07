@@ -103,6 +103,13 @@ distillate line to `~/memory/log.md`. The vault contract
 (`~/memory/README.md`) wins on format; STATUS is a ~10-line card, not
 a copy of this render.
 
+## Cut when
+
+Two weeks in which Denys still asks "what's next" after the render, or
+the "Before you go" list is empty every night and the "Tonight" block
+never changed a decision - then the evening is `park` alone and this
+skill goes.
+
 ## Why it's shaped this way
 
 - **The evening question is really two** - "what's next" and "will it

@@ -101,6 +101,9 @@ handful of files is a **spec** (`/speckit-specify` -> `/speckit-clarify`
 with Denys). Either way the artifact states its north-star case first
 (constitution 2.9.0): the failure moved, the number, the cut condition.
 
+Before rendering, run the `north-star` skill on the recommended fix. A
+verdict of CUT or NOT-A-SPEC changes the recommendation, not the render.
+
 ## Step 4 - Render (one page, decisions at the top)
 
 ```
@@ -139,6 +142,14 @@ Rules that keep it honest:
   `/root-cause` on the chosen class, then the tinyspec or spec, then
   implementation, then `/ship`. Never start the fix from inside this
   skill.
+
+## Cut when
+
+Two weeks of mornings in which Denys still asks "what are the problems"
+or "what is the class" AFTER the render - the skill did not replace the
+nudges, it added a page. Or the Classes table names the same class three
+mornings running with no fix landing - then the skill is a report, and
+the fix belongs to a spec, not to a re-read.
 
 ## Why it's shaped this way
 

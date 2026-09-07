@@ -19,6 +19,21 @@ were retired by spec 022 US3). It sits **behind MCP** and is driven by an **Open
 translates chat into tool calls; devclaw never talks to the user. Cognition is
 always `claude` over Pro/Max **OAuth — no API key, no metered billing**.
 
+## The north star — where every change is judged
+
+**devclaw runs 24/7 non-idle on planned work, nights come out clean, and it
+self-heals through stops instead of waiting for the owner** — a helping hand,
+not a second job (Denys, restated 2026-09-06). It fails in exactly three
+ways — *stopped when it shouldn't*, *ran and produced garbage*, *ran but
+needed the owner* — and every spec, tinyspec, PR and adopted feature names
+the ONE it moves, the number that shows it, and what cuts it (constitution
+2.9.0). The owner acts only on decisions (ruled 2026-09-07): any other owner
+action a change adds is a defect. The always-on checklist is
+`.claude/rules/north-star.md`; the formal verdict is the `north-star` skill;
+the mechanical check at `gh pr create` is `.claude/hooks/north-star-case-guard.py`.
+The current failing axis is read live from `get_scorecard_metrics`, never
+remembered.
+
 ## The layer map — where a change belongs
 
 The system is 5 layers below the user (canonical detail: [`docs/architecture.md`](./docs/architecture.md)).
@@ -360,8 +375,8 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 
 This repo carries a Claude-Code project harness for developing devclaw itself
 (distinct from layer 5's model-agnostic `.agent/skills/`, which is product):
-`.claude/rules/` (testing · git-workflow · cognition-prompts · speckit-workflow —
-auto-loaded, the operational detail this file deliberately doesn't carry;
+`.claude/rules/` (testing · git-workflow · cognition-prompts · speckit-workflow ·
+north-star — auto-loaded, the operational detail this file deliberately doesn't carry;
 speckit-workflow is the anti-drift pipeline since 2026-08-13: every
 behavior-changing change starts `/speckit-specify` → `/speckit-clarify` →
 plan → tasks → implement, specs landing in `specs/` and the machinery in `.specify/`, no implementation before clarify,
@@ -370,11 +385,15 @@ statement specs are checked against; the pre-speckit proposals + ADRs were
 removed from the tree 2026-09-06 — git history (`git log -- docs/decisions docs/proposals`); only ADR 0004, cited by the constitution, stays),
 `.claude/commands/ship.md` (the pre-PR ritual as `/ship`),
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
-escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit, live-shakedown, root-cause, devclaw-status,
+escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1` — + a north-star-case guard that blocks
+`gh pr create` on a behavior-changing branch whose spec/tinyspec has no filled
+`North-star case`, escape hatch `DEVCLAW_ALLOW_NO_CASE=1` for a hotfix), and `.claude/skills/` (docs-audit, live-shakedown, root-cause, devclaw-status,
 eng-health — the engineering-health ratchet over `evals/measure_eng_health.py`,
 devclaw-morning + devclaw-evening — the daily loop as two commands (status →
 class → one fix → decisions; landed → tonight → next → park), added 2026-09-07
 so the loop is typed once a day instead of nudged four times,
+north-star — the judge: eight tests and one verdict (ADMIT / SHRINK / CUT /
+NOT-A-SPEC) on any decision before it is built, written into the artifact,
 plus the vendored speckit-* command skills).
 
 ## Where to look next
