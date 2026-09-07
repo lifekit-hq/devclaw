@@ -959,12 +959,55 @@ async def _handle_long_lived_advance(
                     "merge-conflict resolution increment",
                 )
             else:
-                store.append_log(
-                    goal_id,
-                    f"all referenced issues are closed but done-gate previously "
-                    f"refused ({base.donegate_rounds} round(s)) — dispatching "
-                    "worker to complete the remaining contract",
+                # The contract's SOURCE is gone and the gate has already
+                # refused. A pointer goal reads done_when live from its issues
+                # (spec 019), so with every issue closed no dispatch can amend
+                # the contract — while the gate keeps judging the pinned
+                # revision. Re-dispatching here is a loop by construction: it
+                # is what burned 8 rounds on fs-431 and 5 on fs-421 with the
+                # log contradicting itself every time ("dropped from the
+                # remaining scope" immediately followed by "dispatching worker
+                # to complete the remaining contract"). The freshness guard and
+                # the done-gate are each right alone; nobody owned their
+                # disagreement. Hand it to the owner — spec 031's shape.
+                # NOTE the first pass (donegate_rounds == 0) above is
+                # untouched: an issue closed by a partial implementation still
+                # gets a propose-done and a grounded verdict. Only AFTER a
+                # refusal do we have evidence of both an unmet contract and a
+                # vanished source.
+                nums = ", ".join(f"#{n}" for n in sorted(goal.issue_refs))
+                q = (
+                    f"every referenced issue ({nums}) is closed, but the "
+                    f"done-gate has refused {base.donegate_rounds} round(s). "
+                    "The contract is read live from those issues, so no "
+                    "dispatch can amend it and the gate will keep refusing. "
+                    "Either the closure means the work is done, or the "
+                    "contract was abandoned mid-flight — the loop cannot tell "
+                    "which."
                 )
+                prob = _problems.new_problem(
+                    goal_id, kind="needs_answer", raised_by="closed_contract",
+                    what=q,
+                    # the gate's own words: the owner needs to see WHY it
+                    # refuses, not merely that it does.
+                    clause=(base.last_eval_note or "").strip(),
+                    why="the contract's source is closed while the gate still refuses",
+                    options=(_problems.ACCEPT_CLOSE, _problems.CORRECT, _problems.CANCEL),
+                    default_key="accept_close",
+                )
+                with store.transaction():
+                    _problems.raise_problem(store, prob)
+                    store.transition(
+                        goal_id, Event.BLOCK,
+                        replace(base, phase="blocked",
+                                blocked_on=_problems.summary_line(prob),
+                                blocked_kind="needs_answer", problem_id=prob.id,
+                                next=""),
+                        expect=status, consume_steering=consume_ids,
+                    )
+                await _notify(ctx.notifier, NotifyLevel.OWNER,
+                              f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
+                return Outcome.BLOCKED
             issue_context = _issue_ref.render_issue_context([], snaps)
         else:
             issue_context = _issue_ref.render_issue_context(
