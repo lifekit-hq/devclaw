@@ -79,7 +79,8 @@ def test_ok_run_emits_contract_result_and_events(tmp_path):
     assert result["status"] == "ok"
     # agent_output is the agent's OWN final message (#570 semantics).
     assert result["agent_output"].startswith("All done.")
-    assert result["repo_notes"] == "fake repo, tests are fast."
+    # spec 034: no REPO NOTES hand-back — memory is a file the worker edits
+    assert "repo_notes" not in result
     types = [e["type"] for e in events]
     assert "MessageEvent" in types and "ACPToolCallEvent" in types
     # No usage report from this agent → the field is declared-absent (D6).

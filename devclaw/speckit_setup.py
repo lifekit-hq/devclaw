@@ -220,6 +220,52 @@ def ensure_goal_checkouts_ignored(workspace_dir: str) -> "str | None":
     return ".gitignore"
 
 
+#: Spec 034 (worker file memory): the repo carries the worker's durable
+#: memory as a committed ``.devclaw/`` directory — ``MEMORY.md`` (an
+#: always-read index, one line per fact) plus ``memory/<slug>.md`` fact files
+#: the worker edits inside its increments. The install PR seeds the
+#: EMPTY index, with the write policy stated in-file for any reader, through
+#: the same reviewable install/migrate PR as the manifest. The fact directory
+#: is created by the first fact (git tracks no empty directory). Contract:
+#: ``specs/034-worker-file-memory/contracts/memory-layout.md``.
+WORKER_MEMORY_DIR = ".devclaw"
+WORKER_MEMORY_INDEX = f"{WORKER_MEMORY_DIR}/MEMORY.md"
+WORKER_MEMORY_INDEX_SEED = """\
+# Worker memory — index
+
+Durable facts about THIS repository that a fresh engineering session should not
+relearn the hard way (build/test quirks, environment gotchas, non-obvious
+commands). One fact per file under `memory/`, listed here as
+`- [title](memory/<slug>.md) — one-line hook`. Read this index at session
+start; open a fact file only when its hook bears on the task.
+
+Write policy (for any agent or human editing this directory):
+
+- Update an existing fact over adding a reworded sibling; delete a fact
+  proven wrong.
+- Mechanize first: a lesson a committed mechanism can enforce (a wrapper, a
+  config default, a guard) becomes that mechanism, with at most a pointer here.
+- Never record goal-scoped state (what one task attempted, why a run failed).
+- Memory edits ship in the same commit as the change that taught them.
+
+## Facts
+
+"""
+
+
+def ensure_worker_memory_seeded(workspace_dir: str) -> "str | None":
+    """Write the empty ``.devclaw/MEMORY.md`` index when the repo has none.
+    Returns the relative path when a file was written, else None. Never
+    overwrites an existing index (the worker owns its content). Called ONLY
+    from the reviewable-PR paths — never a silent runtime write."""
+    path = Path(workspace_dir) / WORKER_MEMORY_DIR / "MEMORY.md"
+    if path.exists():
+        return None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(WORKER_MEMORY_INDEX_SEED, encoding="utf-8")
+    return WORKER_MEMORY_INDEX
+
+
 def manifest_needs_upkeep(workspace_dir: str) -> bool:
     """True when the repo's devclaw.json is absent or mechanically behind
     (schemaVersion / boilerplateRevision) — i.e. a re-onboard should open the
@@ -266,6 +312,9 @@ async def migrate_manifest_pr(workspace_dir: str, *, project_id: str | None = No
         ignored = ensure_goal_checkouts_ignored(workspace_dir)
         if ignored:
             changed.append(ignored)
+        memory = ensure_worker_memory_seeded(workspace_dir)
+        if memory:
+            changed.append(memory)
         if not changed:
             return {"delivered": False, "pr_url": None, "branch": MIGRATE_BRANCH,
                     "error": None, "changed": [], "note": "manifest already current"}
@@ -323,6 +372,9 @@ async def install_speckit_pr(workspace_dir: str, *, project_id: str | None = Non
         ignored = ensure_goal_checkouts_ignored(workspace_dir)
         if ignored:
             created.append(ignored)
+        memory = ensure_worker_memory_seeded(workspace_dir)
+        if memory:
+            created.append(memory)
 
         result = await deliver_change(
             workspace_dir=workspace_dir,

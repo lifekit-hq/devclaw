@@ -23,7 +23,11 @@ Later check families, by home — instance (`devclaw/doctor/checks_instance.py`)
 registry token, gate consultation, schedule dispatch, pr_ledger, sandbox
 sizing, problems/decisions tables, merge-on-close columns, contract pins;
 project (`devclaw/doctor/checks_project.py`): tracked checkout, issue-ref
-shape, backlog-ready contract, capability declaration.
+shape, backlog-ready contract, capability declaration, `.goals/` ignored,
+worker-memory health (`project.worker_memory.health`, spec 034 — advisory:
+a dangling `.devclaw/MEMORY.md` index line, an unindexed fact file, or an
+index past 30 entries WARNs; nothing is dropped). The instance legacy-shape
+check also FAILs on a lingering `project_docs` table (dropped at boot).
 
 Instance section:
 

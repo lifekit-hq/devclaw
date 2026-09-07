@@ -45,7 +45,7 @@ already has (:mod:`devclaw.goal.store.status` / :mod:`devclaw.goal.store
   ``goal_phase_history``.
 - :mod:`.state_content` — :class:`~devclaw.goal.state_content
   .GoalStateContentMixin`: ``goal_steering`` / ``goal_log`` /
-  ``goal_deliveries`` / ``project_docs`` / ``goal_settlements``.
+  ``goal_deliveries`` / ``goal_settlements``.
 - this module — the class head, the table bootstrap, and the composed
   :class:`GoalState` every importer keeps using.
 
@@ -219,22 +219,14 @@ class GoalState(
                   UNIQUE(goal_id, ref_id)
                 );
 
-                -- PROJECT-scoped documents (mission-control borrow item 3):
-                -- A goal's own state dies with it, so every new goal on the
-                -- same repo relearned build quirks from zero. scope_key is the
-                -- NORMALIZED workspace_dir (project_registry._normalize_
-                -- workspace — the same join key the registry uses), NOT a
-                -- goal/project id: the brief must survive goal cancel+refile
-                -- and project re-registration alike. Host-side on purpose —
-                -- the sandbox workspace is `git clean -fdx`-wiped per
-                -- dispatch, so nothing left in-repo survives between tasks.
-                CREATE TABLE IF NOT EXISTS project_docs (
-                  scope_key  TEXT NOT NULL,
-                  kind       TEXT NOT NULL,
-                  content    TEXT,
-                  updated_at INTEGER,
-                  PRIMARY KEY(scope_key, kind)
-                );
+                -- project_docs (the host-side accumulated REPO NOTES blob,
+                -- injected in full every dispatch) was retired by spec 034:
+                -- worker memory now lives in the repo as a committed
+                -- .devclaw/ directory, edited by the worker and reviewed
+                -- like code. Hard cut (clarified 2026-09-01): the blob is
+                -- dropped, nothing migrates it. Idempotent at every boot —
+                -- the same shape as the programs drop in state_store.schema.
+                DROP TABLE IF EXISTS project_docs;
 
                 -- Issue-keyed identity for one_shot companion goals (spec 022 US1).
                 -- PRIMARY KEY on (project_id, issue_key) implies NOT NULL on both

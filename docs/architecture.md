@@ -334,9 +334,13 @@ PRs in [`flows/delivery.md`](./flows/delivery.md).
 **SQLite (`devclaw.db`) is the single source of truth.** Since Tranche 1 the
 goal layer lives in the same DB as the task queue: `goal_status`,
 `goal_steering`, `goal_log`, `goal_deliveries`, `goal_phase_history`,
-`goal_contract_pins`, `goal_decisions`, plus the goal-transcending `project_docs` (the repo
-brief workers accumulate, keyed by normalized workspace path — it survives
-goal cancel+refile on purpose). The familiar files — `STATUS.md`, `log.md`, `inbox.md`,
+`goal_contract_pins`, `goal_decisions`. The worker's repo-scoped memory is NOT
+host state: since spec 034 (2026-09-07) it is a committed `.devclaw/`
+directory in the project repo (`MEMORY.md` index + one fact per file under
+`memory/`), edited by the worker inside its increments and reviewed like
+code; the dispatch brief carries a one-line pointer, never the facts. (The
+former host-side `project_docs` blob — appended, never edited, injected in
+full every dispatch — is dropped at boot.) The familiar files — `STATUS.md`, `log.md`, `inbox.md`,
 `deliveries.md` — are **generated views**: human- and rollback-readable,
 **never read back for decisions**. Only `goal.yaml` and `spec.md` stay plain
 files.

@@ -319,7 +319,6 @@ class InProcessEngine:
             pr_url=t.pr_url,
             gate_passed=_gate_passed(t.result_json),
             diff_stats=_diff_stats(t.result_json),
-            repo_notes=_repo_notes(t.result_json) if terminal else None,
             no_change=_no_change(t.result_json) if terminal else False,
             landed_partial=_landed_partial(t.result_json) if terminal else False,
             non_worker_commits=_non_worker_commits(t.result_json) if terminal else (),
@@ -353,17 +352,6 @@ def _gate_passed(result_json: Optional[str]) -> Optional[bool]:
     verify = data.get("verify") if isinstance(data, dict) else None
     if isinstance(verify, dict) and verify.get("ran") and "passed" in verify:
         return bool(verify["passed"])
-    return None
-
-
-def _repo_notes(result_json: Optional[str]) -> Optional[str]:
-    """The worker's REPO NOTES hand-back the runner parsed into the result
-    (durable repo facts for future tasks on the same repo — MC borrow item 3).
-    Defensive: anything not a non-empty string → None."""
-    data = _parse_result(result_json)
-    notes = data.get("repo_notes") if isinstance(data, dict) else None
-    if isinstance(notes, str) and notes.strip():
-        return notes.strip()
     return None
 
 

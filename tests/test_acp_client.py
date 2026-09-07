@@ -50,9 +50,9 @@ def _run(acp, script: str, tmp_path, **kwargs):
 def test_ok_turn_returns_outcome_and_streams_events(acp, tmp_path):
     outcome, events, _ = _run(acp, "ok", tmp_path)
     assert outcome.stop_reason == "end_turn"
-    # The LAST complete message is the hand-back (REPO NOTES parse feeds on it).
+    # The LAST complete message is the hand-back (the BLOCKED parse feeds on it).
     assert outcome.last_agent_message.startswith("All done.")
-    assert "REPO NOTES:" in outcome.last_agent_message
+    assert "FOLLOW-UPS:" in outcome.last_agent_message
     types = [e["type"] for e in events]
     assert "MessageEvent" in types
     assert types.count("ACPToolCallEvent") == 2

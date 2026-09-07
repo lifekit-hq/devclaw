@@ -1,22 +1,24 @@
-"""Structural regression tests for the repo-brief module (spec 029).
+"""Structural regression tests for the repo-brief pointers (spec 029 + 034).
 
-Guards two invariants:
+One invariant per pointer, no store or engine involved (pure file-system
+probes, deterministic, zero LLM):
+
   1. The architecture map pointer fires when ARCHITECTURE.md is present and
-     is absent when the file is not — without any store or engine involvement
-     (pure file-system probe, deterministic, zero LLM).
-  2. The raised MAX_BRIEF_CHARS cap (12 000) prevents silent eviction of
-     operational facts accumulated across a handful of goals.
+     is absent when the file is not.
+  2. The worker memory pointer fires when ``.devclaw/MEMORY.md`` is present
+     and is absent when it is not — so a repo that never adopted memory
+     renders a brief byte-identical to one that never had it (spec 034
+     SC-004), and the brief carries a pointer, never fact bodies (FR-002).
 """
 
 from devclaw.goal.repo_brief import (
-    MAX_BRIEF_CHARS,
     architecture_map_pointer,
-    merge_repo_notes,
+    worker_memory_pointer,
 )
 
 
 # ---------------------------------------------------------------------------
-# US1 — architecture map pointer
+# spec 029 — architecture map pointer
 # ---------------------------------------------------------------------------
 
 
@@ -56,33 +58,29 @@ def test_architecture_pointer_returns_empty_for_missing_workspace():
 
 
 # ---------------------------------------------------------------------------
-# US2 — brief retention under raised cap
+# spec 034 — worker memory pointer (the brief never carries fact bodies)
 # ---------------------------------------------------------------------------
 
 
-def test_brief_retains_facts_under_raised_cap():
-    """A brief that fits within the raised MAX_BRIEF_CHARS cap (12 000) must not
-    lose any lines — the silent-eviction failure mode from the 4 000-char era."""
-    # Build ~5 000 chars of existing brief content (well under the new cap)
-    existing_lines = [
-        f"fact-{i:03d}: some operational note about this repo — build quirk, test gotcha"
-        for i in range(100)
-    ]
-    existing = "\n".join(existing_lines)
-    assert len(existing) > 4_000  # would have been evicted under the old cap
-    assert len(existing) < MAX_BRIEF_CHARS  # fits under the new cap
+def test_memory_pointer_present_iff_index_exists(tmp_path):
+    """The pointer fires on ``.devclaw/MEMORY.md`` alone, names the index, and
+    carries none of the fact text — the brief's size is independent of how
+    much memory the repo holds. Absent index ⇒ '' (byte-identical brief)."""
+    assert worker_memory_pointer(str(tmp_path)) == ""
+    assert worker_memory_pointer(None) == ""
+    assert worker_memory_pointer("/nonexistent/path/to/workspace") == ""
 
-    new_notes = "new-fact: freshly discovered build quirk"
-    merged = merge_repo_notes(existing, new_notes)
+    mem = tmp_path / ".devclaw" / "memory"
+    mem.mkdir(parents=True)
+    (mem / "private-tmpdir.md").write_text(
+        "# Private TMPDIR\n\nSECRET-FACT-BODY: run pytest with TMPDIR=$(mktemp -d).\n"
+    )
+    (tmp_path / ".devclaw" / "MEMORY.md").write_text(
+        "- [Private TMPDIR](memory/private-tmpdir.md) — pytest needs a private tmpdir\n"
+    )
 
-    # All original lines survive
-    for line in existing_lines:
-        assert line in merged, f"evicted: {line!r}"
-    # New fact also present
-    assert "freshly discovered build quirk" in merged
+    result = worker_memory_pointer(str(tmp_path))
 
-
-def test_max_brief_chars_is_at_least_12000():
-    """Document the intentional raise: anyone lowering MAX_BRIEF_CHARS below
-    12 000 must also update this test deliberately (spec 029)."""
-    assert MAX_BRIEF_CHARS >= 12_000
+    assert ".devclaw/MEMORY.md" in result
+    assert "SECRET-FACT-BODY" not in result and "private-tmpdir" not in result
+    assert result == worker_memory_pointer(str(tmp_path))  # deterministic

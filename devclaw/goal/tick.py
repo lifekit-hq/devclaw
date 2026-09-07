@@ -485,27 +485,27 @@ def _advance_brief(
     Deliberately thin (§3a trust-the-input): the worker PULLS its context — the
     speckit ``specs/*/`` artifacts + the repo's ``.specify/`` scripts + the repo
     itself — the way a briefed subagent explores, rather than being handed a
-    pre-chewed dossier. This says only WHAT to pursue and to advance it by one
-    story-slice via the speckit flow. Model-agnostic (Principle II): plain
-    imperative text referencing the ``.specify/`` bash scripts, never Claude-Code
-    slash-command wiring. Steering (an owner input, or the done-gate's own
-    corrections re-applied via ``_apply_corrections``) rides in here for the
-    worker to read — never applied by a planner, because there isn't one."""
+    pre-chewed dossier. This says only WHAT to pursue; HOW (the speckit
+    procedure) lives once, in the worker skill bundle, and is pointed at,
+    not repeated (spec 034 FR-009). Model-agnostic (Principle II): plain
+    imperative text, never Claude-Code slash-command wiring. Steering (an
+    owner input, or the done-gate's own corrections re-applied via
+    ``_apply_corrections``) rides in here for the worker to read — never
+    applied by a planner, because there isn't one."""
     parts = [
         # Built from the shared marker so the detectors (delivery's title/body
         # guard, tick_dispatch's display choke point) can never drift from the
         # generator (#547/#550).
         ADVANCE_BRIEF_MARKER
         + ", shippable increment using speckit, then stop.",
-        "Find the CURRENT feature: the smallest not-yet-complete specs/NNN-*/ "
-        "(its tasks.md still has unchecked items). If none exists and new work is "
-        "called for, create one with .specify/scripts/bash/create-new-feature.sh.",
-        "Run the speckit steps for that feature — specify, then plan, then tasks, "
-        "then implement — using the repo's .specify/ scripts and templates. "
-        "Implement only the SMALLEST not-yet-done story-slice (one coherent slice "
-        "= one reviewable PR); do NOT build ahead into later stories.",
-        "Check off the completed items in tasks.md and commit the specs/NNN-*/ "
-        "artifacts together with the code.",
+        # The procedure (find the current feature, run the speckit steps,
+        # advance ONE story-slice, check off tasks.md, commit the artifacts
+        # with the code) has exactly one home — the speckit-artifacts skill
+        # in the worker's standard instructions (spec 034 FR-009). This
+        # line points; it does not repeat.
+        "Follow the speckit-artifacts procedure in your standard instructions "
+        "(the current feature, one story-slice, tasks.md checked off, artifacts "
+        "committed with the code) — it is not repeated here.",
         "",
         # The saga framing — five named slots, one generator, size-bounded
         # (spec 012 US2). Re-sent in full every increment (FR-009a); a goal

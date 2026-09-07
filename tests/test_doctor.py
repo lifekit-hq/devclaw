@@ -102,6 +102,8 @@ def test_nullable_ref_id_schema_and_null_rows_detected(env):
 def test_dropped_shapes_still_present_detected(env):
     db = env["store"]._db
     db.execute("CREATE TABLE goal_docs (goal_id TEXT)")
+    # spec 034: the host-side worker-memory blob is dropped at boot too
+    db.execute("CREATE TABLE project_docs (scope_key TEXT, kind TEXT)")
     db.execute("ALTER TABLE goal_status ADD COLUMN inbox_ingest_cursor TEXT")
     # program-lane remnants (022 demolition tail): table + column + the
     # load-bearing zombie — a pending row the dead lane left behind, which
@@ -115,9 +117,11 @@ def test_dropped_shapes_still_present_detected(env):
     db.commit()
     report = _run(env)
     (docs,) = _findings(report, "instance.legacy.goal_docs_table")
+    (pdocs,) = _findings(report, "instance.legacy.project_docs_table")
     (cursor,) = _findings(report, "instance.legacy.inbox_cursor_column")
     (lane,) = _findings(report, "instance.legacy.program_lane")
     assert docs.verdict is Verdict.FAIL and cursor.verdict is Verdict.FAIL
+    assert pdocs.verdict is Verdict.FAIL and ".devclaw/" in pdocs.evidence
     assert lane.verdict is Verdict.FAIL
     assert "zombie pending" in lane.evidence and "programs" in lane.evidence
 
@@ -371,6 +375,52 @@ def test_goal_checkouts_not_ignored_warns_with_onboard_remedy(env, tmp_path):
     (ws / ".gitignore").write_text("node_modules/\n.goals/\n")
     (f,) = _findings(_run(env), "project.goal_checkouts.ignored")
     assert f.verdict is Verdict.OK
+
+
+def test_worker_memory_drift_warns_with_curate_remedy(env, tmp_path):
+    """Seeded fault (spec 034 FR-008): the repo's committed ``.devclaw/``
+    memory is advisory-checked — a dangling index line, an unindexed fact
+    file, or an index past the soft maximum WARNs naming the item; absence
+    and a consistent layout are OK; nothing is ever dropped or held."""
+    from devclaw.doctor.checks_project import WORKER_MEMORY_INDEX_SOFT_MAX
+    from devclaw.speckit_setup import ensure_worker_memory_seeded
+
+    ws = tmp_path / "ws-mem"
+    register_tmp_project(env["registry"], str(ws))
+    ws.mkdir(exist_ok=True)
+    (ok,) = _findings(_run(env), "project.worker_memory.health")
+    assert ok.verdict is Verdict.OK and "not seeded" in ok.evidence
+    # the onboard-PR seed: an empty, consistent index ⇒ ok; never re-seeded
+    assert ensure_worker_memory_seeded(str(ws)) == ".devclaw/MEMORY.md"
+    assert ensure_worker_memory_seeded(str(ws)) is None
+    (ok,) = _findings(_run(env), "project.worker_memory.health")
+    assert ok.verdict is Verdict.OK and "0 facts" in ok.evidence
+    index = ws / ".devclaw" / "MEMORY.md"
+    facts = ws / ".devclaw" / "memory"
+    facts.mkdir()
+    (facts / "tmpdir.md").write_text("# Private TMPDIR\n\nuse mktemp -d\n")
+    index.write_text(index.read_text() + "- [Private TMPDIR](memory/tmpdir.md) — pytest tmpdir\n")
+    (ok,) = _findings(_run(env), "project.worker_memory.health")
+    assert ok.verdict is Verdict.OK and "1 facts" in ok.evidence
+    # a dangling line + an unindexed file ⇒ one WARN naming both
+    index.write_text(index.read_text() + "- [Gone](memory/gone.md) — deleted fact\n")
+    (facts / "orphan.md").write_text("# Orphan\n")
+    (f,) = _findings(_run(env), "project.worker_memory.health")
+    assert f.verdict is Verdict.WARN
+    assert "gone.md" in f.evidence and "orphan.md" in f.evidence and "PR" in f.remedy
+    # past the soft maximum ⇒ curation smell, still WARN, still nothing dropped
+    index.write_text(
+        "## Facts\n" + "".join(
+            f"- [f{i}](memory/f{i}.md) — hook\n" for i in range(WORKER_MEMORY_INDEX_SOFT_MAX + 1)
+        )
+    )
+    for i in range(WORKER_MEMORY_INDEX_SOFT_MAX + 1):
+        (facts / f"f{i}.md").write_text(f"# f{i}\n")
+    (facts / "orphan.md").unlink()
+    (facts / "tmpdir.md").unlink()
+    (f,) = _findings(_run(env), "project.worker_memory.health")
+    assert f.verdict is Verdict.WARN and "soft maximum" in f.evidence
+    assert len(list(facts.glob("*.md"))) == WORKER_MEMORY_INDEX_SOFT_MAX + 1
 
 
 def test_unpaired_managed_marker_is_a_fail(env, tmp_path):

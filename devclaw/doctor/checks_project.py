@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -176,6 +177,58 @@ def check_goal_checkouts_ignored(ctx: "InstanceContext", project: "Project") -> 
         remedy="onboard (the install/migrate PR appends .goals/ to .gitignore)",
         project_id=pid,
     )]
+
+
+#: spec 034 FR-008: past this many index entries the memory is a curation
+#: smell surfaced for a human — advisory, nothing dropped, no hard cap anywhere.
+WORKER_MEMORY_INDEX_SOFT_MAX = 30
+
+_MEMORY_INDEX_LINE = re.compile(r"^\s*-\s*\[[^\]]*\]\(([^)]+)\)")
+
+
+def check_worker_memory(ctx: "InstanceContext", project: "Project") -> list[Finding]:
+    """Spec 034: the repo's committed ``.devclaw/``
+    worker memory — an always-read ``MEMORY.md`` index over one-fact-per-file
+    entries in ``memory/``. Advisory only (WARN, never a hold): an index line
+    whose file is missing, a fact file the index does not list, or an index
+    past the soft maximum are curation smells the next PR fixes; absence is a
+    supported state (a repo that never adopted memory, or one behind the
+    boilerplate revision — which ``project.manifest.revision`` already says)."""
+    cid = "project.worker_memory.health"
+    pid = project.id
+    root, unknown = _grounded_workspace(project, cid)
+    if root is None:
+        return unknown
+    index = root / ".devclaw" / "MEMORY.md"
+    if not index.exists():
+        return [Finding(cid, Verdict.OK, "no .devclaw/ worker memory (not seeded)",
+                        project_id=pid)]
+    targets: list[str] = []
+    for line in index.read_text(encoding="utf-8").splitlines():
+        m = _MEMORY_INDEX_LINE.match(line)
+        if m:
+            targets.append(m.group(1).strip())
+    dangling = [t for t in targets if not (index.parent / t).is_file()]
+    facts_dir = index.parent / "memory"
+    on_disk = sorted(p.name for p in facts_dir.glob("*.md")) if facts_dir.is_dir() else []
+    listed = {Path(t).name for t in targets}
+    unindexed = [name for name in on_disk if name not in listed]
+    problems: list[str] = []
+    if dangling:
+        problems.append("index lines with no fact file: " + ", ".join(dangling[:5]))
+    if unindexed:
+        problems.append("fact files missing from the index: " + ", ".join(unindexed[:5]))
+    if len(targets) > WORKER_MEMORY_INDEX_SOFT_MAX:
+        problems.append(f"{len(targets)} index entries (soft maximum "
+                        f"{WORKER_MEMORY_INDEX_SOFT_MAX}) — curate, merge or mechanize")
+    if problems:
+        return [Finding(cid, Verdict.WARN, "; ".join(problems),
+                        remedy="curate .devclaw/ by PR (the worker or a human edits it; "
+                               "nothing is dropped automatically)",
+                        project_id=pid)]
+    return [Finding(cid, Verdict.OK,
+                    f".devclaw/ memory consistent ({len(targets)} facts indexed)",
+                    project_id=pid)]
 
 
 def check_marker_integrity(ctx: "InstanceContext", project: "Project") -> list[Finding]:
@@ -512,6 +565,7 @@ PROJECT_CHECKS: tuple = (
     check_unstamped_goals,
     check_manifest,
     check_goal_checkouts_ignored,
+    check_worker_memory,
     check_marker_integrity,
     check_scaffold_drift,
     check_tracked_checkout_state,

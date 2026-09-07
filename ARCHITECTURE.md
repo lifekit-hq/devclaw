@@ -213,9 +213,8 @@ Retention defaults: traces and events 30 days (`DEVCLAW_TRACE_RETENTION_DAYS`, `
 | `goal_steering` | Append-only: steer messages from MCP + heartbeat corrections | `GoalStore` (via `steer_goal` + `tick_context`) |
 | `goal_log` | Append-only: per-tick progress log | `GoalStore` (inside tick transactions) |
 | `goal_deliveries` | Append-only: PR URLs + gate verdicts, one row per delivery | `GoalStore` (inside tick_settle transaction) |
-| `goal_docs` | Mutable: repo brief, spec, goal contract | `GoalStore.content` |
 | `goal_phase_history` | Append-only: phase transition audit trail | `GoalStore.transition()` |
-| `project_docs` | Repo briefs keyed by workspace path; survives goal cancel + refile | `GoalStore` |
+| *(none)* — worker repo memory | Lives in the project repo as a committed `.devclaw/` directory (spec 034), never in this DB | the worker, via the increment's PR |
 | `goal.yaml` *(plain file, `DEVCLAW_GOALS_DIR/<id>/`)* | Goal facts: objective, `done_when`, mode, `stub_acceptable` | `GoalStore.base` (atomic tmp-file + `os.replace`) |
 | `spec.md` *(plain file, `DEVCLAW_GOALS_DIR/<id>/`)* | Current speckit spec; also committed to the goal's workspace | Worker (in-sandbox); mirrored by runner |
 

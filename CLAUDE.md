@@ -80,10 +80,12 @@ on a second real consumer (ruled 2026-09-06).
 - **Single writer to state.** Only the **TaskQueue** mutates task rows; `StateStore` is
   an append-only event log, views are projections. Goal state is owned by `GoalStore`
   and (as of Tranche 1) lives in SQLite in the same `devclaw.db` — `goal_status`,
-  `goal_steering`, `goal_log`, `goal_deliveries`, `goal_phase_history`, plus
-  goal-transcending `project_docs` (the repo brief, keyed by workspace path).
+  `goal_steering`, `goal_log`, `goal_deliveries`, `goal_phase_history`, ….
   (`goal_docs` was dropped by the #616 cutoff: every kind it held died with the
-  host-cognition chain in the 008 shrink.)
+  host-cognition chain in the 008 shrink; `project_docs` — the host-side
+  accumulated repo-notes blob — was dropped by spec 034 (2026-09-07): the
+  worker's repo memory lives IN the repo as a committed `.devclaw/`
+  directory it edits and the PR reviews, never in a host store.)
   `STATUS.md`/`log.md`/`inbox.md`/`deliveries.md`/`RUN_SUMMARY.md`
   are generated **views** — human- and rollback-readable, never read back for
   decisions. That last clause was aspiration until #617: the store parsed those

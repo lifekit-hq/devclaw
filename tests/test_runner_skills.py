@@ -119,7 +119,7 @@ def test_craft_stays_out_of_the_always_on_brief(runner, skill_dir):
     brief = runner._load_skills("implement_feature")
     # ~12.9k after spec 021's doctrine additions; craft re-concatenation
     # (≈ +4.8k) would push it past this ceiling.
-    assert len(brief) < 13_600
+    assert len(brief) < 14_500
 
 
 def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
@@ -133,9 +133,13 @@ def test_writes_code_brief_stays_lean_after_spoonfeeding_cut(runner, skill_dir):
     precedent rule, one-shot scope bound — genuine doctrine, not prose creep.
     Lifted again 12.6k → 13.2k for spec 021: the harness-enforced one-slice
     contract (US1) and the per-slice read budget (US3) — the context-budget
-    invariant's worker-facing half, genuine doctrine.)"""
+    invariant's worker-facing half, genuine doctrine. Lifted 13.2k → 14.5k
+    for spec 034: the repo-memory write policy — the instruction that
+    replaced the host-side REPO NOTES lane, so it is the one home the
+    protocol has.)"""
     brief = runner._load_skills("implement_feature")
-    assert len(brief) < 13_200
+    assert len(brief) < 14_500
+    assert ".devclaw/MEMORY.md" in brief  # the memory protocol (spec 034)
     # the guardrails the compression must never drop (the anti-#358 rules + the
     # pull-doctrine live on regardless of how tight the prose gets)
     assert "Never weaken or delete an existing test" in brief
@@ -347,6 +351,9 @@ def test_wrap_goal_appends_return_contract_on_skills_path(runner, skill_dir):
     wrapped = runner._wrap_goal("implement_feature", "GOAL-TOKEN")
     for field in ("STATUS:", "CHANGED:", "VERIFIED:", "ACCEPTANCE:", "FOLLOW-UPS:"):
         assert field in wrapped
+    # spec 034: no REPO NOTES hand-back field — repo memory is a file the
+    # worker edits (.devclaw/), never a line the host parses and accumulates
+    assert "REPO NOTES" not in wrapped
     # read-only kinds keep their own report contract — no code hand-back
     assert "FOLLOW-UPS:" not in runner._wrap_goal("review_repository", "x")
 

@@ -1,7 +1,7 @@
 """Content rows — everything ``GoalState`` persists that ISN'T the status row.
 
 :class:`GoalStateContentMixin` carries the pure-DB surface for the content-side
-tables: ``goal_steering``, ``goal_log``, ``goal_deliveries``, ``project_docs``
+tables: ``goal_steering``, ``goal_log``, ``goal_deliveries``
 and ``goal_settlements`` — the rows the store's
 :class:`~devclaw.goal.store.content.GoalContentMixin` reads and writes through.
 
@@ -337,38 +337,6 @@ class GoalStateContentMixin:
                 (goal_id,),
             ).fetchall()
         return {r["ref_id"]: r["status"] for r in rows if r["ref_id"] and r["status"]}
-
-    # ---- project_docs (repo-scoped, outlives any one goal) ----------------
-    #
-    # An atomic per-(scope_key, kind) upsert, keyed by normalized workspace
-    # path rather than goal_id. One kind today: ``repo_brief`` — the durable
-    # repo facts workers hand back (build quirks, test gotchas) that get
-    # prepended to future dispatches on the same repo.
-
-    PROJECT_DOC_KINDS = frozenset({"repo_brief"})
-
-    def write_project_doc(self, scope_key: str, kind: str, content: str, ts_ms: int) -> None:
-        """Upsert the current project-scoped document for ``(scope_key, kind)``."""
-        assert kind in self.PROJECT_DOC_KINDS, f"write_project_doc: unknown kind {kind!r}"
-        with self._store._lock:
-            self._store._db.execute(
-                "INSERT INTO project_docs (scope_key, kind, content, updated_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT(scope_key, kind) DO UPDATE SET "
-                "content = excluded.content, updated_at = excluded.updated_at",
-                (scope_key, kind, content, ts_ms),
-            )
-            self._store._commit()
-
-    def read_project_doc(self, scope_key: str, kind: str) -> "str | None":
-        """The current project-scoped document, or None when no worker has
-        handed back notes for this repo yet."""
-        assert kind in self.PROJECT_DOC_KINDS, f"read_project_doc: unknown kind {kind!r}"
-        with self._store._lock:
-            row = self._store._db.execute(
-                "SELECT content FROM project_docs WHERE scope_key = ? AND kind = ?",
-                (scope_key, kind),
-            ).fetchone()
-        return row["content"] if row else None
 
     # ---- goal_settlements (settled-and-recorded truth — PR7) --------------
     #

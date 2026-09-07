@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-01 (renumbered from 031 on 2026-09-05 — the 031 slot went to problem-resolution; 033 is skipped to avoid aliasing `feat/033-durable-container-secrets`)
 
-**Status**: Draft — specified and clarified, deliberately NOT armed; queued behind the correctness lane (spec 032 US4 provisioning, #793 done-gate clause pinning, #817 transient pause-and-resume)
+**Status**: Implemented 2026-09-07 — all three user stories in one PR (`feat/034-worker-file-memory`): the `.devclaw/` pointer + skill protocol (US1), the REPO NOTES lane deleted end to end with `project_docs` dropped at boot (US2), the advance brief reduced to a pointer at the skill + boilerplate revision 3 seeding `.devclaw/MEMORY.md` + the advisory doctor check (US3). Live proofs (SC-001/002/003) are read on the instance after deploy — see quickstart.md
 
 **Input**: User description: "the worker file memory proposal" (brainstorm capture `2026-09-01-devclaw-worker-file-memory`, ~/memory/system/proposals.md)
 
@@ -160,7 +160,8 @@ install PR.
   never an error.
 - **Worker records a wrong fact**: it ships in a reviewed PR diff (auditable)
   and the write policy's remedy is deletion by a later run or the human;
-  the post-merge review and the trend detector are the curators. A wrong
+  the post-merge review and the done-gate's grounded read are the curators
+  (the trend detector named here at authoring was deleted by spec 037). A wrong
   fact is a content bug, not a mechanism wedge.
 - **Untracked memory dies**: the sandbox workspace is wiped per dispatch, so
   ONLY committed memory survives — the standard instructs committing memory
@@ -295,8 +296,9 @@ install PR.
 - Goal-branch delivery + merge-on-close (spec 025) is how memory edits reach
   main; a fact recorded on an unmerged goal branch becomes visible to other
   goals only after the close — accepted latency, same as any other change.
-- The post-merge human review and the trend detector act as memory curators;
-  no new curation machinery ships with this spec.
+- The post-merge human review and the done-gate act as memory curators (the
+  trend detector was deleted by spec 037 before this shipped); no new curation
+  machinery ships with this spec.
 - The existing brief-budget machinery (spec 021/029) keeps applying to what
   remains pushed (live issue bodies, failure context); this spec removes the
   notes section from that budget rather than re-tuning it.
