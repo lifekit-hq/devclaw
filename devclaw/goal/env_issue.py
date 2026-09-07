@@ -90,9 +90,10 @@ def _finding(
             "or network access).\n\n"
             f"Reported by: {where}\n"
             f"Capability row: {cap_id}\n\n"
-            "Every goal on the project is held on `mechanical:env` until the "
-            "instance environment changes. The hold heals mechanically once the "
-            "capability is provided — this issue tracks providing it."
+            "Every goal on the project is held on `mechanical:env` until this "
+            "is provided. Nothing can probe the gap green — a worker names it "
+            "in prose — so the hold clears when a human confirms the fix with "
+            "`resume_goal`. This issue tracks providing it."
         ),
         expected=f"the sandbox provides {item} to work on this project",
         actual=f"the sandbox does not provide {item}; the project is held",
@@ -100,7 +101,7 @@ def _finding(
         proposed_done_when=(
             f"The sandbox provides {item} — through the image, a mise tool, or the "
             "project's environment declaration — so a worker on this project no "
-            "longer reports it missing and the `mechanical:env` hold clears."
+            "longer reports it missing."
         ),
     )
 

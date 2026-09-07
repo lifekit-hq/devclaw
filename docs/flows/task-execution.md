@@ -250,9 +250,11 @@ form on the wire (`block_kind`, `block_item`); the settle fails the task
 closed and un-retried in both cases, but the env form is the PIPELINE's:
 one problems-catalog row per item (`category="block", kind="env_deficiency"`),
 and the goal's whole project holds on `mechanical:env` (a red `worker:<item>`
-capability row, read at admission by every goal on the project) until the
-instance's environment changes — a new sandbox image or build — when it heals
-with no operator verb. The worker never patches the repo around its
+capability row, read at admission by every goal on the project) until the gap
+is provided. Nothing can probe that row green — a worker names its gap in
+prose — so it clears when a human vouches with `resume_goal`
+(`specs/tiny/env-hold-observes-the-capability`), unlike a declared capability,
+which heals on its own probe. The worker never patches the repo around its
 environment.
 
 The gap is filed as devclaw work **in that same settle** (spec 038,

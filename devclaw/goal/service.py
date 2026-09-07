@@ -499,10 +499,20 @@ class GoalService:
         from . import cycle_report as _nr
 
         now = _now_ms()
-        win = _nr.most_recent_closed_window(now)
+        # The cycle IS the operator's run window — enabled, that span; disabled
+        # (24/7), the calendar day. It used to be a separate hardcoded
+        # 22:00–05:00 setting, which silently stopped describing reality when
+        # 24/7 was ruled: problems outside those 7 hours entered no cycle, so
+        # the self-issue filer's recurrence count never advanced and it stopped
+        # filing (specs/tiny/cycle-is-when-devclaw-works).
+        _start, _end, _tz = _nr.cycle_window_for(self._store.get_run_schedule())
+        win = _nr.most_recent_closed_window(now, start=_start, end=_end, tz=_tz)
         if win is None:  # unresolvable schedule (bad tz/time) — skip, never crash
             return None
         cycle_key, start_ms, end_ms = win
+        window_label = (
+            f"full day {_tz}" if _start == _end else f"{_start}–{_end} {_tz}"
+        )
         if self._store.cycle_report_exists(cycle_key):
             return None  # already reported this cycle (idempotent)
 
@@ -517,7 +527,9 @@ class GoalService:
         except Exception as exc:  # noqa: BLE001 — telemetry, never fatal
             sys.stderr.write(f"goal-layer: pr-ledger refresh failed: {exc}\n")
 
-        report = _nr.assemble_cycle_report(self._store, cycle_key, start_ms, end_ms)
+        report = _nr.assemble_cycle_report(
+            self._store, cycle_key, start_ms, end_ms, window_label=window_label,
+        )
         # Push best-effort; NullNotifier / a relay outage returns False → log-only.
         sent = False
         try:
@@ -1485,7 +1497,7 @@ class GoalService:
                 goal_id, Event.UNBLOCK,
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
                         heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                        donegate_progress=0, slice_hold_count=0,
+                        donegate_progress=0,
                         merge_heal_attempted=False, problem_id="",
                         next=f"{verb}: {(text or option_key)[:120]}"),
                 expect=s,
@@ -1550,7 +1562,7 @@ class GoalService:
                 replace(s, phase="idle", blocked_on="", actions_dispatched=0,
                         heal_attempts=0, next_heal_at=None, donegate_rounds=0,
                         donegate_progress=0, problem_id="",
-                        slice_hold_count=0, env_hold_notified=False,
+                        env_hold_notified=False,
                         env_heal_attempts=0,
                         merge_heal_attempted=False),
                 expect=s,
@@ -1659,14 +1671,29 @@ class GoalService:
             replace(s, phase="idle", blocked_on="", actions_dispatched=0, last_plan_at=None,
                     heal_attempts=0, next_heal_at=None, donegate_rounds=0,
                     donegate_progress=0, problem_id="",
-                    slice_hold_count=0, env_hold_notified=False,
+                    env_hold_notified=False,
                     env_heal_attempts=0),
             expect=s,
         )
+        # A worker-reported environment gap is recorded on the PROJECT, not the
+        # goal, and nothing can probe it green — a worker invents the
+        # capability id from prose. So the human vouch has to reach that row
+        # too: without this the goal unblocks, dispatches, hits the still-red
+        # row and re-blocks on the next tick. Declared-capability rows are NOT
+        # touched — those have real probes and heal on their own evidence
+        # (specs/tiny/env-hold-observes-the-capability).
+        cleared: "tuple[str, ...]" = ()
+        try:
+            _pid = (self._goal_store.load_goal(goal_id).project_id or "").strip()
+            if _pid:
+                cleared = _env_cap_ids.clear_worker_deficiencies(self._goal_store, _pid)
+        except Exception as exc:  # noqa: BLE001 — never fail the resume verb
+            sys.stderr.write(f"goal-layer: worker-cap clear failed for {goal_id}: {exc}\n")
         self._goal_store.record_intervention(goal_id, "resume", was_blocked_on[:80])
         self._goal_store.append_log(
             goal_id,
-            f"resumed: blocker cleared ({was_blocked_on[:120]}) — re-attempting the same contract",
+            f"resumed: blocker cleared ({was_blocked_on[:120]}) — re-attempting the same contract"
+            + (f"; cleared {len(cleared)} worker-reported env gap(s)" if cleared else ""),
         )
         self.poke()
         return {"goal_id": goal_id, "resumed": True, "was_blocked_on": was_blocked_on}

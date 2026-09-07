@@ -689,8 +689,7 @@ def test_project_sizing_check_fails_when_the_host_shrank(env, monkeypatch):
 # because it always builds a fresh schema. Every new goal_status column a
 # brake reads adds a case here — never a sibling test.
 _BRAKE_COLUMNS = [
-    # (column, check id, issue #728 / spec 030)
-    ("slice_hold_count", "instance.dispatch.goal_status_slice_hold_count"),
+    # (column, check id, spec 030)
     ("env_hold_notified", "instance.env.goal_status_env_hold_notified"),
     ("env_heal_attempts", "instance.env.goal_status_env_heal_attempts"),
 ]
@@ -712,6 +711,31 @@ def test_brake_column_absent_detected(env, column, cid):
 def test_brake_column_present_is_ok(env, column, cid):
     (f,) = _findings(_run(env), cid)
     assert f.verdict is Verdict.OK and column in f.evidence
+
+
+def test_slice_hold_stranded_goal_detected(env):
+    """Seeded fault: a goal parked on the RETIRED mechanical:slice_hold kind.
+
+    The brake is gone, so no code path can heal that kind — the goal is
+    stranded until a human resumes it. Only a deployed instance can be in this
+    state (a restored backup, or a boot that released nothing), which is
+    exactly the FR-014 class the stubbed suite cannot see.
+    """
+    db = env["store"]._db
+    db.execute(
+        "INSERT INTO goal_status (goal_id, phase, blocked_on, blocked_kind) "
+        "VALUES ('stranded', 'blocked', 'dispatch held 5 consecutive ticks', "
+        "'mechanical:slice_hold')"
+    )
+    db.commit()
+    (f,) = _findings(_run(env), "instance.legacy.slice_hold_retired")
+    assert f.verdict is Verdict.FAIL
+    assert "slice_hold" in f.evidence and "resume_goal" in f.remedy
+
+
+def test_slice_hold_retired_is_ok_on_a_clean_instance(env):
+    (f,) = _findings(_run(env), "instance.legacy.slice_hold_retired")
+    assert f.verdict is Verdict.OK and "retired" in f.evidence
 
 
 def test_donegate_progress_column_absent_detected(env):

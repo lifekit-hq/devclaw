@@ -212,13 +212,15 @@ class GoalStatus:
     #: structured classification of the CURRENT block — the machine-readable
     #: sibling of the human-readable ``blocked_on`` prose (a planned auto-heal
     #: pass must never string-match ``blocked_on`` to decide what it may retry).
-    #: Taxonomy: ``mechanical:<site>`` (the condition is cheaply re-checkable
-    #: without an LLM — ``mechanical:prep`` / ``mechanical:corrupt_doc`` /
-    #: ``mechanical:lost_ref`` / ``mechanical:dispatch_cap`` / ``mechanical:ci``
-    #: — spec 032: the delivered PR's CI is still running or unreadable, the
-    #: done proposal waits at zero cognition); ``needs_answer``
-    #: (cognition asked the owner a question); ``bug`` (the force_block
-    #: illegal-transition escape hatch). ``""`` = not blocked, or a block that
+    #: Taxonomy: ``mechanical:<site>`` — the condition is cheaply re-checkable
+    #: WITHOUT an LLM, so every mechanical kind either auto-heals in
+    #: ``tick.py`` (``prep`` / ``env`` / ``ci`` / ``corrupt_doc``) or is listed
+    #: in ``tick.HUMAN_GATED_MECHANICAL_KINDS`` as deliberately owner-cleared
+    #: (``lost_ref`` / ``dispatch_cap`` / ``merge_failed``). A mechanical kind
+    #: with neither is a contradiction — it parks a goal with no way back —
+    #: and ``tests/test_mechanical_blocks_are_recheckable.py`` fails the build
+    #: on one. Non-mechanical: ``needs_answer`` (cognition asked the owner a
+    #: question); ``bug`` (the force_block illegal-transition escape hatch). ``""`` = not blocked, or a block that
     #: predates this field / wasn't classified. Only meaningful while
     #: ``phase == "blocked"`` — the store clears it on any write that lands on
     #: a non-blocked phase (see GoalStatusMixin._normalized_blocked_kind).
@@ -292,13 +294,6 @@ class GoalStatus:
     #: productive settle (a shipped increment proves the environment now
     #: fits), alongside ``heal_attempts``.
     envcap_redispatches: int = 0
-    #: consecutive ticks the dispatch-boundary single-feature-slice guard held
-    #: (issue #728). Incremented each tick the scoped check finds offending
-    #: feature dirs; reset to 0 when the guard passes or a human steers/resumes.
-    #: At ``_SLICE_HOLD_CAP`` consecutive holds the goal transitions to
-    #: ``blocked`` with ``blocked_kind="mechanical:slice_hold"`` — loud failure
-    #: over silent indefinite sleep.
-    slice_hold_count: int = 0
     #: spec 025 merge-on-close: PR URL whose squash-merge is still owed after
     #: an ``achieved`` done-gate verdict. Non-empty ⇒ the advance path retries
     #: the MERGE (zero cognition) instead of planning — the verdict already

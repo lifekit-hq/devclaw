@@ -121,6 +121,38 @@ from .tick_settle import (  # noqa: F401 (re-exported)
     sweep_orphaned_refs,
 )
 
+#: ``mechanical:*`` kinds that are deliberately owner-cleared rather than
+#: auto-healed. ``mechanical:`` promises the condition is cheaply re-checkable
+#: without an LLM; these are re-checkable but must NOT clear themselves — each
+#: one means a human decision or action is the fix (raise sandbox sizing,
+#: restore a lost ref, review the open PRs, resolve a merge conflict), and a
+#: silent auto-clear would re-dispatch straight back into it.
+#:
+#: This is a DECLARED FACT, not a convention: any other ``mechanical:*`` kind
+#: the code can write must have a heal branch above, and
+#: ``tests/test_mechanical_blocks_are_recheckable.py`` fails the build
+#: otherwise. A mechanical block with neither a heal nor a place on this list
+#: strands the goals it parks with no way back — the defect that left
+#: ``mechanical:slice_hold`` a four-day dead end
+#: (specs/tiny/slice-guard-observes-the-goal).
+HUMAN_GATED_MECHANICAL_KINDS = frozenset({
+    "mechanical:lost_ref",
+    "mechanical:dispatch_cap",
+    "mechanical:merge_failed",
+    "mechanical:env_cap",
+    # Overloaded on purpose-by-history, and that is exactly why it must not
+    # heal: legacy rows mean "the goal's contract files are corrupt" (those
+    # files died with the 008 shrink — nothing mechanical is left to recheck),
+    # while the live raise site means "the chunk-plan tasks.md is unreadable".
+    # `_chunk_plan_corruption` cannot tell the two apart — it returns "" both
+    # for "clean" and for "no tasks.md at all" — so an auto-heal would clear a
+    # legacy block on the strength of a check that never looked at its cause.
+    # That is the false-heal class this batch exists to remove; a corrupt
+    # continuation contract earns a human. Pinned by
+    # test_autoheal_never_fires_on_human_gated_blocks.
+    "mechanical:corrupt_doc",
+})
+
 
 
 async def _apply_problem_default(goal_id, goal, status, *, store, notifier):
@@ -157,7 +189,7 @@ async def _apply_problem_default(goal_id, goal, status, *, store, notifier):
             goal_id, Event.UNBLOCK,
             replace(status, phase="idle", blocked_on="", actions_dispatched=0,
                     heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                    donegate_progress=0, slice_hold_count=0,
+                    donegate_progress=0,
                     merge_heal_attempted=False, problem_id="",
                     next=f"defaulted: {default.label}"),
             expect=status,
@@ -315,15 +347,17 @@ async def _tick_goal_impl(
     # longer holds — no LLM, ever (the mirror of the quota pause's
     # timestamp-compare auto-resume in tick_all), damped by the persisted
     # per-goal heal budget so a flapping condition can't turn the zero-token
-    # blocked steady-state into a plan + ping per cycle. Two healable kinds:
-    # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs
-    # on the persisted next_heal_at exponential backoff, not every tick — and
-    # ``env`` (spec 030), whose recheck is a persisted-row read, hence no
-    # backoff window. Both are also human-clearable: resume_goal clears them.
-    # needs_answer / bug / lost_ref / dispatch_cap stay human-gated (see the
-    # heal guards' docstrings). A refused heal (budget spent / window closed /
-    # still broken) leaves the blocked status untouched and the tick idles
-    # below at zero cognition, same as any blocked tick.
+    # blocked steady-state into a plan + ping per cycle. The healable kinds:
+    # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs on
+    # the persisted next_heal_at exponential backoff, not every tick — plus
+    # ``env`` (spec 030) and ``ci`` (spec 032), whose rechecks are a
+    # persisted-row read and one bounded gh read, hence no backoff window. All
+    # are also human-clearable: resume_goal clears them. The kinds in
+    # HUMAN_GATED_MECHANICAL_KINDS stay owner-cleared by design, and
+    # needs_answer / bug are not mechanical at all. A refused heal (budget
+    # spent / window closed / still broken) leaves the blocked status
+    # untouched and the tick idles below at zero cognition, same as any
+    # blocked tick.
     if status.phase == "blocked":
         healed = None
         # Spec 031 US2: a Problem whose timebox elapsed takes its default —
@@ -783,8 +817,11 @@ async def _handle_long_lived_advance(
     # exist) whose current feature's tasks.md cannot be read blocks LOUD —
     # the committed speckit artifacts are the workspace's memory of the arc,
     # and dispatching over a corrupt one silently re-plans prior work. The
-    # mechanical:corrupt_doc kind self-heals when the condition clears
-    # (restore the file on the goal branch, or resume_goal after fixing).
+    # block is HUMAN-GATED (see HUMAN_GATED_MECHANICAL_KINDS): restore the
+    # file on the goal branch, then resume_goal. It does NOT self-heal — an
+    # earlier version of this comment claimed it did, which was never true in
+    # code and would have been unsafe if wired, because the recheck cannot
+    # distinguish a repaired artifact from an absent one.
     if increment_rows:
         corrupt = await asyncio.to_thread(
             _chunk_plan_corruption, _workspace.goal_checkout_dir(goal.workspace_dir, goal_id)
@@ -922,12 +959,55 @@ async def _handle_long_lived_advance(
                     "merge-conflict resolution increment",
                 )
             else:
-                store.append_log(
-                    goal_id,
-                    f"all referenced issues are closed but done-gate previously "
-                    f"refused ({base.donegate_rounds} round(s)) — dispatching "
-                    "worker to complete the remaining contract",
+                # The contract's SOURCE is gone and the gate has already
+                # refused. A pointer goal reads done_when live from its issues
+                # (spec 019), so with every issue closed no dispatch can amend
+                # the contract — while the gate keeps judging the pinned
+                # revision. Re-dispatching here is a loop by construction: it
+                # is what burned 8 rounds on fs-431 and 5 on fs-421 with the
+                # log contradicting itself every time ("dropped from the
+                # remaining scope" immediately followed by "dispatching worker
+                # to complete the remaining contract"). The freshness guard and
+                # the done-gate are each right alone; nobody owned their
+                # disagreement. Hand it to the owner — spec 031's shape.
+                # NOTE the first pass (donegate_rounds == 0) above is
+                # untouched: an issue closed by a partial implementation still
+                # gets a propose-done and a grounded verdict. Only AFTER a
+                # refusal do we have evidence of both an unmet contract and a
+                # vanished source.
+                nums = ", ".join(f"#{n}" for n in sorted(goal.issue_refs))
+                q = (
+                    f"every referenced issue ({nums}) is closed, but the "
+                    f"done-gate has refused {base.donegate_rounds} round(s). "
+                    "The contract is read live from those issues, so no "
+                    "dispatch can amend it and the gate will keep refusing. "
+                    "Either the closure means the work is done, or the "
+                    "contract was abandoned mid-flight — the loop cannot tell "
+                    "which."
                 )
+                prob = _problems.new_problem(
+                    goal_id, kind="needs_answer", raised_by="closed_contract",
+                    what=q,
+                    # the gate's own words: the owner needs to see WHY it
+                    # refuses, not merely that it does.
+                    clause=(base.last_eval_note or "").strip(),
+                    why="the contract's source is closed while the gate still refuses",
+                    options=(_problems.ACCEPT_CLOSE, _problems.CORRECT, _problems.CANCEL),
+                    default_key="accept_close",
+                )
+                with store.transaction():
+                    _problems.raise_problem(store, prob)
+                    store.transition(
+                        goal_id, Event.BLOCK,
+                        replace(base, phase="blocked",
+                                blocked_on=_problems.summary_line(prob),
+                                blocked_kind="needs_answer", problem_id=prob.id,
+                                next=""),
+                        expect=status, consume_steering=consume_ids,
+                    )
+                await _notify(ctx.notifier, NotifyLevel.OWNER,
+                              f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
+                return Outcome.BLOCKED
             issue_context = _issue_ref.render_issue_context([], snaps)
         else:
             issue_context = _issue_ref.render_issue_context(

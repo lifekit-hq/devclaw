@@ -534,10 +534,21 @@ async def test_a_worker_reported_deficiency_holds_every_goal_on_the_project_with
 
 
 @pytest.mark.asyncio
-async def test_a_worker_reported_deficiency_heals_when_the_instance_env_ref_changes(tmp_path, monkeypatch):
-    """Spec 032 US2 / SC-004: the row is pinned to the environment it was
-    reported against; a new sandbox image or devclaw build (the fix arriving)
-    reads it green and the whole project resumes with no operator verb."""
+async def test_a_worker_reported_deficiency_survives_an_instance_env_ref_change(tmp_path, monkeypatch):
+    """AMENDS spec 032 US2 / SC-004
+    (specs/tiny/env-hold-observes-the-capability).
+
+    SC-004 read a worker-reported row GREEN whenever ``instance_env_ref()``
+    changed — "a new sandbox image or devclaw build IS the fix arriving". On a
+    self-hosting instance that is false twice over: the sandbox image is tagged
+    with the devclaw sha, so every unrelated merge moved the ref; and the gaps
+    workers report are credentials, which ride env vars and move NO ref, so the
+    real fix was invisible while every irrelevant one looked like a cure.
+    fs-431 lost a genuine `actions:read` hold to an unrelated merge four hours
+    later and was re-dispatched into the same sandbox.
+
+    The hold must now SURVIVE a ref change. Only a human clears it.
+    """
     from devclaw.goal.models import PollResult
     store = _project_pair(tmp_path)
     evaluator, notifier = FakeClaude(), RecordingNotifier()
@@ -558,15 +569,53 @@ async def test_a_worker_reported_deficiency_heals_when_the_instance_env_ref_chan
     assert out["g"] is Outcome.BLOCKED
     assert (await sweep(FakeEngine()))["g2"] is Outcome.BLOCKED
 
-    # devclaw ships a new sandbox image: the environment identity changes
+    # devclaw ships an unrelated build: the environment identity changes, but
+    # nothing about the reported gap did.
     monkeypatch.setattr(env_cap, "instance_env_ref", lambda: "new-image:abc|deadbeef")
     engine = FakeEngine()
     out = await sweep(engine)
-    assert Outcome.DISPATCHED in (out["g"], out["g2"])     # one of them is the runnable head
-    assert "" in (store.load_status("g").blocked_kind, store.load_status("g2").blocked_kind)
-    assert len(engine.dispatched) >= 1
-    assert any("auto-resumed" in line for gid in ("g", "g2") for line in store.recent_log(gid).splitlines())
-    assert evaluator.calls == 0
+    assert store.load_status("g").blocked_kind == "mechanical:env"
+    assert store.load_status("g2").blocked_kind == "mechanical:env"
+    assert engine.dispatched == [], "a redeploy must not release a worker-reported env hold"
+    assert not any(
+        "auto-resumed" in line
+        for gid in ("g", "g2") for line in store.recent_log(gid).splitlines()
+    )
+    assert evaluator.calls == 0                      # held ticks stay free
+
+
+@pytest.mark.asyncio
+async def test_resume_goal_clears_the_worker_reported_gap_and_work_flows(tmp_path):
+    """The ONE exit: a human vouches. ``resume_goal`` must reach the
+    PROJECT-scoped worker row, not just the goal's fields — otherwise the goal
+    unblocks, dispatches, hits the still-red row and re-blocks, which is what
+    made the amended behaviour above safe to ship."""
+    from devclaw.goal.models import PollResult
+    store = _project_pair(tmp_path)
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    failed = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed",
+        detail=f"{_ENV_MARKER} dotnet-ef not available in the sandbox — the sandbox lacks something the work needs",
+    ))
+    caps = {"proj": ()}
+
+    async def sweep(engine):
+        return await tick_all(
+            store=store, engine=engine, evaluator_caller=evaluator, notifier=notifier,
+            notify_url="http://relay", prepare_ws=fake_prepare,
+            project_capabilities=lambda: caps,
+        )
+
+    assert (await sweep(failed))["g"] is Outcome.BLOCKED
+    assert env_cap.worker_caps_for(store, "proj") != ()
+
+    cleared = env_cap.clear_worker_deficiencies(store, "proj")
+    assert len(cleared) == 1
+    assert env_cap.worker_caps_for(store, "proj") == ()
+    assert env_cap.red_caps_for(store, (), "proj") == []
+
+    # idempotent — a second vouch is a no-op, never an error
+    assert env_cap.clear_worker_deficiencies(store, "proj") == ()
 
 
 _DEFICIENCY = "dotnet-ef not available in the sandbox"

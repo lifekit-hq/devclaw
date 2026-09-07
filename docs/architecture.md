@@ -682,15 +682,23 @@ usage-limit hit *pauses-and-resumes* (one account-wide `paused_until` gates
 queue and heartbeat, zero tokens while paused, auto-resumes on cap reset —
 #189/#190/#191).
 
-Blocks carry a structured `blocked_kind`, and the two re-checkable mechanical
-kinds **auto-heal** (zero LLM, damped by a persisted per-goal `heal_attempts`
-budget): `mechanical:corrupt_doc` once the contract file parses again (the
-tick's contract probe is the recheck — free, every tick; cap 3), and
-`mechanical:prep` via a `git ls-remote` recheck on a persisted exponential
-backoff (`next_heal_at`, 30 min → 6 h; cap 5 — between windows a blocked goal
-stays a zero-subprocess tick). Past its cap a goal parks for a human with one
-plain ping. `needs_answer`, `bug`, `mechanical:lost_ref`, and
-`mechanical:dispatch_cap` blocks stay human-gated on purpose; recovery verbs
+Blocks carry a structured `blocked_kind`, and the re-checkable mechanical kinds
+**auto-heal** (zero LLM, damped by a persisted per-goal `heal_attempts`
+budget): `mechanical:prep` via a `git ls-remote` recheck on a persisted
+exponential backoff (`next_heal_at`, 30 min → 6 h; cap 5 — between windows a
+blocked goal stays a zero-subprocess tick), `mechanical:env` via a
+persisted-probe read (spec 030) and `mechanical:ci` via one bounded `gh` read
+per window (spec 032). Past its cap a goal parks for a human with one plain
+ping. Every other mechanical kind is declared in
+`tick.HUMAN_GATED_MECHANICAL_KINDS` and stays owner-cleared on purpose —
+`lost_ref`, `dispatch_cap`, `merge_failed`, `env_cap`, and `corrupt_doc`
+(whose recheck cannot tell a repaired chunk-plan artifact from an absent one,
+so an auto-heal there would clear a block without ever looking at its cause).
+`needs_answer` and `bug` are not mechanical at all. A mechanical kind with
+neither a heal nor a declaration fails the build
+(`tests/test_mechanical_blocks_are_recheckable.py`) — it would strand the
+goals it parks, which is what `mechanical:slice_hold` did before it was
+retired; recovery verbs
 are `resume_goal` (blocker cleared, same contract) and `steer_goal` (direction
 change) — both restore the heal budget. Since spec 031 (2026-09-02) a
 human-gated block **carries a typed Problem** — what is wrong, the `done_when`

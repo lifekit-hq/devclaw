@@ -1523,7 +1523,7 @@ class SettleMixin:
                         f"{WORKER_ENV_SUFFIX_HEAD} something the work needs. Not "
                         "auto-retried: the same environment reproduces the same gap. "
                         "Owned by devclaw, not the owner: the project holds until "
-                        "its environment changes."
+                        "the gap is provided."
                     )
                 else:
                     suffix = (

@@ -208,7 +208,10 @@ pre-existing, affects the other classes, and belongs to its own change.
   problems. The threshold is right for noisy, transient failures; this spec
   only removes from behind it the one class that cannot satisfy it (FR-002/FR-011).
 - Auto-fixing the environment. The gap is filed for a human/self-fix pickup;
-  the hold still heals mechanically when the environment changes (spec 030).
+  the hold is released on its own terms, not by this spec. (Those terms changed
+  under us while this spec was in flight: `specs/tiny/env-hold-observes-the-capability`
+  made a worker-reported row human-gated — `resume_goal`, not an `env_ref`
+  change. See T011.)
 - Any change to the `mechanical:env` hold, ping or heal semantics.
 
 ## Rejected alternatives

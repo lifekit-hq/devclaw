@@ -200,10 +200,15 @@ def speckit_feature_state_sync(workspace_dir: str) -> "tuple[int, int, int]":
 
     Zero-token (pure working-tree fs read), best-effort / never-raises.
     Returns ``(0, 0, 0)`` on any failure or when no feature dirs exist.
-    Used as the dispatch-boundary enforcement gate (issue #679):
-    a dispatch is gated on ``total_dirs == 0`` (first dispatch, allow) OR
-    ``active == 1`` (exactly one active feature, allow); everything else
-    is a speckit contract violation."""
+
+    The dispatch boundary (issue #679) consults ``total_dirs`` and ``graded``
+    ONLY: spec dirs that exist while none carries a ``tasks.md`` mean the
+    speckit plan step never ran. ``active`` is reported for the console and
+    is deliberately NOT a dispatch gate — a count of features with pending
+    tasks describes the repo's accumulated history, not what the next
+    increment will do. Build-ahead is detected from the goal's own commit on
+    the settle path (:func:`tasks_flips_sync`), where it is evidence rather
+    than a prediction."""
     try:
         base = os.path.join(workspace_dir, "specs")
         if not os.path.isdir(base):
@@ -233,59 +238,6 @@ def speckit_feature_state_sync(workspace_dir: str) -> "tuple[int, int, int]":
         except Exception:  # noqa: BLE001 — best-effort
             pass
     return total, graded, active
-
-
-def speckit_offending_dirs_sync(workspace_dir: str, current_dir: str = "") -> "list[str]":
-    """Active feature dirs with unchecked tasks that were modified at or after
-    ``current_dir``'s ``tasks.md``, **excluding** ``current_dir`` itself.
-
-    A feature dir whose ``tasks.md`` was modified BEFORE the current dir is
-    "historical" — it belongs to a prior goal run — and does not block dispatch.
-    Only dirs modified at the same time or after (concurrent build-ahead evidence)
-    are returned.
-
-    When ``current_dir`` is empty or its ``tasks.md`` is absent, returns ``[]``
-    (fail-open: no baseline → treat all other dirs as historical → allow
-    dispatch). Used by the dispatch gate (issue #728) to scope the
-    single-feature-slice enforcement to the goal's current work rather than the
-    repository's accumulated history.
-
-    Zero-token (pure working-tree fs read), best-effort / never-raises."""
-    try:
-        if not current_dir:
-            return []  # no identified current feature — treat all others as historical
-        current_tasks = os.path.join(workspace_dir, current_dir, "tasks.md")
-        if not os.path.isfile(current_tasks):
-            return []  # current dir has no tasks.md — no baseline, fail-open
-        baseline_mtime = os.path.getmtime(current_tasks)
-        base = os.path.join(workspace_dir, "specs")
-        if not os.path.isdir(base):
-            return []
-        entries = sorted(os.listdir(base))
-    except Exception:  # noqa: BLE001 — best-effort, never raises
-        return []
-
-    offending: "list[str]" = []
-    for entry in entries:
-        dir_path = os.path.join(base, entry)
-        rel_path = f"specs/{entry}"
-        if rel_path == current_dir:
-            continue
-        if not os.path.isdir(dir_path):
-            continue
-        tasks_path = os.path.join(dir_path, "tasks.md")
-        if not os.path.isfile(tasks_path):
-            continue
-        try:
-            if os.path.getmtime(tasks_path) < baseline_mtime:
-                continue  # older than current — historical, not a blocker
-            content = open(tasks_path,  # noqa: WPS515
-                           encoding="utf-8", errors="replace").read()
-            if any(not checked for (_k, _s, checked) in _task_rows(content)):
-                offending.append(rel_path)
-        except Exception:  # noqa: BLE001 — best-effort
-            pass
-    return offending
 
 
 def current_feature_dir_sync(workspace_dir: str) -> str:

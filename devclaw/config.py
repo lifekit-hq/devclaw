@@ -220,10 +220,6 @@ REMOTE_CHECKS_ENABLED = os.environ.get("DEVCLAW_GOAL_REMOTE_CHECKS", "1") not in
 DONEGATE_LEAN = os.environ.get("DEVCLAW_DONEGATE_LEAN", "0") == "1"
 
 #: nightly run-cycle window (cycle reports group by it).
-CYCLE_WINDOW_START = os.environ.get("DEVCLAW_RUN_CYCLE_START", "22:00")
-CYCLE_WINDOW_END = os.environ.get("DEVCLAW_RUN_CYCLE_END", "05:00")
-CYCLE_WINDOW_TZ = os.environ.get("DEVCLAW_RUN_CYCLE_TZ", "Europe/London")
-
 #: self-issue filing dials.
 SELF_ISSUE_MIN_CYCLES = int(os.environ.get("DEVCLAW_SELF_ISSUE_MIN_CYCLES", "2"))
 SELF_ISSUE_QUIET_DAYS = int(os.environ.get("DEVCLAW_SELF_ISSUE_QUIET_DAYS", "3"))

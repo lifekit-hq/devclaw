@@ -358,7 +358,7 @@ async def _resolve_polling_action(
     # service, credential or access. That is the PIPELINE's fault to fix, so
     # it never becomes a question for the owner (spec 031) — the project holds
     # on `mechanical:env` (every goal on it, at admission), the catalog carries
-    # one row per item, and the hold heals when the environment changes.
+    # one row per item, and the hold clears when a human vouches (resume_goal).
     if poll.status == "failed" and WORKER_ENV_MARKER in (poll.detail or ""):
         item = (poll.detail or "").split(WORKER_ENV_MARKER, 1)[1]
         item = item.split(WORKER_ENV_SUFFIX_HEAD, 1)[0].strip() or "unspecified environment gap"

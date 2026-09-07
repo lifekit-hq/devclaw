@@ -67,3 +67,7 @@ evals/baskets/*.json
 .shakedown/
 .specify/extensions/.cache/
 .specify/.workflow-install.lock
+
+# devclaw per-goal checkouts (boilerplate revision 2, #834) — one goal, one
+# clone under the project workspace; never the project repo's own content.
+.goals/
