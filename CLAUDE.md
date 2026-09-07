@@ -372,6 +372,9 @@ removed from the tree 2026-09-06 — git history (`git log -- docs/decisions doc
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
 escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1`), and `.claude/skills/` (docs-audit, live-shakedown, root-cause, devclaw-status,
 eng-health — the engineering-health ratchet over `evals/measure_eng_health.py`,
+devclaw-morning + devclaw-evening — the daily loop as two commands (status →
+class → one fix → decisions; landed → tonight → next → park), added 2026-09-07
+so the loop is typed once a day instead of nudged four times,
 plus the vendored speckit-* command skills).
 
 ## Where to look next
