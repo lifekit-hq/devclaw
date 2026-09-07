@@ -42,6 +42,12 @@ You **MUST** consider the user input before proceeding (if not empty). The user 
    **Status**: draft
    **Complexity**: small
 
+   ## North-star case
+
+   - **Failure moved**: {stopped when it shouldn't | ran and produced garbage | ran but needed the owner}
+   - **Number that shows it**: {the loop-health / scorecard read and its current value}
+   - **Cut when**: {the observation under which this change is deleted}
+
    ## What
 
    {1-3 sentence description of what this change does and why}

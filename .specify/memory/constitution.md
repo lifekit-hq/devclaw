@@ -101,6 +101,16 @@ CI-is-the-verdict is this principle applied once.)
 
 ## Development Workflow
 
+- EVERY spec and tinyspec is admitted against the north star before anything
+  else is written (ruled by Denys 2026-09-07): it states which of the three
+  north-star failures it moves — *stopped when it shouldn't*, *ran and
+  produced garbage*, *ran but needed the owner* — the number on the loop-health
+  or scorecard read that will show it, and the condition under which it is
+  cut. A change that cannot name one is not written. A story whose only case
+  is saving a round, adding a protocol, or completing a spec's shape is
+  dropped first, not built last. The north star: devclaw runs 24/7 non-idle
+  on planned work, nights come out clean, and it self-heals through stops
+  instead of waiting for the owner.
 - ALL behavior-changing work starts with the speckit pipeline —
   `/speckit-specify` → `/speckit-clarify` (run WITH Denys, one question at a
   time) → `/speckit-plan` → `/speckit-tasks` → implement
@@ -134,8 +144,13 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.8.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-06
-(2.8.0 — Principle IX added: instruct thin, verify thick, verify mechanically —
+**Version**: 2.9.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-07
+(2.9.0 — Development Workflow gains the north-star admission clause: every
+spec and tinyspec names the failure it moves, the number that shows it, and
+its cut condition; a mandatory `North-star case` section lands in the spec
+template and the tinyspec skeleton. Ruled by Denys 2026-09-07 against
+"infinite engineering" — devclaw was halved once for adopted code it never
+needed. Prior: 2.8.0 — Principle IX added: instruct thin, verify thick, verify mechanically —
 the five software domains, the fact → instruction → brake order, standards
 over bespoke mechanisms; 2.7.0 — Principle VIII added: cognitive guardrails are shed, structural
 invariants are kept, and every plan answers which it adds. Ruled by Denys

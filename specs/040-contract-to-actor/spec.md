@@ -4,9 +4,16 @@
 
 **Created**: 2026-09-07
 
-**Status**: Draft — clarified 2026-09-07 with Denys (5 questions, all encoded below); ready for `/speckit-plan`; nothing is implemented
+**Status**: SHRUNK 2026-09-07 under the north-star admission (constitution 2.9.0), same day it was clarified. **US2 (the red-CI log reaches the worker) is the only story that ships — as the tinyspec `specs/tiny/red-ci-log-to-worker.md`, not through plan/tasks.** US1 (the pinned clause list at dispatch) is PARKED until the spec 037 self-review read (~2026-09-20): 037's skill already instructs the worker to review against the contract clause by clause, and building the software version before that instruction is measured is the mistake this repo was halved for. US3 (per-clause report, UNMET routing) is DELETED. The clarify answers stay as direction memory for US1 if it is ever un-parked. Regrade the parking by 2026-09-22.
 
 **Input**: User description: "The completion contract reaches the actor: the worker gets the same numbered clause list the done-gate judges, and a red CI verdict carries its failing log" (issue #780, plus the CI-log sibling surfaced by the finance-sentry environment holds of 2026-09-06/07)
+
+## North-star case *(mandatory — constitution 2.9.0)*
+
+- **Failure moved**: *ran but needed the owner* (US2). The red-CI correction tells the worker to read a log the sandbox cannot reach; the worker reports it as a missing capability, the goal parks on a `mechanical:env` hold, and a human pastes the log. On 2026-09-07 that was four goals and one hand-paste.
+- **Number that shows it**: interventions per achieved goal, 2.92 on the 14-day read of 2026-09-07; and zero `mechanical:env` holds naming CI-log access (SC-003).
+- **Cut when**: a month of red rollups produces no worker `BLOCKED: env` naming the log, and corrections still converge without it — then the tail was weight and goes.
+- **Not moved by this spec (parked / deleted)**: *ran and produced garbage* — first-pass 0.24 — is US1's case, parked behind the 037 read; US3 had no case beyond saving an evaluator round.
 
 ## Why this exists
 
