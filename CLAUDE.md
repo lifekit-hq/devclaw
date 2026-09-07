@@ -227,7 +227,14 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   same budget-restoring shape as a steer; a timed-out Problem takes its
   default and informs (under `strict` a default that would close parks
   instead). `steer_goal` is **refused** while a Problem is open — prose is
-  not the answer to a problem.
+  not the answer to a problem. A **pointer goal whose referenced issues
+  have all closed while the done-gate still refuses** raises one too
+  (2026-09-07): the contract is read live from those issues, so nothing
+  a dispatch does can amend it and the gate keeps refusing — the loop
+  asks (`accept_close` / `correct` / `cancel`) instead of grinding, which
+  is what cost fs-431 eight rounds. The FIRST pass is unchanged: an issue
+  closed by a partial implementation still gets a propose-done and a
+  grounded verdict.
 
 Rule of thumb: **loud failure over silent degradation.**
 

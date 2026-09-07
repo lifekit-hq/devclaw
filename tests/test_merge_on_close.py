@@ -373,3 +373,51 @@ async def test_merge_conflict_heal_survives_closed_referenced_issues(tmp_path, m
     (action, _g, _u), = engine.dispatched
     assert "[merge-conflict]" in action.goal and PR_URL in action.goal
     assert len(fake.branches) == 1  # no second merge attempt before the increment
+
+
+@pytest.mark.asyncio
+async def test_closed_contract_with_a_refusing_gate_asks_instead_of_grinding(tmp_path, monkeypatch):
+    """Tripwire (brake machinery): all referenced issues closed AND the
+    done-gate already refused ⇒ raise a Problem and BLOCK, never dispatch.
+
+    A pointer goal reads done_when live from its issues (spec 019). Once every
+    issue is closed, no dispatch can amend the contract — but the gate keeps
+    judging the pinned revision, so the loop re-dispatches forever. fs-431
+    burned 8 rounds and fs-421 five that way, logging "dropped from the
+    remaining scope" and "dispatching worker to complete the remaining
+    contract" back to back every time
+    (specs/tiny/closed-contract-raises-a-problem).
+    """
+    from devclaw.goal.issue_ref import IssueSnapshot
+    from tests.goal_fakes import FakeIssueFetcher
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g", issue_refs=[7], done_when="")
+    # the gate has refused before, and no merge heal is owed
+    store.save_status("g", replace(
+        store.load_status("g"), phase="idle", donegate_rounds=2,
+        last_eval_note="clause c2 (price-hike) is structurally unreachable",
+    ))
+    notifier = RecordingNotifier()
+    closed = FakeIssueFetcher({7: IssueSnapshot(
+        number=7, title="t", body="ctx\n## Acceptance\n- /health returns 200",
+        state="closed")})
+
+    engine = FakeEngine()
+    out = await _tick(store, "g", FakeClaude(ACHIEVED), engine, notifier, closed)
+
+    assert out is Outcome.BLOCKED
+    assert engine.dispatched == [], "a vanished contract must not be re-dispatched"
+    saved = store.load_status("g")
+    assert saved.phase == "blocked" and saved.blocked_kind == "needs_answer"
+    assert saved.problem_id, "a human-gated block carries a typed Problem"
+
+    prob = store.current_problem("g")
+    assert prob.status == "open"
+    # the owner is told WHICH issue vanished and WHY the gate refuses
+    assert "#7" in prob.what and "refused 2 round(s)" in prob.what
+    assert "price-hike" in prob.clause
+    # the owner's own closure is the presumption, but it never fires silently
+    assert prob.default_key == "accept_close"
+    assert {o.key for o in prob.options} == {"accept_close", "correct", "cancel"}
+    assert any("[g]" in m for m in notifier.sent)
