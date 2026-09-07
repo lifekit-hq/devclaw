@@ -112,13 +112,13 @@ class GoalStateStatusMixin:
                   goal_id, version, state, phase, lifecycle, blocked_on, blocked_kind,
                   heal_attempts, next_heal_at, env_hold_notified, env_heal_attempts, "next",
                   last_plan_at, last_tick_at, actions_dispatched,
-                  donegate_rounds, donegate_progress, problem_id, envcap_redispatches, slice_hold_count,
+                  donegate_rounds, donegate_progress, problem_id, envcap_redispatches,
                   pending_merge_pr, merge_heal_attempted,
                   pending_done_proposal, ci_green_head,
                   last_eval_verdict, last_eval_at, last_eval_note, last_progress_at,
                   no_progress_notified, in_flight_ref_id, in_flight_kind,
                   in_flight_json, updated_at
-                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(goal_id) DO UPDATE SET
                   version               = goal_status.version + 1,
                   state                 = excluded.state,
@@ -138,7 +138,6 @@ class GoalStateStatusMixin:
                   donegate_progress     = excluded.donegate_progress,
                   problem_id            = excluded.problem_id,
                   envcap_redispatches   = excluded.envcap_redispatches,
-                  slice_hold_count      = excluded.slice_hold_count,
                   pending_merge_pr      = excluded.pending_merge_pr,
                   merge_heal_attempted  = excluded.merge_heal_attempted,
                   pending_done_proposal = excluded.pending_done_proposal,
@@ -172,7 +171,6 @@ class GoalStateStatusMixin:
                     status.donegate_progress,
                     status.problem_id,
                     status.envcap_redispatches,
-                    status.slice_hold_count,
                     status.pending_merge_pr,
                     1 if status.merge_heal_attempted else 0,
                     1 if status.pending_done_proposal else 0,
@@ -211,7 +209,6 @@ class GoalStateStatusMixin:
         "envcap_redispatches": "envcap_redispatches",
         # issue #728: consecutive dispatch-gate hold ticks (slice guard) —
         # bookkeeping stamped by the tick, never read by derive_state.
-        "slice_hold_count": "slice_hold_count",
         # heal_attempts / next_heal_at are damping bookkeeping (never read by
         # derive_state) — the column-only path exists so the auto-heal's
         # gave-up marker and the prep-recheck backoff window can be stamped
@@ -365,7 +362,6 @@ def _row_to_status(row, phase_history: "tuple[dict, ...]") -> GoalStatus:
         donegate_rounds=int(row["donegate_rounds"] or 0),
         donegate_progress=int(row["donegate_progress"] or 0),
         problem_id=str(row["problem_id"] or ""),
-        slice_hold_count=int(row["slice_hold_count"] or 0),
         last_eval_verdict=row["last_eval_verdict"] or None,
         last_eval_at=row["last_eval_at"] or None,
         last_eval_note=row["last_eval_note"] or "",

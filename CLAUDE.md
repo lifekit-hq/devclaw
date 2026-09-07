@@ -203,10 +203,15 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   origin, whatever words it carries — a verify log or a test file named
   `test_rate_limit_pause.py` must never pause the account.
 - **Mechanical blocks auto-heal; recovery is a verb, not a fake steer.** Blocks
-  carry a structured `blocked_kind`; `mechanical:corrupt_doc` and
-  `mechanical:prep` self-heal when their condition clears (zero LLM, damped by
-  a persisted per-goal heal budget + backoff); `needs_answer`/`bug`/`lost_ref`/
-  `dispatch_cap` stay human-gated. `resume_goal` re-attempts the SAME contract
+  carry a structured `blocked_kind`; `mechanical:prep`, `mechanical:env` and
+  `mechanical:ci` self-heal when their condition clears (zero LLM, damped by
+  a persisted per-goal heal budget + backoff). Every other mechanical kind is
+  DECLARED in `tick.HUMAN_GATED_MECHANICAL_KINDS` (`lost_ref`, `dispatch_cap`,
+  `merge_failed`, `env_cap`, `corrupt_doc`) and `needs_answer`/`bug` are not
+  mechanical at all. `mechanical:` promises a cheap re-check, so a kind with
+  neither a heal nor a declaration strands the goals it parks — the defect
+  that made `mechanical:slice_hold` a four-day dead end before it was retired;
+  `tests/test_mechanical_blocks_are_recheckable.py` now fails the build on one. `resume_goal` re-attempts the SAME contract
   without recording steering; `steer_goal` stays the direction-change verb
   (2026-07-13 harden-loop tranche, #228–#238). **A human-gated block carries
   a typed Problem** (spec 031, ruled 2026-09-02): what is wrong, the

@@ -44,11 +44,6 @@ from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
 from .. import env_cap as _env_cap
 
-#: consecutive dispatch-boundary holds before the goal escalates to ``blocked``
-#: with ``blocked_kind="mechanical:slice_hold"`` (issue #728 Part B).
-_SLICE_HOLD_CAP = 5
-
-
 async def _branch_staleness(workspace_dir: str, goal_id: str) -> "dict | None":
     """Best-effort commits-ahead/behind probe for ``goal/<goal_id>`` vs the
     repo's default branch.
@@ -219,18 +214,22 @@ async def _dispatch_action(
                 store=store, notifier=notifier, consume_steering=consume_steering,
             )
     # ---- speckit contract enforcement at the dispatch boundary (issue #679) --
-    # (a) block when spec dirs exist but none are graded (no tasks.md — the plan
-    #     step hasn't run); (b) block when 2+ features have pending tasks BEYOND
-    #     the goal's current work (issue #728 denominator fix: historical feature
-    #     dirs with leftover unchecked tasks must not make a repo permanently
-    #     undispatchable). Zero-token (pure working-tree fs read), best-effort:
-    #     a probe hiccup MUST NOT wedge dispatch. First dispatch on a fresh goal
-    #     returns (0, 0, 0) and sails through. Read-only reviews are exempt.
-    #     A hold that persists for _SLICE_HOLD_CAP consecutive ticks escalates to
-    #     blocked (loud failure over silent indefinite sleep — issue #728 Part B).
+    # Block when spec dirs exist but NONE are graded (no tasks.md anywhere —
+    # the speckit plan step has not run, so a dispatch would re-plan blind).
+    # That reads a FACT about the repo. The sibling check that used to live
+    # here — "2+ features carry pending tasks, so this goal must be building
+    # ahead" — was retired: it predicted the next increment from a count of
+    # leftover spec dirs, and #728's mtime tiebreak could not survive the
+    # per-goal `git clone` (a clone stamps every file at checkout time, so
+    # "historical vs concurrent" became noise and a SIBLING goal's live
+    # feature parked its peers). Build-ahead is caught where it is a fact
+    # instead of a guess: `slice_guard.tasks_flips_sync` on the settle path
+    # compares the goal's own commit against its parent, and the done-gate
+    # judges the delivered increment. Zero-token (pure working-tree fs read),
+    # best-effort: a probe hiccup MUST NOT wedge dispatch. Reviews are exempt.
     if action.tool != "review_repository":
         try:
-            _total, _graded, _active = await asyncio.to_thread(
+            _total, _graded, _ = await asyncio.to_thread(
                 _slice_guard.speckit_feature_state_sync, checkout
             )
             if _total > 0 and _graded == 0:
@@ -240,53 +239,8 @@ async def _dispatch_action(
                     f"(no tasks.md) — complete the speckit plan step before dispatch",
                 )
                 return Outcome.SLEPT
-            if _active > 1:
-                # Scope the check to the goal's current work: features modified
-                # BEFORE the current feature dir are historical (prior goal runs)
-                # and must not block new dispatch. Only concurrent dirs (same or
-                # newer mtime as the current one) indicate genuine build-ahead.
-                _current = await asyncio.to_thread(
-                    _slice_guard.current_feature_dir_sync, checkout
-                )
-                _offending = await asyncio.to_thread(
-                    _slice_guard.speckit_offending_dirs_sync,
-                    checkout, _current,
-                )
-                if _offending:
-                    _dirs_str = ", ".join(_offending)
-                    _hold_msg = (
-                        f"dispatch held: features with pending tasks beyond current "
-                        f"work ({_dirs_str}) — narrow to one feature before dispatch"
-                    )
-                    store.append_log(goal_id, _hold_msg)
-                    _hold_count = base.slice_hold_count + 1
-                    if _hold_count >= _SLICE_HOLD_CAP:
-                        _block_reason = (
-                            f"dispatch held {_SLICE_HOLD_CAP} consecutive ticks — "
-                            f"features with pending tasks block new work: {_dirs_str}"
-                        )
-                        store.transition(
-                            goal_id, Event.BLOCK,
-                            replace(base, phase="blocked", blocked_on=_block_reason,
-                                    blocked_kind="mechanical:slice_hold",
-                                    slice_hold_count=0),
-                            expect=base, consume_steering=consume_steering,
-                        )
-                        await _notify(
-                            notifier, NotifyLevel.OWNER,
-                            f"🛑 [{goal_id}] dispatch permanently held"
-                            f" ({_SLICE_HOLD_CAP} ticks) — features with pending"
-                            f" tasks: {_dirs_str}",
-                        )
-                        return Outcome.BLOCKED
-                    store.update_status_fields(goal_id, slice_hold_count=_hold_count)
-                    return Outcome.SLEPT
         except Exception:  # noqa: BLE001 — a probe hiccup must never wedge dispatch
             pass
-    # Guard passed — reset any accumulated slice hold counter so a later hold
-    # starts from 0, not from a stale accumulated value.
-    if base.slice_hold_count != 0:
-        base = store.update_status_fields(goal_id, slice_hold_count=0)
     # Atomic dispatch (PR7): task row creation + the DISPATCH
     # transition + the log row, as ONE transaction. A crash or CAS conflict
     # anywhere inside rolls the whole unit back — the single-task-orphan
