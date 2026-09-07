@@ -264,7 +264,7 @@ async def _autoheal_ci(
         return None  # parked — the gave-up ping already went out
     if status.heal_attempts >= CI_HEAL_CAP:
         await _heal_give_up(
-            goal_id, store=store, notifier=notifier, cap=CI_HEAL_CAP,
+            goal_id, store=store, notifier=notifier, cap=CI_HEAL_CAP, kind="mechanical:ci",
             reason="the delivered PR's CI never settled",
         )
         return None
@@ -351,7 +351,7 @@ async def _autoheal_prep(
         return None  # parked — the gave-up ping already went out
     if status.heal_attempts >= PREP_HEAL_CAP:
         await _heal_give_up(
-            goal_id, store=store, notifier=notifier, cap=PREP_HEAL_CAP,
+            goal_id, store=store, notifier=notifier, cap=PREP_HEAL_CAP, kind="mechanical:prep",
             reason="the workspace still can't be prepared",
         )
         return None
@@ -415,7 +415,7 @@ def _heal_unblock(
 
 async def _heal_give_up(
     goal_id: str, *, store: GoalStore, notifier: Notifier, cap: int, reason: str,
-    counter_field: str = "heal_attempts",
+    kind: str, counter_field: str = "heal_attempts",
 ) -> None:
     """Park a mechanical block whose heal budget is spent: mark FIRST (the
     sentinel bump one past the cap — a column-only write, the goal stays
@@ -424,8 +424,17 @@ async def _heal_give_up(
     plain owner ping — zero cognition.
 
     ``counter_field`` names the budget being parked, so each brake's sentinel
-    lands on its own column."""
+    lands on its own column. ``kind`` is the ``mechanical:*`` block being
+    parked: its ENTRY was counted as recovered (a wait, not a stop —
+    ``SELF_HEALING_BLOCK_KINDS``); the give-up is the terminal occurrence,
+    recorded here so the catalog and the self-issue filer see a hold that
+    never healed and never a hold that did."""
     store.update_status_fields(goal_id, **{counter_field: cap + 1})
+    store.record_problem(
+        category="block", kind=kind,
+        message=f"auto-recovery gave up after {cap} attempts — {reason}",
+        recovered=False, goal_id=goal_id,
+    )
     store.append_log(
         goal_id, f"auto-recovery gave up after {cap} attempts — {reason}; needs you",
     )
@@ -584,7 +593,7 @@ async def _autoheal_env_cap(
         return None  # parked — the gave-up ping already went out
     if status.env_heal_attempts >= ENV_HEAL_CAP:
         await _heal_give_up(
-            goal_id, store=store, notifier=notifier, cap=ENV_HEAL_CAP,
+            goal_id, store=store, notifier=notifier, cap=ENV_HEAL_CAP, kind="mechanical:env",
             reason="the required environment capability keeps breaking",
             counter_field="env_heal_attempts",
         )

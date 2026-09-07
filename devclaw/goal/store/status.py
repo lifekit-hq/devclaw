@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 import yaml
 
-from ..models import GoalStatus
+from ..models import SELF_HEALING_BLOCK_KINDS, GoalStatus
 from ..state import GoalState
 from ..transitions import (
     Event,
@@ -214,20 +214,23 @@ class GoalStatusMixin:
                 blocked_kind=self._normalized_blocked_kind(new),
             )
             self._goal_state.write_status(goal_id, written)
-            # Observability: record the goal ENTERING a blocked state (deduped)
-            # — a block is a problem devclaw hit whether or not it later
-            # self-heals. Guarded on cur_state so a goal STAYING blocked (a
-            # re-block that lands on the same blocked state) doesn't re-record;
-            # the mechanical auto-heal + re-block cycle is thus counted once per
-            # genuine entry, never per tick. kind = blocked_kind, message =
-            # blocked_on. record_problem is best-effort (never raises), so this
-            # is safe inside the transaction. See state_store/problems.py.
+            # Observability: record the goal ENTERING a blocked state (deduped).
+            # Guarded on cur_state so a goal STAYING blocked (a re-block that
+            # lands on the same blocked state) doesn't re-record; the
+            # mechanical auto-heal + re-block cycle is thus counted once per
+            # genuine entry, never per tick. A kind with a mechanical heal path
+            # (SELF_HEALING_BLOCK_KINDS) is a WAIT, recorded as recovered — the
+            # give-up at its heal cap records the terminal occurrence
+            # (tick_guards._heal_give_up); every other kind is a dead stop on
+            # entry. kind = blocked_kind, message = blocked_on. record_problem
+            # is best-effort (never raises), so this is safe inside the
+            # transaction. See state_store/problems.py.
             if target is State.BLOCKED and cur_state is not State.BLOCKED:
                 self._state.record_problem(
                     category="block",
                     kind=written.blocked_kind or "block",
                     message=written.blocked_on or "",
-                    recovered=False,
+                    recovered=written.blocked_kind in SELF_HEALING_BLOCK_KINDS,
                     goal_id=goal_id,
                 )
         self._flush_or_defer_status_view(goal_id, written)
