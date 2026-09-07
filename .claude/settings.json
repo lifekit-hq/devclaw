@@ -28,6 +28,12 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/main-branch-guard.py\"",
             "timeout": 10,
             "statusMessage": "Guarding main branch"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/north-star-case-guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking the North-star case before the PR opens"
           }
         ]
       }

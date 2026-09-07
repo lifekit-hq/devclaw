@@ -24,6 +24,10 @@ and report it instead of proceeding:
    `.specify/memory/constitution.md` and verify the diff violates no principle
    (and that the change came through a `.specify/specs/` spec per
    .claude/rules/speckit-workflow.md). A violation ⇒ stop and address it.
+   Then the north-star check: the artifact's `North-star case` is filled and
+   honest — run the `north-star` skill on the diff if it was not run at
+   specify/clarify (the hook only checks the section exists; the judgment is
+   the skill's). A CUT verdict ⇒ stop.
 6. **Commit**: conventional message ($ARGUMENTS if provided, else derive one),
    body says WHY + names the regression test, ends with
    `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
