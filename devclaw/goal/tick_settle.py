@@ -31,7 +31,9 @@ from .. import project_manifest as _manifest
 from .engine import GoalEngine, GoalEngineError
 from .models import Goal, GoalStatus, InFlight
 from . import problems as _problems
-from ..queue.settle import WORKER_BLOCKED_MARKER, WORKER_ENV_MARKER
+from ..queue.settle import (
+    WORKER_BLOCKED_MARKER, WORKER_ENV_MARKER, WORKER_ENV_SUFFIX_HEAD,
+)
 from .store import GoalStore
 from .transitions import Event
 from ..loom import trace as _trace
@@ -356,10 +358,10 @@ async def _resolve_polling_action(
     # service, credential or access. That is the PIPELINE's fault to fix, so
     # it never becomes a question for the owner (spec 031) — the project holds
     # on `mechanical:env` (every goal on it, at admission), the catalog carries
-    # one row per item, and the hold heals when the environment changes.
+    # one row per item, and the hold clears when a human vouches (resume_goal).
     if poll.status == "failed" and WORKER_ENV_MARKER in (poll.detail or ""):
         item = (poll.detail or "").split(WORKER_ENV_MARKER, 1)[1]
-        item = item.split(" — the sandbox lacks", 1)[0].strip() or "unspecified environment gap"
+        item = item.split(WORKER_ENV_SUFFIX_HEAD, 1)[0].strip() or "unspecified environment gap"
         return await _block_on_env_deficiency(
             goal_id, goal, new_status, item, task_id=ref.id,
             store=ctx.store, notifier=ctx.notifier,

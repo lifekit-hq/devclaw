@@ -10,10 +10,14 @@ Tripwire classes pinned here (rules/testing.md):
   sweep in ``tick_all`` and only for capabilities a project actually declares.
 - **fail-open on uncertainty (FR-007)**: absent/unknown/green results, and a
   project that declares nothing, dispatch exactly as they do today (SC-003).
+- **loud failure over silent degradation (spec 038 / #818)**: the hold never
+  claims a filing it did not perform — it names the issue it opened, or the
+  rule or error that stopped it, and a filing outcome can never change the hold.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -27,6 +31,7 @@ from devclaw.goal.models import GoalStatus
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import Outcome, tick_all, tick_goal
 from devclaw.goal.tick_guards import ENV_HEAL_CAP
+from devclaw.queue import settle
 from tests.goal_fakes import (
     Clock, FakeClaude, FakeEngine, RecordingNotifier, fake_prepare, seed_goal,
 )
@@ -463,7 +468,7 @@ async def test_an_unrelated_prior_heal_does_not_swallow_the_env_brake(
     assert evaluator.calls == 0
 
 
-_ENV_MARKER = "worker reported environment deficiency:"
+_ENV_MARKER = settle.WORKER_ENV_MARKER
 
 
 def _project_pair(tmp_path):
@@ -611,6 +616,208 @@ async def test_resume_goal_clears_the_worker_reported_gap_and_work_flows(tmp_pat
 
     # idempotent — a second vouch is a no-op, never an error
     assert env_cap.clear_worker_deficiencies(store, "proj") == ()
+
+
+_DEFICIENCY = "dotnet-ef not available in the sandbox"
+#: Built from the queue's OWN constants, so an edit to the failure text that
+#: breaks the goal layer's item split fails here instead of in production.
+_DEFICIENCY_DETAIL = (
+    f"{settle.WORKER_ENV_MARKER} {_DEFICIENCY}"
+    f"{settle.WORKER_ENV_SUFFIX_HEAD} something the work needs. Owned by devclaw."
+)
+
+
+class _FakeGh:
+    """The doorway's create-path adapter. Class-level counters so a test can
+    assert the UNSET-self-repo path shells nothing at all."""
+
+    constructed = 0
+    creates: list = []
+    comments: list = []
+    next_number: "int | None" = 7
+    hang_s: float = 0.0
+
+    def __init__(self) -> None:
+        type(self).constructed += 1
+
+    async def ensure_label(self, repo: str, name: str) -> None:
+        return None
+
+    async def create_issue(self, repo: str, *, title: str, body: str, labels: list) -> "int | None":
+        # `hang_s` stalls the create the way an unresponsive gh does, so the
+        # caller's wall-clock bound cancels a real doorway call mid-flight.
+        if type(self).hang_s:
+            await asyncio.sleep(type(self).hang_s)
+        type(self).creates.append((repo, title, tuple(labels)))
+        return type(self).next_number
+
+    async def comment_issue(self, repo: str, number: int, *, body: str) -> bool:
+        type(self).comments.append((repo, number))
+        return True
+
+    async def reopen_issue(self, repo: str, number: int, *, comment: str) -> bool:
+        return True
+
+
+@pytest.fixture
+def fake_gh(monkeypatch):
+    from devclaw import issue_doorway
+    _FakeGh.constructed, _FakeGh.creates, _FakeGh.comments = 0, [], []
+    _FakeGh.next_number, _FakeGh.hang_s = 7, 0.0
+    monkeypatch.setattr(issue_doorway, "GhCli", _FakeGh)
+    return _FakeGh
+
+
+def _deficiency_row(store) -> dict:
+    """The deficiency's own catalog row — entering ``blocked`` records a second
+    ``block`` row (kind = the blocked_kind), so select by kind, never by index."""
+    rows = store._state.list_problems(category="block", include_issue=True)
+    return next(r for r in rows if r["kind"] == "env_deficiency")
+
+
+def _seed_catalog_row(store, item: str = _DEFICIENCY) -> None:
+    """What ``queue/settle.py`` records before the goal layer settles the
+    deficiency — the row the filing links itself to."""
+    store.record_problem(
+        category="block", kind="env_deficiency", message=item,
+        recovered=False, goal_id="g", task_id="t1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_worker_reported_deficiency_is_filed_and_the_hold_names_the_issue(
+    tmp_path, monkeypatch, fake_gh,
+):
+    """Spec 038 / #818: the pipeline promised "filed as devclaw work" and filed
+    nothing — filing lived on the once-per-cycle edge behind a two-run-cycle
+    recurrence bar, and the hold this settle places is exactly what stops the
+    failure from recurring. So the gap is filed HERE, through the one machine
+    doorway, and the log + block text carry the issue it opened. A repeat
+    report never opens a second issue (one fingerprint, one issue, ever)."""
+    from devclaw.goal import env_issue
+    from devclaw.goal.models import PollResult
+    monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
+    store = _project_pair(tmp_path)
+    _seed_catalog_row(store)
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    failed = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed", detail=_DEFICIENCY_DETAIL,
+    ))
+
+    out = await tick_all(
+        store=store, engine=failed, evaluator_caller=evaluator, notifier=notifier,
+        notify_url="http://relay", prepare_ws=fake_prepare,
+        project_capabilities=lambda: {"proj": ()},
+    )
+
+    assert out["g"] is Outcome.BLOCKED
+    sg = store.load_status("g")
+    assert sg.blocked_kind == "mechanical:env"           # the hold is unchanged
+    expected = "filed as devclaw work: #7 (https://github.com/lifekit-hq/devclaw/issues/7)"
+    assert expected in (sg.blocked_on or "")
+    assert expected in store.recent_log("g")
+    assert any(expected in m for m in notifier.sent)
+    assert len(fake_gh.creates) == 1
+    repo, title, labels = fake_gh.creates[0]
+    assert repo == "lifekit-hq/devclaw" and _DEFICIENCY in title
+    assert "devclaw:self-filed" in labels                # stage-2 pickup still reaches it
+    # the catalog row is linked, so the cycle-close filer reads it as tracked
+    row = _deficiency_row(store)
+    assert (row["issue_number"], row["issue_state"]) == (7, "open")
+    assert evaluator.calls == 0
+
+    # a repeat of the SAME gap comments on #7 instead of opening a second issue
+    again = await env_issue.file_env_deficiency(
+        store, goal_id="g2", project_id="proj", item=_DEFICIENCY,
+        cap_id=env_cap.worker_cap_id(_DEFICIENCY), task_id="t2",
+    )
+    assert again.issue_number == 7 and again.filed is False
+    assert "already tracked as devclaw work: #7" in again.line
+    assert len(fake_gh.creates) == 1 and len(fake_gh.comments) == 1
+
+
+def test_a_filed_environment_gap_is_never_auto_closed_as_stale():
+    """The same deadlock as #818, one layer over: the age-out exit closes an
+    open self-filed issue that has gone quiet, and an environment gap goes
+    quiet BY CONSTRUCTION — the hold is what stops it recurring. Left in, the
+    hold's "filed as devclaw work: #N" would point at an issue devclaw closed
+    itself while the project was still red."""
+    from devclaw.goal import self_issue
+    quiet = {"issue_state": "open", "issue_number": 7, "last_seen_ms": 0}
+    assert self_issue.should_close_stale({**quiet, "kind": "engine_error"}, now_ms=10**12)
+    assert not self_issue.should_close_stale({**quiet, "kind": "env_deficiency"}, now_ms=10**12)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "self_repo, gh_number, fault, expect",
+    [
+        ("", 7, "", "NOT filed as devclaw work: DEVCLAW_SELF_REPO is unset"),
+        ("lifekit-hq/devclaw", None, "",
+         "NOT filed as devclaw work: issue creation failed (gh)"),
+        ("lifekit-hq/devclaw", 7, "hang",
+         "NOT filed as devclaw work: gh did not answer within"),
+        ("lifekit-hq/devclaw", 7, "raise",
+         "NOT filed as devclaw work: RuntimeError: ledger unavailable"),
+    ],
+    ids=["self-repo-unconfigured", "doorway-failed", "gh-hung-past-the-bound",
+         "doorway-raised"],
+)
+async def test_a_deficiency_that_cannot_be_filed_says_why_and_still_holds(
+    tmp_path, monkeypatch, fake_gh, self_repo, gh_number, fault, expect,
+):
+    """The other half of the same invariant: when there is no issue, the text
+    says which rule or error stopped it — never a claim with no record behind
+    it. The hold, its one ping and its heal are untouched either way, and an
+    unconfigured self-repo shells nothing.
+
+    The last two cases are the ones the doorway CANNOT record for itself: its
+    own ``_fail`` never runs when the wall-clock bound cancels it mid-call or
+    when something raises before it is entered. A stated clause with no catalog
+    row behind it is #818's silence one level in — so the caller records it."""
+    from devclaw import issue_doorway
+    from devclaw.goal import env_issue
+    from devclaw.goal.models import PollResult
+    monkeypatch.setenv("DEVCLAW_SELF_REPO", self_repo)
+    fake_gh.next_number = gh_number
+    if fault == "hang":
+        fake_gh.hang_s = 0.5
+        monkeypatch.setattr(env_issue, "FILING_TIMEOUT_S", 0.05)
+    elif fault == "raise":
+        async def _boom(*a, **kw):
+            raise RuntimeError("ledger unavailable")
+        monkeypatch.setattr(issue_doorway, "file_finding", _boom)
+    store = _project_pair(tmp_path)
+    _seed_catalog_row(store)
+    evaluator, notifier = FakeClaude(), RecordingNotifier()
+    failed = FakeEngine(poll_result=PollResult(
+        terminal=True, status="failed", detail=_DEFICIENCY_DETAIL,
+    ))
+
+    out = await tick_all(
+        store=store, engine=failed, evaluator_caller=evaluator, notifier=notifier,
+        notify_url="http://relay", prepare_ws=fake_prepare,
+        project_capabilities=lambda: {"proj": ()},
+    )
+
+    assert out["g"] is Outcome.BLOCKED
+    sg = store.load_status("g")
+    assert sg.blocked_kind == "mechanical:env" and sg.problem_id == ""
+    assert _DEFICIENCY in (sg.blocked_on or "") and expect in (sg.blocked_on or "")
+    assert expect in store.recent_log("g")
+    assert any(expect in m for m in notifier.sent)
+    assert env_cap.worker_caps_for(store, "proj") == (env_cap.worker_cap_id(_DEFICIENCY),)
+    if not self_repo:
+        assert fake_gh.constructed == 0                  # no repo ⇒ nothing shelled
+    else:
+        # a failed filing is loud on the catalog too, never silence — and ONE
+        # attempt is ONE occurrence, so a second recorder on the same exit
+        # (the doorway's and the caller's both firing) fails here.
+        failed = [r for r in store._state.list_problems(category="delivery")
+                  if r["kind"] == "issue_filing_failed"]
+        assert len(failed) == 1 and failed[0]["count"] == 1
+    assert _deficiency_row(store)["issue_number"] is None
+    assert evaluator.calls == 0
 
 
 @pytest.mark.asyncio

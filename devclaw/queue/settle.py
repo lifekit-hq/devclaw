@@ -55,6 +55,7 @@ from ..engine.workspace import (
     prepare_workspace,
 )
 from ..state_store import TaskKind, _now_ms
+from ..state_store.problems import ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND
 # The git ``_sync`` helpers are module globals here so the async wrappers below
 # (patched by tests on THIS namespace) resolve them at call time.
 from ..task_git import (
@@ -126,9 +127,17 @@ WORKER_BLOCKED_MARKER = _WORKER_BLOCKED_MARKER
 #: marker above, but the goal layer routes it to the PIPELINE — a
 #: project-wide ``mechanical:env`` hold, one problems-catalog row per item,
 #: devclaw work — never to the owner as a question: the worker had no way to
-#: fix its environment and must not improvise around it in the repo.
+#: fix its environment and must not improvise around it in the repo. The
+#: filing itself and the sentence naming its outcome belong to the goal layer
+#: (``goal/env_issue.py``), which can actually perform it — this layer names
+#: the owner and stops there (spec 038).
 _WORKER_ENV_MARKER = "worker reported environment deficiency:"
 WORKER_ENV_MARKER = _WORKER_ENV_MARKER
+#: The token that ends the item and begins this layer's explanatory suffix.
+#: The goal layer splits the failure text on it to recover the bare item, so it
+#: is ONE constant both sides import rather than a literal each side re-types
+#: — an edit to the suffix used to be able to silently swallow the split.
+WORKER_ENV_SUFFIX_HEAD = " — the sandbox lacks"
 #: Substring the engine surfaces when the worker's conversation OVERFLOWED the
 #: model context window (full shape: ``Conversation run failed for id=...:
 #: Internal error: Prompt is too long``). Unlike the two markers above this one
@@ -1323,7 +1332,8 @@ class SettleMixin:
                             last_failure = f"{_WORKER_ENV_MARKER} {item}"
                             last_origin = _ORIGIN_WORKER
                             self._store.record_problem(
-                                category="block", kind="env_deficiency", message=item,
+                                category=ENV_DEFICIENCY_CATEGORY,
+                                kind=ENV_DEFICIENCY_KIND, message=item,
                                 recovered=False,
                                 goal_id=(getattr(row, "parent_goal_id", "") or "") if row else "",
                                 task_id=task_id,
@@ -1504,11 +1514,16 @@ class SettleMixin:
                     )
                     partial_json = json.dumps(partial_result)
                 if last_failure.startswith(_WORKER_ENV_MARKER):
+                    # Spec 038: this layer states the OWNER, never the outcome.
+                    # It used to promise "the gap is filed as devclaw work" —
+                    # an action it cannot perform and could not observe (#818).
+                    # The goal layer files it and names the result (`#N`, or
+                    # the rule or error that stopped it) on the hold.
                     suffix = (
-                        " — the sandbox lacks something the work needs. Not "
+                        f"{WORKER_ENV_SUFFIX_HEAD} something the work needs. Not "
                         "auto-retried: the same environment reproduces the same gap. "
-                        "Owned by devclaw: the project holds until its environment "
-                        "changes, and the gap is filed as devclaw work."
+                        "Owned by devclaw, not the owner: the project holds until "
+                        "the gap is provided."
                     )
                 else:
                     suffix = (

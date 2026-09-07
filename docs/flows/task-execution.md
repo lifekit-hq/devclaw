@@ -248,12 +248,29 @@ Problem for the owner, spec 031) or `STATUS: BLOCKED: env — <item>` (the
 sandbox lacks a tool, service, credential or access). The runner types the
 form on the wire (`block_kind`, `block_item`); the settle fails the task
 closed and un-retried in both cases, but the env form is the PIPELINE's:
-one problems-catalog row per item (`category="block", kind="env_deficiency"`, self-filed as
-devclaw work when `DEVCLAW_SELF_REPO` is set), and the goal's whole project
-holds on `mechanical:env` (a red `worker:<item>` capability row, read at
-admission by every goal on the project) until the instance's environment
-changes — a new sandbox image or build — when it heals with no operator verb.
-The worker never patches the repo around its environment.
+one problems-catalog row per item (`category="block", kind="env_deficiency"`),
+and the goal's whole project holds on `mechanical:env` (a red `worker:<item>`
+capability row, read at admission by every goal on the project) until the gap
+is provided. Nothing can probe that row green — a worker names its gap in
+prose — so it clears when a human vouches with `resume_goal`
+(`specs/tiny/env-hold-observes-the-capability`), unlike a declared capability,
+which heals on its own probe. The worker never patches the repo around its
+environment.
+
+The gap is filed as devclaw work **in that same settle** (spec 038,
+`devclaw/goal/env_issue.py`) through the issue doorway, keyed on the catalog
+fingerprint so one gap is ever one issue. The task-layer failure text names
+devclaw as the owner and stops there; the goal's log, `blocked_on` and owner
+ping carry the outcome — `filed as devclaw work: #N <url>`, `already tracked
+as devclaw work: #N`, or `NOT filed as devclaw work: <reason>` — an unset
+`DEVCLAW_SELF_REPO` (nothing was attempted, nothing recorded), or a failed
+attempt, which ALWAYS leaves a `delivery/issue_filing_failed` catalog row: the
+doorway records the failures it sees, and the caller records the two it cannot
+(a `gh` that hangs past the wall-clock bound, anything raised before the
+doorway is entered). Filing cannot change the hold.
+Before #818 the claim rode the settle text while filing waited on the
+once-per-cycle self-issue edge behind a two-run-cycle recurrence bar — which
+this very hold makes unreachable, so nothing was ever filed.
 
 ## Historical (2026-06) — how the 2026-06-25 cascade maps onto these steps
 

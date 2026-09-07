@@ -132,6 +132,14 @@ PROBLEM_CATEGORIES = (
     "other",
 )
 
+#: The catalog identity of a worker-reported environment deficiency
+#: (``BLOCKED: env — <item>``). It is minted by the queue's settle and read
+#: back by the goal layer's filing edge, which must dedup on the SAME
+#: fingerprint — so the two literals live here, in the leaf both layers import,
+#: rather than once per layer where they can drift apart silently (spec 038).
+ENV_DEFICIENCY_CATEGORY = "block"
+ENV_DEFICIENCY_KIND = "env_deficiency"
+
 
 def problem_lifecycle(p: dict) -> str:
     """A problem's stage in the self-improving cycle, derived from its

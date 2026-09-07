@@ -293,23 +293,40 @@ class FilingOutcome:
         return self.action != "failed"
 
 
+def record_filing_failure(
+    store, *, repo: str, source: str, fingerprint: str, reason: str
+) -> None:
+    """FR-006's recording half, as a verb a PRODUCER can call too.
+
+    ``file_finding`` cannot record a failure it never saw: a caller's
+    wall-clock bound cancels it mid-call (``CancelledError`` is not an
+    ``Exception``), and anything raised before it is entered never reaches its
+    handler at all. Those are the failures that used to leave a stated clause
+    with no catalog row behind it — #818's silence one level in. One kind for
+    every filing failure however it happened, so the catalog counts "devclaw
+    could not file" as ONE class instead of splitting it by which layer
+    noticed."""
+    sys.stderr.write(f"issue-doorway: filing {fingerprint} on {repo} failed: {reason}\n")
+    record = getattr(store, "record_problem", None)
+    if record is not None:
+        record(
+            category="delivery",
+            kind="issue_filing_failed",
+            message=f"{source} → {repo}: {reason}",
+            recovered=False,
+        )
+
+
 def _fail(
     store, repo: str, finding: MachineFinding, reason: str
 ) -> FilingOutcome:
     """FR-006: the failure is loud on BOTH surfaces — the caller's outcome and
     the problems catalog. The finding stays owned by the originating mechanism
     (it re-fires on its next edge; the doorway does not queue)."""
-    sys.stderr.write(
-        f"issue-doorway: filing {finding.fingerprint} on {repo} failed: {reason}\n"
+    record_filing_failure(
+        store, repo=repo, source=finding.source,
+        fingerprint=finding.fingerprint, reason=reason,
     )
-    record = getattr(store, "record_problem", None)
-    if record is not None:
-        record(
-            category="delivery",
-            kind="issue_filing_failed",
-            message=f"{finding.source} → {repo}: {reason}",
-            recovered=False,
-        )
     return FilingOutcome(action="failed", reason=reason)
 
 

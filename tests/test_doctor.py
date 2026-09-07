@@ -17,6 +17,9 @@ from devclaw.doctor import Verdict, run_doctor
 from devclaw.goal.store import GoalStore
 from devclaw.project_registry import ProjectRegistry
 from devclaw.state_store import StateStore
+from devclaw.state_store.problems import (
+    ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND, fingerprint_for,
+)
 
 from devclaw import config as _config
 from tests.goal_fakes import FakeClaude, register_tmp_project, seed_goal
@@ -43,6 +46,10 @@ def env(tmp_path, monkeypatch):
     # path, so the suite can never reach the network from a dev machine
     # that happens to carry a real token.
     monkeypatch.delenv("NODE_AUTH_TOKEN", raising=False)
+    # DEVCLAW_SELF_REPO for the same reason (spec 038 US2): the self-repo check
+    # reads the ambient environment, so a host that exports it would flip the
+    # seeded fault to OK and the guard would pass having checked nothing.
+    monkeypatch.delenv("DEVCLAW_SELF_REPO", raising=False)
     # The suite IS the stubbed engine. Both credentials are required only by
     # the production engine (tinyspec durable-container-secrets); with them
     # deleted above, a clean instance stays healthy only under a dev/test
@@ -762,6 +769,48 @@ def test_problems_tables_absent_detected(env):
 def test_problems_tables_present_is_ok(env):
     (f,) = _findings(_run(env), "instance.problems.tables")
     assert f.verdict is Verdict.OK
+
+
+def test_unset_self_repo_is_a_finding_only_once_a_gap_has_been_swallowed(env, monkeypatch):
+    """Seeded fault (spec 038 US2): an instance holding worker-reported
+    environment gaps with no self-repo files none of them — #818's silence,
+    made visible on the instance that is actually losing filings rather than on
+    every dev checkout. Driven across all three shapes on ONE workspace,
+    because ``_findings`` unpacks a single finding per check id."""
+    cid = "instance.env.self_repo_configured"
+    gap = "dotnet-ef not available in the sandbox"
+
+    # 1. unset, but nothing has been swallowed yet — the dev-checkout default.
+    (f,) = _findings(_run(env), cid)
+    assert f.verdict is Verdict.OK and "no unfiled worker-reported" in f.evidence
+
+    # 2. a gap lands in the catalog while the instance still cannot file it.
+    env["store"].record_problem(
+        category=ENV_DEFICIENCY_CATEGORY, kind=ENV_DEFICIENCY_KIND,
+        message=gap, recovered=False, goal_id="g", task_id="t1",
+    )
+    (f,) = _findings(_run(env), cid)
+    assert f.verdict is Verdict.FAIL
+    assert "DEVCLAW_SELF_REPO" in f.evidence and "holds 1 worker-reported" in f.evidence
+    assert "DEVCLAW_SELF_REPO" in f.remedy
+
+    # 3. a gap that WAS filed is not counted as lost — the finding must not
+    # assert a loss that did not happen.
+    env["store"].set_problem_issue(
+        fingerprint_for(ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND, gap),
+        issue_number=7, issue_state="open",
+    )
+    (f,) = _findings(_run(env), cid)
+    assert f.verdict is Verdict.OK
+
+    # 4. configured — an unfiled gap is fine again, because it will be filed.
+    env["store"].set_problem_issue(
+        fingerprint_for(ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND, gap),
+        issue_number=None, issue_state=None,
+    )
+    monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
+    (f,) = _findings(_run(env), cid)
+    assert f.verdict is Verdict.OK and "is set" in f.evidence
 
 
 def test_problem_pointer_drift_detected(env):

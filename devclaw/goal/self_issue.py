@@ -34,7 +34,7 @@ from typing import Callable, Optional, Protocol
 
 from .. import config as _config
 from .. import issue_doorway as _doorway
-from ..state_store.problems import PROBLEM_CATEGORIES
+from ..state_store.problems import ENV_DEFICIENCY_KIND, PROBLEM_CATEGORIES
 from ..procutil import run as _run
 
 # ---- tunables (env-overridable) --------------------------------------------
@@ -110,10 +110,19 @@ def should_file(problem: dict, cycle_count: int, *, threshold: int = RECURRENCE_
 
 def should_close_stale(problem: dict, now_ms: int, *, quiet_ms: int = QUIET_MS) -> bool:
     """CLOSE iff the problem has an OPEN issue and has not been seen for
-    ``quiet_ms`` (the age-out exit). Pure over ``last_seen_ms`` vs ``now_ms``."""
+    ``quiet_ms`` (the age-out exit). Pure over ``last_seen_ms`` vs ``now_ms``.
+
+    A worker-reported environment deficiency is exempt for the same reason it
+    does not wait on :func:`should_file`'s recurrence bar (spec 038): the
+    ``mechanical:env`` hold it raises is what stops it from recurring, so its
+    quiet is the brake working, not the gap closing. Aged out, devclaw would
+    close its own unfixed issue while every goal on the project is still held
+    on it."""
     if (problem.get("issue_state") or None) != "open":
         return False
     if problem.get("issue_number") is None:
+        return False
+    if (problem.get("kind") or "").strip() == ENV_DEFICIENCY_KIND:
         return False
     last_seen = int(problem.get("last_seen_ms") or 0)
     return (now_ms - last_seen) >= quiet_ms

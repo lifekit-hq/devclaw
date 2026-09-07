@@ -216,6 +216,31 @@ class GoalStore(GoalStatusMixin, GoalContentMixin):
         """Write one control-plane meta row — see :meth:`get_meta`."""
         self._state.set_meta(key, value)
 
+    def machine_issue_get(self, repo: str, fingerprint: str) -> "dict | None":
+        """Read the issue-doorway ledger row for ``(repo, fingerprint)`` (spec
+        038: the goal layer files a worker-reported environment gap through the
+        doorway). Passthrough in the :meth:`get_meta` shape."""
+        return self._state.machine_issue_get(repo, fingerprint)
+
+    def machine_issue_record(
+        self, repo: str, fingerprint: str, *, issue_number: int, issue_state: str,
+        source: str, schema_version: int, now_ms: int,
+    ) -> None:
+        """Write the issue-doorway ledger row — see :meth:`machine_issue_get`."""
+        self._state.machine_issue_record(
+            repo, fingerprint, issue_number=issue_number, issue_state=issue_state,
+            source=source, schema_version=schema_version, now_ms=now_ms,
+        )
+
+    def set_problem_issue(
+        self, fingerprint: str, *, issue_number: "int | None", issue_state: "str | None",
+    ) -> None:
+        """Link a problems-catalog row to its filed issue, so the once-per-cycle
+        filer sees it as already tracked instead of opening a duplicate."""
+        self._state.set_problem_issue(
+            fingerprint, issue_number=issue_number, issue_state=issue_state
+        )
+
     def render_mirrors(self, goal_id: str) -> None:
         """Flush every mirror write deferred for ``goal_id`` (in the order
         recorded) to disk, then clear the pending list. Idempotent — a no-op

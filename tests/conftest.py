@@ -36,6 +36,16 @@ os.environ.setdefault(
         / f"devclaw-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}.db"),
 )
 
+# The instance's OWN repo slug. Since spec 038 this is load-bearing on a path
+# the suite drives: a worker-reported environment deficiency files the gap
+# through the issue doorway at the hold, and unset is what makes that a stated
+# no-op that spawns nothing (FR-006). Inherited from the ambient environment it
+# would flip a stubbed settle into a real `gh issue create` against a real
+# repository — and CI runs on the same host devclaw is deployed to, so the
+# suite would behave one way there and another in a sandbox. Cleared, never
+# defaulted: tests that need it set it explicitly with monkeypatch.
+os.environ.pop("DEVCLAW_SELF_REPO", None)
+
 from devclaw import llm_call as _llm_call_mod
 from devclaw import task_queue
 from devclaw.delivery import deploy as _deploy_mod
@@ -112,6 +122,51 @@ _COGNITION_BINARIES = frozenset(
     os.path.basename(b) for b in ("claude", _llm_call_mod.CLAUDE_BIN)
 )
 
+#: ``gh <noun> <verb>`` verbs that only READ. Everything else is treated as a
+#: write, because this guard must fail CLOSED like every other brake in the
+#: system: a denylist of mutating verbs silently admits the next one anybody
+#: adds (`secret set`, `workflow run`, `release upload`), and the cost of being
+#: wrong is a change to a live repository that outlives the test that made it.
+#: The price of the allowlist is that a NEW read has to be named here — a
+#: loud, one-line failure with the fix in the message.
+_GH_READ_VERBS = frozenset(("view", "list", "status", "checks", "diff"))
+
+#: ``gh api`` flags that turn the default GET into a POST. `gh` does this
+#: implicitly whenever a field is supplied, so a method flag is not the only
+#: tell.
+_GH_API_WRITE_FLAGS = ("-f", "-F", "--field", "--raw-field", "--input")
+
+_GH_GUARD_HINT = (
+    "The pytest suite is fully stubbed — a test must NEVER perform a real "
+    "GitHub write (it lands in a live repository and outlives the test). Stub "
+    "the seam your test reaches: patch `devclaw.issue_doorway.GhCli`, pass a "
+    "fake `gh=` adapter, patch `devclaw.delivery.*._run`, or leave "
+    "DEVCLAW_SELF_REPO unset so the filing path is the no-op it is by default. "
+    "If this really is a READ, add its verb to _GH_READ_VERBS in conftest."
+)
+
+
+def _is_gh_write(base: str, args: tuple) -> bool:
+    """True unless this ``gh`` invocation is a recognised read."""
+    if base != "gh":
+        return False
+    strings = [str(a) for a in args]
+    if not strings:
+        return False  # bare `gh` prints help
+    if strings[0] == "api":
+        for i, a in enumerate(strings):
+            if a.startswith("--method="):
+                return a.split("=", 1)[1].upper() != "GET"
+            if a.startswith("-X") and len(a) > 2:  # glued: -XPOST
+                return a[2:].upper() != "GET"
+            if a in ("-X", "--method") and i + 1 < len(strings):
+                return strings[i + 1].upper() != "GET"
+            if a in _GH_API_WRITE_FLAGS or a.startswith(("-f=", "-F=")):
+                return True
+        return False
+    return not (len(strings) >= 2 and strings[1] in _GH_READ_VERBS)
+
+
 _COGNITION_GUARD_HINT = (
     "The pytest suite is fully stubbed — a test must NEVER spawn the real "
     "`claude` CLI (it is the account's quota, and CI has no binary). Inject a "
@@ -164,6 +219,11 @@ def _block_real_docker(monkeypatch):
             pytest.fail(
                 f"BLOCKED: test tried to spawn the real cognition binary: "
                 f"{program} {' '.join(str(a) for a in args[:6])} ...\n{_COGNITION_GUARD_HINT}"
+            )
+        if _is_gh_write(base, args):
+            pytest.fail(
+                f"BLOCKED: test tried to perform a real GitHub write: "
+                f"{program} {' '.join(str(a) for a in args[:6])} ...\n{_GH_GUARD_HINT}"
             )
         return await real_exec(program, *args, **kwargs)
 
