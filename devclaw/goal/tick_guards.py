@@ -26,6 +26,7 @@ from ..task_git import _ls_remote_ok_sync
 from .. import env_cap as _env_cap
 from .. import project_manifest as _manifest
 from .. import config as _config
+from . import env_issue as _env_issue
 from . import remote_checks as _remote_checks
 from . import delivery_strategy as _delivery
 
@@ -476,11 +477,15 @@ async def _block_on_env_cap(
     red_caps: "list[tuple[str, _env_cap.CapProbeResult]]",
     *, store: GoalStore, notifier: Notifier,
     consume_steering: "list[int] | None" = None,
+    extra_clause: str = "",
 ) -> Outcome:
     """Block the goal because one or more required capability probes are red.
 
     Spec 030 FR-002/FR-003. The block message names every failing capability
-    and its remedy so the operator sees ONE story.
+    and its remedy so the operator sees ONE story. ``extra_clause`` appends one
+    more sentence to that story on every surface it reaches (log, ``blocked_on``,
+    ping) — spec 038 uses it to state what actually happened to the gap devclaw
+    said it would file.
 
     Exactly one owner ping per hold EPISODE, marked by ``env_hold_notified``:
     a re-block that follows an env heal logs but does not ping, so a probe
@@ -495,12 +500,14 @@ async def _block_on_env_cap(
         else f"{cap_id}: {r.evidence}"
         for cap_id, r in red_caps
     )
+    clause = extra_clause.strip()
+    joined = f"; {clause}" if clause else ""
     msg = (
         f"environment capability check failed — dispatching would burn a session: "
         f"{cap_lines}. Waiting for the environment to be fixed; devclaw will "
-        "resume automatically when the probe turns green."
+        f"resume automatically when the probe turns green{joined}."
     )
-    store.append_log(goal_id, f"env-cap hold: {cap_lines}")
+    store.append_log(goal_id, f"env-cap hold: {cap_lines}{joined}")
     store.transition(
         goal_id, Event.BLOCK,
         replace(status, phase="blocked", blocked_on=msg,
@@ -515,7 +522,7 @@ async def _block_on_env_cap(
         await _notify(
             notifier, NotifyLevel.OWNER,
             f"🔴 [{goal_id}] dispatch held — environment not ready: {cap_lines}; "
-            "devclaw auto-resumes when the probe turns green",
+            f"devclaw auto-resumes when the probe turns green{joined}",
         )
     return Outcome.BLOCKED
 
@@ -528,15 +535,30 @@ async def _block_on_env_deficiency(
     deficiency as a red capability row for the goal's PROJECT (so every goal on
     it holds at admission, not only this one) and hold this goal through the
     same ``mechanical:env`` seam a declared capability uses — one kind, one
-    ping marker, one heal. The pipeline owns the gap; nobody is asked."""
+    ping marker, one heal. The pipeline owns the gap; nobody is asked.
+
+    Spec 038: "owned by devclaw" is also ACTED ON here, in this same settle —
+    the gap is filed through the issue doorway and the real outcome (``#N``, or
+    the rule or error that stopped it) rides every surface the hold reaches.
+    Filing at the cycle-close self-issue edge instead could never work for this
+    class: that edge needs the problem to survive two run-cycles, and the hold
+    below is exactly what stops it from recurring (#818). The filing cannot
+    change the hold — it is what protects the project's sessions."""
     pid = (goal.project_id or "").strip() or None
     cap_id = _env_cap.record_worker_deficiency(store, pid, item, goal_id=goal_id, task_id=task_id)
     result = _env_cap.read_result(store, cap_id, pid) or _env_cap.CapProbeResult(
         "red", evidence=f"a worker reported the sandbox lacks: {item}",
     )
+    filing = await _env_issue.file_env_deficiency(
+        store, goal_id=goal_id, project_id=pid, item=item,
+        cap_id=cap_id, task_id=task_id,
+    )
+    # The filing clause rides `_block_on_env_cap`'s own log line, so it is not
+    # repeated here — the two lines land adjacent in the goal log.
     store.append_log(goal_id, f"worker environment deficiency → project hold ({cap_id}): {item}")
     return await _block_on_env_cap(
         goal_id, status, [(cap_id, result)], store=store, notifier=notifier,
+        extra_clause=filing.line,
     )
 
 
