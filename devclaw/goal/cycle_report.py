@@ -47,16 +47,42 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from .. import config as _config
 from zoneinfo import ZoneInfo
 
 # ---- window config ----------------------------------------------------------
 # The per-cycle run window. Defaults to 22:00–05:00 Europe/London (the schedule tz
 # the operator's cycle runs use). Overridable via env for a different cadence /
 # timezone; the pure helpers also take explicit overrides so tests pin a clock.
-CYCLE_WINDOW_START = _config.CYCLE_WINDOW_START
-CYCLE_WINDOW_END = _config.CYCLE_WINDOW_END
-CYCLE_WINDOW_TZ = _config.CYCLE_WINDOW_TZ
+#: The cycle window is not its own setting: it IS the operator's run schedule.
+#: A separate DEVCLAW_RUN_CYCLE_* knob was a second source of truth for "when
+#: does devclaw work", and the two drifted the moment 24/7 operation was ruled
+#: (2026-09-05) — the filer kept slicing the day as a 22:00–05:00 night shift
+#: while devclaw worked round the clock, so ~70% of its problems were counted
+#: by no cycle at all and the self-issue filer stopped filing
+#: (specs/tiny/cycle-is-when-devclaw-works).
+#: A full day is expressed as ``start == end``; the arithmetic in
+#: :func:`most_recent_closed_window` already yields a 24h window for that, so
+#: there is no separate all-day code path to keep correct.
+FULL_DAY = "00:00"
+
+
+def cycle_window_for(schedule: "dict | None") -> "tuple[str, str, str]":
+    """``(start, end, tz)`` for the cycle window implied by a run schedule.
+
+    An ENABLED schedule is the cycle: devclaw only worked inside it, so only
+    that span can contain a cycle's problems. A DISABLED schedule means 24/7,
+    and the cycle is the calendar day in the schedule's own timezone (the tz
+    stays meaningful when the window is off — it is where the operator's day
+    boundary falls). Pure: no store, no clock."""
+    sched = schedule or {}
+    tz = str(sched.get("tz") or "UTC")
+    if not sched.get("enabled"):
+        return FULL_DAY, FULL_DAY, tz
+    return (
+        str(sched.get("start") or FULL_DAY),
+        str(sched.get("end") or FULL_DAY),
+        tz,
+    )
 
 
 # ---- failure-class → clean-cycle bucket (mechanical, zero LLM) ---------------
@@ -99,9 +125,9 @@ def _parse_hhmm(s: str) -> Optional[tuple[int, int]]:
 def most_recent_closed_window(
     now_ms: int,
     *,
-    start: str = CYCLE_WINDOW_START,
-    end: str = CYCLE_WINDOW_END,
-    tz: str = CYCLE_WINDOW_TZ,
+    start: str = FULL_DAY,
+    end: str = FULL_DAY,
+    tz: str = "UTC",
 ) -> Optional[tuple[str, int, int]]:
     """``(cycle_key, window_start_ms, window_end_ms)`` for the most-recent
     cycle window that has ALREADY closed at ``now_ms``, or None if the schedule
@@ -158,6 +184,10 @@ class CycleReport:
     pauses: list[dict] = field(default_factory=list)   # [{class, detail, ref}]
     needs_operator: list[dict] = field(default_factory=list)  # genuine needs_answer (clean)
     summary: str = ""
+    #: human-readable span this report actually covered ("22:00–05:00
+    #: Europe/Dublin", or "full day Europe/Dublin"). Rendered instead of module
+    #: constants, which could describe a window the report never used.
+    window_label: str = ""
     #: throughput counts for the summary line (settled in the window)
     settled: int = 0
     done: int = 0
@@ -174,6 +204,7 @@ def assemble_cycle_report(
     cycle_key: str,
     window_start_ms: int,
     window_end_ms: int,
+    window_label: str = "",
 ) -> CycleReport:
     """Project the cycle's slice out of existing rows — ZERO LLM, pure SQL reads
     + mechanical bucketing. Reads ``eval_outcomes`` (PR1's read surface) for
@@ -253,6 +284,7 @@ def assemble_cycle_report(
         done=done,
         failed=failed,
     )
+    report.window_label = window_label
     report.summary = render_summary(report)
     return report
 
@@ -267,7 +299,8 @@ def render_summary(r: CycleReport) -> str:
     else:
         head = f"⚠️ {len(r.wedges)} wedge(s):"
     lines = [
-        f"🔁 Cycle report {r.cycle_key} ({CYCLE_WINDOW_START}–{CYCLE_WINDOW_END} {CYCLE_WINDOW_TZ})",
+        f"🔁 Cycle report {r.cycle_key}"
+        + (f" ({r.window_label})" if r.window_label else ""),
         head,
     ]
     if r.wedges:

@@ -499,10 +499,20 @@ class GoalService:
         from . import cycle_report as _nr
 
         now = _now_ms()
-        win = _nr.most_recent_closed_window(now)
+        # The cycle IS the operator's run window — enabled, that span; disabled
+        # (24/7), the calendar day. It used to be a separate hardcoded
+        # 22:00–05:00 setting, which silently stopped describing reality when
+        # 24/7 was ruled: problems outside those 7 hours entered no cycle, so
+        # the self-issue filer's recurrence count never advanced and it stopped
+        # filing (specs/tiny/cycle-is-when-devclaw-works).
+        _start, _end, _tz = _nr.cycle_window_for(self._store.get_run_schedule())
+        win = _nr.most_recent_closed_window(now, start=_start, end=_end, tz=_tz)
         if win is None:  # unresolvable schedule (bad tz/time) — skip, never crash
             return None
         cycle_key, start_ms, end_ms = win
+        window_label = (
+            f"full day {_tz}" if _start == _end else f"{_start}–{_end} {_tz}"
+        )
         if self._store.cycle_report_exists(cycle_key):
             return None  # already reported this cycle (idempotent)
 
@@ -517,7 +527,9 @@ class GoalService:
         except Exception as exc:  # noqa: BLE001 — telemetry, never fatal
             sys.stderr.write(f"goal-layer: pr-ledger refresh failed: {exc}\n")
 
-        report = _nr.assemble_cycle_report(self._store, cycle_key, start_ms, end_ms)
+        report = _nr.assemble_cycle_report(
+            self._store, cycle_key, start_ms, end_ms, window_label=window_label,
+        )
         # Push best-effort; NullNotifier / a relay outage returns False → log-only.
         sent = False
         try:
