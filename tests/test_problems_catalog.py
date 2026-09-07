@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from devclaw.goal.models import GoalStatus
 from devclaw.goal.store import GoalStore
 from devclaw.goal.transitions import Event
@@ -140,7 +142,20 @@ def test_table_is_bounded_n_occurrences_one_row(tmp_path):
 # ---- categories: the wired choke points land in the right bucket ------------
 
 
-def test_block_transition_records_a_block_problem(tmp_path):
+@pytest.mark.parametrize("kind, recovered, terminal", [
+    # a human-gated block is a dead stop on entry
+    ("needs_answer", 0, 1),
+    ("mechanical:dispatch_cap", 0, 1),
+    ("donegate_churn", 0, 1),
+    # a block with a mechanical heal path is a WAIT on entry: the brake working,
+    # never a terminal occurrence — so the self-issue filer (terminal_count > 0)
+    # cannot file a CI wait as a recurring bug (#853's class)
+    ("mechanical:ci", 1, 0),
+    ("mechanical:prep", 1, 0),
+    ("mechanical:env", 1, 0),
+    ("mechanical:corrupt_doc", 1, 0),
+])
+def test_block_transition_records_a_block_problem(tmp_path, kind, recovered, terminal):
     store = GoalStore(tmp_path, now=Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
@@ -149,15 +164,46 @@ def test_block_transition_records_a_block_problem(tmp_path):
         "g", Event.BLOCK,
         replace(
             s, phase="blocked", lifecycle="executing",
-            blocked_on="needs answer: which database?", blocked_kind="needs_answer",
+            blocked_on="waiting / needs answer", blocked_kind=kind,
         ),
         expect=s,
     )
     rows = store._state.list_problems(category="block")
     assert len(rows) == 1
-    assert rows[0]["kind"] == "needs_answer"
+    assert rows[0]["kind"] == kind
     assert rows[0]["last_goal_id"] == "g"
-    assert rows[0]["terminal_count"] == 1
+    assert rows[0]["recovered_count"] == recovered
+    assert rows[0]["terminal_count"] == terminal
+
+
+def test_heal_give_up_records_the_terminal_occurrence(tmp_path):
+    """The hold that never healed IS a terminal problem — recorded once, at the
+    heal cap, under the same ``mechanical:*`` kind its entry was counted
+    under, so the catalog row reads: entered N times (recovered), gave up
+    once (terminal)."""
+    import asyncio
+    from devclaw.goal import tick_guards
+    from tests.goal_fakes import RecordingNotifier
+    store = GoalStore(tmp_path, now=Clock())
+    seed_goal(tmp_path, "g")
+    store.save_status("g", GoalStatus(phase="idle", lifecycle="executing"))
+    s = store.load_status("g")
+    store.transition(
+        "g", Event.BLOCK,
+        replace(s, phase="blocked", blocked_on="waiting for CI", blocked_kind="mechanical:ci"),
+        expect=s,
+    )
+    notifier = RecordingNotifier()
+    asyncio.run(tick_guards._heal_give_up(
+        "g", store=store, notifier=notifier, cap=tick_guards.CI_HEAL_CAP,
+        reason="the delivered PR's CI never settled", kind="mechanical:ci",
+    ))
+    rows = store._state.list_problems(category="block")
+    assert [r["kind"] for r in rows] == ["mechanical:ci", "mechanical:ci"]
+    assert sum(r["recovered_count"] for r in rows) == 1
+    assert sum(r["terminal_count"] for r in rows) == 1
+    assert any("gave up" in r["sample_message"] for r in rows)
+    assert len(notifier.sent) == 1
 
 
 def test_block_staying_blocked_does_not_re_record(tmp_path):

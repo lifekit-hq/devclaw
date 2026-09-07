@@ -395,6 +395,7 @@ idle path because it fires only on a real failure) — UPSERTs one row per
 **distinct** problem keyed on a fingerprint (`category | kind |
 normalize(message)`), where `normalize()` strips the variable bits (uuids,
 paths, goal/task ids, numbers, timestamps) so the same root cause collapses.
+A block ENTERING a kind with a mechanical heal path (`SELF_HEALING_BLOCK_KINDS`: `ci`/`prep`/`env`/`corrupt_doc`) counts as `recovered` — a wait, the brake working — and only the give-up at its heal cap counts as `terminal`; every other block kind is terminal on entry.
 Recurrence increments `count` (and `recovered_count` vs `terminal_count`) rather
 than appending a row, so the table stays **bounded** — it holds distinct
 problems, not occurrences. It is wired at the failure choke points and captures

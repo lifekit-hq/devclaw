@@ -166,6 +166,16 @@ _STANDING_DONE_WHEN = re.compile(
 )
 
 
+#: The ``blocked_kind`` values with a mechanical heal path (tick_guards
+#: ``_autoheal_*`` / the corrupt-doc re-read): a goal ENTERING one of these
+#: is waiting, not stopped — the problems catalog counts the entry as
+#: ``recovered`` (the brake working) and the give-up at the heal cap as the
+#: one ``terminal`` occurrence. Every other kind is a dead stop on entry.
+SELF_HEALING_BLOCK_KINDS: frozenset[str] = frozenset({
+    "mechanical:ci", "mechanical:prep", "mechanical:env", "mechanical:corrupt_doc",
+})
+
+
 def is_standing(done_when: str) -> bool:
     """True when ``done_when`` declares the goal standing (unbounded). Such a
     goal must never terminally close via the done-gate — completion is the
