@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-07
 
-**Status**: Draft — awaiting `/speckit-clarify` with Denys (the questions are listed under Clarifications; nothing is implemented)
+**Status**: Draft — clarified 2026-09-07 with Denys (5 questions, all encoded below); ready for `/speckit-plan`; nothing is implemented
 
 **Input**: User description: "The completion contract reaches the actor: the worker gets the same numbered clause list the done-gate judges, and a red CI verdict carries its failing log" (issue #780, plus the CI-log sibling surfaced by the finance-sentry environment holds of 2026-09-06/07)
 
@@ -45,29 +45,13 @@ protocol domain (what goes into the worker, what comes out).
 
 ## Clarifications
 
-Questions for `/speckit-clarify`; each answer is encoded back here.
+### Session 2026-09-07
 
-- Q1: Decomposition at dispatch costs ONE evaluator call per contract
-  revision before the first worker session (never on an idle or blocked
-  tick). Accept that one call, or reuse the gate's current lazy pinning and
-  hand the worker the clauses only from the second increment onward?
-  (Recommendation: pay the call — the whole point is round one.)
-- Q2: When the worker reports a clause `UNMET`, does the thin path skip the
-  done proposal and dispatch the next increment (saves an evaluator round),
-  or still propose done and let the gate confirm? (Recommendation: skip —
-  the worker's own admission is a fact about its work, not evidence about
-  the repo; the gate still judges before any close.)
-- Q3: How much log rides in the correction? A bounded tail per failing job
-  (default 120 lines, the step that failed, ANSI stripped), or the whole
-  failed-step log written to a file in the goal checkout? (Recommendation:
-  the tail in the brief; a file needs a checkout write outside the change
-  span.)
-- Q4: Should the worker's per-clause report be REQUIRED by the settle
-  (a report that omits a pinned id is a malformed hand-back → task fails
-  closed) or advisory (missing ids are logged, the gate judges as today)?
-  (Recommendation: advisory in PR-1, required once the eval shows the
-  worker complies; a protocol gate that fails green work is the #186 class
-  in reverse.)
+- Q: Should the loop pay one evaluator call per contract revision to decompose the clauses BEFORE the first worker session, so round one already sees the rubric? → A: Yes — pay the call at dispatch; one decomposition per revision, on the dispatch path only, never on an idle or blocked tick. (Lazy gate-side pinning would leave round one, where first-pass is lost, blind; creation-time pinning was rejected because a pointer goal's contract is live.)
+- Q: When the worker's hand-back reports a clause as UNMET, should the loop skip the done proposal and dispatch the next increment directly, instead of proposing done and letting the gate refuse? → A: Skip the proposal and dispatch the next increment, in both strictness modes. The worker's admission is a fact about its work, never evidence about the repository; the gate runs when the worker claims every clause and still judges every clause before any close.
+- Q: How much of a failing CI job's log should the red-verdict correction carry to the worker? → A: A bounded tail in the brief: per failing check, the last 120 lines of the failed step, ANSI stripped, redacted, inside the existing steering cap; the bound is one config value. (A file in the checkout needs a write outside the materialize span; a per-ecosystem error filter is project-tooling knowledge devclaw must not hold, constitution IX.)
+- Q: In the dispatch brief, should the numbered clause list sit NEXT TO the contract prose the worker gets today, or REPLACE it? → A: Next to the prose, bounded: the prose carries the intent, the list carries the rubric; the list is capped the way steering is and the plan measures the brief budget (spec 021) against it. A pointer goal's issue text stays whole.
+- Q: Should the worker's per-clause report be REQUIRED by the settle from the start, or advisory first? → A: Advisory first: an omitted pinned id is logged as a protocol finding and the gate judges as today; the ratchet to required (a malformed hand-back fails closed) waits for the compliance eval showing the worker follows the format. Not tied to the strictness dial.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -190,8 +174,9 @@ every clause satisfied proposes done exactly as today.
    the goal does not propose done, the log names the clause, and the next
    increment's brief carries it under the steering marker.
 3. **Given** a hand-back that omits pinned ids, **When** settled, **Then**
-   the omission is logged as a protocol finding (advisory in this spec —
-   see Q4) and the done proposal proceeds; the gate judges as today.
+   the omission is logged as a protocol finding (advisory in this spec,
+   clarified 2026-09-07) and the done proposal proceeds; the gate judges
+   as today.
 4. **Given** the goal is under `strict`, **When** an `UNMET` clause is
    reported three increments in a row with the same id, **Then** the
    existing churn brake parks the goal (`donegate_churn`) with a typed
@@ -226,9 +211,12 @@ every clause satisfied proposes done exactly as today.
   drops of step 1a applied). One decomposition per revision, reused by
   dispatch and gate alike.
 - **FR-002**: Every dispatch brief for a pinned revision MUST carry the
-  pinned clauses as a numbered list (id + verbatim text), rendered by ONE
+  pinned clauses as a numbered list (id + verbatim text) NEXT TO the
+  contract prose it carries today — never instead of it — rendered by ONE
   generator shared with the gate's `Pinned clauses` block, so a rendering
-  change moves both.
+  change moves both. The list is capped the way steering is (the cap
+  truncates clause text, never drops an id); the plan measures the brief
+  budget of spec 021 against a pinned list of the largest live contract.
 - **FR-003**: A failed or empty decomposition MUST block the goal with a
   typed Problem (`needs_answer`, raised through `devclaw/goal/problems.py`)
   and MUST NOT dispatch — the empty-contract rule of spec 019 extends to
@@ -254,11 +242,16 @@ every clause satisfied proposes done exactly as today.
   the settle (`devclaw/queue/settle.py`) into structured fields on the
   task result.
 - **FR-009**: An `UNMET` report MUST suppress the done proposal for that
-  settle and MUST carry the clause into the next increment's steering;
-  the done-gate's judgment is never replaced by the report (the report is
-  a claim; the gate reads the repository).
-- **FR-010**: A hand-back that omits pinned ids is advisory in this spec
-  (logged, gate judges as today) — see Q4 for the ratchet.
+  settle, in both strictness modes, and the loop MUST dispatch the next
+  increment with the unmet clause carried in its steering — no review and
+  no evaluator call is spent on a gap the worker named. The done-gate's
+  judgment is never replaced by the report (the report is a claim; the
+  gate reads the repository) and runs when the worker claims every clause.
+- **FR-010**: A hand-back that omits pinned ids is advisory in this spec:
+  the omission is logged as a protocol finding and the gate judges as
+  today, in both strictness modes. The ratchet to required (a malformed
+  hand-back fails closed) is a later spec, gated on a compliance eval over
+  live hand-backs — never on diligence.
 - **FR-011**: The worker skill text MUST say, for a red verdict, that the
   failing log is in the brief and that fetching it is not a step; the
   `BLOCKED: env` skill line MUST exclude CI-log access from what a worker
@@ -302,9 +295,9 @@ every clause satisfied proposes done exactly as today.
   sandbox carries no credential by design (constitution I/II fence); the
   host already has the fact and the protocol is the right carrier.
 - **Making the per-clause report a hard settle gate in this spec.**
-  Deferred (Q4): a protocol gate that fails green work is the fail-closed
-  doctrine turned against the loop; ratchet it once an eval shows
-  compliance.
+  Deferred (clarified 2026-09-07): a protocol gate that fails green work is
+  the fail-closed doctrine turned against the loop; ratchet it once an eval
+  shows compliance.
 - **Decomposing at goal creation.** Rejected: pointer goals' contracts are
   live; the revision at creation is not the revision the first dispatch
   works under.
@@ -320,8 +313,9 @@ every clause satisfied proposes done exactly as today.
   rule: state each rule once).
 - `gh run view --log-failed` (or the jobs API) is available on the host
   with the credential the rollup read already uses.
-- The steering cap leaves room for a 120-line excerpt; the plan measures
-  the brief budget (spec 021) against it and lowers the default if not.
+- The steering cap leaves room for a 120-line excerpt AND the pinned
+  clause list; the plan measures the brief budget (spec 021) against both
+  on the largest live contract and lowers the defaults if not.
 
 ## Post-landing corrections
 
