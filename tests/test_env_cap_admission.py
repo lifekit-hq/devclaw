@@ -17,6 +17,7 @@ Tripwire classes pinned here (rules/testing.md):
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -585,6 +586,7 @@ class _FakeGh:
     creates: list = []
     comments: list = []
     next_number: "int | None" = 7
+    hang_s: float = 0.0
 
     def __init__(self) -> None:
         type(self).constructed += 1
@@ -593,6 +595,10 @@ class _FakeGh:
         return None
 
     async def create_issue(self, repo: str, *, title: str, body: str, labels: list) -> "int | None":
+        # `hang_s` stalls the create the way an unresponsive gh does, so the
+        # caller's wall-clock bound cancels a real doorway call mid-flight.
+        if type(self).hang_s:
+            await asyncio.sleep(type(self).hang_s)
         type(self).creates.append((repo, title, tuple(labels)))
         return type(self).next_number
 
@@ -608,7 +614,7 @@ class _FakeGh:
 def fake_gh(monkeypatch):
     from devclaw import issue_doorway
     _FakeGh.constructed, _FakeGh.creates, _FakeGh.comments = 0, [], []
-    _FakeGh.next_number = 7
+    _FakeGh.next_number, _FakeGh.hang_s = 7, 0.0
     monkeypatch.setattr(issue_doorway, "GhCli", _FakeGh)
     return _FakeGh
 
@@ -695,23 +701,43 @@ def test_a_filed_environment_gap_is_never_auto_closed_as_stale():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "self_repo, gh_number, expect",
+    "self_repo, gh_number, fault, expect",
     [
-        ("", 7, "NOT filed as devclaw work: DEVCLAW_SELF_REPO is unset"),
-        ("lifekit-hq/devclaw", None, "NOT filed as devclaw work: issue creation failed (gh)"),
+        ("", 7, "", "NOT filed as devclaw work: DEVCLAW_SELF_REPO is unset"),
+        ("lifekit-hq/devclaw", None, "",
+         "NOT filed as devclaw work: issue creation failed (gh)"),
+        ("lifekit-hq/devclaw", 7, "hang",
+         "NOT filed as devclaw work: gh did not answer within"),
+        ("lifekit-hq/devclaw", 7, "raise",
+         "NOT filed as devclaw work: RuntimeError: ledger unavailable"),
     ],
-    ids=["self-repo-unconfigured", "doorway-failed"],
+    ids=["self-repo-unconfigured", "doorway-failed", "gh-hung-past-the-bound",
+         "doorway-raised"],
 )
 async def test_a_deficiency_that_cannot_be_filed_says_why_and_still_holds(
-    tmp_path, monkeypatch, fake_gh, self_repo, gh_number, expect,
+    tmp_path, monkeypatch, fake_gh, self_repo, gh_number, fault, expect,
 ):
     """The other half of the same invariant: when there is no issue, the text
     says which rule or error stopped it — never a claim with no record behind
     it. The hold, its one ping and its heal are untouched either way, and an
-    unconfigured self-repo shells nothing."""
+    unconfigured self-repo shells nothing.
+
+    The last two cases are the ones the doorway CANNOT record for itself: its
+    own ``_fail`` never runs when the wall-clock bound cancels it mid-call or
+    when something raises before it is entered. A stated clause with no catalog
+    row behind it is #818's silence one level in — so the caller records it."""
+    from devclaw import issue_doorway
+    from devclaw.goal import env_issue
     from devclaw.goal.models import PollResult
     monkeypatch.setenv("DEVCLAW_SELF_REPO", self_repo)
     fake_gh.next_number = gh_number
+    if fault == "hang":
+        fake_gh.hang_s = 0.5
+        monkeypatch.setattr(env_issue, "FILING_TIMEOUT_S", 0.05)
+    elif fault == "raise":
+        async def _boom(*a, **kw):
+            raise RuntimeError("ledger unavailable")
+        monkeypatch.setattr(issue_doorway, "file_finding", _boom)
     store = _project_pair(tmp_path)
     _seed_catalog_row(store)
     evaluator, notifier = FakeClaude(), RecordingNotifier()
@@ -735,9 +761,12 @@ async def test_a_deficiency_that_cannot_be_filed_says_why_and_still_holds(
     if not self_repo:
         assert fake_gh.constructed == 0                  # no repo ⇒ nothing shelled
     else:
-        # a failed filing is loud on the catalog too, never silence
-        kinds = {r["kind"] for r in store._state.list_problems(category="delivery")}
-        assert "issue_filing_failed" in kinds
+        # a failed filing is loud on the catalog too, never silence — and ONE
+        # attempt is ONE occurrence, so a second recorder on the same exit
+        # (the doorway's and the caller's both firing) fails here.
+        failed = [r for r in store._state.list_problems(category="delivery")
+                  if r["kind"] == "issue_filing_failed"]
+        assert len(failed) == 1 and failed[0]["count"] == 1
     assert _deficiency_row(store)["issue_number"] is None
     assert evaluator.calls == 0
 

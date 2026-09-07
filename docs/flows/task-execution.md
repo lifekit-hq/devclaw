@@ -260,9 +260,12 @@ The gap is filed as devclaw work **in that same settle** (spec 038,
 fingerprint so one gap is ever one issue. The task-layer failure text names
 devclaw as the owner and stops there; the goal's log, `blocked_on` and owner
 ping carry the outcome — `filed as devclaw work: #N <url>`, `already tracked
-as devclaw work: #N`, or `NOT filed as devclaw work: <reason>` (an unset
-`DEVCLAW_SELF_REPO`, or the gh error, which also leaves a
-`delivery/issue_filing_failed` catalog row). Filing cannot change the hold.
+as devclaw work: #N`, or `NOT filed as devclaw work: <reason>` — an unset
+`DEVCLAW_SELF_REPO` (nothing was attempted, nothing recorded), or a failed
+attempt, which ALWAYS leaves a `delivery/issue_filing_failed` catalog row: the
+doorway records the failures it sees, and the caller records the two it cannot
+(a `gh` that hangs past the wall-clock bound, anything raised before the
+doorway is entered). Filing cannot change the hold.
 Before #818 the claim rode the settle text while filing waited on the
 once-per-cycle self-issue edge behind a two-run-cycle recurrence bar — which
 this very hold makes unreachable, so nothing was ever filed.

@@ -17,7 +17,9 @@ Everything here is mechanical: no LLM, and no subprocess at all unless
 ``DEVCLAW_SELF_REPO`` names a repo. The verb never raises and never touches the
 block — the hold is what protects the project's sessions, and bookkeeping must
 not be able to break it. Its whole output is one operator-readable clause the
-caller threads into the goal log, the ``blocked_on`` text and the owner ping.
+caller threads into the goal log, the ``blocked_on`` text and the owner ping —
+plus a problems-catalog row whenever an attempt failed, so a filing devclaw
+could not perform is countable and not merely readable on one goal's hold.
 """
 
 from __future__ import annotations
@@ -103,6 +105,20 @@ def _finding(
     )
 
 
+def _not_filed(store, repo: str, item: str, reason: str) -> EnvFilingOutcome:
+    """A filing that failed where the doorway could not record it itself
+    (:func:`_doorway.record_filing_failure` says which cases those are) — the
+    row, then the clause a human reads."""
+    try:
+        _doorway.record_filing_failure(
+            store, repo=repo, source=DOORWAY_SOURCE,
+            fingerprint=fingerprint_for_item(item), reason=reason,
+        )
+    except Exception as exc:  # noqa: BLE001 — bookkeeping never breaks the hold
+        sys.stderr.write(f"env-issue: recording the failed filing of {item!r}: {exc}\n")
+    return EnvFilingOutcome(line=f"NOT filed as devclaw work: {reason}")
+
+
 async def file_env_deficiency(
     store,
     *,
@@ -122,8 +138,9 @@ async def file_env_deficiency(
     reaches into the shared state store itself.
 
     Unset ``DEVCLAW_SELF_REPO`` is a stated gate, not a failure: nothing is
-    spawned and the reason is named. A doorway failure is loud on both surfaces
-    — the returned clause and the catalog row the doorway records itself.
+    spawned, nothing is recorded, and the reason is named. Every attempt that
+    DID fail is loud on both surfaces — the returned clause and exactly one
+    catalog row.
     """
     repo = repo or _self_issue.self_repo()
     if not repo:
@@ -134,9 +151,9 @@ async def file_env_deficiency(
             )
         )
     try:
-        # ``file_finding`` swallows its own failures into a ``failed`` outcome;
-        # what escapes it is finding validation and the wall-clock bound. Both
-        # degrade to a stated non-filing — never into the settle.
+        # What escapes ``file_finding`` is finding validation and the
+        # wall-clock bound. Both degrade to a stated, recorded non-filing —
+        # never into the settle.
         outcome = await asyncio.wait_for(
             _doorway.file_finding(
                 _finding(item, goal_id=goal_id, project_id=project_id,
@@ -148,16 +165,26 @@ async def file_env_deficiency(
             timeout=FILING_TIMEOUT_S,
         )
     except asyncio.TimeoutError:
-        return EnvFilingOutcome(
-            line=f"NOT filed as devclaw work: gh did not answer within {FILING_TIMEOUT_S:g}s"
+        # The create may have landed on GitHub before the bound cut the call,
+        # with no ledger row to prove it — say so, because the next occurrence
+        # of this gap would then open a second issue for one root cause.
+        return _not_filed(
+            store, repo, item,
+            f"gh did not answer within {FILING_TIMEOUT_S:g}s "
+            "(an issue may exist with no ledger row behind it)",
         )
     except Exception as exc:  # noqa: BLE001 — bookkeeping never breaks the hold
-        sys.stderr.write(f"env-issue: filing {item!r} on {repo} raised: {exc}\n")
-        return EnvFilingOutcome(line=f"NOT filed as devclaw work: {type(exc).__name__}: {exc}")
+        return _not_filed(store, repo, item, f"{type(exc).__name__}: {exc}")
 
-    if not outcome.ok or outcome.issue_number is None:
+    if not outcome.ok:
+        # The doorway saw this one and recorded it; a second row here would
+        # double-count one failure.
         return EnvFilingOutcome(
             line=f"NOT filed as devclaw work: {outcome.reason or 'filing failed'}"
+        )
+    if outcome.issue_number is None:
+        return _not_filed(
+            store, repo, item, f"the doorway reported {outcome.action} with no issue number"
         )
     number = outcome.issue_number
     # Link the catalog row so the once-per-cycle filer reads it as already

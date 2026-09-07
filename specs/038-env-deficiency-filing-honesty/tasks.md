@@ -41,6 +41,12 @@
 
 ---
 
+## Post-landing corrections
+
+- [x] T010 [US1] **FR-007 was only half-held.** `file_finding` records the failures it *sees*, but two of `file_env_deficiency`'s exits never reach it: the FR-010 wall-clock bound cancels it mid-call (`CancelledError` is not an `Exception`, so its handler never runs) and anything raised before it is entered escapes it entirely. Both returned a stated `NOT filed` clause with NO catalog row — #818's own silence, one level in, inside the change that closed #818. `devclaw/issue_doorway.py` grows `record_filing_failure` (FR-006's recording half as a verb a producer can call; `_fail` now delegates to it, so there is ONE shape and ONE kind for a failed filing however it failed), `devclaw/goal/env_issue.py` routes both exits through it via `_not_filed`, and the timeout's reason names the reconciliation risk it leaves behind (the create may have landed with no ledger row, which is how one gap could become two issues). The two exits are added to the existing parametrized failure case in `tests/test_env_cap_admission.py` — the class test, not a sibling; the hang case drives a real doorway call cancelled by a shortened bound rather than a stubbed `TimeoutError`, so it fails if the bound stops being enforced
+
+---
+
 ## Dependencies
 
 - **US1** is self-contained. T001 precedes T002 (the passthroughs are its store surface); T002 precedes T003; T004 is independent of T001–T003 and can land in the same PR in any order.

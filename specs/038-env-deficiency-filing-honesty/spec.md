@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-07
 
-**Status**: US1 and US2 implemented 2026-09-07. Every user story in this spec is built; the only carried item is the pre-existing ledger drift recorded under "Known gap (not this spec's)".
+**Status**: US1 and US2 implemented 2026-09-07, plus the T010 post-landing correction that made FR-007 hold on the two failure exits the doorway cannot see. Every user story in this spec is built; the only carried item is the pre-existing ledger drift recorded under "Known gap (not this spec's)".
 
 **Input**: lifekit-hq/devclaw issue #818 — "Worker env deficiency claims 'filed as devclaw work' but no issue was created"
 
@@ -155,7 +155,12 @@ or set the env var; assert no finding.
 - **FR-006**: With `DEVCLAW_SELF_REPO` unset the filing path MUST spawn no
   subprocess (the default for every dev checkout and every test).
 - **FR-007**: A filing failure MUST leave a problems-catalog row (the doorway's
-  `delivery/issue_filing_failed`), never silence.
+  `delivery/issue_filing_failed`), never silence. This covers EVERY failed
+  attempt, not only the ones the doorway sees: a caller's wall-clock bound
+  (FR-010) cancels `file_finding` mid-call and anything raised before it is
+  entered never reaches its handler, so the caller records those itself through
+  the doorway's own recorder — one kind for the whole class, however it failed.
+  An unset self-repo (FR-006) is not a failed attempt and records nothing.
 - **FR-008**: `devclaw/queue/settle.py`'s environment-deficiency text MUST stop
   asserting that the gap is filed; it names devclaw as the owner and leaves the
   outcome to the layer that performs it.

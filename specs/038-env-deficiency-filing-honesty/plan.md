@@ -118,6 +118,17 @@ tests/test_env_cap_admission.py   # extends the worker-deficiency tripwire cases
   CAS'd sequence inside `_block_on_env_cap`; adding a column for "filing
   outcome" would be a second writer for a fact that is only ever read by a
   human.
+- **A failed filing has ONE recorder (T010).** The doorway owns the shape of
+  "devclaw could not file" — category, kind, message — so a producer whose
+  filing failed outside `file_finding` calls `record_filing_failure` rather than
+  re-typing a `record_problem` call. A second shape would split one class across
+  two fingerprints in the catalog, which is the #630 smell in miniature: the
+  count an operator reads would depend on which layer happened to notice.
+  Consequence to know when reading the catalog: the message carries the source,
+  the repo and the failure MODE but not the item, so the row's `count` is
+  "filings devclaw could not perform, this way" across every gap — the root
+  cause of a filing failure is the filing path, not which tool was missing. The
+  gap itself is already one row per item (`block/env_deficiency`).
 - **Never-raises, and bounded.** `file_env_deficiency` swallows everything and
   degrades to a stated "NOT filed: <error>" line. The hold is the fact that
   protects the project's sessions; bookkeeping must not be able to break it
