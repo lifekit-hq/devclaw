@@ -1140,3 +1140,29 @@ def test_contract_pins_orphan_goal_detected(env):
 def test_contract_pins_present_is_ok(env):
     (f,) = _findings(_run(env), "instance.donegate.contract_pins")
     assert f.verdict is Verdict.OK
+
+
+# ---- spec 038: loop-health tables + the silent worker usage source ---------
+
+
+def test_loop_health_tables_absent_fails_with_restart_remedy(env):
+    """A DB predating spec 038 must not read as healthy: every loop-health
+    metric would silently be unknown. Seeded fault: drop one of the three."""
+    env["store"]._db.execute("DROP TABLE loop_spans")
+    env["store"]._commit()
+    f = _findings(_run(env), "instance.loop_health.tables")
+    assert f and f[0].verdict is Verdict.FAIL
+    assert "loop_spans" in f[0].evidence and "restart" in (f[0].remedy or "")
+
+
+def test_silent_worker_usage_source_warns(env):
+    """Tasks settled this week with no worker usage row reported = the source
+    the spec's live check found dead; doctor names it instead of letting cost
+    per outcome read as a healthy zero."""
+    tid = "t-usage-silent"
+    env["store"].create_task(id=tid, kind="implement_feature", workspace_dir=str(env["tmp"]), goal="x")
+    env["store"].claim_pending(tid)
+    env["store"].mark_done(tid, json.dumps({"status": "ok"}))
+    f = _findings(_run(env), "instance.loop_health.tables")
+    assert f and f[0].verdict is Verdict.WARN
+    assert "usage" in f[0].evidence

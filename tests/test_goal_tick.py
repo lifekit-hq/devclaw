@@ -95,6 +95,41 @@ async def test_idle_tick_spends_zero_tokens(tmp_path):
     assert notifier.sent == []
 
 
+class _LoopSampleEngine(FakeEngine):
+    """FakeEngine + the spec 038 attribution seam: records every sample."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.samples: list[tuple[str, str]] = []
+
+    def record_loop_sample(self, *, now_ms: int, cause: str, detail: str = "") -> str:
+        self.samples.append((cause, detail))
+        return cause
+
+
+@pytest.mark.asyncio
+async def test_tick_all_idle_attributes_the_interval_with_zero_tokens(tmp_path):
+    """Spec 038 US1 rides the zero-token guard: a full sweep over an idle
+    store writes exactly ONE loop sample through the engine seam (FR-004a)
+    and spends no cognition doing it — and a goal blocked on the owner is
+    attributed to its blocked_kind verbatim (FR-002), never to a new name."""
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g", cadence="1d")
+    store.save_status("g", GoalStatus(phase="idle", last_plan_at=store.now_iso()))
+    evaluator, engine, notifier = FakeClaude(), _LoopSampleEngine(), RecordingNotifier()
+
+    await tick_all(store=store, engine=engine, evaluator_caller=evaluator,
+                   notifier=notifier, prepare_ws=fake_prepare)
+    assert evaluator.calls == 0 and engine.dispatched == []
+    assert [c for c, _ in engine.samples] == ["all_planned_done"]
+
+    store.save_status("g", GoalStatus(phase="blocked", blocked_on="q?", blocked_kind="needs_answer"))
+    await tick_all(store=store, engine=engine, evaluator_caller=evaluator,
+                   notifier=notifier, prepare_ws=fake_prepare)
+    assert evaluator.calls == 0
+    assert engine.samples[-1] == ("needs_answer", "g")
+
+
 @pytest.mark.asyncio
 async def test_in_flight_running_spends_zero_tokens(tmp_path):
     store = _store(tmp_path, Clock())
