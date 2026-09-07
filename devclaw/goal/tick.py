@@ -1060,7 +1060,7 @@ async def tick_all(
     issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
 ) -> dict[str, Outcome]:
     """Tick every goal (see :func:`_tick_all_pass`), then attribute the
-    interval since the previous sweep to ONE cause (spec 038 US1).
+    interval since the previous sweep to ONE cause (spec 039 US1).
 
     The attribution is the feature's single write point (FR-004a) and sits
     BELOW every early return of the pass — a paused or held sweep is exactly

@@ -22,7 +22,7 @@ fixes it — doctor executes none of them.
 Later check families, by home — instance (`devclaw/doctor/checks_instance.py`):
 registry token, gate consultation, schedule dispatch, pr_ledger, sandbox
 sizing, problems/decisions tables, merge-on-close columns, contract pins,
-loop-health tables (spec 038: `loop_spans`/`usage_ledger`/`intake_grades`
+loop-health tables (spec 039: `loop_spans`/`usage_ledger`/`intake_grades`
 present, and a WARN when a week of settled tasks reported no worker usage);
 project (`devclaw/doctor/checks_project.py`): tracked checkout, issue-ref
 shape, backlog-ready contract, capability declaration, `.goals/` ignored,

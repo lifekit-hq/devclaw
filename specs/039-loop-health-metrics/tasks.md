@@ -1,6 +1,6 @@
 # Tasks: Loop Health Metrics
 
-**Input**: Design documents from `specs/038-loop-health-metrics/`
+**Input**: Design documents from `specs/039-loop-health-metrics/`
 **Prerequisites**: plan.md, spec.md, research.md, data-model.md, contracts/, quickstart.md
 
 **Tests**: tripwire classes ONLY (constitution Development Workflow): FR-019 doctor seeded fault, FR-020 absent-is-never-zero, one zero-token guard case, the existing fake-agent seam proof. No behaviour tests.
@@ -11,33 +11,33 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Verify worktree import path and green baseline (`.venv` python prints the worktree `devclaw/__init__.py`; full suite green) — no code
+- [X] T001 Verify worktree import path and green baseline (`.venv` python prints the worktree `devclaw/__init__.py`; full suite green) — no code
 
 ## Phase 2: Foundational (PR-A base)
 
-- [ ] T002 Create `devclaw/loop_health.py` (pure leaf): `CAUSES`, `bucket_for(cause)`, `derive_loop_cause(...)` per research D3, `rate math` helpers (`not_stuck_rate(buckets)` returning None on empty) — no store access
-- [ ] T003 Add `loop_spans`, `usage_ledger`, `intake_grades` CREATE TABLE + indexes to `devclaw/state_store/schema.py` (idempotent)
-- [ ] T004 Create `devclaw/state_store/health.py` `LoopHealthMixin` with `record_loop_sample(now_ms, cause, detail, max_gap_ms)` (run-length spans + `unobserved` gap per D2), `list_loop_spans(since_ms)`; compose it into `StateStore` in `devclaw/state_store/core.py`
-- [ ] T005 Register `loop_health` as a leaf in `pyproject.toml` `[tool.importlinter]` if the layer contract requires naming it; run `lint-imports`
+- [X] T002 Create `devclaw/loop_health.py` (pure leaf): `CAUSES`, `bucket_for(cause)`, `derive_loop_cause(...)` per research D3, `rate math` helpers (`not_stuck_rate(buckets)` returning None on empty) — no store access
+- [X] T003 Add `loop_spans`, `usage_ledger`, `intake_grades` CREATE TABLE + indexes to `devclaw/state_store/schema.py` (idempotent)
+- [X] T004 Create `devclaw/state_store/health.py` `LoopHealthMixin` with `record_loop_sample(now_ms, cause, detail, max_gap_ms)` (run-length spans + `unobserved` gap per D2), `list_loop_spans(since_ms)`; compose it into `StateStore` in `devclaw/state_store/core.py`
+- [X] T005 Register `loop_health` as a leaf in `pyproject.toml` `[tool.importlinter]` if the layer contract requires naming it; run `lint-imports`
 
 ## Phase 3: US1 — Know why the loop is not running (PR-A)
 
 **Independent test**: arm no goals, tick twice, read `/loop-health.json` → `empty_backlog`; block a goal `needs_answer` → attributed to it, bucket owner, not-stuck unchanged.
 
-- [ ] T006 [US1] `devclaw/goal/engine.py`: `GoalEngine.record_loop_sample(now_ms, cause, detail)` delegating to the store with `max_gap_ms = 3 × tick_seconds` (engine learns tick seconds from config `goal_tick_seconds()`)
-- [ ] T007 [US1] `devclaw/goal/tick.py`: rename the body of `tick_all` to `_tick_all_pass`; new `tick_all` awaits it then calls `_record_loop_sample(engine, store, outcomes)` (best-effort, getattr seam, after every early return) which gathers pause / operator block / per-goal window / live statuses and calls `loop_health.derive_loop_cause`
-- [ ] T008 [US1] `devclaw/telemetry.py`: `compute_loop_health(store, window_hours)` — spans clipped to the window, per-cause/per-bucket seconds, `not_stuck_rate` (None on empty), `unobserved_seconds`, plus `clean_cycle` and `first_pass` READ with the scorecard's definitions (factor the two scorecard reads into shared helpers, no second definition)
-- [ ] T009 [US1] `devclaw/server/routes/observability.py`: `GET /loop-health.json?window_hours=`; `devclaw/server/tools/observability.py`: `get_loop_health` MCP tool + re-export in `devclaw/server/tools/__init__.py`
-- [ ] T010 [US1] `tests/test_goal_tick.py`: `test_tick_all_idle_records_one_loop_sample_with_zero_tokens` — FakeEngine gains `record_loop_sample` recording calls; assert one call, cause `all_planned_done`/`empty_backlog`, `evaluator.calls == 0`
+- [X] T006 [US1] `devclaw/goal/engine.py`: `GoalEngine.record_loop_sample(now_ms, cause, detail)` delegating to the store with `max_gap_ms = 3 × tick_seconds` (engine learns tick seconds from config `goal_tick_seconds()`)
+- [X] T007 [US1] `devclaw/goal/tick.py`: rename the body of `tick_all` to `_tick_all_pass`; new `tick_all` awaits it then calls `_record_loop_sample(engine, store, outcomes)` (best-effort, getattr seam, after every early return) which gathers pause / operator block / per-goal window / live statuses and calls `loop_health.derive_loop_cause`
+- [X] T008 [US1] `devclaw/telemetry.py`: `compute_loop_health(store, window_hours)` — spans clipped to the window, per-cause/per-bucket seconds, `not_stuck_rate` (None on empty), `unobserved_seconds`, plus `clean_cycle` and `first_pass` READ with the scorecard's definitions (factor the two scorecard reads into shared helpers, no second definition)
+- [X] T009 [US1] `devclaw/server/routes/observability.py`: `GET /loop-health.json?window_hours=`; `devclaw/server/tools/observability.py`: `get_loop_health` MCP tool + re-export in `devclaw/server/tools/__init__.py`
+- [X] T010 [US1] `tests/test_goal_tick.py`: `test_tick_all_idle_records_one_loop_sample_with_zero_tokens` — FakeEngine gains `record_loop_sample` recording calls; assert one call, cause `all_planned_done`/`empty_backlog`, `evaluator.calls == 0`
 
 ## Phase 4: US2 — Know whether devclaw fixes itself (PR-A)
 
 **Independent test**: seed problems with recovered/terminal counts, read the surface → rate = recovered/(recovered+terminal) with raw counts; empty catalog → null.
 
-- [ ] T011 [US2] `devclaw/telemetry.py`: `compute_self_heal(store, since_ms)` per D4 (basis string, raw sums, None on empty); include in `compute_loop_health` output
-- [ ] T012 [US2] `devclaw/doctor/checks_instance.py`: `check_loop_health_tables` (FAIL on missing tables/column; WARN on a silent worker usage source) + register in `INSTANCE_CHECKS`; `tests/test_doctor.py` seeded-fault test (drop `loop_spans` → FAIL with restart remedy)
-- [ ] T013 [US2] `tests/test_loop_health_absent_is_never_zero.py`: FR-020 parametrized cases for `compute_loop_health` (no spans), `compute_self_heal` (empty), `bucket_for` totality (unknown kind → devclaw), `not_stuck_rate` (empty → None) — PR-B/C extend this file
-- [ ] T014 [US2] Docs honesty PR-A: `docs/architecture.md` (observability paragraph: loop attribution + self-heal surface), `docs/runbooks/doctor.md` (check family), `docs/INDEX.md` currency tags; `/ship` PR-A
+- [X] T011 [US2] `devclaw/telemetry.py`: `compute_self_heal(store, since_ms)` per D4 (basis string, raw sums, None on empty); include in `compute_loop_health` output
+- [X] T012 [US2] `devclaw/doctor/checks_instance.py`: `check_loop_health_tables` (FAIL on missing tables/column; WARN on a silent worker usage source) + register in `INSTANCE_CHECKS`; `tests/test_doctor.py` seeded-fault test (drop `loop_spans` → FAIL with restart remedy)
+- [X] T013 [US2] `tests/test_loop_health_absent_is_never_zero.py`: FR-020 parametrized cases for `compute_loop_health` (no spans), `compute_self_heal` (empty), `bucket_for` totality (unknown kind → devclaw), `not_stuck_rate` (empty → None) — PR-B/C extend this file
+- [X] T014 [US2] Docs honesty PR-A: `docs/architecture.md` (observability paragraph: loop attribution + self-heal surface), `docs/runbooks/doctor.md` (check family), `docs/INDEX.md` currency tags; `/ship` PR-A
 
 ## Phase 5: US3 — Keep cost history past 30 days (PR-B)
 

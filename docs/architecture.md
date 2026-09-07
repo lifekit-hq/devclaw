@@ -456,7 +456,7 @@ on-demand direction evaluation (`evaluate_goal`) were removed: four
 pings go out raw; the problems catalog and GitHub Issues carry triage; the
 evaluator has exactly one caller, the done-gate on a done proposal.
 
-**Loop health — why the loop is not running (spec 038, 2026-09-07).** Idle
+**Loop health — why the loop is not running (spec 039, 2026-09-07).** Idle
 had one bit (`cycle_reports.idle`) and no cause. Now every heartbeat sweep
 attributes the interval since the previous sweep to ONE cause — the
 existing `blocked_kind` vocabulary verbatim, or the previously unnamed

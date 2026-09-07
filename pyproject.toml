@@ -133,7 +133,7 @@ forbidden_modules = ["devclaw.*"]
 ignore_imports = ["devclaw.llm_call -> devclaw.loom.*", "devclaw.llm_call -> devclaw.config"]
 
 [[tool.importlinter.contracts]]
-name = "loop_health is a leaf — the idle-cause vocabulary and rate math import nothing (spec 038)"
+name = "loop_health is a leaf — the idle-cause vocabulary and rate math import nothing (spec 039)"
 type = "forbidden"
 source_modules = ["devclaw.loop_health"]
 forbidden_modules = ["devclaw.*"]

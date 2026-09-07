@@ -220,7 +220,7 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                   PRIMARY KEY (repo, fingerprint)
                 );
 
-                -- Loop health (spec 038). Three permanent, thin tables, each
+                -- Loop health (spec 039). Three permanent, thin tables, each
                 -- with ONE writer (state_store/health.py):
                 --   loop_spans    — idle attribution, run-length: every
                 --                   heartbeat sweep attributes the interval

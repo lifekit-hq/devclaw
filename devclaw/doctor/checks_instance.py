@@ -992,7 +992,7 @@ def check_loop_health_tables(ctx: "InstanceContext") -> list[Finding]:
             return [Finding(
                 cid, Verdict.FAIL,
                 f"loop-health table(s) absent: {', '.join(missing)} — the DB predates "
-                "spec 038; idle cause, self-heal and cost history read unknown until "
+                "spec 039; idle cause, self-heal and cost history read unknown until "
                 "the tables exist",
                 remedy="restart devclaw (StateStore bootstraps the tables at construction)",
             )]
@@ -1011,7 +1011,7 @@ def check_loop_health_tables(ctx: "InstanceContext") -> list[Finding]:
             cid, Verdict.WARN,
             f"{settled} task(s) settled in the last 7 days but no worker usage was "
             "reported — the worker usage source is silent (sandbox image or runner "
-            "predate spec 038, or the agent's transcript path is not writable); "
+            "predate spec 039, or the agent's transcript path is not writable); "
             "cost per outcome reads unknown",
             remedy="redeploy with the rebuilt sandbox image; verify a settled task's "
                    "usage_ledger row reads reported=1",

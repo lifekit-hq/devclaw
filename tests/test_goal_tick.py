@@ -96,7 +96,7 @@ async def test_idle_tick_spends_zero_tokens(tmp_path):
 
 
 class _LoopSampleEngine(FakeEngine):
-    """FakeEngine + the spec 038 attribution seam: records every sample."""
+    """FakeEngine + the spec 039 attribution seam: records every sample."""
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
@@ -109,7 +109,7 @@ class _LoopSampleEngine(FakeEngine):
 
 @pytest.mark.asyncio
 async def test_tick_all_idle_attributes_the_interval_with_zero_tokens(tmp_path):
-    """Spec 038 US1 rides the zero-token guard: a full sweep over an idle
+    """Spec 039 US1 rides the zero-token guard: a full sweep over an idle
     store writes exactly ONE loop sample through the engine seam (FR-004a)
     and spends no cognition doing it — and a goal blocked on the owner is
     attributed to its blocked_kind verbatim (FR-002), never to a new name."""

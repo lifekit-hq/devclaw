@@ -509,7 +509,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
 
     # ---- per-goal convergence (spec 018 US1) ---------------------------
     # Goal-weighted, from the goal_convergence terminal ledger — ONE
-    # definition, shared with the loop-health surface (spec 038 FR-016).
+    # definition, shared with the loop-health surface (spec 039 FR-016).
     convergence, convergence_note = _convergence_block(store, since_ms=since_ms, bench_ws=bench_ws)
 
     # ---- cost per merged PR (the legibility number) ---------------------
@@ -691,7 +691,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
     }
 
 
-# ---- shared reads: convergence + cycles (one definition each, spec 038 FR-016)
+# ---- shared reads: convergence + cycles (one definition each, spec 039 FR-016)
 
 
 def _convergence_block(store: Any, *, since_ms: int, bench_ws: "set | None" = None) -> "tuple[dict, Optional[str]]":
@@ -778,7 +778,7 @@ def _cycle_block(store: Any, *, since_ms: int) -> dict:
     }
 
 
-# ---- loop health (spec 038) ------------------------------------------------
+# ---- loop health (spec 039) ------------------------------------------------
 #
 # Why the loop is not running, whether it fixes itself, and (read from their
 # existing sources) whether it converges. Pure projections over loop_spans /
@@ -788,7 +788,7 @@ def _cycle_block(store: Any, *, since_ms: int) -> dict:
 
 def compute_self_heal(store: Any, *, since_ms: int) -> dict:
     """Σ recovered / (Σ recovered + Σ terminal) over the problems catalog's
-    EXISTING counters (spec 038 US2, FR-007). The counters are lifetime per
+    EXISTING counters (spec 039 US2, FR-007). The counters are lifetime per
     fingerprint; the window selects problems by last_seen — the ``basis``
     line says so, and the raw sums ride alongside. None on an empty
     denominator (FR-008)."""
@@ -811,7 +811,7 @@ def compute_self_heal(store: Any, *, since_ms: int) -> dict:
 
 
 def compute_idle_attribution(store: Any, *, since_ms: int, now_ms: Optional[int] = None) -> dict:
-    """Idle by cause over ``loop_spans`` clipped to the window (spec 038 US1):
+    """Idle by cause over ``loop_spans`` clipped to the window (spec 039 US1):
     per-cause seconds, per-bucket seconds (the bucket is DERIVED from the
     cause here, never stored — FR-005a), the not-stuck rate (FR-005b, None
     when nothing was observed) and the unobserved time reported apart."""
@@ -826,7 +826,7 @@ def compute_idle_attribution(store: Any, *, since_ms: int, now_ms: Optional[int]
             "unobserved_seconds": 0,
             "buckets": {b: 0 for b in _lh.RESPONSIBILITY_BUCKETS},
             "causes": [], "current": None,
-            "note": "loop_spans table absent (DB predates spec 038) — idle cause unknown",
+            "note": "loop_spans table absent (DB predates spec 039) — idle cause unknown",
         }
     per_cause: dict[str, dict] = {}
     buckets: dict[str, float] = {b: 0.0 for b in _lh.RESPONSIBILITY_BUCKETS}
@@ -869,7 +869,7 @@ def compute_idle_attribution(store: Any, *, since_ms: int, now_ms: Optional[int]
 
 
 def compute_loop_health(store: Any, *, window_hours: "int | None" = None, registry: Any = None) -> dict:
-    """The loop-health surface (spec 038): idle by cause led by the not-stuck
+    """The loop-health surface (spec 039): idle by cause led by the not-stuck
     rate, the self-heal rate, and the two already-built convergence numbers
     read from their existing sources with the scorecard's definitions
     (FR-016). Pure store read; window defaults to the ratchet window."""

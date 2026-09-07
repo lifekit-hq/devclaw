@@ -68,7 +68,7 @@ async def get_scorecard_metrics(
 async def get_loop_health(
     window_hours: Annotated[int, Field(ge=1, le=24 * 90)] = 168,
 ) -> str:
-    """Why the loop is not running, and whether it runs unattended (spec 038):
+    """Why the loop is not running, and whether it runs unattended (spec 039):
     idle time by cause over the window, each cause in ONE responsibility
     bucket (devclaw-caused / owner's turn / no work available), headlined by
     the **not-stuck rate** — the fraction of observed time spent working or

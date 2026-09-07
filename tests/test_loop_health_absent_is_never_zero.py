@@ -1,4 +1,4 @@
-"""Spec 038 FR-020 — the one tripwire the feature pins: *absent usage / absent
+"""Spec 039 FR-020 — the one tripwire the feature pins: *absent usage / absent
 history is never rendered as zero*, at every layer that reads it.
 
 An empty sample that reads ``0`` (or ``100%``) is the failure class the whole

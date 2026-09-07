@@ -90,7 +90,7 @@ Nothing in this feature assumes them.
 
 ### D1 — Worker usage source: the agent's own transcript, read by the runner (IN scope)
 
-**Decision**: Ship the source inside spec 038 (PR-B). Two bounded changes:
+**Decision**: Ship the source inside spec 039 (PR-B). Two bounded changes:
 1. `engine/sandcastle.py` adds `--tmpfs /home/agent/.claude/projects:rw,exec`
    — the third scratch subpath, same posture as `session-env`.
 2. `runner/runner.py`: when the ACP outcome reported no usage AND the ACP

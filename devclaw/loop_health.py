@@ -1,4 +1,4 @@
-"""Loop health — the ONE definition of "why is the loop not running" (spec 038).
+"""Loop health — the ONE definition of "why is the loop not running" (spec 039).
 
 Pure and store-free (a leaf, like ``dispatch_gate``): the cause vocabulary,
 the responsibility bucket each cause derives to (FR-005a — derived, never

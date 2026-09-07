@@ -1,8 +1,8 @@
 # Implementation Plan: Loop Health Metrics
 
-**Branch**: `feat/038-loop-health-metrics` | **Date**: 2026-09-07 | **Spec**: [spec.md](./spec.md)
+**Branch**: `feat/039-loop-health-metrics` | **Date**: 2026-09-07 | **Spec**: [spec.md](./spec.md)
 
-**Input**: Feature specification from `specs/038-loop-health-metrics/spec.md`
+**Input**: Feature specification from `specs/039-loop-health-metrics/spec.md`
 
 ## Summary
 
@@ -69,7 +69,7 @@ One line per principle in `.specify/memory/constitution.md`; answer each, do not
 ### Documentation (this feature)
 
 ```text
-specs/038-loop-health-metrics/
+specs/039-loop-health-metrics/
 ├── plan.md              # This file
 ├── research.md          # Phase 0: live findings + decisions D1–D9
 ├── data-model.md        # Phase 1: the three tables + the convergence columns

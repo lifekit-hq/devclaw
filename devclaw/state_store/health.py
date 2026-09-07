@@ -1,4 +1,4 @@
-""":class:`LoopHealthMixin` — the single writer of the spec 038 tables.
+""":class:`LoopHealthMixin` — the single writer of the spec 039 tables.
 
 ``loop_spans`` (idle attribution, run-length), ``usage_ledger`` (permanent
 per-run usage) and ``intake_grades`` (the grader's prediction). Composed

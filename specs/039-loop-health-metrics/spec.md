@@ -1,6 +1,6 @@
 # Feature Specification: Loop Health Metrics
 
-**Feature Branch**: `feat/loop-health-metrics`
+**Feature Branch**: `feat/038-loop-health-metrics` (spec renumbered 038 → 039 on 2026-09-07 at PR-A merge: main already carried `specs/038-env-deficiency-filing-honesty`, written in-sandbox by the issue-818 goal; the branch keeps its name)
 
 **Created**: 2026-09-06
 

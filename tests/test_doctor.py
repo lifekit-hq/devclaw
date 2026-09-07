@@ -1142,11 +1142,11 @@ def test_contract_pins_present_is_ok(env):
     assert f.verdict is Verdict.OK
 
 
-# ---- spec 038: loop-health tables + the silent worker usage source ---------
+# ---- spec 039: loop-health tables + the silent worker usage source ---------
 
 
 def test_loop_health_tables_absent_fails_with_restart_remedy(env):
-    """A DB predating spec 038 must not read as healthy: every loop-health
+    """A DB predating spec 039 must not read as healthy: every loop-health
     metric would silently be unknown. Seeded fault: drop one of the three."""
     env["store"]._db.execute("DROP TABLE loop_spans")
     env["store"]._commit()

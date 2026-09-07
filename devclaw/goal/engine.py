@@ -203,7 +203,7 @@ class InProcessEngine:
 
     def operator_hold_state(self) -> tuple[bool, str]:
         """The manual hold alone (``StateStore.operator_hold``), read beside
-        :meth:`operator_block` by the loop-health attribution (spec 038): a
+        :meth:`operator_block` by the loop-health attribution (spec 039): a
         held sweep is the owner's turn, a closed window is no work — the
         combined gate cannot tell them apart."""
         on, reason = self._store.operator_hold()
@@ -285,7 +285,7 @@ class InProcessEngine:
 
     def record_loop_sample(self, *, now_ms: int, cause: str, detail: str = "") -> str:
         """Attribute the interval since the previous heartbeat sweep to ONE
-        cause (spec 038 US1, FR-004a: the heartbeat is the only write point).
+        cause (spec 039 US1, FR-004a: the heartbeat is the only write point).
         Same delegating seam as :meth:`prune_traces` — the store owns the
         write, the engine is how the tick reaches it, and a test double
         without this method records nothing. A gap longer than three ticks

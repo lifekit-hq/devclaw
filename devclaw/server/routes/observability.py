@@ -4,7 +4,7 @@ Read-only projections the console's operator views render:
 ``/problems.json`` (the deduplicated problems catalog with its lifecycle
 stage), ``/usage.json`` (the instance-wide token/cost aggregate),
 ``/traces.json`` (the run-trace read surface, every filter applied in SQL)
-and ``/loop-health.json`` (spec 038: why the loop is not running, whether it
+and ``/loop-health.json`` (spec 039: why the loop is not running, whether it
 self-heals, whether it converges — every rate null on an empty sample).
 """
 
@@ -88,7 +88,7 @@ async def usage_json(_request: Request) -> Response:
 
 @mcp.custom_route("/loop-health.json", methods=["GET"])
 async def loop_health_json(request: Request) -> Response:
-    """Spec 038: idle by cause led by the not-stuck rate, the self-heal rate,
+    """Spec 039: idle by cause led by the not-stuck rate, the self-heal rate,
     clean-cycle and first-pass read from their existing sources. Query param
     ``window_hours`` (default: the ratchet window). Pure store read — no LLM,
     no write; a metric with no data reads ``null``, never ``0``."""
