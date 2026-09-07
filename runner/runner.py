@@ -966,6 +966,92 @@ def _emit_event(payload: dict) -> None:
 _DEFAULT_ACP_COMMAND = ("claude-agent-acp",)
 
 
+# --- worker usage source (spec 038 US3) --------------------------------------
+# ACP 0.x standardizes no token-usage report and claude-agent-acp sends none,
+# so the ACP extractor in acp_client has never had anything to extract. The
+# claude CLI DOES record what it spent — its own session transcript under
+# `$CLAUDE_CONFIG_DIR/projects/<cwd-slug>/<session>.jsonl`, one
+# `message.usage` per assistant message (the artifact ccusage reads). This
+# is the claude-specific branch of the agent-drive seam (constitution II): it
+# runs only when the ACP command is the claude adapter, and a swapped agent
+# takes the existing path (ACP-reported usage or absent). Best-effort, never
+# raises, absent ⇒ NO usage block — never a block of zeros.
+
+
+def _is_claude_adapter(acp_command: "list[str] | tuple[str, ...]") -> bool:
+    """Whether the agent command is the claude ACP adapter (basename starts
+    with ``claude``): the only agent whose transcript layout the reader knows."""
+    if not acp_command:
+        return False
+    return os.path.basename(str(acp_command[0])).lower().startswith("claude")
+
+
+def _claude_transcript_usage(
+    config_dir: str, workspace_dir: str, started_at_s: float
+) -> "dict | None":
+    """Sum the agent's own per-message usage out of the transcripts this run
+    wrote. Files: ``<config_dir>/projects/*/*.jsonl`` modified since the run
+    started; lines: ``type == "assistant"`` whose ``cwd`` is the workspace (or
+    absent) carrying ``message.usage``; one row per ``requestId`` (a single API
+    response spans several JSONL lines; fallback ``message.id``); sidechain
+    (subagent) lines count — they are real spend. All-zero ⇒ None."""
+    try:
+        root = os.path.join(config_dir or "", "projects")
+        if not os.path.isdir(root):
+            return None
+        ws = os.path.realpath(workspace_dir) if workspace_dir else ""
+        seen: set = set()
+        totals = {"input_tokens": 0, "output_tokens": 0,
+                  "cache_read_tokens": 0, "cache_creation_tokens": 0}
+        key_map = (("input_tokens", "input_tokens"), ("output_tokens", "output_tokens"),
+                   ("cache_read_tokens", "cache_read_input_tokens"),
+                   ("cache_creation_tokens", "cache_creation_input_tokens"))
+        for slug in os.listdir(root):
+            d = os.path.join(root, slug)
+            if not os.path.isdir(d):
+                continue
+            for name in os.listdir(d):
+                if not name.endswith(".jsonl"):
+                    continue
+                path = os.path.join(d, name)
+                try:
+                    if os.path.getmtime(path) < started_at_s - 1:
+                        continue
+                    with open(path, encoding="utf-8", errors="replace") as fh:
+                        for line in fh:
+                            try:
+                                row = json.loads(line)
+                            except ValueError:
+                                continue
+                            if not isinstance(row, dict) or row.get("type") != "assistant":
+                                continue
+                            cwd = row.get("cwd")
+                            if ws and isinstance(cwd, str) and cwd and os.path.realpath(cwd) != ws:
+                                continue
+                            msg = row.get("message")
+                            usage = msg.get("usage") if isinstance(msg, dict) else None
+                            if not isinstance(usage, dict):
+                                continue
+                            rid = row.get("requestId") or (msg.get("id") if isinstance(msg, dict) else None)
+                            dedup = rid or (path, row.get("uuid"))
+                            if dedup in seen:
+                                continue
+                            seen.add(dedup)
+                            for col, key in key_map:
+                                v = usage.get(key)
+                                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                                    totals[col] += int(v)
+                except OSError:
+                    continue
+        if not any(totals.values()):
+            return None
+        out: dict = dict(totals)
+        out["source"] = "transcript"
+        return out
+    except Exception:  # noqa: BLE001 — a usage read must never fail the run
+        return None
+
+
 def _resolve_acp_command(req: dict) -> list[str]:
     """The ACP agent command the worker session runs on.
 
@@ -1754,6 +1840,7 @@ def main() -> None:
     client = acp.AcpClient(
         acp_command, acp_env, on_event=_emit_and_watch, on_update=_observe_update
     )
+    run_started_s = time.time()
 
     usage: dict | None = None
     # Snapshot the cgroup OOM counter before the agent runs so a kill DURING
@@ -1790,6 +1877,12 @@ def main() -> None:
         finally:
             client.close()
         usage = outcome.usage
+        if usage:
+            usage = dict(usage, source="acp")
+        elif _is_claude_adapter(acp_command):
+            # The agent reported nothing over ACP — read what the claude CLI
+            # recorded for itself (spec 038 US3; contracts/runner-usage.md).
+            usage = _claude_transcript_usage(claude_cfg, workspace_dir, run_started_s)
         if outcome.stop_reason == "refusal":
             # A refusal is a failed task with the agent's own words as the
             # reason — never a silent success.

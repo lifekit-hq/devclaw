@@ -663,6 +663,9 @@ class SettleMixin:
         except Exception as err:  # noqa: BLE001 — infra crash is loud, no retry
             self._store.mark_failed(task_id, f"validation runner error: {err}")
             return
+        # Permanent usage row for this run (spec 038 US3) — recorded the moment
+        # the runner returns, before anything can fail the settle.
+        self._store.record_task_usage(task_id, attempt=0, usage=result.get("usage"))
 
         # 3) restore the workspace — a validation run never mutates the repo
         #    (FR-005); boot/seed artifacts are discarded, loudly on failure.
@@ -1288,6 +1291,11 @@ class SettleMixin:
                 last_failure = str(err)  # unexpected runner error — retryable
                 last_origin = _ORIGIN_HARNESS
             else:
+                # Permanent usage row per ATTEMPT (spec 038 US3, FR-009): the
+                # ledger row is written the moment the runner returns, so a
+                # retried attempt's spend survives its failure and retention
+                # never deletes the numbers. Absent usage is a reported=0 row.
+                self._store.record_task_usage(task_id, attempt=attempt, usage=result.get("usage"))
                 # Context-tripwire firing (spec 021 US2): the runner landed
                 # (or tried to land) the session before a context overflow.
                 # One problems-catalog row per root cause — the SC-005
