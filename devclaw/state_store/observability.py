@@ -155,19 +155,22 @@ class ObservabilityMixin:
         subprocess / notify / note). Best-effort by convention — callers should
         not propagate exceptions out of telemetry. Returns the monotonic id."""
         with self._lock:
+            at = ts if ts is not None else _now_ms()
             cur = self._db.execute(
                 "INSERT INTO traces (trace_id, goal_id, kind, ts, payload_json) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (
-                    trace_id,
-                    goal_id,
-                    kind,
-                    ts if ts is not None else _now_ms(),
-                    json.dumps(payload, default=str),
-                ),
+                (trace_id, goal_id, kind, at, json.dumps(payload, default=str)),
             )
-            self._commit()
             assert cur.lastrowid is not None  # INSERT always assigns a rowid
+            if kind == "cognition":
+                # Permanent usage row (spec 038 US3) in the SAME commit as the
+                # trace: retention prunes the trace, the ledger keeps the
+                # numbers. Best-effort — a ledger hiccup never loses the trace.
+                try:
+                    self._insert_cognition_usage_row(int(cur.lastrowid), goal_id, payload, int(at))  # type: ignore[attr-defined]
+                except Exception:  # noqa: BLE001
+                    pass
+            self._commit()
             return int(cur.lastrowid)
 
     def read_traces(

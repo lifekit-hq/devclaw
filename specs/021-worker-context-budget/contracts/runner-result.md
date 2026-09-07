@@ -13,6 +13,7 @@ old runners/new hosts and vice versa stay compatible.
 | `tripwire` | object | present iff the tripwire fired: `{ "threshold_pct": int, "used": int, "size": int, "active_slice": "US<n>" \| null, "landed": bool }` — `landed=false` means the land-now follow-up turn did not complete cleanly |
 | `chunk` | object | present when the slice watcher was armed: `{ "feature": "<dir>", "advanced_slices": ["US<n>", ...], "stopped_by_watcher": bool }` |
 | `usage_absent_note` | string | present iff tripwire configured >0 but no usage stream was observed (FR-007 inert-loud) |
+| `usage` | object | (amended by spec 038, `specs/038-loop-health-metrics/contracts/runner-usage.md`) `{input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd?, source: "acp" \| "transcript"}` — `acp` when accumulated from session/update reports, `transcript` when summed by the runner from the claude CLI's own session transcript after the run (claude adapter only; ACP wins when both exist). ABSENT when the agent recorded nothing — never a block of zeros. |
 
 ## Event line — new type
 

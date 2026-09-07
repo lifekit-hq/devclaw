@@ -1201,6 +1201,11 @@ async def _tick_all_pass(
     # 2026-08-30 DB audit) — transcripts, the DB's biggest payload, get the
     # same daily bounded pass; the settle summary + eval_outcomes stay forever.
     _engine_compact_task_results(engine)
+    # Usage-ledger backfill (spec 038 FR-010a): one-shot, watermarked, pure
+    # SQL — the permanent usage record is seeded from whatever transcripts
+    # retention has not yet pruned, BEFORE the compaction above can take
+    # more of them. Same cheap slot, same zero-LLM guarantee.
+    _engine_backfill_usage_ledger(engine)
     # Reclaim the disk those DELETEs free — a weekly, freelist-gated VACUUM
     # (SQLite reuses freed pages but never shrinks the .db file on its own).
     # Same cheap-path slot, same zero-LLM guarantee.
@@ -1441,6 +1446,18 @@ def _engine_compact_task_results(engine: GoalEngine) -> None:
     compaction). Best-effort: a maintenance failure must never break the
     heartbeat — old transcripts just stay bigger until a later tick succeeds."""
     fn = getattr(engine, "compact_task_results", None)
+    if not callable(fn):
+        return
+    try:
+        fn()
+    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
+        pass
+
+
+def _engine_backfill_usage_ledger(engine: GoalEngine) -> None:
+    """Run the one-shot usage-ledger backfill via the engine, if it exposes
+    one (test doubles may not → no backfill). Best-effort, like the prunes."""
+    fn = getattr(engine, "backfill_usage_ledger", None)
     if not callable(fn):
         return
     try:

@@ -108,9 +108,11 @@ def test_docker_args_posture():
     assert args[args.index("--cap-drop") + 1] == "ALL"
     assert args[args.index("--security-opt") + 1] == "no-new-privileges"
     assert args[args.index("--network") + 1] == "host" and "--read-only" not in args
-    # writable scratch overlays survive the curation
+    # writable scratch overlays survive the curation (projects/ = the agent's
+    # own transcript, spec 038 — scratch that dies with the container)
     assert f"{sc.CONTAINER_CLAUDE_DIR}/session-env:rw,exec" in args
     assert f"{sc.CONTAINER_CLAUDE_DIR}/shell-snapshots:rw,exec" in args
+    assert f"{sc.CONTAINER_CLAUDE_DIR}/projects:rw,exec" in args
     # image + payload land last, payload terminal
     assert args[-2] == sc.SANDBOX_IMAGE
     assert args[-1] == '{"kind":"implement_feature"}'
@@ -123,9 +125,14 @@ def test_docker_args_do_not_leak_skills_or_plugins():
         claude_dir=CLAUDE_DIR,
         payload="{}",
     )
-    joined = " ".join(args)
+    # The leak class is a BIND of the host's ~/.claude subtrees. Only `-v`
+    # sources are host paths; a `--tmpfs` overlay (spec 038's transcript
+    # scratch at <container claude dir>/projects) mounts nothing from the host.
+    binds = [args[i + 1] for i, a in enumerate(args) if a == "-v"]
+    joined = " ".join(binds)
     for leaked in ("/skills", "/plugins", "/projects", "/CLAUDE.md", "/history.jsonl"):
         assert leaked not in joined
+    assert f"{CLAUDE_DIR}/projects" not in " ".join(args)
 
 
 def test_workspace_claude_rules_passes_through_over_tmpfs():

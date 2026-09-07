@@ -131,6 +131,12 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │         materialized span: the goal layer settles│                                 │
      │  │         that `partial` — cap refunded, next      │                                 │
      │  │         session told to continue from the branch │                                 │
+     │  │     • after the run (spec 038): if ACP reported  │                                 │
+     │  │       no usage and the agent is the claude       │                                 │
+     │  │       adapter, sum the CLI's own transcript       │                                 │
+     │  │       ($CLAUDE_CONFIG_DIR/projects, a writable   │                                 │
+     │  │       tmpfs) → result `usage{source:transcript}`;│                                 │
+     │  │       absent ⇒ no block, never zeros             │                                 │
      │  │                     ──────► spawns subprocess:  │                                  │
      │  │                                                  │                                 │
      │  │     ┌──────────────────────────────────────┐     │                                 │
