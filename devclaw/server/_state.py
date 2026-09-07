@@ -41,6 +41,15 @@ AUTH_TOKEN = _config.AUTH_TOKEN
 TOKEN_QS = f"?token={urllib.parse.quote(AUTH_TOKEN)}" if AUTH_TOKEN else ""
 
 store = StateStore(DB_PATH)
+
+
+def record_grade(grade: dict) -> None:
+    """Spec 039 US6 (FR-021): the intake grader's prediction becomes a
+    machine-readable row. Bound HERE because this module owns the store; the
+    intake orchestrator (layer 3's caller) holds none and reaches it through
+    a callback. Used by the MCP intake tools, the webhook grade and the
+    startup recovery sweep — one binding, three callers."""
+    store.record_intake_grade(**grade)
 _engine = _config.ENGINE
 if _engine == "stub":
     # Harness-validation mode: deterministic stub engine + cognition, no docker,

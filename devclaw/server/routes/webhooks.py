@@ -17,6 +17,7 @@ docs/runbooks/webhooks.md.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import hmac
 import json
@@ -27,8 +28,11 @@ from starlette.responses import JSONResponse, Response
 
 from ... import config as _config
 from ...goal import events as _events
-from ...intake import regrade as _regrade
-from .._state import goals, mcp, registry
+from ...intake import regrade as _regrade_bare
+from .._state import goals, mcp, record_grade, registry
+
+#: the webhook grade records the prediction like every other grade path (spec 039 US6).
+_regrade = functools.partial(_regrade_bare, record=record_grade)
 
 #: grading tasks in flight — held so the loop never garbage-collects one
 #: mid-run; bounded by GitHub's own delivery pacing.

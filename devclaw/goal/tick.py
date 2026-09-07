@@ -1114,8 +1114,14 @@ def _record_loop_sample(engine: GoalEngine, store: GoalStore, outcomes: "dict[st
                 outcome=out.value if out is not None else "",
                 window_closed=bool(g_blocked),
             ))
-        unarmed_fn = getattr(engine, "count_ready_issues_without_goal", None)
-        unarmed = int(unarmed_fn() or 0) if callable(unarmed_fn) else 0
+        # spec 039 US6: graded-ready issues no goal references — the one
+        # fact that turns "all planned done" into "no goal armed". A store
+        # read (intake_grades ⋈ goal refs), zero cognition.
+        unarmed = 0
+        count_fn = getattr(store, "count_ready_issues_without_goal", None)
+        if callable(count_fn):
+            from .. import intake as _intake  # lazy: READY_LABEL's one home
+            unarmed = int(count_fn(_intake.READY_LABEL) or 0)
         cause, detail = _loop_health.derive_loop_cause(
             goals=views,
             pause_active=pause_active, pause_reason=reason or "",

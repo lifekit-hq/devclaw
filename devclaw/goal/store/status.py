@@ -16,6 +16,7 @@ monolith.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,8 @@ if TYPE_CHECKING:
 
 import yaml
 
-from ..models import SELF_HEALING_BLOCK_KINDS, GoalStatus
+from ... import task_git as _task_git
+from ..models import SELF_HEALING_BLOCK_KINDS, Goal, GoalStatus
 from ..state import GoalState
 from ..transitions import (
     Event,
@@ -42,6 +44,8 @@ from ...state_store import _now_ms
 
 class GoalStatusMixin:
     if TYPE_CHECKING:
+        def load_goal(self, goal_id: str) -> "Goal": ...
+        def list_goal_ids(self) -> list[str]: ...
         # The composing class owns these (its docstring names the same contract in
         # prose); declared under TYPE_CHECKING so the seam is checked, never run.
         _state: StateStore
@@ -93,7 +97,83 @@ class GoalStatusMixin:
             rounds=self._goal_state.count_verifying_rounds(goal_id),
             workspace_dir=workspace_dir,
             closed_at=self._now().isoformat(timespec="seconds"),
+            **self._calibration_fields(goal_id),
         )
+
+    def _calibration_fields(self, goal_id: str) -> dict:
+        """Spec 039 US6 (FR-022): the predictions as they stood (Σ over the
+        goal's issues; NULL when any issue lacks a grade, and the record says
+        which), the dispatches the goal consumed, and whether a human steered.
+        Measurement only — any failure degrades to unknown (NULLs) and never
+        touches the close (FR-024/FR-026)."""
+        fields: dict = {
+            "claimed_units": None, "assessed_units": None,
+            "prediction_issues": None, "dispatches": None, "steered": False,
+        }
+        try:
+            fields["dispatches"] = self._state.count_goal_dispatches(goal_id)
+        except Exception:  # noqa: BLE001 — a missing count reads unknown
+            pass
+        try:
+            fields["steered"] = self._goal_state.has_human_steering(goal_id)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            goal = self.load_goal(goal_id)
+            slug = _task_git.repo_slug(goal.repo_url)
+            refs = [int(n) for n in (goal.issue_refs or [])]
+            if slug and refs:
+                summed: list[int] = []
+                missing: list[int] = []
+                claimed = assessed = 0
+                claimed_ok = assessed_ok = True
+                for n in refs:
+                    row = self._state.intake_grade(slug, n)
+                    if row is None:
+                        missing.append(n)
+                        continue
+                    summed.append(n)
+                    if row.get("claimed_units") is None:
+                        claimed_ok = False
+                    else:
+                        claimed += int(row["claimed_units"])
+                    if row.get("assessed_units") is None:
+                        assessed_ok = False
+                    else:
+                        assessed += int(row["assessed_units"])
+                fields["prediction_issues"] = json.dumps({"summed": summed, "missing": missing})
+                if not missing:
+                    fields["claimed_units"] = claimed if claimed_ok else None
+                    fields["assessed_units"] = assessed if assessed_ok else None
+        except Exception:  # noqa: BLE001 — an unreadable goal reads unpredicted
+            pass
+        return fields
+
+    def count_ready_issues_without_goal(self, ready_label: str) -> int:
+        """Graded-ready, non-stale intake rows that no goal (any phase)
+        references — the fact behind the ``no_goal_armed`` idle cause (spec
+        039 US1/US6). Pure store read, zero cognition; never raises."""
+        try:
+            with self._state._lock:  # noqa: SLF001 — same DB, one read
+                rows = self._state._db.execute(
+                    "SELECT repo, issue_number FROM intake_grades "
+                    "WHERE readiness = ? AND stale = 0",
+                    (ready_label,),
+                ).fetchall()
+            ready = {(str(r["repo"]), int(r["issue_number"])) for r in rows}
+            if not ready:
+                return 0
+            for gid in self.list_goal_ids():
+                try:
+                    g = self.load_goal(gid)
+                except Exception:  # noqa: BLE001 — one bad row must not lose the count
+                    continue
+                slug = _task_git.repo_slug(g.repo_url)
+                for n in (g.issue_refs or []):
+                    ready.discard((slug or "", int(n)))
+            return len(ready)
+        except Exception:  # noqa: BLE001
+            return 0
 
     def save_status(self, goal_id: str, status: GoalStatus) -> None:
         # Source of truth is the goal_status table; STATUS.md is a generated

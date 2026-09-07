@@ -66,11 +66,11 @@
 
 **Independent test**: grade an issue → `intake_grades` row; close a goal from it → convergence row carries both predictions + dispatches + rounds; `/calibration.json` reports not-determinable below the floor.
 
-- [ ] T028 [US6] `devclaw/state_store/health.py`: `record_intake_grade(repo, issue_number, readiness, claimed, assessed, sizing, stale)`, `intake_grade(repo, issue_number)`, `count_ready_issues_without_goal()` (join against `goal_issue_identity`)
-- [ ] T029 [US6] `devclaw/intake.py`: `grade_and_label(..., record=None)` calls `record({...})` after labelling; thread `record` through `regrade`, `grade_backlog`, `recover_pending_grades`; `devclaw/server/tools/intake.py` (+ the webhook route if it calls regrade) pass `record=store.record_intake_grade`
-- [ ] T030 [US6] `devclaw/goal/state.py`: ALTER `goal_convergence` ADD the six columns; `devclaw/goal/state_status.py` `record_convergence` accepts and writes them; `devclaw/goal/store/status.py` `record_convergence` computes predictions (intake_grades over `goal.issue_refs` × `repo_slug(goal.repo_url)`), `dispatches` (tasks of the goal, `kind != review_repository`), `steered` (human steering rows), `cost_tokens` (ledger)
-- [ ] T031 [US6] `devclaw/telemetry.py`: `compute_calibration(store)` per D7 (`CALIBRATION_MIN_SAMPLE = 10`); `devclaw/server/routes/observability.py`: `GET /calibration.json`
-- [ ] T032 [US6] `devclaw/goal/engine.py` + `tick.py` + `loop_health.py`: `no_goal_armed` emission when no live goal exists and `count_ready_issues_without_goal() > 0`
+- [X] T028 [US6] `devclaw/state_store/health.py`: `record_intake_grade(repo, issue_number, readiness, claimed, assessed, sizing, stale)`, `intake_grade(repo, issue_number)`, `count_ready_issues_without_goal()` (join against `goal_issue_identity`)
+- [X] T029 [US6] `devclaw/intake.py`: `grade_and_label(..., record=None)` calls `record({...})` after labelling; thread `record` through `regrade`, `grade_backlog`, `recover_pending_grades`; `devclaw/server/tools/intake.py` (+ the webhook route if it calls regrade) pass `record=store.record_intake_grade`
+- [X] T030 [US6] `devclaw/goal/state.py`: ALTER `goal_convergence` ADD the six columns; `devclaw/goal/state_status.py` `record_convergence` accepts and writes them; `devclaw/goal/store/status.py` `record_convergence` computes predictions (intake_grades over `goal.issue_refs` × `repo_slug(goal.repo_url)`), `dispatches` (tasks of the goal, `kind != review_repository`), `steered` (human steering rows), `cost_tokens` (ledger — DEFERRED with US3, column not added)
+- [X] T031 [US6] `devclaw/telemetry.py`: `compute_calibration(store)` per D7 (`CALIBRATION_MIN_SAMPLE = 10`); `devclaw/server/routes/observability.py`: `GET /calibration.json`
+- [X] T032 [US6] `devclaw/goal/engine.py` + `tick.py` + `loop_health.py`: `no_goal_armed` emission when no live goal exists and `count_ready_issues_without_goal() > 0`
 - [ ] T033 [US6] `tests/test_loop_health_absent_is_never_zero.py`: calibration below the floor → `determinable=false`, predictors None, `needed` stated; a convergence row without predictions still records actuals; `tests/test_doctor.py` seeded fault extends to the missing `cost_tokens` column
 - [ ] T034 [US6] Docs honesty PR-C: `docs/reference/intake-shape.md` (grade persisted), `docs/architecture.md`, `docs/INDEX.md`; `/ship` PR-C (stacked on B)
 

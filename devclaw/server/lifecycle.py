@@ -26,6 +26,7 @@ from ._state import (
     queue,
     registry,
     store,
+    record_grade,
 )
 
 
@@ -101,7 +102,7 @@ def _kick_readiness_recovery() -> None:
 
     async def _run() -> None:
         try:
-            n = await intake_mod.recover_pending_grades(registry)
+            n = await intake_mod.recover_pending_grades(registry, record=record_grade)
             if n:
                 sys.stderr.write(
                     f"{SERVER_NAME}: readiness recovery graded {n} pending intake issue(s)\n"

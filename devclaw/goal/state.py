@@ -339,6 +339,15 @@ class GoalState(
                 "ALTER TABLE goal_status ADD COLUMN merge_heal_attempted INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN pending_done_proposal INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN ci_green_head TEXT NOT NULL DEFAULT ''",
+                # spec 039 US6 (FR-022): the close-time calibration record —
+                # predictions as filed/graded, the dispatches the goal took, whether
+                # a human steered (the prediction was then made against a different
+                # ask). NULL = unknown on every pre-existing row.
+                "ALTER TABLE goal_convergence ADD COLUMN claimed_units INTEGER",
+                "ALTER TABLE goal_convergence ADD COLUMN assessed_units INTEGER",
+                "ALTER TABLE goal_convergence ADD COLUMN prediction_issues TEXT",
+                "ALTER TABLE goal_convergence ADD COLUMN dispatches INTEGER",
+                "ALTER TABLE goal_convergence ADD COLUMN steered INTEGER NOT NULL DEFAULT 0",
             ):
                 try:
                     self._store._db.execute(sql)

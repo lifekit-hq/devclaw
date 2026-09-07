@@ -1145,14 +1145,21 @@ def test_contract_pins_present_is_ok(env):
 # ---- spec 039: loop-health tables + the silent worker usage source ---------
 
 
-def test_loop_health_tables_absent_fails_with_restart_remedy(env):
+@pytest.mark.parametrize("fault, named", [
+    ("DROP TABLE loop_spans", "loop_spans"),
+    # spec 039 US6: the calibration columns are part of the same shape —
+    # a goal_convergence predating them records every close as unpredicted
+    ("ALTER TABLE goal_convergence RENAME COLUMN dispatches TO dispatches_old", "dispatches"),
+])
+def test_loop_health_tables_absent_fails_with_restart_remedy(env, fault, named):
     """A DB predating spec 039 must not read as healthy: every loop-health
-    metric would silently be unknown. Seeded fault: drop one of the three."""
-    env["store"]._db.execute("DROP TABLE loop_spans")
+    metric would silently be unknown. Seeded faults: a table dropped, a
+    calibration column missing."""
+    env["store"]._db.execute(fault)
     env["store"]._commit()
     f = _findings(_run(env), "instance.loop_health.tables")
     assert f and f[0].verdict is Verdict.FAIL
-    assert "loop_spans" in f[0].evidence and "restart" in (f[0].remedy or "")
+    assert named in f[0].evidence and "restart" in (f[0].remedy or "")
 
 
 def test_silent_worker_usage_source_warns(env):

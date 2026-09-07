@@ -868,6 +868,89 @@ def compute_idle_attribution(store: Any, *, since_ms: int, now_ms: Optional[int]
     }
 
 
+#: below this many achieved, unsteered, predicted goals the calibration read is
+#: "not yet" — a constant, not a knob (research D7): nothing to tune until a
+#: figure exists.
+CALIBRATION_MIN_SAMPLE = 10
+
+
+def _predictor_stats(pairs: "list[tuple[int, int]]") -> dict:
+    """Agreement of one predictor with the actual dispatch count: mean absolute
+    error, exact-match rate, within-one rate. None over an empty sample."""
+    n = len(pairs)
+    if n == 0:
+        return {"n": 0, "mae": None, "exact_rate": None, "within_one_rate": None}
+    errs = [abs(p - a) for p, a in pairs]
+    return {
+        "n": n,
+        "mae": round(sum(errs) / n, 2),
+        "exact_rate": round(sum(1 for e in errs if e == 0) / n, 4),
+        "within_one_rate": round(sum(1 for e in errs if e <= 1) / n, 4),
+    }
+
+
+def compute_calibration(store: Any) -> dict:
+    """Does the pre-execution size estimate predict anything? (spec 039 US6,
+    FR-023..FR-027.) Over the ``goal_convergence`` ledger: achieved,
+    unsteered goals whose prediction was recorded, compared with the
+    dispatches they took. Cancelled goals (a floor, not a cost) and steered
+    goals (the prediction was made against a different ask) are excluded and
+    counted. Below ``CALIBRATION_MIN_SAMPLE`` the read is ``determinable:
+    false`` with how many more goals are needed — never a figure from a
+    sample too small to mean anything (FR-025). Pure store read."""
+    out: dict[str, Any] = {
+        "min_sample": CALIBRATION_MIN_SAMPLE,
+        "records": 0, "achieved": 0, "abandoned_excluded": 0,
+        "steered_excluded": 0, "unpredicted": 0,
+        "claimed": _predictor_stats([]), "assessed": _predictor_stats([]),
+        "n": 0, "determinable": False, "needed": CALIBRATION_MIN_SAMPLE,
+        "note": None,
+    }
+    try:
+        with store._lock:  # noqa: SLF001 — telemetry co-designs with state_store
+            rows = store._db.execute(
+                "SELECT outcome, claimed_units, assessed_units, dispatches, steered "
+                "FROM goal_convergence"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        out["note"] = (
+            "goal_convergence lacks the calibration columns (DB predates spec 039 "
+            "US6) — the estimate's worth is unknown"
+        )
+        return out
+    claimed: list[tuple[int, int]] = []
+    assessed: list[tuple[int, int]] = []
+    for r in rows:
+        out["records"] += 1
+        if r["outcome"] != "achieved":
+            out["abandoned_excluded"] += 1
+            continue
+        out["achieved"] += 1
+        if int(r["steered"] or 0):
+            out["steered_excluded"] += 1
+            continue
+        actual = r["dispatches"]
+        if actual is None or (r["claimed_units"] is None and r["assessed_units"] is None):
+            out["unpredicted"] += 1
+            continue
+        if r["claimed_units"] is not None:
+            claimed.append((int(r["claimed_units"]), int(actual)))
+        if r["assessed_units"] is not None:
+            assessed.append((int(r["assessed_units"]), int(actual)))
+    out["claimed"] = _predictor_stats(claimed)
+    out["assessed"] = _predictor_stats(assessed)
+    n = max(len(claimed), len(assessed))
+    out["n"] = n
+    out["determinable"] = n >= CALIBRATION_MIN_SAMPLE
+    out["needed"] = max(0, CALIBRATION_MIN_SAMPLE - n)
+    if not out["determinable"]:
+        out["note"] = (
+            f"not yet determinable: {n} predicted goal(s) closed, "
+            f"{out['needed']} more needed"
+        )
+    return out
+
+
 def compute_loop_health(store: Any, *, window_hours: "int | None" = None, registry: Any = None) -> dict:
     """The loop-health surface (spec 039): idle by cause led by the not-stuck
     rate, the self-heal rate, and the two already-built convergence numbers
@@ -904,6 +987,7 @@ def compute_loop_health(store: Any, *, window_hours: "int | None" = None, regist
             "rounds_median": convergence["rounds_median"],
             "note": conv_note,
         },
+        "calibration": compute_calibration(store),
     }
 
 

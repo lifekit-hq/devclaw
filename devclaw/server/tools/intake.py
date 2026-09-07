@@ -15,7 +15,7 @@ from fastmcp.exceptions import ToolError
 from ... import intake as _intake
 from ... import speckit_setup as _speckit
 from ...state_store import _now_ms
-from .._state import mcp, queue, registry
+from .._state import mcp, queue, record_grade as _record_grade, registry
 from ._common import _preflight_or_prep, _resolve_project_or_reject
 
 
@@ -108,6 +108,7 @@ def _schedule_readiness_grade(
                 context=context,
                 workspace_dir=workspace_dir,
                 claude_caller=default_caller(),
+                record=_record_grade,
             )
         except Exception as exc:  # noqa: BLE001 — background task, log and drop
             _sys.stderr.write(f"file_intake: readiness grade failed: {exc}\n")
@@ -157,7 +158,7 @@ async def regrade_intake(project_id: str, issue_url: str) -> str:
     confident agreement lands ``needs-sizing``."""
     try:
         result = await _intake.regrade(
-            registry, project_id=project_id, issue=issue_url
+            registry, project_id=project_id, issue=issue_url, record=_record_grade,
         )
     except _intake.IntakeError as exc:
         raise ToolError(str(exc)) from exc
@@ -183,7 +184,9 @@ async def grade_backlog(project_id: str) -> str:
     the ``listing_limit`` page bound. A listing failure raises loudly — an
     explicit call never silently degrades to an empty sweep."""
     try:
-        result = await _intake.grade_backlog(registry, project_id=project_id)
+        result = await _intake.grade_backlog(
+            registry, project_id=project_id, record=_record_grade,
+        )
     except _intake.IntakeError as exc:
         raise ToolError(str(exc)) from exc
     return json.dumps(result, indent=2)

@@ -129,3 +129,49 @@ def test_self_heal_rate_needs_a_denominator(store):
     out = telemetry.compute_self_heal(store, since_ms=0)
     assert (out["recovered"], out["terminal"], out["rate"]) == (2, 1, round(2 / 3, 4))
     assert "lifetime" in out["basis"]
+
+
+# ---- calibration (US6, FR-025): below the floor the read says "not yet" ------
+
+
+def test_calibration_below_the_floor_is_not_determinable(tmp_path, store):
+    """An empty ledger, a ledger predating the columns, and a ledger with a
+    handful of predicted goals all read ``determinable: false`` with the
+    sample still needed — never a figure from a sample too small to mean
+    anything, never a healthy-looking 0."""
+    from tests.goal_fakes import Clock, seed_goal
+    from devclaw.goal.store import GoalStore
+
+    # a StateStore alone has no goal_convergence table at all
+    cal = telemetry.compute_calibration(store)
+    assert cal["determinable"] is False and cal["n"] == 0
+    assert cal["needed"] == telemetry.CALIBRATION_MIN_SAMPLE
+    assert cal["claimed"]["mae"] is None and cal["assessed"]["exact_rate"] is None
+    assert cal["note"]
+
+    gstore = GoalStore(tmp_path / "goals", now=Clock())
+    for i in range(3):
+        seed_goal(tmp_path / "goals", f"g{i}")
+        gstore._goal_state.record_convergence(
+            f"g{i}", outcome="achieved", rounds=1, workspace_dir=None,
+            closed_at="2026-09-07T12:00:00", claimed_units=2, assessed_units=1,
+            prediction_issues='{"summed": [1], "missing": []}', dispatches=2, steered=False,
+        )
+    # a steered goal and an abandoned one are excluded, and counted as such
+    seed_goal(tmp_path / "goals", "steered")
+    gstore._goal_state.record_convergence(
+        "steered", outcome="achieved", rounds=1, workspace_dir=None,
+        closed_at="2026-09-07T12:00:00", claimed_units=1, dispatches=9, steered=True,
+    )
+    seed_goal(tmp_path / "goals", "gone")
+    gstore._goal_state.record_convergence(
+        "gone", outcome="abandoned", rounds=4, workspace_dir=None,
+        closed_at="2026-09-07T12:00:00", claimed_units=1, dispatches=9,
+    )
+    cal = telemetry.compute_calibration(gstore._state)
+    assert cal["n"] == 3 and cal["determinable"] is False
+    assert cal["needed"] == telemetry.CALIBRATION_MIN_SAMPLE - 3
+    assert cal["steered_excluded"] == 1 and cal["abandoned_excluded"] == 1
+    # the raw agreement is still reported next to the sample it rests on
+    assert cal["claimed"] == {"n": 3, "mae": 0.0, "exact_rate": 1.0, "within_one_rate": 1.0}
+    assert cal["assessed"]["n"] == 3 and cal["assessed"]["mae"] == 1.0
