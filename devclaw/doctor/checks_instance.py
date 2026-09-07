@@ -973,6 +973,12 @@ def check_contract_pins(ctx: "InstanceContext") -> list[Finding]:
     )]
 
 
+#: the calibration columns spec 039 US6 adds to goal_convergence (lazy ALTER).
+_CALIBRATION_COLUMNS = frozenset({
+    "claimed_units", "assessed_units", "prediction_issues", "dispatches", "steered",
+})
+
+
 def check_loop_health_tables(ctx: "InstanceContext") -> list[Finding]:
     """Spec 038 (per spec-016 FR-014): the three loop-health tables must exist
     wherever goal tables do — a DB predating them silently reports every
@@ -996,6 +1002,17 @@ def check_loop_health_tables(ctx: "InstanceContext") -> list[Finding]:
                 "the tables exist",
                 remedy="restart devclaw (StateStore bootstraps the tables at construction)",
             )]
+        if "goal_convergence" in tables:
+            cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_convergence)")}
+            missing_cols = sorted(_CALIBRATION_COLUMNS - cols)
+            if missing_cols:
+                return [Finding(
+                    cid, Verdict.FAIL,
+                    f"goal_convergence lacks calibration column(s): {', '.join(missing_cols)} "
+                    "— the DB predates spec 039 US6; the estimate's worth reads unknown "
+                    "and every close since is unrecorded",
+                    remedy="restart devclaw (GoalState ALTERs the columns at construction)",
+                )]
         week_ago = int(time.time() * 1000) - 7 * 24 * 3600 * 1000
         settled = db.execute(
             "SELECT COUNT(*) AS n FROM tasks WHERE completed_at IS NOT NULL AND completed_at >= ?",

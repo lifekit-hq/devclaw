@@ -114,6 +114,54 @@ class LoopHealthMixin:
             ).fetchone()
         return dict(row) if row else None
 
+    # ---- intake_grades (US6) ------------------------------------------------
+
+    def record_intake_grade(
+        self, *, repo: str, issue_number: int, readiness: str,
+        claimed_units: Optional[int] = None, assessed_units: Optional[int] = None,
+        sizing: Optional[str] = None, stale: bool = False,
+    ) -> None:
+        """Persist the grader's prediction for ``(repo, issue_number)`` (FR-021)
+        — a re-grade REPLACES the row, so the prediction that stands when a
+        goal is created is the latest grade. Pure write; the intake
+        orchestrator reaches it through a callback so layer 3 holds no
+        store."""
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO intake_grades "
+                "(repo, issue_number, readiness, claimed_units, assessed_units, "
+                "sizing, stale, graded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    str(repo), int(issue_number), str(readiness),
+                    None if claimed_units is None else int(claimed_units),
+                    None if assessed_units is None else int(assessed_units),
+                    None if sizing is None else str(sizing),
+                    1 if stale else 0, _now_ms(),
+                ),
+            )
+            self._commit()
+
+    def intake_grade(self, repo: str, issue_number: int) -> Optional[dict]:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT repo, issue_number, readiness, claimed_units, assessed_units, "
+                "sizing, stale, graded_at FROM intake_grades "
+                "WHERE repo = ? AND issue_number = ?",
+                (str(repo), int(issue_number)),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def count_goal_dispatches(self, goal_id: str) -> int:
+        """Worker tasks the goal consumed — every task dispatched by the goal
+        except the done-gate's read-only review (FR-022's ``dispatches``)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT COUNT(*) AS n FROM tasks "
+                "WHERE parent_goal_id = ? AND kind != 'review_repository'",
+                (goal_id,),
+            ).fetchone()
+        return int(row["n"] or 0)
+
     # ---- problems rollup (US2) ---------------------------------------------
 
     def self_heal_counts(self, *, since_ms: int) -> dict:

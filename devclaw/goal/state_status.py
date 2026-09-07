@@ -294,6 +294,9 @@ class GoalStateStatusMixin:
     def record_convergence(
         self, goal_id: str, *, outcome: str, rounds: int,
         workspace_dir: "str | None", closed_at: str,
+        claimed_units: "int | None" = None, assessed_units: "int | None" = None,
+        prediction_issues: "str | None" = None, dispatches: "int | None" = None,
+        steered: bool = False,
     ) -> None:
         """INSERT the goal's one terminal convergence row (spec 018 US1).
         ``INSERT OR IGNORE``: terminal is terminal — a duplicate write (e.g.
@@ -302,11 +305,27 @@ class GoalStateStatusMixin:
         with self._store._lock:
             self._store._db.execute(
                 "INSERT OR IGNORE INTO goal_convergence "
-                "(goal_id, outcome, rounds, workspace_dir, closed_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (goal_id, outcome, rounds, workspace_dir, closed_at),
+                "(goal_id, outcome, rounds, workspace_dir, closed_at, "
+                "claimed_units, assessed_units, prediction_issues, dispatches, steered) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (goal_id, outcome, rounds, workspace_dir, closed_at,
+                 claimed_units, assessed_units, prediction_issues, dispatches,
+                 1 if steered else 0),
             )
             self._store._commit()
+
+    def has_human_steering(self, goal_id: str) -> bool:
+        """Did a human steer this goal? Machine sources (``auto-ci``,
+        ``auto-eval``) are the loop's own corrections; anything else is the
+        owner's hand — the prediction was then made against a different ask
+        (spec 039 US6 edge case)."""
+        with self._store._lock:
+            row = self._store._db.execute(
+                "SELECT COUNT(*) AS n FROM goal_steering "
+                "WHERE goal_id = ? AND source NOT LIKE 'auto-%'",
+                (goal_id,),
+            ).fetchone()
+        return int(row["n"] or 0) > 0
 
     def seed_phase_history(self, goal_id: str, entries: "tuple[dict, ...]") -> None:
         """Bulk-insert existing phase entries verbatim — the lazy migration path

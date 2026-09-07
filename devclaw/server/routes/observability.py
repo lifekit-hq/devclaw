@@ -77,6 +77,14 @@ async def problems_json(request: Request) -> Response:
     return JSONResponse({"problems": rows, "count": len(rows), "selfRepo": self_repo()})
 
 
+@mcp.custom_route("/calibration.json", methods=["GET"])
+async def calibration_json(_request: Request) -> Response:
+    """Spec 039 US6: whether the pre-execution size estimate (the filer's
+    claim, the grader's assessment) predicts the dispatches a goal takes —
+    or ``determinable: false`` with the sample still needed. Pure store read."""
+    return JSONResponse(_telemetry.compute_calibration(store))
+
+
 @mcp.custom_route("/usage.json", methods=["GET"])
 async def usage_json(_request: Request) -> Response:
     """Instance-wide usage aggregate (cognition + worker tokens, per-project

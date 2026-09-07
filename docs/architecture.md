@@ -476,7 +476,7 @@ breakdown, the self-heal rate (Σ recovered / Σ recovered+terminal over the
 problems catalog's lifetime counters, labelled as such), and clean-cycle +
 first-pass read from their existing sources with the scorecard's one
 definition each. Doctor's `instance.loop_health.tables` fails a DB missing
-the tables.
+the tables. **Calibration (US6, 2026-09-07):** the intake grader's prediction is persisted per issue (`intake_grades`, written through a callback the MCP layer binds — layer 3 holds no store), a goal's close joins it onto its `goal_convergence` row (Σ claimed / Σ assessed over the goal's issues, the dispatches it consumed, whether a human steered), and `GET /calibration.json` / the `get_loop_health` block reports the agreement — `determinable: false` with the sample still needed below `CALIBRATION_MIN_SAMPLE` (10), never a figure from a handful of goals. Nothing in the loop reads it back (FR-026). The same join supplies the `no_goal_armed` idle cause: a graded-ready issue no goal references.
 
 ---
 

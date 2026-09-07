@@ -24,7 +24,7 @@ import json
 import re
 import sys
 from datetime import datetime, timezone
-from typing import Optional, Protocol
+from typing import Optional, Protocol, Callable
 from .goal.issue_ref import CONTRACT_HEADING, extract_acceptance
 from .procutil import run as _run
 from .task_git import repo_slug
@@ -562,6 +562,7 @@ async def grade_and_label(
     expected_increments: Optional[int] = None,
     increment_basis: Optional[str] = None,
     increments_stated: bool = False,
+    record: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     """Grade one ask on both axes and record the outcome as durable labels.
 
@@ -636,6 +637,22 @@ async def grade_and_label(
     )
     await _apply_readiness_label(gh, repo, issue, label, verdict, note)
     await _apply_sizing_label(gh, repo, issue, needs_human)
+    if record is not None:
+        # Spec 039 US6 (FR-021): the prediction becomes a machine-readable row
+        # the goal's close joins onto. Best-effort — measurement never fails
+        # a grade, and this module holds no store (the caller binds one).
+        number = issue_number_of(issue)
+        if number is not None:
+            try:
+                record({
+                    "repo": repo, "issue_number": number, "readiness": label,
+                    "claimed_units": expected_increments if increments_stated else None,
+                    "assessed_units": sizing.assessed,
+                    "sizing": "needs_human" if needs_human else "agreed",
+                    "stale": bool(getattr(verdict, "stale", False)),
+                })
+            except Exception as exc:  # noqa: BLE001 — never fails the grade
+                sys.stderr.write(f"intake: grade record failed for {issue}: {exc}\n")
     return {
         "readiness": label,
         "expected_increments": expected_increments if increments_stated else None,
@@ -645,6 +662,12 @@ async def grade_and_label(
         "sizing_reason": reason,
         "stale": bool(getattr(verdict, "stale", False)),
     }
+
+
+def issue_number_of(issue: str) -> Optional[int]:
+    """The issue number in an issue URL, ``#12`` or ``12``; None otherwise."""
+    m = re.search(r"(?:/issues/|#|^)(\d+)/?$", (issue or "").strip())
+    return int(m.group(1)) if m else None
 
 
 # ---- manual re-grade (FR-010) -----------------------------------------------
@@ -711,6 +734,7 @@ async def regrade(
     issue: str,
     claude_caller=None,
     gh: Optional[GhAdapter] = None,
+    record: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     """Grade any OPEN issue on the registered project's repo — the manual
     re-trigger (006 FR-010) and the universal adoption verb (spec 009) in one.
@@ -802,6 +826,7 @@ async def regrade(
         expected_increments=claimed,
         increment_basis=claim_basis,
         increments_stated=claim_stated,
+        record=record,
     )
     return {
         "issue_url": issue,
@@ -815,6 +840,7 @@ async def regrade(
 
 async def recover_pending_grades(
     registry, *, gh: Optional[GhAdapter] = None, claude_caller=None,
+    record: Optional[Callable[[dict], None]] = None,
 ) -> int:
     """Re-grade every intake issue left WITHOUT a readiness label — the pending
     set derived from GitHub itself (the label is the source of truth). Closes the
@@ -845,7 +871,7 @@ async def recover_pending_grades(
             try:
                 await regrade(
                     registry, project_id=project.id, issue=issue,
-                    claude_caller=claude_caller, gh=gh,
+                    claude_caller=claude_caller, gh=gh, record=record,
                 )
                 graded += 1
             except Exception as exc:  # noqa: BLE001 — one issue never blocks the sweep
@@ -873,6 +899,7 @@ async def grade_backlog(
     project_id: str,
     gh: Optional[GhAdapter] = None,
     claude_caller=None,
+    record: Optional[Callable[[dict], None]] = None,
 ) -> dict:
     """Grade up to :data:`BULK_GRADE_CAP` open, not-yet-graded issues on one
     registered project through the identical single-issue :func:`regrade` path
@@ -941,7 +968,7 @@ async def grade_backlog(
         try:
             result = await regrade(
                 registry, project_id=project.id, issue=url,
-                claude_caller=claude_caller, gh=gh,
+                claude_caller=claude_caller, gh=gh, record=record,
             )
         except Exception as exc:  # noqa: BLE001 — one issue never stops the batch
             report["failed"].append({"url": url, "reason": str(exc)})
