@@ -155,7 +155,11 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   evidence; every changed path carries a class and the always-hard
   `change_class` gate fails a gate-input edit or a committed binary; a
   worker's `BLOCKED: env — <item>` is the pipeline's fact (a project-wide
-  `mechanical:env` hold that heals when the environment changes), never the
+  `mechanical:env` hold that only a human clears — `resume_goal`, which
+  drops the project's worker-reported rows; a devclaw redeploy does NOT
+  clear it, amending spec 032 US2 SC-004, because the sandbox image is tagged
+  with the devclaw sha and the gaps workers report are credentials that move
+  no image), never the
   owner's question. The human is not a stage.
   The browser-E2E gate stays dial-able — under `trust` a surviving finding
   advises-and-ships (loud + surfaced in the PR; the validation lane, spec 015,
