@@ -90,10 +90,18 @@ tests/test_env_cap_admission.py   # extends the worker-deficiency tripwire cases
   ledger needs `machine_issue_get` / `machine_issue_record` passthroughs (and
   `set_problem_issue` for FR-003).
 
-- **US2 (P2, a later PR)** — `devclaw/doctor/checks_instance.py` (a check beside
+- **US2 (P2, landed 2026-09-07)** — `devclaw/doctor/checks_instance.py` (a check beside
   `check_goal_status_env_hold_notified`), `tests/test_doctor.py`
   (`_run`/`_findings` unpack ONE finding per check id — mutate one registered
-  workspace across shapes, never register a second project).
+  workspace across shapes, never register a second project),
+  `docs/runbooks/doctor.md` + `docs/INDEX.md`. Constraint found while building
+  it: the check reads the ambient environment, so `DEVCLAW_SELF_REPO` must be
+  cleared or the seeded fault reads OK on a configured host and the guard
+  passes having checked nothing. The load-bearing clearing is at
+  `tests/conftest.py` module level (it precedes every `devclaw` import and
+  `config.self_repo()` reads the environment per call); the `delenv` in the
+  doctor `env` fixture is local defence in depth, beside the OAuth and
+  registry tokens it already clears.
 
 ## Load-bearing choices
 

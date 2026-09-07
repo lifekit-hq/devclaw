@@ -23,6 +23,8 @@
 - [x] T005 [US1] Tests — extend the existing class cases in `tests/test_env_cap_admission.py`: parametrize the worker-deficiency case over filed / already-tracked / doorway-failure / self-repo-unset, asserting the hold is identical in all four, the log names `#N` or the reason, exactly one `gh issue create` across a repeat, the catalog link, the `issue_filing_failed` row on failure, and `FakeClaude.calls == 0` throughout; plus the pure age-out exemption case (FR-011). The detail string is built from the queue's own marker/suffix constants, so a text edit that breaks the item split fails here
 - [x] T006 [US1] Docs in the same PR: `docs/flows/task-execution.md` (the env-block hop now files and states the outcome), `docs/reference/env-vars.md` (`DEVCLAW_SELF_REPO`'s row says an unset value is stated in the hold, not silent), `docs/INDEX.md` currency tags
 
+- [x] T006a [US1] **Post-landing correction**: US1 put a real `gh issue create` on a path the stubbed suite drives, gated only on an ambient `DEVCLAW_SELF_REPO`. CI runs on the host devclaw is deployed to, so the suite could behave differently there than in a sandbox — and could write to a live repository. `tests/conftest.py` now clears `DEVCLAW_SELF_REPO` (leaving the filing path the stated no-op FR-006 already specifies) and its spawn guard fails any `gh` WRITE verb beside the existing docker/tailscale/claude guards; reads stay allowed
+
 **Checkpoint**: US1 alone closes #818 — every environment gap on a configured instance becomes exactly one issue within a heartbeat, and every gap on an unconfigured one says so out loud.
 
 ---
@@ -33,9 +35,9 @@
 
 **Independent test**: spec.md US2 Independent Test.
 
-- [ ] T007 [US2] `devclaw/doctor/checks_instance.py`: `check_self_repo_configured_when_env_gaps_exist` beside `check_goal_status_env_hold_notified`, registered in the instance check list
-- [ ] T008 [US2] `tests/test_doctor.py`: the seeded-fault case (one registered workspace mutated across shapes — `_run`/`_findings` unpack ONE finding per check id)
-- [ ] T009 [US2] Docs: the check's row in the doctor reference + `docs/INDEX.md` currency tag
+- [x] T007 [US2] `devclaw/doctor/checks_instance.py`: `check_self_repo_configured_when_env_gaps_exist` beside `check_goal_status_env_hold_notified`, registered in the instance check list. Keyed on the catalog holding `block/env_deficiency` rows, so it fires on the instance losing filings rather than on every dev checkout
+- [x] T008 [US2] `tests/test_doctor.py`: the seeded-fault case (one registered workspace mutated across shapes — `_run`/`_findings` unpack ONE finding per check id). The `env` fixture also clears an ambient `DEVCLAW_SELF_REPO`, as it already does for the OAuth and registry tokens, or the seeded fault would read OK on a configured host
+- [x] T009 [US2] Docs: the check's row in the doctor reference + `docs/INDEX.md` currency tag
 
 ---
 

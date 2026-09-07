@@ -31,6 +31,11 @@ from ..engine.sandcastle import OAUTH_TOKEN_VAR as _OAUTH_TOKEN_VAR  # noqa: E40
 from ..engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR  # noqa: E402
 #: the credentials' one home (one home for the path too: boot_guard).
 from ..boot_guard import SECRETS_FILE_DEFAULT as _SECRETS_FILE_DEFAULT  # noqa: E402
+#: the catalog identity of a worker-reported environment gap — the same two
+#: constants the queue mints it with and the goal layer files it on (spec 038).
+from ..state_store.problems import (  # noqa: E402
+    ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND,
+)
 
 
 def _ro_db(db_path: str) -> sqlite3.Connection:
@@ -661,6 +666,47 @@ def check_goal_status_env_heal_attempts(ctx: "InstanceContext") -> list[Finding]
     )
 
 
+def check_self_repo_configured_when_env_gaps_exist(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 038 US2: an unset ``DEVCLAW_SELF_REPO`` makes the filing of a
+    worker-reported environment gap a stated no-op (US1 FR-006). That is the
+    right default for a dev checkout and the wrong state for a live instance
+    that is already holding projects on gaps nobody is tracking — so the
+    finding is raised against the catalog, not against the env var alone: it
+    fires only where filings are actually being lost.
+    """
+    cid = "instance.env.self_repo_configured"
+    if _config.self_repo():
+        return [Finding(cid, Verdict.OK, "DEVCLAW_SELF_REPO is set; environment gaps are filed")]
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "problems" not in tables:
+            return [Finding(cid, Verdict.OK, "problems catalog absent (nothing reported yet)")]
+        # Only rows with no issue behind them. A gap filed while the var WAS
+        # set stays linked (env_issue links the row on success), and counting
+        # it would make this finding assert a loss that did not happen — the
+        # exact dishonesty spec 038 exists to remove.
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(problems)")}
+        unfiled = " AND issue_number IS NULL" if "issue_number" in cols else ""
+        n = db.execute(
+            "SELECT COUNT(*) AS n FROM problems "
+            f"WHERE category = ? AND kind = ?{unfiled}",
+            (ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND),
+        ).fetchone()["n"]
+    if not n:
+        return [Finding(
+            cid, Verdict.OK,
+            "DEVCLAW_SELF_REPO unset; no unfiled worker-reported environment gap",
+        )]
+    return [Finding(
+        cid, Verdict.FAIL,
+        f"DEVCLAW_SELF_REPO is unset while the catalog holds {n} worker-reported "
+        "environment deficiency row(s) with no issue behind them — each held a "
+        "project and none was filed as devclaw work",
+        remedy="set DEVCLAW_SELF_REPO=<owner>/<name> on the instance and restart; "
+               "the gaps already in the catalog are filed on their next report",
+    )]
+
+
 def check_goal_status_donegate_progress(ctx: "InstanceContext") -> list[Finding]:
     """Progress-aware churn brake: ``donegate_progress`` persists the best
     satisfied-clause count a done-gate round has reported, so a round that
@@ -913,6 +959,7 @@ INSTANCE_CHECKS: tuple = (
     check_goal_status_slice_hold_count,
     check_goal_status_env_hold_notified,
     check_goal_status_env_heal_attempts,
+    check_self_repo_configured_when_env_gaps_exist,
     check_goal_status_donegate_progress,
     check_problems_tables,
     check_problem_status_pointer,

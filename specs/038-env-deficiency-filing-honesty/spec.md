@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-07
 
-**Status**: US1 implemented 2026-09-07. US2 (P2) is the next slice and is tracked as unchecked tasks in [tasks.md](./tasks.md) — not a deferral without an owner.
+**Status**: US1 and US2 implemented 2026-09-07. Every user story in this spec is built; the only carried item is the pre-existing ledger drift recorded under "Known gap (not this spec's)".
 
 **Input**: lifekit-hq/devclaw issue #818 — "Worker env deficiency claims 'filed as devclaw work' but no issue was created"
 

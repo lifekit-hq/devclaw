@@ -38,6 +38,10 @@ Instance section:
   pre-dispatch check the `skills_missing` class never had, #610/#613)
 - run-window **raw** meta key: absent (lost on redeploy) vs corrupt vs valid —
   `get_run_schedule` alone cannot tell "operator disabled" from "row gone"
+- `DEVCLAW_SELF_REPO` unset **while the problems catalog already holds
+  worker-reported environment deficiencies** (spec 038 US2) — those gaps held
+  a project each and none was filed as devclaw work. Keyed on the catalog so
+  it fires on the instance losing filings, not on every dev checkout
 
 Per-project section:
 
