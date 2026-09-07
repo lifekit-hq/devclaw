@@ -158,6 +158,14 @@ def goal_tick_seconds() -> int:
     return int(os.environ.get("DEVCLAW_GOAL_TICK_SECONDS", "900"))
 
 
+def ci_log_tail_lines() -> int:
+    """``DEVCLAW_CI_LOG_TAIL_LINES`` — lines of a failing CI job's log the
+    red-verdict correction carries to the worker, per failing check
+    (specs/tiny/red-ci-log-to-worker.md). The sandbox holds no credential and
+    cannot fetch the log itself; the host reads it with the rollup."""
+    return int(os.environ.get("DEVCLAW_CI_LOG_TAIL_LINES", "120"))
+
+
 # ---- autonomy-ratchet thresholds (spec 018 US4) ---------------------------
 # The finish-line numbers the scorecard grades itself against (agreed
 # 2026-08-25). Configuration, not code: tune without a deploy. The gate they

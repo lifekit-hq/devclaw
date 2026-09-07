@@ -5,8 +5,9 @@ move — a typed hand-back — and one forbidden move: changing what the gate
 reads so the gate passes.
 
 **Your environment lacks something the work needs** (a tool, a service the
-tests need, a credential, network or registry access). End your final
-message with
+tests need, a credential, network or registry access). Not the CI log: a red
+check's log arrives in your brief with the correction; never report it as
+missing. End your final message with
 
     BLOCKED: env — <exactly what is missing, one line>
 

@@ -233,8 +233,11 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
 **Step M — the CI fact (spec 032 US1).** When the settle proposes done, the
 heartbeat first reads the delivered PR's check rollup for its exact head
 (`goal/remote_checks.check_pr`, bounded, zero cognition): red ⇒ the failing
-check names are steered back as the next correction (no review, no
-evaluator, no gate round); pending/unknown ⇒ the goal holds on
+check names AND the bounded tail of each failing job's log are steered back
+as the next correction (no review, no evaluator, no gate round) — the host
+reads the log because the sandbox holds no GitHub credential
+(`specs/tiny/red-ci-log-to-worker.md`; a log that cannot be read is said so
+in one line, never a block); pending/unknown ⇒ the goal holds on
 `mechanical:ci` and re-reads once per heartbeat window (parks with one ping
 after `CI_HEAL_CAP` windows); no CI definition / CI that cannot execute ⇒ a
 typed Problem; green ⇒ the head is remembered (`goal_status.ci_green_head`)

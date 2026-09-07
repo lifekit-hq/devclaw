@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Awaitable, Callable, Optional
 
 from .. import config as _config
@@ -78,6 +78,12 @@ class RemoteChecksResult:
     pr_url: str = ""
     failing_names: tuple[str, ...] = ()
     pending_names: tuple[str, ...] = ()
+    #: per failing check, the bounded tail of its failed job log — the FACT the
+    #: correction carries to a worker that cannot read GitHub itself
+    #: (specs/tiny/red-ci-log-to-worker.md). ``()`` with ``log_note`` set when
+    #: the read could not be made; the correction then says so.
+    failing_logs: tuple[tuple[str, str], ...] = ()
+    log_note: str = ""
 
     @property
     def proceeds(self) -> bool:
@@ -175,6 +181,77 @@ def combine_states(
     return RemoteChecksResult("passing", f"{ok} checks green ({summary})", head_sha, pr_url)
 
 
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+#: token shapes that must never ride into a brief even if the project's own
+#: Actions masking missed them (GitHub masks registered secrets as ``***``).
+_TOKEN_RE = re.compile(r"\b(gh[pousr]_|github_pat_)[A-Za-z0-9_]{20,}")
+_AUTH_RE = re.compile(r"(?i)(authorization:\s*(?:bearer|token|basic)\s+)\S+")
+
+
+def scrub_log(text: str) -> str:
+    """ANSI stripped, credential shapes masked — the two things a CI log
+    carries that a brief must not (GitHub masks registered secrets as
+    ``***`` already; this catches the token shapes it cannot know about)."""
+    text = _ANSI_RE.sub("", text or "")
+    text = _TOKEN_RE.sub(lambda m: m.group(1) + "***", text)
+    return _AUTH_RE.sub(lambda m: m.group(1) + "***", text)
+
+
+def tail_by_job(log: str, *, lines: int) -> dict[str, str]:
+    """``gh run view --log-failed`` prints ``<job>\t<step>\t<text>`` lines;
+    group by job and keep the last ``lines`` of each — the test-runner summary
+    lives at the tail."""
+    per_job: dict[str, list[str]] = {}
+    for raw in (log or "").splitlines():
+        parts = raw.split("\t", 2)
+        if len(parts) < 3:
+            continue
+        per_job.setdefault(parts[0].strip(), []).append(parts[2].rstrip())
+    return {job: "\n".join(rows[-lines:]) for job, rows in per_job.items()}
+
+
+async def failed_check_logs(
+    owner_repo: str, head_sha: str, failing_names: "tuple[str, ...]", *, lines: int,
+) -> "tuple[tuple[tuple[str, str], ...], str]":
+    """The bounded tail of every failing check's job log for ``head_sha``,
+    read through the same ``gh`` the rollup came from (bounded, best-effort,
+    never raises). Returns ``(excerpts, note)``: ``note`` names why an
+    excerpt is missing so the correction can say so instead of silently
+    carrying nothing."""
+    if not head_sha or not failing_names or lines <= 0:
+        return (), "no failing check named or no head to read"
+    rc, out = await _gh(
+        "run", "list", "--repo", owner_repo, "--commit", head_sha,
+        "--json", "databaseId,conclusion,name", "--limit", "20",
+    )
+    runs = _parse_json(rc, out)
+    if not isinstance(runs, list):
+        return (), f"could not list runs for {head_sha[:7]}: {out.strip()[:120] or 'gh failed'}"
+    failed_ids = [
+        str(r.get("databaseId")) for r in runs
+        if isinstance(r, dict) and str(r.get("conclusion") or "").lower() in _BAD_CONCLUSIONS
+    ]
+    if not failed_ids:
+        return (), "no failed workflow run recorded for this head"
+    tails: dict[str, str] = {}
+    unread: list[str] = []
+    for run_id in failed_ids:
+        rc_l, log = await _gh("run", "view", run_id, "--repo", owner_repo, "--log-failed")
+        if rc_l != 0:
+            unread.append(run_id)
+            continue
+        for job, tail in tail_by_job(scrub_log(log), lines=lines).items():
+            tails.setdefault(job, tail)
+    excerpts = tuple((name, tails[name]) for name in failing_names if name in tails)
+    missing = [n for n in failing_names if n not in tails]
+    notes = []
+    if unread:
+        notes.append(f"log unreadable for run(s) {', '.join(unread)}")
+    if missing:
+        notes.append(f"no failed-job log found for: {', '.join(missing)}")
+    return excerpts, "; ".join(notes)
+
+
 async def _gh(*args: str) -> tuple[int, str]:
     """``gh`` under the shared wall-clock bound; a spawn failure or a timeout
     reads as ``rc != 0`` so the caller maps it to ``unknown``."""
@@ -236,10 +313,19 @@ async def check_pr(repo_url: str, branch: str) -> RemoteChecksResult:
         )
         workflows_present = rc_wf == 0 and out_wf.strip().isdigit() and int(out_wf.strip()) > 0
 
-    return combine_states(
+    result = combine_states(
         rollup, required=required, workflows_present=workflows_present,
         head_sha=head_sha, pr_url=pr_url,
     )
+    if result.state == "failing":
+        # the fact the correction carries: a worker cannot read GitHub, the
+        # host can — one more bounded gh read on the red path only
+        from .. import config as _config
+        excerpts, note = await failed_check_logs(
+            owner_repo, head_sha, result.failing_names, lines=_config.ci_log_tail_lines(),
+        )
+        result = replace(result, failing_logs=excerpts, log_note=note)
+    return result
 
 
 def default_checker() -> RemoteChecker:
