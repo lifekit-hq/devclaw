@@ -1663,10 +1663,25 @@ class GoalService:
                     env_heal_attempts=0),
             expect=s,
         )
+        # A worker-reported environment gap is recorded on the PROJECT, not the
+        # goal, and nothing can probe it green — a worker invents the
+        # capability id from prose. So the human vouch has to reach that row
+        # too: without this the goal unblocks, dispatches, hits the still-red
+        # row and re-blocks on the next tick. Declared-capability rows are NOT
+        # touched — those have real probes and heal on their own evidence
+        # (specs/tiny/env-hold-observes-the-capability).
+        cleared: "tuple[str, ...]" = ()
+        try:
+            _pid = (self._goal_store.load_goal(goal_id).project_id or "").strip()
+            if _pid:
+                cleared = _env_cap_ids.clear_worker_deficiencies(self._goal_store, _pid)
+        except Exception as exc:  # noqa: BLE001 — never fail the resume verb
+            sys.stderr.write(f"goal-layer: worker-cap clear failed for {goal_id}: {exc}\n")
         self._goal_store.record_intervention(goal_id, "resume", was_blocked_on[:80])
         self._goal_store.append_log(
             goal_id,
-            f"resumed: blocker cleared ({was_blocked_on[:120]}) — re-attempting the same contract",
+            f"resumed: blocker cleared ({was_blocked_on[:120]}) — re-attempting the same contract"
+            + (f"; cleared {len(cleared)} worker-reported env gap(s)" if cleared else ""),
         )
         self.poke()
         return {"goal_id": goal_id, "resumed": True, "was_blocked_on": was_blocked_on}

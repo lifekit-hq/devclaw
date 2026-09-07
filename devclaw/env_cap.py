@@ -71,9 +71,10 @@ KNOWN_CAPABILITIES: frozenset[str] = frozenset({
 #: spec 032 US2: a WORKER-REPORTED environment deficiency is recorded as a
 #: red capability row under this prefix (``worker:<slug of the item>``), so
 #: admission, the hold, the heal, doctor and get_goal tell the same story
-#: they tell for a declared capability. It has no probe runner: the row is
-#: red while the instance's environment is the one the worker reported
-#: against (:func:`instance_env_ref`) and reads green once that changes.
+#: they tell for a declared capability. It has no probe runner — a worker
+#: invents the id from prose, so nothing can ever read it green mechanically.
+#: The row stays red until a human vouches (``resume_goal`` →
+#: :func:`clear_worker_deficiencies`).
 WORKER_PREFIX = "worker:"
 
 CapScope = Literal["instance", "project"]
@@ -192,14 +193,18 @@ def read_result(
         )
     except Exception:  # noqa: BLE001
         return None
-    if cap_id.startswith(WORKER_PREFIX) and result.status == "red":
-        # spec 032 US2: the row is about the environment it was reported
-        # against; a changed environment reads green (the fix arrived).
-        if (d.get("env_ref") or "") != instance_env_ref():
-            return CapProbeResult(
-                status="green",
-                evidence=f"environment changed since the worker's report ({result.evidence})",
-            )
+    # A worker-reported row stays RED until a human vouches (resume_goal).
+    # It used to read GREEN whenever `env_ref` differed — "a new sandbox image
+    # or devclaw build IS the fix arriving" (spec 032 US2 / SC-004). That is
+    # amended (specs/tiny/env-hold-observes-the-capability): the ref is
+    # `sandbox image | devclaw sha` and the sandbox image is TAGGED with the
+    # sha, so every unrelated devclaw merge read as a fix and cleared real
+    # holds within hours. Worse, the gaps workers report are credentials and
+    # env vars — which ride the environment, not the image — so the actual fix
+    # moves nothing while everything irrelevant moves the ref. The signal was
+    # anti-correlated with the fact, which no refinement of the fingerprint can
+    # repair. `env_ref` is kept on the row as PROVENANCE (which environment the
+    # report was made against); it is never a heal trigger.
     return result
 
 
@@ -224,10 +229,13 @@ def record_worker_deficiency(
     *, goal_id: str = "", task_id: str = "",
 ) -> str:
     """Record a worker-reported environment deficiency (spec 032 US2) as a
-    red capability row for the project and return its capability id. One
-    row per (item, project): a repeat report against the same environment
-    refreshes ``probed_at_ms`` only; a report against a NEW environment
-    re-pins the row (the earlier fix did not close the gap)."""
+    red capability row for the project and return its capability id.
+
+    One row per (item, project); a repeat report refreshes ``probed_at_ms``.
+    ``env_ref`` is stored as provenance — which environment the gap was
+    reported against — and is NOT a heal trigger
+    (specs/tiny/env-hold-observes-the-capability amends SC-004). The row
+    clears when a human vouches via ``resume_goal``."""
     from .state_store import _now_ms  # deferred — avoids circular at module load
 
     cap_id = worker_cap_id(item)
@@ -241,7 +249,9 @@ def record_worker_deficiency(
             existing = json.loads(raw)
         except Exception:  # noqa: BLE001
             existing = {}
-    if existing.get("env_ref") == ref:
+    if existing.get("status") == "red":
+        # Same gap, reported again — refresh recency, keep the original
+        # provenance. There is no re-pin branch: the ref never healed anything.
         existing["probed_at_ms"] = _now_ms()
         store.set_meta(key, json.dumps(existing))
     else:
@@ -264,6 +274,28 @@ def record_worker_deficiency(
         ids.add(cap_id)
         store.set_meta(_worker_index_key(pid), json.dumps(sorted(ids)))
     return cap_id
+
+
+def clear_worker_deficiencies(store: MetaStore, project_id: Optional[str]) -> "tuple[str, ...]":
+    """Drop every worker-reported deficiency row for ``project_id`` and return
+    the ids cleared.
+
+    This is the ONE exit from a worker-reported hold
+    (specs/tiny/env-hold-observes-the-capability). A worker invents the
+    capability id from prose, so devclaw has no probe that could ever read it
+    green — only a human can say the gap is closed, and ``resume_goal`` is that
+    statement. Clearing must reach the project-scoped row, not just the goal's
+    fields: otherwise the goal unblocks, dispatches, hits the still-red row and
+    re-blocks on the next tick.
+
+    Idempotent — a project with no worker rows returns ``()``."""
+    pid = (project_id or "").strip() or None
+    ids = worker_caps_for(store, pid)
+    for cap_id in ids:
+        store.set_meta(_meta_key(cap_id, pid), "")
+    if ids:
+        store.set_meta(_worker_index_key(pid), json.dumps([]))
+    return ids
 
 
 def _write_result(store: MetaStore, target: CapTarget, result: CapProbeResult) -> None:
