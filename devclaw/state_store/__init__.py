@@ -12,6 +12,8 @@ The store was split into a package for legibility (behavior-preserving):
   + their retention prunes.
 - :mod:`.evals` — :class:`EvalOutcomesMixin`, the continuous-eval projections
   (eval_outcomes + cycle_reports, ADR 0006).
+- :mod:`.health` — :class:`LoopHealthMixin`, the loop-health tables (spec
+  038): idle attribution spans, the permanent usage ledger, intake grades.
 - :mod:`.core` — :class:`StateStore` itself: connection, transactions,
   task/program CRUD, scheduling/recovery, VACUUM + DB-size alarm.
 

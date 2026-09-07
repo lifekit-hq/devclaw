@@ -31,6 +31,7 @@ from typing import Iterator, Optional
 from .. import config as _config
 from .control import ControlPlaneMixin
 from .evals import EvalOutcomesMixin
+from .health import LoopHealthMixin
 from .observability import ObservabilityMixin
 from .observability import (  # noqa: F401 — compat re-exports: the retention
     # helpers moved to observability.py with the prune methods; external
@@ -100,7 +101,8 @@ def db_size_alert_bytes() -> int:
 
 
 class StateStore(
-    ControlPlaneMixin, ProblemsMixin, MachineIssuesMixin, ObservabilityMixin, EvalOutcomesMixin
+    ControlPlaneMixin, ProblemsMixin, MachineIssuesMixin, ObservabilityMixin, EvalOutcomesMixin,
+    LoopHealthMixin,
 ):
     def __init__(self, db_path: str) -> None:
         Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)

@@ -75,6 +75,7 @@ from .intake import (  # noqa: F401
 )
 from .observability import (  # noqa: F401
     get_events,
+    get_loop_health,
     get_scorecard_metrics,
     get_status,
     list_problems,

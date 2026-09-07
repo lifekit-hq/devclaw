@@ -1,9 +1,11 @@
-"""Observability read surfaces — problems, token usage, run traces.
+"""Observability read surfaces — problems, token usage, run traces, loop health.
 
-Three read-only projections the console's operator views render:
+Read-only projections the console's operator views render:
 ``/problems.json`` (the deduplicated problems catalog with its lifecycle
-stage), ``/usage.json`` (the instance-wide token/cost aggregate) and
-``/traces.json`` (the run-trace read surface, every filter applied in SQL).
+stage), ``/usage.json`` (the instance-wide token/cost aggregate),
+``/traces.json`` (the run-trace read surface, every filter applied in SQL)
+and ``/loop-health.json`` (spec 038: why the loop is not running, whether it
+self-heals, whether it converges — every rate null on an empty sample).
 """
 
 from __future__ import annotations
@@ -82,6 +84,22 @@ async def usage_json(_request: Request) -> Response:
     no write, cheap enough to poll from the console's Usage page."""
     all_goals = goals.list_goals()
     return JSONResponse(_telemetry.compute_instance_usage(store, registry, all_goals))
+
+
+@mcp.custom_route("/loop-health.json", methods=["GET"])
+async def loop_health_json(request: Request) -> Response:
+    """Spec 038: idle by cause led by the not-stuck rate, the self-heal rate,
+    clean-cycle and first-pass read from their existing sources. Query param
+    ``window_hours`` (default: the ratchet window). Pure store read — no LLM,
+    no write; a metric with no data reads ``null``, never ``0``."""
+    raw = request.query_params.get("window_hours")
+    window: "int | None" = None
+    if raw:
+        try:
+            window = max(1, min(int(raw), 24 * 90))
+        except ValueError:
+            window = None
+    return JSONResponse(_telemetry.compute_loop_health(store, window_hours=window, registry=registry))
 
 
 @mcp.custom_route("/traces.json", methods=["GET"])
