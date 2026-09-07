@@ -457,6 +457,27 @@ on-demand direction evaluation (`evaluate_goal`) were removed: four
 pings go out raw; the problems catalog and GitHub Issues carry triage; the
 evaluator has exactly one caller, the done-gate on a done proposal.
 
+**Loop health — why the loop is not running (spec 039, 2026-09-07).** Idle
+had one bit (`cycle_reports.idle`) and no cause. Now every heartbeat sweep
+attributes the interval since the previous sweep to ONE cause — the
+existing `blocked_kind` vocabulary verbatim, or the previously unnamed
+nothing-to-do set (`empty_backlog`, `no_goal_armed`, `all_planned_done`,
+`window_closed`, `paused`) plus `operator_hold` — as run-length
+`loop_spans` rows written by `StateStore.record_loop_sample` through the
+engine seam at the end of `tick_all` (the feature's single write point,
+below every pause/hold early return; zero cognition). The responsibility
+bucket — devclaw-caused / owner's turn / no work available — is derived
+from the cause at read time (`devclaw/loop_health.py`, the one definition),
+never stored; a heartbeat gap longer than three ticks is an explicit
+`unobserved` span, attributed to nobody. `/loop-health.json` and the
+`get_loop_health` tool serve the **not-stuck rate** (only devclaw-caused
+idle lowers it; `null` over an empty window, never 100%), the three-bucket
+breakdown, the self-heal rate (Σ recovered / Σ recovered+terminal over the
+problems catalog's lifetime counters, labelled as such), and clean-cycle +
+first-pass read from their existing sources with the scorecard's one
+definition each. Doctor's `instance.loop_health.tables` fails a DB missing
+the tables.
+
 ---
 
 # Part II — the locked contract
@@ -774,7 +795,7 @@ devclaw/
 ├── delivery/        commit → branch → push → PR; deploy.py; repo.py
 ├── quality/         gates past green tests — pre-PR review, browser_gate, reachability
 ├── loom/            engine-agnostic substrate — limits, test_integrity, trace
-├── state_store/     StateStore package (rows · control · problems · observability · evals · core) — the append-only log
+├── state_store/     StateStore package (rows · control · problems · observability · evals · health · core) — the append-only log
 ├── task_queue.py + queue/ + task_{git,notify}.py    layer 4 — dispatch, concurrency, settle (queue/ = the settle/admission mixins)
 └── prompts/         system prompts as .md files (load_prompt(slug)); gate prompts live in quality/prompts/
 runner/runner.py    layer 5 — the in-sandbox harness

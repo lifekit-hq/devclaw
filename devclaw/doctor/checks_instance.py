@@ -973,7 +973,54 @@ def check_contract_pins(ctx: "InstanceContext") -> list[Finding]:
     )]
 
 
+def check_loop_health_tables(ctx: "InstanceContext") -> list[Finding]:
+    """Spec 038 (per spec-016 FR-014): the three loop-health tables must exist
+    wherever goal tables do — a DB predating them silently reports every
+    loop-health metric as unknown (which the surfaces name, but a boot
+    fixes). Two live-only drifts the stubbed suite cannot see: the tables
+    absent post-migration (FAIL), and a worker usage source that has gone
+    silent — tasks settled in the last 7 days yet no worker ledger row
+    reported usage (WARN: the sandbox image / runner predate the transcript
+    source, or the transcript path is not writable)."""
+    cid = "instance.loop_health.tables"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
+        missing = sorted({"loop_spans", "usage_ledger", "intake_grades"} - tables)
+        if missing:
+            return [Finding(
+                cid, Verdict.FAIL,
+                f"loop-health table(s) absent: {', '.join(missing)} — the DB predates "
+                "spec 039; idle cause, self-heal and cost history read unknown until "
+                "the tables exist",
+                remedy="restart devclaw (StateStore bootstraps the tables at construction)",
+            )]
+        week_ago = int(time.time() * 1000) - 7 * 24 * 3600 * 1000
+        settled = db.execute(
+            "SELECT COUNT(*) AS n FROM tasks WHERE completed_at IS NOT NULL AND completed_at >= ?",
+            (week_ago,),
+        ).fetchone()["n"]
+        reported = db.execute(
+            "SELECT COUNT(*) AS n FROM usage_ledger "
+            "WHERE source = 'worker' AND reported = 1 AND at_ms >= ?",
+            (week_ago,),
+        ).fetchone()["n"]
+    if int(settled or 0) > 0 and int(reported or 0) == 0:
+        return [Finding(
+            cid, Verdict.WARN,
+            f"{settled} task(s) settled in the last 7 days but no worker usage was "
+            "reported — the worker usage source is silent (sandbox image or runner "
+            "predate spec 039, or the agent's transcript path is not writable); "
+            "cost per outcome reads unknown",
+            remedy="redeploy with the rebuilt sandbox image; verify a settled task's "
+                   "usage_ledger row reads reported=1",
+        )]
+    return [Finding(cid, Verdict.OK, "loop-health tables present")]
+
+
 INSTANCE_CHECKS: tuple = (
+    check_loop_health_tables,
     check_contract_pins,
     check_goal_interventions_table,
     check_goal_status_pending_done_proposal,

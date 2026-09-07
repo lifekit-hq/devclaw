@@ -201,6 +201,14 @@ class InProcessEngine:
         after the queue's pump lazily cleared the pause + reason."""
         return self._store.pause_notified_kind()
 
+    def operator_hold_state(self) -> tuple[bool, str]:
+        """The manual hold alone (``StateStore.operator_hold``), read beside
+        :meth:`operator_block` by the loop-health attribution (spec 039): a
+        held sweep is the owner's turn, a closed window is no work — the
+        combined gate cannot tell them apart."""
+        on, reason = self._store.operator_hold()
+        return bool(on), str(reason or "")
+
     def operator_block(self, now_ms: int) -> tuple[bool, str]:
         """The manual-hold + daily run-window gate (``dispatch_gate.operator_block``),
         read by the goal heartbeat beside the quota pause. Delegates to the same
@@ -274,6 +282,20 @@ class InProcessEngine:
         (volume hygiene, 2026-07-18). Delegates to :meth:`StateStore.maybe_vacuum`
         — same getattr seam as :meth:`prune_traces`."""
         return self._store.maybe_vacuum()
+
+    def record_loop_sample(self, *, now_ms: int, cause: str, detail: str = "") -> str:
+        """Attribute the interval since the previous heartbeat sweep to ONE
+        cause (spec 039 US1, FR-004a: the heartbeat is the only write point).
+        Same delegating seam as :meth:`prune_traces` — the store owns the
+        write, the engine is how the tick reaches it, and a test double
+        without this method records nothing. A gap longer than three ticks
+        is recorded as ``unobserved`` by the store, never attributed."""
+        from .. import config as _config
+
+        return self._store.record_loop_sample(
+            now_ms=now_ms, cause=cause, detail=detail,
+            max_gap_ms=3 * _config.goal_tick_seconds() * 1000,
+        )
 
     def check_db_size_alert(self) -> "str | None":
         """One-shot DB-size alarm (loud-not-silent, 2026-07-18). Delegates to

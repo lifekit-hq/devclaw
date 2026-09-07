@@ -63,6 +63,7 @@ from ..state_store import _now_ms
 from ..engine import workspace as _workspace
 from ..engine.workspace import prepare_workspace
 from .. import config as _config
+from .. import loop_health as _loop_health
 from .prompt_budget import cap_steering as _cap_steering
 from .. import env_cap as _env_cap_mod
 from .. import project_manifest as _env_cap_manifest_mod  # aliased to dodge shadowing
@@ -1037,6 +1038,97 @@ async def _handle_long_lived_advance(
 
 
 async def tick_all(
+    *,
+    store: GoalStore,
+    engine: GoalEngine,
+    evaluator_caller: ClaudeCaller,
+    notifier: Notifier,
+    notify_url: str = "",
+    prepare_ws: WorkspacePrep = prepare_workspace,
+    verify_done: bool = VERIFY_DONE,
+    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
+    no_progress_s: int = NO_PROGRESS_S,
+    verify_done_resolver: "Callable[[Goal], bool] | None" = None,
+    autodeploy_resolver: "Callable[[Goal], bool | None] | None" = None,
+    tracer_factory: "Callable[[str], _trace.Tracer | None] | None" = None,
+    remote_checker: "_remote_checks.RemoteChecker | None" = None,
+    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
+    project_workspaces: "Callable[[], set[str]] | None" = None,
+    project_capabilities: "Callable[[], dict[str, tuple[str, ...]]] | None" = None,
+    project_images: "Callable[[], dict[str, str | None]] | None" = None,
+    project_repo_urls: "Callable[[], dict[str, str | None]] | None" = None,
+    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
+) -> dict[str, Outcome]:
+    """Tick every goal (see :func:`_tick_all_pass`), then attribute the
+    interval since the previous sweep to ONE cause (spec 039 US1).
+
+    The attribution is the feature's single write point (FR-004a) and sits
+    BELOW every early return of the pass — a paused or held sweep is exactly
+    the interval that must be attributed. Pure SQLite through the engine seam,
+    zero cognition (constitution III), best-effort: a bookkeeping failure
+    never touches the outcomes.
+    """
+    outcomes = await _tick_all_pass(
+        store=store, engine=engine, evaluator_caller=evaluator_caller,
+        notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
+        verify_done=verify_done, autodeploy=autodeploy, no_progress_s=no_progress_s,
+        verify_done_resolver=verify_done_resolver, autodeploy_resolver=autodeploy_resolver,
+        tracer_factory=tracer_factory, remote_checker=remote_checker,
+        mergeability_probe=mergeability_probe, project_workspaces=project_workspaces,
+        project_capabilities=project_capabilities, project_images=project_images,
+        project_repo_urls=project_repo_urls, issue_fetcher=issue_fetcher,
+    )
+    _record_loop_sample(engine, store, outcomes)
+    return outcomes
+
+
+def _record_loop_sample(engine: GoalEngine, store: GoalStore, outcomes: "dict[str, Outcome]") -> None:
+    """Derive the sweep's one cause (``loop_health.derive_loop_cause``) from
+    what the tick already read — pause, hold, window, per-goal statuses and
+    outcomes — and hand it to the engine's ``record_loop_sample`` seam. A
+    test double without the seam records nothing; a store hiccup is
+    swallowed (bookkeeping must never break the heartbeat)."""
+    fn = getattr(engine, "record_loop_sample", None)
+    if not callable(fn):
+        return
+    try:
+        now = _now_ms()
+        until, reason = _engine_pause(engine)
+        pause_active = bool(until and now < until)
+        hold_fn = getattr(engine, "operator_hold_state", None)
+        hold_on, hold_reason = hold_fn() if callable(hold_fn) else (False, "")
+        blocked, why = _engine_operator_block(engine)
+        views: list[_loop_health.GoalView] = []
+        for gid in store.list_goal_ids():
+            try:
+                st = store.load_status(gid)
+            except Exception:  # noqa: BLE001 — one bad row must not lose the sample
+                continue
+            g_blocked, _ = _engine_goal_operator_block(engine, gid)
+            out = outcomes.get(gid)
+            views.append(_loop_health.GoalView(
+                goal_id=gid,
+                terminal=_project_hold.is_terminal(st),
+                phase=str(st.phase or ""),
+                blocked_kind=str(st.blocked_kind or ""),
+                outcome=out.value if out is not None else "",
+                window_closed=bool(g_blocked),
+            ))
+        unarmed_fn = getattr(engine, "count_ready_issues_without_goal", None)
+        unarmed = int(unarmed_fn() or 0) if callable(unarmed_fn) else 0
+        cause, detail = _loop_health.derive_loop_cause(
+            goals=views,
+            pause_active=pause_active, pause_reason=reason or "",
+            operator_hold=bool(hold_on), hold_reason=hold_reason or "",
+            window_closed=bool(blocked and not hold_on), window_reason=why or "",
+            unarmed_ready_issues=unarmed,
+        )
+        fn(now_ms=now, cause=cause, detail=detail)
+    except Exception:  # noqa: BLE001 — measurement must not break the heartbeat
+        pass
+
+
+async def _tick_all_pass(
     *,
     store: GoalStore,
     engine: GoalEngine,

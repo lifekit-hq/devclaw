@@ -508,65 +508,9 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
     )
 
     # ---- per-goal convergence (spec 018 US1) ---------------------------
-    # Goal-weighted, from the goal_convergence terminal ledger — the
-    # verdict-weighted first_pass_hit_rate this replaces let one churny
-    # goal shift a whole week (audited 2026-08-25: 0.36 reported vs 0.45
-    # per-goal). Goal tables share this store's sqlite file (Tranche 1);
-    # a DB predating the table degrades to an explicit note, never to
-    # silent zeros.
-    convergence: dict[str, Any] = {
-        "goals_closed": 0, "first_pass": 0, "first_pass_rate": None,
-        "rounds_median": None, "rounds_max": None,
-        "abandoned": 0, "rounds_unknown": 0,
-    }
-    convergence_note: Optional[str] = None
-    try:
-        with store._lock:
-            conv_rows = store._db.execute(
-                "SELECT goal_id, outcome, rounds, workspace_dir, closed_at "
-                "FROM goal_convergence"
-            ).fetchall()
-            term_rows = store._db.execute(
-                "SELECT goal_id, at FROM goal_phase_history "
-                "WHERE phase IN ('done', 'cancelled')"
-            ).fetchall()
-    except sqlite3.OperationalError:
-        conv_rows, term_rows = [], []
-        convergence_note = (
-            "goal_convergence/goal_phase_history tables absent (DB predates "
-            "spec 018) — per-goal convergence unknown for this window."
-        )
-    achieved_rounds: list[int] = []
-    recorded_ids = {r["goal_id"] for r in conv_rows}
-    for r in conv_rows:
-        ms = _iso_to_ms(r["closed_at"])
-        if ms is None or ms < since_ms:
-            continue
-        if _ws_norm(r["workspace_dir"]) in bench_ws:
-            continue  # bench goals move no ratchet-facing number (SC-006)
-        if r["outcome"] == "achieved":
-            achieved_rounds.append(int(r["rounds"]))
-        elif r["outcome"] == "abandoned":
-            convergence["abandoned"] += 1
-    unknown_ids = set()
-    for r in term_rows:
-        ms = _iso_to_ms(r["at"])
-        if ms is None or ms < since_ms:
-            continue
-        if r["goal_id"] not in recorded_ids:
-            unknown_ids.add(r["goal_id"])  # pre-018 close: never guessed
-    convergence["rounds_unknown"] = len(unknown_ids)
-    convergence["goals_closed"] = len(achieved_rounds)
-    if achieved_rounds:
-        # rounds counts every done proposal incl. the closing one, so
-        # first-pass is rounds<=1 (0 covers a close with no verifying entry,
-        # e.g. a manual evaluation path — it never proposed-and-failed).
-        convergence["first_pass"] = sum(1 for n in achieved_rounds if n <= 1)
-        convergence["first_pass_rate"] = round(
-            convergence["first_pass"] / len(achieved_rounds), 4
-        )
-        convergence["rounds_median"] = statistics.median(achieved_rounds)
-        convergence["rounds_max"] = max(achieved_rounds)
+    # Goal-weighted, from the goal_convergence terminal ledger — ONE
+    # definition, shared with the loop-health surface (spec 039 FR-016).
+    convergence, convergence_note = _convergence_block(store, since_ms=since_ms, bench_ws=bench_ws)
 
     # ---- cost per merged PR (the legibility number) ---------------------
     # Tokens are the honest unit on OAuth (Pro/Max) runs — the CLI reports no
@@ -663,16 +607,8 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
     # condition (non-idle cycle_reports rows in-window, all clean). A null
     # metric NEVER passes; the overall verdict is the AND. Informational
     # only — nothing actuates from it (spec 007's flip stays a human act).
-    try:
-        with store._lock:
-            cyc_rows = store._db.execute(
-                "SELECT clean, idle FROM cycle_reports WHERE window_end_ms >= ?",
-                (since_ms,),
-            ).fetchall()
-    except sqlite3.OperationalError:
-        cyc_rows = []
-    counted = [r for r in cyc_rows if not (r["idle"] or 0)]
-    clean_cycles = sum(1 for r in counted if r["clean"])
+    cycle_block = _cycle_block(store, since_ms=since_ms)
+    clean_cycles, counted_cycles = cycle_block["clean"], cycle_block["total"]
     thresholds = {
         "first_pass_rate": _config.ratchet_first_pass(),
         "decided_merge_rate": _config.ratchet_decided_merge(),
@@ -691,8 +627,8 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
         },
         "wedge_free_window": {
             "clean_cycles": clean_cycles,
-            "total_cycles": len(counted),
-            "pass": len(counted) > 0 and clean_cycles == len(counted),
+            "total_cycles": counted_cycles,
+            "pass": counted_cycles > 0 and clean_cycles == counted_cycles,
         },
     }
     ratchet = {
@@ -752,6 +688,222 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
                 "cost_per_merged_pr_usd is null unless a real cost was recorded.",
             ) if n
         ],
+    }
+
+
+# ---- shared reads: convergence + cycles (one definition each, spec 039 FR-016)
+
+
+def _convergence_block(store: Any, *, since_ms: int, bench_ws: "set | None" = None) -> "tuple[dict, Optional[str]]":
+    """Per-goal convergence over the goal_convergence terminal ledger — the
+    scorecard's definition (spec 018 US1), read by the loop-health surface
+    too so first-pass has exactly one meaning. A DB predating the table
+    degrades to an explicit note, never to silent zeros."""
+    bench_ws = bench_ws or set()
+    convergence: dict[str, Any] = {
+        "goals_closed": 0, "first_pass": 0, "first_pass_rate": None,
+        "rounds_median": None, "rounds_max": None,
+        "abandoned": 0, "rounds_unknown": 0,
+    }
+    note: Optional[str] = None
+    try:
+        with store._lock:  # noqa: SLF001 — telemetry co-designs with state_store
+            conv_rows = store._db.execute(
+                "SELECT goal_id, outcome, rounds, workspace_dir, closed_at "
+                "FROM goal_convergence"
+            ).fetchall()
+            term_rows = store._db.execute(
+                "SELECT goal_id, at FROM goal_phase_history "
+                "WHERE phase IN ('done', 'cancelled')"
+            ).fetchall()
+    except sqlite3.OperationalError:
+        conv_rows, term_rows = [], []
+        note = (
+            "goal_convergence/goal_phase_history tables absent (DB predates "
+            "spec 018) — per-goal convergence unknown for this window."
+        )
+    achieved_rounds: list[int] = []
+    recorded_ids = {r["goal_id"] for r in conv_rows}
+    for r in conv_rows:
+        ms = _iso_to_ms(r["closed_at"])
+        if ms is None or ms < since_ms:
+            continue
+        if _ws_norm(r["workspace_dir"]) in bench_ws:
+            continue  # bench goals move no ratchet-facing number (SC-006)
+        if r["outcome"] == "achieved":
+            achieved_rounds.append(int(r["rounds"]))
+        elif r["outcome"] == "abandoned":
+            convergence["abandoned"] += 1
+    unknown_ids = set()
+    for r in term_rows:
+        ms = _iso_to_ms(r["at"])
+        if ms is None or ms < since_ms:
+            continue
+        if r["goal_id"] not in recorded_ids:
+            unknown_ids.add(r["goal_id"])  # pre-018 close: never guessed
+    convergence["rounds_unknown"] = len(unknown_ids)
+    convergence["goals_closed"] = len(achieved_rounds)
+    if achieved_rounds:
+        # rounds counts every done proposal incl. the closing one, so
+        # first-pass is rounds<=1 (0 covers a close with no verifying entry,
+        # e.g. a manual evaluation path — it never proposed-and-failed).
+        convergence["first_pass"] = sum(1 for n in achieved_rounds if n <= 1)
+        convergence["first_pass_rate"] = round(
+            convergence["first_pass"] / len(achieved_rounds), 4
+        )
+        convergence["rounds_median"] = statistics.median(achieved_rounds)
+        convergence["rounds_max"] = max(achieved_rounds)
+    return convergence, note
+
+
+def _cycle_block(store: Any, *, since_ms: int) -> dict:
+    """Clean-cycle rate over non-idle cycle_reports rows in the window — the
+    ratchet's wedge-free condition (spec 018 US4) and the loop-health
+    surface's clean-cycle metric, one read. ``rate`` is None with no
+    counted cycle, never 0 or 1."""
+    try:
+        with store._lock:  # noqa: SLF001
+            cyc_rows = store._db.execute(
+                "SELECT clean, idle FROM cycle_reports WHERE window_end_ms >= ?",
+                (since_ms,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        cyc_rows = []
+    counted = [r for r in cyc_rows if not (r["idle"] or 0)]
+    clean = sum(1 for r in counted if r["clean"])
+    return {
+        "clean": clean,
+        "total": len(counted),
+        "rate": (round(clean / len(counted), 4) if counted else None),
+    }
+
+
+# ---- loop health (spec 039) ------------------------------------------------
+#
+# Why the loop is not running, whether it fixes itself, and (read from their
+# existing sources) whether it converges. Pure projections over loop_spans /
+# problems / cycle_reports / goal_convergence — no cognition, no write, and
+# every rate is None over an empty sample (FR-020: absent is never zero).
+
+
+def compute_self_heal(store: Any, *, since_ms: int) -> dict:
+    """Σ recovered / (Σ recovered + Σ terminal) over the problems catalog's
+    EXISTING counters (spec 039 US2, FR-007). The counters are lifetime per
+    fingerprint; the window selects problems by last_seen — the ``basis``
+    line says so, and the raw sums ride alongside. None on an empty
+    denominator (FR-008)."""
+    try:
+        counts = store.self_heal_counts(since_ms=since_ms)
+    except (sqlite3.OperationalError, AttributeError):
+        return {
+            "rate": None, "recovered": 0, "terminal": 0, "problems": 0,
+            "basis": "problems table absent",
+        }
+    rec, term = int(counts["recovered"]), int(counts["terminal"])
+    denom = rec + term
+    return {
+        "rate": (round(rec / denom, 4) if denom else None),
+        "recovered": rec,
+        "terminal": term,
+        "problems": int(counts["problems"]),
+        "basis": "lifetime counters of problems last seen in window",
+    }
+
+
+def compute_idle_attribution(store: Any, *, since_ms: int, now_ms: Optional[int] = None) -> dict:
+    """Idle by cause over ``loop_spans`` clipped to the window (spec 039 US1):
+    per-cause seconds, per-bucket seconds (the bucket is DERIVED from the
+    cause here, never stored — FR-005a), the not-stuck rate (FR-005b, None
+    when nothing was observed) and the unobserved time reported apart."""
+    from . import loop_health as _lh
+
+    now = _now_ms() if now_ms is None else now_ms
+    try:
+        spans = store.list_loop_spans(since_ms=since_ms)
+    except (sqlite3.OperationalError, AttributeError):
+        return {
+            "not_stuck_rate": None, "observed_seconds": 0, "working_seconds": 0,
+            "unobserved_seconds": 0,
+            "buckets": {b: 0 for b in _lh.RESPONSIBILITY_BUCKETS},
+            "causes": [], "current": None,
+            "note": "loop_spans table absent (DB predates spec 039) — idle cause unknown",
+        }
+    per_cause: dict[str, dict] = {}
+    buckets: dict[str, float] = {b: 0.0 for b in _lh.RESPONSIBILITY_BUCKETS}
+    working_ms = 0
+    unobserved_ms = 0
+    for sp in spans:
+        ms = _lh.clip_span(sp["start_ms"], sp["end_ms"], since_ms, now)
+        if ms <= 0:
+            continue
+        cause = str(sp["cause"])
+        bucket = _lh.bucket_for(cause)
+        if bucket == _lh.BUCKET_WORKING:
+            working_ms += ms
+        elif bucket == _lh.BUCKET_UNOBSERVED:
+            unobserved_ms += ms
+        else:
+            buckets[bucket] += ms
+        row = per_cause.setdefault(
+            cause, {"cause": cause, "bucket": bucket, "seconds": 0, "ticks": 0, "last_detail": ""}
+        )
+        row["seconds"] += ms // 1000
+        row["ticks"] += int(sp.get("ticks") or 0)
+        row["last_detail"] = str(sp.get("detail") or "")
+    bucket_s = {b: int(v // 1000) for b, v in buckets.items()}
+    last = spans[-1] if spans else None
+    return {
+        "not_stuck_rate": _lh.not_stuck_rate(buckets, float(working_ms)),
+        "observed_seconds": int((working_ms + sum(buckets.values())) // 1000),
+        "working_seconds": int(working_ms // 1000),
+        "unobserved_seconds": int(unobserved_ms // 1000),
+        "buckets": bucket_s,
+        "causes": sorted(per_cause.values(), key=lambda r: -r["seconds"]),
+        "current": (
+            {"cause": last["cause"], "bucket": _lh.bucket_for(str(last["cause"])),
+             "since_ms": int(last["start_ms"]), "detail": last.get("detail") or ""}
+            if last else None
+        ),
+        "note": None,
+    }
+
+
+def compute_loop_health(store: Any, *, window_hours: "int | None" = None, registry: Any = None) -> dict:
+    """The loop-health surface (spec 039): idle by cause led by the not-stuck
+    rate, the self-heal rate, and the two already-built convergence numbers
+    read from their existing sources with the scorecard's definitions
+    (FR-016). Pure store read; window defaults to the ratchet window."""
+    from . import config as _config
+
+    if window_hours is None:
+        window_hours = _config.ratchet_window_days() * 24
+    now = _now_ms()
+    since_ms = now - int(window_hours * 3600 * 1000)
+    bench_ws: set = set()
+    if registry is not None:
+        try:
+            bench_ws = {
+                _ws_norm(p.workspace_dir)
+                for p in registry.list()
+                if getattr(p, "bench", False) and p.workspace_dir
+            }
+        except Exception:  # noqa: BLE001 — a registry hiccup never breaks the read
+            bench_ws = set()
+    convergence, conv_note = _convergence_block(store, since_ms=since_ms, bench_ws=bench_ws)
+    return {
+        "window_hours": window_hours,
+        "since_ms": since_ms,
+        "computed_at_ms": now,
+        "idle": compute_idle_attribution(store, since_ms=since_ms, now_ms=now),
+        "self_heal": compute_self_heal(store, since_ms=since_ms),
+        "clean_cycle": _cycle_block(store, since_ms=since_ms),
+        "first_pass": {
+            "first_pass": convergence["first_pass"],
+            "goals_closed": convergence["goals_closed"],
+            "rate": convergence["first_pass_rate"],
+            "rounds_median": convergence["rounds_median"],
+            "note": conv_note,
+        },
     }
 
 

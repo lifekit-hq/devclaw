@@ -219,6 +219,64 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                   last_seen_ms     INTEGER NOT NULL,
                   PRIMARY KEY (repo, fingerprint)
                 );
+
+                -- Loop health (spec 039). Three permanent, thin tables, each
+                -- with ONE writer (state_store/health.py):
+                --   loop_spans    — idle attribution, run-length: every
+                --                   heartbeat sweep attributes the interval
+                --                   since the previous sweep to ONE cause
+                --                   (devclaw.loop_health vocabulary); the
+                --                   responsibility bucket is DERIVED at read
+                --                   time, never stored (FR-005a).
+                --   usage_ledger  — per-run token/cost record extracted at
+                --                   the two places usage already enters
+                --                   (task settle per attempt; cognition
+                --                   trace) so transcript retention never
+                --                   deletes the numbers (FR-009). A run that
+                --                   reported nothing is a row with
+                --                   reported=0 and NULL tokens — absent is
+                --                   never zero (FR-011).
+                --   intake_grades — the readiness grader's assessed unit
+                --                   count, machine-readable at grade time
+                --                   (FR-021); joined onto goal_convergence at
+                --                   the goal's close.
+                CREATE TABLE IF NOT EXISTS loop_spans (
+                  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                  cause     TEXT NOT NULL,
+                  start_ms  INTEGER NOT NULL,
+                  end_ms    INTEGER NOT NULL,
+                  ticks     INTEGER NOT NULL DEFAULT 1,
+                  detail    TEXT NOT NULL DEFAULT ''
+                );
+                CREATE TABLE IF NOT EXISTS usage_ledger (
+                  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                  source                TEXT NOT NULL,   -- worker | cognition
+                  ref_id                TEXT NOT NULL,   -- task id | trace row id
+                  attempt               INTEGER NOT NULL DEFAULT 0,
+                  goal_id               TEXT,
+                  workspace_dir         TEXT,
+                  kind                  TEXT,
+                  reported              INTEGER NOT NULL,
+                  input_tokens          INTEGER,
+                  output_tokens         INTEGER,
+                  cache_read_tokens     INTEGER,
+                  cache_creation_tokens INTEGER,
+                  cost_usd              REAL,
+                  usage_source          TEXT NOT NULL DEFAULT '',
+                  at_ms                 INTEGER NOT NULL,
+                  UNIQUE(source, ref_id, attempt)
+                );
+                CREATE TABLE IF NOT EXISTS intake_grades (
+                  repo            TEXT NOT NULL,
+                  issue_number    INTEGER NOT NULL,
+                  readiness       TEXT NOT NULL,
+                  claimed_units   INTEGER,
+                  assessed_units  INTEGER,
+                  sizing          TEXT,
+                  stale           INTEGER NOT NULL DEFAULT 0,
+                  graded_at       INTEGER NOT NULL,
+                  PRIMARY KEY (repo, issue_number)
+                );
                 """
             )
 
@@ -325,6 +383,9 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 CREATE INDEX IF NOT EXISTS idx_tasks_kind       ON tasks(kind);
                 CREATE INDEX IF NOT EXISTS idx_tasks_parent_goal ON tasks(parent_goal_id);
                 CREATE INDEX IF NOT EXISTS idx_events_task      ON events(task_id, id);
+                CREATE INDEX IF NOT EXISTS idx_loop_spans_end   ON loop_spans(end_ms);
+                CREATE INDEX IF NOT EXISTS idx_usage_ledger_at  ON usage_ledger(at_ms);
+                CREATE INDEX IF NOT EXISTS idx_usage_ledger_goal ON usage_ledger(goal_id);
                 CREATE INDEX IF NOT EXISTS idx_events_ts        ON events(ts);
                 CREATE INDEX IF NOT EXISTS idx_traces_goal      ON traces(goal_id, id);
                 CREATE INDEX IF NOT EXISTS idx_traces_trace     ON traces(trace_id, id);
