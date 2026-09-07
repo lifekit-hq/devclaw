@@ -31,7 +31,9 @@ from .limits import (
     Classification,
     FailureKind,
     PAUSING_KINDS,
+    RETRY_NOW_KINDS,
     classify_failure,
+    escalated_pause_seconds,
     pause_seconds,
 )
 from .test_integrity import IntegrityReport, scan_diff
@@ -40,9 +42,11 @@ __all__ = [
     # failure classification
     "classify_failure",
     "pause_seconds",
+    "escalated_pause_seconds",
     "FailureKind",
     "Classification",
     "PAUSING_KINDS",
+    "RETRY_NOW_KINDS",
     # test-integrity guard
     "scan_diff",
     "IntegrityReport",

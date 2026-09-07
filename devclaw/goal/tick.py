@@ -1030,12 +1030,26 @@ async def tick_all(
                 # a human re-login fixes must pierce quiet mode — an unsent
                 # auth ping silently kills an unattended week.
                 await _notify(notifier, NotifyLevel.OWNER, msg, critical=True)
+            elif reason.startswith(FailureKind.SERVER_ERROR.value):
+                # A provider outage is weather, not an account state: saying
+                # "usage limit" here would send the owner hunting a cap that
+                # isn't there (#817 — three goals parked on a 529 outage).
+                # Not `critical`: there is nothing for a human to do, and it
+                # auto-resumes.
+                msg = (
+                    f"⏸️ paused — the model provider is returning server errors "
+                    f"({reason}); nothing to do, resuming ~{resume_hhmm} UTC"
+                )
+                await _notify(notifier, NotifyLevel.OWNER, msg)
             else:
                 msg = f"⏸️ paused on a usage limit — {reason}; resuming ~{resume_hhmm} UTC"
                 await _notify(notifier, NotifyLevel.OWNER, msg)
             kind = (
                 FailureKind.AUTH.value
-                if reason.startswith(FailureKind.AUTH.value) else "limit"
+                if reason.startswith(FailureKind.AUTH.value)
+                else FailureKind.SERVER_ERROR.value
+                if reason.startswith(FailureKind.SERVER_ERROR.value)
+                else "limit"
             )
             _engine_set_pause_notified(engine, True, kind=kind)
         return {gid: Outcome.RATE_LIMITED for gid in store.list_goal_ids()}
@@ -1060,9 +1074,18 @@ async def tick_all(
             or bool(until and reason.startswith(FailureKind.AUTH.value))
         )
         if not auth_episode:
+            # The resume must name what actually lifted — the pause ping told
+            # the owner "provider server errors", so "usage limit lifted"
+            # would contradict it. Same kind-first/reason-fallback read as the
+            # auth check above.
+            server_episode = (
+                _engine_pause_notified_kind(engine) == FailureKind.SERVER_ERROR.value
+                or bool(until and reason.startswith(FailureKind.SERVER_ERROR.value))
+            )
             await _notify(
                 notifier, NotifyLevel.OWNER,
-                "▶️ usage limit lifted — resuming work",
+                "▶️ provider server errors cleared — resuming work"
+                if server_episode else "▶️ usage limit lifted — resuming work",
             )
         _engine_set_pause_notified(engine, False)
 
@@ -1417,6 +1440,14 @@ def _engine_pause_notified_kind(engine: GoalEngine) -> str:
     return str(fn() or "") if callable(fn) else ""
 
 
+def _engine_next_pause_episode_step(engine: GoalEngine) -> int:
+    """The 0-based index of the provider-outage pause being set now, recorded
+    as it is read (see StateStore). A double without the accessor gets 0 — the
+    base backoff, i.e. exactly the pre-ladder behaviour."""
+    fn = getattr(engine, "next_pause_episode_step", None)
+    return int(fn() or 0) if callable(fn) else 0
+
+
 def _engine_operator_block(engine: GoalEngine) -> tuple[bool, str]:
     """Read the operator hold + run-window gate via the engine, if it exposes one
     (the in-process engine does; test doubles may not → treated as open)."""
@@ -1443,7 +1474,13 @@ def _maybe_pause(engine: GoalEngine, store: GoalStore, goal_id: str, err: str) -
     cls = classify_failure(err, now_utc=datetime.now(timezone.utc))
     if not (cls.is_pausing and hasattr(engine, "set_global_pause")):
         return None
-    backoff = pause_seconds(cls.retry_after_s, stated=cls.stated, kind=cls.kind)
+    step = (
+        _engine_next_pause_episode_step(engine)
+        if cls.kind is FailureKind.SERVER_ERROR else 0
+    )
+    backoff = pause_seconds(
+        cls.retry_after_s, stated=cls.stated, kind=cls.kind, episode_step=step,
+    )
     engine.set_global_pause(_now_ms() + backoff * 1000, f"{cls.kind.value} (goal cognition)")
     store.append_log(goal_id, f"paused — {cls.kind.value}; resuming in ~{backoff}s")
     return Outcome.RATE_LIMITED

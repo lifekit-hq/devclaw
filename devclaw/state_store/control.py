@@ -16,6 +16,7 @@ import re
 from typing import TYPE_CHECKING, Optional
 
 from .. import config as _config
+from .rows import _now_ms
 
 if TYPE_CHECKING:
     import sqlite3
@@ -130,6 +131,55 @@ class ControlPlaneMixin:
         kind-less ping, which stores the bare "1" sentinel)."""
         raw = self.get_meta("pause_notified")
         return "" if raw in (None, "1") else raw
+
+    # The provider-outage EPISODE counter (spec 036 US2). A usage cap states
+    # when it lifts; a provider outage doesn't, so consecutive pauses of one
+    # episode climb ``loom.limits.escalated_pause_seconds`` instead of
+    # re-probing at a flat interval — five probes then span ~95 minutes rather
+    # than 25, inside the unchanged ``MAX_PAUSE_REQUEUES`` bound. The ladder
+    # itself is pure and lives in limits.py; only the count is state, and it
+    # lives here with the rest of the episode's fields.
+
+    def next_pause_episode_step(self) -> int:
+        """The 0-based index of the pause being set right now, recording that it
+        happened. Read-and-advance in ONE locked call so the two pause writers
+        (the queue pump and the heartbeat) can't interleave a read with a write.
+
+        A step is one PROBE ROUND, not one failure: up to
+        ``DEVCLAW_MAX_CONCURRENT`` tasks are in flight when an outage starts and
+        they all fail within seconds of each other. Counting each of them would
+        jump the ladder to its ceiling on the first round, and since the pause
+        write is last-one-wins, the length actually applied could be any of the
+        steps burned. So a failure arriving while this episode's pause is still
+        in force returns the step ALREADY in force — every racer computes the
+        same backoff and the ladder only climbs when a probe after the pause
+        expires fails again."""
+        with self._lock:
+            step = self.pause_episode_step()
+            until, _ = self.global_pause()
+            if step and until > _now_ms():
+                return step - 1
+            self.set_meta("pause_episode_step", str(step + 1))
+        return step
+
+    def pause_episode_step(self) -> int:
+        """How many provider-outage pauses the current episode has set (0 when
+        no episode is running). Corrupt or negative degrades to 0 — a wrong
+        step costs one short pause, never a wedge."""
+        raw = self.get_meta("pause_episode_step")
+        try:
+            step = int(str(raw).strip()) if raw is not None else 0
+        except (TypeError, ValueError):
+            return 0
+        return max(0, step)
+
+    def clear_pause_episode(self) -> None:
+        """End the episode, so the next provider outage starts from the base
+        backoff. Without this the ladder ratchets to its ceiling and stays
+        there for the life of the instance. A no-op when no episode is open —
+        this runs on EVERY productive settle."""
+        if self.get_meta("pause_episode_step") is not None:
+            self.delete_meta("pause_episode_step")
 
     # ---- operator dispatch controls (manual pause + daily run window) ----
     # Human-facing siblings of the quota pause above. Distinct meta keys, so the

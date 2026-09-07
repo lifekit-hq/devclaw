@@ -22,23 +22,60 @@ def store(tmp_path):
     s.close()
 
 
-async def test_rate_limit_pauses_not_fails(store, monkeypatch):
+@pytest.mark.parametrize("error_text,expected_kind,backoffs,steps", [
+    # a usage cap states its own reset, so consecutive pauses re-probe flat —
+    # and never touch the outage episode counter
+    ("API Error: 429 Too Many Requests", "rate_limit",
+     (limits.RATE_LIMIT_PAUSE_S, limits.RATE_LIMIT_PAUSE_S, limits.RATE_LIMIT_PAUSE_S),
+     (0, 0, 0)),
+    # #817: a provider outage joins the class. On 2026-09-03 this exact wording
+    # was classified retry-now, so three goals each spent BOTH dispatches on a
+    # ~35-minute outage and parked on mechanical:dispatch_cap with zero agent
+    # work. Requeueing instead of failing is what protects the cap: a requeued
+    # task never settles, so the same dispatch resumes after the outage and
+    # keeps its refund instead of sticking as a failure. An outage states no
+    # reset, so its consecutive pauses climb instead — five flat probes span
+    # only ~25 minutes, less than the outage that produced the spec.
+    ("session/prompt failed: Internal error: API Error: 529 Overloaded", "server_error",
+     (300, 600, 1200), (1, 2, 3)),
+])
+async def test_rate_limit_pauses_not_fails(
+    store, monkeypatch, error_text, expected_kind, backoffs, steps
+):
     monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 1)
     calls: list = []
 
     async def rl(req: EngineRequest):
         calls.append(req.goal)
-        return {"status": "error", "error": "API Error: 429 Too Many Requests"}
+        return {"status": "error", "error": error_text}
 
     q = TaskQueue(store, runner=rl)
-    tid = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g")
-    await q.drain()
+    # TWO tasks in flight: an outage fails everything already dispatched within
+    # seconds of itself, so one PROBE ROUND must cost the ladder one step, not
+    # one per task — counting each would hit the ceiling on the first round,
+    # and since the pause write is last-one-wins the length actually applied
+    # could be any of the steps burned.
+    tids = [
+        q.submit(kind="implement_feature", workspace_dir="/ws", goal=f"g{i}")
+        for i in range(2)
+    ]
 
-    t = store.get_task(tid)
-    assert t.status == "pending"          # requeued, NOT failed
-    assert len(calls) == 1                # NOT retried — quota not burned
-    until, reason = store.global_pause()
-    assert until > _now_ms() and "rate_limit" in reason
+    for attempt, (backoff, step) in enumerate(zip(backoffs, steps)):
+        if attempt:
+            store.set_global_pause(_now_ms() - 1000, "expired")  # window elapses
+            q._pump()
+        await q.drain()
+        for tid in tids:
+            assert store.get_task(tid).status == "pending"   # requeued, NOT failed
+        assert len(calls) == (attempt + 1) * len(tids)       # NOT retried — quota not burned
+        assert store.pause_episode_step() == step
+        until, reason = store.global_pause()
+        assert expected_kind in reason
+        assert (
+            _now_ms() + backoff * 1000 - 5_000
+            <= until
+            <= _now_ms() + backoff * 1000 + 5_000
+        )
 
 
 async def test_real_error_still_fails(store, monkeypatch):
@@ -71,14 +108,18 @@ async def test_pump_holds_dispatch_while_paused(store):
     assert called == []
 
 
-async def test_resumes_after_pause_expires(store, monkeypatch):
+@pytest.mark.parametrize("error_text", [
+    "rate limit exceeded",
+    "session/prompt failed: Internal error: API Error: 529 Overloaded",
+])
+async def test_resumes_after_pause_expires(store, monkeypatch, error_text):
     monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)
     state = {"n": 0}
 
     async def rl_then_ok(req: EngineRequest):
         state["n"] += 1
         if state["n"] == 1:
-            return {"status": "error", "error": "rate limit exceeded"}
+            return {"status": "error", "error": error_text}
         return {"status": "ok", "workspaceDir": req.workspace_dir}
 
     q = TaskQueue(store, runner=rl_then_ok)
@@ -94,6 +135,10 @@ async def test_resumes_after_pause_expires(store, monkeypatch):
     assert store.get_task(tid).status == "done"          # auto-resumed + completed
     assert state["n"] == 2
     assert store.global_pause()[0] == 0                   # pause cleared on resume
+    # A session that ran to a productive settle proves the provider answered, so
+    # the outage episode ENDS — without this the escalation ladder ratchets to
+    # its 30-minute ceiling and stays there for the life of the instance.
+    assert store.pause_episode_step() == 0
 
 
 async def test_stated_hint_survives_not_clobbered_to_max(store, monkeypatch):

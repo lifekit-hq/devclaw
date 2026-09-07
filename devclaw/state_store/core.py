@@ -251,12 +251,20 @@ class StateStore(
                 "WHERE id = ? AND status IN ('pending', 'running')",
                 (result_json, pr_url, _now_ms(), task_id),
             )
-            if cur.rowcount == 1:
+            moved = cur.rowcount == 1
+            if moved:
                 # eval_outcomes projection (ADR 0006): materialized inside the
                 # settle's own commit, only when a row actually moved — a no-op
                 # re-settle writes nothing (exactly-once).
                 self._insert_live_outcome(task_id, status="done", result_json=result_json)
             self._commit()
+        # A session that ran to a productive settle proves the provider is
+        # answering, so the provider-outage backoff ladder starts from its base
+        # again (spec 036 FR-010). One choke point for "a successful session",
+        # the same shape mark_failed uses for the problems catalog: only when a
+        # row actually moved, outside the write lock.
+        if moved:
+            self.clear_pause_episode()
 
     def mark_failed(
         self, task_id: str, error: str, result_json: Optional[str] = None

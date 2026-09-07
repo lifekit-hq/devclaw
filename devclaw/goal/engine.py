@@ -189,6 +189,12 @@ class InProcessEngine:
     def set_pause_notified(self, on: bool, kind: str = "") -> None:
         self._store.set_pause_notified(on, kind)
 
+    def next_pause_episode_step(self) -> int:
+        """The 0-based index of the provider-outage pause being set now (see
+        StateStore) — what climbs the escalating backoff ladder. Shared with
+        the task queue so both layers escalate one episode, not two."""
+        return self._store.next_pause_episode_step()
+
     def pause_notified_kind(self) -> str:
         """The kind recorded with the pause ping (see StateStore) — lets the
         resume path suppress a false "limit lifted" for an auth episode even

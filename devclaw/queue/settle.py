@@ -1537,7 +1537,18 @@ class SettleMixin:
             else:
                 cls = Classification(FailureKind.REAL, None, "")
             if cls.is_pausing:
-                backoff = pause_seconds(cls.retry_after_s, stated=cls.stated, kind=cls.kind)
+                # A provider outage states no reset, so consecutive pauses of
+                # one episode climb the ladder instead of re-probing flat; the
+                # step is recorded as it is handed out. Every other pausing
+                # kind ignores it (a cap tells us when it lifts).
+                step = (
+                    self._store.next_pause_episode_step()
+                    if cls.kind is FailureKind.SERVER_ERROR else 0
+                )
+                backoff = pause_seconds(
+                    cls.retry_after_s, stated=cls.stated, kind=cls.kind,
+                    episode_step=step,
+                )
                 self._store.set_global_pause(
                     _now_ms() + backoff * 1000, f"{cls.kind.value}: {last_failure[:160]}"
                 )
