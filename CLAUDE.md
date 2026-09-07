@@ -313,6 +313,11 @@ use). For the real pipeline (a logged-in `claude` + docker), follow
 
 ## Conventions
 
+- **The run cycle IS the run schedule** (2026-09-07): the cycle that gates the
+  cycle report and the self-issue filer follows `set_run_schedule` — enabled ⇒
+  that window, disabled (24/7) ⇒ the calendar day. There is no separate
+  cycle-window setting; the two drifted once 24/7 was ruled and the filer
+  quietly stopped filing (1 issue against 40 catalogued problems).
 - **Conventional-commit messages** (`fix(queue): …`, `feat(cognition): …`).
 - **The suite is a tripwire net, not a coverage instrument** (ruled 2026-08-29,
   tests-to-tripwires prune): a PR ships a test ONLY when it touches an
