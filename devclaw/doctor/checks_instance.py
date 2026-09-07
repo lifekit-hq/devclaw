@@ -628,14 +628,42 @@ def _goal_status_column_finding(
     return [Finding(cid, Verdict.OK, f"goal_status.{column} column present")]
 
 
-def check_goal_status_slice_hold_count(ctx: "InstanceContext") -> list[Finding]:
-    """Issue #728: the slice_hold_count column tracks consecutive dispatch holds
-    so the escalation-to-blocked logic can fire."""
-    return _goal_status_column_finding(
-        ctx, "instance.dispatch.goal_status_slice_hold_count", "slice_hold_count",
-        "the DB predates issue #728; persistent dispatch holds will never "
-        "escalate to blocked",
-    )
+def check_legacy_slice_hold_retired(ctx: "InstanceContext") -> list[Finding]:
+    """The slice-hold brake was retired (specs/tiny/slice-guard-observes-the-goal):
+    its column is dropped and no goal stays parked on its blocked_kind.
+
+    Both halves are checked because they fail independently — an interrupted
+    boot can release the goals and not reach the DROP, and a DB restored from
+    a pre-retirement backup carries parked rows the code can no longer heal.
+    The stubbed suite cannot see either (it builds fresh DBs), which is the
+    FR-014 class this check exists for."""
+    cid = "instance.legacy.slice_hold_retired"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
+        cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
+        stranded = 0
+        if "blocked_kind" in cols:
+            stranded = int(db.execute(
+                "SELECT COUNT(*) FROM goal_status WHERE blocked_kind = 'mechanical:slice_hold'"
+            ).fetchone()[0])
+    if stranded:
+        return [Finding(
+            cid, Verdict.FAIL,
+            f"{stranded} goal(s) still parked on the retired mechanical:slice_hold "
+            "block — no code path can heal that kind any more",
+            remedy="restart devclaw (the retirement migration releases them), "
+                   "or resume_goal each one",
+        )]
+    if "slice_hold_count" in cols:
+        return [Finding(
+            cid, Verdict.WARN,
+            "goal_status.slice_hold_count still present — the retirement DROP "
+            "did not run (harmless, but the schema is drifted)",
+            remedy="restart devclaw (the retirement migration runs at boot)",
+        )]
+    return [Finding(cid, Verdict.OK, "slice-hold brake retired: column dropped, no goal parked on it")]
 
 
 def check_goal_status_env_hold_notified(ctx: "InstanceContext") -> list[Finding]:
@@ -910,7 +938,7 @@ INSTANCE_CHECKS: tuple = (
     check_pr_ledger,
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
-    check_goal_status_slice_hold_count,
+    check_legacy_slice_hold_retired,
     check_goal_status_env_hold_notified,
     check_goal_status_env_heal_attempts,
     check_goal_status_donegate_progress,

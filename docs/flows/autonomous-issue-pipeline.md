@@ -72,8 +72,7 @@ with the GitHub issue as the source of truth throughout and PLAN.md gone.**
     every dispatch runs the speckit flow (specs/NNN/ in the repo)
     label-routed ceremony (feature → full cycle, bug → direct)
                                     [spec 008 US3 NOT BUILT]
-    can't narrow to one feature → dispatch held at the boundary;
-      5 consecutive holds → blocked mechanical:slice_hold
+    spec dirs present but none graded → dispatch held at the boundary
     NO PLAN.md (speckit is universal: adopt, or install via PR)
                                             │
                                             ▼
@@ -150,8 +149,13 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
   No self-dealing. *[exists]*
 - **A bug** (`fix: forecast off-by-one`) → runs the same speckit flow as a feature;
   the direct-advance shortcut is spec 008 US3. *[NOT BUILT]*
-- **Can't narrow the scope** → the slice-guard holds the dispatch; five consecutive
-  holds park the goal **`mechanical:slice_hold`**, never a garbage plan. *[exists]*
+- **No graded spec** (dirs exist, no `tasks.md` anywhere) → the dispatch is held
+  until the speckit plan step runs, never a garbage plan. *[exists]*  The old
+  sibling-feature check that parked goals `mechanical:slice_hold` was retired
+  (`specs/tiny/slice-guard-observes-the-goal`): it predicted build-ahead from
+  leftover spec dirs, and in a per-goal checkout it parked goals behind their
+  peers' live work. Build-ahead is caught on the settle path, where the goal's
+  own commit makes it a fact rather than a guess.
 - **Merge fails at close** → `mechanical:merge_failed` after one bounded conflict
   self-heal; the lane skips over to the queued successor. *[exists, spec 025]*
 

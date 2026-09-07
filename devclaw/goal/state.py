@@ -134,7 +134,6 @@ class GoalState(
                   donegate_rounds       INTEGER NOT NULL DEFAULT 0,
                   donegate_progress     INTEGER NOT NULL DEFAULT 0,
                   problem_id            TEXT NOT NULL DEFAULT '',
-                  slice_hold_count      INTEGER NOT NULL DEFAULT 0,
                   last_eval_verdict     TEXT,
                   last_eval_at          TEXT,
                   last_eval_note        TEXT,
@@ -344,7 +343,6 @@ class GoalState(
                 "ALTER TABLE goal_status ADD COLUMN donegate_progress INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN problem_id TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE goal_status ADD COLUMN envcap_redispatches INTEGER NOT NULL DEFAULT 0",
-                "ALTER TABLE goal_status ADD COLUMN slice_hold_count INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN pending_merge_pr TEXT NOT NULL DEFAULT ''",
                 "ALTER TABLE goal_status ADD COLUMN merge_heal_attempted INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE goal_status ADD COLUMN pending_done_proposal INTEGER NOT NULL DEFAULT 0",
@@ -354,5 +352,28 @@ class GoalState(
                     self._store._db.execute(sql)
                 except sqlite3.OperationalError:
                     pass  # column already exists
+
+            # Slice-hold retirement (specs/tiny/slice-guard-observes-the-goal).
+            # ORDER IS LOAD-BEARING: release the goals the retired brake parked
+            # BEFORE dropping its column — a brake that stops existing must not
+            # strand the goals it stopped, and after the DROP there is no
+            # column left to explain why they were blocked. The release is
+            # keyed on blocked_kind (the goal's own record of WHY), so it
+            # touches only slice-held rows and is idempotent: a second boot
+            # matches nothing. Goals return to `idle` and the next tick
+            # re-evaluates them normally.
+            try:
+                self._store._db.execute(
+                    "UPDATE goal_status SET phase = 'idle', blocked_on = NULL, "
+                    "blocked_kind = '' WHERE blocked_kind = 'mechanical:slice_hold'"
+                )
+            except sqlite3.OperationalError:
+                pass  # pre-blocked_kind DB — nothing could have been slice-held
+            try:
+                self._store._db.execute(
+                    "ALTER TABLE goal_status DROP COLUMN slice_hold_count"
+                )
+            except sqlite3.OperationalError:
+                pass  # already dropped (or never existed on this DB)
 
             self._store._commit()
