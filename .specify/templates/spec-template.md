@@ -8,6 +8,20 @@
 
 **Input**: User description: "$ARGUMENTS"
 
+## North-star case *(mandatory — constitution 2.9.0)*
+
+<!--
+  Admission, before anything else is written. The north star: devclaw runs
+  24/7 non-idle on planned work, nights come out clean, and it self-heals
+  through stops instead of waiting for the owner. It fails in exactly three
+  ways. Name the ONE this spec moves, the number that will show it, and when
+  it is cut. A spec that cannot fill these three lines is not written.
+-->
+
+- **Failure moved**: [stopped when it shouldn't | ran and produced garbage | ran but needed the owner]
+- **Number that shows it**: [the loop-health / scorecard read and its current value]
+- **Cut when**: [the observation under which this spec, or a story of it, is deleted]
+
 ## User Scenarios & Testing *(mandatory)*
 
 <!--

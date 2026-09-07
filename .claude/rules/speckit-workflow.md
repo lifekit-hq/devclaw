@@ -14,6 +14,12 @@ The pre-speckit proposals and ADRs were removed from the tree on 2026-09-06
 → implement (→ /speckit-analyze when artifacts disagree)
 ```
 
+- **Every spec and tinyspec is admitted against the north star first**
+  (ruled by Denys 2026-09-07, constitution 2.9.0): its first section names
+  the north-star failure it moves (stopped when it shouldn't / ran and
+  produced garbage / ran but needed the owner), the number that will show
+  it, and its cut condition. No case, no spec. A story whose only case is
+  saving a round or adding a protocol is dropped first.
 - **Every behavior-changing change starts with `/speckit-specify`** — a spec
   under `specs/` at the repo ROOT — not under the .specify directory, which
   holds only the scripts, templates and constitution the pipeline runs on.
