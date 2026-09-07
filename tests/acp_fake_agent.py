@@ -155,7 +155,7 @@ class FakeAgent:
                 "content": [{"content": {"type": "text", "text": "readme text"}}],
             }
         )
-        self.message("All done.\n\nREPO NOTES: fake repo, tests are fast.")
+        self.message("All done.\n\nFOLLOW-UPS: none")
         _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
 
     def script_usage(self, prompt_id: int) -> None:
@@ -282,7 +282,7 @@ class FakeAgent:
         if self.prompt_count > 1:
             self.message(
                 "LANDED: slice committed honestly.\n\nSTATUS: DONE\n"
-                "REPO NOTES: none"
+                "FOLLOW-UPS: none"
             )
             _send(
                 {"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}}

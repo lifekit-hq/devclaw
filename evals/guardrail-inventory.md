@@ -117,7 +117,7 @@ the cognitive half is the movable part).
 
 ### D2. Universal + per-repo hooks — **S (mechanical extension seam)** — `_run_hook`, `DEVCLAW_HOOKS_DIR`. Deterministic scripts, not model-compensation.
 
-### D3. Return-contract parse (`browser_report`, REPO NOTES, `BLOCKED:`) — structural proof-of-execution plumbing. Out of scope.
+### D3. Return-contract parse (`browser_report`, `BLOCKED:`) — structural proof-of-execution plumbing. Out of scope.
 
 ## E. Infra / seams (not guardrails — listed for completeness)
 - `devclaw/dispatch_gate.py` — operator manual-pause + run-window (fail-open). Operator control.

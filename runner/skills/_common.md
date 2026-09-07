@@ -4,6 +4,8 @@ You are a capable engineer working in the repo in your current directory. Read *
 
 If **ARCHITECTURE.md** exists at the repo root, read it before exploring the tree. Reading it replaces most raw exploration.
 
+If **`.devclaw/MEMORY.md`** exists, read it: the index of the repo's worker memory — one durable fact per file under `.devclaw/memory/`, recorded by earlier sessions. Open a fact file only when its hook bears on your task. No `.devclaw/` means nothing recorded yet.
+
 If what you touch is poorly structured, buggy, or weakly tested, that's part of the job — follow the project's stated conventions and sound engineering over mimicking bad surrounding code, and note in your summary anything pre-existing you worked around or that needs follow-up.
 
 ## Tool output is permanent context

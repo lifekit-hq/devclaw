@@ -520,10 +520,6 @@ class PollResult:
     #: gate-time diff stats the queue captured (files/insertions/deletions),
     #: None when absent — a stats hiccup never blocks a settle
     diff_stats: Optional[dict] = None
-    #: the worker's REPO NOTES hand-back — durable repo-level facts for future
-    #: tasks on the same repo (MC borrow item 3). None when the worker
-    #: reported none.
-    repo_notes: Optional[str] = None
     #: the code-writing task finished successfully having changed NOTHING
     #: (spec 013 FR-014). A settle carrying this is not a delivered increment:
     #: it publishes nothing and must read upstream as no progress, so a run that

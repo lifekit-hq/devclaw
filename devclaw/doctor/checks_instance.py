@@ -105,6 +105,16 @@ def check_legacy_dropped_shapes(ctx: "InstanceContext") -> list[Finding]:
             ))
         else:
             findings.append(Finding("instance.legacy.goal_docs_table", Verdict.OK, "goal_docs table dropped"))
+        if "project_docs" in tables:
+            findings.append(Finding(
+                "instance.legacy.project_docs_table", Verdict.FAIL,
+                "table project_docs still present — spec 034 moved worker memory into the "
+                "repo (.devclaw/) and drops the host-side blob at boot",
+                remedy="restart devclaw (the drop runs at boot)",
+            ))
+        else:
+            findings.append(Finding("instance.legacy.project_docs_table", Verdict.OK,
+                                    "project_docs table dropped"))
         if "goal_status" in tables:
             cols = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
             if "inbox_ingest_cursor" in cols:

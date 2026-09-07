@@ -191,7 +191,7 @@ class AcpClient:
         self.proc: subprocess.Popen | None = None
         self.session_id: str | None = None
         #: Last COMPLETE agent message flushed this turn — feeds `agent_output`
-        #: and the BLOCKED/REPO NOTES parsing. Readable mid-turn (except path).
+        #: and the BLOCKED parsing. Readable mid-turn (except path).
         self.last_agent_message: str = ""
         #: True while the CURRENT turn's cancel was requested by the runner
         #: itself (slice watcher / tripwire — spec 021). The runner uses this

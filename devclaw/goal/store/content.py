@@ -159,15 +159,6 @@ class GoalContentMixin:
         with path.open("a") as fh:
             fh.write(block)
 
-    def write_repo_brief(self, scope_key: str, content: str) -> None:
-        """Upsert the accumulated repo brief for a workspace scope key."""
-        self._goal_state.write_project_doc(scope_key, "repo_brief", content, _now_ms())
-
-    def read_repo_brief(self, scope_key: str) -> str:
-        """The accumulated repo brief, or '' when no worker on this repo has
-        handed back notes yet."""
-        return self._goal_state.read_project_doc(scope_key, "repo_brief") or ""
-
     def write_spec(self, goal_id: str, spec: str) -> None:
         """Persist the agreed scope spec — what to build, what's out, constraints.
         Produced by a pre-goal scoping conversation (the retired scope_grill porch) BEFORE the goal

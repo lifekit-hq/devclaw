@@ -251,23 +251,20 @@ async def _dispatch_action(
     # raised by store.transition() (propagated UNTOUCHED to tick_goal's
     # top-level choke point, same as before this PR).
     dispatch_exc: "Exception | None" = None
-    # Repo-scoped worker brief (MC borrow item 3): prepend the accumulated
-    # notes previous workers handed back for THIS repo — build quirks, test
-    # gotchas — so a fresh goal doesn't relearn them from zero. Mechanism,
-    # not cognition (one SQLite read); skipped for read-only reviews so the
-    # reviewer's grounded read isn't seeded with prior claims to confirm.
-    # Architecture map pointer (spec 029): if ARCHITECTURE.md exists at the
-    # workspace root, prepend a one-line pointer before the operational notes
-    # so the worker reads the component map before exploring raw files. Pure
-    # file-existence probe — best-effort, never-raises, zero LLM, zero token.
+    # Repo pointers (spec 029 + spec 034): if the checkout carries an
+    # ARCHITECTURE.md and/or a committed .devclaw/MEMORY.md worker-memory
+    # index, prepend a one-line pointer at each so the worker reads them
+    # before exploring raw files. Pure file-existence probes — best-effort,
+    # never-raise, zero LLM, and independent of how much either file holds:
+    # the brief does not grow with the repo's memory (spec 034 FR-002). No
+    # fact bodies are ever injected; the worker pulls them. Skipped for
+    # read-only reviews, whose grounded read starts from the repo itself.
     brief_prefix = ""
     if action.tool != "review_repository":
-        arch_ptr = _repo_brief.architecture_map_pointer(checkout)
-        scope = _repo_brief.scope_key_for(goal.workspace_dir)
-        notes_prefix = ""
-        if scope:
-            notes_prefix = _repo_brief.render_brief_prefix(store.read_repo_brief(scope))
-        brief_prefix = arch_ptr + notes_prefix
+        brief_prefix = (
+            _repo_brief.architecture_map_pointer(checkout)
+            + _repo_brief.worker_memory_pointer(checkout)
+        )
     # Human-facing form of the action (#550 — the display half of the #547
     # class): the thin-advance brief is dispatch plumbing, so everything a
     # HUMAN reads from this dispatch — the ``next`` hint (get_goal/console/
