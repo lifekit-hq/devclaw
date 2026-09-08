@@ -34,6 +34,12 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/north-star-case-guard.py\"",
             "timeout": 10,
             "statusMessage": "Checking the North-star case before the PR opens"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/merge-verdict-guard.py\"",
+            "timeout": 30,
+            "statusMessage": "Reading the PR's CI verdict before the merge"
           }
         ]
       }

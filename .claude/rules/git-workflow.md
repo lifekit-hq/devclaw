@@ -20,7 +20,13 @@
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`
 - End every PR body with:
   `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
-- Full suite green before `gh pr create` (see rules/testing.md). Docs honesty:
+- Full suite green before `gh pr create` (see rules/testing.md). **And the
+  PR's own CI green before `gh pr merge`** — the local suite runs on a different
+  machine under different load and is NOT the verdict of record (spec 032); on
+  2026-09-08 the two disagreed and `main` sat red for five hours. A PreToolUse
+  hook (`.claude/hooks/merge-verdict-guard.py`) refuses a merge on a failing or
+  pending rollup; the escape hatch is prefixing `DEVCLAW_ALLOW_RED_MERGE=1`.
+  Docs honesty:
   if the diff makes a doc wrong, fix the doc + its `docs/INDEX.md` currency tag
   in the SAME PR.
 - Repo merges are **squash** (`gh pr merge --squash`).
