@@ -375,6 +375,260 @@ async def _live_contract(
     return replace(goal, done_when=contract), None
 
 
+async def _close_and_merge(
+    goal_id: str, goal: Goal, base: GoalStatus, status: GoalStatus, *,
+    rationale: str, followups: "list[str]", review_report: str,
+    store: GoalStore, notifier: Notifier,
+    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
+    remote_checker: "_remote_checks.RemoteChecker | None" = None,
+    consume_steering: "list[int] | None" = None,
+    label: "str | None" = None,
+    require_same_head: bool = True,
+) -> Outcome:
+    """The ONE close-and-merge tail (spec 025 US1), shared by the evaluator's
+    ``achieved`` verdict and the owner's ``accept_close`` Decision (spec 041
+    FR-003): the goal closes MERGED or it does not close. This is the one seam
+    where devclaw merges a PR — the #641 doctrine ("nothing on the settle path
+    merges") holds everywhere else, and #486 is intact: nothing merges
+    mid-flight, only at the confirmed close. ``rationale`` is what the close
+    records; ``followups`` ride it as loud advisory lines."""
+    # Merge-on-close (spec 025 US1): the goal closes MERGED or it does not
+    # close. This is the one seam where devclaw merges a PR — the #641
+    # doctrine ("nothing on the settle path merges") holds everywhere
+    # else, and #486 is intact: nothing merges mid-flight, only at the
+    # confirmed-achieved close.
+    branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
+    merge = None
+    if branch is not None:
+        # Spec 032 US1: the merge requires the green head the gate opened
+        # on. Re-read right before merging — zero cognition, one gh read.
+        read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
+        if read is not None:
+            # An owner's accepted close (spec 041) is judged on the CURRENT
+            # head — there was no gate open to pin one; green is the rule.
+            head_ref = status if require_same_head else replace(status, ci_green_head="")
+            hold = _ci_hold_before_merge(head_ref, read[0], read[1])
+            if hold is not None:
+                store.append_log(goal_id, f"merge-on-close deferred: {hold}")
+                store.transition(
+                    goal_id, Event.BLOCK,
+                    replace(base, phase="blocked", blocked_on=hold,
+                            blocked_kind="mechanical:ci", pending_done_proposal=True,
+                            ci_green_head="", next=""),
+                    expect=status, consume_steering=consume_steering,
+                )
+                await _notify(notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] merge deferred — {hold[:200]}")
+                return Outcome.BLOCKED
+        merge = await _attempt_merge(goal.workspace_dir, branch)
+        store.append_log(
+            goal_id,
+            f"merge-on-close: {merge.outcome.value}"
+            + (f" {merge.pr_url}" if merge.pr_url else "")
+            + (f" — {merge.detail[:200]}" if merge.detail else ""),
+        )
+    if (
+        merge is not None
+        and merge.outcome is _merge.MergeOutcome.CONFLICT
+        and not status.merge_heal_attempted
+    ):
+        # FR-017: ONE bounded self-heal — back to idle with a machine
+        # steering row; the next tick's advance dispatches the resolution
+        # increment through the normal pipeline (verify gate and a fresh
+        # done-gate round included), then this close re-runs and
+        # re-attempts the merge with the budget spent.
+        store.transition(
+            goal_id, Event.RESUME_IDLE,
+            replace(base, phase="idle", merge_heal_attempted=True,
+                    next="merge conflict — resolution increment queued",
+                    donegate_rounds=0, donegate_progress=0),
+            expect=status, consume_steering=consume_steering,
+        )
+        store.append_steering(goal_id, [
+            f"[merge-conflict] the goal is done but its cumulative PR "
+            f"{merge.pr_url} cannot merge: the branch conflicts with the "
+            f"default branch. Update {branch} onto the current default-"
+            f"branch head, resolve the conflicts preserving both sides' "
+            f"intent, and make the verify gate pass. Change nothing else.",
+        ], source="auto-conflict")
+        await _notify(
+            notifier, NotifyLevel.TASK,
+            f"🔀 [{goal_id}] achieved, but the PR conflicts with its base — "
+            f"dispatching the one bounded resolution increment",
+        )
+        return Outcome.SLEPT
+    if merge is not None and merge.outcome not in _merge.SUCCESS_OUTCOMES:
+        q = (
+            f"merge-on-close failed ({merge.outcome.value}): {merge.detail[:300]} — "
+            f"PR {merge.pr_url or '(unknown)'}. The done-gate confirmed achieved, "
+            f"but the goal must not close with its work unmerged. Resolve the "
+            f"cause (merge by hand, or fix the branch), then resume_goal — "
+            f"resume re-attempts the MERGE only, never the done-gate."
+        )
+        store.transition(
+            goal_id, Event.BLOCK,
+            replace(base, phase="blocked", blocked_on=q,
+                    blocked_kind="mechanical:merge_failed",
+                    pending_merge_pr=merge.pr_url or "", next=""),
+            expect=status, consume_steering=consume_steering,
+        )
+        await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}")
+        return Outcome.BLOCKED
+    merged_note = ""
+    if merge is not None and merge.outcome in _merge.SUCCESS_OUTCOMES:
+        if merge.outcome is _merge.MergeOutcome.NO_PR:
+            merged_note = " — no PR to merge (no-change goal)"
+        else:
+            merged_note = f" — merged {merge.merged_sha[:12] or merge.pr_url}"
+        if merge.outcome is _merge.MergeOutcome.MERGED:
+            # FR-005 belt-and-braces; the next goal's prepare_ws is the
+            # guarantee. Safe here: this goal holds its project lane.
+            await _sync_workspace(goal.workspace_dir)
+        if (
+            merge.outcome is not _merge.MergeOutcome.NO_PR
+            and _self_deploy.is_self_repo(goal.repo_url)
+        ):
+            # Spec 025 US2: a merged devclaw-repo goal owes the instance a
+            # redeploy — recorded here, fired by the heartbeat once
+            # quiescent (self_deploy.maybe_trigger).
+            store.mark_self_deploy_pending(merge.merged_sha, goal_id)
+            store.append_log(
+                goal_id, "self-deploy pending — the instance redeploys "
+                         "onto the merged main once no task is running",
+            )
+    store.transition(
+        goal_id, Event.ACHIEVE,
+        replace(base, phase="done", next=rationale[:200], donegate_rounds=0, donegate_progress=0,
+                pending_merge_pr="", merge_heal_attempted=False,
+                pending_done_proposal=False, ci_green_head=""),
+        expect=status, consume_steering=consume_steering,
+    )
+    # Convergence ledger (spec 018 US1) — after the CAS'd close, so a
+    # rejected transition never leaves a phantom row.
+    store.record_convergence(goal_id, "achieved", goal.workspace_dir)
+    if followups:
+        # Trust-dial close: the structural axis advises-and-ships (ADR
+        # 0007) — loud in the goal log + the owner ping, never a silent
+        # drop; the human PR review is the backstop.
+        store.append_log(
+            goal_id,
+            "advisory follow-ups shipped with the close (structural axis, "
+            "not gating): " + "; ".join(followups),
+        )
+    # Close-out artifact: RUN_SUMMARY.md, a projection of the goal's own
+    # rows (delivery traces + cognition totals + phase history)
+    # rendered once, AFTER the ACHIEVE transition committed — a rolled-back
+    # close can't leave a summary behind. Best-effort end to end: a summary
+    # hiccup logs and the verified close proceeds untouched (same
+    # never-undo-a-close stance as the deploy below). Zero LLM calls.
+    summary_line = ""
+    try:
+        from . import run_summary as _run_summary
+
+        md, summary_line = _run_summary.build_run_summary(
+            goal_id,
+            base,
+            store.read_goal_traces(goal_id, kind="delivery"),
+            totals=store.goal_trace_totals(goal_id),
+            objective=goal.objective,
+        )
+        store.write_run_summary_view(goal_id, md)
+        store.append_log(goal_id, "run summary written → RUN_SUMMARY.md")
+    except Exception as exc:  # noqa: BLE001 — observability, not correctness
+        summary_line = ""
+        sys.stderr.write(f"goal-tick: run-summary render failed [{goal_id}]: {exc}\n")
+    # Handoff: a completed goal should be a thing the owner can OPEN, not just a
+    # closed ticket. Best-effort deploy the built app to a durable Tailscale URL.
+    # NEVER let a deploy hiccup undo a verified-complete goal — the goal IS done.
+    live = await _auto_deploy(goal_id, goal, store, enabled=autodeploy)
+    # Honest labeling (F3): "(verified)" is earned by a repo review that
+    # actually grounded the decision. On the verify_done=False fallthrough
+    # no review ran — same close, annotated honestly (cf. the ci-gate
+    # flexible annotation above); which verdicts close is unchanged.
+    label = label or (
+        "goal complete (verified)" if review_report.strip()
+        else "goal complete (artifact-only close — no repo review ran; "
+             "verify_done is off for this project)"
+    )
+    summary_suffix = f"\n{summary_line}" if summary_line else ""
+    followups_note = (
+        f" — {len(followups)} advisory follow-up(s) in the goal log"
+        if followups else ""
+    )
+    await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label}{merged_note} — {rationale[:200]}{followups_note}{live}{summary_suffix}")
+    return Outcome.DONE
+
+
+async def _finalize_accepted_close(
+    goal_id: str, goal: Goal, status: GoalStatus, decision: "_decisions.Decision", *,
+    store: GoalStore, notifier: Notifier,
+    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
+    remote_checker: "_remote_checks.RemoteChecker | None" = None,
+    consume_steering: "list[int] | None" = None,
+) -> Outcome:
+    """Spec 041 FR-003 — the owner decided ``accept_close``: the Decision IS
+    the verdict. Close on the same mechanical facts as an ``achieved`` close
+    (green CI on the current head, merge-on-close) with NO evaluator round —
+    the owner is the one party who may accept a gap the evaluator reported,
+    and re-asking the model was how fs-318/421/429 cycled decide → gate →
+    downgrade → Problem → decide on 2026-09-07/08. Zero cognition on every
+    branch: red ⇒ the failing checks are steered as the next correction (the
+    accept stands and the close re-runs once the fix settles green); pending
+    ⇒ ``mechanical:ci`` hold, re-driven here — never to the gate; no CI ⇒ the
+    same typed Problem the gate raises."""
+    now = store.now_iso()
+    rationale = f"closed on the owner's accept_close decision {decision.id}" + (
+        f" — accepted gap: {' '.join(decision.clause.split())[:200]}" if decision.clause else ""
+    )
+    # last_eval_note feeds a later pending-merge retry's rationale (FR-003)
+    base = replace(status, last_tick_at=now, last_eval_note=rationale)
+    store.append_log(goal_id, f"accept_close stands ({decision.id}) — closing without a gate round")
+    read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
+    if read is not None:
+        branch, rc = read
+        if rc.state == "failing":
+            store.transition(
+                goal_id, Event.RESUME_IDLE,
+                replace(base, phase="idle", next="CI red — fix the failing checks; the accepted close follows",
+                        pending_done_proposal=False, ci_green_head=""),
+                expect=status, consume_steering=consume_steering,
+            )
+            store.append_steering(goal_id, [_tick_guards._ci_correction(branch, rc)], source="auto-ci")
+            await _notify(
+                notifier, NotifyLevel.TASK,
+                f"🔴 [{goal_id}] CI red on {branch} — "
+                f"{', '.join(rc.failing_names) or rc.detail[:120]}; steering the fix before the accepted close",
+            )
+            return Outcome.SLEPT
+        if rc.state in ("pending", "unknown"):
+            hold = _ci_hold_text(branch, rc)
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=hold, blocked_kind="mechanical:ci",
+                        pending_done_proposal=False, ci_green_head="", next=""),
+                expect=status, consume_steering=consume_steering,
+            )
+            await _notify(notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] {hold[:200]}")
+            return Outcome.BLOCKED
+        if rc.state in ("no_workflows", "infra_broken"):
+            return await _block_on_ci_definition(
+                goal_id, goal, base, branch, rc, store=store, notifier=notifier,
+                consume_steering=consume_steering,
+            )
+        base = replace(base, ci_green_head=rc.head_sha, pending_done_proposal=False)
+    followups = (
+        [f"[accepted by decision {decision.id}] {' '.join(decision.clause.split())[:300]}"]
+        if decision.clause else []
+    )
+    return await _close_and_merge(
+        goal_id, goal, base, status,
+        rationale=rationale, followups=followups, review_report="",
+        store=store, notifier=notifier, autodeploy=autodeploy,
+        remote_checker=remote_checker, consume_steering=consume_steering,
+        label="goal complete (closed on the owner's accept_close decision — no gate round)",
+        require_same_head=False,
+    )
+
+
 async def _resolve_done_gate(
     goal_id: str, goal: Goal, status: GoalStatus, review_report: str,
     *, store: GoalStore, evaluator_caller: ClaudeCaller, notifier: Notifier,
@@ -534,167 +788,13 @@ async def _resolve_done_gate(
     )
     store.append_log(goal_id, f"done-gate: {ev.verdict} — {ev.rationale[:500]}")
     if ev.verdict == "achieved":
-        # Merge-on-close (spec 025 US1): the goal closes MERGED or it does not
-        # close. This is the one seam where devclaw merges a PR — the #641
-        # doctrine ("nothing on the settle path merges") holds everywhere
-        # else, and #486 is intact: nothing merges mid-flight, only at the
-        # confirmed-achieved close.
-        branch = _delivery.resolve_strategy(store, goal_id).goal_branch(goal_id)
-        merge = None
-        if branch is not None:
-            # Spec 032 US1: the merge requires the green head the gate opened
-            # on. Re-read right before merging — zero cognition, one gh read.
-            read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
-            if read is not None:
-                hold = _ci_hold_before_merge(status, read[0], read[1])
-                if hold is not None:
-                    store.append_log(goal_id, f"merge-on-close deferred: {hold}")
-                    store.transition(
-                        goal_id, Event.BLOCK,
-                        replace(base, phase="blocked", blocked_on=hold,
-                                blocked_kind="mechanical:ci", pending_done_proposal=True,
-                                ci_green_head="", next=""),
-                        expect=status, consume_steering=consume_steering,
-                    )
-                    await _notify(notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] merge deferred — {hold[:200]}")
-                    return Outcome.BLOCKED
-            merge = await _attempt_merge(goal.workspace_dir, branch)
-            store.append_log(
-                goal_id,
-                f"merge-on-close: {merge.outcome.value}"
-                + (f" {merge.pr_url}" if merge.pr_url else "")
-                + (f" — {merge.detail[:200]}" if merge.detail else ""),
-            )
-        if (
-            merge is not None
-            and merge.outcome is _merge.MergeOutcome.CONFLICT
-            and not status.merge_heal_attempted
-        ):
-            # FR-017: ONE bounded self-heal — back to idle with a machine
-            # steering row; the next tick's advance dispatches the resolution
-            # increment through the normal pipeline (verify gate and a fresh
-            # done-gate round included), then this close re-runs and
-            # re-attempts the merge with the budget spent.
-            store.transition(
-                goal_id, Event.RESUME_IDLE,
-                replace(base, phase="idle", merge_heal_attempted=True,
-                        next="merge conflict — resolution increment queued",
-                        donegate_rounds=0, donegate_progress=0),
-                expect=status, consume_steering=consume_steering,
-            )
-            store.append_steering(goal_id, [
-                f"[merge-conflict] the goal is done but its cumulative PR "
-                f"{merge.pr_url} cannot merge: the branch conflicts with the "
-                f"default branch. Update {branch} onto the current default-"
-                f"branch head, resolve the conflicts preserving both sides' "
-                f"intent, and make the verify gate pass. Change nothing else.",
-            ], source="auto-conflict")
-            await _notify(
-                notifier, NotifyLevel.TASK,
-                f"🔀 [{goal_id}] achieved, but the PR conflicts with its base — "
-                f"dispatching the one bounded resolution increment",
-            )
-            return Outcome.SLEPT
-        if merge is not None and merge.outcome not in _merge.SUCCESS_OUTCOMES:
-            q = (
-                f"merge-on-close failed ({merge.outcome.value}): {merge.detail[:300]} — "
-                f"PR {merge.pr_url or '(unknown)'}. The done-gate confirmed achieved, "
-                f"but the goal must not close with its work unmerged. Resolve the "
-                f"cause (merge by hand, or fix the branch), then resume_goal — "
-                f"resume re-attempts the MERGE only, never the done-gate."
-            )
-            store.transition(
-                goal_id, Event.BLOCK,
-                replace(base, phase="blocked", blocked_on=q,
-                        blocked_kind="mechanical:merge_failed",
-                        pending_merge_pr=merge.pr_url or "", next=""),
-                expect=status, consume_steering=consume_steering,
-            )
-            await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}")
-            return Outcome.BLOCKED
-        merged_note = ""
-        if merge is not None and merge.outcome in _merge.SUCCESS_OUTCOMES:
-            if merge.outcome is _merge.MergeOutcome.NO_PR:
-                merged_note = " — no PR to merge (no-change goal)"
-            else:
-                merged_note = f" — merged {merge.merged_sha[:12] or merge.pr_url}"
-            if merge.outcome is _merge.MergeOutcome.MERGED:
-                # FR-005 belt-and-braces; the next goal's prepare_ws is the
-                # guarantee. Safe here: this goal holds its project lane.
-                await _sync_workspace(goal.workspace_dir)
-            if (
-                merge.outcome is not _merge.MergeOutcome.NO_PR
-                and _self_deploy.is_self_repo(goal.repo_url)
-            ):
-                # Spec 025 US2: a merged devclaw-repo goal owes the instance a
-                # redeploy — recorded here, fired by the heartbeat once
-                # quiescent (self_deploy.maybe_trigger).
-                store.mark_self_deploy_pending(merge.merged_sha, goal_id)
-                store.append_log(
-                    goal_id, "self-deploy pending — the instance redeploys "
-                             "onto the merged main once no task is running",
-                )
-        store.transition(
-            goal_id, Event.ACHIEVE,
-            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,
-                    pending_merge_pr="", merge_heal_attempted=False,
-                    pending_done_proposal=False, ci_green_head=""),
-            expect=status, consume_steering=consume_steering,
+        return await _close_and_merge(
+            goal_id, goal, base, status,
+            rationale=ev.rationale, followups=list(ev.structural_concerns or []),
+            review_report=review_report, store=store, notifier=notifier,
+            autodeploy=autodeploy, remote_checker=remote_checker,
+            consume_steering=consume_steering,
         )
-        # Convergence ledger (spec 018 US1) — after the CAS'd close, so a
-        # rejected transition never leaves a phantom row.
-        store.record_convergence(goal_id, "achieved", goal.workspace_dir)
-        if ev.structural_concerns:
-            # Trust-dial close: the structural axis advises-and-ships (ADR
-            # 0007) — loud in the goal log + the owner ping, never a silent
-            # drop; the human PR review is the backstop.
-            store.append_log(
-                goal_id,
-                "advisory follow-ups shipped with the close (structural axis, "
-                "not gating): " + "; ".join(ev.structural_concerns),
-            )
-        # Close-out artifact: RUN_SUMMARY.md, a projection of the goal's own
-        # rows (delivery traces + cognition totals + phase history)
-        # rendered once, AFTER the ACHIEVE transition committed — a rolled-back
-        # close can't leave a summary behind. Best-effort end to end: a summary
-        # hiccup logs and the verified close proceeds untouched (same
-        # never-undo-a-close stance as the deploy below). Zero LLM calls.
-        summary_line = ""
-        try:
-            from . import run_summary as _run_summary
-
-            md, summary_line = _run_summary.build_run_summary(
-                goal_id,
-                base,
-                store.read_goal_traces(goal_id, kind="delivery"),
-                totals=store.goal_trace_totals(goal_id),
-                objective=goal.objective,
-            )
-            store.write_run_summary_view(goal_id, md)
-            store.append_log(goal_id, "run summary written → RUN_SUMMARY.md")
-        except Exception as exc:  # noqa: BLE001 — observability, not correctness
-            summary_line = ""
-            sys.stderr.write(f"goal-tick: run-summary render failed [{goal_id}]: {exc}\n")
-        # Handoff: a completed goal should be a thing the owner can OPEN, not just a
-        # closed ticket. Best-effort deploy the built app to a durable Tailscale URL.
-        # NEVER let a deploy hiccup undo a verified-complete goal — the goal IS done.
-        live = await _auto_deploy(goal_id, goal, store, enabled=autodeploy)
-        # Honest labeling (F3): "(verified)" is earned by a repo review that
-        # actually grounded the decision. On the verify_done=False fallthrough
-        # no review ran — same close, annotated honestly (cf. the ci-gate
-        # flexible annotation above); which verdicts close is unchanged.
-        label = (
-            "goal complete (verified)" if review_report.strip()
-            else "goal complete (artifact-only close — no repo review ran; "
-                 "verify_done is off for this project)"
-        )
-        summary_suffix = f"\n{summary_line}" if summary_line else ""
-        followups = (
-            f" — {len(ev.structural_concerns)} advisory follow-up(s) in the goal log"
-            if ev.structural_concerns else ""
-        )
-        await _notify(notifier, NotifyLevel.OWNER, f"✅ [{goal_id}] {label}{merged_note} — {ev.rationale[:200]}{followups}{live}{summary_suffix}")
-        return Outcome.DONE
     if ev.verdict in ("stalled", "needs_human"):
         # Spec 031 US1: the block carries a typed Problem — what, clause, why,
         # bounded options (the evaluator's own corrections, then the fixed

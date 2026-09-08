@@ -128,7 +128,11 @@ on a second real consumer (ruled 2026-09-06).
   checkout serializes files.
 - **"Done" is a proposal, gated on grounded evaluation.** The planner's `done` triggers
   a read-only `review_repository` against the firmed `done_when` + `stub_acceptable`; the
-  goal closes **only if the evaluator confirms `achieved`**. Never gate completion on
+  goal closes **only if the evaluator confirms `achieved`** — or, since spec 041
+  (2026-09-08), if the OWNER explicitly decided `accept_close`: that Decision is the
+  verdict and the next tick closes on the mechanical facts alone (green CI on the
+  current head, merge-on-close), no evaluator round, the accepted gap logged as a
+  follow-up; a *defaulted* accept never closes without the gate. Never gate completion on
   counting PRs or backlog items. Since spec 025 (merge-on-close, ruled 2026-08-29) a
   confirmed-achieved close also **squash-merges the goal's cumulative PR** — the one
   deliberate reversal of the #641 "a human merges" doctrine, at exactly one seam: a goal
@@ -249,7 +253,13 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   devclaw-controlled fact, never an inbox line) and unblocking with the
   same budget-restoring shape as a steer; a timed-out Problem takes its
   default and informs (under `strict` a default that would close parks
-  instead). `steer_goal` is **refused** while a Problem is open — prose is
+  instead). **A Decision is executed by the next tick** (spec 041,
+  2026-09-08): it is work (`should_plan` true, no cadence wait), it beats
+  the closed-issue propose-done shortcut (a correction dispatches the
+  worker instead of re-proposing — fs-431 ran eight worker-less rounds
+  that way), an owner `accept_close` closes without a gate round, and
+  `cancel` cancels in the Decision's own transaction. A recorded decision
+  the loop waits on is the defect, not a state. `steer_goal` is **refused** while a Problem is open — prose is
   not the answer to a problem. A **pointer goal whose referenced issues
   have all closed while the done-gate still refuses** raises one too
   (2026-09-07): the contract is read live from those issues, so nothing

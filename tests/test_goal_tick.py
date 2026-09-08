@@ -2845,6 +2845,65 @@ async def test_defaulted_accept_and_close_never_emits_achieve(tmp_path, strictne
 
 
 @pytest.mark.asyncio
+async def test_decide_cancel_cancels_the_goal_in_the_decisions_transaction(tmp_path):
+    """Spec 041 FR-005: a cancel Decision cancels — it never leaves an idle
+    goal carrying next="decide: cancel" for the cadence to dispatch (the
+    executor-less decision class)."""
+    from devclaw.goal import problems as _pb
+
+    svc, db, goals_dir = _resume_service(tmp_path)
+    try:
+        seed_goal(goals_dir, "g")
+        store = svc._goal_store
+        p = _pb.new_problem(
+            "g", kind="needs_answer", raised_by="worker_block", what="needs a credential",
+            clause="", why="the sandbox lacks it", options=_pb.WORKER_BLOCK_OPTIONS,
+            default_key="correct", timebox_s=1,
+        )
+        store.raise_problem(p)
+        store.save_status("g", GoalStatus(
+            phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+            problem_id=p.id,
+        ))
+        out = svc.resolve_problem("g", p.id, verb="decide", option="cancel")
+        assert out["cancelled"] is True
+        s = store.load_status("g")
+        assert s.phase == "cancelled" and s.problem_id == ""
+        assert store.problem_by_id(p.id).status == "resolved"
+        assert store.decisions("g")[0].option_key == "cancel"
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio
+async def test_defaulted_cancel_cancels_the_goal(tmp_path):
+    """Same executor for the timebox path: a Problem whose default is cancel
+    cancels when it elapses, abandoned in the convergence ledger."""
+    from devclaw.goal import problems as _pb
+
+    store = _store(tmp_path, Clock())
+    seed_goal(tmp_path, "g")
+    p = _pb.new_problem(
+        "g", kind="needs_answer", raised_by="worker_block", what="needs a credential",
+        clause="", why="the sandbox lacks it", options=_pb.WORKER_BLOCK_OPTIONS,
+        default_key="cancel", timebox_s=1, now_ms=1_000_000,
+    )
+    p = replace(p, timebox_at=0)
+    store.raise_problem(p)
+    store.save_status("g", GoalStatus(
+        phase="blocked", blocked_on="needs_answer: see problem", blocked_kind="needs_answer",
+        problem_id=p.id,
+    ))
+    engine, notifier = FakeEngine(), RecordingNotifier()
+    await _tick(store, "g", FakeClaude(), engine, notifier)
+    s = store.load_status("g")
+    assert s.phase == "cancelled" and s.problem_id == ""
+    assert engine.dispatched == []
+    assert store.problem_by_id(p.id).status == "defaulted"
+    assert any("cancelled" in m for m in notifier.sent)
+
+
+@pytest.mark.asyncio
 async def test_steer_goal_is_refused_while_a_problem_is_open(tmp_path):
     """Q1 → A: prose steering is refused while a Problem is open — the
     refusal carries the Problem and the two verbs, and writes nothing."""
@@ -3676,13 +3735,24 @@ def test_green_mechanical_verification_alone_never_closes_a_goal():
     src = (root / "devclaw/goal/tick_donegate.py").read_text(encoding="utf-8")
     assert src.count("Event.ACHIEVE,") == 2, "unexpected ACHIEVE emitter count"
     assert 'if ev.verdict == "achieved":' in src, "the close lost its verdict guard"
+    # Since spec 041 the primary ACHIEVE lives in the ONE close-and-merge
+    # tail, `_close_and_merge`, reached from exactly two callers: the
+    # evaluator's `achieved` verdict, and the OWNER's explicit accept_close
+    # Decision (`_finalize_accepted_close` — provenance-gated in
+    # decisions.accepted_close; a defaulted accept never qualifies). A third
+    # caller is a bypass and fails here.
     guard = (
-        'store.transition(\n            goal_id, Event.ACHIEVE,\n'
-        '            replace(base, phase="done", next=ev.rationale[:200], donegate_rounds=0, donegate_progress=0,\n'
-        '                    pending_merge_pr="", merge_heal_attempted=False,\n'
-        '                    pending_done_proposal=False, ci_green_head=""),'
+        'store.transition(\n        goal_id, Event.ACHIEVE,\n'
+        '        replace(base, phase="done", next=rationale[:200], donegate_rounds=0, donegate_progress=0,\n'
+        '                pending_merge_pr="", merge_heal_attempted=False,\n'
+        '                pending_done_proposal=False, ci_green_head=""),'
     )
-    assert guard in src, "the primary ACHIEVE no longer clears the merge marker inside the verdict block"
+    assert guard in src, "the primary ACHIEVE no longer clears the merge marker inside _close_and_merge"
+    assert src.count("await _close_and_merge(") == 2, "a third path reaches the close-and-merge tail"
+    dec_src = (root / "devclaw/goal/decisions.py").read_text(encoding="utf-8")
+    assert 'last.provenance == "owner" and last.option_key == "accept_close"' in dec_src, (
+        "the accepted-close rule lost its owner-provenance guard"
+    )
     assert "async def _finalize_pending_merge" in src and "status.pending_merge_pr" in src, (
         "the retry ACHIEVE lost its pending-merge guard"
     )

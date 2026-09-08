@@ -59,6 +59,15 @@ that is by policy not consulted produces no silence to ship on, so removing it
 from the `trust` chain does not repeal #186. The verify, test-integrity, and
 goal-level done gates stay always-hard in BOTH modes; the browser-E2E gate
 stays dial-able (advise-under-trust / block-under-strict) per ADR 0007.
+Since spec 041 (2026-09-08) there is exactly ONE human exception to the
+evaluator's authority, at the same seam: the owner's explicit `accept_close`
+Decision closes the goal on the mechanical facts alone — green CI on the
+current head, merge-on-close — with no further evaluation, the reported gap
+logged as a follow-up. The owner is the one party who may accept a gap the
+evaluator reported; a *defaulted* accept never is, and the evaluator remains
+the only machine emitter of `done`. Every other Decision is work the next
+tick executes (a correction dispatches; a cancel cancels) — a recorded
+decision that waits for a cadence or a human is the defect spec 041 removed.
 
 ### VI. Loud failure over silent degradation
 Broken delivery fails; lost/corrupt state blocks legibly with an owner ping;
@@ -144,8 +153,12 @@ wins and this file is corrected in the same PR. A spec that requires an
 invariant change must say so explicitly and amend this constitution in the
 same arc — never silently.
 
-**Version**: 2.9.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-07
-(2.9.0 — Development Workflow gains the north-star admission clause: every
+**Version**: 2.10.0 | **Ratified**: 2026-08-13 | **Last Amended**: 2026-09-08
+(2.10.0 — Principle V: the owner's explicit `accept_close` closes on mechanical
+facts with no further evaluation, and every Decision is executed by the next
+tick; spec 041, ruled by Denys 2026-09-08 after fs-318/421/429 cycled
+decide → gate → downgrade → Problem → decide and fs-431's recorded correction
+never dispatched. Prior: 2.9.0 — Development Workflow gains the north-star admission clause: every
 spec and tinyspec names the failure it moves, the number that shows it, and
 its cut condition; a mandatory `North-star case` section lands in the spec
 template and the tinyspec skeleton. Ruled by Denys 2026-09-07 against

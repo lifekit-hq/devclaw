@@ -421,3 +421,109 @@ async def test_closed_contract_with_a_refusing_gate_asks_instead_of_grinding(tmp
     assert prob.default_key == "accept_close"
     assert {o.key for o in prob.options} == {"accept_close", "correct", "cancel"}
     assert any("[g]" in m for m in notifier.sent)
+
+
+# ---- spec 041 US1: an owner Decision is executed by the next tick -----------
+# Tripwire classes: zero-token (an accepted close spends no evaluator call) and
+# brake machinery (a pending correction beats the closed-issue shortcut).
+
+def _owner_decision(store, goal_id, *, option="", text="", verb="decide", clause="c2", made_at=None):
+    """Write the Decision row resolve_problem would write — no Problem needed
+    for the tick's reading of it (it derives from goal_decisions alone)."""
+    from devclaw.goal.models import Decision
+    from devclaw.state_store import _now_ms
+
+    d = Decision(
+        id=f"dec_{option or verb}_{made_at or 0}", goal_id=goal_id, problem_id="",
+        clause=clause, verb=verb, option_key=option, text=text,
+        provenance="owner", made_by="denys", made_at=made_at or (_now_ms() + 60_000),
+    )
+    store.record_decision(d, problem_status="resolved")
+    return d
+
+
+@pytest.mark.asyncio
+async def test_owner_accept_close_closes_and_merges_without_an_evaluator_call(tmp_path, monkeypatch):
+    """Spec 041 FR-003: the owner's accept_close IS the verdict. The next tick
+    merges and closes on the mechanical facts — zero cognition, no gate
+    round — and the accepted gap rides the close as a follow-up. Before this,
+    fs-318/421/429 cycled decide → gate → strict downgrade → Problem → decide
+    (3 decisions, 4 steers, 4 review calls, still open on 2026-09-08)."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g", issue_refs=[7], done_when="")
+    store.set_strictness("g", "strict")
+    store.save_status("g", replace(store.load_status("g"), phase="idle", donegate_rounds=1,
+                                   last_plan_at=store.now_iso()))
+    _owner_decision(store, "g", option="accept_close", clause="structural: shape concerns")
+    merge = ScriptedMerge(moc.MergeResult(moc.MergeOutcome.MERGED, pr_url=PR_URL, merged_sha="abc123def456"))
+    monkeypatch.setattr(tick_donegate, "_attempt_merge", merge)
+    evaluator, engine, notifier = FakeClaude(ACHIEVED), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.DONE
+    assert evaluator.calls == 0, "an accepted close never re-asks the evaluator"
+    assert engine.dispatched == []
+    s = store.load_status("g")
+    assert s.phase == "done" and "accept_close" in s.next
+    log = store.recent_log("g", 40)
+    assert "closing without a gate round" in log
+    assert "accepted by decision" in log  # the gap is a follow-up, never silent
+    assert any("✅ [g]" in m and "accept_close" in m for m in notifier.sent)
+
+
+@pytest.mark.asyncio
+async def test_defaulted_accept_close_still_goes_through_the_gate(tmp_path, monkeypatch):
+    """A timebox is not an owner ruling (spec 031 Q2 → C stands): a DEFAULTED
+    accept_close never closes without the gate — the accepted-close rule is
+    owner-provenance only."""
+    from devclaw.goal.models import Decision
+    from devclaw.state_store import _now_ms
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.save_status("g", replace(store.load_status("g"), phase="idle", last_plan_at=store.now_iso()))
+    store.record_decision(Decision(
+        id="dec_defaulted", goal_id="g", problem_id="", clause="", verb="decide",
+        option_key="accept_close", provenance="defaulted", made_by="tick", made_at=_now_ms() + 60_000,
+    ), problem_status="defaulted")
+    merge = ScriptedMerge(moc.MergeResult(moc.MergeOutcome.MERGED, pr_url=PR_URL, merged_sha="abc"))
+    monkeypatch.setattr(tick_donegate, "_attempt_merge", merge)
+    engine = FakeEngine()
+
+    await _tick(store, "g", FakeClaude(ACHIEVED), engine, RecordingNotifier())
+
+    assert store.load_status("g").phase != "done"
+    assert engine.dispatched, "a pending defaulted decision is work: the tick dispatches, it never closes on its own"
+
+
+@pytest.mark.asyncio
+async def test_closed_contract_with_a_pending_correction_dispatches_instead_of_proposing(tmp_path):
+    """Spec 041 FR-001/FR-002 (the fs-431 loop of 2026-09-08): with every
+    referenced issue closed and a recorded correct_implementation the tick
+    DISPATCHES the worker carrying the Decision — it does not take the
+    "propose done without a worker" shortcut (eight worker-less rounds), and
+    it does not raise a second Problem."""
+    from devclaw.goal.issue_ref import IssueSnapshot
+    from tests.goal_fakes import FakeIssueFetcher
+
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g", issue_refs=[7], done_when="")
+    # resolve_problem's unblock shape: idle, rounds reset, plan instant in the past
+    store.save_status("g", replace(store.load_status("g"), phase="idle", donegate_rounds=0,
+                                   last_plan_at=store.now_iso()))
+    _owner_decision(store, "g", verb="correct_implementation",
+                    text="register the job through IBackgroundJobClient", clause="c2")
+    closed = FakeIssueFetcher({7: IssueSnapshot(
+        number=7, title="t", body="ctx\n## Acceptance\n- /health returns 200", state="closed")})
+    evaluator, engine, notifier = FakeClaude(ACHIEVED), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier, closed)
+
+    assert out is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+    assert evaluator.calls == 0
+    brief = engine.dispatched[0][0].goal
+    assert "IBackgroundJobClient" in brief, "the Decision rides the brief as settled fact"
+    assert store.load_status("g").problem_id == ""
+    assert "there is work to dispatch (a recorded decision)" in store.recent_log("g", 20)

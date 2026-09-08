@@ -28,7 +28,8 @@ from .models import Problem, ProblemOption
 #: all key off them; labels are the owner-facing text.
 ACCEPT_CLOSE = ProblemOption(
     "accept_close", "Accept the gap and close",
-    "the clause is recorded as resolved by your decision; the done-gate closes the goal on its next round",
+    "your decision is the verdict: the next tick merges and closes the goal on green CI "
+    "with no further review; the reported gap is logged as a follow-up",
     closes_goal=True,
 )
 SPLIT = ProblemOption(
@@ -46,6 +47,11 @@ SUPPLY = ProblemOption(
 CANCEL = ProblemOption(
     "cancel", "Cancel the goal",
     "the goal is cancelled; nothing merges",
+)
+CONTINUE = ProblemOption(
+    "continue", "Continue — refund the dispatch budget",
+    "the cap is refunded and the next tick dispatches again; a second cap with no "
+    "delivered increment in between waits for an explicit decide",
 )
 
 CHURN_OPTIONS: tuple[ProblemOption, ...] = (CORRECT, ACCEPT_CLOSE, SPLIT)

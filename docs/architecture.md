@@ -749,6 +749,13 @@ as the block, and resolved by exactly two verbs, `correct_implementation` and
 `decide`, each recording a Decision (`goal_decisions`) and unblocking with the
 steer's budget-restoring shape. A timed-out Problem takes its default and
 informs; under `strict` a default that would close the goal parks instead.
+Since spec 041 (2026-09-08) **a Decision is executed by the next tick**: a
+current Decision made after `last_plan_at` is work (derived from
+`goal_decisions`, never stored), it takes precedence over the closed-issue
+propose-done shortcut (a recorded correction dispatches the worker), an
+owner-provenance `accept_close` closes through the one close-and-merge tail
+(`tick_donegate._close_and_merge`, shared with the `achieved` verdict) with
+no evaluator round, and `cancel` cancels in the Decision's transaction.
 `steer_goal` is refused while a Problem is open. At creation the `done_when`
 admission lint (`devclaw/goal/admission_lint.py`) refuses sandbox-impossible
 clauses — a credential, a human, a change in another repository — in an
