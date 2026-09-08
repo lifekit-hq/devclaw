@@ -411,7 +411,10 @@ removed from the tree 2026-09-06 — git history (`git log -- docs/decisions doc
 `.claude/hooks/` (docs-reminder + a main-branch guard that blocks commit/push on main —
 escape hatch: prefix `DEVCLAW_ALLOW_MAIN=1` — + a north-star-case guard that blocks
 `gh pr create` on a behavior-changing branch whose spec/tinyspec has no filled
-`North-star case`, escape hatch `DEVCLAW_ALLOW_NO_CASE=1` for a hotfix), and `.claude/skills/` (docs-audit, live-shakedown, root-cause, devclaw-status,
+`North-star case`, escape hatch `DEVCLAW_ALLOW_NO_CASE=1` for a hotfix — + a merge-verdict guard
+that blocks `gh pr merge` while the PR's CI rollup is failing or pending, since
+the local suite is not the verdict of record, escape hatch
+`DEVCLAW_ALLOW_RED_MERGE=1`), and `.claude/skills/` (docs-audit, live-shakedown, root-cause, devclaw-status,
 eng-health — the engineering-health ratchet over `evals/measure_eng_health.py`,
 devclaw-morning + devclaw-evening — the daily loop as two commands (status →
 class → one fix → decisions; landed → tonight → next → park), added 2026-09-07
