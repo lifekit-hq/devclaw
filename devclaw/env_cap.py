@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import Callable, Iterable, Literal, Optional, Protocol
 
 from . import config as _config
+from . import credentials as _credentials
 from .engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR
 from .engine.sandcastle import SANDBOX_IMAGE as _SANDBOX_IMAGE
 
@@ -120,7 +121,7 @@ def _is_project_scoped(cap_id: str) -> bool:
 #: these is not a GitHub token at all — the exact 2026-08-31 failure, where a
 #: malformed secret rode the whole plumbing into the sandbox and only
 #: surfaced as an `npm ci` 401 after it had eaten a goal's dispatch budget.
-GH_TOKEN_PREFIXES = ("ghp_", "github_pat_", "ghs_", "gho_")
+GH_TOKEN_PREFIXES = _credentials.GH_TOKEN_PREFIXES
 
 #: Remedy for the credential being absent while a project declares the
 #: capability. Shared with doctor so both surfaces print the same fix (US3).

@@ -114,7 +114,8 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │     • acp = _load_acp_client()  # sibling module │                                 │
      │  │     • client = acp.AcpClient(                    │                                 │
      │  │           acp_command, # DEVCLAW_ACP_COMMAND     │                                 │
-     │  │           acp_env,     # allowlist + model tier  │                                 │
+     │  │           acp_env,     # allowlist + model tier  │
+     │  │             + payload agent_env credentials      │                                 │
      │  │           on_event=…, on_update=…)               │                                 │
      │  │     • client.run("/workspace", wrapped_goal)     │                                 │
      │  │       (initialize → session/new → session/prompt)│                                 │

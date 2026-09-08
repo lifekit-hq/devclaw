@@ -1425,6 +1425,20 @@ def _refuse_api_key() -> None:
             sys.exit(2)
 
 
+_PRE_042_AGENT_ENV: tuple = ("CLAUDE_CODE_OAUTH_TOKEN",)
+
+
+def _agent_env_vars(req: dict) -> tuple:
+    """The credential names the agent's shells receive — the host's list from
+    the payload (``agent_env``, spec 042), or the pre-042 contract (the
+    setup-token alone, #644) when the host sent none. Names only; values are
+    read from this process env at forward time and never logged."""
+    raw = req.get("agent_env")
+    if not isinstance(raw, list):
+        return _PRE_042_AGENT_ENV
+    return tuple(str(v) for v in raw if isinstance(v, str) and v.strip())
+
+
 def main() -> None:
     _refuse_api_key()
 
@@ -1617,16 +1631,20 @@ def main() -> None:
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
     }
-    # The ONE sanctioned credential (#644): the instance's subscription
-    # setup-token, injected into the container env by the engine. It must be
-    # forwarded EXPLICITLY — this env is an allowlist, and without this entry
-    # the agent never sees the token and silently falls back to the mounted
-    # ~/.claude login, whose overnight expiry is exactly the outage class the
-    # setup-token exists to end (live-found 2026-08-24). The refused metered
-    # keys (ANTHROPIC_API_KEY/AUTH_TOKEN) stay out by construction.
-    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
-    if oauth_token:
-        acp_env["CLAUDE_CODE_OAUTH_TOKEN"] = oauth_token
+    # The sanctioned credentials (spec 042): the HOST's registry names, in the
+    # payload, exactly which credentials the agent's shells get — this env is
+    # an allowlist, and a credential the engine injected into the container
+    # but not into this dict is invisible to every tool the agent runs. That
+    # is how the setup-token was lost on 2026-08-24 (#644: the agent fell
+    # back to the mounted login) and the registry token on 2026-09-08 (npm ci
+    # 401 in the agent's shell while the verify gate, which inherits the
+    # container env, had it). The runner never spells a credential itself
+    # (spec 011); a pre-042 host that sends no list gets the #644 contract.
+    # The refused metered keys stay out by construction (_refuse_api_key).
+    for _cred_var in _agent_env_vars(req):
+        _cred_val = os.environ.get(_cred_var, "").strip()
+        if _cred_val:
+            acp_env[_cred_var] = _cred_val
     # OOM shield for the agent's OWN bash children (spec 020 US2): every
     # non-interactive bash sources $BASH_ENV, so each tool child self-raises
     # its oom_score_adj and the kernel prefers the workload over the agent.

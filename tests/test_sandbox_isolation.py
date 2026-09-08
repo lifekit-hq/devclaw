@@ -646,3 +646,59 @@ def test_docker_args_declare_the_enforced_sizing_to_the_worker():
     # each declaration rides an explicit -e pair (the allowlist convention)
     assert args[args.index(f"DEVCLAW_SANDBOX_MEMORY={mem}") - 1] == "-e"
     assert args[args.index(f"DEVCLAW_SANDBOX_CPUS={cpus}") - 1] == "-e"
+
+
+# ---- spec 042: one credential registry, every hop iterates it ----------------
+# The setup-token and the registry token above are the two instances; these
+# pin the CLASS so the third credential cannot be added to some hops and not
+# others (the #644 / 2026-09-08 shape).
+
+import importlib.util as _ilu
+import json
+from pathlib import Path as _Path
+
+from devclaw import credentials as _creds
+
+_RUNNER_PATH = _Path(__file__).resolve().parents[1] / "runner" / "runner.py"
+
+
+def _load_runner():
+    spec = _ilu.spec_from_file_location("devclaw_runner_agent_env", _RUNNER_PATH)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("var", _creds.sandbox_vars())
+def test_every_registered_sandbox_credential_crosses_the_container_boundary(monkeypatch, var):
+    for other in _creds.sandbox_vars():
+        monkeypatch.delenv(other, raising=False)
+    monkeypatch.setenv(var, "value-under-test")
+    args = sc._build_docker_args(
+        container_name="devclaw-x", host_bind_path="/host/ws",
+        claude_dir="/host/claude", payload="{}",
+    )
+    assert f"{var}=value-under-test" in args
+    assert not any(a.startswith(f"{o}=") for a in args for o in _creds.sandbox_vars() if o != var)
+
+
+def test_payload_hands_the_runner_the_agent_credential_names_never_values(monkeypatch):
+    """The host's registry decides what reaches the agent's shells; the
+    runner receives names in the payload (spec 011: it imports nothing)."""
+
+    for var in _creds.sandbox_vars():
+        monkeypatch.setenv(var, "secret-value")
+    payload = sc._build_payload(EngineRequest(kind="k", workspace_dir="/w", goal="g"))
+    assert payload["agent_env"] == list(_creds.agent_vars())
+    assert "secret-value" not in json.dumps(payload)
+
+
+def test_runner_forwards_exactly_the_registered_agent_credentials():
+    """The runner's allowlist forwards the names the host sent, and falls back
+    to the #644 contract (the setup-token alone) for a pre-042 host."""
+    runner = _load_runner()
+    assert runner._agent_env_vars({"agent_env": list(_creds.agent_vars())}) == _creds.agent_vars()
+    assert runner._agent_env_vars({}) == ("CLAUDE_CODE_OAUTH_TOKEN",)
+    assert runner._agent_env_vars({"agent_env": ["", 3, "X_TOKEN"]}) == ("X_TOKEN",)
+    for refused in _creds.REFUSED:
+        assert refused not in _creds.agent_vars()

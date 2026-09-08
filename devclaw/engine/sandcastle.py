@@ -44,6 +44,7 @@ from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
 from ..claude_trust import write_trusted_copy
 from .. import config as _config
+from .. import credentials as _credentials
 from . import workspace as _workspace
 from ..git_identity import git_identity_env
 
@@ -147,47 +148,29 @@ SANDBOX_CLAUDE_ALLOWLIST: tuple[str, ...] = tuple(
     if e.strip()
 ) or _DEFAULT_CLAUDE_ALLOWLIST
 
-# The one AUTH env var that deliberately crosses the container boundary, joining
-# the git identity as a host-owned credential the sandbox cannot work without.
-# A `claude setup-token` OAuth token (one-year, subscription-backed — never a
-# metered key) supplied on the host as CLAUDE_CODE_OAUTH_TOKEN. Without this the
-# token reaches host cognition only and every sandbox run stays on the mounted
-# `.credentials.json`, i.e. on exactly the interactive login whose revocation
-# takes the box down mid-night. Claude Code ranks this variable ABOVE the
-# `/login` credential, so when it is set the mounted identity pair stops being
-# load-bearing for auth (`.claude.json` still carries the account identity the
-# ACP loop needs). Absent/blank ⇒ no `-e` at all: the mount posture is unchanged
-# and the pre-token deployment keeps working byte-identically.
-OAUTH_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
+# The credentials that cross the container boundary are declared ONCE in
+# devclaw.credentials (spec 042): the subscription OAuth token and the
+# registry-read token, each with its scope and the hops it crosses. This
+# launcher iterates that registry; it never spells a credential. The names
+# stay importable from here for the doctor/boot-guard readers that grew up
+# on this module.
+OAUTH_TOKEN_VAR = _credentials.OAUTH_TOKEN.var
+REGISTRY_TOKEN_VAR = _credentials.REGISTRY_TOKEN.var
 
 
-def _oauth_token_env() -> tuple[str, ...]:
-    """``-e CLAUDE_CODE_OAUTH_TOKEN=…`` when the host carries a setup-token."""
-    token = os.environ.get(OAUTH_TOKEN_VAR, "").strip()
-    return ("-e", f"{OAUTH_TOKEN_VAR}={token}") if token else ()
-
-
-# The one REGISTRY credential that crosses the boundary: a read:packages-scoped
-# token so `npm ci` on an @lifekit-hq-consuming repo (frontend/.npmrc:
-# `_authToken=${NODE_AUTH_TOKEN}`) can resolve GitHub Packages inside the
-# sandbox — without it no real frontend build (and so no real-app e2e proof)
-# is possible in there. Read-only by scope: the sandbox still holds no
-# credential that can push, merge, or touch issues/PRs — delivery ceremony
-# stays host-side. Absent/blank ⇒ no `-e` at all, byte-identical behavior.
-REGISTRY_TOKEN_VAR = "NODE_AUTH_TOKEN"
-
-
-def _registry_token_env() -> tuple[str, ...]:
-    """``-e NODE_AUTH_TOKEN=…`` when the host carries a registry-read token."""
-    token = os.environ.get(REGISTRY_TOKEN_VAR, "").strip()
-    return ("-e", f"{REGISTRY_TOKEN_VAR}={token}") if token else ()
+def _credential_env() -> tuple[str, ...]:
+    """``-e VAR=…`` for every registered sandbox credential the host carries
+    (absent/blank ⇒ not forwarded, byte-identical pre-credential posture)."""
+    parts: list[str] = []
+    for var, value in _credentials.sandbox_env(os.environ):
+        parts += ["-e", f"{var}={value}"]
+    return tuple(parts)
 
 
 def _strip_api_keys(env: dict[str, str]) -> dict[str, str]:
-    clean = dict(env)
-    clean.pop("ANTHROPIC_API_KEY", None)
-    clean.pop("ANTHROPIC_AUTH_TOKEN", None)
-    return clean
+    """The refused metered keys never reach the docker CLI's own env
+    (constitution I) — the one strip, owned by the credential registry."""
+    return _credentials.strip_refused(env)
 
 
 async def _teardown(proc: "asyncio.subprocess.Process", container_name: str) -> None:
@@ -615,13 +598,12 @@ def _build_docker_args(
         # image or leaked through a mount can't put the owner's name on agent
         # commits. The worker's own "Co-Authored-By: Claude …" trailer stays.
         *(part for k, v in git_identity_env().items() for part in ("-e", f"{k}={v}")),
-        # The subscription OAuth token, when the host carries one — see
-        # OAUTH_TOKEN_VAR. A metered key never rides along: _strip_api_keys
-        # governs the docker CLI's own env and the runner refuses one outright.
-        *_oauth_token_env(),
-        # The registry-read token, when the host carries one — see
-        # REGISTRY_TOKEN_VAR.
-        *_registry_token_env(),
+        # Every registered sandbox credential the host carries (spec 042:
+        # devclaw.credentials is the one home — the OAuth setup-token and the
+        # read:packages registry token today). A metered key never rides
+        # along: _strip_api_keys governs the docker CLI's own env and the
+        # runner refuses one outright.
+        *_credential_env(),
         # The THIRD env-forward family (the _build_payload docstring makes
         # adding one a decision — this is spec 020 US3's): declare the
         # ENFORCED resource allocation to the worker, sourced from the SAME
@@ -639,17 +621,22 @@ def _build_docker_args(
     ]
 
 
+def _build_payload_agent_env() -> list[str]:
+    """The ``agent_env`` list the payload carries — the registry's ``agent``
+    set, exposed for the structural guard."""
+    return list(_credentials.agent_vars())
+
+
 def _build_payload(req: EngineRequest) -> dict:
     """The runner JSON payload for one task. Pure (no I/O) so the host→sandbox
     contract — the only channel carrying WORK across the container boundary — is
     unit-testable without docker. The host env does not cross wholesale; the
     deliberate exceptions are credentials the sandbox cannot function without,
     forwarded one variable at a time in :func:`_build_docker_args`: the git
-    identity (:func:`git_identity_env`), the subscription OAuth token
-    (:data:`OAUTH_TOKEN_VAR`), the enforced sandbox sizing declaration
-    (spec 020 US3 — the decision the previous sentence demanded), and the
-    registry-read token (:data:`REGISTRY_TOKEN_VAR`). Adding another is a
-    decision, not a convenience."""
+    identity (:func:`git_identity_env`), every credential the registry marks
+    ``sandbox`` (:mod:`devclaw.credentials`, spec 042 — the OAuth setup-token
+    and the registry-read token), and the enforced sandbox sizing declaration
+    (spec 020 US3). Adding a credential is a registry entry, and a decision."""
     payload: dict = {
         "kind": req.kind,
         "workspace_dir": CONTAINER_WORKSPACE,
@@ -660,6 +647,10 @@ def _build_payload(req: EngineRequest) -> dict:
         # verify gate runs INSIDE the container after the agent finishes —
         # same toolchain + workspace the agent built in (None → no gate).
         "verify_cmd": req.verify_cmd,
+        # spec 042: the credentials the runner forwards into the agent's own
+        # shells, by name — the host's registry decides, the runner never
+        # spells a credential (spec 011: stdlib-only, imports nothing here).
+        "agent_env": _build_payload_agent_env(),
     }
     if req.validation is not None:
         # spec 015: the host-resolved validation contract for the agent-less

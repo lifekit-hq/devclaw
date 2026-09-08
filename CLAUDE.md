@@ -62,7 +62,13 @@ on a second real consumer (ruled 2026-09-06).
   at the cognition caller (`devclaw/cognition.py`), the LLM-call primitive (`devclaw/llm_call.py`),
   host engine (`devclaw/engine/host.py`), and sandbox
   (`devclaw/engine/sandcastle.py`, `runner/runner.py`) — a stray key
-  must never silently switch autonomous runs onto metered billing.
+  must never silently switch autonomous runs onto metered billing. The
+  refused keys, and every credential that legitimately crosses a hop, live
+  in ONE registry — `devclaw/credentials.py` (spec 042, 2026-09-08): name,
+  least-privilege scope, and the hops it crosses (`required` / `sandbox` /
+  `agent`). Every hop iterates it; a credential name spelled anywhere else
+  in the package fails the build. The runner never names a credential —
+  the host hands it the `agent` set in the task payload.
 - **Model-agnostic worker layer.** Skills are **plain markdown** (no model-specific
   frontmatter, no native `Skill(...)` calls); hooks are **bash `.sh` files** invoked
   by `runner.py` (never a `settings.json`); cross-tool capability goes through **MCP**,

@@ -22,6 +22,7 @@ from pathlib import Path
 from . import EngineRequest, EngineResult
 from .runner_io import STREAM_LINE_LIMIT, consume_runner_output
 from .. import config as _config
+from .. import credentials as _credentials
 from ..git_identity import git_identity_env
 
 #: The REPOSITORY ROOT — ``runner/`` and its skill bundle are siblings of the
@@ -63,10 +64,9 @@ RUNNER_PYTHON = _config.RUNNER_PYTHON_OVERRIDE or (
 
 
 def _strip_api_keys(env: dict[str, str]) -> dict[str, str]:
-    clean = dict(env)
-    clean.pop("ANTHROPIC_API_KEY", None)
-    clean.pop("ANTHROPIC_AUTH_TOKEN", None)
-    return clean
+    """The refused metered keys never reach the host runner (constitution I)
+    — the one strip, owned by the credential registry (spec 042)."""
+    return _credentials.strip_refused(env)
 
 
 def _runner_env() -> dict[str, str]:
@@ -91,6 +91,8 @@ async def run_host(req: EngineRequest) -> EngineResult:
         "goal": req.goal,
         # verify gate runs on the host after the agent finishes (host toolchain).
         "verify_cmd": req.verify_cmd,
+        # spec 042: the registry names the credentials the agent's shells get
+        "agent_env": list(_credentials.agent_vars()),
     }
     if req.validation is not None:
         body["validation"] = req.validation
