@@ -23,7 +23,44 @@ _OPTION_LABELS = {
     "split": "split into a follow-up",
     "supply": "supply the capability",
     "cancel": "cancel",
+    "continue": "continue — the dispatch budget is refunded",
 }
+
+
+def _iso_ms(iso: "str | None") -> int:
+    """Milliseconds since the epoch for a store ISO timestamp; ``0`` for
+    none/unparseable so every Decision counts as made after it."""
+    import datetime as _dt
+    if not iso:
+        return 0
+    try:
+        return int(_dt.datetime.fromisoformat(iso).timestamp() * 1000)
+    except ValueError:
+        return 0
+
+
+def pending_since(rows: "list[Decision]", last_plan_at: "str | None") -> "list[Decision]":
+    """The current Decisions the loop has not acted on yet — made after the
+    goal's last plan/dispatch instant (spec 041 FR-001). A Decision is work:
+    the owner (or the timebox) said what to do, and the next tick does it
+    instead of waiting for the cadence. Derived, never stored."""
+    since = _iso_ms(last_plan_at)
+    return [d for d in rows if not d.superseded_by and d.made_at > since]
+
+
+def accepted_close(rows: "list[Decision]") -> "Decision | None":
+    """The owner's standing ``accept_close`` — present only when the LATEST
+    current Decision is an owner-provenance accept (spec 041 FR-003). A later
+    Decision of any kind takes the last word: the accept then no longer
+    closes without the gate. A *defaulted* accept never qualifies (a timebox
+    is not an owner ruling — spec 031 Q2 → C stands)."""
+    current = [d for d in rows if not d.superseded_by]
+    if not current:
+        return None
+    last = max(current, key=lambda d: (d.made_at, d.id))
+    if last.provenance == "owner" and last.option_key == "accept_close":
+        return last
+    return None
 
 
 def _when(ms: int) -> str:

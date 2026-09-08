@@ -111,6 +111,7 @@ from .tick_donegate import (  # noqa: F401 (re-exported)
     _resolve_done_gate,
 )
 from .tick_donegate import _finalize_pending_merge as _donegate_finalize_pending_merge
+from .tick_donegate import _finalize_accepted_close as _donegate_finalize_accepted_close
 from .tick_dispatch import (  # noqa: F401 (re-exported)
     _dispatch_action,
 )
@@ -184,6 +185,24 @@ async def _apply_problem_default(goal_id, goal, status, *, store, notifier):
         clause=prob.clause, verb="decide", option_key=default.key, text="",
         provenance="defaulted", made_by="tick", made_at=_now_ms(),
     )
+    if default.key == _problems.CANCEL.key:
+        # Spec 041 FR-005: a cancel Decision cancels — in its own transaction,
+        # never as an idle goal carrying next="cancel" (the executor-less
+        # decision class). Abandoned convergence, same as cancel_goal.
+        with store.transaction():
+            store.record_decision(dec, problem_status="defaulted")
+            new = store.transition(
+                goal_id, Event.CANCEL,
+                replace(status, phase="cancelled", blocked_on="", in_flight=None,
+                        problem_id="", pending_done_proposal=False, ci_green_head="",
+                        next=f"defaulted: {default.label}"),
+                expect=status,
+            )
+        store.record_convergence(goal_id, "abandoned", goal.workspace_dir)
+        store.append_log(goal_id, f"problem {prob.id} defaulted → cancel; goal cancelled")
+        await _notify(notifier, NotifyLevel.OWNER,
+                      f"ℹ️ [{goal_id}] defaulted — cancelled on \"{prob.clause or 'contract'}\".")
+        return new
     with store.transaction():
         store.record_decision(dec, problem_status="defaulted")
         new = store.transition(
@@ -371,6 +390,9 @@ async def _tick_goal_impl(
             if defaulted is not None:
                 status = defaulted
                 phase = _classify(status)
+                if phase is Phase.TERMINAL_CANCELLED:
+                    # a defaulted cancel (spec 041 FR-005) ends the tick here
+                    return Outcome.SKIP_CANCELLED
         if status.blocked_kind == "mechanical:prep":
             healed = await _autoheal_prep(
                 goal_id, goal, status, store=store, notifier=notifier,
@@ -666,9 +688,19 @@ async def _handle_long_lived_advance(
     # trigger). invariant-guard reproduced the free-text crack, 2026-08-05.
     header = finished_detail.split("\n", 1)[0] if finished_detail else ""
     settled_ok = "status=done" in header and "gate=FAILED" not in header
+    # Spec 041 FR-003/FR-004: the owner's standing accept_close is the verdict.
+    # One store read, no cognition; ``None`` for every other goal.
+    accepted = _decisions.accepted_close(store.decisions(goal_id))
     if settled_ok:
         now = store.now_iso()
         base = replace(status, last_plan_at=now, last_tick_at=now)
+        if accepted is not None:
+            store.append_log(goal_id, "thin: advance session settled — the owner's accept_close stands, closing without a gate round")
+            return await _donegate_finalize_accepted_close(
+                goal_id, goal, base, accepted,
+                store=store, notifier=ctx.notifier, autodeploy=ctx.autodeploy,
+                remote_checker=ctx.remote_checker,
+            )
         store.append_log(goal_id, "thin: advance session settled — proposing done")
         return await _open_done_gate(
             goal_id, goal, base,
@@ -699,6 +731,13 @@ async def _handle_long_lived_advance(
     if status.pending_done_proposal and status.phase != "blocked":
         now = store.now_iso()
         base = replace(status, last_plan_at=now, last_tick_at=now)
+        if accepted is not None:
+            store.append_log(goal_id, "ci settled — the owner's accept_close stands, closing without a gate round")
+            return await _donegate_finalize_accepted_close(
+                goal_id, goal, base, accepted,
+                store=store, notifier=ctx.notifier, autodeploy=ctx.autodeploy,
+                remote_checker=ctx.remote_checker,
+            )
         store.append_log(goal_id, "ci settled — re-opening the done-gate")
         return await _open_done_gate(
             goal_id, goal, base,
@@ -742,7 +781,11 @@ async def _handle_long_lived_advance(
     # version; reload so the dispatch's expect= CAS's against the current row
     # (same reason as _handle_long_lived_advance).
     status = store.load_status(goal_id)
-    work = bool(finished_detail) or bool(steering)
+    # Spec 041 FR-001: a Decision the loop has not acted on yet IS work — the
+    # owner (or the timebox) said what to do; the next tick does it instead
+    # of waiting out the cadence. Derived from goal_decisions, never stored.
+    pending = _decisions.pending_since(store.decisions(goal_id), status.last_plan_at)
+    work = bool(finished_detail) or bool(steering) or bool(pending)
     if status.phase == "blocked":
         # Human-gated: only a settle or HUMAN steering unblocks. Machine
         # rows (source ``auto-*``, e.g. the churn brake's own corrections)
@@ -750,12 +793,22 @@ async def _handle_long_lived_advance(
         # after a human acts.
         should_plan = bool(finished_detail) or store.has_unread_human_steering(goal_id)
     else:
-        should_plan = work or store.cadence_due(goal, status)
+        should_plan = work or accepted is not None or store.cadence_due(goal, status)
     if not should_plan:
         store.update_status_fields(goal_id, last_tick_at=store.now_iso())
         return Outcome.IDLE
 
     consume_ids = [rid for rid, _ in rows]
+    # Spec 041 FR-003: the owner's accept_close, with nothing else to
+    # dispatch, closes NOW — no cadence, no worker, no gate round. Unread
+    # steering (a red-CI correction, a human line) dispatches first; the
+    # accept stands and the close re-runs when that work settles.
+    if accepted is not None and not steering and not finished_detail:
+        return await _donegate_finalize_accepted_close(
+            goal_id, goal, status, accepted,
+            store=store, notifier=ctx.notifier, autodeploy=ctx.autodeploy,
+            remote_checker=ctx.remote_checker, consume_steering=consume_ids,
+        )
     now = store.now_iso()
     base = replace(status, last_plan_at=now, last_tick_at=now)
     # A non-ok settle reaching this dispatch (failed task, or done-with-
@@ -916,13 +969,39 @@ async def _handle_long_lived_advance(
                 await _notify(ctx.notifier, NotifyLevel.OWNER,
                               f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
                 return Outcome.BLOCKED
-            if base.donegate_rounds == 0 and not base.merge_heal_attempted:
+            # Spec 041 FR-002: the propose-done shortcut fires only when the
+            # tick has NOTHING to dispatch. Unread steering (a red-CI correction)
+            # or a recorded Decision (a correct_implementation) is work, and
+            # work beats the shortcut — otherwise a red rollup steers, the next
+            # tick re-proposes, red steers again: fs-431 ran eight worker-less
+            # rounds that way on 2026-09-08 and the owner's correction never ran.
+            if base.merge_heal_attempted:
+                # spec 025 FR-017: the conflict heal returned the goal to idle
+                # with the round counter reset, which is exactly the state the
+                # propose-done shortcut above keys on — so it skipped the owed
+                # resolution increment and re-ran straight into the same
+                # CONFLICT, parking the goal with a heal budget spent but never
+                # used. The increment is merge work, not scope work: it
+                # dispatches regardless of what the referenced issues say.
+                store.append_log(
+                    goal_id,
+                    "all referenced issues are closed but the cumulative PR "
+                    "conflicts with its base — dispatching the owed "
+                    "merge-conflict resolution increment",
+                )
+            elif steering or pending:
+                store.append_log(
+                    goal_id,
+                    "all referenced issues are closed, but there is work to dispatch ("
+                    + ("a recorded decision" if pending else "steering")
+                    + ") — dispatching worker; the closures stay an input to the brief",
+                )
+            elif base.donegate_rounds == 0:
                 # First pass: all issues closed, no prior done-gate refusal,
-                # no merge-conflict resolution increment owed.
-                # Out-of-band work may have fully satisfied the contract —
-                # propose done and let the grounded gate decide.
-                # If the gate refuses (donegate_rounds becomes > 0), the next
-                # tick dispatches a worker instead of re-proposing (issue #726).
+                # nothing to dispatch. Out-of-band work may have fully
+                # satisfied the contract — propose done and let the grounded
+                # gate decide. If the gate refuses (donegate_rounds becomes
+                # > 0) the next tick raises the closed-contract Problem below.
                 store.append_log(
                     goal_id,
                     "all referenced issues are closed — proposing done without "
@@ -937,27 +1016,6 @@ async def _handle_long_lived_advance(
                     note="all referenced issues closed", remote_checker=ctx.remote_checker,
                     autodeploy=ctx.autodeploy, consume_steering=consume_ids,
                     issue_fetcher=ctx.issue_fetcher,
-                )
-            # donegate_rounds > 0: the done-gate already refused — the contract
-            # is unmet even with all issues closed. An issue can be closed by a
-            # partial implementation (e.g. a PR with Closes #N on an
-            # intermediate increment while the full spec remains unbuilt).
-            # Dispatch a worker to complete the remaining contract; the closed
-            # issues tell it not to re-open or re-work them. The issue closure
-            # is an input to the evaluation, not the verdict (spec 019 US2).
-            if base.merge_heal_attempted:
-                # spec 025 FR-017: the conflict heal returned the goal to idle
-                # with the round counter reset, which is exactly the state the
-                # propose-done shortcut above keys on — so it skipped the owed
-                # resolution increment and re-ran straight into the same
-                # CONFLICT, parking the goal with a heal budget spent but never
-                # used. The increment is merge work, not scope work: it
-                # dispatches regardless of what the referenced issues say.
-                store.append_log(
-                    goal_id,
-                    "all referenced issues are closed but the cumulative PR "
-                    "conflicts with its base — dispatching the owed "
-                    "merge-conflict resolution increment",
                 )
             else:
                 # The contract's SOURCE is gone and the gate has already

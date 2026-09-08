@@ -1491,6 +1491,31 @@ class GoalService:
             problem_id=cur.id, clause=cur.clause, verb=verb, option_key=option_key,
             text=text, provenance="owner", made_by=made_by, made_at=_now_ms(),
         )
+        if option_key == _problems.CANCEL.key:
+            # Spec 041 FR-005: a cancel Decision cancels, in the Decision's own
+            # transaction — never an idle goal carrying next="decide: cancel"
+            # for a cadence to find (the executor-less decision class).
+            with self._goal_store.transaction():
+                self._goal_store.record_decision(dec, problem_status="resolved")
+                self._goal_store.transition(
+                    goal_id, Event.CANCEL,
+                    replace(s, phase="cancelled", blocked_on="", in_flight=None,
+                            problem_id="", pending_done_proposal=False, ci_green_head="",
+                            next=f"{verb}: {option_key}"),
+                    expect=s,
+                )
+            self._goal_store.record_intervention(goal_id, verb, dec.id)
+            try:
+                ws = self._goal_store.load_goal(goal_id).workspace_dir
+            except Exception:  # noqa: BLE001
+                ws = None
+            self._goal_store.record_convergence(goal_id, "abandoned", ws)
+            self._goal_store.append_log(goal_id, f"problem {cur.id} resolved by decide: cancel — goal cancelled")
+            self.poke()
+            return {
+                "goal_id": goal_id, "resolved": True, "decision_id": dec.id, "verb": verb,
+                "clause": cur.clause, "option": option_key, "text": None, "cancelled": True,
+            }
         with self._goal_store.transaction():
             self._goal_store.record_decision(dec, problem_status="resolved")
             self._goal_store.transition(
