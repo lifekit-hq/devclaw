@@ -735,7 +735,13 @@ ping. Every other mechanical kind is declared in
 `lost_ref`, `dispatch_cap`, `merge_failed`, `env_cap`, and `corrupt_doc`
 (whose recheck cannot tell a repaired chunk-plan artifact from an absent one,
 so an auto-heal there would clear a block without ever looking at its cause).
-`needs_answer` and `bug` are not mechanical at all. A mechanical kind with
+`needs_answer` and `bug` are not mechanical at all. Since spec 041 US2
+(2026-09-08) the dispatch cap parks WITH a typed Problem whose default,
+`continue`, refunds the cap after the timebox (one bounded self-heal; a
+second cap with nothing delivered since the last continue has no default),
+and a referenced-issue fetch failure — at the dispatch boundary or the
+done-gate's live contract — holds `mechanical:prep` and rides the prep
+heal, so `lost_ref` names only a destroyed in-flight ref. A mechanical kind with
 neither a heal nor a declaration fails the build
 (`tests/test_mechanical_blocks_are_recheckable.py`) — it would strand the
 goals it parks, which is what `mechanical:slice_hold` did before it was
@@ -749,6 +755,13 @@ as the block, and resolved by exactly two verbs, `correct_implementation` and
 `decide`, each recording a Decision (`goal_decisions`) and unblocking with the
 steer's budget-restoring shape. A timed-out Problem takes its default and
 informs; under `strict` a default that would close the goal parks instead.
+Since spec 041 (2026-09-08) **a Decision is executed by the next tick**: a
+current Decision made after `last_plan_at` is work (derived from
+`goal_decisions`, never stored), it takes precedence over the closed-issue
+propose-done shortcut (a recorded correction dispatches the worker), an
+owner-provenance `accept_close` closes through the one close-and-merge tail
+(`tick_donegate._close_and_merge`, shared with the `achieved` verdict) with
+no evaluator round, and `cancel` cancels in the Decision's transaction.
 `steer_goal` is refused while a Problem is open. At creation the `done_when`
 admission lint (`devclaw/goal/admission_lint.py`) refuses sandbox-impossible
 clauses — a credential, a human, a change in another repository — in an
