@@ -48,6 +48,18 @@ def pending_since(rows: "list[Decision]", last_plan_at: "str | None") -> "list[D
     return [d for d in rows if not d.superseded_by and d.made_at > since]
 
 
+def continues_since(rows: "list[Decision]", last_progress_at: "str | None") -> "list[Decision]":
+    """The ``continue`` Decisions (a dispatch-cap Problem's default or the
+    owner's pick) made since the goal last delivered an increment (spec 041
+    FR-007). One is the bounded self-heal; a second with nothing delivered in
+    between is the signal to wait for an explicit decide."""
+    since = _iso_ms(last_progress_at)
+    return [
+        d for d in rows
+        if not d.superseded_by and d.option_key == "continue" and d.made_at > since
+    ]
+
+
 def accepted_close(rows: "list[Decision]") -> "Decision | None":
     """The owner's standing ``accept_close`` — present only when the LATEST
     current Decision is an owner-provenance accept (spec 041 FR-003). A later

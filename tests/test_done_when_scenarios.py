@@ -144,11 +144,16 @@ async def test_scenario_absence_blocks_round_never_evaluates_empty(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_contract_fetch_error_blocks_lost_ref(tmp_path):
+async def test_contract_fetch_error_holds_self_healing_never_evaluates(tmp_path):
+    """Load-bearing input, fail-closed AND re-checkable (spec 019 + spec 041
+    FR-009): an unfetchable contract never reaches the evaluator, and the hold
+    is the self-healing `mechanical:prep` kind — a `gh` timeout is a remote
+    that may come back, not a destroyed in-flight ref (`lost_ref`), and never
+    a park that waits for a human to type resume (fs-431, 2026-09-08)."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g", issue_refs=[7], done_when="")
     _verifying(store)
-    fetcher = FakeIssueFetcher({7: IssueRefError("gh exit 1")})
+    fetcher = FakeIssueFetcher({7: IssueRefError("gh exit -1: timeout after 20s")})
     evaluator = FakeClaude(ACHIEVED)
     engine = FakeEngine(poll_result=PollResult(terminal=True, status="done", detail="review"))
 
@@ -156,7 +161,8 @@ async def test_contract_fetch_error_blocks_lost_ref(tmp_path):
 
     assert out is Outcome.BLOCKED
     s = store.load_status("g")
-    assert s.blocked_kind == "lost_ref"
+    assert s.blocked_kind == "mechanical:prep"
+    assert s.pending_done_proposal, "the gate round is still owed once the fetch succeeds"
     assert evaluator.calls == 0
 
 

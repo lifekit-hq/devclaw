@@ -363,6 +363,10 @@ async def test_idle_goal_still_advances_on_auto_eval_corrections(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dispatch_cap_blocks_runaway(tmp_path):
+    """The cap still brakes — and since spec 041 FR-007 the brake carries a
+    typed Problem whose default is ONE refunded continue, so the stop has an
+    exit that is not a human typing resume (24,718 s of resume-waits in the
+    14 days to 2026-09-08)."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")  # backlog 2 → cap = 4
     store.save_status("g", GoalStatus(phase="idle", actions_dispatched=4))
@@ -373,6 +377,43 @@ async def test_dispatch_cap_blocks_runaway(tmp_path):
     assert out is Outcome.BLOCKED
     assert engine.dispatched == []
     assert any("cap" in m for m in notifier.sent)
+    s = store.load_status("g")
+    assert s.blocked_kind == "mechanical:dispatch_cap" and s.problem_id
+    prob = store.current_problem("g")
+    assert prob.default_key == "continue" and {o.key for o in prob.options} == {"continue", "cancel"}
+    assert evaluator.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cap_continues_once_then_waits_for_a_decide(tmp_path, monkeypatch):
+    """Spec 041 FR-007/FR-008: the cap Problem's default refunds the cap and
+    the same tick dispatches (a Decision is work); a SECOND cap with nothing
+    delivered since that continue raises the Problem with no default — one
+    bounded self-heal, then a human, the merge-conflict shape."""
+    clock = Clock()
+    store = _store(tmp_path, clock)
+    seed_goal(tmp_path, "g")  # cap = 4
+    store.save_status("g", GoalStatus(phase="idle", actions_dispatched=4))
+    engine, notifier = FakeEngine(), RecordingNotifier()
+    await _tick(store, "g", FakeClaude(), engine, notifier)
+    prob = store.current_problem("g")
+    from devclaw.goal import tick as _tick_mod
+    monkeypatch.setattr(_tick_mod, "_now_ms", lambda: prob.timebox_at + 1000)  # the timebox elapses
+
+    out = await _tick(store, "g", FakeClaude(), engine, notifier)
+
+    assert out is Outcome.DISPATCHED and len(engine.dispatched) == 1
+    decs = store.decisions("g")
+    assert decs[-1].option_key == "continue" and decs[-1].provenance == "defaulted"
+    # every dispatch fails; the cap is hit again with nothing delivered
+    store.save_status("g", replace(store.load_status("g"), phase="idle", in_flight=None, actions_dispatched=4))
+    out = await _tick(store, "g", FakeClaude(), engine, notifier)
+    assert out is Outcome.BLOCKED
+    again = store.current_problem("g")
+    assert again is not None and again.id != prob.id
+    import time as _time
+    assert again.timebox_at - int(_time.time() * 1000) > 365 * 24 * 3600 * 1000, "no default — an explicit decide only"
+    assert len(engine.dispatched) == 1
 
 
 @pytest.mark.asyncio

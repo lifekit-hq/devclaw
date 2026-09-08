@@ -239,7 +239,15 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   a persisted per-goal heal budget + backoff). Every other mechanical kind is
   DECLARED in `tick.HUMAN_GATED_MECHANICAL_KINDS` (`lost_ref`, `dispatch_cap`,
   `merge_failed`, `env_cap`, `corrupt_doc`) and `needs_answer`/`bug` are not
-  mechanical at all. `mechanical:` promises a cheap re-check, so a kind with
+  mechanical at all. Since spec 041 US2 (2026-09-08) two of those stops no
+  longer wait for a resume: **the dispatch cap raises a typed Problem**
+  (`continue` refunds the cap after the timebox — the ONE bounded self-heal,
+  the merge-conflict shape; a second cap with nothing delivered since the
+  last continue has no default and waits for an explicit `decide`), and **a
+  referenced-issue fetch failure is a `mechanical:prep` hold** (the remote
+  may come back; ls-remote recheck on the persisted backoff, then one ping)
+  — `lost_ref` is only ever a destroyed in-flight ref. 97% of devclaw-caused
+  idle in the 14 days to 2026-09-08 was these two kinds waiting on a human. `mechanical:` promises a cheap re-check, so a kind with
   neither a heal nor a declaration strands the goals it parks — the defect
   that made `mechanical:slice_hold` a four-day dead end before it was retired;
   `tests/test_mechanical_blocks_are_recheckable.py` now fails the build on one. `resume_goal` re-attempts the SAME contract

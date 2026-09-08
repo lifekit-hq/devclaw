@@ -735,7 +735,13 @@ ping. Every other mechanical kind is declared in
 `lost_ref`, `dispatch_cap`, `merge_failed`, `env_cap`, and `corrupt_doc`
 (whose recheck cannot tell a repaired chunk-plan artifact from an absent one,
 so an auto-heal there would clear a block without ever looking at its cause).
-`needs_answer` and `bug` are not mechanical at all. A mechanical kind with
+`needs_answer` and `bug` are not mechanical at all. Since spec 041 US2
+(2026-09-08) the dispatch cap parks WITH a typed Problem whose default,
+`continue`, refunds the cap after the timebox (one bounded self-heal; a
+second cap with nothing delivered since the last continue has no default),
+and a referenced-issue fetch failure — at the dispatch boundary or the
+done-gate's live contract — holds `mechanical:prep` and rides the prep
+heal, so `lost_ref` names only a destroyed in-flight ref. A mechanical kind with
 neither a heal nor a declaration fails the build
 (`tests/test_mechanical_blocks_are_recheckable.py`) — it would strand the
 goals it parks, which is what `mechanical:slice_hold` did before it was

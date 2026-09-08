@@ -12,7 +12,7 @@
 
 ## US2 — a stop without a decision never waits for a human (P2)
 
-- [ ] T008 `problems.py`: `CONTINUE`; `tick_dispatch.py`: cap raises the Problem (default continue; repeat cap ⇒ no default)
-- [ ] T009 `tick.py` + `tick_donegate._live_contract`: fetch failure ⇒ `mechanical:prep`, TASK-level notify
-- [ ] T010 tests: `test_dispatch_cap_blocks_runaway` extended (Problem, default), `test_dispatch_cap_continues_once_then_waits_for_a_decide`, `test_contract_fetch_error_holds_self_healing` (renamed)
-- [ ] T011 docs: CLAUDE.md mechanical-blocks paragraph, architecture auto-heal paragraph, INDEX
+- [X] T008 `problems.py`: `CONTINUE`; `tick_dispatch.py`: cap raises the Problem (default continue; repeat cap ⇒ no default)
+- [X] T009 `tick.py` + `tick_donegate._live_contract`: fetch failure ⇒ `mechanical:prep`, TASK-level notify
+- [X] T010 tests: `test_dispatch_cap_blocks_runaway` extended (Problem, default), `test_dispatch_cap_continues_once_then_waits_for_a_decide`, `test_contract_fetch_error_holds_self_healing` (renamed)
+- [X] T011 docs: CLAUDE.md mechanical-blocks paragraph, architecture auto-heal paragraph, INDEX

@@ -359,18 +359,25 @@ async def _live_contract(
         await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
         return goal, Outcome.BLOCKED
     except _issue_ref.IssueRefError as exc:
+        # Spec 041 FR-009: a self-healing mechanical:prep hold, same as the
+        # dispatch boundary — the remote may come back; the gate never
+        # evaluates an empty contract and never parks for a human on a
+        # timeout. Steering is not consumed: the round is still owed.
         q = (
             f"the completion contract could not be fetched: {exc} — a "
-            "referenced goal is judged only against live issue state. Fix "
-            "access or the reference, then resume_goal."
+            "referenced goal is judged only against live issue state; devclaw "
+            "rechecks on a backoff and re-opens the gate when the fetch "
+            "succeeds (resume_goal skips the wait)."
         )
+        store.append_log(goal_id, f"contract fetch failed — holding for a recheck: {exc}")
         store.transition(
             goal_id, Event.BLOCK,
             replace(base, phase="blocked", blocked_on=q,
-                    blocked_kind="lost_ref", next=""),
-            expect=base, consume_steering=consume_steering,
+                    blocked_kind="mechanical:prep", next="",
+                    pending_done_proposal=True),
+            expect=base,
         )
-        await _notify(notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
+        await _notify(notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] {q[:300]}")
         return goal, Outcome.BLOCKED
     return replace(goal, done_when=contract), None
 
