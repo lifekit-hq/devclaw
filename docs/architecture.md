@@ -85,17 +85,26 @@ by age with in-flight work outranking it, tie-broken on goal id — a pure
 function of rows the CAS'd transition discipline already governs
 (`devclaw/goal/project_hold.py`). There is no lock row, no acquire and no
 release, so a holder that dies cannot leave a lock nobody clears, and no heal
-machinery is needed for a state that cannot occur. "Can actually act" is the
-**runnable-head rule** (owner ruling 2026-09-01, generalizing spec 025 FR-015's
-blocked skip-over): a blocked goal, a goal owing only its merge, and an idle
-goal with no unread steering and no due cadence are all skipped as candidates —
-head-of-line blocking is a bug, not a policy (2026-08-31: one cadence-idle head
-stranded 7 runnable successors for a night). Two holds are NOT skipped because
-the goal is finishing work it already owns and re-drives it ahead of the hold
-gate in the same sweep: a `mechanical:ci` hold and a held done proposal
-(`pending_done_proposal`) keep the lane (2026-09-06: dropping a ci-held head
-handed its lane to a successor for the very sweep the hold cleared, and two
-goals ran on one directory). The single-writer invariant is
+machinery is needed for a state that cannot occur. "Can actually act" is ONE
+derived fact, `project_hold.next_move` — what the goal would do on its next
+tick — read by the holder derivation AND by the tick's hold gate and plan
+gate (tinyspec `one-definition-of-runnable`, 2026-09-08; before it, each
+consumer carried its own inline definition and spec 041 updated one of them,
+so a decided `accept_close` sat all evening behind a busy lane while a goal
+whose only work was a dispatching Decision was no candidate yet dispatched).
+The moves: `in_flight` holds and outranks age; `lane` (a settle to retry,
+unread steering, a pending Decision, a held done proposal, a due cadence)
+holds and waits; `heal` (a `mechanical:ci` hold owing a done proposal, whose
+heal re-drives the gate — 2026-09-06: dropping it handed the lane to a
+successor for the very sweep the hold cleared, and two goals ran on one
+directory) holds without planning; `lane_free` (a merge retry, the owner's
+standing `accept_close` — a close on mechanical facts that touches no
+checkout) neither holds nor waits; `none` neither holds nor plans. That is
+the **runnable-head rule** (owner ruling 2026-09-01, generalizing spec 025
+FR-015's blocked skip-over): a blocked goal, a goal owing only its close,
+and an idle goal with nothing to do are never candidates — head-of-line
+blocking is a bug, not a policy (2026-08-31: one cadence-idle head stranded
+7 runnable successors for a night). The single-writer invariant is
 untouched: at most one goal dispatches per project, a successor mid-task keeps
 the lane against a newly-runnable elder (in-flight outranks age), and the elder
 reclaims it at the next sweep where nothing is in flight. Goal-less direct

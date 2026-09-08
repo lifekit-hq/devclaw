@@ -3543,6 +3543,41 @@ async def test_runnable_again_head_reclaims_lane_from_idle_successor(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_head_whose_only_move_is_a_dispatching_decision_holds_the_lane(tmp_path):
+    """One definition of runnable (tinyspec ``one-definition-of-runnable``):
+    the lane's candidacy and the tick's plan gate read the same
+    ``next_move``. A pending dispatching Decision (spec 041 FR-001: the owner
+    said ``correct``, the next tick does it) is work for the tick, so it MUST
+    be a holding move for the lane — before this, such a head was no
+    candidate, found no holder, and dispatched in the same sweep as its
+    runnable successor: two writers on one project, the #553/#722 class
+    spec 010 closed by construction."""
+    from devclaw.goal.decisions import _iso_ms
+    from devclaw.goal.models import Decision
+
+    store = _store(tmp_path, Clock())
+    _seed_dated(store, tmp_path, "head", created_at_ms=1_000)
+    _seed_dated(store, tmp_path, "succ", created_at_ms=2_000)
+    now = store.now_iso()
+    # head just planned (cadence not due, no steering) — its ONLY move is the
+    # owner's correction, recorded after that plan
+    store.save_status("head", GoalStatus(phase="idle", lifecycle="executing", last_plan_at=now))
+    store.record_decision(Decision(
+        id="dec_correct", goal_id="head", problem_id="", clause="c1", verb="decide",
+        option_key="correct", text="", provenance="owner", made_by="denys",
+        made_at=_iso_ms(now) + 1,
+    ), problem_status="resolved")
+    engine = FakeEngine()
+
+    out = await _tick(store, "succ", FakeClaude(), engine, RecordingNotifier())
+
+    assert out is Outcome.QUEUED, "a head with a pending dispatching Decision holds the lane"
+    assert engine.dispatched == []
+    assert await _tick(store, "head", FakeClaude(), engine, RecordingNotifier()) is Outcome.DISPATCHED
+    assert len(engine.dispatched) == 1
+
+
+@pytest.mark.asyncio
 async def test_resumed_predecessor_waits_while_successor_task_is_in_flight(tmp_path):
     """The skip-over trap: resuming a parked predecessor while its skip-over
     successor is MID-TASK must not hand the lane back by age — that would

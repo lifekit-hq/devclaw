@@ -473,6 +473,40 @@ async def test_owner_accept_close_closes_and_merges_without_an_evaluator_call(tm
 
 
 @pytest.mark.asyncio
+async def test_owner_accept_close_closes_while_another_goal_holds_the_lane(tmp_path, monkeypatch):
+    """One definition of runnable (tinyspec ``one-definition-of-runnable``):
+    an accepted close is a lane-FREE move — a remote squash-merge and a
+    status flip, no checkout — so the project lane must never queue it.
+    FR-003 says the close runs "before any cadence or work gate"; the lane
+    gate is one of those. On 2026-09-08 fs-318/421/429 carried the owner's
+    accept_close for 3–7 h behind a busy finance-sentry lane while the spec
+    that made the Decision execute was already live."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g", issue_refs=[7], done_when="")
+    seed_goal(tmp_path, "holder", issue_refs=[8], done_when="")
+    store.set_strictness("g", "strict")
+    store.save_status("g", replace(store.load_status("g"), phase="idle", donegate_rounds=1,
+                                   last_plan_at=store.now_iso()))
+    # a successor mid-task on the same project: in-flight work always holds
+    store.save_status("holder", GoalStatus(
+        phase="in_flight", lifecycle="executing",
+        in_flight=InFlight("devclaw", "implement_feature", "t9", "task", "advance the goal"),
+    ))
+    _owner_decision(store, "g", option="accept_close", clause="structural: shape concerns")
+    merge = ScriptedMerge(moc.MergeResult(moc.MergeOutcome.MERGED, pr_url=PR_URL, merged_sha="abc123def456"))
+    monkeypatch.setattr(tick_donegate, "_attempt_merge", merge)
+    evaluator, engine, notifier = FakeClaude(ACHIEVED), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert out is Outcome.DONE, "a lane-free close never reads QUEUED"
+    assert evaluator.calls == 0
+    assert engine.dispatched == []
+    assert store.load_status("g").phase == "done"
+    assert store.load_status("holder").phase == "in_flight", "the holder is untouched"
+
+
+@pytest.mark.asyncio
 async def test_defaulted_accept_close_still_goes_through_the_gate(tmp_path, monkeypatch):
     """A timebox is not an owner ruling (spec 031 Q2 → C stands): a DEFAULTED
     accept_close never closes without the gate — the accepted-close rule is

@@ -32,6 +32,7 @@ today's behaviour — rather than wedge the heartbeat.
 
 from __future__ import annotations
 
+from . import decisions as _decisions
 from .models import Goal
 
 #: A goal is a candidate holder unless it has reached a terminal phase.
@@ -77,30 +78,128 @@ def is_terminal(status: object) -> bool:
     return str(getattr(status, "phase", "") or "") in TERMINAL_PHASES
 
 
+#: A goal's next move, as the lane sees it — ONE answer to "what can this
+#: goal do on its next tick", read by BOTH the holder derivation below and the
+#: tick's hold gate + plan gate (tinyspec ``one-definition-of-runnable``,
+#: 2026-09-08). Before it, the two consumers each carried their own inline
+#: definition and spec 041 updated one of them: a goal whose only move was the
+#: owner's ``accept_close`` was (rightly) no lane candidate here, yet the tick
+#: queued it behind the holder all evening; and a goal whose only move was a
+#: dispatching Decision was work for the tick but no candidate here — two such
+#: goals on one project both dispatched in one sweep, the #553/#722 class.
+MOVE_NONE = "none"              # nothing to do
+MOVE_HEAL = "heal"              # a mechanical:ci hold owing a done proposal — its heal re-drives the gate
+MOVE_LANE_FREE = "lane_free"    # a close on mechanical facts (merge retry, owner accept_close): no checkout, no lane
+MOVE_LANE = "lane"              # a dispatch into the project's checkout
+MOVE_IN_FLIGHT = "in_flight"    # work already running — holds, outranks age
+
+#: The moves that make a goal a holder candidate.
+HOLDING_MOVES = frozenset({MOVE_IN_FLIGHT, MOVE_HEAL, MOVE_LANE})
+#: The moves the tick plans on (everything the advance handler does past its
+#: gates); ``heal`` acts through the blocked-phase heal, never through a plan.
+PLANNING_MOVES = frozenset({MOVE_LANE, MOVE_LANE_FREE})
+
+
+def waits_for_lane(move: str) -> bool:
+    """Whether a goal with this move is queued behind another holder. Only a
+    lane-free move passes: it touches no checkout, so a successor mid-task is
+    no reason to hold a decided close (spec 041 FR-003 says "before any
+    cadence or work gate"; the lane gate is one of those)."""
+    return move != MOVE_LANE_FREE
+
+
+def next_move(goal: Goal, status: object, store, *, settled: bool = False) -> str:
+    """The goal's next move. Pure reads on rows the CAS'd transition discipline
+    already governs — steering, Decisions, cadence — zero cognition, and the
+    same reads the tick performs right after its gate, so a queued tick costs
+    what it cost before. ``settled`` is the tick's "a task just settled on
+    this tick" (its ``finished_detail``); the sweep never sets it, because an
+    unsettled task is ``in_flight``.
+
+    Mirrors the tick's advance handler branch for branch, in its order:
+    a blocked goal moves only on a settle or HUMAN steering (machine rows —
+    the churn brake's own corrections — must not un-park it), except that a
+    ``mechanical:ci`` hold owing a done proposal HOLDS the lane for the heal
+    that re-drives its gate (2026-09-06: dropping it handed the lane to a
+    successor for the very sweep the hold cleared). Past the block: a settle
+    retries (lane); a merge retry is lane-free; a held done proposal
+    re-drives the gate (lane) unless the owner's ``accept_close`` stands, in
+    which case it finalizes on mechanical facts (lane-free); unread steering
+    dispatches first (lane); the owner's standing ``accept_close`` closes
+    (lane-free); a pending Decision is work (lane); a due cadence advances
+    (lane)."""
+    if is_terminal(status):
+        return MOVE_NONE
+    if getattr(status, "in_flight", None) is not None:
+        return MOVE_IN_FLIGHT
+    goal_id = goal.id
+    if str(getattr(status, "phase", "") or "") == "blocked":
+        if settled or store.has_unread_human_steering(goal_id):
+            return MOVE_LANE
+        if (
+            str(getattr(status, "blocked_kind", "") or "") == "mechanical:ci"
+            and getattr(status, "pending_done_proposal", False)
+        ):
+            return MOVE_HEAL
+        return MOVE_NONE
+    if settled:
+        return MOVE_LANE
+    if getattr(status, "pending_merge_pr", ""):
+        return MOVE_LANE_FREE
+    rows = store.decisions(goal_id)
+    accepted = _decisions.accepted_close(rows) is not None
+    if getattr(status, "pending_done_proposal", False):
+        # The ci-settled re-drive, EXCEPT when the owner's accept_close
+        # stands: the tick then finalizes on mechanical facts alone (spec
+        # 041 FR-004) — a close, not a gate dispatch, so it needs no lane.
+        return MOVE_LANE_FREE if accepted else MOVE_LANE
+    if store.unread_steering_rows(goal_id):
+        return MOVE_LANE
+    if accepted:
+        return MOVE_LANE_FREE
+    if _decisions.pending_since(rows, getattr(status, "last_plan_at", None)):
+        return MOVE_LANE
+    if store.cadence_due(goal, status):
+        return MOVE_LANE
+    return MOVE_NONE
+
+
 def holder_map(store) -> "dict[str, str]":
     """``scope_key -> holding goal_id`` across the whole fleet.
 
     Computed ONCE per heartbeat sweep and threaded into each tick: it reads
     every goal, so making it per-goal would turn one sweep into an N² scan.
 
-    Ordering is age ascending, tie-broken on goal id. Goals carry no priority
-    field today, so FR-003's "priority band, then oldest" reduces to age; the id
-    tie-break is what keeps the holder deterministic instead of dependent on
-    which goal happened to be read first.
+    A candidate is a goal whose :func:`next_move` is a holding move. Ordering
+    is in-flight first, then age ascending, tie-broken on goal id: when a
+    parked predecessor is resumed while its skip-over successor is mid-task,
+    the successor keeps the lane until its task settles — otherwise the older
+    resumed goal would reclaim holdership and dispatch a second writer against
+    a workspace with a live task in it (the #553/#722 class). Goals carry no
+    priority field today, so FR-003's "priority band, then oldest" reduces to
+    age; the id tie-break keeps the holder deterministic instead of dependent
+    on which goal happened to be read first. Absent creation time sorts LAST,
+    not first: a goal we cannot date must never displace one we can.
+
+    Skip-over (spec 025 FR-015) and the runnable-head rule (owner ruling
+    2026-09-01) both live in :func:`next_move` now: a blocked goal, a goal
+    owing only its merge or its accepted close, and an idle goal with nothing
+    to do are not candidates — head-of-line blocking is a bug, not a policy.
 
     Failure policy — deliberately narrow. A goal whose ``goal.yaml`` will not
     load is skipped: that is an expected, isolated condition with precedent
     (tick_all already applies the same rule to its per-goal resolvers), and one
     corrupt file must not sink the sweep.
 
-    Everything else is allowed to RAISE. An earlier draft wrapped the store
-    reads in a blanket ``except`` that degraded to an empty map — and an empty
-    map does not mean "be careful", it means "nothing is held", so every goal
-    dispatches and the single-writer invariant silently switches itself off.
-    That swallow immediately hid a real bug (this function queried a column that
-    does not exist, and the fleet quietly fell back to id-ordering). A broken
-    read of a core table is a bug to surface, never a reason to ship the
-    unguarded behaviour (constitution VI)."""
+    Everything else is allowed to RAISE — :func:`next_move` runs OUTSIDE the
+    try on purpose. An earlier draft wrapped the store reads in a blanket
+    ``except`` that degraded to an empty map — and an empty map does not mean
+    "be careful", it means "nothing is held", so every goal dispatches and the
+    single-writer invariant silently switches itself off. That swallow
+    immediately hid a real bug (this function queried a column that does not
+    exist, and the fleet quietly fell back to id-ordering). A broken read of a
+    core table is a bug to surface, never a reason to ship the unguarded
+    behaviour (constitution VI)."""
     created = store.goal_created_at_map()
     candidates: "dict[str, list[tuple[int, int, str]]]" = {}
     for goal_id in store.list_goal_ids():
@@ -108,66 +207,17 @@ def holder_map(store) -> "dict[str, str]":
             status = store.load_status(goal_id)
             if is_terminal(status):
                 continue
-            # Skip-over (spec 025 FR-015): a blocked goal is not a candidate —
-            # the queued successor takes the lane instead of idling behind a
-            # park that only a human can clear. EXCEPT a ``mechanical:ci``
-            # hold: that goal is finishing work it already owns (a done
-            # proposal waiting on the PR's checks, minutes) and its heal
-            # re-drives the done-gate in the very sweep it clears — BEFORE
-            # the hold gate, by design. Dropping it as a candidate handed
-            # its lane to a successor for the same sweep, and two goals then
-            # ran on one directory (2026-09-06, issue-817 / issue-819).
-            if (
-                str(getattr(status, "phase", "") or "") == "blocked"
-                and str(getattr(status, "blocked_kind", "") or "") != "mechanical:ci"
-            ):
-                continue
             goal = store.load_goal(goal_id)
             scope = scope_key(goal)
         except Exception:  # noqa: BLE001 — a bad goal.yaml must not sink the sweep
             continue
         if scope is None:
             continue
-        # Runnable-head rule (owner ruling 2026-09-01, generalizing spec 025's
-        # blocked skip-over): a goal that CANNOT act this sweep is not a
-        # candidate either. Head-of-line blocking is a bug, not a policy — on
-        # 2026-08-31 one idle head waiting out its 1d re-plan cadence stranded
-        # 7 runnable successors for a whole night. A head with work in flight
-        # always holds (single-writer); a head owing only its merge needs no
-        # lane at all (the pending-merge finalize runs BEFORE the hold gate by
-        # design); an idle head is runnable only when it has unread steering
-        # or a due cadence — the same cheap reads the tick's own should_plan
-        # gate uses, so this stays zero-token and zero-write. The head
-        # reclaims the lane the moment it is runnable again and no successor
-        # has work in flight. Deliberately OUTSIDE the try above: these are
-        # core-table reads (module failure policy) — swallowing a broken one
-        # would silently thin candidacy, which is how single-writer switches
-        # itself off. (scope is None already skipped qa goals, whose empty
-        # cadence never parses.)
-        # A held done proposal (``pending_done_proposal``) is runnable work the
-        # goal already owns: the ci-settled re-drive dispatches its done-check
-        # ahead of the hold gate, so the head must keep the lane for it.
-        if (
-            status.in_flight is None
-            and not status.pending_done_proposal
-            and (
-                status.pending_merge_pr
-                or (
-                    not store.unread_steering_rows(goal_id)
-                    and not store.cadence_due(goal, status)
-                )
-            )
-        ):
+        move = next_move(goal, status, store)
+        if move not in HOLDING_MOVES:
             continue
-        # A goal with WORK IN FLIGHT outranks age: when a parked predecessor
-        # is resumed while its skip-over successor is mid-task, the successor
-        # keeps the lane until its task settles — otherwise the older resumed
-        # goal would reclaim holdership and dispatch a second writer against
-        # a workspace with a live task in it (the #553/#722 class).
-        # Absent creation time sorts LAST, not first: a goal we cannot date must
-        # never displace one we can as holder.
         candidates.setdefault(scope, []).append((
-            0 if status.in_flight else 1,
+            0 if move == MOVE_IN_FLIGHT else 1,
             created.get(goal_id, 1 << 62),
             goal_id,
         ))
