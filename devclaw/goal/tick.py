@@ -754,17 +754,29 @@ async def _handle_long_lived_advance(
     #
     # Placed here on purpose — after the settled-ok done-gate branch above, so a
     # goal that still has in-flight work finishes settling it and nothing is
-    # orphaned (the spec's upgrade edge case), and BEFORE the steering read
-    # below, which lazily ingests inbox lines and therefore WRITES. A queued
-    # tick must cost zero cognition AND zero writes: the hold is derived, so
-    # there is nothing here to acquire, stamp, or release.
+    # orphaned (the spec's upgrade edge case). A queued tick must cost zero
+    # cognition and must not churn the goal's row or log: the hold is derived,
+    # so there is nothing here to acquire, stamp, or release.
     #
     # ``ctx.holders`` is the sweep-wide map when tick_all threaded one in;
     # a direct tick_goal call (tick_one, tests) derives it here instead.
+    #
+    # What this goal would DO next — and therefore whether it needs the lane
+    # at all — is ONE derived fact, ``project_hold.next_move``, the same one
+    # the holder derivation above read for this goal (tinyspec
+    # ``one-definition-of-runnable``, 2026-09-08). Only a lane-free move (a
+    # merge retry, the owner's standing accept_close — a close on mechanical
+    # facts that touches no checkout) passes a held lane; every other move
+    # waits. The plan gate below reads the same move, so the two can never
+    # disagree again: before this, the owner's accept_close on three goals
+    # sat all evening behind a busy lane (2026-09-08), and a goal whose only
+    # work was a dispatching Decision was no candidate here yet dispatched
+    # there — two writers on one project in one sweep.
     holders = ctx.holders if ctx.holders is not None else _project_hold.holder_map(store)
     scope = _project_hold.scope_key(goal)
     holder = holders.get(scope) if scope else None
-    if holder is not None and holder != goal_id:
+    move = _project_hold.next_move(goal, status, store, settled=bool(finished_detail))
+    if holder is not None and holder != goal_id and _project_hold.waits_for_lane(move):
         # No log line and no status write: this fires every heartbeat for as
         # long as the holder runs, and a per-tick append would bury the goal's
         # real history under queue noise. The wait is legible where an operator
@@ -772,29 +784,22 @@ async def _handle_long_lived_advance(
         # SC-006).
         return Outcome.QUEUED
 
-    # Steering + should_plan gate — mirrors the planner path's gate exactly so
-    # the zero-token idle guard is preserved: a blocked goal unblocks only on
-    # work, an idle goal plans only on work or a due cadence.
+    # Steering + plan gate — the zero-token idle guard: a blocked goal
+    # unblocks only on a settle or HUMAN steering (machine rows — source
+    # ``auto-*``, e.g. the churn brake's own corrections — stay parked with
+    # the goal and are consumed by the first dispatch after a human acts), an
+    # idle goal plans only on work (a settle, unread steering, a pending
+    # Decision — spec 041 FR-001: the owner or the timebox said what to do,
+    # and the next tick does it instead of waiting out the cadence — or the
+    # owner's standing accept_close) or a due cadence. All of it is
+    # ``next_move``'s verdict above.
     rows = store.unread_steering_rows(goal_id)
     steering = "\n".join(line for _, line in rows)
     # unread_steering_rows() may have lazily ingested inbox lines, bumping
     # version; reload so the dispatch's expect= CAS's against the current row
     # (same reason as _handle_long_lived_advance).
     status = store.load_status(goal_id)
-    # Spec 041 FR-001: a Decision the loop has not acted on yet IS work — the
-    # owner (or the timebox) said what to do; the next tick does it instead
-    # of waiting out the cadence. Derived from goal_decisions, never stored.
-    pending = _decisions.pending_since(store.decisions(goal_id), status.last_plan_at)
-    work = bool(finished_detail) or bool(steering) or bool(pending)
-    if status.phase == "blocked":
-        # Human-gated: only a settle or HUMAN steering unblocks. Machine
-        # rows (source ``auto-*``, e.g. the churn brake's own corrections)
-        # stay parked with the goal and are consumed by the first dispatch
-        # after a human acts.
-        should_plan = bool(finished_detail) or store.has_unread_human_steering(goal_id)
-    else:
-        should_plan = work or accepted is not None or store.cadence_due(goal, status)
-    if not should_plan:
+    if move not in _project_hold.PLANNING_MOVES:
         store.update_status_fields(goal_id, last_tick_at=store.now_iso())
         return Outcome.IDLE
 
@@ -984,6 +989,14 @@ async def _handle_long_lived_advance(
             # work beats the shortcut — otherwise a red rollup steers, the next
             # tick re-proposes, red steers again: fs-431 ran eight worker-less
             # rounds that way on 2026-09-08 and the owner's correction never ran.
+            #
+            # Derived HERE, at its one remaining use. The plan gate above is
+            # ``project_hold.next_move``'s verdict now — it already knows this
+            # goal has work — and this branch is the only place left that
+            # needs to know WHICH work, to name it in the log line. Deriving
+            # it back up at the gate is how the second definition of runnable
+            # grew last time.
+            pending = _decisions.pending_since(store.decisions(goal_id), status.last_plan_at)
             if base.merge_heal_attempted:
                 # spec 025 FR-017: the conflict heal returned the goal to idle
                 # with the round counter reset, which is exactly the state the

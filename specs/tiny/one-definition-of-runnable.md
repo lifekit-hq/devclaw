@@ -3,7 +3,7 @@
 **Issue**: none (Denys, 2026-09-08 evening — "I don't want to fix symptoms; fix the root cause, whether it's lifecycle or whatever")
 **Branch**: fix/one-definition-of-runnable
 **Date**: 2026-09-08
-**Status**: proposed — Denys reviews before implementation (tinyspec lane gate)
+**Status**: done — implemented 2026-09-08 (suite 1525 passed / 5 skipped; ruff, mypy, lint-imports green)
 **Complexity**: small
 
 ## North-star case
@@ -67,12 +67,12 @@ Add the predicate to the module that owns the lane; make both consumers call it;
 
 ## Tasks
 
-- [ ] `next_move` + constants in `project_hold.py`; `holder_map` on top of it
-- [ ] `tick.py` gate + `should_plan` on `next_move`
-- [ ] Test: pending dispatching Decision ⇒ head holds, successor QUEUED
-- [ ] Test: owner accept_close closes behind an in-flight holder, `FakeClaude.calls == 0`
-- [ ] `docs/architecture.md` paragraph + INDEX tag
-- [ ] Full suite + `ruff check .` + `mypy` + `lint-imports` green
+- [x] `next_move` + constants in `project_hold.py`; `holder_map` on top of it
+- [x] `tick.py` gate + `should_plan` on `next_move`
+- [x] Test: pending dispatching Decision ⇒ head holds, successor QUEUED
+- [x] Test: owner accept_close closes behind an in-flight holder, `FakeClaude.calls == 0`
+- [x] `docs/architecture.md` paragraph + INDEX tag
+- [x] Full suite + `ruff check .` + `mypy` + `lint-imports` green
 
 ## Done when
 
