@@ -235,24 +235,35 @@ def test_goal_store_uses_shared_state_when_given(tmp_path, store):
 # ---- interventions ledger: a commit is one row per (goal, sha) ---------------
 
 
-@pytest.mark.parametrize("pre_index_duplicates", [False, True])
-def test_commit_intervention_is_idempotent_under_goal_and_sha(store, pre_index_duplicates):
+@pytest.mark.parametrize("pre_key_rows", [False, True])
+def test_commit_intervention_is_idempotent_under_goal_and_sha(store, pre_key_rows):
     """Delivery re-scans the whole goal branch at every settle, so the same
     hand commit reaches ``record_intervention`` once per later task. The
-    ledger keys commits by (goal, sha): a repeat is a no-op, and a DB that
-    accumulated duplicates before the key collapses to one row per sha at
-    bootstrap (66 rows for 43 shas, live 2026-09-08). The verbs stay
-    append-only — two resumes are two acts."""
+    ledger keys commits by (goal, sha): a repeat is a no-op. A DB that holds
+    commit rows from before the key is purged of them at bootstrap — none
+    was recorded against a real identity (66 rows / 43 shas, live
+    2026-09-08; ruled by Denys) — while the verbs it holds survive, and a
+    keyed ledger is never purged again. Two resumes are two acts."""
     gs = GoalState(store)
-    if pre_index_duplicates:
+    if pre_key_rows:
         store._db.execute("DROP INDEX uq_goal_interventions_commit")
         for _ in range(3):
             store._db.execute(
                 "INSERT INTO goal_interventions (goal_id, verb, ref, made_at) "
                 "VALUES ('g1', 'commit', 'abc123def456', 1)"
             )
+        store._db.execute(
+            "INSERT INTO goal_interventions (goal_id, verb, ref, made_at) "
+            "VALUES ('g1', 'resume', 'kept', 1)"
+        )
         store._commit()
-        gs = GoalState(store)  # bootstrap collapses the duplicates and keys the table
+        gs = GoalState(store)  # bootstrap purges the pre-key commits and keys the table
+        assert [r["verb"] for r in gs.interventions_since(0)] == ["resume"]
+        gs.record_intervention("g1", "commit", "kept-after-key")
+        gs = GoalState(store)  # a keyed ledger is never purged again
+        assert sorted(r["ref"] for r in gs.interventions_since(0)) == ["kept", "kept-after-key"]
+        store._db.execute("DELETE FROM goal_interventions")
+        store._commit()
     for _ in range(3):
         gs.record_intervention("g1", "commit", "abc123def456")
     gs.record_intervention("g1", "commit", "fedcba987654")

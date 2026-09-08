@@ -41,12 +41,12 @@ surface:
 | File | Role |
 |------|------|
 | `runner/runner.py` | Modified — the four `GIT_AUTHOR_*`/`GIT_COMMITTER_*` vars cross the allowlist beside the credential registry (identity is a fact the environment carries, not a credential) |
-| `devclaw/goal/state.py` | Modified — bootstrap collapses pre-key duplicate commit rows (keep the first sighting) THEN creates the partial unique index `uq_goal_interventions_commit (goal_id, ref) WHERE verb='commit'`; order is load-bearing |
+| `devclaw/goal/state.py` | Modified — on a DB without the key, bootstrap PURGES every commit row (none was recorded against a real identity) THEN creates the partial unique index `uq_goal_interventions_commit (goal_id, ref) WHERE verb='commit'`; gated on the key's absence so it runs once and never on a keyed ledger |
 | `devclaw/goal/state_interventions.py` | Modified — `INSERT OR IGNORE`; verbs stay append-only, only commits are keyed |
 | `devclaw/doctor/checks_instance.py` | Modified — `instance.scorecard.goal_interventions` also FAILs on a missing key (spec 016 FR-014: persisted shape ⇒ doctor check) |
 | `devclaw/telemetry.py` | Modified — `steering.human_steers` removed; usage note corrected; CLI render line |
 | `tests/test_runner_acp.py` + `tests/acp_fake_agent.py` | Extended — the allowlist class test gains the identity case (`echo_git_identity`) |
-| `tests/test_goal_state.py` | Extended — the ledger key: repeats are no-ops, pre-key duplicates collapse at bootstrap, verbs stay append-only |
+| `tests/test_goal_state.py` | Extended — the ledger key: repeats are no-ops, pre-key commit rows are purged once at bootstrap (verbs kept, keyed ledger never purged again), verbs stay append-only |
 | `tests/test_doctor.py` | Extended — the seeded-fault test parametrized over the missing table and the missing key |
 | `docs/reference/env-vars.md`, `docs/INDEX.md` | The `DEVCLAW_GIT_EMAIL` row says where the identity now reaches |
 | `specs/018-scorecard-ratchet/contracts/scorecard-output.md` | `human_steers` marked removed |
@@ -56,14 +56,13 @@ surface:
 1. A commit made by the agent inside the sandbox is authored as
    `git_identity.py`'s identity, with the model's `Co-Authored-By` trailer
    untouched.
-2. The same (goal, sha) recorded N times is one intervention row; a DB that
-   already holds duplicates reads one row per sha after restart.
+2. The same (goal, sha) recorded N times is one intervention row.
 3. `steer`/`resume`/`decide`/`correct_implementation` rows are never
    collapsed.
 4. Exactly one field on the scorecard counts the owner's steers.
-5. Rows recorded before this change under an invented identity stay: they
-   cannot be told from a real hand commit after the fact, and the 14-day
-   window ages them out. Not backfilled, on purpose.
+5. Commit rows recorded before the key are deleted at the first restart
+   (ruled by Denys 2026-09-08): none was recorded against a real identity,
+   so none is evidence. Verb rows are untouched.
 
 ## Plan
 
@@ -72,7 +71,7 @@ Forward the identity; key the ledger; drop the second count; fix the note.
 ## Tasks
 
 - [x] `GIT_*` passthrough in the runner allowlist + fake-agent echo test
-- [x] Dedupe-then-index bootstrap + `INSERT OR IGNORE`
+- [x] Purge-then-index bootstrap (once, gated on the key) + `INSERT OR IGNORE`
 - [x] Doctor check on the key + seeded-fault parametrization
 - [x] `human_steers` removed, usage note corrected, spec 018 contract annotated
 - [x] env-vars row + INDEX tag

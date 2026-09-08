@@ -356,23 +356,28 @@ class GoalState(
 
             # A commit intervention is one row per (goal, sha): delivery
             # re-scans the whole goal branch at every settle, so before this
-            # index the same hand commit was recorded once per later task
-            # (66 rows for 43 commits, live 2026-09-08). ORDER IS
-            # LOAD-BEARING: collapse the duplicates a pre-index DB holds
-            # (keep the first sighting) BEFORE the unique index, or the
-            # CREATE fails on them. Both statements are idempotent. The
-            # verbs stay append-only — the index is partial on purpose.
-            for sql in (
-                "DELETE FROM goal_interventions WHERE verb = 'commit' AND id NOT IN ("
-                "SELECT MIN(id) FROM goal_interventions WHERE verb = 'commit' "
-                "GROUP BY goal_id, ref)",
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_goal_interventions_commit "
-                "ON goal_interventions(goal_id, ref) WHERE verb = 'commit'",
-            ):
-                try:
-                    self._store._db.execute(sql)
-                except sqlite3.OperationalError:
-                    pass
+            # key the same sha was recorded once per later task — and, with
+            # the identity never reaching the agent, most of those rows were
+            # the worker's own commits (66 rows / 43 shas, live 2026-09-08).
+            # A pre-key DB's commit rows are PURGED, not collapsed (ruled by
+            # Denys 2026-09-08): none of them was recorded against a real
+            # identity, so none is evidence. Gated on the key's absence, so
+            # it runs exactly once per DB and never touches a keyed ledger;
+            # the verbs stay append-only — the index is partial on purpose.
+            keyed = self._store._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' "
+                "AND name = 'uq_goal_interventions_commit'"
+            ).fetchone()
+            if keyed is None:
+                for sql in (
+                    "DELETE FROM goal_interventions WHERE verb = 'commit'",
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_goal_interventions_commit "
+                    "ON goal_interventions(goal_id, ref) WHERE verb = 'commit'",
+                ):
+                    try:
+                        self._store._db.execute(sql)
+                    except sqlite3.OperationalError:
+                        pass
 
             # Slice-hold retirement (specs/tiny/slice-guard-observes-the-goal).
             # ORDER IS LOAD-BEARING: release the goals the retired brake parked

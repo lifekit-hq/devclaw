@@ -785,7 +785,7 @@ def check_goal_interventions_table(ctx: "InstanceContext") -> list[Finding]:
             "goal_interventions lacks the uq_goal_interventions_commit index — "
             "a hand commit is re-counted at every later settle and the "
             "scorecard's non_worker_commits / per-achieved-goal figures inflate",
-            remedy="restart devclaw (GoalState collapses duplicates and creates the index at construction)",
+            remedy="restart devclaw (GoalState purges the pre-key commit rows and creates the index at construction)",
         )]
     return [Finding(cid, Verdict.OK, "goal_interventions ledger present, commits keyed by sha")]
 
