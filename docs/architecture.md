@@ -570,6 +570,21 @@ the tables. **Calibration (US6, 2026-09-07):** the intake grader's prediction is
   ALL`, `no-new-privileges`; network stays host, root stays writable) and
   teardown to the agent runtime. Swapping the agent inside leaves the box
   unchanged.
+- **One credential registry** (spec 042, 2026-09-08): every credential that
+  crosses a hop — the subscription setup-token, the `read:packages` registry
+  token — is declared ONCE in `devclaw/credentials.py` with its scope and
+  the hops it crosses (`required` ⇒ the boot guard refuses without it,
+  `sandbox` ⇒ `docker run -e`, `agent` ⇒ the runner forwards it into the
+  agent's own shells, the names travelling in the task payload). The
+  launcher, the boot guard, doctor and the host engine iterate the registry;
+  none spells a name, and `tests/test_credentials_single_registry.py` fails
+  the build on one spelled anywhere else. Least privilege is the registry's
+  job: `agent` is the only way a secret reaches a shell, and a read the host
+  can do (a CI log, an issue body) stays on the host — no GitHub token is
+  registered for the sandbox at all. Before the registry each hop was its
+  own hand-written list, and the same miss (in the container, not in the
+  agent) hit the setup-token on 2026-08-24 (#644) and the registry token on
+  2026-09-08.
 - **Allowed to call:** docker socket (sandcastle only), the workspace
   filesystem.
 - **Forbidden:** reading the goal store (the orchestrator passes everything the

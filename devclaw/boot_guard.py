@@ -24,11 +24,12 @@ import os
 from collections.abc import Mapping
 
 from . import config as _config
-from .engine.sandcastle import OAUTH_TOKEN_VAR, REGISTRY_TOKEN_VAR
+from . import credentials as _credentials
 
 #: credentials the production engine (``DEVCLAW_ENGINE`` unset) refuses to
-#: start without. ``host`` / ``stub`` are the dev/test engines and need neither.
-REQUIRED_PRODUCTION_ENV: tuple[str, ...] = (OAUTH_TOKEN_VAR, REGISTRY_TOKEN_VAR)
+#: start without — the registry's ``required`` set (spec 042). ``host`` /
+#: ``stub`` are the dev/test engines and need none.
+REQUIRED_PRODUCTION_ENV: tuple[str, ...] = _credentials.required_vars()
 
 #: the one home — where the deploy writes them and the compose file reads them
 #: (docs/reference/env-vars.md, docs/runbooks/devclaw-self-deploy.md §1).

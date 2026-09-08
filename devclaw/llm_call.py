@@ -30,6 +30,7 @@ from typing import Awaitable, Callable
 
 from .loom import trace as _trace
 from . import config as _config
+from . import credentials as _credentials
 
 #: A bound, one-argument LLM caller: ``await caller(prompt) -> response``. The
 #: cognition callers are all this shape (``cognition.claude_with_model`` builds one). Lives
@@ -496,8 +497,7 @@ async def _spawn_claude_once(
     effective_timeout_ms = timeout_ms if timeout_ms is not None else PLANNER_TIMEOUT_MS
     env = dict(os.environ)
     # Belt + suspenders: never let an API key override the OAuth session.
-    env.pop("ANTHROPIC_API_KEY", None)
-    env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env = _credentials.strip_refused(env)
 
     argv = _build_claude_argv(prompt, model)
     argv_head = f"{CLAUDE_BIN} --print" + (f" --model {model}" if model else "")

@@ -130,7 +130,13 @@ name = "llm_call is a leaf — the claude --print primitive over loom + config"
 type = "forbidden"
 source_modules = ["devclaw.llm_call"]
 forbidden_modules = ["devclaw.*"]
-ignore_imports = ["devclaw.llm_call -> devclaw.loom.*", "devclaw.llm_call -> devclaw.config"]
+ignore_imports = ["devclaw.llm_call -> devclaw.loom.*", "devclaw.llm_call -> devclaw.config", "devclaw.llm_call -> devclaw.credentials"]
+
+[[tool.importlinter.contracts]]
+name = "credentials is a leaf — the one registry of credential names and hops imports nothing (spec 042)"
+type = "forbidden"
+source_modules = ["devclaw.credentials"]
+forbidden_modules = ["devclaw.*"]
 
 [[tool.importlinter.contracts]]
 name = "loop_health is a leaf — the idle-cause vocabulary and rate math import nothing (spec 039)"

@@ -33,6 +33,7 @@ import time
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
 from . import config as _config
+from . import credentials as _credentials
 
 
 class Cognition(Protocol):
@@ -227,8 +228,7 @@ class AgentSDKCognition:
 
         # OAuth invariant: copy the environment, strip both keys.
         env = dict(os.environ)
-        env.pop("ANTHROPIC_API_KEY", None)
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        env = _credentials.strip_refused(env)
 
         # Grounding invariant: neutral cwd + no ambient setting sources.
         cwd = tempfile.mkdtemp(prefix="devclaw-cognition-")
