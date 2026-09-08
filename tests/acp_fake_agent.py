@@ -121,6 +121,18 @@ class FakeAgent:
         self.message("OAUTH-TOKEN-PRESENT" if present else "OAUTH-TOKEN-ABSENT")
         _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
 
+    def script_echo_git_identity(self, prompt_id: int) -> None:
+        """Report the git author/committer identity the AGENT process sees —
+        the seam the allowlist dropped (live 2026-09-08): with none, git in
+        the agent's shells refuses to commit and the model invents an
+        identity, which the scorecard then counts as a human's hand."""
+        vals = [
+            os.environ.get(k) or "-"
+            for k in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL")
+        ]
+        self.message(" ".join(vals))
+        _send({"jsonrpc": "2.0", "id": prompt_id, "result": {"stopReason": "end_turn"}})
+
     def script_echo_bash_env(self, prompt_id: int) -> None:
         """Report the BASH_ENV the AGENT process sees — the OOM-shield seam
         (spec 020 US2): the runner sets it only when the sandbox image ships

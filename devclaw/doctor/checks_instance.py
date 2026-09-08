@@ -766,6 +766,7 @@ def check_goal_interventions_table(ctx: "InstanceContext") -> list[Finding]:
     cid = "instance.scorecard.goal_interventions"
     with _ro_db(ctx.store.db_path) as db:
         tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        indexes = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='index'")}
     if "goal_status" not in tables:
         return [Finding(cid, Verdict.OK, "goal tables absent (no goals yet)")]
     if "goal_interventions" not in tables:
@@ -776,7 +777,17 @@ def check_goal_interventions_table(ctx: "InstanceContext") -> list[Finding]:
             "scorecard's per-achieved-goal metric reads unknown",
             remedy="restart devclaw (GoalState bootstraps tables at construction)",
         )]
-    return [Finding(cid, Verdict.OK, "goal_interventions ledger present")]
+    if "uq_goal_interventions_commit" not in indexes:
+        # Without the (goal, sha) key every settle re-records the same hand
+        # commit and non_worker_commits inflates with the goal's task count.
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal_interventions lacks the uq_goal_interventions_commit index — "
+            "a hand commit is re-counted at every later settle and the "
+            "scorecard's non_worker_commits / per-achieved-goal figures inflate",
+            remedy="restart devclaw (GoalState collapses duplicates and creates the index at construction)",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_interventions ledger present, commits keyed by sha")]
 
 
 def check_goal_status_pending_done_proposal(ctx: "InstanceContext") -> list[Finding]:

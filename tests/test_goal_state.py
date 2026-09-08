@@ -230,3 +230,35 @@ def test_goal_store_uses_shared_state_when_given(tmp_path, store):
     # Goal-state and task tables share the one database.
     assert "goal_status" in names
     assert "tasks" in names
+
+
+# ---- interventions ledger: a commit is one row per (goal, sha) ---------------
+
+
+@pytest.mark.parametrize("pre_index_duplicates", [False, True])
+def test_commit_intervention_is_idempotent_under_goal_and_sha(store, pre_index_duplicates):
+    """Delivery re-scans the whole goal branch at every settle, so the same
+    hand commit reaches ``record_intervention`` once per later task. The
+    ledger keys commits by (goal, sha): a repeat is a no-op, and a DB that
+    accumulated duplicates before the key collapses to one row per sha at
+    bootstrap (66 rows for 43 shas, live 2026-09-08). The verbs stay
+    append-only — two resumes are two acts."""
+    gs = GoalState(store)
+    if pre_index_duplicates:
+        store._db.execute("DROP INDEX uq_goal_interventions_commit")
+        for _ in range(3):
+            store._db.execute(
+                "INSERT INTO goal_interventions (goal_id, verb, ref, made_at) "
+                "VALUES ('g1', 'commit', 'abc123def456', 1)"
+            )
+        store._commit()
+        gs = GoalState(store)  # bootstrap collapses the duplicates and keys the table
+    for _ in range(3):
+        gs.record_intervention("g1", "commit", "abc123def456")
+    gs.record_intervention("g1", "commit", "fedcba987654")
+    gs.record_intervention("g1", "resume", "same reason")
+    gs.record_intervention("g1", "resume", "same reason")
+    rows = gs.interventions_since(0)
+    commits = sorted(r["ref"] for r in rows if r["verb"] == "commit")
+    assert commits == ["abc123def456", "fedcba987654"]
+    assert sum(1 for r in rows if r["verb"] == "resume") == 2

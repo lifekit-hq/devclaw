@@ -533,29 +533,13 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
         else None
     )
 
-    # ---- steering split (spec 018 US3) ---------------------------------
-    # HUMAN steering (owner-written rows, source not auto-*) counted from
-    # where it already lives; the machine half is the convergence rounds
-    # distribution — the single conflated steer_rate this replaces counted
-    # only the machine's own off_track verdicts while wearing a name that
-    # implied the owner.
-    human_steers = 0
-    steering_note = None
-    try:
-        with store._lock:
-            hs_row = store._db.execute(
-                "SELECT COUNT(*) AS n FROM goal_steering "
-                "WHERE source NOT LIKE 'auto-%' AND created_at >= ?",
-                (since_ms,),
-            ).fetchone()
-        human_steers = int(hs_row["n"] if hs_row else 0)
-    except sqlite3.OperationalError:
-        steering_note = (
-            "goal_steering table absent (DB predates the goal tables) — "
-            "human-steer count unknown for this window."
-        )
+    # ---- steering (spec 018 US3) ---------------------------------------
+    # The machine half only: the convergence rounds distribution. The human
+    # half is `interventions.steers` below (spec 032 US5) — the one count of
+    # the owner's steers; a second one here from goal_steering rows (which
+    # decide/correct also write) disagreed with it on the same surface
+    # (14 vs 7, live 2026-09-08).
     steering_block = {
-        "human_steers": human_steers,
         "machine_correction_rounds_median": convergence["rounds_median"],
     }
 
@@ -680,12 +664,12 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
             n for n in (
                 convergence_note,
                 pr_note,
-                steering_note,
                 interventions["note"],
                 "usage: cognition rows without real CLI usage contribute their "
-                "len/4 estimate; OAuth (Pro/Max) runs report no dollar cost, so "
-                "tokens_per_merged_pr is the honest cross-billing number and "
-                "cost_per_merged_pr_usd is null unless a real cost was recorded.",
+                "len/4 estimate; every *_cost_usd figure is the CLI's "
+                "API-equivalent estimate, not a bill — OAuth (Pro/Max) runs "
+                "meter nothing; tokens_per_merged_pr is the cross-billing number "
+                "and cost_per_merged_pr_usd is null only when no run reported a cost.",
             ) if n
         ],
     }
@@ -1254,8 +1238,7 @@ def format_scorecard(sc: dict) -> str:
     st = sc.get("steering") or {}
     med = st.get("machine_correction_rounds_median")
     lines.append(
-        f"steering:         human {st.get('human_steers', 0)} steer(s) · "
-        f"machine correction median {med if med is not None else 'n/a'} round(s)"
+        f"steering:         machine correction median {med if med is not None else 'n/a'} round(s)"
     )
     iv = sc.get("interventions") or {}
     if iv:

@@ -35,7 +35,8 @@ Every rate whose denominator is 0 is `null`, never 0.0 or 1.0.
   },
 
   "steering": {                         // US3
-    "human_steers": 0,                  // goal_steering rows, source NOT LIKE 'auto-%'
+    // "human_steers" REMOVED 2026-09-08 (tinyspec worker-git-identity-and-intervention-dedup):
+    // interventions.steers (spec 032 US5) is the one count of the owner's steers
     "machine_correction_rounds_median": null   // alias of convergence.rounds_median,
                                                // the machine half of the old steer_rate
   },

@@ -29,9 +29,15 @@ class GoalStateInterventionsMixin:
     def record_intervention(self, goal_id: str, verb: str, ref: str = "") -> None:
         if verb not in INTERVENTION_VERBS:
             raise ValueError(f"unknown intervention verb {verb!r}")
+        # A commit is keyed by its sha: delivery re-scans the whole goal
+        # branch at every settle, so the same hand commit arrives once per
+        # later task — idempotent under (goal, sha) via the partial unique
+        # index, never re-counted (66 rows for 43 commits, live 2026-09-08).
+        # The verbs stay append-only: two resumes are two acts.
         with self._store._lock:
             self._store._db.execute(
-                "INSERT INTO goal_interventions (goal_id, verb, ref, made_at) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO goal_interventions (goal_id, verb, ref, made_at) "
+                "VALUES (?, ?, ?, ?)",
                 (goal_id, verb, ref or "", _now_ms()),
             )
             self._store._commit()
