@@ -595,15 +595,23 @@ def test_missing_merge_columns_detected(env):
 # ---- instance: interventions ledger (spec 032 US5) -------------------------
 
 
-def test_missing_goal_interventions_table_detected(env):
-    """Seeded fault: a DB predating spec 032 — human verbs would be dropped
-    and the north-star metric reads unknown; FAIL with the restart remedy."""
+@pytest.mark.parametrize("fault, named", [
+    # a DB predating spec 032 — human verbs would be dropped and the
+    # north-star metric reads unknown
+    ("DROP TABLE goal_interventions", "goal_interventions"),
+    # a DB predating the (goal, sha) key — every settle re-records the same
+    # hand commit and non_worker_commits inflates (66 rows / 43 shas, 2026-09-08)
+    ("DROP INDEX uq_goal_interventions_commit", "uq_goal_interventions_commit"),
+])
+def test_goal_interventions_shape_drift_detected(env, fault, named):
+    """Seeded faults on the interventions ledger: FAIL, naming the missing
+    shape, with the restart remedy."""
     db = env["store"]._db
-    db.execute("DROP TABLE goal_interventions")
+    db.execute(fault)
     db.commit()
     (f,) = _findings(_run(env), "instance.scorecard.goal_interventions")
     assert f.verdict is Verdict.FAIL
-    assert "goal_interventions" in f.evidence and "restart" in f.remedy
+    assert named in f.evidence and "restart" in f.remedy
 
 
 def test_goal_interventions_table_present_is_ok(env):

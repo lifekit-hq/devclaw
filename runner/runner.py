@@ -1645,6 +1645,23 @@ def main() -> None:
         _cred_val = os.environ.get(_cred_var, "").strip()
         if _cred_val:
             acp_env[_cred_var] = _cred_val
+    # The git identity (devclaw/git_identity.py): the engine pins author and
+    # committer on the container env, and git gives the environment
+    # precedence over every config level — but only in shells that HAVE it.
+    # The allowlist dropped these four, so inside the agent git had no
+    # identity at all and the model invented one per session
+    # (`agent@devclaw`, `agent@lifekit-hq.local`, …, live 2026-09-08); the
+    # scorecard's "commits the worker did not author" then counted the
+    # worker's own work as the owner's hand. Identity is a fact the
+    # environment carries, not a credential, so it rides beside the registry
+    # rather than through it.
+    for _git_var in (
+        "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL",
+    ):
+        _git_val = os.environ.get(_git_var, "").strip()
+        if _git_val:
+            acp_env[_git_var] = _git_val
     # OOM shield for the agent's OWN bash children (spec 020 US2): every
     # non-interactive bash sources $BASH_ENV, so each tool child self-raises
     # its oom_score_adj and the kernel prefers the workload over the agent.

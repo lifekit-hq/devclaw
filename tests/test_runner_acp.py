@@ -223,6 +223,24 @@ def test_runner_agent_env_stays_lean_without_a_token(tmp_path):
     assert result["agent_output"] == "OAUTH-TOKEN-ABSENT"
 
 
+def test_runner_forwards_the_pinned_git_identity_to_the_agent(tmp_path):
+    """The engine pins author + committer on the container env
+    (devclaw/git_identity.py); the allowlist must carry all four into the
+    agent, or git inside the agent's shells has no identity and the model
+    invents one per session — which the scorecard's non-worker-commit count
+    then reads as the owner's hand (live 2026-09-08: `agent@devclaw`,
+    `agent@lifekit-hq.local`, `devclaw@lifekit.local` on worker commits)."""
+    _, _, result, _ = _run_runner(
+        tmp_path, "echo_git_identity",
+        env_extra={
+            "GIT_AUTHOR_NAME": "devclaw", "GIT_AUTHOR_EMAIL": "devclaw@local",
+            "GIT_COMMITTER_NAME": "devclaw", "GIT_COMMITTER_EMAIL": "devclaw@local",
+        },
+    )
+    assert result["status"] == "ok"
+    assert result["agent_output"] == "devclaw devclaw@local devclaw devclaw@local"
+
+
 def test_runner_sets_bash_env_shield_when_image_ships_the_script(tmp_path):
     """Spec 020 US2: BASH_ENV points at the baked oom-shield script so every
     bash the agent spawns self-raises its OOM score. The runner keys on the
