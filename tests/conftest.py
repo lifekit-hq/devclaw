@@ -17,9 +17,13 @@ import pytest
 # could land in the wrong one with every test still green (#610). Set at
 # module-level (not in a fixture) so it is in effect when the module-scoped
 # `runner` fixture executes exec_module and reads the env var.
-os.environ.setdefault(
-    "DEVCLAW_SKILLS_DIR",
-    str(pathlib.Path(__file__).resolve().parents[1] / "runner" / "skills"),
+# SET, never setdefault: CI runs on the same host devclaw is deployed to, so an
+# ambient DEVCLAW_SKILLS_DIR would be adopted and point the suite straight at
+# the baked bundle this pin exists to avoid — the #610 wrong-copy bug, silently
+# restored by the guard against it. A hermeticity pin is an assertion about the
+# suite's world, not a default for it.
+os.environ["DEVCLAW_SKILLS_DIR"] = str(
+    pathlib.Path(__file__).resolve().parents[1] / "runner" / "skills"
 )
 
 # Give the suite its own devclaw.db. `devclaw.server._state` builds a real
@@ -30,10 +34,29 @@ os.environ.setdefault(
 # path per worker process (PYTEST_XDIST_WORKER is set before conftest imports;
 # empty when running -n0). Module-level, not a fixture: import-time side
 # effects need the env var already in place.
-os.environ.setdefault(
-    "DEVCLAW_DB",
-    str(pathlib.Path(tempfile.mkdtemp(prefix="devclaw-suite-"))
-        / f"devclaw-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}.db"),
+# SET, never setdefault — for TWO reasons, and setdefault defeated both.
+#
+# 1. Inheritance. Under `-n auto` the xdist CONTROLLER imports this file first
+#    and execnet spawns every worker with the controller's os.environ, so a
+#    worker's own setdefault sees the value already present and does nothing.
+#    Every worker then opened the CONTROLLER's database — the suffix below read
+#    `main`, never `gw3`, and the per-worker path this pin promises was dead
+#    code. Sixteen processes sharing one file, while `devclaw.server._state`
+#    builds a real StateStore AT IMPORT TIME, means sixteen concurrent
+#    `PRAGMA journal_mode = WAL` on it: a lock race a quiet dev box wins and the
+#    loaded VPS runner loses. The loser fails to IMPORT the module, its tests
+#    vanish from that worker's collection, and xdist aborts the whole run on the
+#    mismatch — which is what painted CI red from 2026-09-08 17:45 onward with
+#    no commit responsible, tracking instance load instead.
+# 2. Ambience. CI runs on the deploy host; an ambient DEVCLAW_DB would be
+#    adopted and point the suite at a real database (same reasoning as
+#    DEVCLAW_SELF_REPO below, which already got this right).
+#
+# mkdtemp is unique per process, so once the value is no longer inherited each
+# worker gets its own file; the worker suffix stays as legible belt-and-braces.
+os.environ["DEVCLAW_DB"] = str(
+    pathlib.Path(tempfile.mkdtemp(prefix="devclaw-suite-"))
+    / f"devclaw-{os.environ.get('PYTEST_XDIST_WORKER', 'main')}.db"
 )
 
 # The instance's OWN repo slug. Since spec 038 this is load-bearing on a path
