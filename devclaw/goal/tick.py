@@ -908,18 +908,27 @@ async def _handle_long_lived_advance(
             for n in goal.issue_refs:
                 snaps.append(await fetcher(goal.repo_url or "", n))
         except _issue_ref.IssueRefError as exc:
+            # Spec 041 FR-009: a fetch that fails is a remote that may come
+            # back — the mechanical:prep hold (ls-remote recheck on the
+            # persisted backoff, PREP_HEAL_CAP, then one owner ping), never a
+            # human-gated park: on 2026-09-08 a 20 s `gh` timeout filed fs-431
+            # under lost_ref, the kind for a destroyed in-flight ref, and the
+            # owner's recorded correction sat behind a resume. Steering is
+            # NOT consumed: the hold is a wait, the work is still owed.
             q = (
                 f"referenced issue could not be fetched: {exc} — a referenced "
                 "goal dispatches only from live issue state, never a stale "
-                "copy. Fix access or the reference, then resume_goal."
+                "copy; devclaw rechecks on a backoff and resumes when the "
+                "fetch succeeds (resume_goal skips the wait)."
             )
+            store.append_log(goal_id, f"issue fetch failed — holding for a recheck: {exc}")
             store.transition(
                 goal_id, Event.BLOCK,
                 replace(base, phase="blocked", blocked_on=q,
-                        blocked_kind="lost_ref", next=""),
-                expect=status, consume_steering=consume_ids,
+                        blocked_kind="mechanical:prep", next=""),
+                expect=status,
             )
-            await _notify(ctx.notifier, NotifyLevel.OWNER, f"🟡 [{goal_id}] {q[:400]}")
+            await _notify(ctx.notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] {q[:300]}")
             return Outcome.BLOCKED
         open_snaps = [
             s for s in snaps if s.state == "open" and _issue_ref.is_ready(s)

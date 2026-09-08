@@ -43,6 +43,8 @@ from ..engine.workspace import WorkspaceError
 from ..loom import trace as _trace
 from .. import speckit_setup as _speckit
 from .. import env_cap as _env_cap
+from . import problems as _problems
+from . import decisions as _decisions
 
 async def _branch_staleness(workspace_dir: str, goal_id: str) -> "dict | None":
     """Best-effort commits-ahead/behind probe for ``goal/<goal_id>`` vs the
@@ -110,13 +112,40 @@ async def _dispatch_action(
                 )
         except Exception:  # noqa: BLE001 — the honest reason is best-effort,
             pass  # the block itself must never be lost to a store hiccup
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=reason,
-                    blocked_kind="mechanical:dispatch_cap"),
-            expect=base, consume_steering=consume_steering,
+        # Spec 041 FR-007: the cap is a stop with no decision to make, so it
+        # raises a typed Problem instead of waiting for a human to type
+        # resume — `continue` (refund the cap, dispatch again) is the ONE
+        # bounded self-heal, the merge-conflict shape; a second cap with no
+        # delivered increment since the last `continue` waits for an explicit
+        # decide (timebox 0 ⇒ no default). 24,718 s of the 14 days to
+        # 2026-09-08 were goals parked here for a resume.
+        repeat = bool(_decisions.continues_since(store.decisions(goal_id), base.last_progress_at))
+        prob = _problems.new_problem(
+            goal_id, kind="mechanical:dispatch_cap", raised_by="dispatch_cap",
+            what=reason, clause="",
+            why=(
+                "the dispatch budget measures failed dispatches, not progress; a "
+                + ("second cap with nothing delivered since the last continue is not a transient"
+                   if repeat else "transient (a gate crash, an idle timeout) earns one refund")
+            ),
+            options=(_problems.CONTINUE, _problems.CANCEL), default_key="continue",
+            timebox_s=(0 if repeat else None),
         )
-        await _notify(notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] dispatch cap ({cap}) reached — paused for your review")
+        with store.transaction():
+            _problems.raise_problem(store, prob)
+            store.transition(
+                goal_id, Event.BLOCK,
+                replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
+                        blocked_kind="mechanical:dispatch_cap", problem_id=prob.id),
+                expect=base, consume_steering=consume_steering,
+            )
+        await _notify(
+            notifier, NotifyLevel.OWNER,
+            f"🛑 [{goal_id}] dispatch cap ({cap}) reached — "
+            + ("waiting for your decide (a continue was already spent with nothing delivered)\n"
+               if repeat else "continues once after the timebox unless you decide\n")
+            + _problems.render_for_human(prob),
+        )
         return Outcome.BLOCKED
     # Admission prep: prove the workspace is placeable on the goal branch —
     # clone/fetch/checkout ``goal/<id>`` so each increment's commits STACK on
