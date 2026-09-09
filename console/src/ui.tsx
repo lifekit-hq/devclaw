@@ -203,3 +203,109 @@ export function ErrorNote({ children }: { children: ReactNode }) {
     <div style={{ padding: "16px 0", fontSize: 13, color: "var(--red)" }}>{children}</div>
   );
 }
+
+// ---- Trend (spec 039 US5) ---------------------------------------------------
+// The console carries no chart library on purpose (React + router only), and
+// the existing idiom is a hand-rolled bar (Evals' failure classes). This is that
+// idiom generalised to a time series, in inline SVG so it scales and prints.
+//
+// The one rule it enforces structurally: a bucket whose value is `null` is a
+// GAP — no bar, a dotted baseline tick — never a zero-height bar (spec 039
+// FR-011, absent is never zero). A caller cannot accidentally draw silence as
+// free, because null is a distinct branch, not a falsy number.
+
+export interface TrendPoint {
+  /** x-axis label (a month, a day, a cycle). */
+  label: string;
+  /** null = no data for this bucket. Rendered as a gap, never as 0. */
+  value: number | null;
+  /** Optional hover text; the label + formatted value when omitted. */
+  title?: string;
+}
+
+export function Trend({
+  points,
+  color = "var(--accent)",
+  height = 56,
+  format = (v: number) => String(v),
+  ariaLabel,
+}: {
+  points: TrendPoint[];
+  color?: string;
+  height?: number;
+  format?: (v: number) => string;
+  ariaLabel: string;
+}) {
+  const known = points.filter((p) => p.value !== null) as { value: number }[];
+  const max = known.length ? Math.max(...known.map((p) => p.value)) : 0;
+  const gap = 2;
+  const w = 100 / Math.max(points.length, 1);
+
+  if (points.length === 0) {
+    return <EmptyState title="No data yet" hint="Buckets appear here once there is history to show." />;
+  }
+
+  return (
+    <div style={{ width: "100%", overflowX: "auto" }}>
+      <svg
+        viewBox={`0 0 100 ${height}`}
+        preserveAspectRatio="none"
+        role="img"
+        aria-label={ariaLabel}
+        style={{ width: "100%", height, display: "block" }}
+      >
+        {/* baseline — also what a gap bucket shows instead of a bar */}
+        <line x1="0" y1={height - 0.5} x2="100" y2={height - 0.5} stroke="var(--border)" strokeWidth="1" />
+        {points.map((p, i) => {
+          const x = i * w;
+          if (p.value === null) {
+            return (
+              <g key={i}>
+                <title>{p.title ?? `${p.label}: no data`}</title>
+                <rect x={x} y={0} width={w} height={height} fill="transparent" />
+                <line
+                  x1={x + gap / 2}
+                  y1={height - 2}
+                  x2={x + w - gap / 2}
+                  y2={height - 2}
+                  stroke="var(--text-muted)"
+                  strokeWidth="1"
+                  strokeDasharray="1 1"
+                />
+              </g>
+            );
+          }
+          // A real zero still draws a hairline, so "measured zero" and "no data"
+          // stay visually distinct.
+          const h = max > 0 ? Math.max((p.value / max) * (height - 4), 0.75) : 0.75;
+          return (
+            <g key={i}>
+              <title>{p.title ?? `${p.label}: ${format(p.value)}`}</title>
+              <rect x={x} y={0} width={w} height={height} fill="transparent" />
+              <rect
+                x={x + gap / 2}
+                y={height - h}
+                width={Math.max(w - gap, 0.5)}
+                height={h}
+                fill={color}
+                rx="0.5"
+              />
+            </g>
+          );
+        })}
+      </svg>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginTop: 4,
+          fontSize: 10.5,
+        }}
+        className="mono muted"
+      >
+        <span>{points[0].label}</span>
+        {points.length > 1 && <span>{points[points.length - 1].label}</span>}
+      </div>
+    </div>
+  );
+}

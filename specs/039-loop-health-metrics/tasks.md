@@ -72,17 +72,17 @@
 - [X] T031 [US6] `devclaw/telemetry.py`: `compute_calibration(store)` per D7 (`CALIBRATION_MIN_SAMPLE = 10`); `devclaw/server/routes/observability.py`: `GET /calibration.json`
 - [X] T032 [US6] `devclaw/goal/engine.py` + `tick.py` + `loop_health.py`: `no_goal_armed` emission when no live goal exists and `count_ready_issues_without_goal() > 0`
 - [X] T033 [US6] `tests/test_loop_health_absent_is_never_zero.py`: calibration below the floor → `determinable=false`, predictors None, `needed` stated; a convergence row without predictions still records actuals; `tests/test_doctor.py` seeded fault extends to the missing `cost_tokens` column
-- [ ] T034 [US6] Docs honesty PR-C: `docs/reference/intake-shape.md` (grade persisted), `docs/architecture.md`, `docs/INDEX.md`; `/ship` PR-C (stacked on B)
+- [X] T034 [US6] Docs honesty PR-C: `docs/reference/intake-shape.md` (grade persisted), `docs/architecture.md`, `docs/INDEX.md`; `/ship` PR-C (stacked on B)
 
 ## Phase 8: US5 — See it without asking (PR-D)
 
 **Independent test**: console overview shows the five metrics; a metric with no data reads `—`/"no data"; usage page renders months past retention.
 
-- [ ] T035 [US5] `console/src/api.ts`: `LoopHealth`, `CostPerOutcome`, `UsageHistory` types; `fetchLoopHealth()`, `fetchCalibration()`; `InstanceUsage.history`
-- [ ] T036 [US5] `console/src/pages/Overview.tsx`: "Loop health" strip — not-stuck rate + three buckets, self-heal, clean-cycle, first-pass, cost per merged goal / standalone PR; `null` → `—` with a "no data" caption
-- [ ] T037 [US5] `console/src/pages/Usage.tsx`: monthly trend list/bars from `history`, with the backfill boundary note; unknown months distinct from zero
-- [ ] T038 [US5] `cd console && npm ci && npm run build` (tsc gate) — no dist committed
-- [ ] T039 [US5] Docs honesty PR-D + spec Status header update to what shipped; `/ship` PR-D (stacked on C)
+- [X] T035 [US5] `console/src/api.ts`: `LoopHealth`, `CostPerOutcome`, `UsageHistory` types; `fetchLoopHealth()`, `fetchCalibration()`; `InstanceUsage.history`
+- [X] T036 [US5] `console/src/pages/Overview.tsx`: "Loop health" strip — not-stuck rate + three buckets, self-heal, clean-cycle, first-pass, cost per merged goal / standalone PR; `null` → `—` with a "no data" caption
+- [X] T037 [US5] `console/src/pages/Usage.tsx`: monthly trend list/bars from `history`, with the backfill boundary note; unknown months distinct from zero
+- [X] T038 [US5] `cd console && npm ci && npm run build` (tsc gate) — no dist committed
+- [X] T039 [US5] Docs honesty PR-D + spec Status header update to what shipped; `/ship` PR-D (stacked on C)
 
 ## Dependencies
 

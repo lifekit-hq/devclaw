@@ -516,7 +516,22 @@ agent-drive seam. `compute_cost_per_outcome` replaces the old
 **standalone PR** as two figures (a merged PR behind one dispatch vs
 several — derived from the data), runs that shipped nothing as a separate
 total, and open/unrefreshed PRs as an explicit unknown bucket outside both
-rates; `/usage.json` gains the ledger's monthly `history`.
+rates; `/usage.json` gains the ledger's monthly `history`. A closed goal
+records what it cost in `goal_convergence.cost_tokens` (Σ its REPORTED ledger
+rows, cache reads excluded; NULL when nothing reported) — the last field US6
+deferred until there was a ledger to read.
+
+**Seeing it without asking (US5).** The console renders those reads on the
+pages that already own each metric, never on a new one. Overview carries a
+loop-health strip — not-stuck rate, first-pass, clean cycles, self-heal, and
+where the idle went by responsibility bucket — placed above "Needs you" so the
+failing axis reaches the owner instead of waiting to be visited. Usage carries
+the ledger's monthly trend, and states plainly that the instance totals above
+it are a rolling ~30-day window (they read the pruned tables) while the trend
+is permanent. The `Trend` primitive in `console/src/ui.tsx` is inline SVG with
+no charting dependency — the console stays React + router — and it renders a
+`null` bucket as a dotted gap, never a zero-height bar, so "cheap" and "silent"
+cannot look alike.
 
 ---
 

@@ -12,39 +12,39 @@
 - **The model-agnostic alternative was tried and does not work.** `runner/acp_client.py` already carries a protocol-level usage extractor (research D6), so a scrape-free ledger was the obvious shrink. It was rejected on evidence: the 2026-09-07 live check found zero settled tasks with a usage block — claude-agent-acp reports no tokens over ACP. A scrape-free ledger would record real cognition rows and `reported=0` for every worker run, and worker tokens are the bulk of the spend. Honest, and useless for "what does a shipped increment cost".
 - **"OAuth money is fixed" was the weaker half of the original reasoning.** Tokens, not dollars, are the unit the spec already reports (`tokens_per_merged_pr` exists precisely because OAuth runs meter nothing). Fixed spend does not make consumption unmeasurable, and the ledger is a money-domain fact under constitution IX either way.
 
-US3 + US4 rebased onto main 2026-09-09 (`feat/039-usage-ledger`, cherry-pick of 776abbd; suite 1534 passed / 5 skipped, ruff + mypy + lint-imports clean). US5 follows on that base.
+US3 + US4 rebased onto main 2026-09-09 (`feat/039-usage-ledger`, cherry-pick of 776abbd; suite 1534 passed / 5 skipped, ruff + mypy + lint-imports clean). US5 (console surfaces) and the deferred US6 `cost_tokens` landed the same day. **Spec 039 is COMPLETE — all six user stories built.**
 
 **Input**: Owner session 2026-09-06 — "why the loop isn't running, and what a shipped increment costs"
 
-## North-star case
+## North-star case *(mandatory — constitution 2.9.0; written retroactively 2026-09-09)*
 
-**The failure this moves:** *ran but needed the owner.* Not the loop stopping —
-the owner having to open a session to find out whether it is stopping. The
-failing ratchet axis is read live from `get_scorecard_metrics` and never
-remembered; `~/memory/projects/devclaw/STATUS.md` carries only a dated last-read.
-Today "is first-pass recovering?" costs a session.
+This spec was created 2026-09-06, one day before the constitution made the case
+mandatory, so it never carried one. Written now, honestly, rather than waved
+through on the spec's age.
 
-**The number:** owner status-reads per week (today: one per morning brief, by
-construction) and time-to-notice a regressing axis. Secondary, and the harder
-number: cost per merged goal, which is **unmeasurable today past 30 days** —
-`tasks.result_json` is NULLed and `traces` deleted by retention, so the figures
-silently shrink rather than end.
-
-**What cuts it:** if the surfaces ship and the owner still opens a session to
-ask how the loop is doing, US5 failed and should be cut rather than extended.
-If `usage_ledger` accumulates for a month and no decision is ever taken on a
-cost number, US4's `cost_per_outcome` is decoration and should be dropped from
-the scorecard rather than kept for completeness.
-
-**Honest weight.** US1/US2/US6 earn their place on the first two axes — they
-changed what the loop reports about itself. US5 is a surface, and a surface the
-owner must visit is the checklist's "moves a number without moving behaviour";
-it survives only in the form ruled 2026-09-09 — trends in place on the pages
-that already own each metric, no new nav entry, and the failing axis on
-Overview so it finds the owner. US3 is the one story here with a hard,
-axis-independent justification: a permanent usage ledger is a money-domain fact
-under constitution IX, required by US4 and by any cost read at all, chart or no
-chart.
+- **Failure moved**: *ran but needed the owner.* Not the loop stopping — the
+  owner opening a session to find out whether it is. The failing ratchet axis is
+  read live from `get_scorecard_metrics` and never remembered;
+  `~/memory/projects/devclaw/STATUS.md` carries only a dated last-read. "Is
+  first-pass recovering?" costs a session today.
+- **Number that shows it**: owner status-reads per week (today one per morning
+  brief, by construction) and time-to-notice a regressing axis. Secondary, and
+  the harder one: cost per merged goal, **unmeasurable past 30 days** before
+  this spec — `tasks.result_json` is NULLed and `traces` deleted by retention,
+  so the figures silently shrank rather than ended.
+- **Cut when**: the surfaces ship and the owner still opens a session to ask how
+  the loop is doing — then US5 failed and is cut, not extended. And if the
+  ledger accumulates for a month with no decision ever taken on a cost number,
+  US4's `cost_per_outcome` is decoration and comes out of the scorecard rather
+  than being kept for completeness.
+- **Honest weight**: US1/US2/US6 earn their place on the first two axes — they
+  changed what the loop reports about itself. US5 is a surface, and a surface
+  the owner must visit is the checklist's "moves a number without moving
+  behaviour"; it survives only in the shape ruled 2026-09-09 — in place on the
+  pages that already own each metric, no new nav entry, the failing axis on
+  Overview so it finds the owner. US3 is the one story with a hard,
+  axis-independent justification: a permanent usage ledger is a money-domain
+  fact under constitution IX, needed by US4 and by any cost read at all.
 
 ## Why this exists
 

@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { fetchUsage, type InstanceUsage, type ProjectUsageBucket, type UsageBucket } from "../api";
+import {
+  fetchUsage,
+  type InstanceUsage,
+  type ProjectUsageBucket,
+  type UsageBucket,
+  type UsageHistory,
+} from "../api";
 import { relativeTime } from "../util/time";
-import { EmptyState, ErrorNote, Loading, SectionLabel } from "../ui";
+import { EmptyState, ErrorNote, Loading, SectionLabel, Trend, type TrendPoint } from "../ui";
 
 // Usage page — instance-wide token and cost aggregate, per-project breakdown,
 // and cap-pressure history. Fetches /usage.json read-only; no write, no LLM.
@@ -173,6 +179,9 @@ export function Usage() {
         <>
           <div style={{ marginBottom: 6 }}>
             <span className="eyebrow">Instance totals</span>
+            <span className="muted" style={{ fontSize: 11, marginLeft: 8 }}>
+              (recent — see the note below)
+            </span>
             <span className="mono muted" style={{ fontSize: 11, marginLeft: 8 }}>
               updated {relativeTime(data.computed_at_ms)}
             </span>
@@ -180,6 +189,8 @@ export function Usage() {
           <div style={{ marginBottom: 22 }}>
             <TotalsGrid b={data.totals} />
           </div>
+
+          {data.history && <UsageTrend h={data.history} />}
 
           <SectionLabel count={data.by_project.length}>Per project</SectionLabel>
           {data.by_project.length === 0 ? (
@@ -356,6 +367,9 @@ export function Usage() {
           )}
 
           <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+            The instance totals above are read from the trace and task tables, which retention
+            empties after 30 days — they are a rolling recent window, not a lifetime sum. The
+            monthly trend is read from the permanent usage ledger instead and does not expire.
             Cost figures are API-equivalent <b>estimates</b> — not a subscription balance or
             remaining quota. On OAuth (Pro/Max) the CLI reports no dollar cost, so the estimate is
             0. Cognition rows without real CLI-reported usage contribute a len/4 token estimate
@@ -364,5 +378,80 @@ export function Usage() {
         </>
       )}
     </div>
+  );
+}
+
+// ---- Monthly trend from the permanent ledger (spec 039 US3/US5) -------------
+// The totals above expire with retention; this does not. A month whose runs
+// reported no usage is a GAP, never a zero bar — `reported`/`records` say how
+// many rows the month stands on, so "cheap" and "silent" never look alike.
+
+function UsageTrend({ h }: { h: UsageHistory }) {
+  if (h.months.length === 0) {
+    return (
+      <>
+        <SectionLabel>Monthly trend</SectionLabel>
+        <div className="card" style={{ marginBottom: 22 }}>
+          <EmptyState
+            title="No durable history yet"
+            hint={h.note ?? "The usage ledger fills as runs settle; months appear here from then on."}
+          />
+        </div>
+      </>
+    );
+  }
+
+  const point = (m: (typeof h.months)[number], which: "worker" | "cognition"): TrendPoint => {
+    const b = m[which];
+    return {
+      label: m.month,
+      value: b.tokens,
+      title:
+        b.tokens === null
+          ? `${m.month}: ${b.records} run(s), none reported usage — unknown, not zero`
+          : `${m.month}: ${fmtK(b.tokens)} tokens (${b.reported}/${b.records} runs reported)`,
+    };
+  };
+
+  const boundary =
+    h.backfill_boundary_ms !== null
+      ? new Date(h.backfill_boundary_ms).toISOString().slice(0, 7)
+      : null;
+
+  return (
+    <>
+      <SectionLabel count={h.months.length}>Monthly trend</SectionLabel>
+      <div className="card" style={{ padding: "16px 18px", marginBottom: 22 }}>
+        <div style={{ display: "grid", gap: 20, gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))" }}>
+          <div style={{ minWidth: 0 }}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>Worker tokens</div>
+            <Trend
+              ariaLabel="Worker tokens by month"
+              points={h.months.map((m) => point(m, "worker"))}
+              color="var(--accent)"
+              format={fmtK}
+            />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div className="eyebrow" style={{ marginBottom: 8 }}>Cognition tokens</div>
+            <Trend
+              ariaLabel="Cognition tokens by month"
+              points={h.months.map((m) => point(m, "cognition"))}
+              color="var(--violet)"
+              format={fmtK}
+            />
+          </div>
+        </div>
+        <div className="muted" style={{ fontSize: 11, marginTop: 12 }}>
+          A dotted tick is a month with runs but no reported usage — unknown, not zero.
+          {boundary && (
+            <>
+              {" "}Months at or before <span className="mono">{boundary}</span> were backfilled from
+              transcripts that survived retention; anything already pruned is absent, not zero.
+            </>
+          )}
+        </div>
+      </div>
+    </>
   );
 }

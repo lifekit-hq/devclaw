@@ -948,6 +948,10 @@ export interface InstanceUsage {
   /** Limit events by classification (rate_limit / quota / auth), windowed to the
    *  last 30 days. Only kinds that have events in the window are present. */
   cap_pressure: Record<string, CapPressureEntry>;
+  /** The permanent ledger's monthly trend (spec 039 US3/FR-017). Absent on a
+   *  server that predates the ledger — the page then says so rather than
+   *  drawing an empty chart. */
+  history?: UsageHistory;
 }
 
 export async function fetchUsage(): Promise<InstanceUsage> {
@@ -976,5 +980,95 @@ export async function answerGoal(
     }
     throw new Error(msg);
   }
+  return r.json();
+}
+
+// ---- loop health + durable usage (spec 039 US5) -----------------------------
+// Every rate here is `null` when its sample is empty — spec 039 FR-011: absent
+// is never zero. The console renders `null` as "—", never as 0 or 0%.
+
+/** One month of the permanent usage ledger. `tokens`/`cost_usd` are null when
+ *  no row in that month REPORTED usage — a month of silent workers reads
+ *  unreported, not free, and `records`/`reported` say which. */
+export interface UsageMonth {
+  month: string; // YYYY-MM
+  worker: UsageLedgerBucket;
+  cognition: UsageLedgerBucket;
+}
+
+export interface UsageLedgerBucket {
+  tokens: number | null;
+  cost_usd: number | null;
+  records: number;
+  reported: number;
+}
+
+export interface UsageHistory {
+  months: UsageMonth[];
+  /** When the one-shot backfill ran. Rows before it came from transcripts that
+   *  survived retention; anything already pruned is absent, not zero. */
+  backfill_boundary_ms: number | null;
+  note?: string;
+}
+
+export interface CostRate {
+  count: number;
+  tokens_total: number;
+  tokens_per: number | null;
+  cost_usd_per: number | null;
+}
+
+export interface CostPerOutcome {
+  merged_goals: CostRate;
+  merged_standalone_prs: CostRate;
+  shipped_nothing: { count: number; tokens_total: number };
+  /** PRs whose platform state is open/unknown/never-refreshed — excluded from
+   *  both rates rather than guessed at. */
+  unknown: { count: number; tokens_total: number };
+  records: number;
+  reported: number;
+  tasks_without_record: number;
+  note: string | null;
+}
+
+export interface IdleCause {
+  cause: string;
+  bucket: "working" | "devclaw" | "owner" | "no_work";
+  seconds: number;
+  ticks: number;
+  last_detail: string;
+}
+
+export interface LoopHealth {
+  window_hours: number;
+  computed_at_ms: number;
+  idle: {
+    not_stuck_rate: number | null;
+    observed_seconds: number;
+    working_seconds: number;
+    unobserved_seconds: number;
+    buckets: { devclaw: number; owner: number; no_work: number };
+    causes: IdleCause[];
+    current: { cause: string; bucket: string; since_ms: number; detail: string } | null;
+    note: string | null;
+  };
+  self_heal: { rate: number | null; recovered: number; terminal: number; problems: number; basis: string };
+  clean_cycle: { clean: number; total: number; rate: number | null };
+  first_pass: {
+    first_pass: number;
+    goals_closed: number;
+    rate: number | null;
+    rounds_median: number | null;
+    note: string | null;
+  };
+  cost_per_outcome?: CostPerOutcome;
+}
+
+export async function fetchLoopHealth(windowHours?: number): Promise<LoopHealth> {
+  const qs = tokenQS();
+  const sep = qs ? "&" : "?";
+  const w = windowHours ? `${sep}window_hours=${windowHours}` : "";
+  const r = await fetch(`/loop-health.json${qs}${w}`);
+  if (!r.ok) throw new Error(`loop-health.json ${r.status}`);
   return r.json();
 }
