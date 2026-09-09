@@ -16,6 +16,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from ... import telemetry as _telemetry
+from ...state_store.problems import DEFAULT_PROBLEM_WINDOW_DAYS
 from ...state_store.problems import problem_lifecycle as _problem_lifecycle
 from .._state import goals, mcp, registry, store
 from ._common import json_limit
@@ -45,7 +46,6 @@ async def problems_json(request: Request) -> Response:
     limit, err = json_limit(request)
     if err is not None:
         return err
-    _THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
     since_ms_param = request.query_params.get("since_ms")
     if since_ms_param is not None:
         try:
@@ -55,7 +55,10 @@ async def problems_json(request: Request) -> Response:
         # 0 (or negative) → caller wants all-time; positive → use as lower bound.
         since_ms: int | None = raw if raw > 0 else None
     else:
-        since_ms = int(time.time() * 1000) - _THIRTY_DAYS_MS
+        since_ms = (
+            int(time.time() * 1000)
+            - DEFAULT_PROBLEM_WINDOW_DAYS * 24 * 60 * 60 * 1000
+        )
     rows = store.list_problems(
         category=request.query_params.get("category") or None,
         limit=limit,

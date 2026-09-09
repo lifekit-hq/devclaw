@@ -43,6 +43,32 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Optional
 
+#: Default recency window for a catalog READ, in days. The catalog is bounded
+#: per fingerprint but unbounded in VOCABULARY — 285 distinct rows had
+#: accumulated by 2026-09-09, 165 of them last seen over 14 days earlier — and
+#: ``count`` is a LIFETIME counter, so ``ORDER BY count DESC`` floats a row that
+#: recurred 60 times two months ago above one that recurred 13 times yesterday.
+#: Every READ surface (the MCP ``list_problems`` tool, the console
+#: ``/problems.json`` route) applies this so both mean the same thing by "the
+#: problems catalog"; a caller wanting the whole history asks for it explicitly.
+#: The cycle report is NOT a read surface in this sense — it reads all-time on
+#: purpose, because a cycle's history is what it exists to summarise.
+DEFAULT_PROBLEM_WINDOW_DAYS = 14
+
+#: Cognition roles that no longer exist in the code. A ``cognition/<role>`` row
+#: is keyed on ``payload["role"]`` at ``loom/trace.py``; the live vocabulary is
+#: exactly ``evaluator``, ``review``, ``intake_readiness`` and ``reachability``.
+#: Rows naming a role below can never be raised again, so they are DELETED at
+#: boot rather than hidden — a recency window cannot retire them (two were last
+#: seen 10 days before this list was written, well inside any sane window), and
+#: absence of recurrence is evidence of a fix only while the raise site still
+#: exists. Deletion of the raise site is proof.
+RETIRED_COGNITION_ROLES = frozenset({
+    "goal_planner",    # host-cognition chain removed (spec 008 shrink, #563)
+    "summary",         # owner summarizer retired (spec 037, 2026-09-06)
+    "trend-detector",  # trend detector retired (spec 037, 2026-09-06)
+})
+
 if TYPE_CHECKING:
     import sqlite3
     import threading
