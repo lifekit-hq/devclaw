@@ -195,6 +195,44 @@ def test_the_skill_bundle_licenses_no_gate_bypass(runner, skill_dir):
         assert "gate inputs" in bundle.lower()
 
 
+def test_feature_id_is_collision_proof_and_never_an_issue_number(runner, skill_dir):
+    """The feature identifier is unique WITHOUT coordination between checkouts,
+    and the handoff rule resolves to exactly one directory.
+
+    One goal, one checkout (2026-09-06): each goal runs in a clone carrying
+    only its own branch, so `create-new-feature.sh`'s sequential allocator —
+    which reads the `specs/` it can see — hands every goal branching off one
+    default branch the SAME number. finance-sentry on the fs-431 branch: four
+    `044-` directories, two `042-`, two `043-`, plus `421-asset-dossier` where
+    a worker put a GitHub issue number in the feature slot. Same class as the
+    two-goals-one-directory finding of 2026-09-06 — a per-checkout allocator
+    minting a global identifier.
+
+    The consequence that bites is the handoff: "the smallest not-yet-complete
+    `specs/NNN-*/`" ties four ways, and `421-` sorts after `046-`, so a session
+    can adopt another goal's plan as its own prior self's. The rule is now the
+    branch, which is the goal's identity and cannot tie.
+    """
+    for kind in ("implement_feature", "fix_bug"):
+        bundle = runner._load_skills(kind)
+        # the identifier is minted collision-free, never by the allocator
+        assert "--timestamp" in bundle
+        assert "Never pass an issue number as the feature number" in bundle
+        # the handoff is scoped to what THIS branch added — no tie, and no
+        # adopting a directory that belongs to another goal
+        assert "--diff-filter=A origin/HEAD...HEAD -- specs/" in bundle
+        assert "never adopt one" in bundle
+        # …and the retired tie-prone rule is gone
+        assert "smallest not-yet-complete" not in bundle
+        # a bare number is not a commit scope: the issue rides `Fixes #<n>`,
+        # the one place a number carries its namespace
+        assert "never a bare number" in bundle
+        assert "Fixes #<n>" in bundle
+    # absence proven against the raw sources too, not just the assembled brief
+    for path in sorted(skill_dir.rglob("*.md")):
+        assert "specs/NNN-*" not in path.read_text(encoding="utf-8"), path
+
+
 def test_onboard_brief_keeps_agents_md_authoring_uncapped(runner, skill_dir):
     """The never-create cap is feature/fix doctrine only — onboarding IS the
     authoring path and must not receive a contradicting rule (the cap lives in

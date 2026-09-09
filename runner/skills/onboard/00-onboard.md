@@ -47,7 +47,7 @@ Describe **HOW IT WORKS** so a reader understands the boundaries + data flow wit
 - **Component map** — the major components/modules/services and what each is responsible for. One paragraph per component. This is the level at which architectural decisions get made.
 - **Data flow** — how a request / job / event flows through the components. Sequence diagram in prose is fine; ASCII / mermaid welcome.
 - **Cross-cutting concerns** — auth, logging, error handling, tests, deploy, whichever apply.
-- **Notable design decisions** — for each: what was decided, why, and what was rejected. Cross-link the feature's `specs/NNN-*/` artifacts for the full rationale when the repo has them — the spec is the decision memory; do NOT create a separate ADR log.
+- **Notable design decisions** — for each: what was decided, why, and what was rejected. Cross-link the feature's `specs/` artifacts for the full rationale when the repo has them — the spec is the decision memory; do NOT create a separate ADR log.
 
 Placeholder for diagrams is acceptable if you can't draw one directly — write `<!-- diagram: <what should go here> -->` and describe it in prose.
 

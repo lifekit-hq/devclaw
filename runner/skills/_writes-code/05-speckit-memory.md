@@ -1,46 +1,46 @@
 # Durable memory — the speckit artifacts, never a PLAN.md
 
-Work can outlive your session — you may be picking it up from a prior session,
-and a later session picks up from you. The handoff is the repo's **speckit
-artifacts**: `specs/NNN-*/` (spec.md, plan.md, tasks.md). They are the plan of
-record; the code is the source of truth — where they disagree, the repo wins
-and you fix the artifacts.
+Work outlives your session: you may be picking it up, and a later session
+picks up from you. The handoff is the repo's **speckit artifacts**:
+`specs/<feature>/` (spec.md, plan.md, tasks.md). They are the plan of record;
+the code is the source of truth — where they disagree, the repo wins and you
+fix the artifacts.
 
-**Never create or update a root `PLAN.md`.** It is retired as a planning spine;
-everything it carried lives in the feature's speckit artifacts. A stale one is
-left untouched — removing it is not your task.
+**Never create or update a root `PLAN.md`** — retired; a stale one is left
+untouched, removing it is not your task.
 
 ## Start of session
 
-1. Find the current feature: the smallest not-yet-complete `specs/NNN-*/`
-   (its `tasks.md` still has unchecked items). Read its spec.md and tasks.md
-   first — that is your prior self's handoff. A feature missing plan.md or
-   tasks.md gets them via the speckit steps (plan → tasks, the repo's
-   `.specify/` scripts and templates) before any implementation.
-2. No `specs/` and the repo has `.specify/`? Create the feature with
-   `.specify/scripts/bash/create-new-feature.sh` and run the speckit steps
-   (specify → plan → tasks) before implementing.
-3. No `.specify/` at all (a plain repo, a bounded one-shot fix)? Just do the
-   task well — no planning file of any kind is expected of you.
+1. **Your feature is the one this branch added** —
+   `git diff --name-only --diff-filter=A origin/HEAD...HEAD -- specs/`.
+   Read its spec.md and tasks.md first: your prior self's handoff. A feature
+   already on the default branch is another goal's — never adopt one. Missing
+   plan.md or tasks.md? Run plan → tasks into it before implementing.
+2. Nothing added and the repo has `.specify/`? Create it with
+   `create-new-feature.sh --timestamp --short-name <slug>`, then specify →
+   plan → tasks. `--timestamp` is not optional: the `NNN-` allocator reads only
+   the `specs/` this checkout can see, so concurrent goals all mint the same
+   number. Never pass an issue number as the feature number — wrong namespace
+   and wrong sort.
+3. No `.specify/` (a plain repo, a one-shot fix)? Just do the task well — no
+   planning file is expected of you.
 
 ## As you work
 
-- Flip `- [ ]` → `- [x]` in the feature's `tasks.md` as each task lands — that
-  is how the next session sees what's left without re-deriving it.
+- Flip `- [ ]` → `- [x]` in `tasks.md` as each task lands — that is how the
+  next session sees what's left without re-deriving it.
 - Implement only the smallest not-yet-done story-slice (`[US<n>]`); one
-  coherent slice = one reviewable PR. Never build ahead into later stories —
-  one slice is this session's whole scope, and the harness ends the session
-  once a completed slice is left behind. Land the slice (tasks.md honest,
-  artifacts committed, checks run) before touching anything else.
+  coherent slice = one reviewable PR, this session's whole scope. Never build
+  ahead — the harness ends the session once a completed slice is left behind.
+  Land the slice (tasks.md honest, artifacts committed, checks run) first.
 - Record load-bearing choices (a stack, a schema, an API shape) with a
-  one-line why in the feature's plan.md, so no session relitigates them.
+  one-line why in plan.md, so no session relitigates them.
 - While planning (the tasks step), record for EACH story-slice one line in
-  the feature's plan.md naming the files/areas that slice touches and any
-  constraint discovered — the next session's read budget.
+  plan.md naming the files/areas it touches and any constraint discovered —
+  the next session's read budget.
 - When implementing a slice, read its plan.md line and AGENTS.md FIRST and
   explore raw files only within the slice's declared surface. If the line is
   stale or missing, fix it first and say so in the commit — never silently
   fall back to repo-wide exploration.
-- Commit the `specs/NNN-*/` artifact changes together with the code they
-  describe.
+- Commit the artifact changes together with the code they describe.
 - *Decisions on this goal* in the brief are the owner's rulings: apply, never re-open.
