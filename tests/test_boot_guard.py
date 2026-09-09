@@ -13,23 +13,32 @@ from pathlib import Path
 
 import pytest
 
-from devclaw import boot_guard
+from devclaw import boot_guard, credentials
 
 _REPO = Path(__file__).resolve().parents[1]
 
-# realistic-shaped dummies — the assertion that they never leak is the point
-_BOTH = {
-    "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-dummy-value-never-echoed",
-    "NODE_AUTH_TOKEN": "ghp_dummyvalueneverechoed",
+# Realistic-shaped dummies — the assertion that they never leak is the point.
+# DERIVED from the registry (spec 042): a hand-written pair is exactly the
+# per-hop list the registry replaced, and it would go on passing while a newly
+# required credential had no coverage here at all.
+_REQUIRED = {
+    c.var: ("ghp_dummyvalueneverechoed" if c.prefixes
+            else "sk-ant-oat01-dummy-value-never-echoed")
+    for c in credentials.REGISTRY if c.required
 }
 
 
-@pytest.mark.parametrize("missing", sorted(_BOTH))
+def test_the_required_set_is_the_registrys():
+    assert tuple(_REQUIRED) == boot_guard.REQUIRED_PRODUCTION_ENV
+    assert len(_REQUIRED) >= 2  # the fixture is not vacuous
+
+
+@pytest.mark.parametrize("missing", sorted(_REQUIRED))
 @pytest.mark.parametrize("blank", ["", "   "])
 def test_production_refuses_without_a_required_credential(missing, blank):
     """Blank and absent are the same thing; the refusal names the variable
     and the fix and never a value."""
-    env = dict(_BOTH)
+    env = dict(_REQUIRED)
     env[missing] = blank
     with pytest.raises(SystemExit) as exc:
         boot_guard.assert_required_env(env, engine="")
@@ -37,19 +46,19 @@ def test_production_refuses_without_a_required_credential(missing, blank):
     assert exc.value.code == msg  # a message, i.e. non-zero exit, not `SystemExit(0)`
     assert "refuses to start" in msg and missing in msg
     assert "deploy" in msg  # the fix is named
-    for value in _BOTH.values():
+    for value in _REQUIRED.values():
         assert value not in msg
 
 
-def test_production_refuses_when_both_are_absent():
+def test_production_refuses_when_all_are_absent():
     with pytest.raises(SystemExit) as exc:
         boot_guard.assert_required_env({}, engine="")
     msg = str(exc.value)
-    assert all(name in msg for name in _BOTH)
+    assert all(name in msg for name in _REQUIRED)
 
 
-def test_production_starts_with_both_set():
-    boot_guard.assert_required_env(dict(_BOTH), engine="")  # no raise
+def test_production_starts_with_every_credential_set():
+    boot_guard.assert_required_env(dict(_REQUIRED), engine="")  # no raise
 
 
 @pytest.mark.parametrize("engine", ["host", "stub"])

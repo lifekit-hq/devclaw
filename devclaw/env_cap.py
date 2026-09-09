@@ -26,7 +26,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import Callable, Iterable, Literal, Optional, Protocol
+from typing import Any, Callable, Iterable, Literal, Optional, Protocol
 
 from . import config as _config
 from . import credentials as _credentials
@@ -365,6 +365,43 @@ def probe_registry_token(token: str, timeout_s: float = 5.0) -> Optional[int]:
         return int(exc.code)
     except Exception:
         return None
+
+
+def probe_github_scopes(
+    token: str, timeout_s: float = 5.0
+) -> tuple[Optional[int], Optional[frozenset[str]]]:
+    """``(http_status, granted_scopes)`` for a GitHub credential.
+
+    Sibling of :func:`probe_registry_token` and the same contract: never
+    raises, never logs or returns the token, and every failure degrades to
+    ``(None, None)`` — an unverifiable credential is *unknown*, never OK.
+
+    The scope set comes from the ``X-OAuth-Scopes`` response header, which
+    only a CLASSIC PAT carries. A fine-grained PAT, an app installation token
+    or an OAuth-app token authenticates fine and reports no scopes at all, so
+    ``None`` for the scope set means "not stated", never "none granted" — a
+    caller must report that as unknown rather than as a missing scope."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        "https://api.github.com/user",
+        headers={"Authorization": f"Bearer {token}", "User-Agent": "devclaw-doctor"},
+    )
+
+    def _scopes(headers: Any) -> Optional[frozenset[str]]:
+        raw = headers.get("X-OAuth-Scopes")
+        if raw is None:
+            return None
+        return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return int(resp.status), _scopes(resp.headers)
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), _scopes(exc.headers)
+    except Exception:
+        return None, None
 
 
 def _probe_registry_npm_github(target: CapTarget) -> CapProbeResult:

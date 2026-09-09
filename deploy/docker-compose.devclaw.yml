@@ -82,8 +82,11 @@ services:
       FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
-      # CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN: see env_file above — never
-      # here (an `environment:` entry would override the file with blank).
+      # CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN + GH_TOKEN: see env_file
+      # above — never here (an `environment:` entry would override the file
+      # with blank). GH_TOKEN also supersedes the ~/.config/gh mount below for
+      # every `gh` call and for git's `gh auth git-credential` helper; the
+      # mount stays until a live push has proven the env path.
       # The per-task sandbox image, pulled from ghcr by tag (built from the same
       # source as this MCP image — no md5-verify crutch; both are this commit).
       DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}

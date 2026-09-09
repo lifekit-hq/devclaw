@@ -2,8 +2,9 @@
 
 `claude setup-token` mints the credential that keeps this box off the
 revocable interactive login (#644); the `read:packages` token is what lets a
-sandbox `npm ci` resolve GitHub Packages. They only help if they actually reach
-the containers, and that path crosses files nobody runs locally: the repo
+sandbox `npm ci` resolve GitHub Packages; `GH_TOKEN` is every host-side GitHub
+call, delivery and the failing-job log read included. They only help if they
+actually reach the containers, and that path crosses files nobody runs locally: the repo
 Actions secrets → the deploy workflow's step env → `deploy-devclaw.sh` → the
 on-box secrets file → the compose `env_file`. Since tinyspec
 durable-container-secrets (2026-09-04) the contract is ONE durable home and
@@ -60,7 +61,7 @@ def test_deploy_workflow_hands_each_secret_to_the_deploy_step(var):
 
 def test_deploy_script_writes_the_home_dies_on_absence_and_never_echoes_a_value():
     src = (_REPO / "deploy/deploy-devclaw.sh").read_text()
-    # both credentials are resolved and written, by name
+    # every required credential is resolved and written, by name
     for var in REQUIRED_PRODUCTION_ENV:
         assert f"_resolve_secret {var}" in src
         assert f"{var}=%s" in src  # printf'd into the home
@@ -75,4 +76,8 @@ def test_deploy_script_writes_the_home_dies_on_absence_and_never_echoes_a_value(
     for var in REQUIRED_PRODUCTION_ENV:
         assert f'echo "${{{var}}}"' not in src
         assert f'say "${{{var}}}"' not in src
-    assert src.count('"$_oauth" "$_reg" > "$SECRETS_FILE"') == 1
+    # ONE writer, ONE write: the home is only ever produced by a single
+    # redirection, so a credential added later cannot get a second printf that
+    # truncates what the first one wrote. Asserted structurally rather than by
+    # quoting the current variable list, which a third credential invalidated.
+    assert src.count('> "$SECRETS_FILE"') == 1
