@@ -420,6 +420,46 @@ def probe_github_scopes(
         return None, None
 
 
+def probe_repo_secret_names(
+    owner_repo: str, token: str, timeout_s: float = 5.0
+) -> "Optional[frozenset[str]]":
+    """The NAMES of the Actions secrets set on ``owner_repo`` — never a value.
+
+    The upstream hop nothing checked. A credential's one home is the on-box
+    secrets file, which ``deploy-devclaw.sh`` writes from these Actions
+    secrets — so a name missing HERE is a deploy that will die, or an instance
+    running on whatever stale value it already had. Until now that surfaced as
+    a dead goal days later (NODE_AUTH_TOKEN, #873/#874, fs-557).
+
+    Same contract as :func:`probe_github_scopes`: never raises, never returns
+    or logs a value, and every failure degrades to ``None`` — "could not look"
+    is unknown, never "nothing is set". GitHub's secrets API returns names and
+    timestamps only; the values are not readable by any token."""
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{owner_repo}/actions/secrets",
+        headers={
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "devclaw-doctor",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception:
+        return None
+    secrets = payload.get("secrets") if isinstance(payload, dict) else None
+    if not isinstance(secrets, list):
+        return None
+    return frozenset(
+        str(item["name"]) for item in secrets
+        if isinstance(item, dict) and item.get("name")
+    )
+
+
 def _probe_registry_npm_github(target: CapTarget) -> CapProbeResult:
     """Probe the GitHub Packages npm-registry credential (the fs-479 class).
 

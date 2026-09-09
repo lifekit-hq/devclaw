@@ -354,11 +354,55 @@ def _delivery(env, monkeypatch, *, token="ghp_dummyneverechoed", status=200, sco
     return _findings(_run(env), "instance.delivery.token")
 
 
-def test_delivery_token_without_actions_read_fails_loud(env, monkeypatch):
-    (f,) = _delivery(env, monkeypatch, scopes=("repo", "workflow"))
+def test_delivery_token_without_repo_scope_fails_loud(env, monkeypatch):
+    """`repo` is what a classic/OAuth token needs — for delivery AND for the
+    Actions log read. The check used to demand `actions:read`, which is a
+    FINE-GRAINED PAT permission a classic token never states, so its OK branch
+    was unreachable for the very token its remedy asked for; the old test hid
+    that by passing a scope set GitHub does not return."""
+    (f,) = _delivery(env, monkeypatch, scopes=("gist", "workflow"))
     assert f.verdict is Verdict.FAIL
-    assert "actions:read" in f.evidence and "actions:read" in (f.remedy or "")
+    assert "repo" in f.evidence and "repo" in (f.remedy or "")
     assert "ghp_dummyneverechoed" not in f.evidence  # never echo the value
+
+
+def test_required_actions_secret_missing_detected(env, monkeypatch):
+    """The upstream hop: a credential the deploy resolves from Actions secrets
+    is not set on the repo. Nothing checked this, so it surfaced days later as
+    a burned worker session (NODE_AUTH_TOKEN, #873/#874) instead of here.
+
+    The finding must carry the EXACT provisioning command — "redeploy" is what
+    this used to say and is precisely what cannot work: the deploy dies at
+    _resolve_secret before it touches the box."""
+    from devclaw.doctor import checks_instance as ci
+
+    monkeypatch.setattr(_config, "ENGINE", "")
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
+    monkeypatch.setattr(
+        ci, "_probe_repo_secret_names",
+        lambda repo, token, **kw: frozenset({"CLAUDE_CODE_OAUTH_TOKEN", "GH_TOKEN"}),
+    )
+    (f,) = _findings(_run(env), "instance.credentials.secrets")
+    assert f.verdict is Verdict.FAIL
+    assert "NODE_AUTH_TOKEN" in f.evidence
+    assert "gh secret set NODE_AUTH_TOKEN --repo lifekit-hq/devclaw" in f.remedy
+    # the least privilege comes from the registry, never restated in the check
+    assert "read:packages" in f.remedy
+
+
+def test_unreadable_actions_secrets_is_unknown_never_a_false_fail(env, monkeypatch):
+    """Could-not-look is UNKNOWN. A network blip or a token without `repo`
+    must never read as "the secret is missing" and send the owner chasing a
+    credential that is already set."""
+    from devclaw.doctor import checks_instance as ci
+
+    monkeypatch.setattr(_config, "ENGINE", "")
+    monkeypatch.setenv("GH_TOKEN", "ghp_" + "x" * 36)
+    monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
+    monkeypatch.setattr(ci, "_probe_repo_secret_names", lambda repo, token, **kw: None)
+    (f,) = _findings(_run(env), "instance.credentials.secrets")
+    assert f.verdict is Verdict.UNKNOWN
 
 
 def test_delivery_token_absent_in_production_fails(env, monkeypatch):
@@ -375,7 +419,9 @@ def test_delivery_token_absent_in_production_fails(env, monkeypatch):
     ({"status": 401}, Verdict.FAIL),                      # revoked
     ({"status": None}, Verdict.UNKNOWN),                  # unreachable ⇒ never OK
     ({"scopes": None}, Verdict.UNKNOWN),                  # fine-grained: not stated
-    ({"scopes": ("repo", "actions:read")}, Verdict.OK),
+    # the scope set a real `gh auth login` token carries — the OK branch has
+    # to be reachable for it, which is the bug this parametrization missed
+    ({"scopes": ("gist", "read:org", "repo", "workflow")}, Verdict.OK),
 ])
 def test_delivery_token_verdicts(env, monkeypatch, kw, verdict):
     (f,) = _delivery(env, monkeypatch, **kw)

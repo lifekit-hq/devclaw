@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from .. import claude_trust
 from .. import config as _config
+from .. import credentials as _credentials
 from .model import Finding, Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -29,8 +30,6 @@ _EXPIRY_WARN_MS = 48 * 3600 * 1000
 #: re-imported, not restated).
 from ..engine.sandcastle import OAUTH_TOKEN_VAR as _OAUTH_TOKEN_VAR  # noqa: E402
 from ..engine.sandcastle import REGISTRY_TOKEN_VAR as _REGISTRY_TOKEN_VAR  # noqa: E402
-#: the credentials' one home (one home for the path too: boot_guard).
-from ..boot_guard import SECRETS_FILE_DEFAULT as _SECRETS_FILE_DEFAULT  # noqa: E402
 #: the catalog identity of a worker-reported environment gap — the same two
 #: constants the queue mints it with and the goal layer files it on (spec 038).
 from ..state_store.problems import (  # noqa: E402
@@ -283,12 +282,24 @@ def check_auth_claude_json(ctx: "InstanceContext") -> list[Finding]:
 #: Both credential checks name the same fix the boot guard names — one story
 #: (tinyspec durable-container-secrets): the credentials' one home is the
 #: on-box secrets file the compose file declares, written by the deploy.
-_SECRETS_REMEDY = (
-    "redeploy through the Deploy workflow (`gh workflow run deploy.yml -f "
-    "tag=<sha>`): deploy-devclaw.sh writes both credentials from the repo's "
-    f"Actions secrets into {_SECRETS_FILE_DEFAULT}, the env_file the compose "
-    "file declares"
-)
+def _provision_remedy(var: str) -> str:
+    """The EXACT two commands that provision one credential, named from the
+    registry — not "redeploy", which is what a missing Actions secret used to
+    be told to do and is precisely what cannot work: the deploy dies at
+    `_resolve_secret` before it touches the box, so the operator loops.
+
+    Every fact here already lives in ``devclaw/credentials.py`` (the var, the
+    least privilege it is issued with); this only renders it."""
+    try:
+        cred = _credentials.by_var(var)
+        scope = cred.scope
+    except KeyError:  # a var outside the registry — still say something useful
+        scope = "see devclaw/credentials.py"
+    repo = _config.self_repo() or "<owner>/<repo>"
+    return (
+        f"gh secret set {var} --repo {repo}   (scope: {scope}), "
+        "then redeploy: gh workflow run deploy.yml -f tag=<sha>"
+    )
 
 
 def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
@@ -313,7 +324,7 @@ def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
                     f"{_OAUTH_TOKEN_VAR} not set — the production engine refuses to "
                     "start without it (boot_guard), so this process is stale or "
                     "running degraded on the revocable mounted /login credential",
-                    remedy=_SECRETS_REMEDY)]
+                    remedy=_provision_remedy(_OAUTH_TOKEN_VAR))]
 
 
 #: Shape rules and the live probe are owned by ``devclaw.env_cap`` — the
@@ -326,6 +337,7 @@ from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY  # noqa: E402
 from ..env_cap import GH_TOKEN_PREFIXES as _GH_TOKEN_PREFIXES  # noqa: E402
 from ..env_cap import probe_github_scopes as _probe_github_scopes  # noqa: E402
 from ..env_cap import probe_registry_token as _probe_registry_token  # noqa: E402
+from ..env_cap import probe_repo_secret_names as _probe_repo_secret_names  # noqa: E402
 
 
 def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
@@ -364,7 +376,7 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
                         "engine refuses to start without it (boot_guard); every "
                         "sandbox `npm ci` against GitHub Packages 401s in there and "
                         f"any project declaring '{_CAP_REGISTRY}' is held",
-                        remedy=_SECRETS_REMEDY)]
+                        remedy=_provision_remedy(_REGISTRY_TOKEN_VAR))]
     if not token.startswith(_GH_TOKEN_PREFIXES):
         return [Finding(cid, Verdict.FAIL,
                         f"{_REGISTRY_TOKEN_VAR} is set but is not a GitHub token "
@@ -395,32 +407,44 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
 #: the scope the failing-job log read needs, and the one an operator forgets:
 #: `repo` alone authenticates every push, PR and merge devclaw makes, so a
 #: token without this reads healthy on every path except the one that matters.
-_ACTIONS_READ = "actions:read"
+#: What a classic/OAuth token must carry for every host-side call devclaw
+#: makes, the failing-job log read included.
+#:
+#: NOT ``actions:read``: that is a FINE-GRAINED PAT permission name, never a
+#: classic scope, so a classic/OAuth token never states it and `repo` is what
+#: grants the Actions API there. Requiring it from a STATED scope set could
+#: never pass — this check's OK branch was unreachable for exactly the token
+#: its own remedy told the operator to issue, and the test hid that by
+#: fabricating a scope set GitHub does not return. Verified 2026-09-09: a live
+#: `gist, read:org, repo, workflow` token returns HTTP 200 on
+#: /actions/runs/{id}/jobs.
+_CLASSIC_SCOPE = "repo"
 
 
 def check_delivery_token(ctx: "InstanceContext") -> list[Finding]:
     """The GitHub credential is present, well-formed, live, AND carries
-    ``actions:read`` (specs/tiny/github-credential-in-the-registry.md).
+    ``repo`` (specs/tiny/github-credential-in-the-registry.md).
 
     Until spec 042's registry grew this entry the credential devclaw leans on
     hardest was the one nothing declared: it reached the container as a bind
-    mount of a human's ``~/.config/gh``, so its scope was whatever that human
-    last logged in with. The consequence was not a loud 401. `repo` alone
-    authenticates delivery, intake and the issue doorway, so everything looked
-    fine; only ``gh run view --log-failed`` needs ``actions:read``, and its
-    absence degrades into a one-line ``log unavailable`` note inside a
-    steering message. The worker then meets a red CI verdict with no log, and
-    the only lever it can still see is the CI definition — five workflow files
-    edited on fs-431 (2026-09-08), the always-hard ``change_class`` gate
-    failing the task, and the dispatch budget gone.
+    mount of a human's ``~/.config/gh`` — a revocable personal login whose
+    scope was whatever that human last logged in with, and which nothing
+    checked. On 2026-09-03 devclaw ran ~20h reporting healthy on one.
 
-    A missing scope is therefore reported LOUD here rather than quietly at the
+    The scope this asserts was ``actions:read`` until 2026-09-09 and that was
+    a category error: ``actions:read`` is a FINE-GRAINED PAT permission name,
+    never a classic scope, so a classic/OAuth token never states it and this
+    check could never return OK for the token its own remedy asked for.
+    ``repo`` is what grants a classic token the Actions API — job logs
+    included — alongside delivery, intake and the issue doorway.
+
+    A missing scope is reported LOUD here rather than quietly at the
     read. The value is never echoed — presence, shape and scope names only.
     """
     cid = "instance.delivery.token"
     var = _DELIVERY_TOKEN.var
     remedy = (
-        f"issue a classic PAT with `repo` AND `{_ACTIONS_READ}`, "
+        f"issue a classic PAT with `{_CLASSIC_SCOPE}`, "
         f"`gh secret set {var}`, then redeploy"
     )
     token = os.environ.get(var, "").strip()
@@ -434,7 +458,7 @@ def check_delivery_token(ctx: "InstanceContext") -> list[Finding]:
                         "start without it (boot_guard). Every delivery push, PR and "
                         "merge, intake, the issue doorway and the red-CI log read are "
                         "host-side GitHub calls with no credential",
-                        remedy=_SECRETS_REMEDY)]
+                        remedy=_provision_remedy(var))]
     if not token.startswith(_GH_TOKEN_PREFIXES):
         return [Finding(cid, Verdict.FAIL,
                         f"{var} is set but is not a GitHub token "
@@ -463,21 +487,70 @@ def check_delivery_token(ctx: "InstanceContext") -> list[Finding]:
         return [Finding(cid, Verdict.UNKNOWN,
                         f"{var} accepted by GitHub (HTTP {status}) but states no "
                         "scopes (a fine-grained/app token) — devclaw cannot verify "
-                        f"that it grants {_ACTIONS_READ}, which the failing-job log "
-                        "read needs",
-                        remedy=f"confirm the token grants Actions: read, or issue a "
-                               f"classic PAT with `repo` and `{_ACTIONS_READ}`")]
-    if _ACTIONS_READ not in scopes:
+                        "its permissions, and the failing-job log read is the one "
+                        "that degrades silently without them",
+                        remedy="confirm the token grants Contents + Actions: read, "
+                               f"or issue a classic PAT with `{_CLASSIC_SCOPE}`")]
+    if _CLASSIC_SCOPE not in scopes:
         return [Finding(cid, Verdict.FAIL,
-                        f"{var} is live but lacks {_ACTIONS_READ} "
-                        f"(granted: {', '.join(sorted(scopes)) or 'none'}) — delivery "
-                        "and intake work, so this fails silently: `gh run view "
-                        "--log-failed` cannot read a failing job, and a red-CI "
-                        "correction reaches the worker as a verdict with no evidence",
+                        f"{var} is live but lacks `{_CLASSIC_SCOPE}` "
+                        f"(granted: {', '.join(sorted(scopes)) or 'none'}) — every "
+                        "host-side GitHub call devclaw makes needs it: delivery "
+                        "push/PR/merge, intake, the issue doorway, and the "
+                        "failing-job log read that feeds a red-CI correction",
                         remedy=remedy)]
     return [Finding(cid, Verdict.OK,
                     f"{var} set, well-formed, accepted by GitHub (HTTP {status}) "
-                    f"and carrying {_ACTIONS_READ}")]
+                    f"and carrying `{_CLASSIC_SCOPE}` "
+                    f"(granted: {', '.join(sorted(scopes))})")]
+
+
+def check_credential_secrets(ctx: "InstanceContext") -> list[Finding]:
+    """Every required credential exists as an Actions secret on the self repo.
+
+    The hop nothing checked. A credential's one home on the box is written by
+    ``deploy-devclaw.sh`` from these secrets, so a name missing HERE means the
+    next deploy dies at ``_resolve_secret`` — or, worse, the instance keeps
+    running on a value the deploy never refreshed. Both used to surface days
+    later as a burned worker session (NODE_AUTH_TOKEN, #873/#874, fs-557 held
+    for a week) instead of here, with the fix line attached.
+
+    Registry-driven: it asks ``credentials.required_vars()``, so a credential
+    added later is covered without touching this check. Reading secret NAMES
+    needs the delivery token itself, so an unset/blank one degrades to UNKNOWN
+    — never a false FAIL — and ``instance.delivery.token`` is the finding that
+    already names that case with its own fix."""
+    cid = "instance.credentials.secrets"
+    if _config.ENGINE != "":
+        return [Finding(cid, Verdict.OK,
+                        f"not checked under DEVCLAW_ENGINE={_config.ENGINE!r} (dev/test engine)")]
+    repo = _config.self_repo()
+    if not repo:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        "DEVCLAW_SELF_REPO not set — cannot say which repo's Actions "
+                        "secrets the deploy resolves from")]
+    token = os.environ.get(_DELIVERY_TOKEN.var, "").strip()
+    if not token:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"{_DELIVERY_TOKEN.var} unset — reading secret names needs it "
+                        f"(see instance.delivery.token)")]
+    names = _probe_repo_secret_names(repo, token)
+    if names is None:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"could not read the Actions secrets of {repo} (network, or the "
+                        f"{_DELIVERY_TOKEN.var} lacks `repo`)")]
+    required = _credentials.required_vars()
+    missing = [v for v in required if v not in names]
+    if missing:
+        return [Finding(
+            cid, Verdict.FAIL,
+            f"{repo} is missing Actions secret(s) the deploy resolves: "
+            + ", ".join(missing),
+            remedy="; ".join(_provision_remedy(v) for v in missing),
+        )]
+    return [Finding(cid, Verdict.OK,
+                    f"{repo} carries every required Actions secret "
+                    f"({', '.join(required)})")]
 
 
 def check_auth_pause(ctx: "InstanceContext") -> list[Finding]:
@@ -1234,6 +1307,7 @@ INSTANCE_CHECKS: tuple = (
     check_legacy_deliveries_ref_id,
     check_legacy_dropped_shapes,
     check_goal_status_schema,
+    check_credential_secrets,
     check_auth_credentials_file,
     check_auth_claude_json,
     check_auth_setup_token,

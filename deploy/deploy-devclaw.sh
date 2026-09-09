@@ -89,7 +89,7 @@ fi
 # network call, so doctor's instance.delivery.token owns that half.
 if [[ ! "$_gh" =~ ^(ghp_|github_pat_|ghs_|gho_) ]]; then
   unset _oauth _reg _gh
-  die "GH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). Every host-side GitHub call — delivery push/PR/merge, intake, the issue doorway, the failing-job log read — would 401. Issue a classic PAT with \`repo\` AND \`actions:read\`, \`gh secret set GH_TOKEN\`, and redeploy."
+  die "GH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). Every host-side GitHub call — delivery push/PR/merge, intake, the issue doorway, the failing-job log read — would 401. Issue a classic PAT with \`repo\`, \`gh secret set GH_TOKEN\`, and redeploy."
 fi
 
 # The home must pre-exist with the right ownership — /srv/devclaw is root-owned

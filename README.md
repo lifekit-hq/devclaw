@@ -14,7 +14,7 @@ It sits behind MCP. An [OpenClaw](https://openclaw.ai) waiter agent translates c
 
 ## Run it
 
-Prerequisites: Python 3.11+, docker, a logged-in `claude` CLI, and a `GH_TOKEN` with `repo` + `actions:read` for delivery and the failing-job log read. The per-task sandbox receives a disposable copy of the OAuth identity pair (`.credentials.json` + `.claude.json`) and nothing else from `~/.claude`.
+Prerequisites: Python 3.11+, docker, a logged-in `claude` CLI, and a `GH_TOKEN` with `repo` for delivery and the failing-job log read. The per-task sandbox receives a disposable copy of the OAuth identity pair (`.credentials.json` + `.claude.json`) and nothing else from `~/.claude`.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
