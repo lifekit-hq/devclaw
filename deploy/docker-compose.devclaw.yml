@@ -159,8 +159,12 @@ services:
       - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
       # The /srv/memory vault — trend retrospectives + self-reflection reads.
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
-      # gh CLI auth (private clone + PR) and gitconfig (commit authorship).
-      - ${LIFEKIT_GH_CONFIG:-/home/lifekit/.config/gh}:/home/node/.config/gh
+      # gitconfig: commit authorship AND the `gh auth git-credential` helper
+      # that every https remote operation resolves through. The gh CONFIG mount
+      # that used to sit beside it is gone (2026-09-09, the follow-up in
+      # specs/tiny/github-credential-in-the-registry.md): GH_TOKEN in the env is
+      # the credential's one home and `gh` ranks it above any config file, so a
+      # second source here could only ever mask the env path being broken.
       - ${LIFEKIT_GITCONFIG:-/home/lifekit/.gitconfig}:/home/node/.gitconfig:ro
     cap_drop:
       - NET_RAW
