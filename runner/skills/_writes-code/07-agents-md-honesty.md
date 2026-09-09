@@ -10,4 +10,4 @@ history. NEVER create AGENTS.md if the repo doesn't have one — authoring it
 from scratch is onboarding work, not part of a feature or fix task. If an
 edit would grow the file rather than correct it, it belongs in a split
 target instead: repeatable learnings in `.agent/skills/<topic>.md`, feature
-knowledge in the feature's `specs/NNN-*/` artifacts.
+knowledge in the feature's `specs/` artifacts.
