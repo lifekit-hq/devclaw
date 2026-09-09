@@ -117,10 +117,18 @@ export function GoalDetail() {
   };
   const problemOptions: BlockOption[] = (data?.problem?.options ?? []).map((o) => ({
     key: o.key,
-    label: `${o.label}${o.key === data?.problem?.default ? " (default)" : ""}`,
+    label: o.label,
     detail: o.consequence,
     steer: o.key,
   }));
+
+  // A Problem's `default` is what the loop will take when the timebox elapses —
+  // the same thing `blockOptions.recommended` means for a needs_answer block, and
+  // the thing an owner scanning a blocked goal is looking for. It used to reach
+  // the banner as a " (default)" suffix inside the label while `recommended` was
+  // read from `blockOptions`, which a Problem never populates — so every spec-031
+  // Problem rendered with no highlighted option at all.
+  const recommendedOption = data?.problem?.default ?? data?.blockOptions?.recommended ?? "";
 
   const doSteer = async () => {
     setSteerOpen(false);
@@ -305,12 +313,16 @@ export function GoalDetail() {
                 : data.blockedOn}
               hasUnknowns={hasUnknowns}
               options={data.problem ? problemOptions : (data.blockOptions?.options ?? [])}
-              recommended={data.blockOptions?.recommended ?? ""}
+              recommended={recommendedOption}
               busy={busy}
               onResume={doResume}
               onAnswer={() => setAnswerOpen(true)}
               onPickOption={data.problem ? doDecide : doSteerMessage}
               onCustom={() => setSteerOpen(true)}
+              // While a Problem is open the free-text box calls
+              // correct_implementation, never steer_goal (which the server
+              // refuses) — so it is named for what it does.
+              customLabel={data.problem ? "Write a correction…" : "Write your own answer…"}
             />
           )}
 
@@ -449,6 +461,7 @@ function BlockedBanner({
   onAnswer,
   onPickOption,
   onCustom,
+  customLabel,
 }: {
   blockedOn: string | null;
   hasUnknowns: boolean;
@@ -459,6 +472,7 @@ function BlockedBanner({
   onAnswer: () => void;
   onPickOption: (steer: string) => void;
   onCustom: () => void;
+  customLabel: string;
 }) {
   const isDispatchCap = (blockedOn ?? "").toLowerCase().includes("dispatch cap");
   // §6 (ADR 0010): a needs_answer block whose planner emitted structured options
@@ -516,7 +530,7 @@ function BlockedBanner({
             );
           })}
           <button className="btn ghost sm" disabled={busy !== null} onClick={onCustom} style={{ alignSelf: "flex-start", marginTop: 2 }}>
-            Write your own answer…
+            {customLabel}
           </button>
         </div>
       )}
