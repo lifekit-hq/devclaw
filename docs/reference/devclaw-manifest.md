@@ -39,23 +39,47 @@ Machine schema: [`devclaw-manifest.schema.json`](./devclaw-manifest.schema.json)
 
 Unknown keys are tolerated (forward-compat within a schema version).
 
-### `environment` (spec 032 US4 — declaration surface only)
+### `environment` (spec 032 US4; read since `verify-gate-is-never-narrower-than-ci`)
 
 ```json
 "environment": {
   "image": "mcr.microsoft.com/dotnet/sdk:10.0",
   "services": ["postgres:14"],
   "tools": ["dotnet-ef@10"],
-  "registries": ["npm-github"]
+  "registries": ["npm-github"],
+  "verifyExcludes": [
+    "integration tests (Category=Integration) — they boot the API through WebApplicationFactory and need Docker + Postgres, which only CI has"
+  ]
 }
 ```
 
-The project's verification environment: the SDK image, the sibling services
-its verify needs, tools beyond the SDK, and the registries its install reads.
-Absent keeps today's behaviour; present-but-malformed fails the manifest loud.
-In this arc the block is parsed and validated only — provisioning exactly what
-is declared (or refusing dispatch) lands with US4's follow-up plan, once the
-CI-rollup fact (US1) has a live track record.
+The project's verification environment: the SDK image, the sibling services its
+verify needs, tools beyond the SDK, the registries its install reads, and —
+since tinyspec `verify-gate-is-never-narrower-than-ci` — **what `verifyCmd`
+does not run**. Absent keeps today's behaviour; present-but-malformed fails the
+manifest loud.
+
+The block is now **read**: `devclaw/goal/repo_brief.py` renders it into the
+worker's dispatch brief, from the default-branch tip (a worker can write
+`devclaw.json` on its own branch). Provisioning exactly what is declared — or
+refusing dispatch — is still US4's follow-up.
+
+**Why `verifyExcludes` is prose and not a parsed flag.** A verify command that
+narrows the suite is normal; hiding the narrowing is the defect. fs-431's gate
+was `dotnet test … --filter 'Category!=Integration'` while the failing CI job
+was the integration tier, so the gate excluded exactly what was red and
+returned PASSED with full confidence for nine days and ten increments. Devclaw
+could have derived that by reading the filter — and then it would owe the same
+for pytest, jest, go test and every runner after, which is precisely the
+project-tooling knowledge constitution IX keeps out of the harness. So the
+project states the gap in its own words and devclaw carries it verbatim,
+unparsed and unjudged. The two rendered lines say what the environment is and
+that a PASS from a narrowed gate is a pass on a strict subset of what CI runs,
+never agreement with CI.
+
+Declare it whenever `verifyCmd` skips a tier CI runs — a category filter, a
+skipped suite, a tag exclusion. Nothing infers it, so an undeclared narrowing
+stays invisible exactly as before.
 
 ### `capabilities` (spec 030)
 

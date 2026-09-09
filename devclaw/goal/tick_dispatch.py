@@ -288,11 +288,17 @@ async def _dispatch_action(
     # the brief does not grow with the repo's memory (spec 034 FR-002). No
     # fact bodies are ever injected; the worker pulls them. Skipped for
     # read-only reviews, whose grounded read starts from the repo itself.
+    # The third is a DECLARATION, not a pointer (tinyspec
+    # verify-gate-is-never-narrower-than-ci): the project's verification
+    # environment and what its verify command does not cover are not in the
+    # checkout to be read, and a gate that excludes exactly the tier CI is
+    # failing returns PASSED with full confidence every round.
     brief_prefix = ""
     if action.tool != "review_repository":
         brief_prefix = (
             _repo_brief.architecture_map_pointer(checkout)
             + _repo_brief.worker_memory_pointer(checkout)
+            + _repo_brief.verification_environment(checkout)
         )
     # Human-facing form of the action (#550 — the display half of the #547
     # class): the thin-advance brief is dispatch plumbing, so everything a

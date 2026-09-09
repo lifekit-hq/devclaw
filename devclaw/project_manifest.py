@@ -78,13 +78,31 @@ class ValidationContract:
 
 @dataclass(frozen=True)
 class EnvironmentDecl:
-    """Spec 032 US4 (surface only in this arc): the project's declared
-    verification environment. Parsed and validated so declarations can start
-    accumulating; consumed by nothing until US4's provisioning plan."""
+    """The project's declared verification environment (spec 032 US4).
+
+    Declared, never derived. Since tinyspec
+    ``verify-gate-is-never-narrower-than-ci`` this block is READ: the dispatch
+    brief renders it so a worker knows what environment the project's CI
+    verifies in before it spends a session rediscovering that the sandbox is
+    not that environment (two fs-431 workers wrote the same gaps into REPO
+    NOTES independently, which is the fact arriving too late and in the wrong
+    place).
+
+    ``verify_excludes`` is the half that had no home: what ``verify_cmd``
+    does NOT run. It is a human sentence, not a parsed flag — devclaw must
+    never learn a test runner's filter grammar, because the day it reads
+    ``--filter 'Category!=Integration'`` it owes the same for pytest, jest and
+    go test (constitution IX: devclaw encodes no knowledge about a project's
+    tooling). fs-431's gate excluded precisely the tier CI was failing, so it
+    returned PASSED with full confidence every round for nine days.
+    """
     image: Optional[str] = None
     services: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
     registries: tuple[str, ...] = ()
+    #: what ``verifyCmd`` does not cover, in the project's own words
+    #: (e.g. "integration tests — they need Docker and Postgres, CI only")
+    verify_excludes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -202,7 +220,7 @@ def _parse_environment(raw, source: str) -> Optional[EnvironmentDecl]:
     if image is not None and (not isinstance(image, str) or not image.strip()):
         raise ManifestError(f"{source}: environment.image must be a non-empty string")
     lists: dict[str, tuple[str, ...]] = {}
-    for key in ("services", "tools", "registries"):
+    for key in ("services", "tools", "registries", "verifyExcludes"):
         val = raw.get(key, [])
         if not isinstance(val, list) or any(not isinstance(v, str) or not v.strip() for v in val):
             raise ManifestError(f"{source}: environment.{key} must be a list of non-empty strings")
@@ -210,6 +228,7 @@ def _parse_environment(raw, source: str) -> Optional[EnvironmentDecl]:
     return EnvironmentDecl(
         image=image.strip() if isinstance(image, str) else None,
         services=lists["services"], tools=lists["tools"], registries=lists["registries"],
+        verify_excludes=lists["verifyExcludes"],
     )
 
 
