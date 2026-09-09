@@ -552,6 +552,11 @@ export const PROBLEM_CATEGORIES = [
 ] as const;
 export type ProblemCategory = (typeof PROBLEM_CATEGORIES)[number];
 
+/** The Problems page asks for the server's max page (JSON_MAX_LIMIT) rather
+ *  than the 100-row default: the catalog is larger than that, and a page
+ *  capped at 100 rendered under "the whole catalog" is a lie. */
+export const PROBLEMS_PAGE_LIMIT = 1000;
+
 export interface ProblemsResponse {
   problems: ProblemRow[];
   count: number;
@@ -561,16 +566,20 @@ export interface ProblemsResponse {
    *  showing rather than implying the catalog is this small. */
   windowDays: number | null;
   category: string | null;
+  /** True when the page filled `limit` — there may be more rows than shown. */
+  truncated: boolean;
+  limit: number;
 }
 
 /** `sinceDays: 0` disables the window (all-time). Omitted → the server's
  *  shared default (`DEFAULT_PROBLEM_WINDOW_DAYS`). */
 export async function fetchProblems(
-  opts?: { sinceDays?: number; category?: ProblemCategory | null },
+  opts?: { sinceDays?: number; category?: ProblemCategory | null; limit?: number },
 ): Promise<ProblemsResponse> {
   const qs = new URLSearchParams(tokenQS().replace(/^\?/, ""));
   if (opts?.sinceDays !== undefined) qs.set("since_days", String(opts.sinceDays));
   if (opts?.category) qs.set("category", opts.category);
+  qs.set("limit", String(opts?.limit ?? PROBLEMS_PAGE_LIMIT));
   const q = qs.toString();
   const r = await fetch(`/problems.json${q ? `?${q}` : ""}`);
   if (!r.ok) throw new Error(`problems.json ${r.status}`);

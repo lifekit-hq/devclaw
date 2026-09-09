@@ -91,3 +91,16 @@ None. Per `.claude/rules/testing.md` the suite is a tripwire net: this touches
 no tripwire class (no zero-token guard, fail-closed gate, CAS, OAuth/sandbox
 fence, pause brake, materialize span, doctor seeded-fault or structural guard).
 The console build typechecks the UI half; the route half is exercised live.
+
+## Amendment — a capped page is not "the whole catalog" (2026-09-09, same day)
+
+Verified live after deploy: `/problems.json` defaults to `limit=100`
+(`JSON_DEFAULT_LIMIT`) and the catalog holds **279** rows all-time, 118 in the
+14-day window. So "All time" rendered 100 rows under the prose "showing the
+whole catalog" — the exact dishonesty R4 exists to remove, reintroduced one
+layer down. A full page is indistinguishable from "that is all of them".
+
+- **R6** The response carries `truncated` (the page filled `limit`) and the
+  `limit` applied.
+- **R7** The Problems page requests `JSON_MAX_LIMIT` (1000), not the 100-row
+  default, and says "the first N of …" plus how to narrow when `truncated`.

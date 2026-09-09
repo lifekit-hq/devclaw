@@ -97,6 +97,12 @@ async def problems_json(request: Request) -> Response:
         "problems": rows, "count": len(rows), "selfRepo": self_repo(),
         "windowDays": window_days,
         "category": request.query_params.get("category") or None,
+        # A full page is indistinguishable from "that is all of them" — and the
+        # catalog is bigger than the default limit (279 rows on 2026-09-09), so
+        # a console saying "the whole catalog" over a capped page repeats the
+        # dishonesty the window picker exists to remove.
+        "truncated": len(rows) >= limit,
+        "limit": limit,
     })
 
 
