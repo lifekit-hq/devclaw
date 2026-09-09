@@ -4,7 +4,15 @@
 
 **Created**: 2026-08-27
 
-**Status**: ACTIVE — un-parked by Denys 2026-08-29 (resume condition explicitly overridden; spec 022 landed the same day via #723/#727 and spec 023 via #740). Clarify session 2026-08-29: (1) the TICKET WINS at the done-gate — a scope_grill `spec` slot is worker guidance/grounding, never the judged contract, for issue-backed goals; (2) the issue template rolls out to all four lifekit repos. Implementation note: US1's core (goal stores done_when="" + slots declared empty; the gate judges the live scenario contract) landed with spec 022's dispatch_issue — this arc adds the create-lane slot exemption, the FR-005 judged-revision log, and the template. The goal's `objective` keeps the issue title as IDENTITY DISPLAY (list surfaces need a name); it is never gate input.
+**Status**: **Implemented 2026-08-29** — for issue-backed goals the ticket is the
+contract; the prose lane and the kind-alias tools were removed in `c2a4ed8`;
+tasks 4/5. ONE task open, **T005 — the issue-template rollout** to
+finance-sentry / lifekit-dashboard / lifekit-common. It lands as small PRs on
+*those* repos, not this one: **owner Denys, at the next deploy pass.** Header
+corrected 2026-09-09 by the spec audit: it read `ACTIVE — un-parked` for eleven
+days after the code landed, naming no completion state and no condition that
+ends it.
+Un-parked by Denys 2026-08-29 (resume condition explicitly overridden; spec 022 landed the same day via #723/#727 and spec 023 via #740). Clarify session 2026-08-29: (1) the TICKET WINS at the done-gate — a scope_grill `spec` slot is worker guidance/grounding, never the judged contract, for issue-backed goals; (2) the issue template rolls out to all four lifekit repos. Implementation note: US1's core (goal stores done_when="" + slots declared empty; the gate judges the live scenario contract) landed with spec 022's dispatch_issue — this arc adds the create-lane slot exemption, the FR-005 judged-revision log, and the template. The goal's `objective` keeps the issue title as IDENTITY DISPLAY (list surfaces need a name); it is never gate input.
 
 **Input**: Ruled direction from the 2026-08-27 architecture session: devclaw's entity triple (issue / goal / task) is the canonical ticket / workflow / job shape — the smell is not the count but the **duplication of content** across them. The goal carries freeform `objective` + `done_when` prose restating the issue; the task carries `goal` prose restating both; the saga slots (`out_of_scope` / `invariants` / `established`) are demanded at goal-creation time as API arguments instead of living on the ticket. End state: for issue-backed work the **issue is the contract**; the goal is pure orchestration state; the task is pure execution state. Nothing invented — this is ordinary normalization: one home per fact, and the tracker is the home for intent.
 

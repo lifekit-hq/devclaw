@@ -4,7 +4,13 @@
 
 **Created**: 2026-08-24
 
-**Status**: Clarified 2026-08-24 (3 questions, answered by Denys: manifest =
+**Status**: **Implemented 2026-08-24** — US1 the read-only zero-LLM doctor
+(`devclaw/doctor/`, #674), US2 the per-project `devclaw.json` manifest
+(`devclaw/project_manifest.py`), US3 drift detection + guided migration;
+tasks 26/26. Header corrected 2026-09-09 by the spec audit: it still read
+`Clarified` sixteen days after the code landed, so the spec advertised
+itself as unbuilt work.
+Clarified 2026-08-24 (3 questions, answered by Denys: manifest =
 `devclaw.json` at repo root; `verify_cmd` included in the manifest;
 strictness precedence = most-specific-wins, resolved live)
 
