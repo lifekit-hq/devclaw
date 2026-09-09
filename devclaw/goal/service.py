@@ -375,7 +375,20 @@ class GoalService:
             # deploy pending it waits for task quiescence then fires the
             # workflow. Own try for the same never-kill-the-loop reason.
             try:
-                await _self_deploy.maybe_trigger(self._store, now_ms=_now_ms())
+                _deploy_outcome = await _self_deploy.maybe_trigger(
+                    self._store, now_ms=_now_ms())
+                if _deploy_outcome in ("expired", "trigger_failed"):
+                    # A merge that silently never deploys is the loop's own
+                    # "stopped when it shouldn't": the instance keeps running
+                    # old code and nothing says so. Since every push to main
+                    # arms this, an expiry means the box has been busy for the
+                    # whole bounded wait — the owner needs to know, not a
+                    # stderr line nobody reads.
+                    await self._notifier.send(
+                        f"⚠️ self-deploy {_deploy_outcome}: the instance is still "
+                        f"running its previous build. Re-armed by the next merge, "
+                        f"or deploy by hand."
+                    )
             except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
                 sys.stderr.write(f"goal-layer: self-deploy edge crashed: {exc}\n")
             # Health-drift edge (spec 027 / issue #596) — zero-LLM, read-only:

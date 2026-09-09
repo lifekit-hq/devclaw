@@ -298,6 +298,37 @@ async def control_pause(request: Request) -> Response:
     return JSONResponse({"operatorHold": {"on": on, "reason": r}})
 
 
+@mcp.custom_route("/control/deploy-pending", methods=["POST"])
+async def control_deploy_pending(request: Request) -> Response:
+    """Arm a self-deploy: main moved, redeploy once the instance is quiescent.
+
+    Posted by the deploy workflow on every push to main, so a merge by ANY
+    author — a human, release-please, dependabot automerge — is picked up, not
+    only devclaw's own merge-on-close (spec 025 US2, which was the sole arming
+    path and left every hand-merge invisible).
+
+    This route states a FACT ("main is at <sha>"); it does not deploy. The
+    decision of WHEN belongs to the heartbeat, because that is the only place
+    that can see whether a task is running — putting a quiescence check on the
+    runner would be a second gate answering the same question from worse
+    information. Optional JSON body ``{"sha": "..."}``; blank means main HEAD.
+    Idempotent: a newer merge overwrites the sha, since deploying the latest
+    main covers every merge behind it."""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    from ...state_store import _now_ms
+
+    sha = str((body or {}).get("sha") or "").strip()
+    store.set_deploy_pending(sha=sha, goal_id="ci", since_ms=_now_ms())
+    pending = store.deploy_pending()
+    return JSONResponse({"deployPending": {
+        "sha": pending[0] if pending else "",
+        "armedBy": pending[1] if pending else "",
+    }})
+
+
 @mcp.custom_route("/control/resume", methods=["POST"])
 async def control_resume(request: Request) -> Response:
     """Clear the manual operator hold. Does NOT touch an active quota pause or the
