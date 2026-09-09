@@ -12,6 +12,11 @@ name: Deploy devclaw
 #     automatic rollback to the previously running SHA, instance-dead relay
 #     ping if even the rollback fails.
 on:
+  # A merge to main ARMS a self-deploy; it does not deploy here. The instance
+  # owns the timing, because it is the only place that can see whether a task
+  # is running — see the `arm` job below.
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -28,8 +33,43 @@ permissions:
   packages: write        # push devclaw-mcp + devclaw-sandbox to ghcr.io
 
 jobs:
+  # ---- arm lane (push to main) ------------------------------------------
+  # Tells the instance "main moved". The heartbeat then waits for task
+  # quiescence and fires this same workflow's auto lane (spec 025 US2), so an
+  # in-flight sandbox is never SIGKILLed by a recreate. Runs on the self-hosted
+  # runner because the instance is reachable only on the box's loopback.
+  #
+  # Why arm instead of deploy: quiescence is a fact only the instance holds.
+  # Checking it here would be a second gate answering the same question from
+  # worse information, and a race between them is a killed sandbox.
+  arm:
+    name: Arm a self-deploy (instance picks the moment)
+    if: github.event_name == 'push'
+    runs-on: self-hosted
+    steps:
+      - name: Arm
+        run: |
+          set -uo pipefail
+          # The token is read from the box's own env file, never from an Actions
+          # secret: the runner is ON the VPS, so the credential has no reason to
+          # take a trip through GitHub and gain a hop it does not need (#894).
+          ENV_FILE="${DEVCLAW_ENV_FILE:-/srv/devclaw/.env}"
+          TOKEN="$(sudo -n grep -m1 -E '^DEVCLAW_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+          [ -n "$TOKEN" ] || TOKEN="$(grep -m1 -E '^DEVCLAW_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+          code=$(curl -sS -o /tmp/arm.out -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            ${TOKEN:+-H "Authorization: Bearer $TOKEN"} \
+            -d "{\"sha\": \"${GITHUB_SHA}\"}" \
+            http://127.0.0.1:18791/control/deploy-pending) || code=000
+          echo "arm → HTTP $code"; cat /tmp/arm.out 2>/dev/null || true; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::could not arm the self-deploy (HTTP $code). main is ahead of the running instance; deploy by hand via workflow_dispatch."
+            exit 1
+          fi
+
   deploy:
     name: Build → push (ghcr) → deploy to lifekit-vps
+    if: github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     concurrency:
       group: deploy-lifekit-vps
