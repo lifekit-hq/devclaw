@@ -118,3 +118,119 @@ def test_the_retired_slice_hold_kind_is_gone() -> None:
         "mechanical:slice_hold was retired — the dispatch boundary no longer "
         "predicts build-ahead from sibling spec dirs."
     )
+
+
+# --- the ROW level: a capability row inside a healable kind ------------------
+# The guards above are about the block KIND. `mechanical:env` has a heal
+# branch, so it passes them — and three goals still parked for days on a
+# credential the instance already had (specs/tiny/env-hold-defers-to-a-live-
+# probe). The unreckeckable thing was one level down, in the capability row a
+# worker reports from prose. These pin that level.
+
+import json  # noqa: E402
+
+import pytest  # noqa: E402
+
+from devclaw import credentials as _credentials  # noqa: E402
+from devclaw import env_cap  # noqa: E402
+
+
+class _Meta:
+    """Minimal MetaStore double — env_cap reads and writes nothing else."""
+
+    def __init__(self) -> None:
+        self._d: dict[str, str] = {}
+
+    def get_meta(self, key: str) -> str:
+        return self._d.get(key, "")
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._d[key] = value
+
+
+def _seed_worker_gap(store: _Meta, item: str, project_id: str | None = "proj") -> str:
+    return env_cap.record_worker_deficiency(store, project_id, item)
+
+
+def _seed_probe(store: _Meta, cap_id: str, status: str) -> None:
+    store.set_meta(
+        env_cap._meta_key(cap_id, None),  # noqa: SLF001 — instance-scoped row
+        json.dumps({"status": status, "evidence": "seeded", "remedy": ""}),
+    )
+
+
+def test_every_superseding_mapping_targets_a_probeable_capability() -> None:
+    """A mapping whose target has no probe runner can never read green, so it
+    would silently mean 'never supersedes' — the exact shape of the bug this
+    fixes, re-introduced one level up."""
+    unprobeable = sorted(
+        target for _var, target in env_cap._SUPERSEDING_CREDENTIALS  # noqa: SLF001
+        if target not in env_cap._PROBE_RUNNERS  # noqa: SLF001
+    )
+    assert not unprobeable, (
+        f"superseding mapping(s) target a capability with no probe runner: "
+        f"{unprobeable}. The supersede reads that capability's persisted probe "
+        "result; without a runner the row is never written and the worker's "
+        "report holds forever."
+    )
+
+
+def test_every_superseding_mapping_names_a_registered_credential() -> None:
+    """The map is registry-driven by contract (R2): a hand-typed name here
+    would be a second spelling of a credential and would drift."""
+    registered = {c.var for c in _credentials.REGISTRY}
+    stray = sorted(
+        var for var, _t in env_cap._SUPERSEDING_CREDENTIALS  # noqa: SLF001
+        if var not in registered
+    )
+    assert not stray, (
+        f"superseding mapping(s) name credential(s) not in the registry: {stray}."
+    )
+
+
+@pytest.mark.parametrize(
+    "probe_status, still_red",
+    [
+        ("green", False),   # the fact arrived — the report stops holding
+        ("red", True),      # the gap is real — hold, exactly as before
+        ("unknown", True),  # unrunnable probe is not evidence (FR-007)
+        (None, True),       # never probed — hold
+    ],
+)
+def test_a_worker_gap_naming_a_registry_credential_defers_to_its_probe(
+    probe_status: "str | None", still_red: bool,
+) -> None:
+    """The class: a brake must be able to observe its own release condition.
+    A worker's prose naming NODE_AUTH_TOKEN is answered by the credential's own
+    probe — the one doctor runs and the sweep refreshes — instead of waiting
+    for a human to type resume_goal."""
+    store = _Meta()
+    cap_id = _seed_worker_gap(
+        store,
+        f"{_credentials.REGISTRY_TOKEN.var} (GitHub token with `read:packages`) "
+        "is absent, so `npm ci` 401s on `@lifekit-hq/*`",
+    )
+    if probe_status is not None:
+        _seed_probe(store, env_cap.CAP_REGISTRY_NPM_GITHUB, probe_status)
+
+    red = env_cap.red_caps_for(store, (), "proj")
+
+    assert bool(red) is still_red, (
+        f"worker row {cap_id} with a {probe_status!r} credential probe: "
+        f"expected {'held' if still_red else 'superseded'}, got {red!r}"
+    )
+
+
+def test_a_worker_gap_naming_no_registry_credential_still_waits_for_a_human() -> None:
+    """The human-only exit is narrowed, not removed: prose devclaw cannot check
+    holds until resume_goal, and a green credential probe elsewhere on the
+    instance must not release it."""
+    store = _Meta()
+    _seed_worker_gap(store, "a human must click Approve in the vendor console")
+    _seed_probe(store, env_cap.CAP_REGISTRY_NPM_GITHUB, "green")
+
+    assert env_cap.red_caps_for(store, (), "proj"), (
+        "an unmappable worker report was released by an unrelated green probe"
+    )
+    assert env_cap.clear_worker_deficiencies(store, "proj"), "resume_goal still clears it"
+    assert not env_cap.red_caps_for(store, (), "proj")
