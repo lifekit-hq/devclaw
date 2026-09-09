@@ -71,7 +71,7 @@ Spec 042 US1's cut condition reads: *"the day a third credential is added and it
 - [x] Doctor `instance.delivery.token` (presence, shape, liveness, `actions:read`) + `env_cap.probe_github_scopes` + seeded faults; a fine-grained/app token states no scopes ⇒ UNKNOWN, never a false red
 - [x] Docs + INDEX currency tag (README's prerequisite line too)
 - [ ] Live proof after deploy: one red rollup whose next brief carries the job tail, closing `red-ci-log-to-worker`'s open task
-- [ ] Follow-up, owner Denys, by 2026-09-23: once a live push has run on the env path, remove the `LIFEKIT_GH_CONFIG` mount so the credential has one home
+- [x] Follow-up DONE 2026-09-09: the `LIFEKIT_GH_CONFIG` mount is removed — the credential has one home. Proven on the live box first, with `GH_CONFIG_DIR` pointed at an empty dir: `gh api user`, `git ls-remote` on a private repo over https (the authenticated remote path, through the `gh auth git-credential` helper) and the Actions API all succeeded on `GH_TOKEN` alone. The `LIFEKIT_GITCONFIG` mount stays — it carries the helper itself.
 
 ## Done-When
 
