@@ -22,7 +22,7 @@ import json
 from typing import Optional, Protocol
 
 from .models import Action, Goal, InFlight, PollResult
-from ..state_store import StateStore, TaskKind
+from ..state_store import StateStore, TaskKind, derive_failure_class
 from ..task_change import CHANGE as _CHANGE
 from ..state_store.core import _now_ms
 
@@ -351,7 +351,19 @@ class InProcessEngine:
             no_change=_no_change(t.result_json) if terminal else False,
             landed_partial=_landed_partial(t.result_json) if terminal else False,
             non_worker_commits=_non_worker_commits(t.result_json) if terminal else (),
+            torn_down=_torn_down(t.error) if terminal else False,
         )
+
+
+def _torn_down(error: "Optional[str]") -> bool:
+    """Did the queue tear this task's sandbox down on the wall clock?
+
+    Routed through the EXISTING settle-path classifier rather than a second
+    substring match: ``derive_failure_class`` already owns the vocabulary that
+    turns a settled error into a mechanical class, and its ``timeout`` bucket
+    is exactly this event. A new matcher here would be a second place to keep
+    the wording in sync — the drift this repo has paid for before."""
+    return derive_failure_class(error) == "timeout"
 
 
 def _non_worker_commits(result_json: Optional[str]) -> tuple[str, ...]:

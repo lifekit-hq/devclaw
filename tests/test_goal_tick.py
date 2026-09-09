@@ -16,6 +16,8 @@ from dataclasses import replace
 import pytest
 
 from devclaw.goal.engine import GoalEngineError
+from devclaw.goal import engine as _goal_engine
+from devclaw.queue import settle as _queue_settle
 from devclaw.goal.models import GoalStatus, InFlight, PollResult
 from devclaw.goal.store import GoalStore
 from devclaw.goal.tick import Outcome, tick_all, tick_goal
@@ -361,6 +363,15 @@ async def test_idle_goal_still_advances_on_auto_eval_corrections(tmp_path):
     assert store.unread_steering_rows("g") == []
 
 
+# The wall-clock teardown, end to end: the wording the QUEUE produces, run
+# through the classifier the GOAL layer actually uses. Hardcoding either half
+# would let a message drift in devclaw/queue/settle.py silently stop the
+# refunds below while these tests stayed green — the silent-degradation shape
+# this suite exists to catch.
+_TEARDOWN_MSG = _queue_settle.wall_clock_teardown_msg()
+_TORN_DOWN = _goal_engine._torn_down(_TEARDOWN_MSG)
+
+
 @pytest.mark.asyncio
 async def test_dispatch_cap_blocks_runaway(tmp_path):
     """The cap still brakes — and since spec 041 FR-007 the brake carries a
@@ -467,28 +478,35 @@ async def test_gateless_successful_settle_refunds_dispatch_cap(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "poll",
+    "poll,spent",
     [
         # failed run — no refund
-        PollResult(terminal=True, status="failed", detail="agent died"),
+        (PollResult(terminal=True, status="failed", detail="agent died"), 0),
         # done but gate FAILED — unverified, no refund
-        PollResult(terminal=True, status="done", detail="broke tests",
-                   pr_url="https://github.com/o/r/pull/9", gate_passed=False),
+        (PollResult(terminal=True, status="done", detail="broke tests",
+                    pr_url="https://github.com/o/r/pull/9", gate_passed=False), 0),
         # a worker block that landed NOTHING (empty or undeterminable span, so
         # engine._landed_partial reads False) — there is nothing for the next
         # session to continue from, so it still burns its dispatch and the cap
         # still catches it. The refund narrows the brake; it never weakens it.
-        PollResult(terminal=True, status="failed",
-                   detail="worker reported BLOCKED: missing credential",
-                   landed_partial=False),
+        (PollResult(terminal=True, status="failed",
+                    detail="worker reported BLOCKED: missing credential",
+                    landed_partial=False), 0),
+        # THE BOUND: a SECOND wall-clock teardown with nothing produced since
+        # the first is no longer transient — it is a slice that does not fit the
+        # wall clock. It burns its dispatch and the cap catches it exactly as
+        # before the refund existed. Without this bound the refund is an
+        # unbounded retry, which is the one thing it must never become.
+        (PollResult(terminal=True, status="failed", detail=_TEARDOWN_MSG,
+                    torn_down=_TORN_DOWN), 1),
     ],
 )
-async def test_unproductive_settle_keeps_dispatch_count(tmp_path, poll):
+async def test_unproductive_settle_keeps_dispatch_count(tmp_path, poll, spent):
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status(
         "g", GoalStatus(
-            phase="in_flight", actions_dispatched=4,
+            phase="in_flight", actions_dispatched=4, teardown_refunds=spent,
             in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "add /health"),
         ),
     )
@@ -500,13 +518,30 @@ async def test_unproductive_settle_keeps_dispatch_count(tmp_path, poll):
 
 
 @pytest.mark.asyncio
-async def test_landed_partial_refunds_the_cap_but_leaves_the_watchdog_armed(tmp_path):
+@pytest.mark.parametrize(
+    "poll",
+    [
+        # a context-tripwire block that LANDED a coherent partial increment
+        PollResult(terminal=True, status="failed",
+                   detail="worker reported BLOCKED: context budget exhausted",
+                   landed_partial=True),
+        # devclaw's OWN wall clock firing: the sandbox was torn down mid-session,
+        # so the dispatch never got to succeed or fail on its merits. Charging it
+        # a slot is what parked fs-431 on mechanical:dispatch_cap (2026-09-08:
+        # a 3600s teardown at 19:09 + one other failure at 20:16) waiting for an
+        # owner to press `continue` — a verb the owner should never need.
+        PollResult(terminal=True, status="failed", detail=_TEARDOWN_MSG,
+                   torn_down=_TORN_DOWN),
+    ],
+)
+async def test_unshipped_refund_leaves_the_watchdog_armed(tmp_path, poll):
     """The refund must not become a licence to loop.
 
-    A landed partial publishes no PR and may have committed only re-planning,
-    so it is NOT a delivered increment: ``last_progress_at`` is left untouched
-    and the no-progress watchdog stays armed. That is what makes refunding the
-    dispatch cap safe without minting a second counter — a goal that lands
+    Neither shape is a delivered increment — a landed partial publishes no PR
+    and may have committed only re-planning; a teardown may have committed
+    nothing at all — so ``last_progress_at`` is left untouched and the
+    no-progress watchdog stays armed. That is what makes refunding the dispatch
+    cap safe without minting a second counter: a goal that lands, or times out,
     forever without ever shipping still trips the existing brake."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")  # backlog 2 → cap 4
@@ -517,11 +552,7 @@ async def test_landed_partial_refunds_the_cap_but_leaves_the_watchdog_armed(tmp_
             in_flight=InFlight("devclaw", "implement_feature", "t1", "task", "spec 030"),
         ),
     )
-    engine = FakeEngine(poll_result=PollResult(
-        terminal=True, status="failed",
-        detail="worker reported BLOCKED: context budget exhausted",
-        landed_partial=True,
-    ))
+    engine = FakeEngine(poll_result=poll)
 
     out = await _tick(store, "g", FakeClaude(), engine, RecordingNotifier())
 

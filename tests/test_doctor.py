@@ -102,6 +102,21 @@ def test_nullable_ref_id_schema_and_null_rows_detected(env):
     assert "NULL ref_id" in f.evidence and "1 delivery row" in f.evidence
 
 
+def test_goal_status_missing_a_declared_column_detected(env):
+    """A column the code declares but the live table lacks — the shape a deploy
+    whose ALTER never ran leaves behind. The stubbed suite cannot see it: tests
+    build goal_status fresh, where every column is present by construction.
+
+    Seeded on the newest column, but the check diffs the WHOLE declared shape,
+    so it covers every column without a per-column check."""
+    db = env["store"]._db
+    db.execute("ALTER TABLE goal_status DROP COLUMN teardown_refunds")
+    db.commit()
+    (f,) = _findings(_run(env), "instance.schema.goal_status")
+    assert f.verdict is Verdict.FAIL
+    assert "teardown_refunds" in f.evidence
+
+
 def test_dropped_shapes_still_present_detected(env):
     db = env["store"]._db
     db.execute("CREATE TABLE goal_docs (goal_id TEXT)")
