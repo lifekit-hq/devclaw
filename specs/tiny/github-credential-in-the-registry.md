@@ -1,3 +1,9 @@
+> **Superseded in part, 2026-09-09** — this spec's `actions:read` requirement was a
+> category error: it is a fine-grained-PAT permission name, never a classic scope, so
+> the doctor check it specified could never return OK for the classic PAT it asked the
+> operator to issue. `repo` grants a classic/OAuth token the Actions API. Corrected by
+> `specs/tiny/credentials-say-the-exact-fix.md`; the rest of this spec stands.
+
 # TinySpec: the GitHub credential joins the registry, and its scope is checked
 
 **Branch**: `fix/github-credential-in-the-registry`

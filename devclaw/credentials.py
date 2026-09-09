@@ -90,9 +90,13 @@ DELIVERY_TOKEN = Credential(
         "feeds a red-CI correction"
     ),
     scope=(
-        "repo (push/PR/merge on the driven repos) + actions:read — the log read "
-        "is a distinct scope and its absence degrades silently, which is the "
-        "reason this credential is declared rather than mounted"
+        "repo — push/PR/merge on the driven repos, intake, the issue doorway, "
+        "and the Actions job-log read (`repo` covers the Actions API for a "
+        "classic/OAuth token; `actions:read` is a fine-grained-PAT permission "
+        "name, not a classic scope, and asking for it was a category error "
+        "corrected 2026-09-09). Declared rather than mounted because a "
+        "bind-mounted ~/.config/gh is a revocable personal login nothing "
+        "checks — the 2026-09-03 incident, 20h healthy on it"
     ),
     required=True, sandbox=False, agent=False,
     prefixes=GH_TOKEN_PREFIXES,
