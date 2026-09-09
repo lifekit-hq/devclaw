@@ -155,11 +155,13 @@ export function Problems() {
           )}
 
           <div className="muted" style={{ fontSize: 11, marginTop: 14 }}>
-            Showing {data.windowDays === null
+            Showing {data.truncated ? <>the first <b>{data.count}</b> of </> : null}
+            {data.windowDays === null
               ? "the whole catalog"
               : <>problems seen in the <b>last {data.windowDays} days</b></>}
-            {category ? <> in <b>{category}</b></> : null}. Rows outside the window are hidden, never
-            deleted — widen it to see them. Sorted most-frequent first, and <span className="mono">×N</span>{" "}
+            {category ? <> in <b>{category}</b></> : null}
+            {data.truncated ? <> — more rows exist than fit one page; narrow the window or pick a category</> : null}.
+            Rows outside the window are hidden, never deleted — widen it to see them. Sorted most-frequent first, and <span className="mono">×N</span>{" "}
             is a <b>lifetime</b> count, so a wide window floats long-dead rows to the top.
           </div>
 
