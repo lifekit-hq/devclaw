@@ -1260,6 +1260,9 @@ def test_contract_pins_present_is_ok(env):
     # spec 039 US6: the calibration columns are part of the same shape —
     # a goal_convergence predating them records every close as unpredicted
     ("ALTER TABLE goal_convergence RENAME COLUMN dispatches TO dispatches_old", "dispatches"),
+    # deferred with US3 until the ledger existed to read it (2026-09-09):
+    # without the column every close records its cost as unknown
+    ("ALTER TABLE goal_convergence RENAME COLUMN cost_tokens TO cost_tokens_old", "cost_tokens"),
 ])
 def test_loop_health_tables_absent_fails_with_restart_remedy(env, fault, named):
     """A DB predating spec 039 must not read as healthy: every loop-health

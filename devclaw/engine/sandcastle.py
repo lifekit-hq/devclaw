@@ -593,6 +593,14 @@ def _build_docker_args(
         f"{CONTAINER_CLAUDE_DIR}/session-env:rw,exec",
         "--tmpfs",
         f"{CONTAINER_CLAUDE_DIR}/shell-snapshots:rw,exec",
+        # The agent's own session transcript (spec 039 US3): claude writes
+        # `projects/<cwd-slug>/<session>.jsonl` with per-message token usage —
+        # the one place the worker's spend is recorded, since ACP reports none.
+        # On the RO root that write hit EROFS and was silently dropped. A third
+        # scratch overlay makes the record exist for the life of the container
+        # (the runner reads it after the run); it dies with the container.
+        "--tmpfs",
+        f"{CONTAINER_CLAUDE_DIR}/projects:rw,exec",
         # Pin git authorship to devclaw for every commit the agent makes in
         # here: env beats every git config level, so an identity baked into the
         # image or leaked through a mount can't put the owner's name on agent

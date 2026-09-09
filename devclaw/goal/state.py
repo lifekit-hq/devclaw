@@ -348,6 +348,9 @@ class GoalState(
                 "ALTER TABLE goal_convergence ADD COLUMN prediction_issues TEXT",
                 "ALTER TABLE goal_convergence ADD COLUMN dispatches INTEGER",
                 "ALTER TABLE goal_convergence ADD COLUMN steered INTEGER NOT NULL DEFAULT 0",
+                # Deferred with US3 until the ledger existed to read (2026-09-09):
+                # Σ reported ledger tokens for the goal; NULL = nothing reported.
+                "ALTER TABLE goal_convergence ADD COLUMN cost_tokens INTEGER",
             ):
                 try:
                     self._store._db.execute(sql)

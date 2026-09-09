@@ -277,6 +277,13 @@ class InProcessEngine:
         :meth:`prune_events`."""
         return self._store.maybe_compact_task_results()
 
+    def backfill_usage_ledger(self) -> int:
+        """One-shot usage-ledger backfill from surviving transcripts (spec 039
+        FR-010a). Delegates to :meth:`StateStore.maybe_backfill_usage_ledger`
+        — same seam as :meth:`prune_traces`; watermarked, so every tick after
+        the first is one meta read."""
+        return self._store.maybe_backfill_usage_ledger()
+
     def vacuum(self) -> bool:
         """Weekly VACUUM that reclaims the disk the retention prunes free
         (volume hygiene, 2026-07-18). Delegates to :meth:`StateStore.maybe_vacuum`

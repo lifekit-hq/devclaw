@@ -298,6 +298,9 @@ def compute_instance_usage(store: Any, registry: Any, all_goals: list) -> dict:
         "by_project": by_project,
         "unattributed": _finalize_bucket(unattributed),
         "cap_pressure": _build_cap_pressure(limit_list, since_ms=cap_since_ms),
+        # spec 039 US3/FR-017: the permanent ledger's monthly trend — the one
+        # view that survives transcript retention.
+        "history": compute_usage_history(store),
     }
 
 
@@ -512,26 +515,19 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
     # definition, shared with the loop-health surface (spec 039 FR-016).
     convergence, convergence_note = _convergence_block(store, since_ms=since_ms, bench_ws=bench_ws)
 
-    # ---- cost per merged PR (the legibility number) ---------------------
-    # Tokens are the honest unit on OAuth (Pro/Max) runs — the CLI reports no
-    # dollar cost there, so cost_usd sums are often 0.0; report the token
-    # ratio always and the dollar ratio only when a real cost was recorded.
+    # ---- cost per outcome (spec 039 US4) --------------------------------
+    # The window's raw token totals stay (they describe the window); the
+    # per-merged-PR ratio they used to feed is GONE (FR-015a): it blended
+    # goal-cumulative and standalone PRs and charged every token in the
+    # window — including runs that shipped nothing — to the merged count.
+    # `cost_per_outcome` below is the durable, shape-segmented replacement,
+    # read from the usage ledger with ground-truth PR state.
     total_tokens = (
         cog_tokens_in + cog_tokens_out
         + worker_usage["input_tokens"] + worker_usage["output_tokens"]
     )
     total_cost_usd = round(cog_cost_usd + worker_usage["cost_usd"], 6)
-    # denominator is now DISTINCT merged PRs (ground truth, non-bench) —
-    # the name finally means what it says; null when nothing merged in-window.
-    merged_prs = pr_main["merged"]
-    tokens_per_merged_pr = (
-        int(total_tokens / merged_prs) if merged_prs else None
-    )
-    cost_per_merged_pr_usd = (
-        round(total_cost_usd / merged_prs, 6)
-        if merged_prs and total_cost_usd > 0
-        else None
-    )
+    cost_per_outcome = compute_cost_per_outcome(store, since_ms=since_ms, bench_ws=bench_ws)
 
     # ---- steering (spec 018 US3) ---------------------------------------
     # The machine half only: the convergence rounds distribution. The human
@@ -648,8 +644,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
             "tasks_with_usage": worker_usage["tasks_with_usage"],
             "total_tokens": total_tokens,
             "total_cost_usd": total_cost_usd,
-            "tokens_per_merged_pr": tokens_per_merged_pr,
-            "cost_per_merged_pr_usd": cost_per_merged_pr_usd,
+            "cost_per_outcome": cost_per_outcome,
         },
         "evaluator": {
             "total_calls": eval_calls,
@@ -666,10 +661,11 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
                 pr_note,
                 interventions["note"],
                 "usage: cognition rows without real CLI usage contribute their "
-                "len/4 estimate; every *_cost_usd figure is the CLI's "
-                "API-equivalent estimate, not a bill — OAuth (Pro/Max) runs "
-                "meter nothing; tokens_per_merged_pr is the cross-billing number "
-                "and cost_per_merged_pr_usd is null only when no run reported a cost.",
+                "len/4 estimate to the window totals; OAuth (Pro/Max) runs report "
+                "no dollar cost. cost_per_outcome reads the permanent usage ledger "
+                "(reported rows only) joined to ground-truth PR state — tokens are "
+                "the honest cross-billing unit, cost_usd_per is null unless a real "
+                "cost was recorded.",
             ) if n
         ],
     }
@@ -964,6 +960,7 @@ def compute_loop_health(store: Any, *, window_hours: "int | None" = None, regist
         "idle": compute_idle_attribution(store, since_ms=since_ms, now_ms=now),
         "self_heal": compute_self_heal(store, since_ms=since_ms),
         "clean_cycle": _cycle_block(store, since_ms=since_ms),
+        "cost": compute_cost_per_outcome(store, since_ms=since_ms, bench_ws=bench_ws),
         "first_pass": {
             "first_pass": convergence["first_pass"],
             "goals_closed": convergence["goals_closed"],
@@ -973,6 +970,166 @@ def compute_loop_health(store: Any, *, window_hours: "int | None" = None, regist
         },
         "calibration": compute_calibration(store),
     }
+
+
+# ---- durable usage (spec 039 US3/US4) ---------------------------------------
+#
+# Projections over `usage_ledger` — the permanent per-run record written at
+# settle (per attempt) and at each cognition trace. Every sum carries the
+# record and reported counts it is based on; a rate over nothing is None.
+
+
+def _month_key(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m")
+
+
+def _ledger_tokens(r: dict) -> int:
+    return int(r.get("input_tokens") or 0) + int(r.get("output_tokens") or 0)
+
+
+def compute_usage_history(store: Any) -> dict:
+    """Monthly totals per source over the whole ledger (FR-017): tokens and
+    cost from REPORTED rows only, plus ``records``/``reported`` per month so a
+    month of silent workers reads as unreported, never as free."""
+    try:
+        rows = store.usage_ledger_rows(since_ms=0)
+        boundary = store.backfill_boundary_ms()
+    except (sqlite3.OperationalError, AttributeError):
+        return {"months": [], "backfill_boundary_ms": None,
+                "note": "usage_ledger absent (DB predates spec 039) — no durable history"}
+    months: dict[str, dict] = {}
+    for r in rows:
+        m = months.setdefault(_month_key(int(r["at_ms"])), {
+            "month": _month_key(int(r["at_ms"])),
+            "worker": {"tokens": None, "cost_usd": None, "records": 0, "reported": 0},
+            "cognition": {"tokens": None, "cost_usd": None, "records": 0, "reported": 0},
+        })
+        b = m["worker" if r["source"] == "worker" else "cognition"]
+        b["records"] += 1
+        if not r["reported"]:
+            continue
+        b["reported"] += 1
+        b["tokens"] = (b["tokens"] or 0) + _ledger_tokens(r)
+        c = r.get("cost_usd")
+        if isinstance(c, (int, float)) and not isinstance(c, bool):
+            b["cost_usd"] = round((b["cost_usd"] or 0.0) + float(c), 6)
+    return {
+        "months": [months[k] for k in sorted(months)],
+        "backfill_boundary_ms": boundary,
+        "note": (
+            "rows before the backfill boundary come from transcripts that survived "
+            "retention; anything already pruned is absent, not zero"
+        ),
+    }
+
+
+def compute_cost_per_outcome(store: Any, *, since_ms: int, bench_ws: "set | None" = None) -> dict:
+    """Cost attributable to merged work vs runs that shipped nothing (FR-014),
+    segmented by delivery shape (FR-014a): a merged PR produced by ONE worker
+    dispatch is a standalone PR, one produced by several is a goal-cumulative
+    PR — derived from the data, never declared. PR state is the ledger's
+    ground truth (FR-015): open / unknown / never refreshed is an explicit
+    third bucket excluded from both rates. Tokens are summed from REPORTED
+    ledger rows only, and the block carries how many records that is."""
+    bench_ws = bench_ws or set()
+    empty_rate = {"count": 0, "tokens_total": 0, "tokens_per": None, "cost_usd_per": None}
+    out: dict = {
+        "merged_goals": dict(empty_rate),
+        "merged_standalone_prs": dict(empty_rate),
+        "shipped_nothing": {"count": 0, "tokens_total": 0},
+        "unknown": {"count": 0, "tokens_total": 0},
+        "records": 0, "reported": 0, "tasks_without_record": 0, "note": None,
+    }
+    try:
+        ledger = store.usage_ledger_rows(since_ms=0)
+        with store._lock:  # noqa: SLF001 — telemetry co-designs with state_store
+            task_rows = store._db.execute(
+                "SELECT id, parent_goal_id, kind, pr_url, status, workspace_dir, completed_at "
+                "FROM tasks WHERE completed_at IS NOT NULL AND completed_at >= ?",
+                (since_ms,),
+            ).fetchall()
+            pr_rows = store._db.execute("SELECT pr_url, state FROM pr_ledger").fetchall()
+    except (sqlite3.OperationalError, AttributeError):
+        out["note"] = "usage_ledger / pr_ledger absent (DB predates spec 039) — cost per outcome unknown"
+        return out
+    pr_state = {r["pr_url"]: r["state"] for r in pr_rows}
+    # spend per goal (worker + cognition) and per task, reported rows only
+    goal_tokens: dict[str, int] = {}
+    task_tokens: dict[str, int] = {}
+    ledger_task_ids: set[str] = set()
+    for r in ledger:
+        if r["source"] == "worker":
+            ledger_task_ids.add(str(r["ref_id"]))
+        if not r["reported"]:
+            continue
+        t = _ledger_tokens(r)
+        if r["goal_id"]:
+            goal_tokens[r["goal_id"]] = goal_tokens.get(r["goal_id"], 0) + t
+        if r["source"] == "worker":
+            task_tokens[str(r["ref_id"])] = task_tokens.get(str(r["ref_id"]), 0) + t
+    # tasks settled in-window, grouped by goal
+    by_goal: dict[str, list] = {}
+    goalless: list = []
+    for t in task_rows:
+        if _ws_norm(t["workspace_dir"]) in bench_ws:
+            continue
+        if t["id"] not in ledger_task_ids:
+            out["tasks_without_record"] += 1
+        (by_goal.setdefault(t["parent_goal_id"], []) if t["parent_goal_id"] else goalless).append(t)
+    in_window_goal_ids = set(by_goal)
+    for r in ledger:
+        if r["goal_id"] in in_window_goal_ids or (r["source"] == "worker" and any(
+            str(r["ref_id"]) == t["id"] for t in goalless
+        )):
+            out["records"] += 1
+            out["reported"] += int(bool(r["reported"]))
+
+    def _add(bucket: str, tokens: int) -> None:
+        out[bucket]["count"] += 1
+        out[bucket]["tokens_total"] += tokens
+
+    for gid, tasks in by_goal.items():
+        workers = [t for t in tasks if t["kind"] != "review_repository"]
+        pr_urls = {t["pr_url"] for t in tasks if t["pr_url"]}
+        tokens = goal_tokens.get(gid, 0)
+        states = {pr_state.get(u, "unknown") for u in pr_urls}
+        if not pr_urls:
+            _add("shipped_nothing", tokens)
+        elif "merged" in states:
+            _add("merged_standalone_prs" if len(workers) <= 1 else "merged_goals", tokens)
+        elif states <= {"rejected"}:
+            _add("shipped_nothing", tokens)
+        else:
+            _add("unknown", tokens)
+    for t in goalless:
+        tokens = task_tokens.get(t["id"], 0)
+        st = pr_state.get(t["pr_url"], "unknown") if t["pr_url"] else None
+        if st is None or st == "rejected":
+            _add("shipped_nothing", tokens)
+        elif st == "merged":
+            _add("merged_standalone_prs", tokens)
+        else:
+            _add("unknown", tokens)
+    for key in ("merged_goals", "merged_standalone_prs"):
+        b = out[key]
+        b["tokens_per"] = int(b["tokens_total"] / b["count"]) if b["count"] and b["tokens_total"] else None
+    if out["reported"] == 0 and out["records"] > 0:
+        out["note"] = "no usage was reported for any run in the window — every figure is unknown, not zero"
+    return out
+
+
+def format_cost_per_outcome(cpo: dict) -> str:
+    mg, sp = cpo.get("merged_goals") or {}, cpo.get("merged_standalone_prs") or {}
+
+    def _per(b: dict) -> str:
+        return f"{b['tokens_per']} tok" if b.get("tokens_per") is not None else "n/a"
+
+    return (
+        f"merged goal {_per(mg)} (n={mg.get('count', 0)}) · standalone PR {_per(sp)} "
+        f"(n={sp.get('count', 0)}) · shipped-nothing {(cpo.get('shipped_nothing') or {}).get('tokens_total', 0)} tok "
+        f"· unknown n={(cpo.get('unknown') or {}).get('count', 0)} "
+        f"[{cpo.get('reported', 0)}/{cpo.get('records', 0)} records reported]"
+    )
 
 
 # ---- trace read surface (day-report + shared --since parsing) --------------
@@ -1286,12 +1443,8 @@ def format_scorecard(sc: dict) -> str:
             f"workers {u['worker_input_tokens']}+{u['worker_output_tokens']} tok "
             f"({u['tasks_with_usage']} tasks reporting)"
         )
-        per_pr = (
-            f"{u['tokens_per_merged_pr']} tok" if u["tokens_per_merged_pr"] is not None else "n/a"
-        )
-        if u["cost_per_merged_pr_usd"] is not None:
-            per_pr += f" / ${u['cost_per_merged_pr_usd']:.4f}"
-        lines.append(f"per merged PR:    {per_pr}")
+        cpo = u.get("cost_per_outcome") or {}
+        lines.append("per outcome:      " + format_cost_per_outcome(cpo))
     lines.append("")
     lines.append("estimate notes:")
     for n in sc.get("estimate_notes") or []:

@@ -495,6 +495,44 @@ first-pass read from their existing sources with the scorecard's one
 definition each. Doctor's `instance.loop_health.tables` fails a DB missing
 the tables. **Calibration (US6, 2026-09-07):** the intake grader's prediction is persisted per issue (`intake_grades`, written through a callback the MCP layer binds — layer 3 holds no store), a goal's close joins it onto its `goal_convergence` row (Σ claimed / Σ assessed over the goal's issues, the dispatches it consumed, whether a human steered), and `GET /calibration.json` / the `get_loop_health` block reports the agreement — `determinable: false` with the sample still needed below `CALIBRATION_MIN_SAMPLE` (10), never a figure from a handful of goals. Nothing in the loop reads it back (FR-026). The same join supplies the `no_goal_armed` idle cause: a graded-ready issue no goal references.
 
+**Durable usage — the `usage_ledger` (spec 039 US3/US4).** Token figures
+used to live only inside `tasks.result_json` and `traces.payload_json`, both
+pruned at 30 days, so no trend could outlive a month and the degradation
+was silent. The ledger is the permanent projection, fed at the two places
+usage already enters: `StateStore.record_task_usage` — one row per worker
+ATTEMPT, written by the queue the moment the runner returns (before gates,
+before delivery) — and `append_trace_event`, which writes the cognition row
+in the same commit as a `kind=cognition` trace. A run that reported nothing
+is a `reported=0` row with NULL tokens: absent is a fact, never a zero, and
+every rollup carries `records`/`reported`. Retention is untouched; a
+one-shot watermarked backfill on the heartbeat's cheap slot seeds the ledger
+from whatever transcripts survived. The worker half has its FIRST real
+source with this spec: `claude-agent-acp` reports no token usage over ACP,
+so the runner reads the claude CLI's own session transcript
+(`$CLAUDE_CONFIG_DIR/projects/*/*.jsonl`, made writable by a third tmpfs
+overlay in the sandbox) after the run, behind the claude branch of the
+agent-drive seam. `compute_cost_per_outcome` replaces the old
+`tokens_per_merged_pr`: cost per merged **goal** and per merged
+**standalone PR** as two figures (a merged PR behind one dispatch vs
+several — derived from the data), runs that shipped nothing as a separate
+total, and open/unrefreshed PRs as an explicit unknown bucket outside both
+rates; `/usage.json` gains the ledger's monthly `history`. A closed goal
+records what it cost in `goal_convergence.cost_tokens` (Σ its REPORTED ledger
+rows, cache reads excluded; NULL when nothing reported) — the last field US6
+deferred until there was a ledger to read.
+
+**Seeing it without asking (US5).** The console renders those reads on the
+pages that already own each metric, never on a new one. Overview carries a
+loop-health strip — not-stuck rate, first-pass, clean cycles, self-heal, and
+where the idle went by responsibility bucket — placed above "Needs you" so the
+failing axis reaches the owner instead of waiting to be visited. Usage carries
+the ledger's monthly trend, and states plainly that the instance totals above
+it are a rolling ~30-day window (they read the pruned tables) while the trend
+is permanent. The `Trend` primitive in `console/src/ui.tsx` is inline SVG with
+no charting dependency — the console stays React + router — and it renders a
+`null` bucket as a dotted gap, never a zero-height bar, so "cheap" and "silent"
+cannot look alike.
+
 ---
 
 # Part II — the locked contract
