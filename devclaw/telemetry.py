@@ -298,7 +298,7 @@ def compute_instance_usage(store: Any, registry: Any, all_goals: list) -> dict:
         "by_project": by_project,
         "unattributed": _finalize_bucket(unattributed),
         "cap_pressure": _build_cap_pressure(limit_list, since_ms=cap_since_ms),
-        # spec 038 US3/FR-017: the permanent ledger's monthly trend — the one
+        # spec 039 US3/FR-017: the permanent ledger's monthly trend — the one
         # view that survives transcript retention.
         "history": compute_usage_history(store),
     }
@@ -515,7 +515,7 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
     # definition, shared with the loop-health surface (spec 039 FR-016).
     convergence, convergence_note = _convergence_block(store, since_ms=since_ms, bench_ws=bench_ws)
 
-    # ---- cost per outcome (spec 038 US4) --------------------------------
+    # ---- cost per outcome (spec 039 US4) --------------------------------
     # The window's raw token totals stay (they describe the window); the
     # per-merged-PR ratio they used to feed is GONE (FR-015a): it blended
     # goal-cumulative and standalone PRs and charged every token in the
@@ -972,7 +972,7 @@ def compute_loop_health(store: Any, *, window_hours: "int | None" = None, regist
     }
 
 
-# ---- durable usage (spec 038 US3/US4) ---------------------------------------
+# ---- durable usage (spec 039 US3/US4) ---------------------------------------
 #
 # Projections over `usage_ledger` — the permanent per-run record written at
 # settle (per attempt) and at each cognition trace. Every sum carries the
@@ -996,7 +996,7 @@ def compute_usage_history(store: Any) -> dict:
         boundary = store.backfill_boundary_ms()
     except (sqlite3.OperationalError, AttributeError):
         return {"months": [], "backfill_boundary_ms": None,
-                "note": "usage_ledger absent (DB predates spec 038) — no durable history"}
+                "note": "usage_ledger absent (DB predates spec 039) — no durable history"}
     months: dict[str, dict] = {}
     for r in rows:
         m = months.setdefault(_month_key(int(r["at_ms"])), {
@@ -1050,7 +1050,7 @@ def compute_cost_per_outcome(store: Any, *, since_ms: int, bench_ws: "set | None
             ).fetchall()
             pr_rows = store._db.execute("SELECT pr_url, state FROM pr_ledger").fetchall()
     except (sqlite3.OperationalError, AttributeError):
-        out["note"] = "usage_ledger / pr_ledger absent (DB predates spec 038) — cost per outcome unknown"
+        out["note"] = "usage_ledger / pr_ledger absent (DB predates spec 039) — cost per outcome unknown"
         return out
     pr_state = {r["pr_url"]: r["state"] for r in pr_rows}
     # spend per goal (worker + cognition) and per task, reported rows only

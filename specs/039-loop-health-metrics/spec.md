@@ -4,9 +4,47 @@
 
 **Created**: 2026-09-06
 
-**Status**: PR-A (US1 + US2) implemented 2026-09-07 (#859); PR-C (US6 estimate calibration, without the `cost_tokens` column that waits on US3) implemented 2026-09-07. **Ruled 2026-09-07 (Denys, on the session's recommendation):** US6 (estimate calibration) is next — the spec's own hypothesis that first-pass may be measuring size makes it the read that changes what the loop does; US5 ships alongside as the cheap surface. **US3 and US4 are PARKED**: the only worker-usage source available is a vendor-specific transcript scrape inside the runner (research D1), which is the one layer the constitution keeps model-agnostic (II), to price runs on an OAuth plan whose money is fixed. They resume the day the ACP agent reports usage itself; the `feat/038b-usage-ledger` branch holds the draft until then. Regrade the parking by 2026-10-05.
+**Status**: PR-A (US1 + US2) implemented 2026-09-07 (#859); PR-C (US6 estimate calibration, without the `cost_tokens` column that waits on US3) implemented 2026-09-07. **Ruled 2026-09-07 (Denys, on the session's recommendation):** US6 (estimate calibration) is next — the spec's own hypothesis that first-pass may be measuring size makes it the read that changes what the loop does; US5 ships alongside as the cheap surface. **US3 and US4 are PARKED**: the only worker-usage source available is a vendor-specific transcript scrape inside the runner (research D1), which is the one layer the constitution keeps model-agnostic (II), to price runs on an OAuth plan whose money is fixed. They were to resume the day the ACP agent reports usage itself; the `feat/038b-usage-ledger` branch held the draft.
+
+**UNPARKED 2026-09-09 (Denys, "finish all the US of 039").** The parking is reversed, not expired — the regrade came early because the owner asked for usage history he cannot have without the ledger. What was re-examined and what changed:
+
+- **The model-agnostic objection stands but is contained.** The transcript read sits behind `_is_claude_adapter(argv)` on the agent-drive seam and fires only when `outcome.usage is None`. The file it reads is the agent's own standard session artifact (the same one `ccusage` reads) — adopted, not invented. The day an ACP agent reports usage over the protocol, the fallback stops firing and nothing else in the runner changes.
+- **The model-agnostic alternative was tried and does not work.** `runner/acp_client.py` already carries a protocol-level usage extractor (research D6), so a scrape-free ledger was the obvious shrink. It was rejected on evidence: the 2026-09-07 live check found zero settled tasks with a usage block — claude-agent-acp reports no tokens over ACP. A scrape-free ledger would record real cognition rows and `reported=0` for every worker run, and worker tokens are the bulk of the spend. Honest, and useless for "what does a shipped increment cost".
+- **"OAuth money is fixed" was the weaker half of the original reasoning.** Tokens, not dollars, are the unit the spec already reports (`tokens_per_merged_pr` exists precisely because OAuth runs meter nothing). Fixed spend does not make consumption unmeasurable, and the ledger is a money-domain fact under constitution IX either way.
+
+US3 + US4 rebased onto main 2026-09-09 (`feat/039-usage-ledger`, cherry-pick of 776abbd; suite 1534 passed / 5 skipped, ruff + mypy + lint-imports clean). US5 follows on that base.
 
 **Input**: Owner session 2026-09-06 — "why the loop isn't running, and what a shipped increment costs"
+
+## North-star case
+
+**The failure this moves:** *ran but needed the owner.* Not the loop stopping —
+the owner having to open a session to find out whether it is stopping. The
+failing ratchet axis is read live from `get_scorecard_metrics` and never
+remembered; `~/memory/projects/devclaw/STATUS.md` carries only a dated last-read.
+Today "is first-pass recovering?" costs a session.
+
+**The number:** owner status-reads per week (today: one per morning brief, by
+construction) and time-to-notice a regressing axis. Secondary, and the harder
+number: cost per merged goal, which is **unmeasurable today past 30 days** —
+`tasks.result_json` is NULLed and `traces` deleted by retention, so the figures
+silently shrink rather than end.
+
+**What cuts it:** if the surfaces ship and the owner still opens a session to
+ask how the loop is doing, US5 failed and should be cut rather than extended.
+If `usage_ledger` accumulates for a month and no decision is ever taken on a
+cost number, US4's `cost_per_outcome` is decoration and should be dropped from
+the scorecard rather than kept for completeness.
+
+**Honest weight.** US1/US2/US6 earn their place on the first two axes — they
+changed what the loop reports about itself. US5 is a surface, and a surface the
+owner must visit is the checklist's "moves a number without moving behaviour";
+it survives only in the form ruled 2026-09-09 — trends in place on the pages
+that already own each metric, no new nav entry, and the failing axis on
+Overview so it finds the owner. US3 is the one story here with a hard,
+axis-independent justification: a permanent usage ledger is a money-domain fact
+under constitution IX, required by US4 and by any cost read at all, chart or no
+chart.
 
 ## Why this exists
 

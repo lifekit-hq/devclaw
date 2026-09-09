@@ -1367,7 +1367,7 @@ async def _tick_all_pass(
     # 2026-08-30 DB audit) — transcripts, the DB's biggest payload, get the
     # same daily bounded pass; the settle summary + eval_outcomes stay forever.
     _engine_compact_task_results(engine)
-    # Usage-ledger backfill (spec 038 FR-010a): one-shot, watermarked, pure
+    # Usage-ledger backfill (spec 039 FR-010a): one-shot, watermarked, pure
     # SQL — the permanent usage record is seeded from whatever transcripts
     # retention has not yet pruned, BEFORE the compaction above can take
     # more of them. Same cheap slot, same zero-LLM guarantee.

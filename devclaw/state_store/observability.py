@@ -163,7 +163,7 @@ class ObservabilityMixin:
             )
             assert cur.lastrowid is not None  # INSERT always assigns a rowid
             if kind == "cognition":
-                # Permanent usage row (spec 038 US3) in the SAME commit as the
+                # Permanent usage row (spec 039 US3) in the SAME commit as the
                 # trace: retention prunes the trace, the ledger keeps the
                 # numbers. Best-effort — a ledger hiccup never loses the trace.
                 try:

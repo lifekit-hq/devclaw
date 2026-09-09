@@ -966,7 +966,7 @@ def _emit_event(payload: dict) -> None:
 _DEFAULT_ACP_COMMAND = ("claude-agent-acp",)
 
 
-# --- worker usage source (spec 038 US3) --------------------------------------
+# --- worker usage source (spec 039 US3) --------------------------------------
 # ACP 0.x standardizes no token-usage report and claude-agent-acp sends none,
 # so the ACP extractor in acp_client has never had anything to extract. The
 # claude CLI DOES record what it spent — its own session transcript under
@@ -1881,7 +1881,7 @@ def main() -> None:
             usage = dict(usage, source="acp")
         elif _is_claude_adapter(acp_command):
             # The agent reported nothing over ACP — read what the claude CLI
-            # recorded for itself (spec 038 US3; contracts/runner-usage.md).
+            # recorded for itself (spec 039 US3; contracts/runner-usage.md).
             usage = _claude_transcript_usage(claude_cfg, workspace_dir, run_started_s)
         if outcome.stop_reason == "refusal":
             # A refusal is a failed task with the agent's own words as the

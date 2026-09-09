@@ -43,24 +43,24 @@
 
 **Independent test**: settle a task with usage, advance past retention, compact → usage row still readable; a run with no usage reads unknown; retried task sums attempts.
 
-- [ ] T015 [US3] `devclaw/state_store/health.py`: `record_task_usage(task_id, attempt, usage|None, usage_source)`, `record_cognition_usage(trace_id, payload)`, `maybe_backfill_usage_ledger(now_ms)` (meta watermark `usage_ledger_backfilled`; traces + non-NULL result_json tasks), `usage_history(since_ms)` monthly rollup, `goal_usage_tokens(goal_id)`
-- [ ] T016 [US3] `devclaw/state_store/observability.py`: `append_trace_event` writes the cognition ledger row in the same commit when `kind == 'cognition'`
-- [ ] T017 [US3] `devclaw/queue/settle.py`: call `self._store.record_task_usage(task_id, attempt, result.get("usage"), ...)` right after both `self._runner(request)` sites (attempt index; 0 on the validation path)
-- [ ] T018 [US3] `devclaw/goal/engine.py` + `devclaw/goal/tick.py`: `backfill_usage_ledger` seam on the cheap slot next to `_engine_prune_traces` (getattr pattern, best-effort)
-- [ ] T019 [US3] `devclaw/engine/sandcastle.py`: `--tmpfs {CONTAINER_CLAUDE_DIR}/projects:rw,exec` beside the two existing scratch overlays (comment: the agent's transcript, dies with the container)
-- [ ] T020 [US3] `runner/runner.py`: `_is_claude_adapter(argv)`, `_claude_transcript_usage(config_dir, workspace_dir, started_at_s)` per contracts/runner-usage.md (dedup on requestId, cwd filter, mtime filter, sidechains counted, never raises); used when `outcome.usage is None`; `usage["source"]` stamped on both paths
-- [ ] T021 [US3] `devclaw/telemetry.py`: `_accum_worker`/`sum_task_usage` tolerate `cache_creation_tokens`/`source` and a missing `cost_usd`; `compute_instance_usage` gains `history` (from the ledger) with the backfill boundary note
-- [ ] T022 [US3] `tests/test_loop_health_absent_is_never_zero.py`: add cases — runner `_claude_transcript_usage` on an empty dir → None and on a seeded transcript without usage → None (import runner via spec_from_file_location like `tests/test_runner_*.py`), ledger `usage_history` on unreported rows → tokens None with records/reported counts; `tests/test_runner_acp.py` fake-agent `"usage" not in result` stays green (no change)
-- [ ] T023 [US3] `specs/021-worker-context-budget/contracts/runner-result.md`: usage block `source` field + transcript rule (docs honesty)
+- [X] T015 [US3] `devclaw/state_store/health.py`: `record_task_usage(task_id, attempt, usage|None, usage_source)`, `record_cognition_usage(trace_id, payload)`, `maybe_backfill_usage_ledger(now_ms)` (meta watermark `usage_ledger_backfilled`; traces + non-NULL result_json tasks), `usage_history(since_ms)` monthly rollup, `goal_usage_tokens(goal_id)`
+- [X] T016 [US3] `devclaw/state_store/observability.py`: `append_trace_event` writes the cognition ledger row in the same commit when `kind == 'cognition'`
+- [X] T017 [US3] `devclaw/queue/settle.py`: call `self._store.record_task_usage(task_id, attempt, result.get("usage"), ...)` right after both `self._runner(request)` sites (attempt index; 0 on the validation path)
+- [X] T018 [US3] `devclaw/goal/engine.py` + `devclaw/goal/tick.py`: `backfill_usage_ledger` seam on the cheap slot next to `_engine_prune_traces` (getattr pattern, best-effort)
+- [X] T019 [US3] `devclaw/engine/sandcastle.py`: `--tmpfs {CONTAINER_CLAUDE_DIR}/projects:rw,exec` beside the two existing scratch overlays (comment: the agent's transcript, dies with the container)
+- [X] T020 [US3] `runner/runner.py`: `_is_claude_adapter(argv)`, `_claude_transcript_usage(config_dir, workspace_dir, started_at_s)` per contracts/runner-usage.md (dedup on requestId, cwd filter, mtime filter, sidechains counted, never raises); used when `outcome.usage is None`; `usage["source"]` stamped on both paths
+- [X] T021 [US3] `devclaw/telemetry.py`: `_accum_worker`/`sum_task_usage` tolerate `cache_creation_tokens`/`source` and a missing `cost_usd`; `compute_instance_usage` gains `history` (from the ledger) with the backfill boundary note
+- [X] T022 [US3] `tests/test_loop_health_absent_is_never_zero.py`: add cases — runner `_claude_transcript_usage` on an empty dir → None and on a seeded transcript without usage → None (import runner via spec_from_file_location like `tests/test_runner_*.py`), ledger `usage_history` on unreported rows → tokens None with records/reported counts; `tests/test_runner_acp.py` fake-agent `"usage" not in result` stays green (no change)
+- [X] T023 [US3] `specs/021-worker-context-budget/contracts/runner-result.md`: usage block `source` field + transcript rule (docs honesty)
 
 ## Phase 6: US4 — Know what a shipped increment costs (PR-B)
 
 **Independent test**: ledger rows + pr_ledger states → merged goals vs standalone PRs as separate figures, shipped-nothing total, unknown bucket, counts.
 
-- [ ] T024 [US4] `devclaw/telemetry.py`: `compute_cost_per_outcome(store, since_ms)` per D6 (segmentation by worker dispatches behind the merged PR; unknown bucket excluded; `records`/`reported`/`tasks_without_record`)
-- [ ] T025 [US4] `devclaw/telemetry.py`: REPLACE `usage.tokens_per_merged_pr` / `usage.cost_per_merged_pr_usd` in `compute_scorecard` with `usage.cost_per_outcome`; update `format_scorecard` and the `estimate_notes` wording; include the same block in `compute_loop_health`
-- [ ] T026 [US4] `tests/test_loop_health_absent_is_never_zero.py`: `compute_cost_per_outcome` on an empty ledger → every `tokens_per` None, counts 0, and the scorecard no longer carries the removed keys
-- [ ] T027 [US4] Docs honesty PR-B: `docs/architecture.md` (usage ledger + cost per outcome), `docs/flows/task-execution.md` (runner result usage source, the sandbox tmpfs), `docs/INDEX.md`; `/ship` PR-B (stacked on A)
+- [X] T024 [US4] `devclaw/telemetry.py`: `compute_cost_per_outcome(store, since_ms)` per D6 (segmentation by worker dispatches behind the merged PR; unknown bucket excluded; `records`/`reported`/`tasks_without_record`)
+- [X] T025 [US4] `devclaw/telemetry.py`: REPLACE `usage.tokens_per_merged_pr` / `usage.cost_per_merged_pr_usd` in `compute_scorecard` with `usage.cost_per_outcome`; update `format_scorecard` and the `estimate_notes` wording; include the same block in `compute_loop_health`
+- [X] T026 [US4] `tests/test_loop_health_absent_is_never_zero.py`: `compute_cost_per_outcome` on an empty ledger → every `tokens_per` None, counts 0, and the scorecard no longer carries the removed keys
+- [X] T027 [US4] Docs honesty PR-B: `docs/architecture.md` (usage ledger + cost per outcome), `docs/flows/task-execution.md` (runner result usage source, the sandbox tmpfs), `docs/INDEX.md`; `/ship` PR-B (stacked on A)
 
 ## Phase 7: US6 — Estimate calibration (PR-C)
 

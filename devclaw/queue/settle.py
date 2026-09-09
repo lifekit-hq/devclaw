@@ -663,7 +663,7 @@ class SettleMixin:
         except Exception as err:  # noqa: BLE001 — infra crash is loud, no retry
             self._store.mark_failed(task_id, f"validation runner error: {err}")
             return
-        # Permanent usage row for this run (spec 038 US3) — recorded the moment
+        # Permanent usage row for this run (spec 039 US3) — recorded the moment
         # the runner returns, before anything can fail the settle.
         self._store.record_task_usage(task_id, attempt=0, usage=result.get("usage"))
 
@@ -1291,7 +1291,7 @@ class SettleMixin:
                 last_failure = str(err)  # unexpected runner error — retryable
                 last_origin = _ORIGIN_HARNESS
             else:
-                # Permanent usage row per ATTEMPT (spec 038 US3, FR-009): the
+                # Permanent usage row per ATTEMPT (spec 039 US3, FR-009): the
                 # ledger row is written the moment the runner returns, so a
                 # retried attempt's spend survives its failure and retention
                 # never deletes the numbers. Absent usage is a reported=0 row.

@@ -593,7 +593,7 @@ def _build_docker_args(
         f"{CONTAINER_CLAUDE_DIR}/session-env:rw,exec",
         "--tmpfs",
         f"{CONTAINER_CLAUDE_DIR}/shell-snapshots:rw,exec",
-        # The agent's own session transcript (spec 038 US3): claude writes
+        # The agent's own session transcript (spec 039 US3): claude writes
         # `projects/<cwd-slug>/<session>.jsonl` with per-message token usage —
         # the one place the worker's spend is recorded, since ACP reports none.
         # On the RO root that write hit EROFS and was silently dropped. A third

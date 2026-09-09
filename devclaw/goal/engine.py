@@ -278,7 +278,7 @@ class InProcessEngine:
         return self._store.maybe_compact_task_results()
 
     def backfill_usage_ledger(self) -> int:
-        """One-shot usage-ledger backfill from surviving transcripts (spec 038
+        """One-shot usage-ledger backfill from surviving transcripts (spec 039
         FR-010a). Delegates to :meth:`StateStore.maybe_backfill_usage_ledger`
         — same seam as :meth:`prune_traces`; watermarked, so every tick after
         the first is one meta read."""
