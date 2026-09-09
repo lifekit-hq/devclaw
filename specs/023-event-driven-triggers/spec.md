@@ -4,7 +4,15 @@
 
 **Created**: 2026-08-27
 
-**Status**: ACTIVE — un-parked by Denys 2026-08-29 (the resume condition was
+**Status**: **Implemented 2026-08-29** — the signature-verified webhook route
+(`devclaw/server/routes/webhooks.py`, `60e1538`) wakes the machinery and grades
+on issue events; tasks 6/7. ONE task open, **T007 — the live legs** (4-repo
+webhook configuration, one observed merged-PR wake for SC-001, one auto-graded
+issue for SC-002). It cannot run inside a code PR: **owner Denys, at the next
+VPS deploy.** Header corrected 2026-09-09 by the spec audit: it read
+`ACTIVE — un-parked` for eleven days after the code landed, naming no
+completion state and no condition that ends it.
+Un-parked by Denys 2026-08-29 (the resume condition was
 explicitly overridden alongside the unattended-week arc; spec 022's US1/US2/US3
 core landed via #723/#727 the same day, with only the demolition scope
 trailing as a pure-removal PR). Clarify session held 2026-08-29:

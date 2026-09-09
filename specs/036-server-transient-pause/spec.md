@@ -4,7 +4,13 @@
 
 **Created**: 2026-09-06
 
-**Status**: Draft — US1 + US2 implemented 2026-09-06; US3 specified, not implemented
+**Status**: US1 + US2 **implemented 2026-09-06**; **US3 (the sandbox reports the
+outage structurally, T013–T016) SPECIFIED, NOT IMPLEMENTED — build or cut by
+2026-09-22, owner Denys.** Resume condition added 2026-09-09 by the spec audit:
+the story suspended itself with no date and no owner, the
+label-that-stops-a-clock defect (`~/memory/README.md` rule 4) that specs 040 and
+042 each avoid by carrying one. The date matches spec 042 US2's regrade so both
+land in one sitting; move it if that is the wrong week.
 
 **Input**: User description: "A 529 Overloaded burns the dispatch cap; a server-side transient should pause-and-resume like quota/auth (lifekit-hq/devclaw issue #817)"
 

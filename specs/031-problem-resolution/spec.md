@@ -4,7 +4,19 @@
 
 **Created**: 2026-09-02
 
-**Status**: Clarified 2026-09-02 (3 questions walked with Denys, all recommended options taken) — ready for `/speckit-plan`
+**Status**: **Implemented 2026-09-02** — all four user stories: the typed Problem
+seam (`devclaw/goal/problems.py`, `91c6ba7`), the `goal_problems` /
+`goal_decisions` tables, the two resolution verbs (`decide`,
+`correct_implementation`), and Decisions fed forward as fact
+(`devclaw/goal/decisions.py`). Extended by spec 041 (2026-09-08, a Decision is
+executed by the next tick) and relied on by spec 044. Tasks 50/51: **T050 — the
+live quickstart walkthrough** is the only one open and runs at deploy, not in a
+code PR: **owner Denys, at the next VPS deploy.** Header corrected 2026-09-09 by
+the spec audit: it read `ready for /speckit-plan` for a week after the seam
+shipped and became load-bearing in `CLAUDE.md`, the constitution and spec 044 —
+the most misleading header in `specs/`, since it invited someone to plan work
+that already existed.
+Clarified 2026-09-02 (3 questions walked with Denys, all recommended options taken).
 
 **Input**: User description: "A goal that cannot proceed states its problem as a
 typed thing, and the owner resolves it with one of exactly two typed moves; most
