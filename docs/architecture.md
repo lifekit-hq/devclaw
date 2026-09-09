@@ -428,7 +428,15 @@ false all-clear). Mechanical auto-heals do **not** re-record — the original
 block entry already counted it.
 This is the **capture + dedup + count** layer; the `list_problems` MCP tool
 (reading `StateStore.list_problems`, most-frequent first, optional `category`
-filter) is the read surface over it. **The catalog is a GATHERER, not a backlog
+filter) is the read surface over it. Both read surfaces are **windowed by
+default** — `DEFAULT_PROBLEM_WINDOW_DAYS` (14) in `state_store/problems.py`,
+one home for the number — because the table is bounded per fingerprint but
+unbounded in VOCABULARY and `count` is a lifetime counter, so an all-time
+read sorts long-dead rows above live ones (`since_days=0` defeats it). A
+cognition role that is DELETED can never be raised again, so its rows are
+purged at boot against the declared `RETIRED_COGNITION_ROLES` rather than
+hidden by the window (doctor: `instance.legacy.retired_cognition_problems`).
+The cycle report is deliberately NOT windowed — it summarises history. **The catalog is a GATHERER, not a backlog
 (N1/#371).** The single canonical store of *intent* — "what to do about a
 failure" — is **GitHub Issues**; SQLite stays canonical for execution *state*;
 this table is the mechanical feeder between them. The self-improving loop

@@ -12,6 +12,8 @@ import sqlite3
 import threading
 from typing import Callable
 
+from .problems import RETIRED_COGNITION_ROLES
+
 
 def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[], None]) -> None:
         with lock:
@@ -374,6 +376,23 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 )
             except sqlite3.OperationalError:
                 pass  # table/column not present yet (fresh DB pre-CREATE) — nothing to backfill
+
+            # Retire the problems-catalog vocabulary of DELETED cognition roles
+            # (specs/tiny/problems-catalog-recency.md R4). A `cognition/<role>`
+            # row is keyed on the caller's `role`; when the caller is deleted the
+            # row can never be raised again, so it is removed rather than hidden.
+            # A recency window cannot do this — two of the three roles were last
+            # seen 10 days before the retirement, inside any sane window — and
+            # they dominated the default read by lifetime `count`. Idempotent:
+            # a second boot matches nothing.
+            try:
+                db.execute(
+                    "DELETE FROM problems WHERE category = 'cognition' AND kind IN "
+                    "(%s)" % ",".join("?" * len(RETIRED_COGNITION_ROLES)),
+                    tuple(sorted(RETIRED_COGNITION_ROLES)),
+                )
+            except sqlite3.OperationalError:
+                pass  # table not present yet (fresh DB pre-CREATE) — nothing to purge
 
             # (3) Indexes — safe now that all referenced columns exist.
             db.executescript(

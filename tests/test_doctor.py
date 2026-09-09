@@ -796,6 +796,56 @@ def test_slice_hold_retired_is_ok_on_a_clean_instance(env):
     assert f.verdict is Verdict.OK and "retired" in f.evidence
 
 
+def test_retired_cognition_problems_detected(env):
+    """Seeded fault: a problems row naming a DELETED cognition role.
+
+    `cognition/<role>` rows are keyed on the caller's role; the callers for
+    goal_planner/summary/trend-detector are gone, so these rows can never be
+    raised again — yet their LIFETIME count keeps them at the top of the
+    default `ORDER BY count DESC` read. Only a deployed instance reaches this
+    state (an interrupted boot, or a pre-retirement backup), the FR-014 class
+    the stubbed suite cannot otherwise see.
+    """
+    from devclaw.state_store.problems import RETIRED_COGNITION_ROLES
+
+    db = env["store"]._db
+    for role in sorted(RETIRED_COGNITION_ROLES):
+        db.execute(
+            "INSERT INTO problems (fingerprint, category, kind, summary, "
+            "sample_message, count, first_seen_ms, last_seen_ms) "
+            "VALUES (?, 'cognition', ?, 's', 'm', 60, 1, 2)",
+            (f"fp-{role}", role),
+        )
+    db.commit()
+    (f,) = _findings(_run(env), "instance.legacy.retired_cognition_problems")
+    assert f.verdict is Verdict.FAIL
+    assert "goal_planner" in f.evidence and "restart devclaw" in f.remedy
+
+
+def test_retired_cognition_problems_ok_on_a_clean_instance(env):
+    (f,) = _findings(_run(env), "instance.legacy.retired_cognition_problems")
+    assert f.verdict is Verdict.OK
+
+
+def test_live_cognition_role_is_never_purged(env):
+    """The purge is keyed on a DECLARED retired set, never on staleness — an
+    ancient `cognition/evaluator` row stays, because that caller still exists.
+    Pins the boundary the migration must not cross."""
+    from devclaw.state_store.problems import RETIRED_COGNITION_ROLES
+
+    assert "evaluator" not in RETIRED_COGNITION_ROLES
+    assert "review" not in RETIRED_COGNITION_ROLES
+    db = env["store"]._db
+    db.execute(
+        "INSERT INTO problems (fingerprint, category, kind, summary, "
+        "sample_message, count, first_seen_ms, last_seen_ms) "
+        "VALUES ('fp-live', 'cognition', 'evaluator', 's', 'm', 3, 1, 2)"
+    )
+    db.commit()
+    (f,) = _findings(_run(env), "instance.legacy.retired_cognition_problems")
+    assert f.verdict is Verdict.OK
+
+
 def test_donegate_progress_column_absent_detected(env):
     """Seeded fault (spec-016 FR-014): donegate_progress dropped → the DB
     predates the progress-aware churn brake; every done-gate round reads as

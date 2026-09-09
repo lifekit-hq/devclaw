@@ -7,11 +7,13 @@ dispatches, mutates, or wakes the goal loop.
 from __future__ import annotations
 
 import json
+import time
 from typing import Annotated, Literal, Optional
 
 from fastmcp.exceptions import ToolError
 from pydantic import Field
 
+from ...state_store.problems import DEFAULT_PROBLEM_WINDOW_DAYS
 from .._state import mcp, registry, store
 
 
@@ -95,6 +97,7 @@ async def list_problems(
         ]
     ] = None,
     limit: Annotated[int, Field(ge=1, le=1000)] = 100,
+    since_days: Annotated[int, Field(ge=0, le=3650)] = DEFAULT_PROBLEM_WINDOW_DAYS,
 ) -> str:
     """The deduplicated problems catalog — a **gatherer-signal readout**, NOT a
     backlog (issue-driven-pipelines, N1/#371). The single canonical store of
@@ -114,15 +117,28 @@ async def list_problems(
     un-normalized example for context.
 
     Pass ``category`` to filter to one class of failure (block / task_fail /
-    gate / delivery / limit / cognition / subprocess / other). Pure SELECT over
-    state_store — cheap, read-only, never wakes the goal loop."""
+    gate / delivery / limit / cognition / subprocess / other).
+
+    **This read is WINDOWED.** ``since_days`` (default 14) drops rows not seen
+    in that window, so what comes back is what devclaw is hitting NOW — the
+    catalog is bounded per fingerprint but unbounded in vocabulary, and
+    ``count`` is a LIFETIME counter, so an all-time read sorts a long-dead row
+    that recurred 60 times above a live one that recurred 13 times yesterday.
+    Pass ``since_days=0`` for the whole history; a row absent from a windowed
+    read is hidden, never deleted. Pure SELECT over state_store — cheap,
+    read-only, never wakes the goal loop."""
     from ...state_store.problems import problem_lifecycle
 
+    since_ms = (
+        None if int(since_days) <= 0
+        else int(time.time() * 1000) - int(since_days) * 24 * 60 * 60 * 1000
+    )
     problems = store.list_problems(
-        category=category, limit=int(limit), include_issue=True
+        category=category, limit=int(limit), include_issue=True, since_ms=since_ms
     )
     for p in problems:
         p["lifecycle"] = problem_lifecycle(p)
     return json.dumps(
-        {"count": len(problems), "problems": problems}, indent=2
+        {"count": len(problems), "window_days": int(since_days), "problems": problems},
+        indent=2,
     )

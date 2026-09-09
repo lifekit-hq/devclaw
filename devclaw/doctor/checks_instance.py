@@ -34,7 +34,7 @@ from ..boot_guard import SECRETS_FILE_DEFAULT as _SECRETS_FILE_DEFAULT  # noqa: 
 #: the catalog identity of a worker-reported environment gap — the same two
 #: constants the queue mints it with and the goal layer files it on (spec 038).
 from ..state_store.problems import (  # noqa: E402
-    ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND,
+    ENV_DEFICIENCY_CATEGORY, ENV_DEFICIENCY_KIND, RETIRED_COGNITION_ROLES,
 )
 
 
@@ -681,6 +681,44 @@ def check_legacy_slice_hold_retired(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "slice-hold brake retired: column dropped, no goal parked on it")]
 
 
+def check_retired_cognition_problems(ctx: "InstanceContext") -> list[Finding]:
+    """specs/tiny/problems-catalog-recency.md R6: no ``problems`` row may name a
+    cognition role the code can no longer raise.
+
+    A ``cognition/<role>`` row is keyed on the caller's ``role``; when that
+    caller is deleted the row becomes permanently unraisable, yet it keeps its
+    LIFETIME ``count`` and so outranks live problems in the default
+    ``ORDER BY count DESC`` read. The boot migration deletes them; this check
+    catches the two ways that fails on a DEPLOYED instance — an interrupted
+    boot, and a DB restored from a pre-retirement backup. The stubbed suite
+    cannot see either (it builds fresh DBs), which is the FR-014 class this
+    check exists for."""
+    cid = "instance.legacy.retired_cognition_problems"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "problems" not in tables:
+            return [Finding(cid, Verdict.OK, "problems table absent (nothing gathered yet)")]
+        placeholders = ",".join("?" * len(RETIRED_COGNITION_ROLES))
+        rows = db.execute(
+            f"SELECT kind, COUNT(*) AS n FROM problems "
+            f"WHERE category = 'cognition' AND kind IN ({placeholders}) GROUP BY kind",
+            tuple(sorted(RETIRED_COGNITION_ROLES)),
+        ).fetchall()
+    if rows:
+        detail = ", ".join(f"{r['kind']} ({r['n']} row(s))" for r in rows)
+        return [Finding(
+            cid, Verdict.FAIL,
+            f"retired cognition role(s) still in the problems catalog: {detail} — "
+            "no code path can raise these, but their lifetime counts still "
+            "outrank live problems in the default read",
+            remedy="restart devclaw (the retirement migration purges them at boot)",
+        )]
+    return [Finding(
+        cid, Verdict.OK,
+        f"no retired cognition roles in the catalog ({len(RETIRED_COGNITION_ROLES)} declared)",
+    )]
+
+
 def check_goal_status_env_hold_notified(ctx: "InstanceContext") -> list[Finding]:
     """Spec 030 FR-003: ``env_hold_notified`` marks the one owner ping an
     environment-capability hold episode is allowed. Absent, every held tick
@@ -1070,6 +1108,7 @@ INSTANCE_CHECKS: tuple = (
     check_project_sandbox_sizing,
     check_goal_issue_identity_table,
     check_legacy_slice_hold_retired,
+    check_retired_cognition_problems,
     check_goal_status_env_hold_notified,
     check_goal_status_env_heal_attempts,
     check_self_repo_configured_when_env_gaps_exist,
