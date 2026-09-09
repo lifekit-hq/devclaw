@@ -46,6 +46,9 @@ def env(tmp_path, monkeypatch):
     # path, so the suite can never reach the network from a dev machine
     # that happens to carry a real token.
     monkeypatch.delenv("NODE_AUTH_TOKEN", raising=False)
+    # GH_TOKEN likewise: a developer machine exports one for `gh`, and the
+    # delivery check would then probe api.github.com from the suite.
+    monkeypatch.delenv("GH_TOKEN", raising=False)
     # DEVCLAW_SELF_REPO for the same reason (spec 038 US2): the self-repo check
     # reads the ambient environment, so a host that exports it would flip the
     # seeded fault to OK and the guard would pass having checked nothing.
@@ -313,6 +316,55 @@ def test_doctor_reports_healthy_affirmatively(env):
     assert report.healthy, [f for f in report.findings if f.verdict is not Verdict.OK]
     assert report.findings  # every check listed as ok — never empty output
     assert all(f.verdict is Verdict.OK for f in report.findings)
+
+
+# ---- the GitHub credential: present, live, and scoped ---------------------
+#
+# specs/tiny/github-credential-in-the-registry.md. The failure this seeds is
+# not a 401 — `repo` alone makes delivery, intake and the issue doorway all
+# work. It is the SILENT half: without `actions:read` the failing-job log read
+# degrades to a note, the worker meets a red verdict with no evidence, and the
+# only lever left in its reach is the CI definition (fs-431, 2026-09-08).
+
+
+def _delivery(env, monkeypatch, *, token="ghp_dummyneverechoed", status=200, scopes=("repo",)):
+    from devclaw.doctor import checks_instance as ci
+
+    monkeypatch.setattr(_config, "ENGINE", "")
+    monkeypatch.setenv(ci._DELIVERY_TOKEN.var, token)
+    monkeypatch.setattr(
+        ci, "_probe_github_scopes",
+        lambda _t, timeout_s=5.0: (status, None if scopes is None else frozenset(scopes)),
+    )
+    return _findings(_run(env), "instance.delivery.token")
+
+
+def test_delivery_token_without_actions_read_fails_loud(env, monkeypatch):
+    (f,) = _delivery(env, monkeypatch, scopes=("repo", "workflow"))
+    assert f.verdict is Verdict.FAIL
+    assert "actions:read" in f.evidence and "actions:read" in (f.remedy or "")
+    assert "ghp_dummyneverechoed" not in f.evidence  # never echo the value
+
+
+def test_delivery_token_absent_in_production_fails(env, monkeypatch):
+    from devclaw.doctor import checks_instance as ci
+
+    monkeypatch.setattr(_config, "ENGINE", "")
+    monkeypatch.delenv(ci._DELIVERY_TOKEN.var, raising=False)
+    (f,) = _findings(_run(env), "instance.delivery.token")
+    assert f.verdict is Verdict.FAIL and "boot_guard" in f.evidence
+
+
+@pytest.mark.parametrize("kw,verdict", [
+    ({"token": "not-a-github-token"}, Verdict.FAIL),      # shape
+    ({"status": 401}, Verdict.FAIL),                      # revoked
+    ({"status": None}, Verdict.UNKNOWN),                  # unreachable ⇒ never OK
+    ({"scopes": None}, Verdict.UNKNOWN),                  # fine-grained: not stated
+    ({"scopes": ("repo", "actions:read")}, Verdict.OK),
+])
+def test_delivery_token_verdicts(env, monkeypatch, kw, verdict):
+    (f,) = _delivery(env, monkeypatch, **kw)
+    assert f.verdict is verdict
 
 
 def test_crashed_check_reports_unknown_never_omitted(env, monkeypatch):

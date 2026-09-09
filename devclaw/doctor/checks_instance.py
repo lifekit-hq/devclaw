@@ -273,8 +273,10 @@ def check_auth_setup_token(ctx: "InstanceContext") -> list[Finding]:
 #: rule stated twice could drift into doctor reporting OK on a credential the
 #: admission gate calls red. Re-bound as module globals because tests patch
 #: the probe HERE, in the calling module (the collector convention).
+from ..credentials import DELIVERY_TOKEN as _DELIVERY_TOKEN  # noqa: E402
 from ..env_cap import CAP_REGISTRY_NPM_GITHUB as _CAP_REGISTRY  # noqa: E402
 from ..env_cap import GH_TOKEN_PREFIXES as _GH_TOKEN_PREFIXES  # noqa: E402
+from ..env_cap import probe_github_scopes as _probe_github_scopes  # noqa: E402
 from ..env_cap import probe_registry_token as _probe_registry_token  # noqa: E402
 
 
@@ -340,6 +342,94 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK,
                     f"{_REGISTRY_TOKEN_VAR} set, well-formed, and accepted by "
                     f"GitHub (HTTP {status})")]
+
+
+#: the scope the failing-job log read needs, and the one an operator forgets:
+#: `repo` alone authenticates every push, PR and merge devclaw makes, so a
+#: token without this reads healthy on every path except the one that matters.
+_ACTIONS_READ = "actions:read"
+
+
+def check_delivery_token(ctx: "InstanceContext") -> list[Finding]:
+    """The GitHub credential is present, well-formed, live, AND carries
+    ``actions:read`` (specs/tiny/github-credential-in-the-registry.md).
+
+    Until spec 042's registry grew this entry the credential devclaw leans on
+    hardest was the one nothing declared: it reached the container as a bind
+    mount of a human's ``~/.config/gh``, so its scope was whatever that human
+    last logged in with. The consequence was not a loud 401. `repo` alone
+    authenticates delivery, intake and the issue doorway, so everything looked
+    fine; only ``gh run view --log-failed`` needs ``actions:read``, and its
+    absence degrades into a one-line ``log unavailable`` note inside a
+    steering message. The worker then meets a red CI verdict with no log, and
+    the only lever it can still see is the CI definition — five workflow files
+    edited on fs-431 (2026-09-08), the always-hard ``change_class`` gate
+    failing the task, and the dispatch budget gone.
+
+    A missing scope is therefore reported LOUD here rather than quietly at the
+    read. The value is never echoed — presence, shape and scope names only.
+    """
+    cid = "instance.delivery.token"
+    var = _DELIVERY_TOKEN.var
+    remedy = (
+        f"issue a classic PAT with `repo` AND `{_ACTIONS_READ}`, "
+        f"`gh secret set {var}`, then redeploy"
+    )
+    token = os.environ.get(var, "").strip()
+    if not token:
+        if _config.ENGINE != "":
+            return [Finding(cid, Verdict.OK,
+                            f"{var} not set — not required under "
+                            f"DEVCLAW_ENGINE={_config.ENGINE!r} (dev/test engine)")]
+        return [Finding(cid, Verdict.FAIL,
+                        f"{var} not set — required: the production engine refuses to "
+                        "start without it (boot_guard). Every delivery push, PR and "
+                        "merge, intake, the issue doorway and the red-CI log read are "
+                        "host-side GitHub calls with no credential",
+                        remedy=_SECRETS_REMEDY)]
+    if not token.startswith(_GH_TOKEN_PREFIXES):
+        return [Finding(cid, Verdict.FAIL,
+                        f"{var} is set but is not a GitHub token "
+                        f"(no {'/'.join(_GH_TOKEN_PREFIXES)} prefix) — every "
+                        "host-side GitHub call will 401",
+                        remedy=remedy)]
+    status, scopes = _probe_github_scopes(token)
+    if status is None:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"{var} is well-formed but could not be verified "
+                        "(GitHub unreachable) — validity and scope unproven",
+                        remedy=remedy)]
+    if status in (401, 403):
+        return [Finding(cid, Verdict.FAIL,
+                        f"{var} rejected by GitHub (HTTP {status}) — expired or revoked",
+                        remedy=remedy)]
+    if status >= 400:
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"{var} probe returned HTTP {status} — validity unproven",
+                        remedy=remedy)]
+    if scopes is None:
+        # A fine-grained PAT / app / OAuth-app token states no scopes at all.
+        # "Not stated" is not "not granted": reporting FAIL here would be a
+        # false red on a perfectly-scoped token, and reporting OK would be the
+        # silence this check exists to break.
+        return [Finding(cid, Verdict.UNKNOWN,
+                        f"{var} accepted by GitHub (HTTP {status}) but states no "
+                        "scopes (a fine-grained/app token) — devclaw cannot verify "
+                        f"that it grants {_ACTIONS_READ}, which the failing-job log "
+                        "read needs",
+                        remedy=f"confirm the token grants Actions: read, or issue a "
+                               f"classic PAT with `repo` and `{_ACTIONS_READ}`")]
+    if _ACTIONS_READ not in scopes:
+        return [Finding(cid, Verdict.FAIL,
+                        f"{var} is live but lacks {_ACTIONS_READ} "
+                        f"(granted: {', '.join(sorted(scopes)) or 'none'}) — delivery "
+                        "and intake work, so this fails silently: `gh run view "
+                        "--log-failed` cannot read a failing job, and a red-CI "
+                        "correction reaches the worker as a verdict with no evidence",
+                        remedy=remedy)]
+    return [Finding(cid, Verdict.OK,
+                    f"{var} set, well-formed, accepted by GitHub (HTTP {status}) "
+                    f"and carrying {_ACTIONS_READ}")]
 
 
 def check_auth_pause(ctx: "InstanceContext") -> list[Finding]:
@@ -1098,6 +1188,7 @@ INSTANCE_CHECKS: tuple = (
     check_auth_claude_json,
     check_auth_setup_token,
     check_registry_token,
+    check_delivery_token,
     check_auth_pause,
     check_gate_consultation,
     check_skills_bundle,

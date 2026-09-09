@@ -92,7 +92,7 @@ jobs:
       # Scoped deploy — pulls the tag, recreates ONLY the devclaw project,
       # verifies /health, fails loud. OpenClaw-side containers are untouched.
       - name: Deploy (scoped, readiness-gated)
-        # Both credentials the instance cannot run without ride in from the
+        # Every credential the instance cannot run without rides in from the
         # repo secrets — the source of truth. deploy-devclaw.sh writes them into
         # the on-box secrets file the compose file declares as its env_file
         # (/srv/devclaw/secrets.env, 0600), so a later recreate from the box —
@@ -104,6 +104,12 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # read:packages registry token: in-sandbox `npm ci` on @lifekit-hq
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+          # host-side GitHub (`repo` + `actions:read`): delivery push/PR/merge,
+          # intake, the issue doorway, and the failing-job log read that feeds a
+          # red-CI correction. NOT `secrets.GITHUB_TOKEN` — that is the job's
+          # own hourly-expiring token, and GitHub forbids a `GITHUB_`-prefixed
+          # secret name, which is why the registry spells this one GH_TOKEN.
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
           # the auto lane's instance-dead relay ping target (optional secret;
           # unset ⇒ the wrapper skips the ping, everything else unchanged)
           DEVCLAW_NOTIFY_URL: ${{ secrets.DEVCLAW_NOTIFY_URL }}

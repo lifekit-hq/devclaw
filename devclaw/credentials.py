@@ -22,8 +22,9 @@ credential name spelled anywhere else in the package fails the build
 Least privilege lives here too: ``scope`` is the minimum the credential is
 issued with, and ``agent`` is the only way a secret reaches a shell. A read
 the host can do stays on the host and only the fact goes down (the red-CI
-log, tinyspec ``red-ci-log-to-worker``) — which is why no GitHub token is
-registered for the sandbox at all.
+log, tinyspec ``red-ci-log-to-worker``) — which is why the GitHub credential
+is registered ``sandbox=False, agent=False``: it is the most privileged thing
+devclaw holds and it never crosses the fence.
 
 Leaf module: imports nothing from devclaw.
 """
@@ -75,8 +76,30 @@ REGISTRY_TOKEN = Credential(
     prefixes=GH_TOKEN_PREFIXES,
 )
 
+#: ``GH_TOKEN``, not ``GITHUB_TOKEN``: the deploy carries every credential in
+#: from a repository Actions secret, and GitHub refuses to create a secret
+#: whose name starts with ``GITHUB_`` (``secrets.GITHUB_TOKEN`` is the
+#: workflow's own job-scoped, hourly-expiring token — useless to a long-lived
+#: instance). ``gh`` and ``gh auth git-credential`` both rank ``GH_TOKEN``
+#: above ``GITHUB_TOKEN``, so one name serves every host-side read and write.
+DELIVERY_TOKEN = Credential(
+    "GH_TOKEN",
+    purpose=(
+        "every host-side GitHub call: delivery (push, PR, merge), intake, the "
+        "issue doorway, the self-issue filer, and the failing-job log read that "
+        "feeds a red-CI correction"
+    ),
+    scope=(
+        "repo (push/PR/merge on the driven repos) + actions:read — the log read "
+        "is a distinct scope and its absence degrades silently, which is the "
+        "reason this credential is declared rather than mounted"
+    ),
+    required=True, sandbox=False, agent=False,
+    prefixes=GH_TOKEN_PREFIXES,
+)
+
 #: the registry — the order is the order every hop reports them in
-REGISTRY: tuple[Credential, ...] = (OAUTH_TOKEN, REGISTRY_TOKEN)
+REGISTRY: tuple[Credential, ...] = (OAUTH_TOKEN, REGISTRY_TOKEN, DELIVERY_TOKEN)
 
 #: metered-billing keys that are actively refused at every hop (constitution I):
 #: stripped by the host before any subprocess, refused by the runner outright

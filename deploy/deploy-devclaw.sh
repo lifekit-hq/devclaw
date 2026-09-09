@@ -37,10 +37,13 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 [[ -f "$ENV_FILE" ]]     || die "env file not found: $ENV_FILE (set DEVCLAW_ENV_FILE)"
 
 # ─── Credentials: ONE durable home, written here, never blank ──────────────
-# The two credentials the instance cannot run without — CLAUDE_CODE_OAUTH_TOKEN
+# The three credentials the instance cannot run without — CLAUDE_CODE_OAUTH_TOKEN
 # (the `claude setup-token` subscription credential: host cognition + sandbox
-# auth) and NODE_AUTH_TOKEN (read:packages, in-sandbox `npm ci`) — live in ONE
-# place on the box: $SECRETS_FILE, the env_file the compose file declares.
+# auth), NODE_AUTH_TOKEN (read:packages, in-sandbox `npm ci`) and GH_TOKEN
+# (host-side GitHub: delivery, intake, and the failing-job log read) — live in
+# ONE place on the box: $SECRETS_FILE, the env_file the compose file declares.
+# They are declared once in devclaw/credentials.py; this script is the deploy
+# hop of that registry.
 # This script is that file's only writer. Under the workflow the values come
 # from the repo's Actions secrets (the source of truth); on a hand run from
 # the box (a rollback, an emergency recreate) they are read back from the file
@@ -74,31 +77,40 @@ _resolve_secret() {   # $1 = name → sets _RESOLVED from the env, else the file
 
 _resolve_secret CLAUDE_CODE_OAUTH_TOKEN; _oauth="$_RESOLVED"
 _resolve_secret NODE_AUTH_TOKEN;         _reg="$_RESOLVED"
+_resolve_secret GH_TOKEN;                _gh="$_RESOLVED"
 unset _RESOLVED
 if [[ ! "$_reg" =~ ^(ghp_|github_pat_|ghs_|gho_) ]]; then
-  unset _oauth _reg
+  unset _oauth _reg _gh
   die "NODE_AUTH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). A malformed registry token reaches every sandbox and 401s there. Regenerate a read:packages-only classic PAT, \`gh secret set NODE_AUTH_TOKEN\`, and redeploy."
+fi
+# GH_TOKEN, not GITHUB_TOKEN: GitHub refuses to create an Actions secret whose
+# name starts with GITHUB_, and `gh` ranks GH_TOKEN above GITHUB_TOKEN anyway.
+# Shape only here — the `actions:read` scope cannot be asserted without a
+# network call, so doctor's instance.delivery.token owns that half.
+if [[ ! "$_gh" =~ ^(ghp_|github_pat_|ghs_|gho_) ]]; then
+  unset _oauth _reg _gh
+  die "GH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). Every host-side GitHub call — delivery push/PR/merge, intake, the issue doorway, the failing-job log read — would 401. Issue a classic PAT with \`repo\` AND \`actions:read\`, \`gh secret set GH_TOKEN\`, and redeploy."
 fi
 
 # The home must pre-exist with the right ownership — /srv/devclaw is root-owned
 # and this runs as the deploy user, so the file is created ONCE by hand and
 # rewritten through its inode here (docs/runbooks/devclaw-self-deploy.md §1).
 if [[ ! -f "$SECRETS_FILE" ]]; then
-  unset _oauth _reg
+  unset _oauth _reg _gh
   die "secrets file absent: $SECRETS_FILE. One-time provisioning (as root): install -m 0600 -o $(id -un) -g $(id -gn) /dev/null $SECRETS_FILE — then re-run."
 fi
 if [[ ! -w "$SECRETS_FILE" ]]; then
-  unset _oauth _reg
+  unset _oauth _reg _gh
   die "secrets file not writable by $(id -un): $SECRETS_FILE — chown it to the deploy user (mode 0600) and re-run."
 fi
 _mode="$(stat -c '%a' "$SECRETS_FILE" 2>/dev/null || stat -f '%Lp' "$SECRETS_FILE" 2>/dev/null || echo '?')"
 if [[ "$_mode" != "600" ]]; then
-  unset _oauth _reg
+  unset _oauth _reg _gh
   die "secrets file mode is $_mode, expected 600: chmod 600 $SECRETS_FILE — a credential file readable by others is not a home."
 fi
-printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\nNODE_AUTH_TOKEN=%s\n' "$_oauth" "$_reg" > "$SECRETS_FILE"
-unset _oauth _reg _mode
-say "credentials: CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN present, well-formed, written to ${SECRETS_FILE} (the one home)"
+printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\nNODE_AUTH_TOKEN=%s\nGH_TOKEN=%s\n' "$_oauth" "$_reg" "$_gh" > "$SECRETS_FILE"
+unset _oauth _reg _gh _mode
+say "credentials: CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN + GH_TOKEN present, well-formed, written to ${SECRETS_FILE} (the one home)"
 
 export DEVCLAW_MCP_IMAGE="${REGISTRY}/devclaw-mcp:${TAG}"
 export DEVCLAW_SANDBOX_IMAGE="${REGISTRY}/devclaw-sandbox:${TAG}"
