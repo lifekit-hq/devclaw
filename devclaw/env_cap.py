@@ -72,10 +72,14 @@ KNOWN_CAPABILITIES: frozenset[str] = frozenset({
 #: spec 032 US2: a WORKER-REPORTED environment deficiency is recorded as a
 #: red capability row under this prefix (``worker:<slug of the item>``), so
 #: admission, the hold, the heal, doctor and get_goal tell the same story
-#: they tell for a declared capability. It has no probe runner — a worker
-#: invents the id from prose, so nothing can ever read it green mechanically.
+#: they tell for a declared capability. It has no probe runner of its own — a
+#: worker invents the id from prose, so nothing can dispatch a probe on it.
 #: The row stays red until a human vouches (``resume_goal`` →
-#: :func:`clear_worker_deficiencies`).
+#: :func:`clear_worker_deficiencies`), with ONE exception: prose that names a
+#: credential in the registry is superseded by that credential's own probe
+#: while it reads green (:data:`_SUPERSEDING_CREDENTIALS`) — the gap is
+#: checkable after all, because spec 042 gave the credential one home and one
+#: probe.
 WORKER_PREFIX = "worker:"
 
 CapScope = Literal["instance", "project"]
@@ -107,11 +111,19 @@ def instance_env_ref() -> str:
     return f"{_SANDBOX_IMAGE}|{_config.git_sha() or ''}"
 
 
+def _slug(text: str) -> str:
+    """The one normalisation for prose that becomes part of a capability id.
+
+    Shared by :func:`worker_cap_id` and :func:`superseding_capability` so a
+    credential name is matched against a worker's prose in the SAME form the
+    id was built in — two spellings here would silently stop superseding."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
 def worker_cap_id(item: str) -> str:
     """``worker:<slug>`` for a reported item — stable across re-reports of
     the same gap so one item is one row (and one catalog entry)."""
-    slug = re.sub(r"[^a-z0-9]+", "-", item.lower()).strip("-")[:60] or "unknown"
-    return f"{WORKER_PREFIX}{slug}"
+    return f"{WORKER_PREFIX}{_slug(item)[:60] or 'unknown'}"
 
 
 def _is_project_scoped(cap_id: str) -> bool:
@@ -281,11 +293,15 @@ def clear_worker_deficiencies(store: MetaStore, project_id: Optional[str]) -> "t
     """Drop every worker-reported deficiency row for ``project_id`` and return
     the ids cleared.
 
-    This is the ONE exit from a worker-reported hold
-    (specs/tiny/env-hold-observes-the-capability). A worker invents the
-    capability id from prose, so devclaw has no probe that could ever read it
-    green — only a human can say the gap is closed, and ``resume_goal`` is that
-    statement. Clearing must reach the project-scoped row, not just the goal's
+    This is the human exit from a worker-reported hold
+    (specs/tiny/env-hold-observes-the-capability): a worker invents the
+    capability id from prose, so for prose devclaw cannot check, only a human
+    can say the gap is closed and ``resume_goal`` is that statement. Prose that
+    names a registry credential no longer needs it — that row is superseded by
+    the credential's own probe in :func:`red_caps_for`
+    (specs/tiny/env-hold-defers-to-a-live-probe), and is left in place as
+    provenance so it holds again if the credential later breaks.
+    Clearing must reach the project-scoped row, not just the goal's
     fields: otherwise the goal unblocks, dispatches, hits the still-red row and
     re-blocks on the next tick.
 
@@ -559,6 +575,38 @@ _PROBE_RUNNERS: dict[str, Callable[[CapTarget], CapProbeResult]] = {
     CAP_CI_DEFINITION: _probe_ci_definition,
 }
 
+#: Worker prose that NAMES one of these credentials is superseded by that
+#: credential's own probe while the probe reads green
+#: (specs/tiny/env-hold-defers-to-a-live-probe).
+#:
+#: :data:`WORKER_PREFIX` said no worker report could ever be read green because
+#: "a worker invents the id from prose". Spec 042 falsified that for a subset:
+#: a gap that names a credential in the ONE registry is checkable, because that
+#: credential HAS a probe — the same one doctor runs and the sweep refreshes.
+#: Everything outside this map keeps the human-only exit, so the supersede is
+#: mechanical rather than a guess.
+#:
+#: Keyed by the ``Credential`` object, never a re-typed name: a credential
+#: spelled twice in the package fails the build (constitution I / spec 042).
+_SUPERSEDING_CREDENTIALS: "tuple[tuple[str, str], ...]" = (
+    (_credentials.REGISTRY_TOKEN.var, CAP_REGISTRY_NPM_GITHUB),
+)
+
+
+def superseding_capability(cap_id: str) -> Optional[str]:
+    """The declared capability whose probe answers ``cap_id``, or ``None``.
+
+    ``cap_id`` is a ``worker:<slug>`` id built by :func:`worker_cap_id` from the
+    worker's prose, so the credential name is matched in slug form — the same
+    normalisation both sides of the comparison. A report naming no registered
+    credential resolves to ``None`` and keeps the human-only exit."""
+    if not cap_id.startswith(WORKER_PREFIX):
+        return None
+    for var, target in _SUPERSEDING_CREDENTIALS:
+        if _slug(var) in cap_id:
+            return target
+    return None
+
 
 # ---- sweep runner (called from tick_all, never from per-goal ticks) ----------
 
@@ -625,10 +673,22 @@ def red_caps_for(
     capability (:data:`CAP_SCOPES`) — a goal must be admitted against the probe
     of the image ITS sandbox launches, not the fleet default's."""
     red: list[tuple[str, CapProbeResult]] = []
+    pid = (project_id or "").strip() or None
     # spec 032 US2: a worker-reported deficiency holds the project whether or
     # not anything is declared — the worker's report IS the evidence.
-    for cap_id in tuple(declared) + worker_caps_for(store, (project_id or "").strip() or None):
-        result = read_result(store, cap_id, (project_id or "").strip() or None)
-        if result is not None and result.status == "red":
-            red.append((cap_id, result))
+    for cap_id in tuple(declared) + worker_caps_for(store, pid):
+        result = read_result(store, cap_id, pid)
+        if result is None or result.status != "red":
+            continue
+        # specs/tiny/env-hold-defers-to-a-live-probe: a report naming a
+        # registry credential defers to that credential's OWN probe. Reading
+        # the persisted row keeps this zero-network (the sweep refreshes it);
+        # only a confirmed GREEN supersedes — unknown is not green, so an
+        # unrunnable probe leaves the hold standing.
+        target = superseding_capability(cap_id)
+        if target is not None:
+            probe = read_result(store, target, pid if _is_project_scoped(target) else None)
+            if probe is not None and probe.status == "green":
+                continue
+        red.append((cap_id, result))
     return red
