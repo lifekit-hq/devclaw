@@ -259,6 +259,21 @@ def test_ledger_rows_without_usage_are_records_not_zeros(store):
     store.record_task_usage("t1", attempt=2, usage={"input_tokens": 999, "output_tokens": 999})
     assert telemetry.compute_usage_history(store)["months"][0]["worker"]["tokens"] == 15
 
+    # the same rule at goal grain (US6 `cost_tokens`): a goal whose runs
+    # reported nothing costs unknown, and cache reads are not consumption.
+    assert store.goal_usage_tokens("no-such-goal") is None
+    store.create_task(
+        id="t2", kind="implement_feature", workspace_dir="/ws",
+        goal="objective", parent_goal_id="g2",
+    )
+    store.record_task_usage("t2", attempt=0, usage=None)
+    assert store.goal_usage_tokens("g2") is None
+    store.record_task_usage(
+        "t2", attempt=1,
+        usage={"input_tokens": 7, "output_tokens": 3, "cache_read_tokens": 900},
+    )
+    assert store.goal_usage_tokens("g2") == 10
+
 
 def test_cognition_trace_writes_its_ledger_row_in_the_same_commit(store):
     real = store.append_trace_event(

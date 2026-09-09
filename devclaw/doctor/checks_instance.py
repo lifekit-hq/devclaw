@@ -1115,11 +1115,12 @@ def check_contract_pins(ctx: "InstanceContext") -> list[Finding]:
 #: the calibration columns spec 039 US6 adds to goal_convergence (lazy ALTER).
 _CALIBRATION_COLUMNS = frozenset({
     "claimed_units", "assessed_units", "prediction_issues", "dispatches", "steered",
+    "cost_tokens",
 })
 
 
 def check_loop_health_tables(ctx: "InstanceContext") -> list[Finding]:
-    """Spec 038 (per spec-016 FR-014): the three loop-health tables must exist
+    """Spec 039 (per spec-016 FR-014): the three loop-health tables must exist
     wherever goal tables do — a DB predating them silently reports every
     loop-health metric as unknown (which the surfaces name, but a boot
     fixes). Two live-only drifts the stubbed suite cannot see: the tables

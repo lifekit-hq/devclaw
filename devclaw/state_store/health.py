@@ -372,6 +372,24 @@ class LoopHealthMixin:
             rows = self._db.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
+    def goal_usage_tokens(self, goal_id: str) -> Optional[int]:
+        """Total reported tokens attributed to one goal (spec 039 US6,
+        data-model `cost_tokens`) — input + output over that goal's REPORTED
+        ledger rows. ``None`` when the goal has no reported row at all: a goal
+        whose runs reported nothing costs *unknown*, never 0 (FR-011). Cache
+        reads are excluded — they are not fresh consumption."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT COUNT(*) AS n, "
+                " COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS tin, "
+                " COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS tout "
+                "FROM usage_ledger WHERE goal_id = ? AND reported = 1",
+                (goal_id,),
+            ).fetchone()
+        if row is None or not int(row["n"] or 0):
+            return None
+        return int(row["tin"] or 0) + int(row["tout"] or 0)
+
     def backfill_boundary_ms(self) -> Optional[int]:
         """When the ledger was backfilled (ms), or None when it never ran — the
         surfaces show rows before it as "surviving transcripts only"."""

@@ -296,7 +296,7 @@ class GoalStateStatusMixin:
         workspace_dir: "str | None", closed_at: str,
         claimed_units: "int | None" = None, assessed_units: "int | None" = None,
         prediction_issues: "str | None" = None, dispatches: "int | None" = None,
-        steered: bool = False,
+        steered: bool = False, cost_tokens: "int | None" = None,
     ) -> None:
         """INSERT the goal's one terminal convergence row (spec 018 US1).
         ``INSERT OR IGNORE``: terminal is terminal — a duplicate write (e.g.
@@ -306,11 +306,12 @@ class GoalStateStatusMixin:
             self._store._db.execute(
                 "INSERT OR IGNORE INTO goal_convergence "
                 "(goal_id, outcome, rounds, workspace_dir, closed_at, "
-                "claimed_units, assessed_units, prediction_issues, dispatches, steered) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "claimed_units, assessed_units, prediction_issues, dispatches, steered, "
+                "cost_tokens) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (goal_id, outcome, rounds, workspace_dir, closed_at,
                  claimed_units, assessed_units, prediction_issues, dispatches,
-                 1 if steered else 0),
+                 1 if steered else 0, cost_tokens),
             )
             self._store._commit()
 

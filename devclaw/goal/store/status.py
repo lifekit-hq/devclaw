@@ -109,6 +109,7 @@ class GoalStatusMixin:
         fields: dict = {
             "claimed_units": None, "assessed_units": None,
             "prediction_issues": None, "dispatches": None, "steered": False,
+            "cost_tokens": None,
         }
         try:
             fields["dispatches"] = self._state.count_goal_dispatches(goal_id)
@@ -117,6 +118,12 @@ class GoalStatusMixin:
         try:
             fields["steered"] = self._goal_state.has_human_steering(goal_id)
         except Exception:  # noqa: BLE001
+            pass
+        try:
+            # Deferred with US3; the ledger exists now. Nothing reported reads
+            # None, never 0 — a goal whose runs were silent costs unknown.
+            fields["cost_tokens"] = self._state.goal_usage_tokens(goal_id)
+        except Exception:  # noqa: BLE001 — an absent ledger reads unknown
             pass
         try:
             goal = self.load_goal(goal_id)
