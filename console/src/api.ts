@@ -546,14 +546,33 @@ export interface ProblemRow {
   fix_goal_id?: string | null; // set when lifecycle === "fixing"
 }
 
+/** The catalog's failure classes — the server's `category` filter vocabulary. */
+export const PROBLEM_CATEGORIES = [
+  "block", "task_fail", "gate", "delivery", "limit", "cognition", "subprocess", "other",
+] as const;
+export type ProblemCategory = (typeof PROBLEM_CATEGORIES)[number];
+
 export interface ProblemsResponse {
   problems: ProblemRow[];
   count: number;
   selfRepo: string | null; // owner/name, or null when self-issue-filing is off
+  /** Recency window the rows were selected with; null = all-time. The list is
+   *  windowed server-side by default, so the UI must state which window it is
+   *  showing rather than implying the catalog is this small. */
+  windowDays: number | null;
+  category: string | null;
 }
 
-export async function fetchProblems(): Promise<ProblemsResponse> {
-  const r = await fetch(`/problems.json${tokenQS()}`);
+/** `sinceDays: 0` disables the window (all-time). Omitted → the server's
+ *  shared default (`DEFAULT_PROBLEM_WINDOW_DAYS`). */
+export async function fetchProblems(
+  opts?: { sinceDays?: number; category?: ProblemCategory | null },
+): Promise<ProblemsResponse> {
+  const qs = new URLSearchParams(tokenQS().replace(/^\?/, ""));
+  if (opts?.sinceDays !== undefined) qs.set("since_days", String(opts.sinceDays));
+  if (opts?.category) qs.set("category", opts.category);
+  const q = qs.toString();
+  const r = await fetch(`/problems.json${q ? `?${q}` : ""}`);
   if (!r.ok) throw new Error(`problems.json ${r.status}`);
   return r.json();
 }

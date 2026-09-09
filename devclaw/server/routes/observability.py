@@ -46,19 +46,32 @@ async def problems_json(request: Request) -> Response:
     limit, err = json_limit(request)
     if err is not None:
         return err
+    # Two ways to say the same thing: `since_days` (what the console's window
+    # picker sends — a duration the UI can label honestly) and the raw
+    # `since_ms` lower bound. 0 means all-time in both. `since_days` wins when
+    # both are present; absent both, the shared default applies.
+    window_days: int | None = DEFAULT_PROBLEM_WINDOW_DAYS
+    since_days_param = request.query_params.get("since_days")
     since_ms_param = request.query_params.get("since_ms")
-    if since_ms_param is not None:
+    if since_days_param is not None:
+        try:
+            days = int(since_days_param)
+        except ValueError:
+            return Response("invalid since_days: must be an integer", status_code=400)
+        window_days = days if days > 0 else None
+    elif since_ms_param is not None:
         try:
             raw = int(since_ms_param)
         except ValueError:
             return Response("invalid since_ms: must be an integer", status_code=400)
         # 0 (or negative) → caller wants all-time; positive → use as lower bound.
-        since_ms: int | None = raw if raw > 0 else None
-    else:
-        since_ms = (
-            int(time.time() * 1000)
-            - DEFAULT_PROBLEM_WINDOW_DAYS * 24 * 60 * 60 * 1000
+        window_days = None if raw <= 0 else max(
+            1, round((int(time.time() * 1000) - raw) / (24 * 60 * 60 * 1000))
         )
+    since_ms: int | None = (
+        None if window_days is None
+        else int(time.time() * 1000) - window_days * 24 * 60 * 60 * 1000
+    )
     rows = store.list_problems(
         category=request.query_params.get("category") or None,
         limit=limit,
@@ -77,7 +90,14 @@ async def problems_json(request: Request) -> Response:
         p["lifecycle"] = stage
     # `selfRepo` (owner/name, or null when self-issue-filing is off) lets the
     # console build issue links without hardcoding the repo.
-    return JSONResponse({"problems": rows, "count": len(rows), "selfRepo": self_repo()})
+    # `windowDays` (null = all-time) lets the console STATE the filter it is
+    # showing. A silently-windowed list is the defect this replaces: the read
+    # was already windowed server-side and the UI could not say so.
+    return JSONResponse({
+        "problems": rows, "count": len(rows), "selfRepo": self_repo(),
+        "windowDays": window_days,
+        "category": request.query_params.get("category") or None,
+    })
 
 
 @mcp.custom_route("/calibration.json", methods=["GET"])

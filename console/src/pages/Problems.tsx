@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { fetchProblems, tokenQueryString, type ProblemRow, type ProblemStage, type ProblemsResponse } from "../api";
+import {
+  fetchProblems, tokenQueryString, PROBLEM_CATEGORIES,
+  type ProblemCategory, type ProblemRow, type ProblemStage, type ProblemsResponse,
+} from "../api";
 import { relativeTime } from "../util/time";
 import { IconExternal } from "../icons";
 import { EmptyState, ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
@@ -29,22 +32,43 @@ const STAGE_LABEL: Record<ProblemStage, string> = {
 };
 const STAGES: (ProblemStage | "all")[] = ["all", "identified", "filed", "fixing", "resolved"];
 
+// Recency windows. The catalog is bounded per fingerprint but unbounded in
+// VOCABULARY and `count` is a LIFETIME counter, so an all-time read sorts
+// long-dead rows above live ones. `null` = all-time; `undefined` = whatever the
+// server's shared default is (DEFAULT_PROBLEM_WINDOW_DAYS) — the UI never
+// hardcodes that number, it reads back the `windowDays` the server applied.
+const WINDOWS: { label: string; days: number | null }[] = [
+  { label: "7d", days: 7 },
+  { label: "14d", days: 14 },
+  { label: "30d", days: 30 },
+  { label: "All time", days: null },
+];
+
 export function Problems() {
   const [data, setData] = useState<ProblemsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [stage, setStage] = useState<ProblemStage | "all">("all");
   const [expanded, setExpanded] = useState<string | null>(null); // fingerprint
+  // `undefined` = let the server apply its default window; `null` = all-time.
+  const [win, setWin] = useState<number | null | undefined>(undefined);
+  const [category, setCategory] = useState<ProblemCategory | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const load = () => fetchProblems().then((r) => alive && setData(r)).catch((e) => alive && setErr(String(e)));
+    const load = () =>
+      fetchProblems({
+        sinceDays: win === undefined ? undefined : (win ?? 0),
+        category,
+      })
+        .then((r) => alive && (setData(r), setErr(null)))
+        .catch((e) => alive && setErr(String(e)));
     load();
     const t = setInterval(load, 20000);
     return () => {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [win, category]);
 
   const problems = data?.problems ?? [];
   const countBy = (s: ProblemStage) => problems.filter((p) => p.lifecycle === s).length;
@@ -61,6 +85,13 @@ export function Problems() {
 
       {data && (
         <>
+          <FilterBar
+            windowDays={data.windowDays}
+            onWindow={setWin}
+            category={category}
+            onCategory={setCategory}
+          />
+
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 22 }}>
             <Tile label="Problems" value={problems.length} />
             <Tile label="Identified" value={countBy("identified")} color="var(--amber)" />
@@ -99,7 +130,16 @@ export function Problems() {
           </SectionLabel>
 
           {shown.length === 0 ? (
-            <div className="card"><EmptyState title="Nothing here" hint="No problems at this lifecycle stage." /></div>
+            <div className="card">
+              <EmptyState
+                title="Nothing here"
+                hint={
+                  data.windowDays === null
+                    ? "No problems match these filters."
+                    : `No problems match these filters in the last ${data.windowDays} days — try a wider window.`
+                }
+              />
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {shown.map((p) => (
@@ -115,6 +155,15 @@ export function Problems() {
           )}
 
           <div className="muted" style={{ fontSize: 11, marginTop: 14 }}>
+            Showing {data.windowDays === null
+              ? "the whole catalog"
+              : <>problems seen in the <b>last {data.windowDays} days</b></>}
+            {category ? <> in <b>{category}</b></> : null}. Rows outside the window are hidden, never
+            deleted — widen it to see them. Sorted most-frequent first, and <span className="mono">×N</span>{" "}
+            is a <b>lifetime</b> count, so a wide window floats long-dead rows to the top.
+          </div>
+
+          <div className="muted" style={{ fontSize: 11, marginTop: 8 }}>
             Lifecycle: <b>identified</b> (in the catalog) → <b>filed</b> (a GitHub issue is open) → <b>fixing</b>
             (a self-fix goal is running) → <b>resolved</b> (issue closed). <b>Fixing</b> opens a PR for <b>your</b>{" "}
             review — it is <b>propose-only, human-merges</b>, never autonomous auto-fix.
@@ -124,6 +173,64 @@ export function Problems() {
     </div>
   );
 }
+
+function FilterBar({
+  windowDays,
+  onWindow,
+  category,
+  onCategory,
+}: {
+  windowDays: number | null;
+  onWindow: (d: number | null) => void;
+  category: ProblemCategory | null;
+  onCategory: (c: ProblemCategory | null) => void;
+}) {
+  return (
+    <div
+      className="card"
+      style={{ padding: "10px 14px", marginBottom: 18, display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}
+    >
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <span className="eyebrow" style={{ marginRight: 2 }}>Seen in</span>
+        {WINDOWS.map((w) => {
+          const active = w.days === windowDays;
+          return (
+            <button
+              key={w.label}
+              className={`btn ghost sm${active ? " active" : ""}`}
+              onClick={() => onWindow(w.days)}
+              style={active ? { color: "var(--accent)" } : undefined}
+            >
+              {w.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <span className="eyebrow" style={{ marginRight: 2 }}>Category</span>
+        <button
+          className={`btn ghost sm${category === null ? " active" : ""}`}
+          onClick={() => onCategory(null)}
+          style={category === null ? { color: "var(--accent)" } : undefined}
+        >
+          all
+        </button>
+        {PROBLEM_CATEGORIES.map((c) => (
+          <button
+            key={c}
+            className={`btn ghost sm${category === c ? " active" : ""}`}
+            onClick={() => onCategory(c)}
+            style={category === c ? { color: "var(--accent)" } : undefined}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 function ProblemCard({
   p,
