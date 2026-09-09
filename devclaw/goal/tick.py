@@ -497,6 +497,22 @@ def _chunk_plan_corruption(workspace_dir: str) -> str:
         return ""
 
 
+def _wall_clock_fact() -> str:
+    """One line naming the session's wall-clock budget, or "" when unbounded.
+
+    Blank-safe on purpose: a deployment that disables the wall clock
+    (``DEVCLAW_TASK_TIMEOUT_S=0``) returns "" and the caller omits the line
+    entirely, rendering the brief byte-identically to before it existed."""
+    budget = _config.TASK_TIMEOUT_S
+    if budget <= 0:
+        return ""
+    return (
+        f"Wall clock: this session is torn down {int(budget // 60)} minutes after it "
+        "starts, whatever state it is in. Size the slice to fit and commit each "
+        "coherent piece as you finish it — uncommitted work at the limit is lost."
+    )
+
+
 def _advance_brief(
     goal: Goal, steering: str, failure_context: str = "",
     prior_increments: str = "", issue_context: str = "",
@@ -535,6 +551,15 @@ def _advance_brief(
         # authored before the schema renders exactly as it did then.
         _saga_framing.render(goal),
     ]
+    # The session's wall clock, as a FACT (constitution IX: close a gap with a
+    # fact before a brake). The worker could not see its own budget, so it sized
+    # slices as if time were unbounded and lost everything — including work it
+    # had not committed — when the sandbox was torn down. Knowing where the wall
+    # is lets it land a smaller slice before the wall. Inserted rather than
+    # listed so an unbounded deployment renders byte-identically to before.
+    wall_clock = _wall_clock_fact()
+    if wall_clock:
+        parts.insert(2, wall_clock)
     # The saga feed-forward (spec 012 US1): what earlier increments of THIS goal
     # delivered and how each was judged. Re-sent in full every increment
     # (FR-009a) — a fresh sandbox has no memory, so a pointer would be a request

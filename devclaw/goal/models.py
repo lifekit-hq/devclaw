@@ -304,6 +304,14 @@ class GoalStatus:
     #: productive settle (a shipped increment proves the environment now
     #: fits), alongside ``heal_attempts``.
     envcap_redispatches: int = 0
+    #: dispatch slots handed back for a wall-clock TEARDOWN — devclaw's own
+    #: limit firing, not a failed attempt by the goal. Bounded: the first
+    #: teardown since the last productive settle is refunded, a second one
+    #: with nothing produced in between is not (it is no longer transient)
+    #: and trips ``mechanical:dispatch_cap`` exactly as today. Reset to 0 on
+    #: a productive settle alongside ``heal_attempts`` — the same stability
+    #: signal, the same ACTION_SETTLED write.
+    teardown_refunds: int = 0
     #: spec 025 merge-on-close: PR URL whose squash-merge is still owed after
     #: an ``achieved`` done-gate verdict. Non-empty ⇒ the advance path retries
     #: the MERGE (zero cognition) instead of planning — the verdict already
@@ -547,6 +555,12 @@ class PollResult:
     #: spec 032 US5: shas on the delivered goal branch not authored by the
     #: worker (a human's hand push) — recorded as interventions at settle
     non_worker_commits: tuple[str, ...] = ()
+    #: the queue tore the sandbox down on the task wall clock with no terminal
+    #: result. Derived from the settled error through the EXISTING failure
+    #: classifier (``derive_failure_class`` ⇒ ``timeout``), never a second
+    #: string match. devclaw's own limit, so it does not spend the goal's
+    #: dispatch budget — see ``tick_settle``. False for engines that predate it.
+    torn_down: bool = False
 
     @property
     def running(self) -> bool:

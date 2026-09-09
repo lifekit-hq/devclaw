@@ -93,6 +93,54 @@ def check_legacy_deliveries_ref_id(ctx: "InstanceContext") -> list[Finding]:
     return [Finding(cid, Verdict.OK, "goal_deliveries.ref_id NOT NULL and no NULL rows")]
 
 
+def _declared_goal_status_columns() -> set[str]:
+    """Columns the CURRENT code declares for goal_status.
+
+    Built by running the real schema bootstrap against a throwaway database
+    rather than restating a list here — a hand-kept copy is the same drift this
+    check exists to catch. Cheap: an empty SQLite file, created and discarded."""
+    import tempfile
+
+    from ..goal.state import GoalState
+    from ..state_store import StateStore
+
+    with tempfile.TemporaryDirectory() as tmp:
+        store = StateStore(str(Path(tmp) / "schema-probe.db"))
+        try:
+            GoalState(store)
+            rows = store._db.execute("PRAGMA table_info(goal_status)").fetchall()
+            return {r["name"] for r in rows}
+        finally:
+            store._db.close()
+
+
+def check_goal_status_schema(ctx: "InstanceContext") -> list[Finding]:
+    """The live goal_status carries every column the current code declares.
+
+    goal_status grows by lazy ``ALTER TABLE`` on boot, so a column added by a
+    deploy that never restarted — or an ALTER that raised and was swallowed —
+    leaves a live table the reader expects fields from. The stubbed suite
+    structurally cannot see it: tests always build the table fresh, where every
+    column is present by construction (spec 016 FR-014, the #641 class). This
+    is the class check, not a column check: it diffs the whole declared shape,
+    so every future column is covered without a new check."""
+    cid = "instance.schema.goal_status"
+    with _ro_db(ctx.store.db_path) as db:
+        tables = {r["name"] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "goal_status" not in tables:
+            return [Finding(cid, Verdict.OK, "goal_status table absent (no goals yet)")]
+        live = {r["name"] for r in db.execute("PRAGMA table_info(goal_status)")}
+    missing = sorted(_declared_goal_status_columns() - live)
+    if missing:
+        return [Finding(
+            cid, Verdict.FAIL,
+            "goal_status is missing column(s) the code reads: " + ", ".join(missing),
+            remedy="restart devclaw (the ALTER migrations run at boot); if a restart "
+                   "does not add them, the migration list and the CREATE TABLE have drifted",
+        )]
+    return [Finding(cid, Verdict.OK, "goal_status matches the declared schema")]
+
+
 def check_legacy_dropped_shapes(ctx: "InstanceContext") -> list[Finding]:
     findings: list[Finding] = []
     with _ro_db(ctx.store.db_path) as db:
@@ -1185,6 +1233,7 @@ INSTANCE_CHECKS: tuple = (
     check_legacy_goal_status_lifecycle,
     check_legacy_deliveries_ref_id,
     check_legacy_dropped_shapes,
+    check_goal_status_schema,
     check_auth_credentials_file,
     check_auth_claude_json,
     check_auth_setup_token,

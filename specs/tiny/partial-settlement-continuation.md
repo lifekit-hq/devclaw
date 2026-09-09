@@ -117,7 +117,9 @@ and feeds forward as *continue from the branch*, never as *nothing landed*.
 - [x] Extend the dispatch-cap brake class test: an empty-handed block still
       keeps its dispatch count (added to the existing parametrized
       `test_unproductive_settle_keeps_dispatch_count`), and
-      `test_landed_partial_refunds_the_cap_but_leaves_the_watchdog_armed`
+      `test_unshipped_refund_leaves_the_watchdog_armed` (renamed and
+      parametrized 2026-09-09 when the wall-clock teardown joined the same
+      invariant — tinyspec `a-torn-down-session-is-not-a-failed-dispatch`)
       pins the refund + armed watchdog together. NOTE the refund's
       observable is NOT a lower `actions_dispatched`: the refund lets the
       SAME tick dispatch the continuation, so the test asserts

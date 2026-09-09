@@ -97,6 +97,20 @@ if TYPE_CHECKING:
 #: generous enough for real work (2026-07-09: an implement_feature doing honest
 #: work was reaped at 30min).
 TASK_TIMEOUT_S = _config.TASK_TIMEOUT_S
+
+
+def wall_clock_teardown_msg(timeout_s: float = TASK_TIMEOUT_S) -> str:
+    """The settle-path wording for a wall-clock teardown — ONE producer.
+
+    The goal layer classifies this text back into a mechanical class
+    (``state_store.derive_failure_class`` ⇒ ``timeout``) and refunds the
+    dispatch slot for it, so the wording is load-bearing across two layers:
+    drift it in one place and refunds silently stop. Anything that needs to
+    recognise a teardown asks here rather than keeping a copy."""
+    return (
+        f"task exceeded the {timeout_s:.0f}s wall-clock timeout "
+        f"with no terminal result — sandbox torn down"
+    )
 #: how many times to RE-RUN a task that fails its verify gate (or errors), each
 #: time with the failure fed back into the goal, before escalating. The gate
 #: catches a bad result; retry gives the agent a bounded second chance to
@@ -1175,10 +1189,7 @@ class SettleMixin:
                 ev = await _check_no_result_evidence(
                     workspace_dir, pre_run_sha, verify_cmd, task_id
                 )
-                base_timeout_msg = (
-                    f"task exceeded the {TASK_TIMEOUT_S:.0f}s wall-clock timeout "
-                    f"with no terminal result — sandbox torn down"
-                )
+                base_timeout_msg = wall_clock_teardown_msg()
                 if not ev.get("has_commits"):
                     # Nothing committed: fail as today.
                     self._store.mark_failed(

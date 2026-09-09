@@ -270,9 +270,36 @@ async def _resolve_polling_action(
         (poll.status == "done" and poll.gate_passed is not False)
         or poll.landed_partial
     ) else 0
+    # devclaw's OWN wall clock firing is not a failed attempt by the goal. The
+    # sandbox was torn down mid-session, so the dispatch never got to succeed or
+    # fail on its merits; charging it a slot is what parks a healthy goal on
+    # mechanical:dispatch_cap after two teardowns and waits for the owner to
+    # press `continue` — the refund the design already calls owed ("a transient
+    # (a gate crash, an idle timeout) earns one refund", the cap Problem's own
+    # `why`). Applied mechanically here instead of by an owner verb.
+    #
+    # BOUNDED, and the bound is the whole safety argument: only the FIRST
+    # teardown since the last productive settle is refunded. A second with
+    # nothing produced in between is not transient — it is a slice that does not
+    # fit the wall clock — so it burns its dispatch and trips the cap exactly as
+    # today. And a refund is NOT a delivery: `delivered` below is untouched, so
+    # the no-progress watchdog stays armed and a goal that times out forever
+    # still trips a brake. Same shape as the landed-partial refund above — no
+    # new kind, no new counter class, no auto-retry (a re-dispatch is the tick's
+    # ordinary next advance, not a replay of the torn-down session).
+    teardown_refund = 1 if (
+        poll.torn_down and not productive and status.teardown_refunds < 1
+    ) else 0
     new_status = replace(
         status, in_flight=None, phase="idle",
-        actions_dispatched=max(0, status.actions_dispatched - productive),
+        actions_dispatched=max(
+            0, status.actions_dispatched - (productive + teardown_refund)
+        ),
+        # spent when granted; cleared by the same productive settle that clears
+        # every other damping counter below.
+        teardown_refunds=(
+            0 if productive else status.teardown_refunds + teardown_refund
+        ),
         # A productive settle also earns the mechanical auto-heal budget back
         # (tick_guards._autoheal_corrupt_doc) — the SAME stability signal as
         # the cap refund above, riding the same ACTION_SETTLED write (no extra
