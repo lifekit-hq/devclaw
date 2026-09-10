@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-08
 
-**Status**: PARTIAL — owner: Denys, build-or-cut by 2026-09-17. US1 implemented 2026-09-08. US2 (the hop is verified where the worker runs) is SCHEDULED: its own cut condition — "if no worker reports a registered credential absent by 2026-09-22" — resolved toward BUILD on 2026-09-10, when five of the nine owner resumes in four days carried `environment capability check failed — dispatching would burn a session`.
+**Status**: SHIPPED — US1 implemented 2026-09-08; US2 implemented 2026-09-10, RESHAPED the same day on the owner's challenge (below).
 
 **Input**: Denys, 2026-09-08 — "today it was NODE_AUTH_TOKEN, before it was the GitHub token; they are all one thing, credentials. Fix the class once and for all: I want to register it once and have it visible everywhere — and least access needed, only what is needed."
 
@@ -39,17 +39,26 @@ An operator adds a credential by writing ONE entry (name, purpose, least-privile
 3. **Given** a credential name typed as a string key in any `devclaw/*.py` other than `credentials.py`, **When** the suite runs, **Then** `test_no_credential_name_is_spelled_outside_the_registry` fails naming the file.
 4. **Given** a pre-042 host that sends no `agent_env`, **When** the runner starts, **Then** it forwards the setup-token alone (the #644 contract) — a mismatched deploy never regresses auth.
 
-### User Story 2 - The hop is verified where the worker runs (Priority: P2) — SPECIFIED, regrade 2026-09-22
+### User Story 2 - The hop is verified where the worker runs (Priority: P2)
 
-The runner emits one `agent_env` event at session start naming (never valuing) the registered credentials present in the agent's environment. The host records it on the task, and a worker's `BLOCKED: env — <text>` that names a registered credential the runner reported present is filed as *present-but-unusable* (value, scope or usage), never as *absent* — the hold message, the machine issue and doctor's remedy say which. Doctor's credential check reports the last such session-start fact next to the host-side probe, so "the host says OK, the worker says absent" becomes one line with both facts instead of two contradicting surfaces.
+The runner emits one `AgentEnv` event at session start naming (never valuing) the registered credentials present in the agent's environment — and **refuses to start the agent** when a credential the HOST declared should cross is not there. That refusal is the existing `blocked` / `env` result, so no new plumbing: the task fails closed having spent zero tokens. The resulting hold is keyed on the CREDENTIAL, not on the sentence, and it heals itself the next time any session reports that credential present. A worker's later claim that a credential is missing, when the runner saw it arrive, is false and brakes nothing in either mode.
 
-**Why this priority**: US1 removes today's cause; US2 makes the next one legible in one read. It is parked, not dropped: if no worker reports a registered credential absent by 2026-09-22, US2 is cut as unneeded.
+**Why this priority**: US1 removes today's cause; US2 stops the next one costing a session and an owner verb.
 
-**Independent Test**: a fake runner session emitting `agent_env` present=[X]; a worker block naming X; the hold text says "present in the agent env".
+**Reshaped 2026-09-10, before merge (Denys).** The first implementation kept the stop and made its *wording* better: a report naming a present credential was filed as "present but unusable", and under `strict` it raised a Problem. Denys rejected it as a workaround, and he was right on all three counts:
 
-**Acceptance Scenarios**:
+- *"It's like having the container and not mounting the credentials. I don't need to spin up an agent session to understand that."* A missing mount is mechanical. Spending a full Claude session to learn `test -n "$VAR"` is the waste, and no amount of better wording after the fact recovers it.
+- A Problem is still an owner verb. Making the owner's question nicer is not removing it.
+- The live catalog on 2026-09-10 showed one missing `NODE_AUTH_TOKEN` occupying **three separate rows**, because the row id was a slug of the worker's free prose and the worker rephrased it every session. Prose has no identity, so the brake had no release condition, so a human had to be the release condition.
 
-1. **Given** the runner reported `NODE_AUTH_TOKEN` present, **When** the worker blocks on it, **Then** the machine issue's title says present-but-rejected and the remedy is the registry token's scope/validity, not "provide it".
+What replaced it, in the order the failure happens:
+
+1. **Refuse before the session.** The host assembles the agent env from its own registry list. Comparing that list against reality costs microseconds and no project knowledge — the host declared it, so its absence is a fact about devclaw, never about this repo.
+2. **One credential, one row.** `credential_cap_id(var)` keys the hold on the variable, so every wording collapses to the same row.
+3. **It heals mechanically.** `read_result` reads a credential row GREEN once any session reports that credential present. Fix the mount, redeploy, and the next run clears it — no `resume_goal`, no vouch. A brake that cannot observe its own release is the defect, which is exactly why the human-only exit existed.
+4. **A false claim brakes nothing.** In both modes, with a log line, no row and no Problem.
+
+What is deliberately unchanged: a gap naming no registered credential — a missing tool, no Docker daemon, the wrong architecture — keeps today's row and today's human exit. The worker is the only witness there and devclaw can probe nothing. That population is the honest remainder of spec 032 US4, which was cut on 2026-09-10.
 
 ### Edge Cases
 

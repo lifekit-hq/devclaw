@@ -370,10 +370,15 @@ async def _resolve_polling_action(
     if poll.status == "failed" and WORKER_ENV_MARKER in (poll.detail or ""):
         item = (poll.detail or "").split(WORKER_ENV_MARKER, 1)[1]
         item = item.split(WORKER_ENV_SUFFIX_HEAD, 1)[0].strip() or "unspecified environment gap"
-        return await _block_on_env_deficiency(
+        env_outcome = await _block_on_env_deficiency(
             goal_id, goal, new_status, item, task_id=ref.id,
             store=ctx.store, notifier=ctx.notifier,
         )
+        if env_outcome is not None:
+            return env_outcome
+        # None = the report named a credential the runner saw arrive, so it is
+        # false and holds nothing (spec 042 US2). Fall through: the task already
+        # failed closed, and this settle treats it as any other failed task.
 
     # ---- worker honest-block → typed Problem, immediately (spec 031 R4) ----
     # The task layer already failed this settle CLOSED and un-retried; letting

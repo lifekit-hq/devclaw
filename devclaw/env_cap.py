@@ -206,6 +206,21 @@ def read_result(
         )
     except Exception:  # noqa: BLE001
         return None
+    # A credential row heals itself (spec 042 US2). The row says "this
+    # credential never reached the agent"; the runner answers that exact
+    # question at the start of every session. So the moment any session reports
+    # it present, the row is stale and reads GREEN — mount it, redeploy, and
+    # the next run clears it with no owner verb. This is the release condition
+    # `mechanical:` promises: a brake that cannot observe its own release is
+    # the defect, and prose could not observe it, which is why the human-only
+    # exit existed at all.
+    if cap_id.startswith(f"{WORKER_PREFIX}cred-") and result.status == "red":
+        for cred in _credentials.REGISTRY:
+            if cap_id == credential_cap_id(cred.var) and credential_reached_agent(store, cred.var):
+                return CapProbeResult(
+                    "green",
+                    evidence=f"{cred.var} reached the agent environment in the last session",
+                )
     # A worker-reported row stays RED until a human vouches (resume_goal).
     # It used to read GREEN whenever `env_ref` differed — "a new sandbox image
     # or devclaw build IS the fix arriving" (spec 032 US2 / SC-004). That is
@@ -219,6 +234,85 @@ def read_result(
     # repair. `env_ref` is kept on the row as PROVENANCE (which environment the
     # report was made against); it is never a heal trigger.
     return result
+
+
+#: spec 042 US2 — the last session-start report of WHICH sanctioned credentials
+#: actually reached the agent's shells, written by the settle path when the
+#: runner's ``AgentEnv`` event arrives. One instance-wide row: the agent env is
+#: assembled from the host's process env, so the answer cannot differ per goal.
+#: Names only — a value never enters an event or a meta row.
+AGENT_ENV_KEY = f"{_META_PREFIX}agent-env-last"
+
+
+def record_agent_env(
+    store: MetaStore, present: Iterable[str], absent: Iterable[str],
+    *, task_id: str = "", goal_id: str = "",
+) -> None:
+    """Record one runner session-start credential report (spec 042 US2).
+
+    Never raises: this is an observation, and losing it must not fail a run.
+    A later report replaces the earlier one — the question it answers ("did
+    the credential reach the agent LAST time we looked") has no history."""
+    from .state_store import _now_ms  # deferred — avoids circular at module load
+
+    try:
+        store.set_meta(AGENT_ENV_KEY, json.dumps({
+            "present": sorted({str(n).strip() for n in present if str(n).strip()}),
+            "absent": sorted({str(n).strip() for n in absent if str(n).strip()}),
+            "task_id": task_id,
+            "goal_id": goal_id,
+            "env_ref": instance_env_ref(),
+            "at_ms": _now_ms(),
+        }))
+    except Exception:  # noqa: BLE001 — an observation never fails a run
+        pass
+
+
+def agent_env_last(store: MetaStore) -> Optional[dict]:
+    """The last session-start credential report, or ``None`` if no worker
+    session has run since the instance started recording them."""
+    raw = store.get_meta(AGENT_ENV_KEY)
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def credential_cap_id(var: str) -> str:
+    """The ONE row id for "this credential did not reach the agent".
+
+    Keyed on the credential, never on the sentence that reported it. A worker
+    invents its own wording every session, and :func:`worker_cap_id` slugs that
+    wording — so ONE missing ``NODE_AUTH_TOKEN`` produced three separate rows
+    in the fortnight to 2026-09-10, each needing its own human clearing. The
+    credential has one name; the gap has one row."""
+    return f"{WORKER_PREFIX}cred-{_slug(var)}"
+
+
+def credential_named_in(item: str) -> Optional[str]:
+    """The registered credential a report's prose names, or ``None``.
+
+    Matched in slug form through :func:`worker_cap_id` — the same
+    normalisation :func:`superseding_capability` uses, because two spellings
+    here would silently stop matching."""
+    cap_id = worker_cap_id(item)
+    for cred in _credentials.REGISTRY:
+        if _slug(cred.var) in cap_id:
+            return cred.var
+    return None
+
+
+def credential_reached_agent(store: MetaStore, var: str) -> bool:
+    """Did ``var`` reach the agent's shells in the last session that reported?
+
+    The host assembles the agent env from its own registry list, so this is a
+    mechanical fact, not an opinion. ``False`` when no session has reported —
+    absence of evidence is not evidence, and the caller keeps today's behaviour."""
+    last = agent_env_last(store) or {}
+    return var in (last.get("present") or [])
 
 
 def _worker_index_key(project_id: Optional[str]) -> str:
@@ -251,7 +345,22 @@ def record_worker_deficiency(
     clears when a human vouches via ``resume_goal``."""
     from .state_store import _now_ms  # deferred — avoids circular at module load
 
-    cap_id = worker_cap_id(item)
+    # Spec 042 US2. Two questions before a row exists at all:
+    #
+    #   1. Does the prose name a credential the host declared? Then the row is
+    #      keyed on the CREDENTIAL, so one gap is one row across every wording.
+    #   2. Did that credential actually reach the agent? The runner reports it
+    #      at session start, before the agent runs. If it arrived, the report is
+    #      simply false — and a false claim must not brake anything. No row, no
+    #      hold, no owner: the caller logs it and carries on.
+    #
+    # A gap naming no registered credential (a missing tool, no Docker daemon,
+    # the wrong arch) is unchanged: the worker is the only witness, so its prose
+    # is the row exactly as before.
+    named = credential_named_in(item)
+    if named and credential_reached_agent(store, named):
+        return ""
+    cap_id = credential_cap_id(named) if named else worker_cap_id(item)
     pid = (project_id or "").strip() or None
     key = _meta_key(cap_id, pid)
     ref = instance_env_ref()
@@ -268,17 +377,33 @@ def record_worker_deficiency(
         existing["probed_at_ms"] = _now_ms()
         store.set_meta(key, json.dumps(existing))
     else:
-        store.set_meta(key, json.dumps({
-            "status": "red",
-            "evidence": (
-                f"a worker reported the sandbox lacks: {item}"
-                + (f" (goal {goal_id}" + (f", task {task_id}" if task_id else "") + ")" if goal_id else "")
-            ),
-            "remedy": (
+        where = (f" (goal {goal_id}" + (f", task {task_id}" if task_id else "") + ")") if goal_id else ""
+        if named:
+            # devclaw's own broken hop: the host declared this credential should
+            # cross and it did not. Nothing about this is project-specific and
+            # nobody needs to vouch for it — fix the mount, redeploy, and the
+            # next session's report clears every row this one made (read_result).
+            evidence = (
+                f"{named} did not reach the agent environment{where} — the host declares "
+                f"it crosses into the sandbox, so the hop is broken"
+            )
+            remedy = (
+                f"mount {named} into the sandbox and redeploy ({_credentials.by_var(named).scope}); "
+                "the hold clears by itself the next time a session reports it present — "
+                "no resume_goal needed"
+            )
+        else:
+            evidence = f"a worker reported the sandbox lacks: {item}{where}"
+            remedy = (
                 f"provide {item!r} in the sandbox — devclaw work (the image, a mise tool, "
                 "or the project's environment declaration); the hold clears when the "
                 "instance's environment changes, or resume_goal after fixing it by hand"
-            ),
+            )
+        store.set_meta(key, json.dumps({
+            "status": "red",
+            "evidence": evidence,
+            "remedy": remedy,
+            "credential": named or "",
             "env_ref": ref,
             "probed_at_ms": _now_ms(),
         }))

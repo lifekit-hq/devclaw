@@ -183,6 +183,13 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │                                                             │                      │
      │  │  Step H — parse the stream:                                 │                      │
      │  │     • event: lines → on_event callback (logging, console) │                      │
+     │  │       — AgentEnv (spec 042 US2): WHICH host-declared        │                      │
+     │  │         credentials reached the agent's shells, names only. │                      │
+     │  │         One missing ⇒ the runner refuses to start the agent │                      │
+     │  │         (blocked/env, zero tokens); the hold is keyed on    │                      │
+     │  │         the credential and heals when a session reports it  │                      │
+     │  │         present. A report naming one that DID arrive is     │                      │
+     │  │         false and holds nothing.                            │                      │
      │  │     • final result: line → EngineResult                     │                      │
      │  │     • if no result line → "sandbox exited 1 without a       │                      │
      │  │       result line" (the misleading error string)            │                      │

@@ -123,3 +123,35 @@ def test_blocked_payload_emits_structured_result(runner, monkeypatch, reason, ki
     assert result["status"] == "blocked"
     assert result["reason"] == reason
     assert result["block_kind"] == kind and result["block_item"] == item
+
+
+# ---- spec 042 US2: a broken hop never costs a session -----------------------
+# A credential the host declared, missing in the container, is devclaw's own
+# mount. Discovering that by running a full Claude session — then describing it
+# in prose that becomes a project-wide brake only a human can clear — is what
+# five owner resumes in four days bought. The runner can answer it before the
+# agent starts, for nothing.
+
+def test_a_declared_credential_that_is_absent_refuses_the_session(runner):
+    req = {"agent_env": ["NODE_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]}
+    present, absent = runner.partition_agent_credentials(
+        req, {"CLAUDE_CODE_OAUTH_TOKEN": "tok", "NODE_AUTH_TOKEN": "   "},
+    )
+    assert present == ("CLAUDE_CODE_OAUTH_TOKEN",) and absent == ("NODE_AUTH_TOKEN",)
+    assert runner.declared_hop_broken(req, absent) is True
+
+
+def test_every_declared_credential_present_starts_the_session(runner):
+    req = {"agent_env": ["NODE_AUTH_TOKEN"]}
+    present, absent = runner.partition_agent_credentials(req, {"NODE_AUTH_TOKEN": "ghp_x"})
+    assert present == ("NODE_AUTH_TOKEN",) and absent == ()
+    assert runner.declared_hop_broken(req, absent) is False
+
+
+def test_a_pre_042_host_declares_nothing_and_is_never_refused(runner):
+    """No list in the payload ⇒ nothing was declared ⇒ nothing can be missing.
+    The #644 fallback contract keeps working byte-identically."""
+    req = {}
+    _, absent = runner.partition_agent_credentials(req, {})
+    assert absent == runner._PRE_042_AGENT_ENV
+    assert runner.declared_hop_broken(req, absent) is False

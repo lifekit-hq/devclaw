@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from .. import claude_trust
 from .. import config as _config
 from .. import credentials as _credentials
+from .. import env_cap as _env_cap
 from .model import Finding, Verdict
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -340,7 +341,7 @@ from ..env_cap import probe_registry_token as _probe_registry_token  # noqa: E40
 from ..env_cap import probe_repo_secret_names as _probe_repo_secret_names  # noqa: E402
 
 
-def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
+def _registry_token_probe(ctx: "InstanceContext") -> list[Finding]:
     """The registry-read credential is present, well-formed, AND live.
 
     Spec `specs/tiny/sandbox-registry-read-token.md` specified only the UNSET
@@ -403,6 +404,45 @@ def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
                     f"{_REGISTRY_TOKEN_VAR} set, well-formed, and accepted by "
                     f"GitHub (HTTP {status})")]
 
+
+
+def _agent_env_clause(ctx: "InstanceContext", var: str) -> str:
+    """What the LAST worker session saw for ``var`` — the other half of the
+    credential's story (spec 042 US2).
+
+    The host probe answers "is this credential good from here". It cannot
+    answer "did it reach the agent's shells", and those two disagreed for a
+    fortnight: doctor read green while workers reported the credential absent,
+    which is two contradicting surfaces and a human resolving them by hand.
+    Both facts on one line, or one plainly-labelled absence."""
+    store = getattr(ctx, "store", None)
+    # A clause is an observation about a credential, never a verdict on one:
+    # a context without a store (or a store that hiccups) drops the clause and
+    # leaves the probe's own finding exactly as it was.
+    try:
+        last = _env_cap.agent_env_last(store) if store is not None else None
+    except Exception:  # noqa: BLE001
+        return ""
+    if not last:
+        return " — no worker session has reported its agent env yet"
+    if var in (last.get("present") or []):
+        return f" — and the last worker session had {var} in the agent env"
+    if var in (last.get("absent") or []):
+        return (f" — but the last worker session did NOT have {var} in the agent env: "
+                f"it is good here and never arrives there, so fix the hop (the payload's "
+                f"agent list, or the container env), not the credential")
+    return f" — the last worker session did not report on {var}"
+
+
+def check_registry_token(ctx: "InstanceContext") -> list[Finding]:
+    """The host-side probe (:func:`_registry_token_probe`) plus what the last
+    worker session actually saw, on one line — see :func:`_agent_env_clause`."""
+    clause = _agent_env_clause(ctx, _REGISTRY_TOKEN_VAR)
+    return [
+        Finding(f.check_id, f.verdict, f.evidence + clause, remedy=f.remedy,
+                project_id=f.project_id)
+        for f in _registry_token_probe(ctx)
+    ]
 
 #: the scope the failing-job log read needs, and the one an operator forgets:
 #: `repo` alone authenticates every push, PR and merge devclaw makes, so a

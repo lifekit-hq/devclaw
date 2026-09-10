@@ -574,8 +574,12 @@ async def _block_on_env_cap(
 async def _block_on_env_deficiency(
     goal_id: str, goal: Goal, status: GoalStatus, item: str,
     *, task_id: str = "", store: GoalStore, notifier: Notifier,
-) -> Outcome:
-    """Spec 032 US2: a worker reported ``BLOCKED: env — <item>``. Record the
+) -> "Outcome | None":
+    """Spec 032 US2: a worker reported ``BLOCKED: env — <item>``.
+
+    Returns ``None`` when the report is FALSE — it names a credential the
+    runner saw reach the agent — so the caller carries on down its ordinary
+    failed-task path (spec 042 US2). Record the
     deficiency as a red capability row for the goal's PROJECT (so every goal on
     it holds at admission, not only this one) and hold this goal through the
     same ``mechanical:env`` seam a declared capability uses — one kind, one
@@ -590,6 +594,17 @@ async def _block_on_env_deficiency(
     change the hold — it is what protects the project's sessions."""
     pid = (goal.project_id or "").strip() or None
     cap_id = _env_cap.record_worker_deficiency(store, pid, item, goal_id=goal_id, task_id=task_id)
+    if not cap_id:
+        # Spec 042 US2: the report names a credential the runner saw reach the
+        # agent this very session. The report is false, and a false claim
+        # brakes nothing — in either mode. No row, no hold, no Problem, because
+        # a Problem is still the owner's turn. The task already failed closed;
+        # the goal carries on and re-dispatches on its own budget.
+        store.append_log(
+            goal_id,
+            f"env report dropped — the credential it names reached the agent this session: {item[:200]}",
+        )
+        return None
     result = _env_cap.read_result(store, cap_id, pid) or _env_cap.CapProbeResult(
         "red", evidence=f"a worker reported the sandbox lacks: {item}",
     )

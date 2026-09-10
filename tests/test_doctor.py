@@ -1347,3 +1347,37 @@ def test_silent_worker_usage_source_warns(env):
     f = _findings(_run(env), "instance.loop_health.tables")
     assert f and f[0].verdict is Verdict.WARN
     assert "usage" in f[0].evidence
+
+
+# ---- instance: the credential's other half (spec 042 US2, seeded faults) ----
+# The host probe answers "is this credential good from here"; it cannot answer
+# "did it reach the agent's shells". For a fortnight those two disagreed —
+# doctor green, workers reporting the credential absent — and a human resolved
+# the contradiction by hand every time. Both facts, one line.
+
+@pytest.mark.parametrize("present, absent, expected", [
+    (["NODE_AUTH_TOKEN"], [], "the last worker session had NODE_AUTH_TOKEN in the agent env"),
+    ([], ["NODE_AUTH_TOKEN"], "did NOT have NODE_AUTH_TOKEN in the agent env"),
+    (["CLAUDE_CODE_OAUTH_TOKEN"], [], "did not report on NODE_AUTH_TOKEN"),
+])
+def test_registry_token_finding_carries_what_the_last_worker_session_saw(
+    env, monkeypatch, present, absent, expected,
+):
+    from devclaw import env_cap
+
+    _patch_probe(monkeypatch, 200)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", "ghp_goodtoken")
+    env_cap.record_agent_env(env["store"], present, absent, task_id="t1")
+    (f,) = _findings(_run(env), _REG_CID)
+    assert f.verdict is Verdict.OK          # the host probe still owns the verdict
+    assert expected in f.evidence
+
+
+def test_registry_token_finding_says_so_when_no_session_has_reported(env, monkeypatch):
+    """A fresh instance has no worker-side fact. Say that plainly rather than
+    implying the hop is proven — an unproven hop read as proven is the state
+    this check exists to end."""
+    _patch_probe(monkeypatch, 200)
+    monkeypatch.setenv("NODE_AUTH_TOKEN", "ghp_goodtoken")
+    (f,) = _findings(_run(env), _REG_CID)
+    assert "no worker session has reported its agent env yet" in f.evidence

@@ -26,6 +26,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional
 
 from .. import config as _config
+from .. import env_cap as _env_cap
 from .. import project_manifest as _manifest
 from .. import validation_loop as _validation
 from ..procutil import run as _proc_run
@@ -1046,6 +1047,20 @@ class SettleMixin:
             )
         except Exception as err:  # event writes must never crash the run
             sys.stderr.write(f"task-queue: append_event failed task={task_id}: {err}\n")
+        if event.type == "AgentEnv":
+            # Spec 042 US2. The event is on the task like every other, but the
+            # question it answers — "did the sanctioned credentials reach the
+            # agent's shells" — is asked later, from the goal layer, when a
+            # worker reports an environment gap. Project it to the one meta row
+            # that read consults, so classifying a gap is a key lookup and not
+            # a scan of an append-only log.
+            payload = event.payload if isinstance(event.payload, dict) else {}
+            _env_cap.record_agent_env(
+                self._store,
+                payload.get("present") or (),
+                payload.get("absent") or (),
+                task_id=task_id,
+            )
 
     async def _run_and_settle(
         self, task_id: str, kind: TaskKind, workspace_dir: str, goal: str,
