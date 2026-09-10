@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-08
 
-**Status**: US1 implemented 2026-09-08; US2 specified, regrade by 2026-09-22 (owner: Denys)
+**Status**: PARTIAL — owner: Denys, build-or-cut by 2026-09-17. US1 implemented 2026-09-08. US2 (the hop is verified where the worker runs) is SCHEDULED: its own cut condition — "if no worker reports a registered credential absent by 2026-09-22" — resolved toward BUILD on 2026-09-10, when five of the nine owner resumes in four days carried `environment capability check failed — dispatching would burn a session`.
 
 **Input**: Denys, 2026-09-08 — "today it was NODE_AUTH_TOKEN, before it was the GitHub token; they are all one thing, credentials. Fix the class once and for all: I want to register it once and have it visible everywhere — and least access needed, only what is needed."
 

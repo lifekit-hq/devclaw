@@ -91,8 +91,8 @@ Every capability claim carries its evidence tier where it is made: **production*
 | Live validation lane (`validate_product`, `qa` goals, deploy-triggered smoke) | **experimental** | spec 015; armed per project through the manifest's `validation` key, off by default |
 | Deploy hosting over Tailscale | **experimental** | built, never run end-to-end in production; the launcher hosts Python or static repos only ([#401](https://github.com/lifekit-hq/devclaw/issues/401)) |
 | Swapping `claude-code` for another ACP agent | **paper** | the seam exists (`DEVCLAW_ACP_COMMAND`, plain-markdown skills, bash hooks) and only `claude-code` has ever run through it |
-| Autonomous issue self-dispatch | **paper** | spec 007, parked |
-| Worker file memory across increments | **paper** | spec 034, drafted and deliberately not armed |
+| Autonomous issue self-dispatch | **cut** | spec 007, cut 2026-09-10 — filing a goal from a graded issue stays the owner's act (`specs/README.md`) |
+| Worker file memory across increments | **production** | spec 034, shipped 2026-09-07 — the `.devclaw/` directory the worker edits and the PR reviews |
 
 **Measured, not vibes.** The ratchet that defines "finished" is a first-pass rate of at least `DEVCLAW_RATCHET_FIRST_PASS`, a decided-merge rate of at least `DEVCLAW_RATCHET_DECIDED_MERGE`, and a wedge-free window of `DEVCLAW_RATCHET_WINDOW_DAYS`, read from `get_scorecard_metrics`. The latest read is [`docs/audits/2026-09-05-scorecard.html`](./docs/audits/2026-09-05-scorecard.html): decided-merge passes, first-pass fails, wedge-free fails. Engineering health is tracked the same way in [`docs/audits/eng-health.md`](./docs/audits/eng-health.md). Honest scope: small-to-medium machine-verifiable backend tasks; UI work and ambiguous specs still need a human.
 

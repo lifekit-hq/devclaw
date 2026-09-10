@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-03
 
-**Status**: Implemented 2026-09-03 — US1 (#811), US2 (#812), US3 (#813), US5 + doctrine amendment + US4 declaration surface (#814). US4 provisioning-or-refusal is DEFERRED by ruling (Q1 = C) until US1 has a live track record; it is the remaining owned work of this spec, tracked in tasks.md Phase 7 / research R8. — amended by spec 045 (2026-09-10): a new `conflicting` rollup state — a CONFLICTING PR is never held on `mechanical:ci`.
+**Status**: PARTIAL — owner: Denys, build-or-cut by 2026-09-17. Shipped 2026-09-03: US1 (#811), US2 (#812), US3 (#813), US5 + doctrine amendment + US4's declaration surface (#814) — amended by spec 045 (2026-09-10): a new `conflicting` rollup state, and a CONFLICTING PR is never held on `mechanical:ci`. **US4's provisioning-or-refusal half is unbuilt** (tasks.md Phase 7 / research R8): the manifest can DECLARE an environment, but nothing checks the declaration is satisfiable or provisions it. Its 2026-09-03 condition was "until US1 has a live track record", with no owner and no date — the label-that-stops-a-clock defect this estate's ledger exists to prevent. The track record arrived and argues for build: five of the nine owner resumes in the four days to 2026-09-10 carried `environment capability check failed — dispatching would burn a session`. Decide it against spec 042 US2, which targets the same class from the legibility side.
 
 **Input**: User description: "Verification ownership: the pipeline verifies a change in the
 project's declared environment, never in devclaw's generic sandbox, and the worker never

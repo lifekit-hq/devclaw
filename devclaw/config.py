@@ -169,8 +169,9 @@ def ci_log_tail_lines() -> int:
 # ---- autonomy-ratchet thresholds (spec 018 US4) ---------------------------
 # The finish-line numbers the scorecard grades itself against (agreed
 # 2026-08-25). Configuration, not code: tune without a deploy. The gate they
-# feed is INFORMATIONAL ONLY — the spec 007 autonomy flip stays a manual
-# operator act; no mechanism reads the verdict.
+# feed is INFORMATIONAL ONLY — it is the compounding-readiness signal, and
+# since spec 007 was cut (2026-09-10) there is no autonomy flip behind it.
+# No mechanism reads the verdict.
 
 
 def goal_text_budget() -> int:

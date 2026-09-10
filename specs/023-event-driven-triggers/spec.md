@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-27
 
-**Status**: **Implemented 2026-08-29** — the signature-verified webhook route
+**Status**: SHIPPED 2026-08-29 — the signature-verified webhook route
 (`devclaw/server/routes/webhooks.py`, `60e1538`) wakes the machinery and grades
 on issue events; tasks 6/7. ONE task open, **T007 — the live legs** (4-repo
 webhook configuration, one observed merged-PR wake for SC-001, one auto-graded

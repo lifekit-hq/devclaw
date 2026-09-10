@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-24
 
-**Status**: **Implemented 2026-08-24** — US1 the read-only zero-LLM doctor
+**Status**: SHIPPED 2026-08-24 — US1 the read-only zero-LLM doctor
 (`devclaw/doctor/`, #674), US2 the per-project `devclaw.json` manifest
 (`devclaw/project_manifest.py`), US3 drift detection + guided migration;
 tasks 26/26. Header corrected 2026-09-09 by the spec audit: it still read

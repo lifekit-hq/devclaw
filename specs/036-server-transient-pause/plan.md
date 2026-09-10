@@ -1,5 +1,9 @@
 # Implementation Plan: A provider-side transient pauses and resumes
 
+> **US3 was CUT on 2026-09-10** — US1/US2 already classify host-side and no
+> `server_error` recurred in the 14 days to that date. The US3 design below is
+> the record of a rejected belt-and-suspenders, not scheduled work (`specs/README.md`).
+
 **Branch**: `036-server-transient-pause` | **Date**: 2026-09-06 | **Spec**: [spec.md](./spec.md)
 
 **Input**: Feature specification from `/specs/036-server-transient-pause/spec.md`

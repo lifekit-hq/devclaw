@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-02
 
-**Status**: **Implemented 2026-09-02** — all four user stories: the typed Problem
+**Status**: SHIPPED 2026-09-02 — all four user stories: the typed Problem
 seam (`devclaw/goal/problems.py`, `91c6ba7`), the `goal_problems` /
 `goal_decisions` tables, the two resolution verbs (`decide`,
 `correct_implementation`), and Decisions fed forward as fact

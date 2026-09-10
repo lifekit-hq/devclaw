@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-27
 
-**Status**: **Implemented 2026-08-29** — for issue-backed goals the ticket is the
+**Status**: SHIPPED 2026-08-29 — for issue-backed goals the ticket is the
 contract; the prose lane and the kind-alias tools were removed in `c2a4ed8`;
 tasks 4/5. ONE task open, **T005 — the issue-template rollout** to
 finance-sentry / lifekit-dashboard / lifekit-common. It lands as small PRs on

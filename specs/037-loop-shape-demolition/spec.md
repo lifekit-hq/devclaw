@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: Ruled 2026-09-06 — direction memory only. Executed through the tinyspec lane (Denys: "demolition without a spec"); no plan.md, no tasks.md. The three questions below were settled in the same session. Supersedes the closed 037 calibration-corpus draft (PR #841).
+**Status**: SHIPPED — ruled 2026-09-06 as direction memory and executed through the tinyspec lane (Denys: "demolition without a spec"); no plan.md, no tasks.md. The three questions below were settled in the same session. Supersedes the closed 037 calibration-corpus draft (PR #841).
 
 **Input**: User description: "Does the current devclaw workflow make sense, with all those review gates after each task? devclaw is a wrapper of claude — it should structure the working agent, not make it stupid." (Denys, 2026-09-06; ruled "do it" on the four cuts below)
 

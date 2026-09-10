@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: PR-A (US1 + US2) implemented 2026-09-07 (#859); PR-C (US6 estimate calibration, without the `cost_tokens` column that waits on US3) implemented 2026-09-07. **Ruled 2026-09-07 (Denys, on the session's recommendation):** US6 (estimate calibration) is next — the spec's own hypothesis that first-pass may be measuring size makes it the read that changes what the loop does; US5 ships alongside as the cheap surface. **US3 and US4 are PARKED**: the only worker-usage source available is a vendor-specific transcript scrape inside the runner (research D1), which is the one layer the constitution keeps model-agnostic (II), to price runs on an OAuth plan whose money is fixed. They were to resume the day the ACP agent reports usage itself; the `feat/038b-usage-ledger` branch held the draft.
+**Status**: SHIPPED — all six user stories built; US3 + US4 unparked by Denys 2026-09-09 ("finish all the US of 039") and landed the same day, with US5 and the US6 `cost_tokens` column that US3 had been blocking. The reversal is recorded below because the reasoning it overturns is still the reasoning that would park it again.
 
 **UNPARKED 2026-09-09 (Denys, "finish all the US of 039").** The parking is reversed, not expired — the regrade came early because the owner asked for usage history he cannot have without the ledger. What was re-examined and what changed:
 

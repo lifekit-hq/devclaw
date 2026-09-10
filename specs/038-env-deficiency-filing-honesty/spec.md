@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-07
 
-**Status**: US1 and US2 implemented 2026-09-07, plus the T010 post-landing correction that made FR-007 hold on the two failure exits the doorway cannot see. Every user story in this spec is built; the only carried item is the pre-existing ledger drift recorded under "Known gap (not this spec's)".
+**Status**: SHIPPED — US1 and US2 implemented 2026-09-07, plus the T010 post-landing correction that made FR-007 hold on the two failure exits the doorway cannot see. Every user story in this spec is built; the only carried item is the pre-existing ledger drift recorded under "Known gap (not this spec's)".
 
 **Input**: lifekit-hq/devclaw issue #818 — "Worker env deficiency claims 'filed as devclaw work' but no issue was created"
 

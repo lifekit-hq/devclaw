@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-24
 
-**Status**: Implemented (US1 + US2)
+**Status**: SHIPPED — US1 + US2.
 
 ## Problem
 

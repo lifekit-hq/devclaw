@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-22
 
-**Status**: Implemented (2026-08-23) — plan.md / tasks.md; all FRs shipped in one PR — amended by spec 045 (2026-09-10): the span leaves out every path the base branch already carries at that content.
+**Status**: SHIPPED — 2026-08-23 — plan.md / tasks.md; all FRs shipped in one PR — amended by spec 045 (2026-09-10): the span leaves out every path the base branch already carries at that content.
 
 **Input**: Issue [#630](https://github.com/lifekit-hq/devclaw/issues/630). Materialize the agent's change once, mechanically, as a git object, and have every consumer read that same object instead of recomputing its own view.
 
