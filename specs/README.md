@@ -50,5 +50,6 @@ the directory went away.
 
 | Story | Cut | Why |
 |---|---|---|
+| 032 US4 — the declared verification environment, provisioned or refused | 2026-09-10 | The `environment` declaration surface shipped 2026-09-03 and stays; the provisioning-or-refusal half is dropped. This is Q1's rejected option A, chosen a week later on evidence: the class it would own — an environment gap holding a project — already carries five mechanisms (030's capability check, 042's registry + probes, 038's filing honesty, and the two `env-hold-*` tinyspecs), and one policy is allowed at a boundary, never a sixth mechanism. Spec 042 US2 owns the class from the legibility side. Accepted consequence, named in the spec: the integration class stays CI-only — which spec 032 itself made the verdict of record. |
 | 036 US3 — the sandbox reports the outage structurally | 2026-09-10 | Belt-and-suspenders behind US1+US2, which already classify host-side; no `server_error` recurred in the 14 days to 2026-09-10. The permanent assumption this leaves is stated in 036's Assumptions, along with what reopens the cut. |
 | 040 US3 — per-clause worker report, UNMET routing | 2026-09-07 | Deleted at 040's own north-star shrink; not revived by 043 without a fresh case. |
