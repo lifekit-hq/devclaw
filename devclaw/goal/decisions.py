@@ -39,6 +39,23 @@ def _iso_ms(iso: "str | None") -> int:
         return 0
 
 
+#: the steering ``source`` the done-gate's own corrections are written under
+#: (tick_context._apply_corrections). One name, read by the two places that
+#: decide whether such a row outranks the owner's accept_close.
+MACHINE_EVAL_SOURCE = "auto-eval"
+
+
+def outranks_accept(rows: "list[tuple[int, str, str]]") -> bool:
+    """Whether any unread steering row must run BEFORE an owner's standing
+    ``accept_close`` closes (spec 045 US3). A human's later line and a
+    mechanical correction (``auto-ci``, ``auto-conflict``) do — the last
+    word and a fact both outrank the accept, as spec 041 rules. The
+    evaluator's own concern rows (:data:`MACHINE_EVAL_SOURCE`) do not: they
+    are the gap the accept accepted, and the close records them as
+    follow-ups. ``rows`` are ``(id, source, line)`` triples."""
+    return any(str(src or "") != MACHINE_EVAL_SOURCE for _id, src, _line in rows)
+
+
 def pending_since(rows: "list[Decision]", last_plan_at: "str | None") -> "list[Decision]":
     """The current Decisions the loop has not acted on yet — made after the
     goal's last plan/dispatch instant (spec 041 FR-001). A Decision is work:

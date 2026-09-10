@@ -527,11 +527,15 @@ async def _resolve_polling_action(
             ctx.store.append_log(
                 goal_id, f"PR is CONFLICTING with its base — cannot land as-is: {poll.pr_url}"
             )
+            # Spec 045 FR-009: a fact for the log and the next brief, not a
+            # request to the owner — the close routes a conflicting PR to
+            # the bounded resolution increment itself (tick_donegate), so
+            # this line never asks for the hand rebase it used to.
             await _notify(
-                ctx.notifier, NotifyLevel.OWNER,
-                f"⚠️ [{goal_id}] delivered PR cannot land — {_action_label(ref)} "
-                f"shipped, but its PR conflicts with the base branch and will not "
-                f"merge as-is. It needs a rebase or hand-resolution: {poll.pr_url}",
+                ctx.notifier, NotifyLevel.TASK,
+                f"⚠️ [{goal_id}] delivered PR conflicts with its base — {_action_label(ref)} "
+                f"shipped, but the PR will not merge as-is; the close dispatches the "
+                f"resolution increment: {poll.pr_url}",
             )
 
     # Tells the planner the PR's REAL state instead of letting it infer one.

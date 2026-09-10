@@ -1704,13 +1704,17 @@ class GoalService:
         # heal_attempts=0 / next_heal_at=None: same as steer_goal — a HUMAN
         # lifting the block vouches for the goal, so the mechanical auto-heal
         # budget (and any prep-backoff window) is restored in full.
+        # merge_heal_attempted=False (spec 045 FR-007): the conflict heal is
+        # one of those budgets — a resumed goal whose PR still conflicts gets
+        # its ONE bounded resolution increment back, instead of re-parking
+        # on the same conflict with a budget spent before the human acted.
         self._goal_store.transition(
             goal_id, Event.UNBLOCK,
             replace(s, phase="idle", blocked_on="", actions_dispatched=0, last_plan_at=None,
                     heal_attempts=0, next_heal_at=None, donegate_rounds=0,
                     donegate_progress=0, problem_id="",
                     env_hold_notified=False,
-                    env_heal_attempts=0),
+                    env_heal_attempts=0, merge_heal_attempted=False),
             expect=s,
         )
         # A worker-reported environment gap is recorded on the PROJECT, not the

@@ -19,6 +19,7 @@ from enum import Enum
 from typing import Awaitable, Callable
 
 from .. import config as _config
+from . import decisions as _decisions
 from . import issue_ref as _issue_ref
 from . import mergeability as _mergeability
 from . import remote_checks as _remote_checks
@@ -302,4 +303,4 @@ def _engine_kick(engine: GoalEngine) -> None:
 
 def _apply_corrections(store: GoalStore, goal_id: str, ev: EvalResult) -> None:
     if ev.corrections:
-        store.append_steering(goal_id, ev.corrections, source="auto-eval")
+        store.append_steering(goal_id, ev.corrections, source=_decisions.MACHINE_EVAL_SOURCE)

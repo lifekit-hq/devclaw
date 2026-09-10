@@ -73,6 +73,8 @@ from ..task_git import (
 from ..task_change import (
     build_paths as _build_paths,
     changed_entries_sync as _changed_entries_sync,
+    base_ref_sync as _base_ref_sync,
+    own_paths_sync as _own_paths_sync,
     in_scope_from_text as _in_scope_from_text,
     ERROR as _CHANGE_ERROR,
     NO_CHANGE as _CHANGE_NONE,
@@ -217,13 +219,30 @@ async def _git_name_status(host_dir: str, base: str, head: str) -> "list[tuple[s
     return await asyncio.to_thread(_changed_entries_sync, host_dir, base, head)
 
 
-async def _git_diff(host_dir: str, base: str = "", head: str = "") -> "str | None":
+async def _git_diff(
+    host_dir: str, base: str = "", head: str = "", paths: "list[str] | None" = None,
+) -> "str | None":
     """Async wrapper — runs the blocking git diff in a thread so it never blocks
     the event loop or trips the asyncio-subprocess child-watcher hang. Looks up
     :func:`_git_diff_sync` as a module global so tests can patch it here.
 
     ``None`` means git could not answer — NOT an empty change (spec 013)."""
-    return await asyncio.to_thread(_git_diff_sync, host_dir, base, head)
+    if paths is None:
+        return await asyncio.to_thread(_git_diff_sync, host_dir, base, head)
+    return await asyncio.to_thread(_git_diff_sync, host_dir, base, head, paths)
+
+
+async def _base_ref(host_dir: str, base_branch: "str | None") -> "str | None":
+    """Async wrapper around :func:`~devclaw.task_change.base_ref_sync` — a
+    module global so tests patch it here. ``None`` = no base resolved."""
+    return await asyncio.to_thread(_base_ref_sync, host_dir, base_branch)
+
+
+async def _own_paths(host_dir: str, base_ref: str, head: str) -> "set[str] | None":
+    """Async wrapper around :func:`~devclaw.task_change.own_paths_sync` — the
+    paths at which the head differs from the base branch. ``None`` = git could
+    not answer; the caller leaves the span unfiltered."""
+    return await asyncio.to_thread(_own_paths_sync, host_dir, base_ref, head)
 
 
 async def _materialize_worktree(
@@ -239,6 +258,7 @@ async def _materialize_worktree(
 
 async def _capture_change(
     workspace_dir: str, base: str, *, task_id: str, message: str, brief: str = "",
+    base_branch: "str | None" = None,
 ) -> ChangeSet:
     """**The** answer to "what did the agent change?" (spec 013, #630).
 
@@ -304,6 +324,8 @@ async def _capture_change(
         )
     status = _CHANGE_SOME if diff.strip() else _CHANGE_NONE
     paths: tuple = ()
+    base_ref = ""
+    note = ""
     if status == _CHANGE_SOME:
         # spec 032 US3: classify every path ONCE, here — the gate, the
         # advisories and the done-gate brief all read this. A span whose
@@ -311,14 +333,45 @@ async def _capture_change(
         # silently unclassified change.
         try:
             entries = await _git_name_status(workspace_dir, base, head)
-            paths = _build_paths(entries, diff, _in_scope_from_text(brief))
+            # Spec 045: the change is the worker's OWN. A path whose post-run
+            # content the base branch already carries — everything a merge
+            # of (or rebase onto) the default branch brings in — is the
+            # base's change, not the worker's, and leaves the span: its
+            # paths, its rendered diff, and so every consumer at once. No
+            # base ref (a local-only repo, the stubbed shapes) ⇒ unfiltered,
+            # said out loud: judging more is the safe direction, never less.
+            base_ref = (await _base_ref(workspace_dir, base_branch)) or ""
+            own = (await _own_paths(workspace_dir, base_ref, head)) if base_ref else None
+            if own is None:
+                note = (
+                    f"span unfiltered: no base ref resolved in {workspace_dir}" if not base_ref
+                    else f"span unfiltered: no merge-base between {base_ref} and {head[:8]}"
+                )
+                base_ref = ""
+            else:
+                kept = [e for e in entries if e[1] in own]
+                if len(kept) != len(entries):
+                    dropped = [p for _, p in entries if p not in own]
+                    note = (
+                        f"{len(dropped)} path(s) carried by {base_ref} left out of the span: "
+                        + ", ".join(dropped[:8]) + (" …" if len(dropped) > 8 else "")
+                    )
+                    entries = kept
+                    rendered = await _git_diff(workspace_dir, base, head, [p for _, p in kept])
+                    if rendered is None:
+                        raise RuntimeError(f"git could not render the span's own paths against {base_ref}")
+                    diff = rendered
+                    if not diff.strip():
+                        status = _CHANGE_NONE
+            if status == _CHANGE_SOME:
+                paths = _build_paths(entries, diff, _in_scope_from_text(brief))
         except Exception as err:  # noqa: BLE001 — undeterminable ⇒ loud, not silent
             return ChangeSet(
                 status=_CHANGE_ERROR, diff=diff,
                 reason=f"the changed paths could not be classified: {err.__class__.__name__}: {err}",
                 **common,
             )
-    return ChangeSet(status=status, diff=diff, paths=paths, **common)
+    return ChangeSet(status=status, diff=diff, paths=paths, base_ref=base_ref, note=note, **common)
 
 
 def _diff_stats(diff: str) -> dict | None:
@@ -388,6 +441,10 @@ def _attach_change(
         }
         if change.reason:
             result["change"]["reason"] = change.reason
+        if change.base_ref:
+            result["change"]["base_ref"] = change.base_ref
+        if change.note:
+            result["change"]["note"] = change.note
         if change.paths:
             result["change"]["gate_input_paths"] = list(change.gate_input_paths)
             result["change"]["binary_paths"] = list(change.binary_paths)
@@ -1255,6 +1312,7 @@ class SettleMixin:
                         change_fn=lambda: _capture_change(
                             workspace_dir, pre_run_sha,
                             task_id=task_id, message=materialize_msg, brief=goal,
+                            base_branch=row.base_branch if row else None,
                         ),
                         project_id=project_id,
                     )
@@ -1400,6 +1458,7 @@ class SettleMixin:
                         change_fn=lambda: _capture_change(
                             workspace_dir, pre_run_sha,
                             task_id=task_id, message=materialize_msg, brief=goal,
+                            base_branch=row.base_branch if row else None,
                         ),
                         project_id=project_id,
                     )
@@ -1527,6 +1586,7 @@ class SettleMixin:
                         await _capture_change(
                             workspace_dir, pre_run_sha,
                             task_id=task_id, message=materialize_msg,
+                            base_branch=row.base_branch if row else None,
                         ),
                         kind=kind, workspace_dir=workspace_dir,
                         verify_cmd=verify_cmd,

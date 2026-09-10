@@ -303,6 +303,18 @@ async def _autoheal_ci(
         store.append_log(goal_id, "auto-resumed: no CI reader bound — re-opening the done-gate")
         return healed
     branch, rc = read
+    if rc.state == "conflicting":
+        # Spec 045 US2: a CONFLICTING PR has nothing to wait for — GitHub
+        # creates no merge ref, so its checks never report. Lift the hold;
+        # the close (gate open or accepted close) routes the conflict to
+        # spec 025's bounded heal on the next tick, at zero cognition.
+        healed = _heal_unblock(goal_id, status, store, heal_attempts=n)
+        store.append_log(
+            goal_id,
+            f"auto-resumed: the PR on {branch} conflicts with its base — nothing to wait "
+            f"for; the close routes the conflict (heal {n}/{CI_HEAL_CAP})",
+        )
+        return healed
     if rc.state == "failing":
         _heal_unblock(goal_id, status, store, heal_attempts=n)
         # the column-only write returns the fresh row — hand THAT back so the
