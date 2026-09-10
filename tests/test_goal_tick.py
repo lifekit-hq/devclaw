@@ -762,6 +762,7 @@ async def test_resume_goal_unblocks_without_steering_and_replans_next_tick(tmp_p
         store.save_status("g", GoalStatus(
             phase="blocked", blocked_on="sandbox image missing",
             actions_dispatched=5, last_plan_at=store.now_iso(),
+            merge_heal_attempted=True,
         ))
 
         out = svc.resume_goal("g")
@@ -773,6 +774,7 @@ async def test_resume_goal_unblocks_without_steering_and_replans_next_tick(tmp_p
         assert not saved.blocked_on                    # stale block reason cleared
         assert saved.actions_dispatched == 0           # cap won't re-fire on the first re-plan
         assert saved.last_plan_at is None              # cadence_due → True on the next tick
+        assert saved.merge_heal_attempted is False     # spec 045 FR-007: the conflict heal is refunded too
         assert store.unread_steering_rows("g") == []   # NO steering row appended
 
         evaluator, engine, notifier = FakeClaude(), FakeEngine(), RecordingNotifier()
@@ -1316,12 +1318,15 @@ async def test_speckit_dispatch_gate_fails_open_on_probe_error(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_conflicting_pr_at_settle_pings_owner_and_logs_conflict(tmp_path, monkeypatch):
+async def test_conflicting_pr_at_settle_logs_the_conflict_without_paging_the_owner(tmp_path, monkeypatch):
     """#394 done-when 1: a delivery whose PR is CONFLICTING at settle is a
-    degraded delivery and must be LOUD — an owner ping naming the conflict and
-    a log line that says the PR cannot land — never a silent `done`
-    indistinguishable from a landable one (closeloop-bench PR #8 accumulated
-    three such deliveries overnight, 2026-07-28)."""
+    degraded delivery and must be LOUD in the goal log — never a silent
+    `done` indistinguishable from a landable one (closeloop-bench PR #8
+    accumulated three such deliveries overnight, 2026-07-28). Spec 045
+    FR-009 retired the OWNER ping that rode with it: it asked for a hand
+    rebase, and the close now routes the conflict to the bounded resolution
+    increment itself — a fact for the log and the next brief, not a job for
+    the owner."""
     store = _store(tmp_path, Clock())
     seed_goal(tmp_path, "g")
     store.save_status("g", GoalStatus(
@@ -1341,11 +1346,11 @@ async def test_conflicting_pr_at_settle_pings_owner_and_logs_conflict(tmp_path, 
                 mergeability_probe=probe)
 
     assert probe.asked == ["https://github.com/o/r/pull/9"]
-    pings = [m for m in notifier.sent if "cannot land" in m]
-    assert pings, f"expected an owner ping for a CONFLICTING PR, got {notifier.sent}"
-    assert "https://github.com/o/r/pull/9" in pings[0]
+    assert not [m for m in notifier.sent if "cannot land" in m or "hand-resolution" in m], (
+        f"a CONFLICTING PR is the close's job, never an owner ping: {notifier.sent}"
+    )
     log = (tmp_path / "g" / "log.md").read_text()
-    assert "CONFLICTING" in log
+    assert "CONFLICTING" in log and "https://github.com/o/r/pull/9" in log
 
 
 @pytest.mark.asyncio
@@ -4326,3 +4331,66 @@ async def test_donegate_amendment_repins_once_with_carry_forward(tmp_path):
     assert await _tick(store, "g", evaluator, engine_ok(), notifier) is Outcome.SLEPT
     assert "## Pinned clauses" in evaluator.last_prompt
     assert store.recent_log("g").count("pinned contract revision") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_conflicting_rollup_at_the_gate_open_routes_to_the_conflict_heal_not_the_ci_hold(tmp_path):
+    """Spec 045 US2 at the gate open: a CONFLICTING PR cannot run its
+    checks and cannot merge, so the done proposal never waits on it and
+    never spends a review sandbox or an evaluator call on a branch that
+    cannot land — the bounded resolution increment (spec 025 FR-017) is
+    dispatched first, at zero cognition."""
+    from devclaw.goal.remote_checks import RemoteChecksResult
+
+    store = _store(tmp_path, Clock())
+    engine = _settled_advance_proposing_done(store, tmp_path)
+    checker = FakeRemoteChecker(RemoteChecksResult(
+        "conflicting", "the PR conflicts with its base", head_sha="5138bf1dcc",
+        pr_url="https://github.com/o/r/pull/9",
+    ))
+    evaluator, notifier = FakeClaude(_ACHIEVED_EVAL), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
+
+    assert out is Outcome.SLEPT
+    s = store.load_status("g")
+    assert s.phase == "idle" and s.merge_heal_attempted is True
+    assert s.blocked_kind != "mechanical:ci" and not s.pending_done_proposal
+    assert "[merge-conflict]" in store.unread_steering("g")
+    assert evaluator.calls == 0
+    assert not any(a.tool == "review_repository" for a, _g, _u in engine.dispatched)
+
+
+@pytest.mark.asyncio
+async def test_a_ci_hold_lifts_on_the_first_conflicting_read(tmp_path):
+    """Spec 045 US2, scenario 3: a ``mechanical:ci`` hold already in place
+    (fs-431 sat 16 windows on checks a conflicting PR could never run) lifts
+    on the first ``conflicting`` recheck and the same tick routes the
+    conflict to the bounded heal — no cap, no ping, zero cognition."""
+    from devclaw.goal.remote_checks import RemoteChecksResult
+
+    store = _store(tmp_path, Clock())
+    engine = _settled_advance_proposing_done(store, tmp_path)
+    checker = FakeRemoteChecker(RemoteChecksResult(
+        "pending", "3 still running: build-and-test", head_sha="5138bf1dcc",
+        pending_names=("build-and-test",),
+    ))
+    evaluator, notifier = FakeClaude(_ACHIEVED_EVAL), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
+    assert out is Outcome.BLOCKED and store.load_status("g").blocked_kind == "mechanical:ci"
+
+    checker.result = RemoteChecksResult(
+        "conflicting", "the PR conflicts with its base", head_sha="5138bf1dcc",
+        pr_url="https://github.com/o/r/pull/9",
+    )
+    store.update_status_fields("g", next_heal_at=None)
+    out = await _tick(store, "g", evaluator, engine, notifier, remote_checker=checker)
+
+    assert out is Outcome.SLEPT
+    s = store.load_status("g")
+    assert s.phase == "idle" and s.merge_heal_attempted is True
+    assert "nothing to wait for" in store.recent_log("g")
+    assert "[merge-conflict]" in store.unread_steering("g")
+    assert evaluator.calls == 0
+    assert not any("gave up" in m for m in notifier.sent)

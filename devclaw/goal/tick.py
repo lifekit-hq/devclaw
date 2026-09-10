@@ -818,7 +818,8 @@ async def _handle_long_lived_advance(
     # and the next tick does it instead of waiting out the cadence — or the
     # owner's standing accept_close) or a due cadence. All of it is
     # ``next_move``'s verdict above.
-    rows = store.unread_steering_rows(goal_id)
+    rows_by_source = store.unread_steering_sources(goal_id)
+    rows = [(rid, line) for rid, _src, line in rows_by_source]
     steering = "\n".join(line for _, line in rows)
     # unread_steering_rows() may have lazily ingested inbox lines, bumping
     # version; reload so the dispatch's expect= CAS's against the current row
@@ -831,13 +832,22 @@ async def _handle_long_lived_advance(
     consume_ids = [rid for rid, _ in rows]
     # Spec 041 FR-003: the owner's accept_close, with nothing else to
     # dispatch, closes NOW — no cadence, no worker, no gate round. Unread
-    # steering (a red-CI correction, a human line) dispatches first; the
-    # accept stands and the close re-runs when that work settles.
-    if accepted is not None and not steering and not finished_detail:
+    # steering from a human, or a mechanical correction (a red-CI fix, the
+    # merge-conflict resolution row) dispatches first; the accept stands and
+    # the close re-runs when that work settles. The evaluator's OWN concern
+    # rows are not "something else" (spec 045 US3): they are the gap the
+    # accept accepted — the close consumes them and records them as
+    # follow-ups. Before this, fs-431's accept_close on 2026-09-09 ran a 3 h
+    # worker session on eight such rows before it closed.
+    if (
+        accepted is not None and not finished_detail
+        and not _decisions.outranks_accept(rows_by_source)
+    ):
         return await _donegate_finalize_accepted_close(
             goal_id, goal, status, accepted,
             store=store, notifier=ctx.notifier, autodeploy=ctx.autodeploy,
             remote_checker=ctx.remote_checker, consume_steering=consume_ids,
+            accepted_lines=tuple(line for _rid, _src, line in rows_by_source),
         )
     now = store.now_iso()
     base = replace(status, last_plan_at=now, last_tick_at=now)

@@ -184,7 +184,10 @@ Since spec 032 (2026-09-03) the done-gate is *preceded* by a mechanical read
 of the delivered PR's CI rollup for its exact head (`goal/remote_checks.py`,
 one bounded `gh` read, zero cognition): red steers the failing checks back
 as the next correction without spending a gate round, pending or unreadable
-holds the goal on `mechanical:ci` and re-reads on the heartbeat cadence, no
+holds the goal on `mechanical:ci` and re-reads on the heartbeat cadence, a
+PR GitHub reports CONFLICTING is never held (no merge ref, so no
+`pull_request` checks can ever report — spec 045) but routed straight to
+spec 025's bounded conflict-resolution increment, no
 CI definition or a CI that cannot execute raises a typed Problem, and only a
 green fact dispatches the review and runs the evaluator. Merge-on-close
 re-reads and requires the *same* green head — a head that moved re-holds and
@@ -267,7 +270,9 @@ When the tick decides to *do* something (not just think):
      never evidence (spec 032).
    - `materialize` (spec 013) — the moment the run ends the host stages
      everything left in the workspace and commits it; the change is the range
-     `pre_run_sha..post_run_sha` (`task_change.py`), and *every* consumer —
+     `pre_run_sha..post_run_sha` less every path the base branch already
+     carries at that content (`task_change.py`; spec 045 — a merge of the
+     default branch is main's change, not the worker's), and *every* consumer —
      each gate below, the change-size projection, the advisory checks, and
      delivery — reads that one object. A span that cannot be determined fails
      closed; an empty span is an explicit no-change outcome (the task settles

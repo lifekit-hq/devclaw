@@ -153,7 +153,11 @@ def next_move(goal: Goal, status: object, store, *, settled: bool = False) -> st
         # stands: the tick then finalizes on mechanical facts alone (spec
         # 041 FR-004) — a close, not a gate dispatch, so it needs no lane.
         return MOVE_LANE_FREE if accepted else MOVE_LANE
-    if store.unread_steering_rows(goal_id):
+    unread = store.unread_steering_sources(goal_id)
+    if unread and not (accepted and not _decisions.outranks_accept(unread)):
+        # Spec 045 US3: the evaluator's own concern rows do not outrank the
+        # owner's accept_close — with only those unread, the move is still
+        # the lane-free close the tick's plan gate takes.
         return MOVE_LANE
     if accepted:
         return MOVE_LANE_FREE

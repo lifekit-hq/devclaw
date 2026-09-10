@@ -47,9 +47,12 @@ repo); the shared goal branch is the delivery surface.
 Increments never overlap by construction, so there is nothing to merge
 mid-goal. A settled delivery gets one read-only advisory: a `gh pr view` asking
 whether the PR has gone CONFLICTING with its base
-(`goal/mergeability.py:pr_conflicting`). A CONFLICTING verdict logs and pages
-the owner — the next increment would otherwise stack onto a branch that can no
-longer land. An unknown verdict says nothing; it never reads as "all clear".
+(`goal/mergeability.py:pr_conflicting`). A CONFLICTING verdict logs and
+grounds the next brief (`pr_state … mergeable=CONFLICTING`); it no longer
+pages the owner (spec 045 FR-009) — the close routes the conflict to the
+bounded resolution increment itself (below), so the ping only ever asked for
+a hand rebase the loop now does. An unknown verdict says nothing; it never
+reads as "all clear".
 
 ## Merge-on-close (spec 025)
 
@@ -63,7 +66,11 @@ subprocesses, zero cognition):
    goal has no PR), and the head must equal `ci_green_head` — the head the
    done-gate opened on. Otherwise the goal blocks `mechanical:ci` with
    `pending_done_proposal=True`: a moved head re-opens the done-gate on the
-   new head; a pending rollup waits, zero-token.
+   new head; a pending rollup waits, zero-token. The same read carries the
+   PR's mergeability (spec 045): a CONFLICTING PR skips the hold — GitHub
+   creates no merge ref for it, so its checks can never report — and goes
+   straight to step 3, at every seam that reads CI before a close (the gate
+   open, the accepted close, this hold, the CI auto-heal).
 2. **`attempt_merge`** (`merge_on_close.py`) finds the open PR for
    `goal/<id>` and runs `gh pr merge --squash`. Outcomes: `merged`;
    `already_merged` (an operator merged by hand — success); `no_pr` (a
@@ -75,7 +82,11 @@ subprocesses, zero cognition):
    steering row (`source="auto-conflict"`); the next tick's advance dispatches
    the resolution increment through the normal pipeline — verify gate and a
    fresh done-gate round included — and the close re-attempts the merge. A
-   second conflict is not healed.
+   second conflict is not healed. The increment merges the default branch,
+   and the judged span leaves out what the base already carries (spec 045
+   US1) — before that, main's own workflow bumps failed the increment's
+   `change_class` gate and the heal could never land. A human `resume_goal`
+   refunds the heal like every other mechanical budget (spec 045 FR-007).
 4. **Failure posture.** Any non-success outcome blocks the goal
    `mechanical:merge_failed` with `pending_merge_pr` set and an owner ping.
    `resume_goal` re-attempts the MERGE only (step 1 included), never the

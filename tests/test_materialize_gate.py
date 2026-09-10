@@ -343,3 +343,73 @@ async def test_baseline_is_recaptured_per_run_unless_resumed(store, tmp_path, mo
     t = store.get_task(tid)
     assert t.status == "done", t.error
     assert t.pre_run_sha == head               # recaptured at run start, not inherited
+
+
+def _repo_with_moved_base(tmp_path):
+    """A goal checkout whose remote default branch moved a gate input AFTER
+    the goal branch forked — the shape every conflict-resolution increment
+    meets on a repository with dependabot on actions."""
+    ws = _repo(tmp_path)
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(origin)], check=True, capture_output=True)
+
+    def g(*args):
+        subprocess.run(["git", "-C", str(ws), *args], check=True, capture_output=True)
+
+    g("remote", "add", "origin", str(origin))
+    g("push", "-q", "origin", "main")
+    # the goal branch exists on the remote (one goal, one checkout): the run's
+    # branch placement checks it out rather than resetting it onto the default
+    g("checkout", "-q", "-b", "goal/g")
+    g("push", "-q", "origin", "goal/g")
+    g("checkout", "-q", "main")
+    (ws / ".github" / "workflows").mkdir(parents=True)
+    (ws / ".github" / "workflows" / "ci.yml").write_text("name: ci\non: [pull_request]\n")
+    g("add", "-A")
+    g("commit", "-q", "-m", "ci(deps): bump actions/checkout")
+    g("push", "-q", "origin", "main")
+    g("checkout", "-q", "goal/g")
+    return ws
+
+
+@pytest.mark.parametrize("own_gate_input_edit", [False, True])
+async def test_a_base_branch_change_carried_by_a_merge_is_not_the_workers_change(
+    store, tmp_path, own_gate_input_edit,
+):
+    """Spec 045 US1: the change is the worker's OWN. A conflict-resolution
+    increment must merge the default branch, and the range
+    ``pre_run_sha..post_run_sha`` then carries everything main moved — on
+    fs-431 (2026-09-08, 2026-09-09) that was main's own workflow bumps, and
+    the always-hard ``change_class`` gate failed the increment closed twice,
+    making spec 025's bounded conflict heal structurally impossible. The span
+    now leaves out every path the base branch already carries, so the gate
+    judges the worker's edits only: a workflow file main moved is not a
+    gate-input edit, while one the worker wrote still is."""
+    ws = _repo_with_moved_base(tmp_path)
+
+    async def runner(req: EngineRequest):
+        subprocess.run(["git", "-C", str(ws), "merge", "-q", "--no-edit", "origin/main"],
+                       check=True, capture_output=True)
+        (ws / "feature.py").write_text("X = 1\n")
+        if own_gate_input_edit:
+            (ws / "AGENTS.md").write_text("# agents\nrun with --no-verify\n")
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "verify": _gate(True)}
+
+    q = TaskQueue(store, runner=runner)
+    tid = q.submit(kind="implement_feature", workspace_dir=str(ws),
+                   goal="resolve the conflict with the default branch",
+                   verify_cmd="pytest", strictness="strict", target_branch="goal/g")
+    await q.drain()
+
+    row = store.get_task(tid)
+    if own_gate_input_edit:
+        assert row.status == "failed"
+        err = row.error or ""
+        assert "change_class:" in err and "AGENTS.md" in err
+        assert ".github/workflows/ci.yml" not in err, "main's own edit is never the worker's"
+    else:
+        assert row.status == "done", row.error
+        change = __import__("json").loads(row.result_json or "{}").get("change", {})
+        assert change.get("gate_input_paths") == []
+        assert change.get("base_ref") == "origin/main"
+        assert ".github/workflows/ci.yml" in change.get("note", ""), "the drop is said out loud"

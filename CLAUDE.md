@@ -91,7 +91,12 @@ on a second real consumer (ruled 2026-09-06).
   ONCE, mechanically, by `devclaw/task_change.py`: when the run ends the host
   stages everything left in the workspace and commits it, and every consumer —
   each gate, the change-size projection, the advisory checks, and delivery —
-  reads that `pre_run_sha..post_run_sha` range. Never re-derive it. Two
+  reads that `pre_run_sha..post_run_sha` range — less every path the base
+  branch already carries at that content (spec 045, 2026-09-10): a merge of
+  the default branch brings main's edits into the range, and they are main's
+  change, not the worker's — the conflict-resolution increment failed
+  `change_class` on main's own workflow bumps twice on fs-431 before the
+  filter existed. Never re-derive it. Two
   components used to compute it independently and silently disagreed: delivery
   shipped 4 files / +179 while the gates judged 1 / +32, because the gates saw
   only what the agent chose to record and what made it record was a sentence in
@@ -177,7 +182,10 @@ Recent work made the loop fail **loud, not silent**. Match it when you add code:
   the verdict of record**: the delivered PR's CI rollup is read as a mechanical
   fact for the exact head before the done-check review is dispatched (red ⇒
   the failing checks are the next correction, pending ⇒ a zero-token
-  `mechanical:ci` hold) and again before merge-on-close (same green head or no
+  `mechanical:ci` hold, CONFLICTING ⇒ never a hold — a PR GitHub cannot
+  merge runs no `pull_request` checks, so the read is the merge-conflict
+  outcome and routes to spec 025's ONE bounded resolution increment, spec
+  045) and again before merge-on-close (same green head or no
   merge); the in-sandbox `verify_cmd` is a fast pre-check whose pass is never
   evidence; every changed path carries a class and the always-hard
   `change_class` gate fails a gate-input edit or a committed binary; a

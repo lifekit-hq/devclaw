@@ -27,6 +27,16 @@ verdict is a fact the tick consumes at zero cognition:
 - ``infra_broken`` → every settled check died at startup: the project's own
                      CI definition is broken and no worker may edit it — a
                      typed Problem for the owner.
+- ``conflicting``  → GitHub reports the PR CONFLICTING with its base (spec
+                     045). No merge ref exists for such a PR, so its
+                     ``pull_request`` workflows never run: the required checks
+                     stay unreported forever and a "pending" hold would never
+                     release (fs-431, 2026-09-10: 16 windows on three checks
+                     that could not exist). It is the merge-conflict outcome
+                     spec 025 already routes, read one read earlier — never a
+                     wait, never a head to pin. Read from the same ``gh pr
+                     view`` as the rollup; ``UNKNOWN`` (GitHub still
+                     computing) leaves the rollup's own verdict in force.
 
 Which checks count: the base branch's required status checks when branch
 protection defines them; otherwise every check on the head. Read from the
@@ -68,7 +78,8 @@ _NO_PR_MARKERS = ("no pull requests found", "could not find pull request", "no o
 @dataclass(frozen=True)
 class RemoteChecksResult:
     """The rollup fact for one PR head. ``state`` is one of
-    passing | failing | pending | infra_broken | no_workflows | no_pr | unknown."""
+    passing | failing | pending | conflicting | infra_broken | no_workflows |
+    no_pr | unknown."""
 
     state: str
     detail: str = ""
@@ -114,6 +125,7 @@ def combine_states(
     workflows_present: bool,
     head_sha: str = "",
     pr_url: str = "",
+    mergeable: str = "",
 ) -> RemoteChecksResult:
     """Fold a PR's ``statusCheckRollup`` into one fact. Pure — the subprocess
     boundary stays in :func:`check_pr`.
@@ -122,9 +134,19 @@ def combine_states(
     ``conclusion``; StatusContext items carry ``context``/``state``); ``None``
     means the read itself failed. ``required`` is the base branch's protected
     context set, or ``None`` when the branch has no protection (every check
-    counts). A required check that has not reported at all is pending."""
+    counts). A required check that has not reported at all is pending —
+    unless ``mergeable`` says ``CONFLICTING``, in which case it never will
+    (spec 045): that is the ``conflicting`` state, ahead of every other
+    reading of the rollup."""
     if rollup is None:
         return RemoteChecksResult("unknown", "could not read the PR's check rollup", head_sha, pr_url)
+    if str(mergeable or "").strip().upper() == "CONFLICTING":
+        return RemoteChecksResult(
+            "conflicting",
+            "the PR conflicts with its base — GitHub creates no merge ref for it, so its "
+            "checks cannot run and it cannot merge; the close routes the conflict",
+            head_sha, pr_url,
+        )
     if not rollup and not workflows_present:
         return RemoteChecksResult(
             "no_workflows", "no .github/workflows on the default branch — the project has no CI definition",
@@ -279,7 +301,7 @@ async def check_pr(repo_url: str, branch: str) -> RemoteChecksResult:
 
     rc, out = await _gh(
         "pr", "view", branch, "--repo", owner_repo,
-        "--json", "url,headRefOid,baseRefName,statusCheckRollup",
+        "--json", "url,headRefOid,baseRefName,statusCheckRollup,mergeable",
     )
     if rc != 0:
         low = out.lower()
@@ -315,7 +337,7 @@ async def check_pr(repo_url: str, branch: str) -> RemoteChecksResult:
 
     result = combine_states(
         rollup, required=required, workflows_present=workflows_present,
-        head_sha=head_sha, pr_url=pr_url,
+        head_sha=head_sha, pr_url=pr_url, mergeable=str(pr.get("mergeable") or ""),
     )
     if result.state == "failing":
         # the fact the correction carries: a worker cannot read GitHub, the

@@ -111,9 +111,13 @@ def _review_repo_context_sync(host_dir: str) -> str:
     return "\n".join(facts)
 
 
-def _git_diff_sync(host_dir: str, base: str, head: str) -> "str | None":
+def _git_diff_sync(
+    host_dir: str, base: str, head: str, paths: "list[str] | None" = None,
+) -> "str | None":
     """The judged span as a unified diff: ONE two-point range, ``git diff
-    <base> <head>``.
+    <base> <head>``. ``paths`` restricts the rendering to the span's own
+    paths (spec 045: what the base branch already carries is left out);
+    ``None`` renders the whole range, ``[]`` is an empty span.
 
     Both ends are known by the time this runs — ``base`` is the task's pinned
     pre-run reference and ``head`` the post-run reference
@@ -134,9 +138,11 @@ def _git_diff_sync(host_dir: str, base: str, head: str) -> "str | None":
     """
     if not base or not head:
         return None
+    if paths is not None and not paths:
+        return ""  # every path was the base branch's own: nothing of the worker's to render
     try:
         p = subprocess.run(
-            ["git", "-C", host_dir, "diff", base, head],
+            ["git", "-C", host_dir, "diff", base, head, *(("--", *paths) if paths else ())],
             capture_output=True, text=True, errors="replace", timeout=60,
         )
     except (OSError, subprocess.SubprocessError):

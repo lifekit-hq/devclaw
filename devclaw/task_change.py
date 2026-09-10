@@ -173,6 +173,56 @@ def changed_entries_sync(host_dir: str, base: str, head: str) -> "list[tuple[str
     return entries
 
 
+def base_ref_sync(host_dir: str, base_branch: "str | None" = None) -> "str | None":
+    """The ref the delivered change is judged against (spec 045): the
+    caller-chosen ``base_branch`` when it resolves, else the remote's default
+    branch — the same ladder delivery walks for the PR base
+    (``origin/HEAD`` → ``origin/main`` → ``origin/master``). ``None`` when no
+    candidate resolves (a local-only repo, the stubbed test shapes): the
+    caller then leaves the span unfiltered."""
+    cands: list[str] = []
+    if base_branch:
+        cands += [f"origin/{base_branch}", base_branch]
+    try:
+        head = _git(host_dir, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+        if head.returncode == 0 and head.stdout.strip().startswith("refs/remotes/"):
+            cands.append(head.stdout.strip()[len("refs/remotes/"):])
+    except (OSError, subprocess.SubprocessError):
+        return None
+    cands += ["origin/main", "origin/master"]
+    for cand in cands:
+        try:
+            ok = _git(host_dir, "rev-parse", "--verify", "--quiet", f"{cand}^{{commit}}")
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if ok.returncode == 0:
+            return cand
+    return None
+
+
+def own_paths_sync(host_dir: str, base_ref: str, head: str) -> "set[str] | None":
+    """The paths at which ``head`` differs from the base branch — measured
+    from the merge-base of ``base_ref`` and ``head``, the way a PR diff is.
+    After a worker merges (or rebases onto) the base branch that merge-base
+    is the base's own tip, so everything the base moved drops out and what
+    the worker authored — including a conflict it resolved AWAY from the
+    base's side — stays. ``None`` when git cannot answer (no merge-base,
+    unrelated histories, a shallow clone): the caller leaves the span
+    unfiltered rather than guessing."""
+    if not base_ref or not head:
+        return None
+    try:
+        mb = _git(host_dir, "merge-base", base_ref, head)
+        if mb.returncode != 0 or not mb.stdout.strip():
+            return None
+        diff = _git(host_dir, "diff", "--name-only", "-M", f"{mb.stdout.strip()}..{head}")
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if diff.returncode != 0:
+        return None
+    return {line.strip() for line in (diff.stdout or "").splitlines() if line.strip()}
+
+
 def build_paths(
     entries: "list[tuple[str, str]]", diff: str, in_scope: "tuple[str, ...]" = (),
 ) -> "tuple[ChangedPath, ...]":
@@ -227,6 +277,12 @@ class ChangeSet:
     #: every path in the span with its class (spec 032 US3); ``()`` for a
     #: span with nothing to classify or a stub that predates the field
     paths: "tuple[ChangedPath, ...]" = ()
+    #: the base ref the span was filtered against (spec 045): a path whose
+    #: post-run content the base branch already carries is the base's change,
+    #: not the worker's. ``""`` when no base ref resolved — then the span is
+    #: the unfiltered range and ``note`` says so (judging more, never less).
+    base_ref: str = ""
+    note: str = ""
 
     @property
     def gate_input_paths(self) -> "tuple[str, ...]":

@@ -190,7 +190,8 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │  Step H2 — materialize the change (task_change.py):         │                      │
      │  │     • git add -A + commit whatever the agent left           │                      │
      │  │       behind (a clean tree writes NO commit)                │                      │
-     │  │     • the span is now pre_run_sha..post_run_sha and every   │                      │
+     │  │     • the span is now pre_run_sha..post_run_sha, less what  │                      │
+     │  │       the base branch already carries (spec 045), and every │                      │
      │  │       consumer below reads THAT object (spec 013, #630)     │                      │
      │  │     • undeterminable ⇒ the always-hard `materialize` gate   │                      │
      │  │       fails CLOSED; empty ⇒ explicit no-change, no publish  │                      │
@@ -246,7 +247,10 @@ reads the log because the sandbox holds no GitHub credential
 (`specs/tiny/red-ci-log-to-worker.md`; a log that cannot be read is said so
 in one line, never a block); pending/unknown ⇒ the goal holds on
 `mechanical:ci` and re-reads once per heartbeat window (parks with one ping
-after `CI_HEAL_CAP` windows); no CI definition / CI that cannot execute ⇒ a
+after `CI_HEAL_CAP` windows); CONFLICTING ⇒ no hold at all — a PR GitHub
+cannot merge runs no `pull_request` checks, so the read is routed as the
+merge-conflict outcome (spec 025's bounded resolution increment, then the
+`mechanical:merge_failed` park; spec 045); no CI definition / CI that cannot execute ⇒ a
 typed Problem; green ⇒ the head is remembered (`goal_status.ci_green_head`)
 and the read-only review is dispatched. Merge-on-close re-reads and merges
 only the same green head. *Fails if:* `gh` is unreachable — the read is

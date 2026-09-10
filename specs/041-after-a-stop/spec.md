@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-08
 
-**Status**: Draft → US1 implemented 2026-09-08; US2 implemented 2026-09-08 (stacked PR)
+**Status**: Draft → US1 implemented 2026-09-08; US2 implemented 2026-09-08 (stacked PR) — amended by spec 045 (2026-09-10): an owner accept_close is not outranked by the evaluator's own `auto-eval` rows; they ride the close as follow-ups.
 
 **Input**: `/devclaw-morning` 2026-09-08 → `/root-cause`. Denys: "get the root cause of each problem, spec the fixes, execute them."
 

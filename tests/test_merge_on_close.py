@@ -561,3 +561,117 @@ async def test_closed_contract_with_a_pending_correction_dispatches_instead_of_p
     assert "IBackgroundJobClient" in brief, "the Decision rides the brief as settled fact"
     assert store.load_status("g").problem_id == ""
     assert "there is work to dispatch (a recorded decision)" in store.recent_log("g", 20)
+
+
+class _Reader:
+    """A remote checker answering one canned ``RemoteChecksResult``."""
+
+    def __init__(self, result):
+        self.result = result
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, repo_url: str, branch: str):
+        self.calls.append((repo_url, branch))
+        return self.result
+
+
+def _conflicting_read():
+    from devclaw.goal.remote_checks import RemoteChecksResult
+    return RemoteChecksResult(
+        "conflicting", "the PR conflicts with its base — its checks cannot run",
+        head_sha="5138bf1dcc", pr_url=PR_URL,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("heal_spent", [False, True])
+async def test_a_conflicting_pr_at_the_accepted_close_is_routed_to_the_conflict_heal_never_the_ci_hold(
+    tmp_path, monkeypatch, heal_spent,
+):
+    """Spec 045 US2: GitHub creates no merge ref for a CONFLICTING PR, so its
+    ``pull_request`` checks never report — on fs-431 (2026-09-10) the
+    accepted close held ``mechanical:ci`` for 16 windows on three required
+    checks that could not exist, then parked for the owner, while the settle
+    path had read CONFLICTING two seconds before the hold. The CI reader now
+    carries mergeability, and a ``conflicting`` read IS the merge-conflict
+    outcome of spec 025: the bounded resolution increment when unspent, the
+    ``mechanical:merge_failed`` park with its Problem when spent — on that
+    tick, never a wait, nothing merged, zero cognition."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.set_strictness("g", "strict")
+    store.save_status("g", replace(store.load_status("g"), phase="idle", donegate_rounds=1,
+                                   last_plan_at=store.now_iso(), merge_heal_attempted=heal_spent))
+    _owner_decision(store, "g", option="accept_close", clause="structural: shape concerns")
+    merge = ScriptedMerge(moc.MergeResult(moc.MergeOutcome.MERGED, pr_url=PR_URL, merged_sha="abc123def456"))
+    monkeypatch.setattr(tick_donegate, "_attempt_merge", merge)
+    evaluator, engine, notifier = FakeClaude(ACHIEVED), FakeEngine(), RecordingNotifier()
+    reader = _Reader(_conflicting_read())
+
+    async def tick():
+        return await tick_goal(
+            "g", store=store, engine=engine, evaluator_caller=evaluator,
+            notifier=notifier, notify_url="http://relay", prepare_ws=fake_prepare,
+            verify_done=True, remote_checker=reader,
+        )
+
+    out = await tick()
+
+    assert evaluator.calls == 0 and engine.dispatched == []
+    assert merge.branches == [], "nothing merges on a conflicting read"
+    s = store.load_status("g")
+    assert s.blocked_kind != "mechanical:ci"
+    assert "ci recheck" not in store.recent_log("g", 40)
+    if not heal_spent:
+        assert out is Outcome.SLEPT
+        assert s.phase == "idle" and s.merge_heal_attempted is True
+        steering = store.unread_steering("g")
+        assert "[merge-conflict]" in steering and "default branch's side" in steering
+        # the resolution increment dispatches through the normal pipeline
+        out = await tick()
+        assert out is Outcome.DISPATCHED
+        (action, _g, _u), = engine.dispatched
+        assert "[merge-conflict]" in action.goal and PR_URL in action.goal
+    else:
+        assert out is Outcome.BLOCKED
+        assert s.phase == "blocked" and s.blocked_kind == "mechanical:merge_failed"
+        assert s.pending_merge_pr == PR_URL
+        assert any("🟥" in m for m in notifier.sent)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source, closes", [("auto-eval", True), ("denys", False), ("auto-ci", False)])
+async def test_owner_accept_close_outranks_the_evaluators_own_concerns_but_not_a_human_or_a_fact(
+    tmp_path, monkeypatch, source, closes,
+):
+    """Spec 045 US3: the evaluator's own unread concern rows are the gap the
+    owner's ``accept_close`` accepted — the close consumes them as follow-ups
+    and runs on that tick with no dispatch (on 2026-09-09 fs-431 ran a 3 h
+    worker session on eight such rows before its accepted close ran). A
+    human's later line and a mechanical correction still dispatch first —
+    the last word and a fact both outrank the accept (spec 041)."""
+    store = _store(tmp_path)
+    seed_goal(tmp_path, "g")
+    store.set_strictness("g", "strict")
+    store.save_status("g", replace(store.load_status("g"), phase="idle", donegate_rounds=1,
+                                   last_plan_at=store.now_iso()))
+    _owner_decision(store, "g", option="accept_close", clause="structural: shape concerns")
+    store.append_steering("g", ["[structural: concerns] Foo.cs:12 — extract the shared reader"], source=source)
+    merge = ScriptedMerge(moc.MergeResult(moc.MergeOutcome.MERGED, pr_url=PR_URL, merged_sha="abc123def456"))
+    monkeypatch.setattr(tick_donegate, "_attempt_merge", merge)
+    evaluator, engine, notifier = FakeClaude(ACHIEVED), FakeEngine(), RecordingNotifier()
+
+    out = await _tick(store, "g", evaluator, engine, notifier)
+
+    assert evaluator.calls == 0
+    s = store.load_status("g")
+    log = store.recent_log("g", 40)
+    if closes:
+        assert out is Outcome.DONE and engine.dispatched == []
+        assert s.phase == "done"
+        assert store.unread_steering("g") == "", "the accepted rows are consumed by the close"
+        assert "accepted by decision" in log and "extract the shared reader" in log
+    else:
+        assert out is Outcome.DISPATCHED and s.phase != "done"
+        (action, _g, _u), = engine.dispatched
+        assert "extract the shared reader" in action.goal

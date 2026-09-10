@@ -321,6 +321,15 @@ class GoalContentMixin:
         rows = self._goal_state.unread_steering_rows(goal_id)
         return [(r["id"], r["line"]) for r in rows]
 
+    def unread_steering_sources(self, goal_id: str) -> "list[tuple[int, str, str]]":
+        """:meth:`unread_steering_rows` with each row's ``source`` — the
+        read for callers that must tell a human line or a mechanical
+        correction from the done-gate's own concern rows (spec 045 US3:
+        only the former outrank an owner's accept_close). Same rows, same
+        order, same consumption discipline."""
+        rows = self._goal_state.unread_steering_rows(goal_id)
+        return [(r["id"], str(r["source"] or ""), r["line"]) for r in rows]
+
     def unread_steering(self, goal_id: str) -> str:
         """Unread steering as one newline-joined string — the display read,
         for callers that render steering rather than consuming it. Built on

@@ -382,6 +382,81 @@ async def _live_contract(
     return replace(goal, done_when=contract), None
 
 
+async def _park_merge_failed(
+    goal_id: str, base: GoalStatus, status: GoalStatus, *,
+    outcome_value: str, detail: str, pr_url: str,
+    store: GoalStore, notifier: Notifier, consume_steering: "list[int] | None",
+) -> Outcome:
+    """Spec 025 FR-018: a merge that cannot complete parks the goal
+    ``mechanical:merge_failed`` with ``pending_merge_pr`` set and one owner
+    ping — the goal must not close with its work unmerged, and a resume
+    re-attempts the MERGE only, never the done-gate."""
+    q = (
+        f"merge-on-close failed ({outcome_value}): {detail[:300]} — "
+        f"PR {pr_url or '(unknown)'}. The done-gate confirmed achieved, "
+        f"but the goal must not close with its work unmerged. Resolve the "
+        f"cause (merge by hand, or fix the branch), then resume_goal — "
+        f"resume re-attempts the MERGE only, never the done-gate."
+    )
+    store.transition(
+        goal_id, Event.BLOCK,
+        replace(base, phase="blocked", blocked_on=q,
+                blocked_kind="mechanical:merge_failed",
+                pending_merge_pr=pr_url or "", next=""),
+        expect=status, consume_steering=consume_steering,
+    )
+    await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}")
+    return Outcome.BLOCKED
+
+
+async def _route_conflict(
+    goal_id: str, base: GoalStatus, status: GoalStatus, *,
+    branch: str, pr_url: str, detail: str,
+    store: GoalStore, notifier: Notifier, consume_steering: "list[int] | None",
+) -> Outcome:
+    """The ONE routing for a cumulative PR that conflicts with its base (spec
+    045 FR-006) — reached from the merge attempt's ``CONFLICT`` result and
+    from the CI reader's ``conflicting`` state alike, at every seam that
+    reads CI before a close. Zero cognition.
+
+    Spec 025 FR-017: ONE bounded self-heal — back to idle with a machine
+    steering row; the next tick's advance dispatches the resolution
+    increment through the normal pipeline (verify gate included), then the
+    close re-runs and re-attempts the merge with the budget spent. A second
+    conflict parks (FR-018). ``pending_done_proposal`` is cleared so the
+    next tick dispatches the increment instead of re-opening a gate that
+    would read the same conflict; a human resume refunds the heal
+    (spec 045 FR-007)."""
+    if not status.merge_heal_attempted:
+        store.transition(
+            goal_id, Event.RESUME_IDLE,
+            replace(base, phase="idle", merge_heal_attempted=True,
+                    next="merge conflict — resolution increment queued",
+                    donegate_rounds=0, donegate_progress=0,
+                    pending_done_proposal=False, ci_green_head=""),
+            expect=status, consume_steering=consume_steering,
+        )
+        store.append_steering(goal_id, [
+            f"[merge-conflict] the goal is done but its cumulative PR "
+            f"{pr_url} cannot merge: the branch conflicts with the "
+            f"default branch. Update {branch} onto the current default-"
+            f"branch head, resolve the conflicts preserving both sides' "
+            f"intent — for a gate-input file (a CI workflow, AGENTS.md, build "
+            f"or test configuration, toolchain pins) take the default branch's "
+            f"side — and make the verify gate pass. Change nothing else.",
+        ], source="auto-conflict")
+        await _notify(
+            notifier, NotifyLevel.TASK,
+            f"🔀 [{goal_id}] the PR conflicts with its base — "
+            f"dispatching the one bounded resolution increment",
+        )
+        return Outcome.SLEPT
+    return await _park_merge_failed(
+        goal_id, base, status, outcome_value="conflict", detail=detail, pr_url=pr_url,
+        store=store, notifier=notifier, consume_steering=consume_steering,
+    )
+
+
 async def _close_and_merge(
     goal_id: str, goal: Goal, base: GoalStatus, status: GoalStatus, *,
     rationale: str, followups: "list[str]", review_report: str,
@@ -411,6 +486,15 @@ async def _close_and_merge(
         # on. Re-read right before merging — zero cognition, one gh read.
         read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
         if read is not None:
+            if read[1].state == "conflicting":
+                # Spec 045 US2: the merge would say CONFLICT; say it now,
+                # from the read already made, and never hold on checks a
+                # conflicting PR cannot run.
+                return await _route_conflict(
+                    goal_id, base, status, branch=read[0],
+                    pr_url=read[1].pr_url, detail=read[1].detail,
+                    store=store, notifier=notifier, consume_steering=consume_steering,
+                )
             # An owner's accepted close (spec 041) is judged on the CURRENT
             # head — there was no gate open to pin one; green is the rule.
             head_ref = status if require_same_head else replace(status, ci_green_head="")
@@ -433,53 +517,18 @@ async def _close_and_merge(
             + (f" {merge.pr_url}" if merge.pr_url else "")
             + (f" — {merge.detail[:200]}" if merge.detail else ""),
         )
-    if (
-        merge is not None
-        and merge.outcome is _merge.MergeOutcome.CONFLICT
-        and not status.merge_heal_attempted
-    ):
-        # FR-017: ONE bounded self-heal — back to idle with a machine
-        # steering row; the next tick's advance dispatches the resolution
-        # increment through the normal pipeline (verify gate and a fresh
-        # done-gate round included), then this close re-runs and
-        # re-attempts the merge with the budget spent.
-        store.transition(
-            goal_id, Event.RESUME_IDLE,
-            replace(base, phase="idle", merge_heal_attempted=True,
-                    next="merge conflict — resolution increment queued",
-                    donegate_rounds=0, donegate_progress=0),
-            expect=status, consume_steering=consume_steering,
+    if merge is not None and merge.outcome is _merge.MergeOutcome.CONFLICT:
+        return await _route_conflict(
+            goal_id, base, status, branch=branch or f"goal/{goal_id}",
+            pr_url=merge.pr_url, detail=merge.detail,
+            store=store, notifier=notifier, consume_steering=consume_steering,
         )
-        store.append_steering(goal_id, [
-            f"[merge-conflict] the goal is done but its cumulative PR "
-            f"{merge.pr_url} cannot merge: the branch conflicts with the "
-            f"default branch. Update {branch} onto the current default-"
-            f"branch head, resolve the conflicts preserving both sides' "
-            f"intent, and make the verify gate pass. Change nothing else.",
-        ], source="auto-conflict")
-        await _notify(
-            notifier, NotifyLevel.TASK,
-            f"🔀 [{goal_id}] achieved, but the PR conflicts with its base — "
-            f"dispatching the one bounded resolution increment",
-        )
-        return Outcome.SLEPT
     if merge is not None and merge.outcome not in _merge.SUCCESS_OUTCOMES:
-        q = (
-            f"merge-on-close failed ({merge.outcome.value}): {merge.detail[:300]} — "
-            f"PR {merge.pr_url or '(unknown)'}. The done-gate confirmed achieved, "
-            f"but the goal must not close with its work unmerged. Resolve the "
-            f"cause (merge by hand, or fix the branch), then resume_goal — "
-            f"resume re-attempts the MERGE only, never the done-gate."
+        return await _park_merge_failed(
+            goal_id, base, status, outcome_value=merge.outcome.value,
+            detail=merge.detail, pr_url=merge.pr_url,
+            store=store, notifier=notifier, consume_steering=consume_steering,
         )
-        store.transition(
-            goal_id, Event.BLOCK,
-            replace(base, phase="blocked", blocked_on=q,
-                    blocked_kind="mechanical:merge_failed",
-                    pending_merge_pr=merge.pr_url or "", next=""),
-            expect=status, consume_steering=consume_steering,
-        )
-        await _notify(notifier, NotifyLevel.OWNER, f"🟥 [{goal_id}] {q[:400]}")
-        return Outcome.BLOCKED
     merged_note = ""
     if merge is not None and merge.outcome in _merge.SUCCESS_OUTCOMES:
         if merge.outcome is _merge.MergeOutcome.NO_PR:
@@ -571,6 +620,7 @@ async def _finalize_accepted_close(
     autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
     remote_checker: "_remote_checks.RemoteChecker | None" = None,
     consume_steering: "list[int] | None" = None,
+    accepted_lines: "tuple[str, ...]" = (),
 ) -> Outcome:
     """Spec 041 FR-003 — the owner decided ``accept_close``: the Decision IS
     the verdict. Close on the same mechanical facts as an ``achieved`` close
@@ -592,6 +642,13 @@ async def _finalize_accepted_close(
     read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
     if read is not None:
         branch, rc = read
+        if rc.state == "conflicting":
+            # Spec 045 US2: same routing as the gate open — the accept stands
+            # and the close re-runs once the resolution increment settles.
+            return await _route_conflict(
+                goal_id, base, status, branch=branch, pr_url=rc.pr_url, detail=rc.detail,
+                store=store, notifier=notifier, consume_steering=consume_steering,
+            )
         if rc.state == "failing":
             store.transition(
                 goal_id, Event.RESUME_IDLE,
@@ -626,6 +683,13 @@ async def _finalize_accepted_close(
         [f"[accepted by decision {decision.id}] {' '.join(decision.clause.split())[:300]}"]
         if decision.clause else []
     )
+    # Spec 045 US3: the evaluator's own unread concern rows are the gap the
+    # owner accepted — they ride the close as follow-ups, never as a
+    # dispatch that outranks the Decision.
+    followups += [
+        f"[accepted by decision {decision.id}] {' '.join(line.split())[:300]}"
+        for line in accepted_lines if line.strip()
+    ]
     return await _close_and_merge(
         goal_id, goal, base, status,
         rationale=rationale, followups=followups, review_report="",
@@ -976,6 +1040,15 @@ async def _open_done_gate(
     read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
     if read is not None:
         branch, rc = read
+        if rc.state == "conflicting":
+            # Spec 045 US2: a conflicting PR is the merge-conflict outcome,
+            # read one read earlier — the resolution increment runs before
+            # any review sandbox or evaluator call is spent on a branch that
+            # cannot land.
+            return await _route_conflict(
+                goal_id, base, base, branch=branch, pr_url=rc.pr_url, detail=rc.detail,
+                store=store, notifier=notifier, consume_steering=consume_steering,
+            )
         if rc.state == "failing":
             store.transition(
                 goal_id, Event.RESUME_IDLE,
@@ -1090,6 +1163,15 @@ async def _finalize_pending_merge(
     # (the verdict was for another head); a not-yet-green same head waits.
     read = await _read_rollup(goal_id, goal, store=store, remote_checker=remote_checker)
     if read is not None:
+        if read[1].state == "conflicting":
+            # Spec 045 US2: the retried merge would conflict; route it now.
+            # A human resume refunded the heal (FR-007), so the resolution
+            # increment dispatches instead of re-parking on the same conflict.
+            return await _route_conflict(
+                goal_id, replace(status, pending_merge_pr=""), status,
+                branch=read[0], pr_url=read[1].pr_url, detail=read[1].detail,
+                store=store, notifier=notifier, consume_steering=None,
+            )
         hold = _ci_hold_before_merge(status, read[0], read[1])
         if hold is not None:
             moved = "moved after" in hold
