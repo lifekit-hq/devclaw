@@ -2,6 +2,53 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [1.2.0](https://github.com/lifekit-hq/devclaw/compare/v1.1.0...v1.2.0) (2026-09-10)
+
+
+### Features
+
+* **console:** the problems catalog says which window it shows, and lets you change it ([#884](https://github.com/lifekit-hq/devclaw/issues/884)) ([383ac42](https://github.com/lifekit-hq/devclaw/commit/383ac42c247d473321275c56778e750b9b86c784))
+* **credentials:** one registry of credentials — register once, every hop iterates it (spec 042 US1) ([#875](https://github.com/lifekit-hq/devclaw/issues/875)) ([2bba2ea](https://github.com/lifekit-hq/devclaw/commit/2bba2eae6e279975fc547b93a4e8c747d6f9b15c))
+* **deploy:** a merge redeploys, once nothing is running ([#902](https://github.com/lifekit-hq/devclaw/issues/902)) ([655aa67](https://github.com/lifekit-hq/devclaw/commit/655aa6799b1ae911a49aa6e55c010708718320a3))
+* finish spec 039 — the usage ledger unparked, cost per outcome, and the loop's health on the pages that own it ([#885](https://github.com/lifekit-hq/devclaw/issues/885)) ([b050cc5](https://github.com/lifekit-hq/devclaw/commit/b050cc5cf29956b1c6a4fac4b78a9e437b096122))
+* **goal:** a red CI verdict carries its failing log to the worker ([#867](https://github.com/lifekit-hq/devclaw/issues/867)) ([7c9b3ad](https://github.com/lifekit-hq/devclaw/commit/7c9b3adf144d8c652487232d58139891588dcf80))
+* **goal:** after a stop — decisions execute, stops re-check (spec 041 US1+US2) ([#876](https://github.com/lifekit-hq/devclaw/issues/876)) ([82f82ca](https://github.com/lifekit-hq/devclaw/commit/82f82ca317932dbc6c081a3ff3e6559562b78b7b))
+* **loop-health:** idle has a cause, and the loop says whether it heals itself (spec 038 US1+US2) ([#859](https://github.com/lifekit-hq/devclaw/issues/859)) ([eeb0445](https://github.com/lifekit-hq/devclaw/commit/eeb0445e6be06ebdaf559f0b97f660498cf8b603))
+* **loop-health:** the size estimate is measured against the work it predicted (spec 039 US6) ([#866](https://github.com/lifekit-hq/devclaw/issues/866)) ([31a3c42](https://github.com/lifekit-hq/devclaw/commit/31a3c42e20e7d9110d4f10ae61cd5a64e67daa1a))
+* **worker:** repo memory lives in .devclaw/, the REPO NOTES lane retires (spec 034) ([#857](https://github.com/lifekit-hq/devclaw/issues/857)) ([a6d9892](https://github.com/lifekit-hq/devclaw/commit/a6d9892b1b633c61872f54b798ad79603ca6c86d))
+
+
+### Bug Fixes
+
+* **console:** a capped problems page never reads as the whole catalog ([#888](https://github.com/lifekit-hq/devclaw/issues/888)) ([79d3750](https://github.com/lifekit-hq/devclaw/commit/79d37501e5471dda1aa6be9312a35e4b816a65bd))
+* **console:** a Problem's default is shown as the recommendation ([#899](https://github.com/lifekit-hq/devclaw/issues/899)) ([c6ee9d5](https://github.com/lifekit-hq/devclaw/commit/c6ee9d5f1ab52a2c47391d3cf13d5834ed4aae76))
+* **credentials:** a credential gap names its own fix, and the scope check stops asking for a scope that cannot exist ([#892](https://github.com/lifekit-hq/devclaw/issues/892)) ([57fbf99](https://github.com/lifekit-hq/devclaw/commit/57fbf99eb4a2ef067c6c53a1a8b950f2d16f5cc1))
+* **credentials:** the GitHub credential joins the registry, and its scope is checked ([#886](https://github.com/lifekit-hq/devclaw/issues/886)) ([4cf9cdc](https://github.com/lifekit-hq/devclaw/commit/4cf9cdcf33ea8d7997e55ae23415ddc729fbd495))
+* **env:** a broken credential hop never costs a session (042 US2) ([#906](https://github.com/lifekit-hq/devclaw/issues/906)) ([74d9ee4](https://github.com/lifekit-hq/devclaw/commit/74d9ee48a3e701a1c44a332a76c5dd6571835d62))
+* **env:** a worker-reported gap defers to the credential's own probe ([#891](https://github.com/lifekit-hq/devclaw/issues/891)) ([cce14bc](https://github.com/lifekit-hq/devclaw/commit/cce14bcaf62d0224bc59fbf220a73062066d6259))
+* **goal,queue:** the change is the worker's own, and a conflicting PR is a conflict (spec 045) ([#904](https://github.com/lifekit-hq/devclaw/issues/904)) ([5c56261](https://github.com/lifekit-hq/devclaw/commit/5c562616981a060e3d97d20b4f5bab3cfa40d1ed))
+* **goal:** a torn-down session is devclaw's failure, not the goal's dispatch ([#890](https://github.com/lifekit-hq/devclaw/issues/890)) ([0a035f4](https://github.com/lifekit-hq/devclaw/commit/0a035f487313f19aad51b5457a5bbf89c3995525))
+* **goal:** a verify gate narrower than CI declares the gap instead of hiding it ([#889](https://github.com/lifekit-hq/devclaw/issues/889)) ([3af317a](https://github.com/lifekit-hq/devclaw/commit/3af317a26dcd3b26e8cd4db53c609c3c971afb7e))
+* **goal:** one definition of a goal's next move — the lane and the tick read the same one ([#879](https://github.com/lifekit-hq/devclaw/issues/879)) ([c7a3c18](https://github.com/lifekit-hq/devclaw/commit/c7a3c183b20d588ae7f729cead9ba6ef70b8e850))
+* **harness:** a merge reads the verdict of record — the local suite is not it ([#881](https://github.com/lifekit-hq/devclaw/issues/881)) ([4e44b6a](https://github.com/lifekit-hq/devclaw/commit/4e44b6aee31bc9e2df16905533a3d31a5076b313))
+* **problems:** a self-healing hold is a wait, not a terminal problem ([#863](https://github.com/lifekit-hq/devclaw/issues/863)) ([7bf0eee](https://github.com/lifekit-hq/devclaw/commit/7bf0eee0c3be3edb34a3ceb7e809ba80735d107c))
+* **problems:** the catalog reads recent-first, and deleted cognition roles are purged ([#883](https://github.com/lifekit-hq/devclaw/issues/883)) ([b9ad4c3](https://github.com/lifekit-hq/devclaw/commit/b9ad4c350ecef8bbbb76cb24116af68973837ce9))
+* **runner,goal:** the worker commits as devclaw again, and a hand commit is counted once ([#878](https://github.com/lifekit-hq/devclaw/issues/878)) ([f30f61d](https://github.com/lifekit-hq/devclaw/commit/f30f61d510d64c3e90a4d2383e2395256c25d8e6))
+* **runner:** a feature id is unique across goals, and a number never poses as an issue ([#887](https://github.com/lifekit-hq/devclaw/issues/887)) ([8f95439](https://github.com/lifekit-hq/devclaw/commit/8f95439e853f2127411f259fd83bfca4c82efaac))
+* **tests:** the suite owns its environment — a hermeticity pin is never a default ([#880](https://github.com/lifekit-hq/devclaw/issues/880)) ([630dd93](https://github.com/lifekit-hq/devclaw/commit/630dd9303c3c1bfc7715ac0771a7bd9083e2efa3))
+
+
+### Documentation
+
+* **harness:** the daily loop as two skills - /devclaw-morning and /devclaw-evening ([#868](https://github.com/lifekit-hq/devclaw/issues/868)) ([69d00a4](https://github.com/lifekit-hq/devclaw/commit/69d00a46d5aad0c70539dec25176d17505f05d61))
+* **harness:** the north-star judge - a skill that rules on drift, and a hook that refuses an unjudged PR ([#869](https://github.com/lifekit-hq/devclaw/issues/869)) ([ed47ff8](https://github.com/lifekit-hq/devclaw/commit/ed47ff86040c5c9c6688a5f87ec22e86fe867ac2))
+* **spec:** 039 — US6 next, US5 alongside, US3/US4 parked until the agent reports usage ([#864](https://github.com/lifekit-hq/devclaw/issues/864)) ([1562b4c](https://github.com/lifekit-hq/devclaw/commit/1562b4ce9698ea7c2b5dcaccb26797c51fa4ffa8))
+* **spec:** 040 shrunk to the red-CI log tinyspec; constitution 2.9.0 north-star admission (US1 parked, US3 deleted) ([#865](https://github.com/lifekit-hq/devclaw/issues/865)) ([9062efd](https://github.com/lifekit-hq/devclaw/commit/9062efd92de7c03479a22f4e92ac123a95f08988))
+* **spec:** 043 — the worker reads the loop's own facts (specify + clarify) ([#893](https://github.com/lifekit-hq/devclaw/issues/893)) ([c891fad](https://github.com/lifekit-hq/devclaw/commit/c891fad93d95acf969b0a2c638a77e9a30b89494))
+* **spec:** 044 — a stop needs evidence (specify + clarify) ([#900](https://github.com/lifekit-hq/devclaw/issues/900)) ([7bb6714](https://github.com/lifekit-hq/devclaw/commit/7bb6714a2ddb75c71412608aaad18c472e0c46be))
+* **spec:** a spec header says what shipped, and a suspension says what ends it ([#903](https://github.com/lifekit-hq/devclaw/issues/903)) ([b33eeec](https://github.com/lifekit-hq/devclaw/commit/b33eeec3a25912b45dffe1df4b9c90c18e5c75af))
+* **specs:** if it is in the tree, it is alive ([#905](https://github.com/lifekit-hq/devclaw/issues/905)) ([ef6d13e](https://github.com/lifekit-hq/devclaw/commit/ef6d13e618f3fe08998e12cafb128c3e188f471d))
+
 ## [1.1.0](https://github.com/lifekit-hq/devclaw/compare/v1.0.0...v1.1.0) (2026-09-07)
 
 
