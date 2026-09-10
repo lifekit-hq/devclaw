@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-08
 
-**Status**: PARTIAL — owner: Denys, build-or-cut by 2026-09-17. US1 implemented 2026-09-08. US2 (the hop is verified where the worker runs) is SCHEDULED: its own cut condition — "if no worker reports a registered credential absent by 2026-09-22" — resolved toward BUILD on 2026-09-10, when five of the nine owner resumes in four days carried `environment capability check failed — dispatching would burn a session`.
+**Status**: SHIPPED — US1 implemented 2026-09-08; US2 implemented 2026-09-10. US2's own cut condition — "if no worker reports a registered credential absent by 2026-09-22" — resolved toward BUILD on 2026-09-10, when five of the nine owner resumes in four days carried `environment capability check failed — dispatching would burn a session`.
 
 **Input**: Denys, 2026-09-08 — "today it was NODE_AUTH_TOKEN, before it was the GitHub token; they are all one thing, credentials. Fix the class once and for all: I want to register it once and have it visible everywhere — and least access needed, only what is needed."
 
@@ -39,11 +39,11 @@ An operator adds a credential by writing ONE entry (name, purpose, least-privile
 3. **Given** a credential name typed as a string key in any `devclaw/*.py` other than `credentials.py`, **When** the suite runs, **Then** `test_no_credential_name_is_spelled_outside_the_registry` fails naming the file.
 4. **Given** a pre-042 host that sends no `agent_env`, **When** the runner starts, **Then** it forwards the setup-token alone (the #644 contract) — a mismatched deploy never regresses auth.
 
-### User Story 2 - The hop is verified where the worker runs (Priority: P2) — SPECIFIED, regrade 2026-09-22
+### User Story 2 - The hop is verified where the worker runs (Priority: P2)
 
 The runner emits one `agent_env` event at session start naming (never valuing) the registered credentials present in the agent's environment. The host records it on the task, and a worker's `BLOCKED: env — <text>` that names a registered credential the runner reported present is filed as *present-but-unusable* (value, scope or usage), never as *absent* — the hold message, the machine issue and doctor's remedy say which. Doctor's credential check reports the last such session-start fact next to the host-side probe, so "the host says OK, the worker says absent" becomes one line with both facts instead of two contradicting surfaces.
 
-**Why this priority**: US1 removes today's cause; US2 makes the next one legible in one read. It is parked, not dropped: if no worker reports a registered credential absent by 2026-09-22, US2 is cut as unneeded.
+**Why this priority**: US1 removes today's cause; US2 makes the next one legible in one read. Built 2026-09-10 on its own condition: workers did report registered credentials absent — five of the nine owner resumes in the four days to that date were a human deciding, by hand, whether a credential had failed to arrive or had arrived and been rejected.
 
 **Independent Test**: a fake runner session emitting `agent_env` present=[X]; a worker block naming X; the hold text says "present in the agent env".
 

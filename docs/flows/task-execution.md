@@ -183,6 +183,11 @@ TIME │  ACTOR / NODE                      │  WHAT HAPPENS                   
      │  │                                                             │                      │
      │  │  Step H — parse the stream:                                 │                      │
      │  │     • event: lines → on_event callback (logging, console) │                      │
+     │  │       — AgentEnv (spec 042 US2) is also projected to one    │                      │
+     │  │         meta row: WHICH sanctioned credentials reached the  │                      │
+     │  │         agent's shells, names only, so a later `BLOCKED:    │                      │
+     │  │         env` naming one of them reads as present-but-       │                      │
+     │  │         unusable instead of absent                          │                      │
      │  │     • final result: line → EngineResult                     │                      │
      │  │     • if no result line → "sandbox exited 1 without a       │                      │
      │  │       result line" (the misleading error string)            │                      │

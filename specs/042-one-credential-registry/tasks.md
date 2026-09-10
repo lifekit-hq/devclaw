@@ -12,7 +12,8 @@
 - [X] T008 `pyproject.toml` import-linter leaf contract
 - [X] T009 docs: env-vars rows, architecture bullet, task-execution line, CLAUDE.md OAuth bullet, INDEX currency
 
-## US2 — the hop is verified where the worker runs (P2, regrade 2026-09-22)
+## US2 — the hop is verified where the worker runs (P2, shipped 2026-09-10)
 
-- [ ] T010 runner: emit `agent_env` (names present) at session start
-- [ ] T011 host: record on the task; classify a worker env report naming a present credential as present-but-unusable in the hold, the machine issue and doctor
+- [X] T010 runner: emit the `AgentEnv` event (names present/absent) at session start
+- [X] T011 host: record on the task (`queue/settle.py`) and project to one meta row (`env_cap.record_agent_env`); classify a worker env report naming a present credential as present-but-unusable in the row's evidence + remedy, which the hold, the machine issue and doctor all read
+- [X] T012 doctor: `instance.registry.token` carries what the last worker session saw, on the same line as the host probe

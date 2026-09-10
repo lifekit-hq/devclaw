@@ -960,3 +960,62 @@ async def test_probes_run_once_per_sweep_and_never_on_the_per_goal_tick(tmp_path
     assert env_cap.red_caps_for(store, ("sandbox:image",), "alpha") == []
     # An instance-scoped capability ignores the project entirely — one row.
     assert env_cap.read_result(store, REGISTRY, "alpha") == env_cap.read_result(store, REGISTRY)
+
+
+# ---- spec 042 US2: absent vs present-but-unusable --------------------------
+# A worker says one sentence — "the sandbox lacks X" — for two faults that take
+# OPPOSITE fixes: the credential never reached the agent's shells (fix the hop),
+# or it arrived and was rejected (fix its value or scope). Told apart only by a
+# human, that cost five of the nine owner resumes in the four days to
+# 2026-09-10. The runner's session-start report is the fact that separates them,
+# so the brake must SAY which one it observed.
+
+@pytest.mark.parametrize("present, prose, unusable", [
+    # the runner had it, the worker still blocked on it → arrived and rejected
+    (["NODE_AUTH_TOKEN"], "NODE_AUTH_TOKEN rejected by the registry", True),
+    # the runner did NOT have it → ordinary absence, the pre-042 story
+    ([], "NODE_AUTH_TOKEN rejected by the registry", False),
+    # names a registered credential that is present, but a DIFFERENT one blocked
+    (["NODE_AUTH_TOKEN"], "dotnet-ef not available in the sandbox", False),
+    # never a false positive from a credential nobody reported on
+    (["CLAUDE_CODE_OAUTH_TOKEN"], "NODE_AUTH_TOKEN missing in the sandbox", False),
+])
+def test_a_credential_that_reached_the_agent_is_not_reported_absent(
+    tmp_path, present, prose, unusable,
+):
+    store = _project_pair(tmp_path)
+    env_cap.record_agent_env(store, present, [], task_id="t1", goal_id="g")
+    cap_id = env_cap.record_worker_deficiency(store, "proj", prose, goal_id="g", task_id="t1")
+
+    row = env_cap.read_result(store, cap_id, "proj")
+    assert row is not None and row.status == "red"   # the brake holds either way
+    if unusable:
+        assert "PRESENT in the agent env" in row.evidence
+        assert "present but unusable" in row.remedy
+        assert "read:packages" in row.remedy          # the scope, from the registry
+        assert not row.remedy.startswith("provide ")   # never send them to re-add it
+        assert "do not re-provide it" in row.remedy
+    else:
+        assert "PRESENT in the agent env" not in row.evidence
+        assert row.remedy.startswith("provide ")
+
+
+def test_a_deficiency_recorded_before_any_session_report_is_plain_absence(tmp_path):
+    """No worker session has reported yet: the classifier has no fact, so it
+    must not invent one — the pre-042 wording, unchanged."""
+    store = _project_pair(tmp_path)
+    cap_id = env_cap.record_worker_deficiency(store, "proj", _DEFICIENCY)
+    row = env_cap.read_result(store, cap_id, "proj")
+    assert row is not None and row.remedy.startswith("provide ")
+
+
+def test_the_session_report_never_carries_a_credential_value(tmp_path):
+    """Names only. The report crosses from the sandbox to a persisted row, so a
+    value here would print a live credential into the meta table and doctor."""
+    store = _project_pair(tmp_path)
+    env_cap.record_agent_env(store, ["NODE_AUTH_TOKEN"], ["CLAUDE_CODE_OAUTH_TOKEN"])
+    raw = store.get_meta(env_cap.AGENT_ENV_KEY) or ""
+    assert "NODE_AUTH_TOKEN" in raw
+    last = env_cap.agent_env_last(store) or {}
+    assert last["present"] == ["NODE_AUTH_TOKEN"] and last["absent"] == ["CLAUDE_CODE_OAUTH_TOKEN"]
+    assert set(last) == {"present", "absent", "task_id", "goal_id", "env_ref", "at_ms"}

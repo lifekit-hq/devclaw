@@ -1727,10 +1727,31 @@ def main() -> None:
     # container env, had it). The runner never spells a credential itself
     # (spec 011); a pre-042 host that sends no list gets the #644 contract.
     # The refused metered keys stay out by construction (_refuse_api_key).
+    _cred_present: list = []
+    _cred_absent: list = []
     for _cred_var in _agent_env_vars(req):
         _cred_val = os.environ.get(_cred_var, "").strip()
         if _cred_val:
             acp_env[_cred_var] = _cred_val
+            _cred_present.append(_cred_var)
+        else:
+            _cred_absent.append(_cred_var)
+    # Spec 042 US2: say — once, at session start — WHICH sanctioned credentials
+    # actually reached the agent's shells. Names only; a value is never read
+    # into an event. Without this the host has one fact (its own probe says the
+    # token is fine) and the worker has another (`BLOCKED: env — no registry
+    # token`), and nothing can tell "never arrived" from "arrived and was
+    # rejected". They take opposite fixes, and five of the nine owner resumes
+    # in the four days to 2026-09-10 were a human deciding that by hand.
+    _emit_event(
+        {
+            "id": None,
+            "type": "AgentEnv",
+            "source": "runner",
+            "ts": int(time.time() * 1000),
+            "payload": {"present": _cred_present, "absent": _cred_absent},
+        }
+    )
     # The git identity (devclaw/git_identity.py): the engine pins author and
     # committer on the container env, and git gives the environment
     # precedence over every config level — but only in shells that HAVE it.

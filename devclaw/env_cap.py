@@ -221,6 +221,68 @@ def read_result(
     return result
 
 
+#: spec 042 US2 — the last session-start report of WHICH sanctioned credentials
+#: actually reached the agent's shells, written by the settle path when the
+#: runner's ``AgentEnv`` event arrives. One instance-wide row: the agent env is
+#: assembled from the host's process env, so the answer cannot differ per goal.
+#: Names only — a value never enters an event or a meta row.
+AGENT_ENV_KEY = f"{_META_PREFIX}agent-env-last"
+
+
+def record_agent_env(
+    store: MetaStore, present: Iterable[str], absent: Iterable[str],
+    *, task_id: str = "", goal_id: str = "",
+) -> None:
+    """Record one runner session-start credential report (spec 042 US2).
+
+    Never raises: this is an observation, and losing it must not fail a run.
+    A later report replaces the earlier one — the question it answers ("did
+    the credential reach the agent LAST time we looked") has no history."""
+    from .state_store import _now_ms  # deferred — avoids circular at module load
+
+    try:
+        store.set_meta(AGENT_ENV_KEY, json.dumps({
+            "present": sorted({str(n).strip() for n in present if str(n).strip()}),
+            "absent": sorted({str(n).strip() for n in absent if str(n).strip()}),
+            "task_id": task_id,
+            "goal_id": goal_id,
+            "env_ref": instance_env_ref(),
+            "at_ms": _now_ms(),
+        }))
+    except Exception:  # noqa: BLE001 — an observation never fails a run
+        pass
+
+
+def agent_env_last(store: MetaStore) -> Optional[dict]:
+    """The last session-start credential report, or ``None`` if no worker
+    session has run since the instance started recording them."""
+    raw = store.get_meta(AGENT_ENV_KEY)
+    if not raw:
+        return None
+    try:
+        d = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return None
+    return d if isinstance(d, dict) else None
+
+
+def present_credential_in(item: str, present: Iterable[str]) -> Optional[str]:
+    """The registered credential a worker's prose names AND the runner reported
+    PRESENT in the agent env, or ``None``.
+
+    Matched in slug form through :func:`worker_cap_id`, the same normalisation
+    :func:`superseding_capability` uses — two spellings here would silently
+    stop classifying. ``None`` means either the prose names no registered
+    credential, or it names one that genuinely did not arrive; both are
+    ordinary absence."""
+    cap_id = worker_cap_id(item)
+    names = {str(n).strip() for n in present if str(n).strip()}
+    for cred in _credentials.REGISTRY:
+        if cred.var in names and _slug(cred.var) in cap_id:
+            return cred.var
+    return None
+
+
 def _worker_index_key(project_id: Optional[str]) -> str:
     return f"{_META_PREFIX}worker-index@{project_id or ''}"
 
@@ -268,17 +330,40 @@ def record_worker_deficiency(
         existing["probed_at_ms"] = _now_ms()
         store.set_meta(key, json.dumps(existing))
     else:
-        store.set_meta(key, json.dumps({
-            "status": "red",
-            "evidence": (
-                f"a worker reported the sandbox lacks: {item}"
-                + (f" (goal {goal_id}" + (f", task {task_id}" if task_id else "") + ")" if goal_id else "")
-            ),
-            "remedy": (
+        where = (f" (goal {goal_id}" + (f", task {task_id}" if task_id else "") + ")") if goal_id else ""
+        # Spec 042 US2: "absent" and "present but unusable" are the same
+        # sentence from the worker and opposite fixes for the owner. The
+        # runner said at session start which sanctioned credentials actually
+        # reached the agent's shells, so when the prose names one that DID
+        # arrive, say so — the gap is its value, scope or usage, and telling
+        # the owner to "provide it" sends them to re-add a credential that is
+        # already there. That round trip was five of the nine owner resumes in
+        # the four days to 2026-09-10.
+        last = agent_env_last(store) or {}
+        present_var = present_credential_in(item, last.get("present") or ())
+        if present_var:
+            evidence = (
+                f"a worker reported the sandbox lacks: {item}{where} — but the runner "
+                f"reported {present_var} PRESENT in the agent env at session start, so it "
+                f"arrived and was rejected"
+            )
+            remedy = (
+                f"{present_var} is present but unusable: check its VALUE, its SCOPE "
+                f"({_credentials.by_var(present_var).scope}), or how the failing command uses "
+                f"it — do not re-provide it. resume_goal once the credential is fixed"
+            )
+        else:
+            evidence = f"a worker reported the sandbox lacks: {item}{where}"
+            remedy = (
                 f"provide {item!r} in the sandbox — devclaw work (the image, a mise tool, "
                 "or the project's environment declaration); the hold clears when the "
                 "instance's environment changes, or resume_goal after fixing it by hand"
-            ),
+            )
+        store.set_meta(key, json.dumps({
+            "status": "red",
+            "evidence": evidence,
+            "remedy": remedy,
+            "present_but_unusable": present_var or "",
             "env_ref": ref,
             "probed_at_ms": _now_ms(),
         }))
