@@ -1,5 +1,9 @@
 # Phase 0 research — provider-side transient pause
 
+> **US3 was CUT on 2026-09-10** — US1/US2 already classify host-side and no
+> `server_error` recurred in the 14 days to that date. The US3 design below is
+> the record of a rejected belt-and-suspenders, not scheduled work (`specs/README.md`).
+
 ## D1 — A new `FailureKind`, not a widening of `TRANSIENT`
 
 **Decision**: add `FailureKind.SERVER_ERROR` and put it in `PAUSING_KINDS`;

@@ -885,8 +885,7 @@ async def recover_pending_grades(
 
 def _priority_band(label_names: set) -> int:
     """Backlog triage order: ``P0`` < ``P1`` < … < ``P5`` < unlabeled — the same
-    priority-band-then-oldest convention the repo backlogs (and spec 007's claim
-    order) use."""
+    priority-band-then-oldest convention the repo backlogs use."""
     for n in range(6):
         if f"P{n}" in label_names:
             return n

@@ -202,11 +202,14 @@ status line records that 032 generalizes its capability set.
 
 ## R8 — US4 is designed only to the interface (Q1 = C)
 
+> **The interface is all that was ever built.** US4's provisioning half was CUT
+> 2026-09-10 (`specs/README.md`); what follows is the design that was not taken.
+
 The manifest gains an `environment` block (`image`, `services[]`, `tools[]`,
 `registries[]`) in the schema and `parse_manifest` (absent ⇒ today's behavior; malformed ⇒
 loud, the `validation` block precedent at `project_manifest.py:178`). Admission maps each
 declared item to a capability id (`tool:<name>`, `service:<name>`, `registry:<name>`);
 provisioning of `tools` rides mise in the runner pre-step (ADR 0005); `services` are
 host-side sibling containers reachable over the sandbox's host networking. Implementation
-is planned in a follow-up revision of this plan after US1–US3 have a live track record;
-this plan only ships the schema/parse surface so declarations can start accumulating.
+was to follow after US1–US3 had a live track record; it was cut instead, and the
+schema/parse surface is the whole of what shipped.

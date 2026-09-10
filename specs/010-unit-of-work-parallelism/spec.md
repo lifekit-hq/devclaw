@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-18
 
-**Status**: **IMPLEMENTED IN FULL 2026-08-23.** P1 (US1 single-writer + US2
+**Status**: SHIPPED — implemented in full 2026-08-23. P1 (US1 single-writer + US2
 #553-closed-by-construction) shipped 2026-08-22 via #618; P3 (US3, the `[P]`
 fan-out — FR-101…FR-105) shipped 2026-08-23 via #637 (settle-time declared-scope
 enforcement) + #639 (the fan-out executor and serial merge queue).

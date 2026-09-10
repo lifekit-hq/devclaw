@@ -7,7 +7,7 @@ description: "Task list for spec 032 — Verification ownership"
 **Input**: Design documents from `/specs/032-verification-ownership/`
 **Prerequisites**: plan.md, spec.md (clarified 2026-09-03), research.md (R1–R8), data-model.md, contracts/, quickstart.md
 **Tests**: only tripwire classes (zero-token, fail-closed gates, CAS/single-writer, sandbox fence, brakes, materialize span, doctor seeded-faults, structural guards). Every test task below extends a named existing class test; no sibling files are minted. Ordinary behavior ships without a test.
-**Status**: Phases 1–7 landed 2026-09-03 (#811–#814); US4 provisioning is the one open item (research R8).
+**Status**: Phases 1–7 landed 2026-09-03 (#811–#814). US4 provisioning was CUT 2026-09-10 (`specs/README.md`), so nothing is open.
 **Organization**: one phase per increment, each landing as ONE reviewable PR, in plan.md's order: US1 → US2 → US3 → US5 → doctrine (+ US4 manifest surface). Line anchors are into `main` = c77d8ce and drift as earlier phases land; re-anchor by symbol.
 
 ## Format: `[ID] [P?] [Story] Description`
@@ -132,7 +132,7 @@ Single project: `devclaw/` (host), `runner/` (sandbox worker), `tests/` (stubbed
 - [x] T034 [P] [US4] Manifest surface only: add the `environment` block (`image`, `services[]`, `tools[]`, `registries[]`) to docs/reference/devclaw-manifest.schema.json and docs/reference/devclaw-manifest.md; parse it in devclaw/project_manifest.py (`Manifest.environment: Optional[EnvironmentDecl] = None`, `_parse_environment` following `_parse_validation` at `:178`, absent ⇒ None, malformed ⇒ `ManifestError`); also add `validation` to the schema (existing drift found in research). Extend the existing manifest class test in tests/ (the `parse_manifest` loud-on-malformed case) with one `environment` row — a structural guard, not an instance test.
 - [x] T035 Update docs/INDEX.md currency tags for every doc touched in phases 3–7; run `/docs-audit` scope-limited to those files.
 
-**Checkpoint**: PR 5 — doctrine and code agree; US4 is explicitly deferred with its declaration surface in place.
+**Checkpoint**: PR 5 — doctrine and code agree; US4 shipped its declaration surface, and its provisioning half was cut 2026-09-10.
 
 ---
 
@@ -144,7 +144,7 @@ Single project: `devclaw/` (host), `runner/` (sandbox worker), `tests/` (stubbed
 - **US3** (Phase 5) is independent of US1/US2; T022 and T023 are parallel with T019–T021.
 - **US5** (Phase 6) is independent; T029 and T030 are parallel with T026–T028.
 - Phase 7 depends on all previous phases having landed (it documents them).
-- US4 provisioning is NOT in this task list (Q1 = C); only T034's declaration surface is.
+- US4 provisioning is NOT in this task list (Q1 = C) and never will be — cut 2026-09-10; only T034's declaration surface shipped.
 
 ## Parallel Execution Examples
 

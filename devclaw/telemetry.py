@@ -586,7 +586,8 @@ def compute_scorecard(store: Any, *, window_hours: "int | None" = None, registry
     # Pass/fail against the configured thresholds + the wedge-free-cycles
     # condition (non-idle cycle_reports rows in-window, all clean). A null
     # metric NEVER passes; the overall verdict is the AND. Informational
-    # only — nothing actuates from it (spec 007's flip stays a human act).
+    # only — nothing actuates from it; the flip it once gated went with
+    # spec 007 (cut 2026-09-10).
     cycle_block = _cycle_block(store, since_ms=since_ms)
     clean_cycles, counted_cycles = cycle_block["clean"], cycle_block["total"]
     thresholds = {

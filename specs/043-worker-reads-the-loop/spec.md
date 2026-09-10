@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-09
 
-**Status**: Draft
+**Status**: DRAFT — owner: Denys, specify-or-cut by 2026-09-17. Absorbs spec 040 US1 (the pinned clause list at dispatch): 040's park was "wait for the 037 self-review read", that read came in negative (first-pass 0.0 over the four days to 2026-09-10, 22 structural concerns to 7 clean), and there are now five mechanisms at the what-the-worker-knows boundary (021, 026, 029, 040 US1, 043) where the standing ruling allows one policy. This spec is that policy. Needs `/speckit-clarify` with Denys before any implementation.
 
 **Input**: User description: "The worker can read the loop's own facts. Today a devclaw worker runs in a sandbox knowing only its dispatch brief (measured live: 2,846 chars on issue-493's first dispatch, 4,891 on the retry) — it cannot see doctor's verdict on the instance it runs inside, its own goal's history and prior verdicts, or the problems catalog. […] devclaw is already an MCP server and the worker already speaks MCP, so this is supplying a FACT (constitution IX order: fact → instruction → brake), not adding a brake."
 
@@ -266,6 +266,50 @@ to that project only.
   consults these facts is the agent's judgment guided by one line in a worker
   skill, measured by an eval — devclaw supplies the fact and does not police
   its use (constitution IX).
+
+## Absorbed from spec 040 — the pinned clause list at dispatch (2026-09-10)
+
+Spec 040 ("the completion contract reaches the actor") was closed on 2026-09-10
+and its live story folded in here. Why it merged rather than shipped beside this
+one: there were five mechanisms at the *what the worker knows* boundary — 021
+(context budget), 026 (dispatch-brief budget), 029 (code-map brief), 040 US1
+(clause list), 043 (loop facts) — and the standing ruling is that two or more at
+one boundary means ONE policy, never a third mechanism. This spec is that policy,
+so what the worker may read is decided once, against one budget.
+
+What happened to 040's three stories:
+
+- **US2 (a red CI verdict carries its failing log)** — SHIPPED, as the tinyspec
+  `specs/tiny/red-ci-log-to-worker.md`.
+- **US1 (the pinned clause list at dispatch)** — absorbed here as a story to
+  clarify. Its park condition was "wait for the spec 037 self-review read
+  (~2026-09-20)", on the reasoning that 037's skill already instructs the worker
+  to review against the contract clause by clause and building the software
+  version before measuring the instruction is the mistake this repo was halved
+  for. That read came in early and negative: over the four days after 037
+  shipped, first-pass was **0.0** (0 of 9 closed goals), rounds median 3, and the
+  evaluator graded 22 structural *concerns* against 7 clean. The instruction did
+  not move it, so the next rung on the constitution IX ladder is a **fact** —
+  which is what the clause list is, and what this spec is about.
+- **US3 (per-clause worker report, UNMET routing)** — DELETED at 040's own
+  shrink, 2026-09-07. Not revived here without a fresh case.
+
+040's clarify answers that still bind US1 (Denys, 2026-09-07):
+
+- Q: Pay one evaluator call per contract revision to decompose the clauses
+  BEFORE the first worker session, so round one already sees the rubric? → **Yes
+  — pay it at dispatch**; one decomposition per revision, on the dispatch path
+  only, never on an idle or blocked tick. (Lazy gate-side pinning would leave
+  round one — where first-pass is lost — blind; creation-time pinning was
+  rejected because a pointer goal's contract is live.)
+- Q: Does the numbered clause list sit NEXT TO the contract prose the worker gets
+  today, or REPLACE it? → **Next to the prose, bounded**: the prose carries the
+  intent, the list carries the rubric; the list is capped the way steering is,
+  and the brief budget (spec 021) is measured against it. A pointer goal's issue
+  text stays whole.
+
+The rest of 040 — its north-star case, the US3 reasoning, the CI-log clarify — is
+in git (`git log -- specs/040-contract-to-actor`).
 
 ## Open questions for `/speckit-clarify`
 

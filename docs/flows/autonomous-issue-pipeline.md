@@ -1,12 +1,14 @@
 # Flow — the issue-driven pipeline
 
-> **STATUS (2026-09-06): mostly LIVE; one stage parked, one story unbuilt.**
+> **STATUS (2026-09-10): LIVE, and stage 2 is human BY DESIGN; one story unbuilt.**
 > Each step below is tagged with what the code does today. The specs behind it:
 >
 > - `specs/006-intake-readiness-gate` — **SHIPPED**: the door grades every ask.
-> - `specs/007-autonomous-issue-dispatch` — **PARKED** (direction memory only;
->   none of its machinery — operator flag, CAS'd claim, provenance wall,
->   promotion — exists in the tree; review by 2026-10-01).
+> - `specs/007-autonomous-issue-dispatch` — **CUT 2026-09-10**
+>   (`specs/README.md`). The heartbeat claiming its own issues is not planned
+>   work: the autonomy ratchet that gated it reads `pass: false` at a 0.0
+>   first-pass rate, and empty-queue idle was 37 minutes in 14 days. Filing a
+>   goal from a graded issue is yours, deliberately, not pending.
 > - `specs/008-speckit-execution-substrate` — **SHIPPED** for the substrate
 >   (speckit drives execution in-sandbox, host planning chain removed);
 >   **US3 label-routed ceremony is NOT BUILT**.
@@ -56,7 +58,7 @@ with the GitHub issue as the source of truth throughout and PLAN.md gone.**
             makes an ask stale.
                                             │
                                             ▼
-  STAGE 2 · DISPATCH                                        [spec 007 PARKED]
+  STAGE 2 · DISPATCH                                          [human by design]
     a human files the goal: create_goal(issues=[…])
     the one autonomous entrance is self-fix pickup [exists]:
       • a human puts `accepted` on a devclaw:self-filed issue
@@ -97,8 +99,9 @@ with the GitHub issue as the source of truth throughout and PLAN.md gone.**
                  3 flat rounds → donegate_churn park
 ```
 
-Tags: **[exists]** = live machinery; **[spec 007 PARKED]** / **[spec 008 US3
-NOT BUILT]** = the step is not automated today.
+Tags: **[exists]** = live machinery; **[human by design]** = a step that stays
+yours on purpose (spec 007, cut); **[spec 008 US3 NOT BUILT]** = specified and
+not yet built.
 
 ---
 
@@ -115,7 +118,7 @@ Example: *"Add a 30-day cash-flow forecast + shortfall sentinel to finance-sentr
    (the Wealth/Alerts modules), concrete change (a forecast service + endpoint +
    sentinel), verifiable intent (the done_when) → **`devclaw-ready`.** *[exists]*
 3. **Dispatch.** You file `create_goal(issues=[#430])`; the goal's contract is read
-   live from the issue. *[human — spec 007 parked]*
+   live from the issue. *[human by design]*
 4. **Plan.** The worker's first advance runs speckit in the sandbox:
    `specs/030-cashflow-forecast/` with spec.md, plan.md, and a `tasks.md` — T001 forecast
    service, T002 sentinel rule, T003 API endpoint, T004 tests. *[exists]*
@@ -179,7 +182,7 @@ devclaw:pickup ─────┴▶ + accepted (human) ─▶ [cycle-edge picku
 |---|---|
 | Filing / refining asks | Shared (you or agents) |
 | **Accepting self-filed / pickup issues** | **Always yours** — the anti-busywork wall |
-| **Filing goals for `devclaw-ready` issues** | **Yours** — spec 007's autonomous claim is parked |
+| **Filing goals for `devclaw-ready` issues** | **Yours, permanently** — the autonomous claim (spec 007) was cut 2026-09-10 |
 | Merging the cumulative PR | The confirmed-achieved close (spec 025); your review moves post-merge |
 | Resolving typed Problems | Yours — `correct_implementation` / `decide` |
 
@@ -190,9 +193,9 @@ devclaw:pickup ─────┴▶ + accepted (human) ─▶ [cycle-edge picku
 - **Now:** the door grades everything (spec 006/009, webhooks optional); you file
   goals; execution runs on speckit in-sandbox (spec 008); the done-gate closes and
   merges (spec 025), with CI as the verdict of record (spec 032).
-- **Parked:** the heartbeat claiming `devclaw-ready` issues itself (spec 007) —
-  resume condition: the autonomy ratchet (`DEVCLAW_RATCHET_*`, informational only)
-  reads ready and Denys rules the unattended weeks earned it.
+- **Not coming:** the heartbeat claiming `devclaw-ready` issues itself — spec 007
+  was cut 2026-09-10. The autonomy ratchet (`DEVCLAW_RATCHET_*`) survives it as the
+  compounding-readiness signal; there is no longer a flip behind it.
 - **Unbuilt:** label-routed ceremony (spec 008 US3).
 
 ---
@@ -205,8 +208,8 @@ devclaw:pickup ─────┴▶ + accepted (human) ─▶ [cycle-edge picku
 - **`taskstoissues` as an issue-creator / task-level execution unit** — rejected; it runs
   the wrong direction and would mint issues that bypass the readiness gate. The
   **feature-issue** stays the graded/claimed/done-gated unit. (spec 008)
-- **Auto-enabling autonomy on a metric** — rejected; the human flips the flag (spec 007).
-- **Async-clarify inside P2** — deferred to its own slice; P2 only dispatches
-  already-graded work (spec 007).
+- **Auto-enabling autonomy on a metric** — rejected while spec 007 lived, and moot since it was cut: there is no flag to flip.
+- **Async-clarify** — devclaw asking its own clarifying questions on an issue. Never
+  built; it was a slice of spec 007 and went with it.
 - **A pre-merge cumulative review gate** — rejected; `done_when` is the sole pre-merge
   authority, human review moves post-merge (spec 025 FR-006).

@@ -150,7 +150,7 @@ seam today (layer map: settle path = layer 4, done-gate/merge = layer 2, runner 
    spec 030 status line, INDEX currency tags) plus the manifest `environment` schema/parse
    surface for US4 (R8). Tests: `test_harness_docs_map` stays green; manifest parse loud
    on malformed block (extends the existing manifest class test).
-6. **US4 — declared environment provisioning**: follow-up plan revision, not in this arc.
+6. **US4 — declared environment provisioning**: CUT 2026-09-10 (`specs/README.md`). There is no follow-up revision; the declaration surface is where this story ends.
 
 ## Complexity Tracking
 

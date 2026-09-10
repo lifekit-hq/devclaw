@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-01 (renumbered from 031 on 2026-09-05 — the 031 slot went to problem-resolution; 033 is skipped to avoid aliasing `feat/033-durable-container-secrets`)
 
-**Status**: Implemented 2026-09-07 — all three user stories in one PR (`feat/034-worker-file-memory`): the `.devclaw/` pointer + skill protocol (US1), the REPO NOTES lane deleted end to end with `project_docs` dropped at boot (US2), the advance brief reduced to a pointer at the skill + boilerplate revision 3 seeding `.devclaw/MEMORY.md` + the advisory doctor check (US3). Live proofs (SC-001/002/003) are read on the instance after deploy — see quickstart.md
+**Status**: SHIPPED — 2026-09-07 — all three user stories in one PR (`feat/034-worker-file-memory`): the `.devclaw/` pointer + skill protocol (US1), the REPO NOTES lane deleted end to end with `project_docs` dropped at boot (US2), the advance brief reduced to a pointer at the skill + boilerplate revision 3 seeding `.devclaw/MEMORY.md` + the advisory doctor check (US3). Live proofs (SC-001/002/003) are read on the instance after deploy — see quickstart.md
 
 **Input**: User description: "the worker file memory proposal" (brainstorm capture `2026-09-01-devclaw-worker-file-memory`, ~/memory/system/proposals.md)
 

@@ -24,7 +24,7 @@
 
 **Checkpoint**: US1 alone is the MVP — a provider outage costs zero dispatches and resumes itself; coverage is ~25 min of outage (5 requeues × 5 min) until US2 lands.
 
-**Checkpoint (US2, landed 2026-09-06)**: the same five requeues now span ~95 min (5/10/20/30/30). US3 remains: detection still depends on the 529 wording surviving the ACP → runner → settle hops.
+**Checkpoint (US2, landed 2026-09-06)**: the same five requeues now span ~95 min (5/10/20/30/30). US3 was CUT 2026-09-10 (see `specs/README.md`); detection stays host-side. Formerly: depends on the 529 wording surviving the ACP → runner → settle hops.
 
 ## Phase 2: User Story 2 — a sustained outage escalates, bounded (P2)
 
@@ -38,18 +38,6 @@
 - [x] T011 [US2] Tests: extend T006's cases with the ladder sequence, the clamp, the stated-hint precedence, and the reset-on-success
 - [x] T012 [US2] Docs + `/ship` ritual; PR 2
 
-## Phase 3: User Story 3 — the sandbox reports the outage structurally (P3)
-
-**Goal**: detection no longer depends on the wording surviving the ACP → runner → settle hops.
-
-**Independent test**: quickstart Scenario 5.
-
-- [ ] T013 [US3] `runner/runner.py`: vendored provider pattern (kept in sync with `loom/limits.py`) + `_failure_result` emitting `status="server_error"` with `retry_after` and the original text (FR-011)
-- [ ] T014 [US3] `devclaw/queue/settle.py`: honour `result["status"] == "server_error"` independently of the text, mirroring the `rate_limited` branch; `devclaw/engine/__init__.py` documents the status in the result contract
-- [ ] T015 [US3] Tests: extend the runner wrapper cases (fake ACP agent fails with 529 wording → tagged result) and the settle case (tag alone pauses)
-- [ ] T016 [US3] Docs + `/ship` ritual; PR 3
-
----
 
 ## Notes
 

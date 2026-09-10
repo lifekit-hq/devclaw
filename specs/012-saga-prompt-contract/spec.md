@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-22
 
-**Status**: **IMPLEMENTED IN FULL 2026-08-23.** US1 (increment feed-forward)
+**Status**: SHIPPED — implemented in full 2026-08-23. US1 (increment feed-forward)
 shipped 2026-08-22 via #609; US2 (saga authoring slots) via #635 and US3
 (expected increment count, plus FR-012a's completion-judgement guard) via #633,
 both 2026-08-23. Every FR is covered: FR-001…006 by US1, FR-007…009b by US2,

@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-03
 
-**Status**: Implemented 2026-09-03 — US1 (#811), US2 (#812), US3 (#813), US5 + doctrine amendment + US4 declaration surface (#814). US4 provisioning-or-refusal is DEFERRED by ruling (Q1 = C) until US1 has a live track record; it is the remaining owned work of this spec, tracked in tasks.md Phase 7 / research R8. — amended by spec 045 (2026-09-10): a new `conflicting` rollup state — a CONFLICTING PR is never held on `mechanical:ci`.
+**Status**: SHIPPED — 2026-09-03: US1 (#811), US2 (#812), US3 (#813), US5 + doctrine amendment + US4's declaration surface (#814) — amended by spec 045 (2026-09-10): a new `conflicting` rollup state, and a CONFLICTING PR is never held on `mechanical:ci`. US4's provisioning-or-refusal half was CUT 2026-09-10 (`specs/README.md`); the `environment` block it declares stays.
 
 **Input**: User description: "Verification ownership: the pipeline verifies a change in the
 project's declared environment, never in devclaw's generic sandbox, and the worker never
@@ -150,6 +150,8 @@ evidence input never sees them.
 ---
 
 ### User Story 4 - The verification environment is the project's, provisioned or refused (Priority: P2)
+
+**CUT 2026-09-10.** The provisioning-or-refusal half is dropped; the `environment` declaration surface that shipped 2026-09-03 stays. This is Q1's rejected option A, chosen deliberately a week later on evidence: the class it would own — an environment gap holding a project — already carries five mechanisms (spec 030's capability check, spec 042's credential registry and probes, spec 038's filing honesty, and the `env-hold-defers-to-a-live-probe` / `env-hold-observes-the-capability` tinyspecs), and the standing ruling allows one policy at a boundary, never a sixth mechanism. Spec 042 US2 owns the class from the legibility side instead. The consequence is accepted and named: the integration class stays CI-only, which is what spec 032 made the verdict of record anyway. See `specs/README.md`.
 
 A project declares its verification environment in its manifest: the dev image or
 devcontainer, the services its verify needs, the tools beyond the SDK, the registries it
@@ -309,7 +311,8 @@ non-worker commit; assert the metric reads 1.0 and each term is itemized.
   product repository across every goal in the window.
 - **SC-004**: Zero worker sessions are spent improvising around an environment gap: every
   such gap ends the session as `BLOCKED: env` within that session and appears once in
-  the problems catalog.
+  the problems catalog. (Reporting the gap shipped with US3; PROVISIONING so the gap does
+  not arise was US4's half and was cut 2026-09-10.)
 - **SC-005**: Human interventions per achieved goal is reported on the scorecard for any
   window and, over the four weeks after the arc lands, trends down from the audit
   baseline (about 0.3) without the achieved count falling.
@@ -364,7 +367,7 @@ non-worker commit; assert the metric reads 1.0 and each term is itemized.
 - **Q1 — Where the verification environment comes from**: C — the CI rollup is the
   sole verdict of record now (US1–US3 ship first); the project-declared environment
   with services (US4) lands as P2 once that has a track record. Rejected: A (drop US4
-  for good — leaves the integration class CI-only forever) and B (provision services
+  for good — leaves the integration class CI-only forever; **chosen on 2026-09-10**, see the story) and B (provision services
   in-sandbox in this arc — the costliest engine work before the cheap fact has proven
   itself).
 - **Q2 — Gate-input edits under `trust`**: B — fail the task in both modes; the worker

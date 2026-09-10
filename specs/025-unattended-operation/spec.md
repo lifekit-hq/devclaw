@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-29
 
-**Status**: Implemented 2026-09-06 — shipped in #735, #736, #737, #759; follow-up fixes #786, #809, #831 (tasks 32/34); two live-leg tasks stay open (T033 VPS live legs, T034 finance-sentry project-notes update) — owner Denys. Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped). — amended by spec 045 (2026-09-10): the CI reader's `conflicting` state routes to FR-017/FR-018 before any hold, and `resume_goal` refunds the conflict heal.
+**Status**: SHIPPED — 2026-09-06 — shipped in #735, #736, #737, #759; follow-up fixes #786, #809, #831 (tasks 32/34); two live-leg tasks stay open (T033 VPS live legs, T034 finance-sentry project-notes update) — owner Denys. Header corrected 2026-09-06 by the docs audit (it read Draft after the work had shipped). — amended by spec 045 (2026-09-10): the CI reader's `conflicting` state routes to FR-017/FR-018 before any hold, and `resume_goal` refunds the conflict heal.
 
 **Input**: User description: "Unattended-week operation: merge-on-close, post-merge self-deploy, and quiet-mode notifications. The operator will be away for a full week; devclaw must work a pre-filed queue of goals end-to-end with zero human touches — PRs flowing through the gates and merging into each repo's default branch, small increments, one goal at a time, no failure class that requires a human."
 

@@ -1,6 +1,6 @@
 # Spec 027 — Instance health drift detection
 
-**Status:** Implemented 2026-08-31 — shipped in #757; follow-up fix #776 (tasks 12/12). Header corrected 2026-09-06 by the docs audit (it read 'implementing [US1]' after the work had shipped).
+**Status**: SHIPPED — 2026-08-31 — shipped in #757; follow-up fix #776 (tasks 12/12). Header corrected 2026-09-06 by the docs audit (it read 'implementing [US1]' after the work had shipped).
 **Issue:** lifekit-hq/devclaw#596
 **Sized:** spec (touches heartbeat, new module, config, tripwire tests)
 

@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-09
 
-**Status**: Draft — specified and clarified with Denys 2026-09-09 (four rulings, recorded below); SHRUNK at clarify from a seam registry + new guard to "every stop is a Problem, and a Problem carries evidence", riding the existing spec 031 seam and the existing strictness dial.
+**Status**: DRAFT — owner: Denys, build-or-cut by 2026-09-17. Specified and clarified with Denys 2026-09-09 (four rulings, recorded below); SHRUNK at clarify from a seam registry + new guard to "every stop is a Problem, and a Problem carries evidence", riding the existing spec 031 seam and the existing strictness dial. Plan and tasks complete (0/57 built); tracked by lifekit-hq/devclaw#901.
 
 **Input**: User description: "A stop needs evidence: no sentence stops a goal without a fact devclaw can check. This week six goals were parked at six different judgment seams by text that outranked a checkable fact […] The invariant: every judgment seam declares the fact it must cite, the mechanical check of that citation, and its uncited direction: an uncited PASS fails closed, an uncited STOP fails open to the fact."
 

@@ -4,13 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: US1 + US2 **implemented 2026-09-06**; **US3 (the sandbox reports the
-outage structurally, T013–T016) SPECIFIED, NOT IMPLEMENTED — build or cut by
-2026-09-22, owner Denys.** Resume condition added 2026-09-09 by the spec audit:
-the story suspended itself with no date and no owner, the
-label-that-stops-a-clock defect (`~/memory/README.md` rule 4) that specs 040 and
-042 each avoid by carrying one. The date matches spec 042 US2's regrade so both
-land in one sitting; move it if that is the wrong week.
+**Status**: SHIPPED — US1 + US2 implemented 2026-09-06. US3 (the sandbox reports the outage structurally) was CUT 2026-09-10: US1+US2 already classify host-side and no `server_error` recurred in the 14 days to 2026-09-10 — see `specs/README.md`.
 
 **Input**: User description: "A 529 Overloaded burns the dispatch cap; a server-side transient should pause-and-resume like quota/auth (lifekit-hq/devclaw issue #817)"
 
@@ -106,25 +100,6 @@ task successfully and assert the next pause starts at the base again.
 2. **Given** an escalated episode, **When** a session completes normally, **Then** the episode ends and the next provider outage starts from the 5-minute base.
 3. **Given** the provider states its own `Retry-After`, **When** the pause is computed, **Then** the stated hint wins over the escalation ladder.
 
----
-
-### User Story 3 - The sandbox reports the outage structurally (Priority: P3)
-
-The in-sandbox runner already tags a clear usage/rate limit as
-`status="rate_limited"` so the host does not have to regex nested agent
-wording. A provider outage gets the same belt-and-suspenders: the runner tags
-`status="server_error"` with any stated `retry_after`, and the host trusts the
-tag when present while keeping the regex fallback for anything untagged.
-
-**Why this priority**: Detection currently depends on the 529 wording
-surviving intact through ACP → runner → engine → settle. It did in the
-observed incident, but a re-worded agent error silently returns the class to
-the cap-burning path. Structural beats textual — after the pause exists.
-
-**Independent Test**: Have the fake ACP agent fail with 529 wording; assert
-the runner's terminal result carries `status="server_error"` and the host
-pauses on the tag alone (wording stripped).
-
 **Acceptance Scenarios**:
 
 1. **Given** the agent fails with provider-overload wording, **When** the runner emits its terminal result, **Then** `status` is `server_error` and the original error text is preserved.
@@ -153,7 +128,6 @@ pauses on the tag alone (wording stripped).
 - **FR-008**: The pause MUST expire on its own and work MUST resume with no human verb.
 - **FR-009** *(US2)*: Consecutive pauses within one episode MUST escalate geometrically from a short base to a bounded ceiling; a stated provider `Retry-After` MUST take precedence.
 - **FR-010** *(US2)*: A successful session MUST end the episode, so the next outage starts from the base.
-- **FR-011** *(US3)*: The runner MUST tag a provider-overload terminal result structurally, and settle MUST honour the tag independently of the error text.
 
 ### Key Entities
 
@@ -171,7 +145,7 @@ pauses on the tag alone (wording stripped).
 
 ## Assumptions
 
-- The provider wording reaching `classify_failure` retains at least one strong marker (`529`, `overloaded`, `server_error`, `API Error: 5xx`). US3 removes this assumption; until then it is the observed shape from the incident.
+- The provider wording reaching `classify_failure` retains at least one strong marker (`529`, `overloaded`, `server_error`, `API Error: 5xx`) — the observed shape from the incident. This assumption is now permanent: the structural tag that would have removed it (US3) was CUT 2026-09-10. A re-worded provider error that classifies as retry-now is what reopens the cut.
 - `MAX_PAUSE_REQUEUES = 5` stays the per-task bound. This spec does not raise it; US2's escalation is what makes those five requeues span a realistic outage.
 - The account-wide pause is the right blast radius: the outage is provider-side, so no goal on any project can make progress during it.
 

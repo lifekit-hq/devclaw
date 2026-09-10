@@ -41,9 +41,3 @@ Three consecutive provider-outage pauses in one episode produce 300, 600 and
 the ladder. After a task settles successfully, the next provider outage
 pauses for 300 again.
 
-## Scenario 5 (US3) — the structural tag
-
-The fake ACP agent fails with provider-overload wording; the runner's
-terminal result carries `status == "server_error"` with the original error
-text preserved. Settle pauses on that status even when the text carries no
-recognisable wording.
