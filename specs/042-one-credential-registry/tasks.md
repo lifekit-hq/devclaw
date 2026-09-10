@@ -14,6 +14,6 @@
 
 ## US2 — the hop is verified where the worker runs (P2, shipped 2026-09-10)
 
-- [X] T010 runner: emit the `AgentEnv` event (names present/absent) at session start
-- [X] T011 host: record on the task (`queue/settle.py`) and project to one meta row (`env_cap.record_agent_env`); classify a worker env report naming a present credential as present-but-unusable in the row's evidence + remedy, which the hold, the machine issue and doctor all read
+- [X] T010 runner: emit the `AgentEnv` event (names present/absent) at session start, and REFUSE to start the agent when a host-declared credential is absent (`partition_agent_credentials` / `declared_hop_broken`, returning the existing `blocked`/`env` result)
+- [X] T011 host: record the event on the task (`queue/settle.py`) and project it to one meta row; a report naming a credential the runner saw arrive is FALSE — no row, no hold, no Problem, both modes; a real credential gap is keyed on the credential (`credential_cap_id`) and heals when the next session reports it present (`read_result`)
 - [X] T012 doctor: `instance.registry.token` carries what the last worker session saw, on the same line as the host probe

@@ -206,6 +206,21 @@ def read_result(
         )
     except Exception:  # noqa: BLE001
         return None
+    # A credential row heals itself (spec 042 US2). The row says "this
+    # credential never reached the agent"; the runner answers that exact
+    # question at the start of every session. So the moment any session reports
+    # it present, the row is stale and reads GREEN — mount it, redeploy, and
+    # the next run clears it with no owner verb. This is the release condition
+    # `mechanical:` promises: a brake that cannot observe its own release is
+    # the defect, and prose could not observe it, which is why the human-only
+    # exit existed at all.
+    if cap_id.startswith(f"{WORKER_PREFIX}cred-") and result.status == "red":
+        for cred in _credentials.REGISTRY:
+            if cap_id == credential_cap_id(cred.var) and credential_reached_agent(store, cred.var):
+                return CapProbeResult(
+                    "green",
+                    evidence=f"{cred.var} reached the agent environment in the last session",
+                )
     # A worker-reported row stays RED until a human vouches (resume_goal).
     # It used to read GREEN whenever `env_ref` differed — "a new sandbox image
     # or devclaw build IS the fix arriving" (spec 032 US2 / SC-004). That is
@@ -266,21 +281,38 @@ def agent_env_last(store: MetaStore) -> Optional[dict]:
     return d if isinstance(d, dict) else None
 
 
-def present_credential_in(item: str, present: Iterable[str]) -> Optional[str]:
-    """The registered credential a worker's prose names AND the runner reported
-    PRESENT in the agent env, or ``None``.
+def credential_cap_id(var: str) -> str:
+    """The ONE row id for "this credential did not reach the agent".
 
-    Matched in slug form through :func:`worker_cap_id`, the same normalisation
-    :func:`superseding_capability` uses — two spellings here would silently
-    stop classifying. ``None`` means either the prose names no registered
-    credential, or it names one that genuinely did not arrive; both are
-    ordinary absence."""
+    Keyed on the credential, never on the sentence that reported it. A worker
+    invents its own wording every session, and :func:`worker_cap_id` slugs that
+    wording — so ONE missing ``NODE_AUTH_TOKEN`` produced three separate rows
+    in the fortnight to 2026-09-10, each needing its own human clearing. The
+    credential has one name; the gap has one row."""
+    return f"{WORKER_PREFIX}cred-{_slug(var)}"
+
+
+def credential_named_in(item: str) -> Optional[str]:
+    """The registered credential a report's prose names, or ``None``.
+
+    Matched in slug form through :func:`worker_cap_id` — the same
+    normalisation :func:`superseding_capability` uses, because two spellings
+    here would silently stop matching."""
     cap_id = worker_cap_id(item)
-    names = {str(n).strip() for n in present if str(n).strip()}
     for cred in _credentials.REGISTRY:
-        if cred.var in names and _slug(cred.var) in cap_id:
+        if _slug(cred.var) in cap_id:
             return cred.var
     return None
+
+
+def credential_reached_agent(store: MetaStore, var: str) -> bool:
+    """Did ``var`` reach the agent's shells in the last session that reported?
+
+    The host assembles the agent env from its own registry list, so this is a
+    mechanical fact, not an opinion. ``False`` when no session has reported —
+    absence of evidence is not evidence, and the caller keeps today's behaviour."""
+    last = agent_env_last(store) or {}
+    return var in (last.get("present") or [])
 
 
 def _worker_index_key(project_id: Optional[str]) -> str:
@@ -313,7 +345,22 @@ def record_worker_deficiency(
     clears when a human vouches via ``resume_goal``."""
     from .state_store import _now_ms  # deferred — avoids circular at module load
 
-    cap_id = worker_cap_id(item)
+    # Spec 042 US2. Two questions before a row exists at all:
+    #
+    #   1. Does the prose name a credential the host declared? Then the row is
+    #      keyed on the CREDENTIAL, so one gap is one row across every wording.
+    #   2. Did that credential actually reach the agent? The runner reports it
+    #      at session start, before the agent runs. If it arrived, the report is
+    #      simply false — and a false claim must not brake anything. No row, no
+    #      hold, no owner: the caller logs it and carries on.
+    #
+    # A gap naming no registered credential (a missing tool, no Docker daemon,
+    # the wrong arch) is unchanged: the worker is the only witness, so its prose
+    # is the row exactly as before.
+    named = credential_named_in(item)
+    if named and credential_reached_agent(store, named):
+        return ""
+    cap_id = credential_cap_id(named) if named else worker_cap_id(item)
     pid = (project_id or "").strip() or None
     key = _meta_key(cap_id, pid)
     ref = instance_env_ref()
@@ -331,26 +378,19 @@ def record_worker_deficiency(
         store.set_meta(key, json.dumps(existing))
     else:
         where = (f" (goal {goal_id}" + (f", task {task_id}" if task_id else "") + ")") if goal_id else ""
-        # Spec 042 US2: "absent" and "present but unusable" are the same
-        # sentence from the worker and opposite fixes for the owner. The
-        # runner said at session start which sanctioned credentials actually
-        # reached the agent's shells, so when the prose names one that DID
-        # arrive, say so — the gap is its value, scope or usage, and telling
-        # the owner to "provide it" sends them to re-add a credential that is
-        # already there. That round trip was five of the nine owner resumes in
-        # the four days to 2026-09-10.
-        last = agent_env_last(store) or {}
-        present_var = present_credential_in(item, last.get("present") or ())
-        if present_var:
+        if named:
+            # devclaw's own broken hop: the host declared this credential should
+            # cross and it did not. Nothing about this is project-specific and
+            # nobody needs to vouch for it — fix the mount, redeploy, and the
+            # next session's report clears every row this one made (read_result).
             evidence = (
-                f"a worker reported the sandbox lacks: {item}{where} — but the runner "
-                f"reported {present_var} PRESENT in the agent env at session start, so it "
-                f"arrived and was rejected"
+                f"{named} did not reach the agent environment{where} — the host declares "
+                f"it crosses into the sandbox, so the hop is broken"
             )
             remedy = (
-                f"{present_var} is present but unusable: check its VALUE, its SCOPE "
-                f"({_credentials.by_var(present_var).scope}), or how the failing command uses "
-                f"it — do not re-provide it. resume_goal once the credential is fixed"
+                f"mount {named} into the sandbox and redeploy ({_credentials.by_var(named).scope}); "
+                "the hold clears by itself the next time a session reports it present — "
+                "no resume_goal needed"
             )
         else:
             evidence = f"a worker reported the sandbox lacks: {item}{where}"
@@ -363,7 +403,7 @@ def record_worker_deficiency(
             "status": "red",
             "evidence": evidence,
             "remedy": remedy,
-            "present_but_unusable": present_var or "",
+            "credential": named or "",
             "env_ref": ref,
             "probed_at_ms": _now_ms(),
         }))

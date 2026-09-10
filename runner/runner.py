@@ -27,7 +27,7 @@ import shlex
 import shutil
 import subprocess
 import sys
-from typing import TextIO
+from typing import Mapping, TextIO
 import tempfile
 import time
 import traceback
@@ -1525,6 +1525,27 @@ def _agent_env_vars(req: dict) -> tuple:
     return tuple(str(v) for v in raw if isinstance(v, str) and v.strip())
 
 
+def partition_agent_credentials(req: dict, environ: "Mapping[str, str]") -> tuple:
+    """``(present, absent)`` of the credential names the host told us to
+    forward, split on whether this process actually has a value for each.
+
+    Pure: the caller passes the environment. Names only — a value is never
+    returned, logged or emitted."""
+    names = _agent_env_vars(req)
+    present = tuple(n for n in names if (environ.get(n) or "").strip())
+    absent = tuple(n for n in names if not (environ.get(n) or "").strip())
+    return present, absent
+
+
+def declared_hop_broken(req: dict, absent: tuple) -> bool:
+    """Should this session refuse to start?
+
+    True when the HOST declared a credential list and something on it is not
+    here — devclaw's own mount, knowable before the agent runs. A pre-042 host
+    sends no list, so nothing is declared and nothing is refused."""
+    return isinstance(req.get("agent_env"), list) and bool(absent)
+
+
 def main() -> None:
     _refuse_api_key()
 
@@ -1727,31 +1748,44 @@ def main() -> None:
     # container env, had it). The runner never spells a credential itself
     # (spec 011); a pre-042 host that sends no list gets the #644 contract.
     # The refused metered keys stay out by construction (_refuse_api_key).
-    _cred_present: list = []
-    _cred_absent: list = []
-    for _cred_var in _agent_env_vars(req):
-        _cred_val = os.environ.get(_cred_var, "").strip()
-        if _cred_val:
-            acp_env[_cred_var] = _cred_val
-            _cred_present.append(_cred_var)
-        else:
-            _cred_absent.append(_cred_var)
+    _cred_present, _cred_absent = partition_agent_credentials(req, os.environ)
+    for _cred_var in _cred_present:
+        acp_env[_cred_var] = os.environ[_cred_var].strip()
     # Spec 042 US2: say — once, at session start — WHICH sanctioned credentials
-    # actually reached the agent's shells. Names only; a value is never read
-    # into an event. Without this the host has one fact (its own probe says the
-    # token is fine) and the worker has another (`BLOCKED: env — no registry
-    # token`), and nothing can tell "never arrived" from "arrived and was
-    # rejected". They take opposite fixes, and five of the nine owner resumes
-    # in the four days to 2026-09-10 were a human deciding that by hand.
+    # reached the agent's shells. Names only; a value is never read into an
+    # event. The host assembles this env, so whether a credential arrived is a
+    # fact the machine holds before the agent starts.
     _emit_event(
         {
             "id": None,
             "type": "AgentEnv",
             "source": "runner",
             "ts": int(time.time() * 1000),
-            "payload": {"present": _cred_present, "absent": _cred_absent},
+            "payload": {"present": list(_cred_present), "absent": list(_cred_absent)},
         }
     )
+    # A credential the HOST said to forward, that is not here, is a broken hop —
+    # devclaw's own mount, not this project's problem and not this agent's to
+    # discover. Refuse to start: the alternative is to spend a whole session
+    # learning `test -n "$VAR"`, have the agent describe the gap in prose, and
+    # turn that prose into a project-wide brake only a human can clear. That
+    # cost five owner resumes in the four days to 2026-09-10 for one variable.
+    # No project knowledge is used or needed — the host declared it, so its
+    # absence is a fact about us. A pre-042 host sends no list and is skipped.
+    if declared_hop_broken(req, _cred_absent):
+        _emit_result({
+            "status": "blocked",
+            "block_kind": "env",
+            # canonical, never prose: the host's own spelling of the credential
+            # is what the hold is keyed on, so one gap is one row however many
+            # sessions hit it.
+            "block_item": ", ".join(sorted(_cred_absent)),
+            "reason": (
+                "credential(s) declared by the host never reached the agent "
+                f"environment: {', '.join(sorted(_cred_absent))}"
+            ),
+        })
+        return
     # The git identity (devclaw/git_identity.py): the engine pins author and
     # committer on the container env, and git gives the environment
     # precedence over every config level — but only in shells that HAVE it.
