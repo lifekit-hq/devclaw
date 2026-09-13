@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-13
 
-**Status**: DIRECTION RULED 2026-09-10/13 (Denys). Eight pillars confirmed. This page is
+**Status**: DRAFT — direction ruled 2026-09-10/13 (Denys); the build is the one 2.0.0 PR. Eight pillars confirmed. This page is
 the whole spec: Denys reads it before any Python exists. No plan.md/tasks.md — the build is
 ONE big-bang PR whose review is this page.
 
