@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import re
 
-from ..advance_brief import is_advance_brief
 from ..git_identity import git_identity_env
 from ..procutil import run as _run
 from ..task_change import MACHINE_COMMIT_SUBJECT
@@ -173,13 +172,8 @@ async def _agent_commit_msg(workspace_dir: str, base: str | None) -> tuple[str, 
 
 
 def _is_advance_brief(goal: str) -> bool:
-    """The thin-advance pull-brief (``goal/tick.py:_advance_brief``) is generic
-    plumbing — "Advance this goal by one substantive, shippable increment…" — not
-    a description of any change. Post-demolition it's the task ``goal`` on every
-    long_lived tick, so it must NEVER leak into a PR title. Detection lives in
-    :mod:`devclaw.advance_brief` (shared with the display half, #550) so the
-    generator and every detector stay in lockstep."""
-    return is_advance_brief(goal)
+    """v1 detected its generic advance brief here; v2 has no such brief."""
+    return False
 
 
 def _link_title_branch(title: str, branch: str, issues: list[int]) -> tuple[str, str]:

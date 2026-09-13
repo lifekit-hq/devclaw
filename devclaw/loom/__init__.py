@@ -1,53 +1,20 @@
-"""loom — the reusable orchestration core, sans the ``-claw`` prefix.
-
-This package is the **extraction seam**: the engine-agnostic substrate devclaw is
-built on, grouped under a neutral name so it can eventually become a standalone,
-reusable library (an orchestrator weaving many threads — goals, tasks, agents —
-into delivered work). devclaw remains the concrete product (the MCP server, the
-sandbox engine, the GitHub delivery); loom is the part with no opinion about
-*which* engine or product uses it.
-
-What lives here (physically, all of it pure stdlib): :mod:`~devclaw.loom.limits`
-(the usage-limit/rate-limit failure classifier), :mod:`~devclaw.loom.test_integrity`
-(the gate's deleted/weakened-test guard), and :mod:`~devclaw.loom.trace` (the
-run-trace capture). These are the ONLY import paths: the re-export shims the
-extraction left at ``devclaw.limits`` / ``devclaw.test_integrity`` were deleted
-by the #616 cutoff — no production module ever imported them.
-
-loom is a LEAF by contract (the import-linter contract in ``pyproject.toml``,
-``lint-imports`` gates it in CI): it imports nothing from the rest of devclaw. The goal domain types + store used to
-be re-exported here as a "curated surface", which made importing ``loom.trace``
-execute this facade and drag ``goal`` + ``state_store`` behind every consumer —
-the exact cycle the extraction seam exists to prevent. Import those from
-``devclaw.goal`` directly; import the core from one place::
-
-    from devclaw.loom import classify_failure, scan_diff
-"""
+"""loom — the engine-agnostic substrate: the usage-limit classifier, the
+test-integrity guard, the untrusted-content fence. A leaf: imports nothing
+from the rest of devclaw (the import-linter contract gates it)."""
 
 from __future__ import annotations
 
-# --- physically owned by loom -------------------------------------------------
 from .limits import (
     Classification,
     FailureKind,
     PAUSING_KINDS,
     RETRY_NOW_KINDS,
     classify_failure,
-    escalated_pause_seconds,
     pause_seconds,
 )
 from .test_integrity import IntegrityReport, scan_diff
 
 __all__ = [
-    # failure classification
-    "classify_failure",
-    "pause_seconds",
-    "escalated_pause_seconds",
-    "FailureKind",
-    "Classification",
-    "PAUSING_KINDS",
-    "RETRY_NOW_KINDS",
-    # test-integrity guard
-    "scan_diff",
-    "IntegrityReport",
+    "classify_failure", "pause_seconds", "FailureKind", "Classification",
+    "PAUSING_KINDS", "RETRY_NOW_KINDS", "scan_diff", "IntegrityReport",
 ]

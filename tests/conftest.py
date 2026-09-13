@@ -69,70 +69,32 @@ os.environ["DEVCLAW_DB"] = str(
 # defaulted: tests that need it set it explicitly with monkeypatch.
 os.environ.pop("DEVCLAW_SELF_REPO", None)
 
-from devclaw import llm_call as _llm_call_mod
 from devclaw import task_queue
-from devclaw.delivery import deploy as _deploy_mod
 from devclaw.engine import sandcastle as _sandcastle_mod
-
-
-@pytest.fixture(autouse=True)
-def _no_real_merges_by_default(monkeypatch):
-    """Merge-on-close (spec 025) runs on every achieved done-gate close and
-    shells the real ``gh`` CLI. A unit test driving a close must never reach
-    the network (or a developer's authenticated gh) — default the seam to
-    NO_PR, the nothing-to-merge success outcome, so every pre-025 close test
-    keeps its exact behavior. Merge tests patch ``tick_donegate._attempt_merge``
-    themselves with recording fakes."""
-    from devclaw.goal import merge_on_close as _moc
-    from devclaw.goal import tick_donegate as _tdg
-
-    async def _no_pr(workspace_dir, branch):
-        return _moc.MergeResult(_moc.MergeOutcome.NO_PR, detail="stubbed (conftest)")
-
-    async def _no_sync(workspace_dir):
-        return None
-
-    monkeypatch.setattr(_tdg, "_attempt_merge", _no_pr)
-    monkeypatch.setattr(_tdg, "_sync_workspace", _no_sync)
-
-
-@pytest.fixture(autouse=True)
-def _disable_review_gate_by_default(monkeypatch):
-    """The pre-PR review gate's default reviewer shells out to the real `claude`
-    CLI. On a developer machine that's authenticated, an un-injected TaskQueue in
-    a test with a real git workspace would make a live, non-deterministic Claude
-    call (and in CI it would just fail open). Keep the whole suite hermetic by
-    defaulting the gate OFF; the review-gate tests re-enable it explicitly and
-    inject a stub reviewer.
-    """
-    monkeypatch.setattr(task_queue, "REVIEW_GATE_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)
 def _disable_sandbox_sweep_by_default(monkeypatch):
     """``TaskQueue.recover()`` sweeps orphaned sandbox containers via the real
-    docker CLI. A test process is NOT the devclaw process: on a docker-enabled
-    dev machine a live devclaw could be mid-task, and a test calling recover()
-    must never ``docker rm -f`` its containers (the "any labeled container is
-    orphaned" premise only holds for the real server's startup). Default the
-    sweep to a no-op; the wiring test injects its own recording stub the same
-    way, and the sweep's own unit tests patch its subprocess seam directly.
-    """
+    docker CLI. A test process is NOT the devclaw process, so the sweep is a
+    no-op here; its own unit tests patch the subprocess seam directly."""
     monkeypatch.setattr(task_queue, "sweep_orphan_sandboxes", lambda owner_id: 0)
+
+
+@pytest.fixture(autouse=True)
+def _no_credential_probes(monkeypatch):
+    """The world fingerprint probes GitHub for live credentials; the suite
+    never reaches the network."""
+    from devclaw import probes as _probes
+
+    monkeypatch.setattr(_probes, "probe_github_token", lambda token, timeout_s=5.0: None)
 
 
 #: Program basenames a test process must NEVER spawn for real. Built from the
 #: same env-derived module constants production uses, so an exotic
 #: ``DEVCLAW_DOCKER_BIN`` on a dev host is still caught.
 _CONTAINER_BINARIES = frozenset(
-    os.path.basename(b)
-    for b in (
-        "docker",
-        "tailscale",
-        _deploy_mod.DOCKER_BIN,
-        _deploy_mod.TAILSCALE_BIN,
-        _sandcastle_mod.DOCKER_BIN,
-    )
+    os.path.basename(b) for b in ("docker", "tailscale", _sandcastle_mod.DOCKER_BIN)
 )
 
 #: The cognition binary — the quota. A test that reaches it burns a real
@@ -141,9 +103,7 @@ _CONTAINER_BINARIES = frozenset(
 #: turned fail-closed hid for a day (2026-09-06: the admission lint's judge).
 #: Injected fakes (``FakeClaude``, a patched ``_judge_undecided``) never reach
 #: the spawn; the opt-in live cognition evals lift the guard themselves.
-_COGNITION_BINARIES = frozenset(
-    os.path.basename(b) for b in ("claude", _llm_call_mod.CLAUDE_BIN)
-)
+_COGNITION_BINARIES = frozenset(("claude",))
 
 #: ``gh <noun> <verb>`` verbs that only READ. Everything else is treated as a
 #: write, because this guard must fail CLOSED like every other brake in the
@@ -162,9 +122,8 @@ _GH_API_WRITE_FLAGS = ("-f", "-F", "--field", "--raw-field", "--input")
 _GH_GUARD_HINT = (
     "The pytest suite is fully stubbed — a test must NEVER perform a real "
     "GitHub write (it lands in a live repository and outlives the test). Stub "
-    "the seam your test reaches: patch `devclaw.issue_doorway.GhCli`, pass a "
-    "fake `gh=` adapter, patch `devclaw.delivery.*._run`, or leave "
-    "DEVCLAW_SELF_REPO unset so the filing path is the no-op it is by default. "
+    "the seam your test reaches: inject a fake `post_comment` / `merge` into "
+    "the GoalService, or patch `devclaw.delivery._run`. "
     "If this really is a READ, add its verb to _GH_READ_VERBS in conftest."
 )
 
@@ -193,21 +152,15 @@ def _is_gh_write(base: str, args: tuple) -> bool:
 _COGNITION_GUARD_HINT = (
     "The pytest suite is fully stubbed — a test must NEVER spawn the real "
     "`claude` CLI (it is the account's quota, and CI has no binary). Inject a "
-    "caller at the seam your test reaches: `svc._evaluator_caller = "
-    "FakeClaude(...)`, `evaluator_caller=`, `claude_caller=`, or patch the "
-    "module-global (`service._judge_undecided`, `evaluator.default_caller`). "
-    "Live cognition evals opt in with DEVCLAW_RUN_COGNITION_EVALS=1."
+    "fake engine (`TaskQueue(store, runner=...)`)."
 )
 
 _GUARD_HINT = (
     "The pytest suite is fully stubbed — a test must NEVER launch real "
     "docker/tailscale (a 2026-07-14 pytest run leaked a live, "
     "restart-unless-stopped `devclaw-deploy-g` container on two hosts). "
-    "Stub the chokepoint your test actually reaches instead: monkeypatch "
-    "`devclaw.delivery.deploy._run` (or `deploy_project` where imported), "
-    "patch `devclaw.engine.sandcastle._docker_run_sync`, or disable the "
-    "feature (e.g. pass `autodeploy=False`) when the test's intent doesn't "
-    "cover deploys."
+    "Stub the chokepoint your test actually reaches instead: inject a fake "
+    "engine, or patch `devclaw.engine.sandcastle._docker_run_sync`."
 )
 
 

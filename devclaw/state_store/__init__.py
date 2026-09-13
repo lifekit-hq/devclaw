@@ -1,46 +1,29 @@
-"""SQLite state store for DevClaw tasks.
-
-Wire shapes (``to_dict``) are camelCase to match the original TypeScript
-output, so MCP consumers keep working across the rewrite.
-
-The store was split into a package for legibility (behavior-preserving):
-
-- :mod:`.rows` — the pure data (dataclasses, row mappers, literals, constants).
-- :mod:`.control` — :class:`ControlPlaneMixin`, the thin typed ``meta`` wrappers.
-- :mod:`.problems` — :class:`ProblemsMixin`, the deduplicated problems catalog.
-- :mod:`.observability` — :class:`ObservabilityMixin`, the events/traces logs
-  + their retention prunes.
-- :mod:`.evals` — :class:`EvalOutcomesMixin`, the continuous-eval projections
-  (eval_outcomes + cycle_reports, ADR 0006).
-- :mod:`.health` — :class:`LoopHealthMixin`, the loop-health tables (spec
-  038): idle attribution spans, the permanent usage ledger, intake grades.
-- :mod:`.core` — :class:`StateStore` itself: connection, transactions,
-  task/program CRUD, scheduling/recovery, VACUUM + DB-size alarm.
-
-Every public name the pre-split ``state_store.py`` exported is re-exported here,
-so no importer changes.
-"""
+"""SQLite state store — tasks, events, goals, decisions, control flags."""
 
 from __future__ import annotations
 
 from .core import StateStore
 from .rows import (
+    EXIT_BLOCKED,
+    EXIT_DELIVERED,
+    EXIT_DONE,
+    EXIT_INTERRUPTED,
+    EXIT_NOTHING,
+    EXIT_REFUSED,
+    EXIT_REVIEW,
+    EXITS,
     SQLITE_BUSY_TIMEOUT_MS,
+    Decision,
+    Goal,
     Task,
     TaskEvent,
     TaskKind,
     TaskStatus,
     _now_ms,
-    derive_failure_class,
 )
 
 __all__ = [
-    "StateStore",
-    "derive_failure_class",
-    "Task",
-    "TaskEvent",
-    "TaskStatus",
-    "TaskKind",
-    "SQLITE_BUSY_TIMEOUT_MS",
-    "_now_ms",
+    "StateStore", "Task", "TaskEvent", "Goal", "Decision", "TaskStatus", "TaskKind",
+    "SQLITE_BUSY_TIMEOUT_MS", "_now_ms", "EXITS", "EXIT_BLOCKED", "EXIT_DELIVERED",
+    "EXIT_DONE", "EXIT_INTERRUPTED", "EXIT_NOTHING", "EXIT_REFUSED", "EXIT_REVIEW",
 ]

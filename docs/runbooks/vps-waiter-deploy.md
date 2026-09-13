@@ -144,3 +144,14 @@ Send a message to the devclaw agent over Telegram or via OpenClaw's UI and check
 The agent is hosted in OpenClaw on the VPS, not in this repo. The runtime (this codebase) ships the chef. The waiter is a config concern on the gateway side. This doc is the bridge — it lives here so the prompt's history is versioned with the chef it talks to.
 
 When you change the menu (add/remove devclaw MCP tools), update the prompt's **"The menu"** section here, then re-deploy by re-running the `tee` block above.
+
+
+## The tool menu (v2, 2026-09-13)
+
+Goals: `create_goal(goal_id, project_id, issues)`, `get_goal`, `list_goals`,
+`decide(goal_id, text)`, `cancel_goal`, `get_status`, `get_events(task_id)`.
+Projects: `register_project`, `list_projects`, `project_status`,
+`update_project`, `delete_project`. Operations: `get_run_schedule`,
+`set_run_schedule`, `set_operator_hold`, `set_max_concurrent`,
+`clear_usage_pause`, `doctor`. Every v1 verb not listed here (steer, resume,
+correct, strictness, intake grading, scorecard, problems, deploys) is gone.

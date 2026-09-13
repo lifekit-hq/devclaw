@@ -40,7 +40,7 @@ def hook_dir(runner, monkeypatch):
 
 
 def test_common_skill_loads_for_every_kind(runner, skill_dir):
-    for kind in ("implement_feature", "fix_bug", "review_repository", "onboard"):
+    for kind in ("implement_feature", "fix_bug", "review_repository"):
         bundle = runner._load_skills(kind)
         assert "Common operating context" in bundle
         assert "AGENTS.md" in bundle
@@ -50,9 +50,9 @@ def test_writes_code_tier_loads_for_code_writing_kinds_only(runner, skill_dir):
     for kind in ("implement_feature", "fix_bug"):
         bundle = runner._load_skills(kind)
         assert "Quality bar" in bundle
-        assert "Verify-gate coverage" in bundle
+        assert ".devclaw/verify" in bundle
         assert "Commit hygiene" in bundle
-    for kind in ("review_repository", "onboard"):
+    for kind in ("review_repository",):
         bundle = runner._load_skills(kind)
         assert "Quality bar" not in bundle
         assert "Commit hygiene" not in bundle
@@ -69,7 +69,7 @@ def test_craft_frontend_design_absent_from_always_on_brief(runner, skill_dir):
     marker = "Distinctive, not templated"
     craft_file = skill_dir / "craft" / "frontend-design.md"
     assert marker in craft_file.read_text(encoding="utf-8")  # marker is real
-    for kind in ("implement_feature", "fix_bug", "review_repository", "onboard"):
+    for kind in ("implement_feature", "fix_bug", "review_repository"):
         assert marker not in runner._load_skills(kind)
 
 
@@ -89,7 +89,7 @@ def test_craft_self_selection_pointer_present_in_brief(runner, skill_dir):
     """_common tells every task where the self-selected craft guides live so the
     agent can `ls` + read the relevant one. Kept ls-based/dynamic so adding a
     new craft file needs no brief edit."""
-    for kind in ("implement_feature", "fix_bug", "review_repository", "onboard"):
+    for kind in ("implement_feature", "fix_bug", "review_repository"):
         bundle = runner._load_skills(kind)
         assert "/opt/devclaw/skills/craft/" in bundle
         assert "frontend-design" in bundle  # named example
@@ -217,11 +217,9 @@ def test_feature_id_is_collision_proof_and_never_an_issue_number(runner, skill_d
         bundle = runner._load_skills(kind)
         # the identifier is minted collision-free, never by the allocator
         assert "--timestamp" in bundle
-        assert "Never pass an issue number as the feature number" in bundle
         # the handoff is scoped to what THIS branch added — no tie, and no
         # adopting a directory that belongs to another goal
         assert "--diff-filter=A origin/HEAD...HEAD -- specs/" in bundle
-        assert "never adopt one" in bundle
         # …and the retired tie-prone rule is gone
         assert "smallest not-yet-complete" not in bundle
         # a bare number is not a commit scope: the issue rides `Fixes #<n>`,
@@ -233,33 +231,6 @@ def test_feature_id_is_collision_proof_and_never_an_issue_number(runner, skill_d
         assert "specs/NNN-*" not in path.read_text(encoding="utf-8"), path
 
 
-def test_onboard_brief_keeps_agents_md_authoring_uncapped(runner, skill_dir):
-    """The never-create cap is feature/fix doctrine only — onboarding IS the
-    authoring path and must not receive a contradicting rule (the cap lives in
-    the _writes-code tier, which onboard never loads)."""
-    bundle = runner._load_skills("onboard")
-    assert "AGENTS.md" in bundle  # onboarding still produces it
-    assert "NEVER create AGENTS.md" not in bundle
-    assert "NEVER create AGENTS.md" not in runner._load_skills("review_repository")
-
-
-def test_onboard_skill_is_three_docs_with_managed_markers(runner, skill_dir):
-    """#552 adopt-over-build: the onboard skill authors exactly three docs —
-    thin marker-delimited AGENTS.md + README.md + ARCHITECTURE.md. DECISIONS.md
-    is retired (the speckit spec is the decision memory) — absence proven
-    against the raw template first. The marker pair is upstream spec-kit's
-    replace-within-markers upsert convention."""
-    raw = (skill_dir / "onboard" / "00-onboard.md").read_text(encoding="utf-8")
-    assert "DECISIONS.md" not in raw
-    assert "<!-- devclaw:managed:start -->" in raw
-    assert "<!-- devclaw:managed:end -->" in raw
-    assert "THIN, BOUNDED pointer" in raw
-    bundle = runner._load_skills("onboard")
-    assert "DECISIONS.md" not in bundle
-    assert "devclaw:managed:start" in bundle
-    assert "preserves everything outside" in bundle
-
-
 def test_common_skill_instructs_reading_architecture_map(runner, skill_dir):
     """Spec 029: the always-on _common.md must instruct workers to read
     ARCHITECTURE.md when it exists, for every task kind. Presence is proven
@@ -267,7 +238,7 @@ def test_common_skill_instructs_reading_architecture_map(runner, skill_dir):
     absence assertions need the marker to actually be in the file)."""
     raw = (skill_dir / "_common.md").read_text(encoding="utf-8")
     assert "ARCHITECTURE.md" in raw  # marker is real in the source
-    for kind in ("implement_feature", "fix_bug", "review_repository", "onboard"):
+    for kind in ("implement_feature", "fix_bug", "review_repository"):
         bundle = runner._load_skills(kind)
         assert "ARCHITECTURE.md" in bundle, (
             f"kind={kind!r}: _common.md ARCHITECTURE.md instruction missing from bundle"
@@ -286,7 +257,7 @@ def test_fix_bug_loads_diagnosis_loop_after_scope(runner, skill_dir):
     assert "Diagnosis loop" in bundle
     assert "red-capable" in bundle
     assert bundle.index("Bug-fix scope") < bundle.index("Diagnosis loop")
-    for kind in ("implement_feature", "review_repository", "onboard"):
+    for kind in ("implement_feature", "review_repository"):
         assert "Diagnosis loop" not in runner._load_skills(kind)
 
 
@@ -294,12 +265,6 @@ def test_review_repository_loads_only_read_only_skill(runner, skill_dir):
     bundle = runner._load_skills("review_repository")
     assert "READ ONLY" in bundle
     assert "Commit hygiene" not in bundle  # no code-writing tier
-
-
-def test_onboard_loads_agents_md_doctrine(runner, skill_dir):
-    bundle = runner._load_skills("onboard")
-    assert "ONBOARDING" in bundle
-    assert "AGENTS.md" in bundle
 
 
 def test_skill_blocks_are_separated_by_horizontal_rule(runner, skill_dir):
@@ -380,20 +345,18 @@ def test_wrap_goal_uses_skills_when_dir_present(runner, skill_dir):
     assert "## Goal" in wrapped
     # goal rides along after the skills; the return contract is the final section
     assert "GOAL-TOKEN" in wrapped
-    assert wrapped.index("## Goal") < wrapped.index("GOAL-TOKEN") < wrapped.index("STATUS:")
+    assert wrapped.index("## Goal") < wrapped.index("GOAL-TOKEN") < wrapped.index("DELIVERED:")
 
 
 def test_wrap_goal_appends_return_contract_on_skills_path(runner, skill_dir):
     # Even with the baked skills loaded (production path), the structured
     # hand-back is appended after ## Goal so the engineer's result is legible.
     wrapped = runner._wrap_goal("implement_feature", "GOAL-TOKEN")
-    for field in ("STATUS:", "CHANGED:", "VERIFIED:", "ACCEPTANCE:", "FOLLOW-UPS:"):
+    for field in ("DELIVERED:", "DONE:", "BLOCKED:", "NOTHING:"):
         assert field in wrapped
-    # spec 034: no REPO NOTES hand-back field — repo memory is a file the
-    # worker edits (.devclaw/), never a line the host parses and accumulates
     assert "REPO NOTES" not in wrapped
     # read-only kinds keep their own report contract — no code hand-back
-    assert "FOLLOW-UPS:" not in runner._wrap_goal("review_repository", "x")
+    assert "DELIVERED:" not in runner._wrap_goal("review_repository", "x")
 
 
 def test_wrap_goal_refuses_loudly_when_the_skill_bundle_is_missing(

@@ -110,7 +110,7 @@ def _validate_sandbox_memory(value: Optional[str]) -> None:
     from . import config as _config
 
     want = _parse_mem(value)
-    reserve = _parse_mem(_config.COGNITION_MEM_RESERVE)
+    reserve = _parse_mem(_config.HOST_MEM_RESERVE)
     total = host_mem_total_bytes()
     if total is not None and want + reserve > total:
         raise ValueError(
@@ -685,51 +685,24 @@ def _normalize_workspace(path: Optional[str]) -> Optional[str]:
 
 
 def project_rollup(project: Project, all_goals: list[dict]) -> dict:
-    """Join a project with live goal state via ``project_id`` match (#524 P3).
-
-    ``all_goals`` is the pre-fetched output of ``goal_service.list_goals()``
-    (or the CLI's GoalStore-backed equivalent). Every goal whose stored
-    ``project_id`` equals the project's id is associated. Passing the full list
-    in from the caller lets us render every project in a single ``list_goals``
-    scan instead of an N-times per-project fetch. (Was a normalized-workspace-dir
-    match — re-keyed to the project reference key so a workspace rename or a
-    shared path can't drift the association.)
-
-    ``health`` is a cheap derived signal for the control plane: ``blocked`` if
-    any goal is blocked or flagged stalled by the watchdog, ``done`` if all
-    goals are done, ``working`` if any is active, else ``idle``."""
-    goals: list[dict] = []
-    for g in all_goals:
-        if g.get("project_id") != project.id:
-            continue
-        goals.append(
-                {
-                    "id": g.get("id"),
-                    "phase": g.get("phase"),
-                    "lifecycle": g.get("lifecycle"),
-                    "blocked_on": g.get("blocked_on"),
-                    "progress": g.get("progress"),
-                    "direction": g.get("direction"),
-                }
-            )
+    """Join a project with its goals' live state (by ``projectId``) and derive
+    one health word: blocked > working > idle > done > archived."""
+    goals = [g for g in all_goals if g.get("projectId") == project.id]
     out = project.to_dict()
-    out["goals"] = goals
-    out["health"] = _health(project.status, goals)
+    out["goals"] = [{"id": g.get("id"), "state": g.get("state"), "outcome": g.get("outcome")} for g in goals]
+    out["health"] = _health(project.status, out["goals"])
     return out
 
 
 def _health(status: ProjectStatus, goals: list[dict]) -> str:
     if status == "archived":
         return "archived"
-    live = [g for g in goals if not g.get("missing")]
-    if not live:
-        return "idle"
-    phases = [g.get("phase") for g in live]
-    stalled = any((g.get("progress") or {}).get("stalled") for g in live)
-    if "blocked" in phases or stalled:
+    open_ = [g for g in goals if not g.get("outcome")]
+    if not open_:
+        return "done" if goals else "idle"
+    states = {g.get("state") for g in open_}
+    if "blocked" in states:
         return "blocked"
-    if all(p == "done" for p in phases):
-        return "done"
-    if any(p in ("in_flight", "verifying", "idle") for p in phases):
+    if states & {"running", "proposed done", "interrupted", "new"}:
         return "working"
     return "idle"

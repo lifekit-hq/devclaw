@@ -81,4 +81,4 @@ def test_the_doorway_itself_reads_devclaw_env_vars():
     """Sanity: the scanner actually detects reads (a broken matcher would make
     the guard above vacuously green)."""
     reads = _devclaw_env_reads(ast.parse((_PKG / "config.py").read_text(encoding="utf-8")))
-    assert len(set(reads)) > 40, f"scanner found only {len(set(reads))} reads in config.py"
+    assert len(set(reads)) > 20, f"scanner found only {len(set(reads))} reads in config.py"

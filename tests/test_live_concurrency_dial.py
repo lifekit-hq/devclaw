@@ -29,7 +29,6 @@ def store(tmp_path):
 #: added HERE as a parametrize case.
 DIALS = [
     pytest.param("max_concurrent", id="sandboxed-tasks"),
-    pytest.param("max_host_cognition", id="host-cognition"),
 ]
 
 

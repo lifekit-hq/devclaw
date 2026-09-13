@@ -15,10 +15,6 @@ devclaw = "devclaw.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist>=3.6", "ruff>=0.8", "mypy>=1.14", "import-linter>=2.15"]
-# OPT-IN alternative cognition backend (DEVCLAW_COGNITION=agent_sdk). NOT a
-# core/dev dependency — the stubbed suite imports devclaw.cognition WITHOUT it,
-# and the real query() is lazy-imported inside AgentSDKCognition.__call__.
-agent-sdk = ["claude-agent-sdk>=0.2.119"]
 
 [build-system]
 requires = ["hatchling"]
@@ -32,19 +28,9 @@ packages = ["devclaw"]
 # ships without a console (server 503s). Glob matches the vite output tree.
 artifacts = ["devclaw/server/console_dist/**"]
 
-# The vendored speckit scaffold lives at the REPO ROOT as `.specify/`, OUTSIDE
-# `packages = ["devclaw"]`, so the wheel never carried it: every installed
-# devclaw raised "cannot install speckit: vendored source ... is missing" while
-# a source checkout kept working, because there the scaffold happens to sit
-# beside the package dir (#588). Force-include it INSIDE the package so an
-# installed devclaw ships its own scaffold. Only the reusable, repo-agnostic
-# parts travel — per-checkout state and devclaw's own manifests stay out,
-# mirroring _SCAFFOLD_DIRS / _SCAFFOLD_FILES in devclaw/speckit_setup.py.
-[tool.hatch.build.targets.wheel.force-include]
-".specify/templates" = "devclaw/_specify/templates"
-".specify/scripts" = "devclaw/_specify/scripts"
-".specify/workflows" = "devclaw/_specify/workflows"
-".specify/.gitignore" = "devclaw/_specify/.gitignore"
+# Since spec 046 the scaffold is baked into the SANDBOX image
+# (/opt/devclaw/specify) and the session copies it into a repo that has none;
+# the host package no longer carries it.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -126,22 +112,9 @@ forbidden_modules = ["devclaw.*"]
 ignore_imports = ["devclaw.dispatch_gate -> devclaw.config"]
 
 [[tool.importlinter.contracts]]
-name = "llm_call is a leaf — the claude --print primitive over loom + config"
-type = "forbidden"
-source_modules = ["devclaw.llm_call"]
-forbidden_modules = ["devclaw.*"]
-ignore_imports = ["devclaw.llm_call -> devclaw.loom.*", "devclaw.llm_call -> devclaw.config", "devclaw.llm_call -> devclaw.credentials"]
-
-[[tool.importlinter.contracts]]
 name = "credentials is a leaf — the one registry of credential names and hops imports nothing (spec 042)"
 type = "forbidden"
 source_modules = ["devclaw.credentials"]
-forbidden_modules = ["devclaw.*"]
-
-[[tool.importlinter.contracts]]
-name = "loop_health is a leaf — the idle-cause vocabulary and rate math import nothing (spec 039)"
-type = "forbidden"
-source_modules = ["devclaw.loop_health"]
 forbidden_modules = ["devclaw.*"]
 
 [[tool.importlinter.contracts]]
@@ -152,15 +125,21 @@ forbidden_modules = ["devclaw.*"]
 ignore_imports = ["devclaw.state_store.* -> devclaw.config"]
 
 [[tool.importlinter.contracts]]
-name = "CLAUDE.md layer order (server > goal > queue > delivery/quality > engine > store > loom/config)"
+name = "CLAUDE.md layer order (server > goal > queue > delivery/gates > engine > store > loom/config)"
 type = "layers"
 layers = [
     "devclaw.server | devclaw.cli",
     "devclaw.doctor",
     "devclaw.goal",
     "devclaw.task_queue : devclaw.queue",
-    "devclaw.delivery | devclaw.quality",
+    "devclaw.delivery | devclaw.gates",
     "devclaw.engine",
     "devclaw.state_store",
     "devclaw.loom | devclaw.config",
 ]
+
+[[tool.importlinter.contracts]]
+name = "the goal layer is the only place that reads GitHub as state (spec 046)"
+type = "forbidden"
+source_modules = ["devclaw.task_queue", "devclaw.queue", "devclaw.engine", "devclaw.state_store"]
+forbidden_modules = ["devclaw.goal"]

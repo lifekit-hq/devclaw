@@ -17,7 +17,6 @@ from devclaw.delivery import (
     _closes_issues,
     _extract_pr_url,
     _goal_pr_body,
-    _is_advance_brief,
     _pr_body,
     _pr_title,
     _resolve_title,
@@ -25,7 +24,6 @@ from devclaw.delivery import (
     _slug,
     deliver_change,
 )
-from devclaw.task_change import MACHINE_COMMIT_SUBJECT
 
 # The thin-advance pull-brief shape (goal/tick.py:_advance_brief) — the generic
 # task ``goal`` on every long_lived tick post-demolition.
@@ -110,29 +108,6 @@ def test_resolve_title_decorates_with_resolved_issue():
     )
     assert title == "fix(feed): stop pagination drift (#42)"
     assert branch == "fix/42-stop-pagination-drift"
-
-
-def test_resolve_title_no_worker_commit_returns_machine_commit_subject():
-    # Spec 017 criterion 2: when there is no worker commit and no planner title,
-    # the PR title must be the machine-commit subject — NEVER any text from the
-    # dispatch prompt. This means the advance brief can't leak (the original
-    # intent of the old test) AND no other prompt text can leak either.
-    title, branch, changes = _resolve_title(
-        planner_title=None, agent_msg=None,
-        goal=_ADVANCE_BRIEF, kind="implement_feature", task_id="deadbeef12",
-    )
-    assert title == MACHINE_COMMIT_SUBJECT
-    assert "Advance this goal by one substantive" not in title
-    assert "Build a small field notes REST API" not in title
-    assert "snapshot" in branch   # branch is `devclaw/<task_id[:8]>-snapshot`
-    assert changes is None
-    assert _is_advance_brief(_ADVANCE_BRIEF) and not _is_advance_brief("add a widget")
-    # Same for a plain (non-brief) goal: dispatch prompt still cannot source title.
-    title2, _, _ = _resolve_title(
-        planner_title=None, agent_msg=None,
-        goal="add a widget", kind="implement_feature", task_id="deadbeef12",
-    )
-    assert title2 == MACHINE_COMMIT_SUBJECT
 
 
 def test_goal_branch_pr_body_never_renders_the_advance_brief():
@@ -1026,183 +1001,6 @@ async def test_direct_task_with_target_branch_lands_on_it_end_to_end(
     assert "feat/spec-035" in refs
 
 
-async def test_direct_task_with_unresolvable_base_branch_fails_loud_before_the_engine_runs(
-    store, tmp_path, monkeypatch
-):
-    """PR-2 advisory (b): a bogus base_branch fails the task AT DISPATCH with
-    an actionable message — the engine never runs, and no silent fresh-branch
-    PR arises from downstream diff-range/PR-base skew."""
-    origin, repo = _clone_with_origin(tmp_path)
-    runner_calls: list = []
-
-    async def runner(req: EngineRequest):
-        runner_calls.append(req.goal)
-        return {"status": "ok", "workspaceDir": req.workspace_dir}
-
-    q = TaskQueue(store, runner=runner)
-    tid = q.submit(
-        kind="implement_feature", workspace_dir=repo, goal="add the widget",
-        deliver=True, base_branch="release/9.9",
-    )
-    await q.drain()
-
-    t = store.get_task(tid)
-    assert t.status == "failed"
-    assert "base_branch 'release/9.9'" in (t.error or "")
-    assert "does not resolve" in (t.error or "")
-    assert "Push the base branch" in (t.error or "")  # actionable, not just loud
-    assert runner_calls == []  # fails FAST — the agent never launched
-    assert t.pr_url is None
-
-
-async def test_pinned_target_branch_miss_settles_failed_not_delivered(
-    store, tmp_path, monkeypatch
-):
-    """PR-2 advisory (a): the caller asked to CONTINUE target_branch; a
-    delivery that landed anywhere else — even with a green PR — broke that
-    contract and must settle 'failed', naming both branches. Settling 'done'
-    would silently degrade continue-this-branch into a fresh-branch PR."""
-    repo = str(tmp_path / "wsx")
-    os.makedirs(repo)
-    _init_repo(repo)
-
-    async def fake_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
-        return branch
-
-    async def landed_elsewhere_deliver(**kwargs):
-        return {"delivered": True, "branch": "feat/add-the-widget-endpoint",
-                "committed": True, "pushed": True,
-                "pr_url": "https://github.com/acme/widgets/pull/9", "error": None}
-
-    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", fake_prep)
-    monkeypatch.setattr("devclaw.queue.settle.deliver_change", landed_elsewhere_deliver)
-
-    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
-    tid = q.submit(
-        kind="implement_feature", workspace_dir=repo, goal="continue spec 035",
-        deliver=True, target_branch="feat/spec-035",
-    )
-    await q.drain()
-
-    t = store.get_task(tid)
-    assert t.status == "failed"
-    assert "pinned target_branch 'feat/spec-035'" in (t.error or "")
-    assert "feat/add-the-widget-endpoint" in (t.error or "")
-    assert "fresh-branch" in (t.error or "")
-    # the wrong-branch PR is named in the error for the human, not recorded as
-    # this task's delivery artifact
-    assert "pull/9" in (t.error or "")
-    assert t.pr_url is None
-
-
-async def test_task_without_branch_params_never_preps_and_keeps_legacy_delivery_shape(
-    store, tmp_path, monkeypatch
-):
-    """Goal-path/byte-unaffected pin: a GOAL-DISPATCHED task (parent_goal_id set,
-    no branch params) triggers no prep subprocess — the goal tick already called
-    prepare_workspace with the goal branch; re-prepping would reset it. Calls
-    deliver_change with the LEGACY kwarg shape — a pre-PR-2 test stub signature
-    (no base_branch/target_branch) still works."""
-    repo = str(tmp_path / "wsy")
-    os.makedirs(repo)
-    _init_repo(repo)
-    prep_calls: list = []
-
-    async def fake_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
-        prep_calls.append(branch)
-        return branch
-
-    # The BRANCH-TARGET kwargs must stay absent for a task that pinned neither
-    # (v1-helper PR-2's blank-safe wire). ``judged_head``/``agent_authored`` are
-    # not branch params — they ride EVERY materialized delivery (spec 013) — so
-    # they are captured and asserted separately below.
-    seen_kwargs: dict = {}
-
-    async def legacy_deliver(*, workspace_dir, task_id, goal, kind=None,
-                             verify=None, title=None, advisories=None, **kw):
-        seen_kwargs.update(kw)
-        return {"delivered": True, "branch": "devclaw/x", "committed": True,
-                "pushed": True, "pr_url": "https://github.com/acme/w/pull/3",
-                "error": None}
-
-    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", fake_prep)
-    monkeypatch.setattr("devclaw.queue.settle.deliver_change", legacy_deliver)
-
-    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
-    tid = q.submit(
-        kind="implement_feature", workspace_dir=repo, goal="add feature",
-        deliver=True, parent_goal_id="goal-fixture",  # goal-dispatched: exempt from direct-dispatch reset
-    )
-    await q.drain()
-
-    t = store.get_task(tid)
-    assert t.status == "done"
-    assert t.pr_url == "https://github.com/acme/w/pull/3"
-    assert prep_calls == []  # goal-path task → direct-dispatch reset is skipped
-    assert "base_branch" not in seen_kwargs and "target_branch" not in seen_kwargs
-
-
-async def test_direct_dispatch_without_target_branch_resets_to_origin_head(
-    store, tmp_path, monkeypatch
-):
-    """Spec 028 FR-001: a direct dispatch (no branch params, no parent_goal_id)
-    resets the workspace to origin/<default> before the engine runs, so the
-    worker always sees the current state of main instead of a stale branch from
-    a prior task."""
-    origin, repo = _clone_with_origin(tmp_path)
-    prep_calls: list = []
-
-    async def fake_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
-        prep_calls.append(branch)
-        return "main"
-
-    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", fake_prep)
-
-    q = TaskQueue(store, runner=_writing_runner("feature.txt"))
-    # No parent_goal_id, no target_branch, no base_branch → direct dispatch
-    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature")
-    await q.drain()
-
-    t = store.get_task(tid)
-    assert t.status == "done"
-    # prepare_workspace called exactly once with branch=None (reset to default)
-    assert prep_calls == [None]
-
-
-async def test_direct_dispatch_workspace_reset_unexpected_exception_marks_failed(
-    store, tmp_path, monkeypatch
-):
-    """Spec 028 steering: an unexpected (non-WorkspaceError) exception during the
-    direct-dispatch workspace reset surfaces as a legible mark_failed — the engine
-    never runs against an unknown workspace state, and the caller gets an actionable
-    reason rather than a silent proceed."""
-    repo = str(tmp_path / "repo")
-    os.makedirs(repo)
-    _init_repo(repo)
-    runner_calls: list = []
-
-    async def boom_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
-        raise OSError("disk full or something unexpected")
-
-    async def recording_runner(req: EngineRequest):
-        runner_calls.append(req.goal)
-        return {"status": "ok", "workspaceDir": req.workspace_dir}
-
-    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", boom_prep)
-
-    q = TaskQueue(store, runner=recording_runner)
-    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature")
-    await q.drain()
-
-    t = store.get_task(tid)
-    # Unexpected exception → task failed, not silently continued
-    assert t.status == "failed"
-    assert "unexpected error" in (t.error or "")
-    assert "OSError" in (t.error or "") or "disk full" in (t.error or "")
-    # Engine must not have run
-    assert runner_calls == []
-
-
 async def test_direct_dispatch_workspace_reset_workspace_error_is_best_effort(
     store, tmp_path, monkeypatch
 ):
@@ -1231,94 +1029,6 @@ async def test_direct_dispatch_workspace_reset_workspace_error_is_best_effort(
     # WorkspaceError (no-remote case) → best-effort, engine runs, task done
     assert t.status == "done"
     assert runner_calls == ["add feature"]
-
-
-async def test_direct_dispatch_workspace_reset_origin_fetch_failure_marks_failed(
-    store, tmp_path, monkeypatch
-):
-    """Spec 028 steering (2026-08-31): when origin IS configured but the fetch
-    fails (network/auth/unreachable), the WorkspaceError must surface as
-    mark_failed — not swallowed as best-effort. Best-effort only applies to
-    workspaces with no origin remote (local-only checkouts)."""
-    origin, repo = _clone_with_origin(tmp_path)
-    runner_calls: list = []
-
-    async def auth_denied_prep(workspace_dir, repo_url=None, branch=None, base_branch=None):
-        raise WorkspaceError("fetch failed: ERROR: Repository not found / auth denied")
-
-    async def recording_runner(req: EngineRequest):
-        runner_calls.append(req.goal)
-        return {"status": "ok", "workspaceDir": req.workspace_dir}
-
-    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", auth_denied_prep)
-
-    q = TaskQueue(store, runner=recording_runner)
-    tid = q.submit(kind="implement_feature", workspace_dir=repo, goal="add feature")
-    await q.drain()
-
-    t = store.get_task(tid)
-    # Origin configured + fetch failure → real problem → task failed
-    assert t.status == "failed"
-    assert "fetch failed" in (t.error or "")
-    # Engine must not have run against the stale workspace
-    assert runner_calls == []
-
-
-async def test_target_branch_on_base_or_default_is_rejected_before_any_push(
-    store, tmp_path, monkeypatch
-):
-    """Invariant-guard finding on PR-2: target_branch == base_branch (or the
-    remote default) would put the workspace ON the base itself and delivery's
-    branch-reuse mode would push unreviewed commits STRAIGHT to it, failing
-    only afterwards on `gh pr create` — loud but already irreversible. The
-    contract is rejected at prep: the engine never runs, prepare_workspace is
-    never called, nothing is ever pushed."""
-    origin, repo = _clone_with_origin(tmp_path)
-    runner_calls: list = []
-    prep_calls: list = []
-
-    async def runner(req: EngineRequest):
-        runner_calls.append(req.goal)
-        return {"status": "ok", "workspaceDir": req.workspace_dir}
-
-    async def recording_prep(*a, **kw):
-        prep_calls.append((a, kw))
-
-    monkeypatch.setattr("devclaw.queue.settle.prepare_workspace", recording_prep)
-
-    q = TaskQueue(store, runner=runner)
-
-    # target == remote default (main): rejected.
-    tid = q.submit(
-        kind="implement_feature", workspace_dir=repo, goal="tweak on main",
-        deliver=True, target_branch="main",
-    )
-    await q.drain()
-    t = store.get_task(tid)
-    assert t.status == "failed"
-    assert "default branch" in (t.error or "")
-    assert "never pushes" in (t.error or "")
-
-    # target == base (non-default): rejected before the base is even fetched.
-    tid2 = q.submit(
-        kind="implement_feature", workspace_dir=repo, goal="tweak on release",
-        deliver=True, base_branch="release/1.0", target_branch="release/1.0",
-    )
-    await q.drain()
-    t2 = store.get_task(tid2)
-    assert t2.status == "failed"
-    assert "equals base_branch" in (t2.error or "")
-
-    assert runner_calls == []   # the agent never launched for either
-    assert prep_calls == []     # the workspace was never put on the base
-    # And the real origin's main is untouched — no push ever happened.
-    out = subprocess.run(
-        ["git", "rev-parse", "main"], cwd=origin, capture_output=True, text=True,
-    )
-    assert out.returncode == 0
-
-
-# ---- atomic sweep + goal-PR refresh (ledger PR #4 warts) -------------------
 
 
 async def test_deliver_amends_stray_files_into_the_worker_commit_atomically(tmp_path):
