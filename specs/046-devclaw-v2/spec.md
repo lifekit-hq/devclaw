@@ -78,13 +78,17 @@ world = fingerprint(
     PR: exists?, head sha, state (open|merged|conflicting),
     CI rollup for that head (green|red|pending|none),
     last comment id on the issue and on the PR,        ← decisions + gate verdicts live HERE
-    last session's exit line)
-if world == goal.last_seen           → nothing            (pillar 6)
+    credentials the registry probes green)             ← an env gap wakes on the fix, no verb
+last = last session's exit line (task row: DELIVERED | DONE | BLOCKED | NOTHING | INTERRUPTED)
+
 if PR merged                         → close the goal      (protocol)
-if last exit == DONE and CI green    → done-gate: evaluator over the repo vs the contract
+if last == INTERRUPTED               → spawn               (quota/timeout: resume, no wait)
+if last == DONE:
+    CI pending                       → nothing             (the world will move)
+    CI green, no verdict yet for sha → done-gate: evaluator over the repo vs the contract
                                        achieved → squash-merge (spec 025 stands) → close
-                                       not achieved → post the findings as a PR comment
-                                       (the world changed; the next tick spawns)
+                                       not → post findings as a PR comment (world moves)
+if world == goal.last_seen           → nothing            (pillar 6; BLOCKED waits here)
 else                                 → spawn ONE session with the world as facts
                                        goal.last_seen = world  (written at spawn)
 ```
@@ -97,6 +101,12 @@ What v1 typed, v2 reasons: a red CI, a conflicting PR, a dependabot bump in the 
 partial implementation, a lost branch, a repeated failure. A `BLOCKED` with no answer yet
 is an unchanged fingerprint: zero tokens for as long as it takes, and the owner's answer is
 the one thing that wakes it.
+
+The exit line is NOT in the fingerprint: a session that pushed nothing and said DELIVERED
+changed nothing, so nothing spawns — the world, not the session's word, is the trigger.
+On every session end, however it ended, the host commits what is left in the checkout
+(the span, spec 013/045) so an interrupted session's WIP is the next session's starting
+point.
 
 **Measured at this seam**: a session that starts and finds nothing to do (exit line
 `NOTHING`) is a fingerprint defect. It is the seam's only number.
@@ -119,7 +129,7 @@ attempt a previous session already made and it failed the same way, stop and BLO
 End with exactly one line:
   DELIVERED: <what landed on the branch>
   DONE: <why the contract is met>          (a proposal; the done-gate decides)
-  BLOCKED: <the one question the owner must answer>
+  BLOCKED: <the one question the owner must answer> — and the default you would take
   NOTHING: <why there was nothing to do>   (this is a devclaw defect; say why)
 ```
 
