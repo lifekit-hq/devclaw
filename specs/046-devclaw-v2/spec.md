@@ -88,9 +88,8 @@ if last == DONE:
     CI pending                       → nothing             (the world will move)
     CI green, no verdict yet for sha → done-gate: evaluator over the repo vs the contract
                                        achieved → squash-merge (spec 025 stands) → close
-                                       not, first refusal → post findings on the PR (world moves)
-                                       not, second refusal in a row → BLOCKED (owner)
-if CI red on two consecutive heads   → BLOCKED with the CI log  (one fix attempt, then stop)
+                                       not achieved → BLOCKED with the finding (no retry)
+if CI red on the delivered head      → BLOCKED with the CI log vs what ran locally (no retry)
 if last == BLOCKED                   → lane released to the next goal; nothing until a
                                        @devclaw comment arrives (the night goes on elsewhere)
 if world == goal.last_seen           → nothing            (pillar 6; BLOCKED waits here)
@@ -107,10 +106,20 @@ partial implementation, a lost branch, a repeated failure. A `BLOCKED` with no a
 is an unchanged fingerprint: zero tokens for as long as it takes, and the owner's answer is
 the one thing that wakes it.
 
-**One retry, then stop** (ruled 2026-09-13): a red CI on a fresh delivery gets exactly one fix
-session; still red → the goal blocks with the log. A done-gate refusal gets exactly one
-correction session; refused again → blocks with the finding. Both are read from the PR's check
-and comment history, never from a stored counter, and both are Python (money domain).
+**No retries — fix the system, not the attempt** (ruled 2026-09-13, Denys: "why does the
+agent push something that is going to be red?"). The sandbox runs what CI runs BEFORE the
+push: the host installs a git `pre-push` hook in the goal checkout that runs `.devclaw/verify`,
+and the session derives that script from the project's own CI workflows on its first run and
+commits it (repo memory; reviewed in the PR). A push that fails it never leaves the sandbox —
+the session sees the errors and fixes them as its own work. So a red CI on a delivered head is
+by definition an ENVIRONMENT gap (a secret, a service, an OS difference the sandbox lacks):
+nothing a second session in the same sandbox can fix → the goal blocks at once with the CI log
+next to what ran locally, and the owner decides. Same shape for the done-gate: the session
+runs the evaluator's rubric over its own repo before proposing `DONE` (the pre-push of done);
+a refusal after that is a disagreement about the contract, not sloppiness → blocks with the
+finding, no correction round. Both stops are Python (verdict/money domain) read from the PR,
+never a counter. **The number**: red CI after a green local verify, per delivery — every one
+is a gap in `.devclaw/verify` or the sandbox image, fixed once for the repo.
 
 **A blocked goal never blocks the night** (ruled 2026-09-13): `BLOCKED` releases the project
 lane to the next queued goal, and the session is told to take a stated default for any
@@ -143,7 +152,10 @@ tasks) into the repo; otherwise take the next unfinished task. Read .devclaw/ fi
 leave your notes there. Verify locally before pushing. Do not merge. Do not edit CI or
 gate inputs. Do not ask for anything you can find in the repo. For a reversible choice take the
 sensible default, say so in the PR, and continue; BLOCK only on scope or irreversible
-design. You get one attempt at a red CI or a gate finding: make it count.
+design. Before you push, `.devclaw/verify` must pass — it runs what CI runs, and on your first run
+you derive it from the CI workflows and commit it. Before you say DONE, review the repo
+against the contract the way the done-gate will. A red CI or a gate refusal after that is
+not yours to retry: the goal stops and the owner decides.
 
 End with exactly one line:
   DELIVERED: <what landed on the branch>
@@ -200,10 +212,10 @@ a decision is a defect.
 | 1 | **Create a goal** from an issue | goal row + lane; first tick spawns | no repo/project registered → refused at create; issue unreadable or no done section → the SESSION blocks with the question, the host never grades | decide only | 0 until spawn |
 | 2 | **First session** (plan) | speckit artifacts committed in-repo, increment 1 landed, host opens the PR, `DELIVERED` | undecided design choice in the contract → `BLOCKED: <question> — default: <x>` before any implementation | `decide` (or "take your default") | 1 session |
 | 3 | **Next increments** | each session takes the next unfinished task; `DELIVERED`; CI runs in parallel | session times out / context exhausted → host commits WIP, `INTERRUPTED`, next tick resumes from the repo notes | none | 1 session each |
-| 4 | **CI red** on the goal PR | world moved → ONE session reads the failing checks, fixes, pushes; green | still red → host blocks the goal with the CI log; no second attempt | `@devclaw` how to proceed | 1 session |
+| 4 | **CI red** on the delivered head | should not happen: the pre-push hook ran CI's checks in the sandbox | host blocks the goal at once with the CI log next to the local run — an environment gap, fixed once per repo (verify script or image), never retried | decide: fix the gap, then `@devclaw` | 0 |
 | 5 | **Merge conflict** with main | `conflicting` → session merges main, resolves, pushes; the span excludes main's paths (spec 045) | a conflict the contract does not settle → `BLOCKED` | decide | 1 session |
-| 6 | **Done proposal** | `DONE` + CI green → evaluator once for that sha → achieved → squash-merge → close; one "closed" notification | not achieved → findings on the PR → ONE correction session → gate again; refused again → host blocks with the finding | read the merged PR; `@devclaw` on a block | 1–2 eval calls + 1 session |
-| 7 | **Gate-input edit / binary** (`change_class`) | never happens: the prompt forbids it | delivery refused fail-closed, reason posted on the PR, next session reverts | none | 1 session |
+| 6 | **Done proposal** | session self-reviews against the contract first; `DONE` + CI green → evaluator once for that sha → achieved → squash-merge → close; one "closed" notification | not achieved → host blocks with the finding, no correction round — a refusal after a self-review is a contract disagreement the owner settles | read the merged PR; `@devclaw` on a block | 1 eval call |
+| 7 | **Gate-input edit / binary** (`change_class`) | never happens: the prompt forbids it and the pre-push hook refuses it | a push that touches CI inputs never leaves the sandbox; the session sees why | none | 0 |
 | 8 | **Quota / rate limit** mid-session | pause until reset, WIP committed, `INTERRUPTED`; resumes on the first tick after reset; one ping | — | none | 0 while paused |
 | 9 | **Auth expired** | same pause, "re-login" ping, fixed 15-min re-probe, auto-resume | — | re-login (a credential is a fact, not a verb) | 0 |
 | 10 | **Provider outage** (529 / server_error) | same pause, re-probe every tick, no escalation, ends on the first productive session | — | none | ~0 |
