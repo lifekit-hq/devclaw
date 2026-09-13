@@ -2,6 +2,17 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.0.0](https://github.com/lifekit-hq/devclaw/compare/v1.2.0...v2.0.0) (2026-09-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* the v1 goal layer and every mechanism it had grown are deleted and the goal layer is rebuilt from an empty package. The host now holds goals, decisions, the quota pause and a per-goal world fingerprint, nothing else; GitHub is the state. One tick rule, one session prompt, one done-gate (a read-only review session validated mechanically), no retries. The MCP surface shrinks to create/get/list/decide/cancel + projects + the operator dials; steer/resume/correct/strictness/intake/scorecard/problems/ deploy tools are gone. Every v1 spec is a superseded row in specs/README.md.
+
+### Features
+
+* devclaw v2 — thin Python, model reasoning (spec 046) ([#909](https://github.com/lifekit-hq/devclaw/issues/909)) ([9f6461e](https://github.com/lifekit-hq/devclaw/commit/9f6461e48ca75584aa4e924ded010575671d6697))
+
 ## [1.2.0](https://github.com/lifekit-hq/devclaw/compare/v1.1.0...v1.2.0) (2026-09-13)
 
 
