@@ -77,7 +77,8 @@ if sessions today ≥ cap (task rows)  → nothing, log once  (money; the ONE br
 world = fingerprint(
     PR: exists?, head sha, state (open|merged|conflicting),
     CI rollup for that head (green|red|pending|none),
-    last comment id on the issue and on the PR,        ← decisions + gate verdicts live HERE
+    last comment id on the issue/PR that MENTIONS @devclaw, ← the owner's ONE input channel
+    the PR's check history (red rollups per head),      ← the one-retry rule reads this
     credentials the registry probes green)             ← an env gap wakes on the fix, no verb
 last = last session's exit line (task row: DELIVERED | DONE | BLOCKED | NOTHING | INTERRUPTED)
 
@@ -87,7 +88,11 @@ if last == DONE:
     CI pending                       → nothing             (the world will move)
     CI green, no verdict yet for sha → done-gate: evaluator over the repo vs the contract
                                        achieved → squash-merge (spec 025 stands) → close
-                                       not → post findings as a PR comment (world moves)
+                                       not, first refusal → post findings on the PR (world moves)
+                                       not, second refusal in a row → BLOCKED (owner)
+if CI red on two consecutive heads   → BLOCKED with the CI log  (one fix attempt, then stop)
+if last == BLOCKED                   → lane released to the next goal; nothing until a
+                                       @devclaw comment arrives (the night goes on elsewhere)
 if world == goal.last_seen           → nothing            (pillar 6; BLOCKED waits here)
 else                                 → spawn ONE session with the world as facts
                                        goal.last_seen = world  (written at spawn)
@@ -101,6 +106,19 @@ What v1 typed, v2 reasons: a red CI, a conflicting PR, a dependabot bump in the 
 partial implementation, a lost branch, a repeated failure. A `BLOCKED` with no answer yet
 is an unchanged fingerprint: zero tokens for as long as it takes, and the owner's answer is
 the one thing that wakes it.
+
+**One retry, then stop** (ruled 2026-09-13): a red CI on a fresh delivery gets exactly one fix
+session; still red → the goal blocks with the log. A done-gate refusal gets exactly one
+correction session; refused again → blocks with the finding. Both are read from the PR's check
+and comment history, never from a stored counter, and both are Python (money domain).
+
+**A blocked goal never blocks the night** (ruled 2026-09-13): `BLOCKED` releases the project
+lane to the next queued goal, and the session is told to take a stated default for any
+reversible choice and block only on scope or irreversible design.
+
+**The owner's one channel is a mention** (ruled 2026-09-13): only a comment that mentions
+`@devclaw` on the issue or PR is an instruction; `decide` writes one. Other comments are
+discussion the session may read but nothing wakes on.
 
 The exit line is NOT in the fingerprint: a session that pushed nothing and said DELIVERED
 changed nothing, so nothing spawns — the world, not the session's word, is the trigger.
@@ -116,15 +134,16 @@ point.
 ```
 You are the engineer on this goal. Contract: issue #{issue} (full text below). Repo: ./
 on branch {branch}. PR: {pr_state} (#{pr} at {sha}; CI {ci}; failing checks: {checks}).
-Since the last session: {new comments — owner decisions, gate verdicts}.
+Since the last session: {@devclaw comments — owner decisions, gate verdicts, CI log}.
 Last session ended: {exit line}.
 
 Do the next thing a developer would: if the PR conflicts or CI is red, fix that first;
 if no plan exists in the repo, run speckit (specify → clarify with defaults → plan →
 tasks) into the repo; otherwise take the next unfinished task. Read .devclaw/ first and
 leave your notes there. Verify locally before pushing. Do not merge. Do not edit CI or
-gate inputs. Do not ask for anything you can find in the repo. If you are repeating an
-attempt a previous session already made and it failed the same way, stop and BLOCK.
+gate inputs. Do not ask for anything you can find in the repo. For a reversible choice take the
+sensible default, say so in the PR, and continue; BLOCK only on scope or irreversible
+design. You get one attempt at a red CI or a gate finding: make it count.
 
 End with exactly one line:
   DELIVERED: <what landed on the branch>
@@ -181,20 +200,20 @@ a decision is a defect.
 | 1 | **Create a goal** from an issue | goal row + lane; first tick spawns | no repo/project registered → refused at create; issue unreadable or no done section → the SESSION blocks with the question, the host never grades | decide only | 0 until spawn |
 | 2 | **First session** (plan) | speckit artifacts committed in-repo, increment 1 landed, host opens the PR, `DELIVERED` | undecided design choice in the contract → `BLOCKED: <question> — default: <x>` before any implementation | `decide` (or "take your default") | 1 session |
 | 3 | **Next increments** | each session takes the next unfinished task; `DELIVERED`; CI runs in parallel | session times out / context exhausted → host commits WIP, `INTERRUPTED`, next tick resumes from the repo notes | none | 1 session each |
-| 4 | **CI red** on the goal PR | world moved → session reads the failing checks, fixes, pushes | same failure a second time → session `BLOCKED` with the question; the daily cap bounds the burn | decide | 1 session per red |
+| 4 | **CI red** on the goal PR | world moved → ONE session reads the failing checks, fixes, pushes; green | still red → host blocks the goal with the CI log; no second attempt | `@devclaw` how to proceed | 1 session |
 | 5 | **Merge conflict** with main | `conflicting` → session merges main, resolves, pushes; the span excludes main's paths (spec 045) | a conflict the contract does not settle → `BLOCKED` | decide | 1 session |
-| 6 | **Done proposal** | `DONE` + CI green → evaluator once for that sha → achieved → squash-merge → close; one "closed" notification | not achieved → findings posted on the PR → next session addresses them; a finding recurring → `BLOCKED: gate wants X, contract says Y` | read the merged PR; decide only on recurrence | 1 eval call + sessions |
+| 6 | **Done proposal** | `DONE` + CI green → evaluator once for that sha → achieved → squash-merge → close; one "closed" notification | not achieved → findings on the PR → ONE correction session → gate again; refused again → host blocks with the finding | read the merged PR; `@devclaw` on a block | 1–2 eval calls + 1 session |
 | 7 | **Gate-input edit / binary** (`change_class`) | never happens: the prompt forbids it | delivery refused fail-closed, reason posted on the PR, next session reverts | none | 1 session |
 | 8 | **Quota / rate limit** mid-session | pause until reset, WIP committed, `INTERRUPTED`; resumes on the first tick after reset; one ping | — | none | 0 while paused |
 | 9 | **Auth expired** | same pause, "re-login" ping, fixed 15-min re-probe, auto-resume | — | re-login (a credential is a fact, not a verb) | 0 |
 | 10 | **Provider outage** (529 / server_error) | same pause, re-probe every tick, no escalation, ends on the first productive session | — | none | ~0 |
-| 11 | **BLOCKED, waiting** | issue comment + one ping; fingerprint unchanged → zero tokens, indefinitely; `decide` wakes it | owner never answers → goal shows blocked with the question AND the session's default in `list_goals`; cancel is the other exit | decide / cancel | 0 |
+| 11 | **BLOCKED, waiting** | issue comment + one ping; the LANE moves on to the next goal so the night continues; zero tokens for this goal until a `@devclaw` reply | reversible choices never block (the session takes a stated default); a goal blocked on scope shows the question AND the default in `list_goals` | `@devclaw` reply / cancel | 0 |
 | 12 | **Env gap** (`BLOCKED: env — needs <credential>`) | credential added → registry probe green → fingerprint moved → wakes, no verb | gap names nothing probeable → owner decides | add the credential | 0 while waiting |
 | 13 | **Nothing changed** | zero sessions, zero tokens | a session spawns and exits `NOTHING` → counted; a devclaw defect, never a goal problem | none | 0 |
 | 14 | **Run window** | outside the window no spawn; in-flight sessions finish | — | none | 0 |
 | 15 | **Concurrency** | one session per goal, one goal per project checkout, one global cap; a second goal on the project queues | — | none | — |
 | 16 | **Daily session cap** hit | goal stops for the calendar day; visible in `get_goal`; morning brief shows it | cap hit with nothing delivered = the "ran and produced garbage" axis, read in the morning | read; decide if the thread asks | bounded |
-| 17 | **Owner comments** on the issue/PR, or pushes to the branch | world moved → next session reads it as an instruction — this REPLACES `steer_goal` | — | a comment | 1 session |
+| 17 | **Owner mentions `@devclaw`** on the issue/PR (or pushes to the branch) | world moved → next session reads it as an instruction — this REPLACES `steer_goal`/`resume_goal`/`correct_implementation`; a plain comment is discussion, nothing wakes | — | a `@devclaw` comment | 1 session |
 | 18 | **Owner cancels** | running session killed, branch and PR left with a "cancelled" comment, lane released | — | cancel | 0 |
 | 19 | **devclaw restarts / redeploys** | merge-to-main redeploy waits for quiescence (#902); on start every "running" task row becomes `INTERRUPTED` → resumes — this REPLACES `lost_ref` | — | none | 1 session |
 | 20 | **Referenced issue edited or closed** by someone else | the contract is read live; issue state is in the fingerprint → session reads the change | closed with the work unmerged → session proposes `DONE` or blocks | decide | 1 session |
