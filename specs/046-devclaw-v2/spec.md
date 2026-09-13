@@ -170,6 +170,39 @@ always-hard `change_class` · `loom/limits` (quota pause) · `config.py` · `ser
    prompt or a line in the skill — never a host type. Two guards fail the build: the goal
    layer's size, and any new column that names a failure kind, budget or counter.
 
+## 5. Use cases — the expectation for each (the shakedown, 2026-09-13)
+
+Every case names: what happens when it goes well · what happens when it does not · what the
+owner sees and does · tokens. "Owner: none" is the design target; an owner action that is not
+a decision is a defect.
+
+| # | Case | Goes well | Goes wrong | Owner | Tokens |
+|---|---|---|---|---|---|
+| 1 | **Create a goal** from an issue | goal row + lane; first tick spawns | no repo/project registered → refused at create; issue unreadable or no done section → the SESSION blocks with the question, the host never grades | decide only | 0 until spawn |
+| 2 | **First session** (plan) | speckit artifacts committed in-repo, increment 1 landed, host opens the PR, `DELIVERED` | undecided design choice in the contract → `BLOCKED: <question> — default: <x>` before any implementation | `decide` (or "take your default") | 1 session |
+| 3 | **Next increments** | each session takes the next unfinished task; `DELIVERED`; CI runs in parallel | session times out / context exhausted → host commits WIP, `INTERRUPTED`, next tick resumes from the repo notes | none | 1 session each |
+| 4 | **CI red** on the goal PR | world moved → session reads the failing checks, fixes, pushes | same failure a second time → session `BLOCKED` with the question; the daily cap bounds the burn | decide | 1 session per red |
+| 5 | **Merge conflict** with main | `conflicting` → session merges main, resolves, pushes; the span excludes main's paths (spec 045) | a conflict the contract does not settle → `BLOCKED` | decide | 1 session |
+| 6 | **Done proposal** | `DONE` + CI green → evaluator once for that sha → achieved → squash-merge → close; one "closed" notification | not achieved → findings posted on the PR → next session addresses them; a finding recurring → `BLOCKED: gate wants X, contract says Y` | read the merged PR; decide only on recurrence | 1 eval call + sessions |
+| 7 | **Gate-input edit / binary** (`change_class`) | never happens: the prompt forbids it | delivery refused fail-closed, reason posted on the PR, next session reverts | none | 1 session |
+| 8 | **Quota / rate limit** mid-session | pause until reset, WIP committed, `INTERRUPTED`; resumes on the first tick after reset; one ping | — | none | 0 while paused |
+| 9 | **Auth expired** | same pause, "re-login" ping, fixed 15-min re-probe, auto-resume | — | re-login (a credential is a fact, not a verb) | 0 |
+| 10 | **Provider outage** (529 / server_error) | same pause, re-probe every tick, no escalation, ends on the first productive session | — | none | ~0 |
+| 11 | **BLOCKED, waiting** | issue comment + one ping; fingerprint unchanged → zero tokens, indefinitely; `decide` wakes it | owner never answers → goal shows blocked with the question AND the session's default in `list_goals`; cancel is the other exit | decide / cancel | 0 |
+| 12 | **Env gap** (`BLOCKED: env — needs <credential>`) | credential added → registry probe green → fingerprint moved → wakes, no verb | gap names nothing probeable → owner decides | add the credential | 0 while waiting |
+| 13 | **Nothing changed** | zero sessions, zero tokens | a session spawns and exits `NOTHING` → counted; a devclaw defect, never a goal problem | none | 0 |
+| 14 | **Run window** | outside the window no spawn; in-flight sessions finish | — | none | 0 |
+| 15 | **Concurrency** | one session per goal, one goal per project checkout, one global cap; a second goal on the project queues | — | none | — |
+| 16 | **Daily session cap** hit | goal stops for the calendar day; visible in `get_goal`; morning brief shows it | cap hit with nothing delivered = the "ran and produced garbage" axis, read in the morning | read; decide if the thread asks | bounded |
+| 17 | **Owner comments** on the issue/PR, or pushes to the branch | world moved → next session reads it as an instruction — this REPLACES `steer_goal` | — | a comment | 1 session |
+| 18 | **Owner cancels** | running session killed, branch and PR left with a "cancelled" comment, lane released | — | cancel | 0 |
+| 19 | **devclaw restarts / redeploys** | merge-to-main redeploy waits for quiescence (#902); on start every "running" task row becomes `INTERRUPTED` → resumes — this REPLACES `lost_ref` | — | none | 1 session |
+| 20 | **Referenced issue edited or closed** by someone else | the contract is read live; issue state is in the fingerprint → session reads the change | closed with the work unmerged → session proposes `DONE` or blocks | decide | 1 session |
+
+What is NOT a case in v2 because it is no longer a thing: `mechanical:*` kinds, heal
+budgets, churn/progress counters, Problem timeboxes and defaulted decisions, intake grading,
+admission lint, `steer_goal` / `resume_goal` / `correct_implementation`, strictness dials.
+
 ## Rejected alternatives (direction memory)
 
 - **New repo / from-scratch v2 elsewhere** — throws away 15k hardened lines (sandbox fence,
