@@ -1,10 +1,4 @@
-"""Pure data + row mappers for the state store.
-
-No shared state, no connection — just the ``Task``/``Program``/``TaskEvent``
-dataclasses, their wire-shape ``to_dict`` (camelCase, to match the original
-TypeScript output), the ``sqlite3.Row`` → dataclass mappers, the status/kind
-literals, and the shared busy-timeout constant.
-"""
+"""Pure data + row mappers for the state store — no connection, no state."""
 
 from __future__ import annotations
 
@@ -13,14 +7,23 @@ import time
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-# cancelled — deliberately aborted by a client (distinct from 'failed', which is
-#   an execution error). Terminal, so crash recovery (which only revives
-#   'running' rows) never resurrects it — an abort stays aborted across restarts.
 TaskStatus = Literal["pending", "running", "done", "failed", "cancelled"]
-TaskKind = Literal[
-    "implement_feature", "fix_bug", "review_repository", "onboard", "validate_product"
-]
-# Programs hold a DAG of tasks decomposed from a single high-level goal.
+TaskKind = Literal["implement_feature", "fix_bug", "review_repository"]
+
+#: How a session ended, as the host observed it (spec 046). The session's own
+#: exit line (DELIVERED / DONE / BLOCKED / NOTHING) is parsed from its final
+#: message; the rest are host outcomes. ``INTERRUPTED`` means "resume next tick".
+EXIT_DELIVERED = "DELIVERED"
+EXIT_DONE = "DONE"
+EXIT_BLOCKED = "BLOCKED"
+EXIT_NOTHING = "NOTHING"
+EXIT_INTERRUPTED = "INTERRUPTED"
+EXIT_REFUSED = "REFUSED"      # a host gate refused the delivery (gate inputs, binaries, span)
+EXIT_REVIEW = "REVIEW"        # a read-only done-gate review session
+EXITS = (EXIT_DELIVERED, EXIT_DONE, EXIT_BLOCKED, EXIT_NOTHING,
+         EXIT_INTERRUPTED, EXIT_REFUSED, EXIT_REVIEW)
+
+
 def _now_ms() -> int:
     return int(time.time() * 1000)
 
@@ -32,80 +35,28 @@ class Task:
     status: TaskStatus
     workspace_dir: str
     goal: str
-    notify_url: Optional[str]
     result_json: Optional[str]
     error: Optional[str]
     created_at: int
     started_at: Optional[int]
     completed_at: Optional[int]
-    #: the spec milestone this task serves (set by plan-from-spec; else None)
-    milestone: Optional[str]
-    #: optional verify-gate command run after the agent finishes; its exit code
-    #: decides done-vs-failed (the agent's self-report is not trusted). None → no gate.
     verify_cmd: Optional[str]
-    #: deliver the change as a branch/PR after a successful run (open_pr tasks)
     deliver: bool
-    #: the delivered PR URL (or None if not delivered / only a local branch)
     pr_url: Optional[str]
-    #: Caller-chosen PR title. Optional; when None, delivery falls back to
-    #: the engineer's own commit subject or the goal-derived heuristic.
-    title: Optional[str] = None
-    #: The durable goal that owns this task. Set when the goal heartbeat
-    #: dispatches a task; None for standalone user-initiated dispatches
-    #: (``dispatch_task``).
     parent_goal_id: Optional[str] = None
-    #: How many times this task was requeued by a usage-limit pause. Bounds the
-    #: pause→requeue→re-run loop: a permanently-failing task whose error text
-    #: happens to match the quota/rate regexes would otherwise loop forever
-    #: (the workspace breaker only counts *failed* rows, and a paused task
-    #: never becomes one).
+    #: usage-limit pause → requeue count (bounds the pause loop)
     pause_count: int = 0
-    #: True when this task is *generated scaffolding* (L3, #222) — set from the
-    #: decomposer-tagged ChecklistItem.scaffold via the goal dispatch path. It
-    #: makes the queue skip ONLY the adversarial review gate (a huge generated
-    #: diff crashes it and shouldn't be diff-reviewed anyway). The verify/build
-    #: gate + test-integrity scan STILL run — a scaffold task that doesn't build
-    #: or that guts tests still fails. Defaulted so existing rows/tests are
-    #: unaffected.
-    scaffold: bool = False
-    #: The PlannedTask key this program-child row was persisted from (ADR 0003
-    #: stage 2). For a one-shot goal's program the key IS the checklist item
-    #: id — the settle path's child→item join. None for standalone tasks and
-    #: rows that predate the column.
-    plan_key: Optional[str] = None
-    #: The gate-baseline sha captured at this task's FIRST run (the pre-run
-    #: HEAD the post-run gates diff against). Persisted so a pause→requeue
-    #: re-run re-uses the ORIGINAL base: the pause path lands a wip snapshot
-    #: commit on the branch, so re-capturing HEAD on resume made the half-done
-    #: work itself the baseline and the gates judged only the post-resume
-    #: leftovers (closeloop-bench b6d53bbd, 2026-07-19). None for rows that
-    #: predate the column or tasks that haven't run.
+    #: the pre-run HEAD the span is measured from (spec 013)
     pre_run_sha: Optional[str] = None
-    #: the goal's gate strictness dial SNAPSHOTTED at dispatch (ADR 0007), set
-    #: from Goal.strictness via the goal dispatch path. The settle cascade reads
-    #: it to decide a dial-able gate failure's consequence: "strict" blocks,
-    #: "trust" advises-and-ships. Snapshotting on the row means a mid-flight
-    #: dial flip applies to the NEXT dispatch, not a task already running.
-    #: Always set: the column is NOT NULL DEFAULT 'trust', so every row —
-    #: including every row written before the dial existed — carries a value.
-    strictness: str = "trust"
-    #: Caller-chosen PR base for a direct ``dispatch_task`` (v1-helper-resurface
-    #: P1, PR-2). Validated against origin at launch; threaded into
-    #: ``deliver_change(base_branch=...)`` (diff range + ``gh pr create
-    #: --base``). None (the goal path, which pins neither) ⇒ the remote
-    #: default branch.
-    base_branch: Optional[str] = None
-    #: Caller-pinned delivery branch for a direct ``dispatch_task`` (same seam):
-    #: the launch step preps the workspace ONTO it, and delivery must land on
-    #: it — a delivery that lands anywhere else fails the task (the
-    #: continue-this-branch contract never silently degrades into a
-    #: fresh-branch PR). None ⇒ today's auto-derived branch.
     target_branch: Optional[str] = None
-    #: the owning project's reference key (#524 P3), stamped at dispatch. The
-    #: per-project override knobs (review_gate, sandbox_image, browser_gate_mode)
-    #: resolve BY this id, not by a workspace-path scan. None for the goal path
-    #: (goals carry their own project_id) and for a task with no owning project.
     project_id: Optional[str] = None
+    #: how the session ended (one of :data:`EXITS`); None while it runs
+    exit: Optional[str] = None
+    #: the exit line's text (the question for BLOCKED, the fact for INTERRUPTED)
+    exit_detail: Optional[str] = None
+    #: the owner was told about this session's outcome (one ping per block)
+    notified: bool = False
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
@@ -113,22 +64,21 @@ class Task:
             "status": self.status,
             "workspaceDir": self.workspace_dir,
             "goal": self.goal,
-            "notifyUrl": self.notify_url,
             "resultJson": self.result_json,
             "error": self.error,
             "createdAt": self.created_at,
             "startedAt": self.started_at,
             "completedAt": self.completed_at,
-            "milestone": self.milestone,
             "verifyCmd": self.verify_cmd,
             "deliver": self.deliver,
             "prUrl": self.pr_url,
-            "title": self.title,
             "parentGoalId": self.parent_goal_id,
             "pauseCount": self.pause_count,
-            "scaffold": self.scaffold,
             "preRunSha": self.pre_run_sha,
+            "targetBranch": self.target_branch,
             "projectId": self.project_id,
+            "exit": self.exit,
+            "exitDetail": self.exit_detail,
         }
 
 
@@ -152,129 +102,110 @@ class TaskEvent:
         }
 
 
+@dataclass
+class Goal:
+    """A durable goal (spec 046): the issue is the contract, the branch is the
+    delivery, GitHub holds the state. The host stores identity plus the last
+    world fingerprint it handed a session — an observation, never a judgment."""
+
+    id: str
+    project_id: str
+    workspace_dir: str
+    repo_url: str
+    objective: str
+    issues: list[int]
+    branch: str
+    created_at: int
+    closed_at: Optional[int] = None
+    #: ``achieved`` | ``cancelled`` | None while open
+    outcome: Optional[str] = None
+    #: the world fingerprint the last session was given (JSON), or None
+    last_seen_json: Optional[str] = None
+    last_seen_at: Optional[int] = None
+
+    @property
+    def open(self) -> bool:
+        return self.outcome is None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "projectId": self.project_id,
+            "workspaceDir": self.workspace_dir,
+            "repoUrl": self.repo_url,
+            "objective": self.objective,
+            "issues": list(self.issues),
+            "branch": self.branch,
+            "createdAt": self.created_at,
+            "closedAt": self.closed_at,
+            "outcome": self.outcome,
+            "lastSeenAt": self.last_seen_at,
+        }
+
+
+@dataclass
+class Decision:
+    id: int
+    goal_id: str
+    text: str
+    comment_url: str
+    made_at: int
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "goalId": self.goal_id, "text": self.text,
+                "commentUrl": self.comment_url, "madeAt": self.made_at}
+
+
+def _col(r: sqlite3.Row, name: str, default=None):
+    return r[name] if name in r.keys() and r[name] is not None else default
+
+
 def _row_to_task(r: sqlite3.Row) -> Task:
     return Task(
-        id=r["id"],
-        kind=r["kind"],
-        status=r["status"],
-        workspace_dir=r["workspace_dir"],
-        goal=r["goal"],
-        notify_url=r["notify_url"],
-        result_json=r["result_json"],
-        error=r["error"],
-        created_at=r["created_at"],
-        started_at=r["started_at"],
-        completed_at=r["completed_at"],
-        milestone=r["milestone"],
-        verify_cmd=r["verify_cmd"],
-        deliver=bool(r["deliver"]),
-        pr_url=r["pr_url"],
-        title=r["title"] if "title" in r.keys() else None,
-        parent_goal_id=(
-            r["parent_goal_id"] if "parent_goal_id" in r.keys() else None
-        ),
-        pause_count=(
-            r["pause_count"] if "pause_count" in r.keys() and r["pause_count"] is not None else 0
-        ),
-        scaffold=(
-            bool(r["scaffold"]) if "scaffold" in r.keys() and r["scaffold"] is not None else False
-        ),
-        plan_key=r["plan_key"] if "plan_key" in r.keys() else None,
-        pre_run_sha=r["pre_run_sha"] if "pre_run_sha" in r.keys() else None,
-        strictness=(
-            r["strictness"] if "strictness" in r.keys() and r["strictness"] else "trust"
-        ),
-        base_branch=r["base_branch"] if "base_branch" in r.keys() else None,
-        target_branch=r["target_branch"] if "target_branch" in r.keys() else None,
-        project_id=r["project_id"] if "project_id" in r.keys() else None,
+        id=r["id"], kind=r["kind"], status=r["status"],
+        workspace_dir=r["workspace_dir"], goal=r["goal"],
+        result_json=r["result_json"], error=r["error"],
+        created_at=r["created_at"], started_at=r["started_at"],
+        completed_at=r["completed_at"], verify_cmd=r["verify_cmd"],
+        deliver=bool(r["deliver"]), pr_url=r["pr_url"],
+        parent_goal_id=_col(r, "parent_goal_id"),
+        pause_count=int(_col(r, "pause_count", 0)),
+        pre_run_sha=_col(r, "pre_run_sha"),
+        target_branch=_col(r, "target_branch"),
+        project_id=_col(r, "project_id"),
+        exit=_col(r, "exit"),
+        exit_detail=_col(r, "exit_detail"),
+        notified=bool(_col(r, "notified", 0)),
     )
-
-
-
-
-# ---- failure-class bucketing (eval_outcomes projection, ADR 0006) -----------
-# Purely MECHANICAL string bucketing of a settled task's error text into a
-# short class label — never an LLM call (the zero-token guard extends to the
-# projection: classification carried the last two root-cause diagnoses without
-# cognition, so the projection derives its classes the same way). Checked in
-# priority order; first hit wins. The phrases are the stable marker strings the
-# settle paths already emit (task_queue's _WORKER_BLOCKED_MARKER /
-# _REVIEW_CRASH_MARKER, quality/task_gates' _verify_failure_summary, the
-# timeout + pause-bound +
-# delivery messages), so bucketing here can't drift from the wording without a
-# test catching it. Basket report errors ride the same buckets — the reports
-# store the identical settle-path texts.
-_FAILURE_CLASS_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    # A MECHANICAL SETUP failure (toolchain-not-provisioned, git clone/fetch/clean
-    # failure, target-branch prep failure) is something the worker CANNOT fix by
-    # re-running the same instruction — first in priority so a later bucket can't
-    # mis-claim it. Routes the goal loop to the damped mechanical:prep breaker
-    # instead of an amnesiac re-dispatch storm (#379: the finance-sentry-ui goal
-    # re-hit the identical trust/prep failure 119×). Markers are the CODE-OWNED
-    # settle-path strings (runner toolchain error + engine.workspace WorkspaceError
-    # + _prep_branch_target). The external Claude-CLI trust-guard wording is
-    # deliberately NOT matched here — a bare "trust" substring would false-positive
-    # on legitimate content, violating the fail-closed spirit; add it only once the
-    # exact guard string is confirmed from a real incident log.
-    ("mechanical_setup", ("toolchain_provision_failed", "clone failed:",
-                          "fetch failed:", "clean -fdx failed",
-                          "could not prepare target_branch")),
-    ("blocked:worker", ("worker reported blocked:",)),
-    ("review_crash", ("review gate crashed",)),
-    ("review_rejected", ("code review requested changes",)),
-    ("browser_gate_failed", ("browser gate (failing closed)",)),
-    ("test_integrity", ("test-integrity",)),
-    ("verify_failed", ("verify gate failed", "verify gate timed out")),
-    ("timeout", ("wall-clock timeout",)),
-    # A worker-conversation context overflow is deterministic at the QUEUE level
-    # (a same-conversation retry replays the overflow) but a GOAL-level fresh
-    # session may legitimately take a smaller bite — named so telemetry and the
-    # advance brief's failure context can speak about the class.
-    ("context_overflow", ("prompt is too long",)),
-    # The sandbox memory cap killed the agent (runner-stamped kernel evidence,
-    # spec 020). Deterministic at the queue level like the overflow above; the
-    # goal layer keys its ONE adapted re-dispatch (FR-002a) on this class.
-    ("sandbox_oom", ("sandbox oom-killed",)),
-    ("delivery_failed", ("gate passed but delivery failed",)),
-    ("no_result_line", ("no result line",)),
-    # AUTH before the rate/quota bucket, mirroring loom.limits' priority: an
-    # auth-flavored pause-bound failure is a login problem, not a cap.
-    ("auth", ("failed to authenticate", "authentication required",
-              "oauth session expired", "please run /login")),
-    ("rate_limited", ("usage-limit pauses", "usage limit", "rate limit",
-                      "out of extra usage", "out of usage", "quota")),
-)
-
-
-def derive_failure_class(error: Optional[str]) -> str:
-    """Bucket a settled-failed task's error text into a short mechanical class
-    (``review_rejected``, ``verify_failed``, ``timeout``, ``rate_limited``,
-    ``blocked:worker``, …). Pure string matching — zero LLM, deterministic,
-    best-effort: anything unrecognized lands in the ``engine_error`` catch-all
-    rather than raising. Case-insensitive so wording-case drift can't unbucket
-    a class silently."""
-    text = (error or "").lower()
-    for label, needles in _FAILURE_CLASS_RULES:
-        if any(n in text for n in needles):
-            return label
-    return "engine_error"
 
 
 def _row_to_event(r: sqlite3.Row) -> TaskEvent:
-    return TaskEvent(
-        id=r["id"],
-        task_id=r["task_id"],
-        type=r["type"],
-        source=r["source"],
-        payload_json=r["payload_json"],
-        ts=r["ts"],
+    return TaskEvent(id=r["id"], task_id=r["task_id"], type=r["type"],
+                     source=r["source"], payload_json=r["payload_json"], ts=r["ts"])
+
+
+def _row_to_goal(r: sqlite3.Row) -> Goal:
+    import json
+
+    try:
+        issues = [int(x) for x in json.loads(r["issues_json"] or "[]")]
+    except (ValueError, TypeError):
+        issues = []
+    return Goal(
+        id=r["id"], project_id=r["project_id"], workspace_dir=r["workspace_dir"],
+        repo_url=r["repo_url"] or "", objective=r["objective"] or "",
+        issues=issues, branch=r["branch"], created_at=r["created_at"],
+        closed_at=r["closed_at"], outcome=r["outcome"],
+        last_seen_json=r["last_seen_json"], last_seen_at=r["last_seen_at"],
     )
 
 
-#: How long a blocked writer waits for the lock before raising
-#: ``sqlite3.OperationalError: database is locked``. WAL gives concurrent reads +
-#: a single writer, but the default busy_timeout is 0 — so a *separate* process
-#: (e.g. the ``devclaw`` CLI) writing while the server holds the write lock fails
-#: instantly instead of waiting its turn. A few seconds lets contending writers
-#: queue politely. Shared default with ``project_registry`` (same db file).
+def _row_to_decision(r: sqlite3.Row) -> Decision:
+    return Decision(id=r["id"], goal_id=r["goal_id"], text=r["text"],
+                    comment_url=r["comment_url"] or "", made_at=r["made_at"])
+
+
+#: How long a blocked writer waits for the lock before raising. WAL gives
+#: concurrent reads + a single writer; a separate process (the CLI) writing
+#: while the server holds the lock queues politely instead of failing.
 SQLITE_BUSY_TIMEOUT_MS = 5000

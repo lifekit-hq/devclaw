@@ -71,11 +71,9 @@ services:
       DEVCLAW_TRANSPORT: http
       DEVCLAW_PORT: "8000"
       DEVCLAW_DB: /var/lib/devclaw/devclaw.db
-      DEVCLAW_GOALS_DIR: /var/lib/devclaw/goals
       # Goal-layer milestone notifications → notify-relay (in the OpenClaw
       # project, reachable over the shared external network by service name).
       DEVCLAW_GOAL_NOTIFY_URL: http://notify-relay:8090/text
-      DEVCLAW_NOTIFY_ALTITUDE: ${DEVCLAW_NOTIFY_ALTITUDE:-task}
       # fastmcp >= 3.4 HostOriginGuard: allowlist the docker-network MCP host and
       # the tailnet console host (else 421 / 403 on non-loopback routes).
       FASTMCP_HTTP_ALLOWED_HOSTS: ${FASTMCP_HTTP_ALLOWED_HOSTS:-["devclaw-mcp:8000","lifekit-vps.tail1cb676.ts.net:18791"]}
@@ -120,15 +118,8 @@ services:
       DEVCLAW_CONTEXT_TRIPWIRE_PCT: ${DEVCLAW_CONTEXT_TRIPWIRE_PCT:-75}
       DEVCLAW_DOCKER_BIN: ${DEVCLAW_DOCKER_BIN:-docker}
       DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST: ${DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST:-}
-      DEVCLAW_COGNITION_MEM_RESERVE: ${DEVCLAW_COGNITION_MEM_RESERVE:-1536m}
-      DEVCLAW_GOAL_DECOMPOSE: ${DEVCLAW_GOAL_DECOMPOSE:-1}
-      DEVCLAW_GOAL_FIRMING: ${DEVCLAW_GOAL_FIRMING:-0}
-      DEVCLAW_TRACE_RETENTION_DAYS: ${DEVCLAW_TRACE_RETENTION_DAYS:-7}
+      DEVCLAW_HOST_MEM_RESERVE: ${DEVCLAW_HOST_MEM_RESERVE:-1536m}
       DEVCLAW_SELF_REPO: ${DEVCLAW_SELF_REPO:-}
-      DEVCLAW_SELF_ISSUE_MIN_CYCLES: ${DEVCLAW_SELF_ISSUE_MIN_CYCLES:-2}
-      DEVCLAW_SELF_ISSUE_QUIET_DAYS: ${DEVCLAW_SELF_ISSUE_QUIET_DAYS:-3}
-      DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE: ${DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE:-3}
-      DEVCLAW_PLANNER_TIMEOUT_MS: ${DEVCLAW_PLANNER_TIMEOUT_MS:-1200000}
       # Git author/committer identity for every commit devclaw produces
       # (devclaw/git_identity.py, forwarded into each sandbox). Blank ⇒ the
       # code default (`devclaw <devclaw@local>`); point DEVCLAW_GIT_EMAIL at a

@@ -3,193 +3,80 @@
 Single source of truth for every env var the runtime reads — enforced by
 `tests/test_env_vars_doc_sync.py` (a var read in code but missing here, or
 documented here but read nowhere, fails the suite). The CODE home is
-`devclaw/config.py`: the one module allowed to read `DEVCLAW_*` vars
-(`tests/test_config_single_doorway.py` enforces the boundary; the in-sandbox
-`runner/` reads its own env by design). Grouped by what each one
-controls. Set in `.env` (devclaw loads it on startup), the systemd unit, the
-compose file, or the shell — devclaw doesn't care.
-
-**What earns a row here:** facts that genuinely differ per host (paths, ports,
-binaries, images, capacity), operator cost/behavior levers, and migration
-flags. Internal tuning (protocol timeouts, retry buffer sizes, breaker
-thresholds) is **code constants, changed by PR** — that's how every such value
-has actually been tuned in this repo's history. If you're looking for a knob
-that used to be here (per-role `*_MODEL` vars, `*_TIMEOUT_MS`,
-`DEVCLAW_RATE_LIMIT_*`, `DEVCLAW_WORKSPACE_BREAK_*`, per-flag env defaults for
-project-overridable behavior), it's now a named constant next to its use site.
-
-**Convention:** empty string or unset = "use the default in the table." Bools
-are truthy unless explicitly `0` / `false`. **Real env vars always win** over
-`.env` — `.env` is the per-machine default surface, not an override.
-
-The committed [`.env.example`](../../.env.example) lists every var with its
-default; copy it to `.env` and uncomment what you want to change.
+`devclaw/config.py`, the one module allowed to read `DEVCLAW_*` vars
+(`tests/test_config_single_doorway.py`); the in-sandbox `runner/` reads its
+own env by design. Empty or unset means "the default in the table". Real env
+vars always win over `.env`.
 
 ## Server transport + auth
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_TRANSPORT` | `stdio` | `stdio` (local dev / tests) or `http` (long-running service) |
+| `DEVCLAW_TRANSPORT` | `stdio` | `stdio` (local dev / tests) or `http` (the long-running service) |
 | `DEVCLAW_PORT` | `8000` | HTTP port when `DEVCLAW_TRANSPORT=http` |
-| `DEVCLAW_HOST` | `0.0.0.0` | HTTP bind address. Set `127.0.0.1` to restrict to loopback. |
-| `DEVCLAW_TOKEN` | — | Bearer-token gate for every HTTP route except `/health`. Sent as `Authorization: Bearer <token>` (MCP clients) or `?token=` (dashboard/SSE). Unset = no auth (local dev). |
-| `DEVCLAW_DOTENV` | `.env` (repo cwd) | Path of the `.env` file loaded at startup. Must be set in the shell to bootstrap (it can't live in the file it locates). |
-| `DEVCLAW_GIT_SHA` | — | Deployed git commit, baked into the image at build time (the deploy script already computes it for CACHEBUST). Surfaced on `/health` + `/node.json` (#494); unset ⇒ `null`, never guessed. |
-| `DEVCLAW_BUILT_AT` | — | Image build timestamp (ISO-8601), same provenance and surfaces as `DEVCLAW_GIT_SHA`. |
-| `DEVCLAW_WEBHOOK_SECRET` | *(unset)* | Spec 023: HMAC secret for `POST /webhooks/github`. **Unset ⇒ the route answers 404** (feature off, no unauthenticated surface). Set it in the compose env file and in each repo's GitHub webhook config; deliveries are verified with `X-Hub-Signature-256` and a bad signature is a counted 401. |
+| `DEVCLAW_HOST` | `0.0.0.0` | HTTP bind address; `127.0.0.1` restricts to loopback |
+| `DEVCLAW_TOKEN` | — | Bearer token for every HTTP route except `/health` (`Authorization: Bearer` or `?token=`). Unset = no auth. |
+| `DEVCLAW_DOTENV` | `.env` (cwd) | Path of the `.env` file loaded at startup |
+| `DEVCLAW_GIT_SHA` | — | Deployed commit, baked at build time; shown on `/health` |
+| `DEVCLAW_BUILT_AT` | — | Image build timestamp, same provenance |
+| `DEVCLAW_WEBHOOK_SECRET` | — | HMAC secret for `POST /webhooks/github`; unset ⇒ the route answers 404. A verified delivery wakes the goal tick early. |
 
-## State + concurrency
-
-| Var | Default | Purpose |
-|---|---|---|
-| `DEVCLAW_DB` | `./devclaw.db` | SQLite path. Holds the task-queue tables (tasks, events) AND, since Tranche 1, the goal-state tables (`goal_status`, `goal_steering`, `goal_log`, `goal_deliveries`, `goal_phase_history`, …; the host-side `project_docs` repo-notes blob was dropped by spec 034 — worker memory is the repo's committed `.devclaw/`) — `GoalStore` is wired onto this same `StateStore` in production. |
-| `DEVCLAW_TICK_SECONDS` | `10` | Task-queue heartbeat interval. Resumes recovered work + launches pending tasks. |
-| `DEVCLAW_MAX_CONCURRENT` | `4` | **DEFAULT** global cap on concurrently-running **sandboxed tasks** — the floor, not the last word. The effective cap is resolved per queue pump: a control-plane override set live with the `set_max_concurrent` MCP tool beats this, and this applies when no override is set (so changing the env var still moves the floor for an instance that never set one). Set the override to `1` for strictly serial execution — the unattended-operation mode: concurrent sandboxes contend for ONE account quota while the usage-limit pause budget is counted per task, and on 2026-08-29 four-way contention killed six tasks at `exceeded 5 usage-limit pauses` with zero delivered increments. Changing the override needs no restart and no redeploy; changing THIS needs both. Passed through by `deploy/docker-compose.devclaw.yml` (`${DEVCLAW_MAX_CONCURRENT:-4}`) — before that line existed (2026-08-31) an env-file value never reached the container at all, the same silent-no-op class as the 2026-08-26 sandbox-sizing OOM incident. Read the effective value with `get_run_schedule`. Host-side cognition subprocesses are NOT counted here — see `DEVCLAW_MAX_HOST_COGNITION`. |
-| `DEVCLAW_MAX_HOST_COGNITION` | `2` | **DEFAULT** cap on concurrent **host-side** `claude --print` cognition subprocesses (the done-gate evaluator, intake readiness, self-triage, the review gate, the reachability judge, trend classification, delivery summaries) — the floor, not the last word. The effective cap is re-read on every acquire: an override set live with the `set_max_host_cognition` MCP tool beats this, and it is seeded from the control plane at server start so it survives a restart. A DIFFERENT population from `DEVCLAW_MAX_CONCURRENT` (which counts sandboxed tasks): both caps apply at once, and capping tasks at 1 does not stop two gates running beside that task. Enforced by a dynamic limiter at the spawn chokepoint in `llm_call.py` rather than a fixed `asyncio.Semaphore` — a rebuilt semaphore would hand fresh full capacity to new callers while old holders were still running, briefly admitting MORE than the cap, which is the over-admission that OOM-killed these calls 117 times (`exited -9`). Queued callers just wait (the per-call timeout starts after the acquire, not during); lowering the cap never cancels in-flight work. Invalid / `<1` / unset → 2 — `0` is not honored, it would deadlock every call. Read the effective value with `get_run_schedule`. |
-| `DEVCLAW_MAX_RETRIES` | `1` | Re-runs of a gate-failing task before escalation. Each retry feeds the failure back as steering. Timeouts are never retried. `0` disables. |
-| `DEVCLAW_TASK_TIMEOUT_S` | `3600` | Per-task wall-clock cap. Exceeded → cancelled, sandbox torn down, task `failed`. The value is also stated to the worker as a fact in the advance brief (`goal.tick._wall_clock_fact`), so it can size a slice and commit before the limit instead of losing uncommitted work at it. A teardown is **devclaw's own limit firing, not a failed attempt by the goal**: the first one since the last productive settle refunds its dispatch slot (`goal.tick_settle`, bounded by `goal_status.teardown_refunds`), so two timeouts no longer park a healthy goal on `mechanical:dispatch_cap` waiting for an owner `continue`; a second with nothing produced in between burns its dispatch as before. The wording a teardown is recognised by has one producer, `queue.settle.wall_clock_teardown_msg`. `<=0` disables. |
-| `DEVCLAW_VERIFY_TIMEOUT_S` | `900` | Wall-clock cap for the `verify_cmd` step (the gate that runs after the agent finishes). |
-| `DEVCLAW_VALIDATION_STEP_TIMEOUT_S` | `900` | Per-step wall-clock cap for a `validate_product` run's boot and suites commands (spec 015). A cut suite is reported as explicit partial coverage. Read in the sandbox by the runner. |
-| `DEVCLAW_TRACE_RETENTION_DAYS` | `30` | Days of `traces`-table telemetry to keep. The goal heartbeat prunes older rows once a day on its cheap path (batched DELETEs, pure SQLite, zero LLM). `0`, a negative value, or an unparseable value disables pruning gracefully. |
-| `DEVCLAW_EVENTS_RETENTION_DAYS` | `30` | Days of `events`-table history to keep (raw runner SDK events, one row per agent action — the highest-volume append-only log after traces). Pruned by the same daily, batched, pure-SQLite, zero-LLM heartbeat pass as the trace prune, on an independent watermark. `0`, a negative value, or an unparseable value disables pruning gracefully. |
-| `DEVCLAW_TASK_RESULT_RETENTION_DAYS` | `30` | Days a settled (done/failed/cancelled) task keeps its full `result_json` worker transcript — the DB's biggest payload (2026-08-30 audit: 83.5MB of 277MB). Past retention the transcript is NULLed by the same daily, batched, zero-LLM heartbeat pass; the settle summary (status/error/pr_url) and the `eval_outcomes` projection are permanent and untouched, and running/pending rows are never touched. `0`, a negative value, or an unparseable value disables compaction gracefully. |
-| `DEVCLAW_WORKSPACE_RETENTION_DAYS` | `3` | Days to keep the workspace of a goal-scoped checkout after the goal ended CLEANLY. Short on purpose: the work is on a branch and nobody inspects the checkout. Swept by the same daily, batched, zero-LLM heartbeat pass as the trace prune, on its own watermark. Never applies to a REGISTERED project's workspace (that is released by `delete_project`) and never to a workspace with a non-terminal goal or a running task. `0`/negative/unparseable disables gracefully. |
-| `DEVCLAW_WORKSPACE_RETENTION_DAYS_FAILED` | `14` | Same sweep, for a goal that ended BADLY (`off_track`/`stalled` direction, or a block never cleared). Long on purpose: the checkout is the only forensics that exists for a run that went wrong. |
-| `DEVCLAW_DB_SIZE_ALERT_MB` | `2000` | Size (MB) at which the heartbeat pings the owner ONCE that `devclaw.db` (incl. the WAL sidecar) has grown too large despite retention+VACUUM — the loud-not-silent guard against a silent disk-fill wedge. Re-arms when size drops back under. `0`, a negative value, or an unparseable value disables the alarm gracefully. |
-
-## Engine selection
+## Storage
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_ENGINE` | *(unset)* | `(unset)` → the worker runner in a per-task docker sandbox (production). `host` → the runner on the host with **no** sandbox (dev/CI, agent has full FS access). `stub` → deterministic stub (harness validation, no docker, no claude). |
-| `DEVCLAW_COGNITION` | `claude` | Which `Cognition` impl every role's `default_caller` routes through. `claude` → `claude --print` over Pro/Max OAuth (production). `stub` → deterministic canned responses (offline harnesses + eval scaffolding). `agent_sdk` → **OPT-IN** streaming backend over `claude-agent-sdk.query()` (same Pro/Max OAuth session, native liveness + structured usage/rate-limit events; requires the optional `agent-sdk` extra — `pip install -e ".[agent-sdk]"`). **Not yet live-shaken.** Unknown values fail loud at first use. |
-| `DEVCLAW_COGNITION_TIMEOUT_S` | `180` | Default budget (seconds) for one cognition call, read by both backends. `claude`: wall-clock cap on one `claude --print` call (`PLANNER_TIMEOUT_MS` in `call_claude`) — a peak-hour latency lever (successful calls measured 50–78s while the old hardcoded 90s cap timed five out at exactly the cap, 2026-07-14/15). `agent_sdk`: inactivity window — each yielded message resets it; a stall closes the stream (killing the spawned `claude`) and raises a timed-out `PlannerError`. Roles with their own budget (review 180s, decomposer 300s) are unaffected; a per-call `timeout_ms` overrides it. Invalid / `<=0` / unset → 180. |
-| `DEVCLAW_COGNITION_RETRIES` | `2` | Bounded retries for a retry-now `claude --print` failure in `call_claude` — **TRANSIENT** (timeout, signal-death `exited -9` OOM-kill under host memory pressure, network blip) and **SERVER_ERROR** (a `529`/provider outage: a subprocess retry costs seconds, so this cheap lane spends its budget before the outage reaches the fleet-wide pause). Short geometric backoff (5s, 20s, …, capped 60s; a provider-stated retry-after hint wins). Only those two kinds retry — QUOTA/RATE/AUTH re-raise on the first failure so the pause-and-resume machinery fires, and a REAL bug fails fast. Exhausted retries re-raise the last error (fail-closed intact). `0` disables retries; invalid / negative / unset → 2. The clean-run fix (2026-07-30). |
+| `DEVCLAW_DB` | `./devclaw.db` | The SQLite home: tasks, events, goals, decisions, control flags |
+| `DEVCLAW_EVENTS_RETENTION_DAYS` | `30` | Days of session events kept; `0` disables the prune |
 
-## Model tiering (cognition cost lever)
-
-Cognition cost is steered by **three tiers**, not per-role vars. Which role
-runs at which tier is a code decision — the table in
-[`devclaw/model_tiers.py`](../../devclaw/model_tiers.py) — changed by PR (the
-twelve per-role vars this replaced were never once set on any host). Tier
-values are `claude --model` inputs: an alias (`haiku`/`sonnet`/`opus`) or a
-full id. Empty → account default. **No API key = the constraint is your
-session quota, not a bill.**
-
-| Var | Default | Runs |
-|---|---|---|
-| `DEVCLAW_MODEL_DEEP` | `opus` | Reserved for rare, high-leverage calls — currently **no live role maps to this tier** (read by `config.py`, consumed by nothing since the 008 shrink moved planning into the sandbox). |
-| `DEVCLAW_MODEL_STANDARD` | `sonnet` | Judgment at volume: the done-gate evaluator, intake readiness, review gate, reachability judge. |
-| `DEVCLAW_MODEL_LIGHT` | `haiku` | Mechanical prose: per-delivery summaries. |
-| `DEVCLAW_EXEC_MODEL` | `claude-sonnet-4-6` | **The in-sandbox coding agent — the token/quota bulk.** Full id, not alias. Set `claude-opus-4-8` to opt a run up to Opus. Empty → ACP server's default. |
-| `DEVCLAW_ACP_COMMAND` | *(unset)* → `claude-agent-acp` | **The ACP agent command the worker session runs on** — the layer-5 replaceability seam. A string like `my-acp --profile x`; the runner shlex-splits it. Read host-side and threaded via the runner JSON payload (host env does NOT cross the container boundary; the runner's own env read only serves manual `docker run` / host-engine runs). Scope caveat: this swaps the *command only* — the `acp_env` (CLAUDE_* vars), the `~/.claude` auth mounts, `DEVCLAW_EXEC_MODEL`'s claude model ids, and the auth/rate-limit classifiers are still claude-shaped, and the alternate binary must be baked into the sandbox image. |
-| `DEVCLAW_ACP_IDLE_TIMEOUT_S` | `1800` | Runner-side hang brake: seconds of TOTAL agent silence (no protocol frames, no stderr) before the runner kills the agent subprocess and fails the task with a legible reason. Generous on purpose — one quiet long-running tool call (a full test suite) is legitimate silence; the container-level timeout stays the hard backstop. Read in-sandbox by the runner's ACP client. |
-
-## Sandbox (auth + resources)
+## Engine + sandbox
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_SANDBOX_IMAGE` | `devclaw-sandbox:latest` | Per-task sandbox image (built from `.sandcastle/Dockerfile`). A project can pin its own via the registry's per-project `sandbox_image` override (ADR 0005 escape hatch/migration bridge), which beats this default for that project's tasks. |
-| `DEVCLAW_DOCKER_BIN` | `docker` | docker binary to spawn. |
-| `DEVCLAW_SANDBOX_MEMORY` | `2g` | Hard per-container memory ceiling. `--memory-swap == --memory` disables swap growth. Also DECLARED into the sandbox env verbatim (spec 020) so the worker can bound its tooling — `/proc/meminfo` inside the cgroup reports the host. A project registry `sandbox_memory` override (spec 020 US4) beats this default for that project's tasks and is what launch admission accounts. |
-| `DEVCLAW_COGNITION_MEM_RESERVE` | `1536m` | Host RAM kept free for the host-side `claude --print` cognition + OS when admitting sandbox launches. Dispatch defers a launch when `/proc/meminfo` MemAvailable would drop below `DEVCLAW_SANDBOX_MEMORY + this` — so N containers can't overcommit the box and get the host `claude` OOM-killed (`exited -9`). Sandbox engine only; fail-open if MemAvailable is unreadable. Size to the host. |
-| `DEVCLAW_CONTEXT_TRIPWIRE_PCT` | `75` | Worker context-usage percentage at which the in-sandbox runner ends the turn and lands a coherent partial increment instead of overflowing the model context (spec 021 US2). `0` disables. Declared into the sandbox env by the engine; firings surface as a `ContextTripwire` event + a `limit|context_tripwire` problems-catalog row — the SC-005 ratchet metric. |
-| `DEVCLAW_SANDBOX_CPUS` | `2.0` | Per-container CPU limit. Declared into the sandbox env verbatim (spec 020; `nproc` reports the host); per-project `sandbox_cpus` override beats it. |
-| `DEVCLAW_HOST_CLAUDE_DIR` | `~/.claude` | Host path bind-mounted read-only into each sandbox. |
-| `DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST` | `.credentials.json,.claude.json` | Comma-separated entries **under** `~/.claude` to bind in. Default = the OAuth identity pair (token + identity — both needed for the ACP agentic loop). Add more only with intent; missing entries surface as docker bind errors, not silent skips. |
-| `DEVCLAW_CONTAINER_PATH_PREFIX` | — | When devclaw itself runs in a container, the workspace path the host sees ≠ what devclaw sees. Set this to devclaw's view; pair with `DEVCLAW_HOST_PATH_PREFIX`. |
-| `DEVCLAW_HOST_PATH_PREFIX` | — | The host-side prefix that swaps in for `DEVCLAW_CONTAINER_PATH_PREFIX` when invoking `docker run`. |
-| `DEVCLAW_RUNNER_PY` | `runner/runner.py` (resolved against repo) | Worker runner script path (host engine mode). |
-| `DEVCLAW_RUNNER_PYTHON` | derived | Python interpreter the host engine spawns the runner with. |
-| `DEVCLAW_SKILLS_DIR` | `/opt/devclaw/skills` in the sandbox; `runner/skills/` under the host engine | The ONE home for worker-kind instructions, read by `runner/runner.py` and prepended per task kind. The sandbox image bakes `runner/skills/` to the default path; the host engine points here at the in-repo source. No bundle ⇒ the runner raises rather than briefing the worker on substitute text (#613). |
-| `DEVCLAW_HOOKS_DIR` | `/opt/devclaw/hooks` | (In-sandbox.) Universal pre/post hook `.sh` files, run alongside any per-repo `.agent/hooks/`. |
-| `DEVCLAW_GIT_NAME` | `devclaw` | Git author/committer **name** for every commit devclaw produces (worker in sandbox + host engine via `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env, delivery's own commit via `-c`). Env beats every git config level, so ambient/leaked identities can't author devclaw's commits. The worker's `Co-Authored-By: Claude …` trailer is unaffected. |
-| `DEVCLAW_GIT_EMAIL` | `devclaw@local` | Git author/committer **email** for the same. Point at a machine account's or GitHub App's noreply address (`<id>+<user>@users.noreply.github.com`) to link commits to a real GitHub profile. Both identity vars are forwarded by the production compose file since 2026-09-06 (tinyspec `compose-git-identity-passthrough`) — before that, setting them on the box was a silent no-op. The runner forwards all four `GIT_*` vars into the agent's own env since 2026-09-08 (tinyspec `worker-git-identity-and-intervention-dedup`) — its allowlist had dropped them, so the agent's shells had no identity and the model invented one per session. |
+| `DEVCLAW_ENGINE` | *(unset)* | *(unset)* = the worker in a per-session docker sandbox (production); `host` = on the host, no sandbox (dev); `stub` = deterministic, no docker, no claude (the suite) |
+| `DEVCLAW_SANDBOX_IMAGE` | `devclaw-sandbox:latest` | The sandbox image (`.sandcastle/Dockerfile`) |
+| `DEVCLAW_DOCKER_BIN` | `docker` | The docker binary |
+| `DEVCLAW_EXEC_MODEL` | `claude-sonnet-4-6` | The model the in-sandbox worker runs; `""` = the agent's own default |
+| `DEVCLAW_ACP_COMMAND` | `claude-agent-acp` | The ACP agent the runner spawns — the one seam that swaps the agent (spec 011) |
+| `DEVCLAW_SANDBOX_MEMORY` | `2g` | Per-sandbox memory ceiling (a project may override it in the registry) |
+| `DEVCLAW_SANDBOX_CPUS` | `2.0` | Per-sandbox CPU cap |
+| `DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST` | `.credentials.json,.claude.json` | Files from `~/.claude` mounted into the sandbox |
+| `DEVCLAW_HOST_CLAUDE_DIR` | `~/.claude` | Host path of the claude config to mount |
+| `DEVCLAW_CONTAINER_PATH_PREFIX` | — | Container-side workspace prefix for host↔container path translation |
+| `DEVCLAW_HOST_PATH_PREFIX` | — | Host-side counterpart |
+| `DEVCLAW_CONTEXT_TRIPWIRE_PCT` | `75` | Context-usage % at which the runner lands the session; `0` disables |
+| `DEVCLAW_GIT_NAME` | `devclaw` | Git author/committer name for every commit devclaw or the worker writes |
+| `DEVCLAW_GIT_EMAIL` | `devclaw@local` | Its email |
+| `DEVCLAW_RUNNER_PY` | — | Host-engine override: the runner script path |
+| `DEVCLAW_RUNNER_PYTHON` | — | Host-engine override: the interpreter |
+| `DEVCLAW_SKILLS_DIR` | `/opt/devclaw/skills` | Where the runner reads the skill bundle (`runner/skills/` in-repo for the host engine) |
+| `DEVCLAW_HOOKS_DIR` | `/opt/devclaw/hooks` | Where the runner reads the pre/post-run hooks |
 
-## Auth (Pro OAuth posture)
+## Queue (money brakes)
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_CLAUDE_BIN` | `claude` | The `claude` binary every host-side `claude --print` call spawns (`devclaw/llm_call.py`). |
-| `DEVCLAW_TAILSCALE_BIN` | `tailscale` | Tailscale CLI used by `deploy.py` for `tailscale serve`. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | *(required in production)* | A long-lived (~1 year) subscription OAuth token from `claude setup-token` — **the production credential, required**. Still Pro/Max OAuth, never metered: the same subscription, supplied as a token instead of an interactive login. Claude Code ranks it ABOVE the `/login` credential, so the box no longer depends on `~/.claude/.credentials.json`, whose revocation by an interactive login elsewhere on the account is what took an unattended instance down overnight (2026-08-22). Registered in `devclaw/credentials.py` — the ONE home for every credential's name, scope and hops (spec 042): the boot guard, doctor, the sandbox launcher's `-e` forwarding and the runner's agent allowlist (which receives the names in the task payload) all iterate that registry, so a credential is never wired into one hop and not another (the #644 / 2026-09-08 class). Read by host cognition from the process env and forwarded into each sandbox and into the agent's own shells. **One durable home** (tinyspec `durable-container-secrets`, 2026-09-04): the on-box secrets file `deploy/docker-compose.devclaw.yml` declares as its `env_file` (`DEVCLAW_SECRETS_FILE`, default `/srv/devclaw/secrets.env`, mode 0600, owned by the deploy user), written by `deploy/deploy-devclaw.sh` from the repo's `CLAUDE_CODE_OAUTH_TOKEN` Actions secret on every workflow deploy and read back on a hand run — so every creation path (workflow, rollback, a hand `docker compose up`) yields the same container. It is deliberately NOT interpolated in the compose `environment:` block: `${VAR:-}` there resolves to blank without a shell env and overrides the file, which is how a hand recreate on 2026-09-03 left the instance running healthy-looking on the revocable mounted login for ~20h. **Absence is loud at every stage**: an unset Actions secret dies in the deploy before the box is touched (the previous file value is kept), a missing file fails `docker compose up`, and the container itself refuses to start without it (`devclaw/boot_guard.py`, production engine only — `DEVCLAW_ENGINE=host`/`stub` need no credential); doctor's `instance.auth.setup_token` reports FAIL on the same absence. Never commit the value; never echo it. |
-| `NODE_AUTH_TOKEN` | *(required in production)* | A **`read:packages`-scoped** GitHub token registered in `devclaw/credentials.py` (spec 042, same registry and hop set as `CLAUDE_CODE_OAUTH_TOKEN`: container `-e` **and** the agent's own shells — on 2026-09-08 it reached the container but not the agent's allowlist, so `npm ci` 401'd in the worker while the verify gate had it) so `npm ci` on an `@lifekit-hq`-consuming repo (`.npmrc`: `//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}`) can resolve GitHub Packages — without it no real frontend build, and so no real-app e2e evidence, is possible in-sandbox. Read-only by scope: the sandbox still holds no credential that can push, merge, or touch issues/PRs; delivery ceremony stays host-side. **Same one durable home and contract as `CLAUDE_CODE_OAUTH_TOKEN`** (tinyspec `durable-container-secrets`, 2026-09-04): the on-box secrets file the compose file declares as its `env_file`, written by the deploy from the repo's `NODE_AUTH_TOKEN` Actions secret, read by every creation path; NOT interpolated in `environment:`. **Required instance-wide** (ruled 2026-09-04): the container refuses to start without it (`devclaw/boot_guard.py`, production engine only) and doctor's `instance.registry.token` reports FAIL on absence — the earlier "unset is a supported posture unless a project declares `registry:npm-github`" rule is retired, because finance-sentry declares nothing and burned a worker session on an `npm ci` 401 while doctor said OK (2026-09-03). The spec-030 probe for a *declared* capability keeps its semantics (unset was already red there). **Set-but-malformed is fatal**: the deploy asserts a `ghp_`/`github_pat_`/`ghs_`/`gho_` prefix on the value it is about to write and `die`s otherwise, because a wrong value is worse than none — it rides the plumbing into every sandbox and only surfaces as an `npm ci` 401 in there, after eating a goal's dispatch budget (2026-08-31). Doctor adds a live auth probe (rejected ⇒ FAIL, unreachable ⇒ UNKNOWN, never OK). Never commit the value; never echo it. |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | — | **Actively refused.** The registry's `REFUSED` set (`devclaw/credentials.py`): one strip every host subprocess uses (cognition, the docker CLI, the host runner), and the sandbox runner refuses them outright. Set anywhere = no effect; the design pillar is Pro/Max OAuth, not metered billing. |
-| `GH_TOKEN` | *(required in production)* | The host-side GitHub credential, registered in `devclaw/credentials.py` (spec 042, tinyspec `github-credential-in-the-registry`) with `required=True, sandbox=False, agent=False` — it is the most privileged thing devclaw holds and it never crosses the sandbox fence. Every host-side GitHub call rides it: delivery (push, PR, merge-on-close), intake, the issue doorway, the self-issue filer, and `gh run view --log-failed` — the failing-job log the host reads and hands down, because the worker cannot fetch it (`red-ci-log-to-worker`). **Scope: `repo`.** That single classic scope covers every call above, the Actions job-log read included. *(Corrected 2026-09-09: this row previously demanded `repo` AND `actions:read`. `actions:read` is a **fine-grained PAT** permission name, never a classic-PAT scope — a classic/OAuth token never states it, so doctor's OK branch was unreachable for exactly the token this row told you to issue. Verified against the live box: a `gist, read:org, repo, workflow` token returns HTTP 200 on `/actions/runs/{id}/jobs`.)* It is declared rather than mounted for a different reason: a bind-mounted `~/.config/gh` is a revocable personal login nothing checks — on 2026-09-03 devclaw ran ~20h healthy on one. **Spelled `GH_TOKEN`, never `GITHUB_TOKEN`**: GitHub refuses to create an Actions secret with a `GITHUB_` prefix (`secrets.GITHUB_TOKEN` is the workflow's own hourly-expiring job token), and `gh` — including the `gh auth git-credential` helper git uses for pushes — ranks `GH_TOKEN` above `GITHUB_TOKEN`, so one name serves every read and write. **Same one durable home as the other two** (tinyspec `durable-container-secrets`): the on-box secrets file the compose declares as its `env_file`, written by `deploy/deploy-devclaw.sh` from the repo's `GH_TOKEN` Actions secret; never in the compose `environment:` block. Unset or malformed dies in the deploy before the box is touched; the container refuses to start without it (`devclaw/boot_guard.py`, production engine only). Doctor's `instance.delivery.token` checks presence, shape, liveness **and the `repo` scope** (a fine-grained/app token states no scopes at all ⇒ UNKNOWN, never OK), and `instance.credentials.secrets` checks the hop upstream of the box — that every required credential exists as an Actions secret on `DEVCLAW_SELF_REPO`, with the exact `gh secret set …` line attached to the finding. The `${LIFEKIT_GH_CONFIG}` bind mount of `~/.config/gh` is **gone** (2026-09-09): the env path was proven on the live box — with `GH_CONFIG_DIR` pointed at an empty directory, `gh api user`, a `git ls-remote` against a private repo over https, and the Actions API all succeeded on `GH_TOKEN` alone — so the credential now has exactly one home. The separate `${LIFEKIT_GITCONFIG}` mount stays: it carries commit authorship and the `gh auth git-credential` helper every https remote operation resolves through, which is a different file and a different job. Never commit the value; never echo it. |
-| `DEVCLAW_GITHUB_OWNER` | — | GitHub account/org `create_repo`/`delete_repo` operate under (falls back to `gh`'s active login). |
+| `DEVCLAW_MAX_CONCURRENT` | `4` | Cap on concurrently-running sandboxes; `set_max_concurrent` overrides it live |
+| `DEVCLAW_HOST_MEM_RESERVE` | `1536m` | Host RAM kept free beyond the sandboxes before another launch is admitted |
+| `DEVCLAW_TICK_SECONDS` | `10` | The queue pump interval |
+| `DEVCLAW_TASK_TIMEOUT_S` | `3600` | Wall-clock cap per session; a hit tears the sandbox down and the session is resumed next tick |
 
 ## Goal layer
 
-Behavior that a **project** can own is not env anymore: `review_gate`,
-`verify_done`, `autodeploy` and the CI-gate
-stance resolve as *code default → project-registry override* (set via
-`register_project` / `update_project`). The env middle-layer was removed —
-three precedence layers with divergent defaults was a debugging trap.
-`autodeploy`'s code default is **conditional** (#554): on goal completion a
-preview deploy runs only if the workspace has an app surface the preview
-launcher can actually serve (`delivery.deploy.workspace_has_app_surface`) — a
-pure library gets no preview container unless its project pins `autodeploy=on`.
+| Var | Default | Purpose |
+|---|---|---|
+| `DEVCLAW_GOAL_TICK_SECONDS` | `900` | The goal tick interval (a settled session and a webhook wake it early) |
+| `DEVCLAW_GOAL_SESSIONS_PER_DAY` | `8` | The ONE money brake per goal: sessions per UTC day, counted from task rows |
+| `DEVCLAW_MENTION` | `@devclaw` | The handle an issue/PR comment must carry to be an instruction |
+| `DEVCLAW_CI_LOG_TAIL_LINES` | `120` | Lines of a failing CI job's log carried to the session, per check |
+| `DEVCLAW_GOAL_NOTIFY_URL` | — | Where owner pings go (`{"text": ...}` POST; the notify relay) |
+| `DEVCLAW_SELF_REPO` | — | `owner/name` of devclaw's own repo — the self-deploy target |
+| `DEVCLAW_DEPLOY_QUIESCENCE_S` | `21600` | How long a pending self-deploy waits for no session to run before it expires |
+
+## Runner (read inside the sandbox)
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_GOALS_DIR` | `~/memory/goals` | Root holding one folder per durable goal. `goal.yaml` (facts) is a plain file; `STATUS.md` / `log.md` / `inbox.md` / `deliveries.md` / `RUN_SUMMARY.md` are generated **views** over the SQLite goal-state tables (`DEVCLAW_DB`) — human-readable, never read back for decisions. |
-| `DEVCLAW_GOAL_TICK_SECONDS` | `900` | Goal heartbeat interval. Also poked in-process the moment a task settles. |
-| `DEVCLAW_GOAL_TEXT_BUDGET` | `1000` | Max free-text characters on a REFERENCED goal (spec 019): the spec lives in the graded issue, the goal is a pointer. Hard doorway refusal, no override; issue-less goals exempt. |
-| `DEVCLAW_RATCHET_FIRST_PASS` | `0.70` | Autonomy-ratchet threshold (spec 018): per-goal first-pass rate the scorecard grades against. Informational — the spec 007 flip stays manual. |
-| `DEVCLAW_RATCHET_DECIDED_MERGE` | `0.80` | Autonomy-ratchet threshold: decided-PR merge rate (merged / merged+rejected, bench excluded). |
-| `DEVCLAW_RATCHET_WINDOW_DAYS` | `14` | Rolling window the ratchet metrics and the wedge-free-cycles condition are judged over; also the scorecard's default display window. |
-| `DEVCLAW_DONEGATE_LEAN` | `0` | De-fat the done-gate evaluator prompt (structural-root-2026-08-05): at the done-gate, omit the two re-fed diary blocks — the `## Recent event log` and the `## What has actually shipped` delivery record (each cap 24K, ~half the 105K prompt that OOMs/times out). The gate then judges every `done_when` clause from the fresh read-only repo review + repository-context snapshot — the repo END STATE, not the journey. Fails toward CLOSED (the repo review is still required for every clause; only non-evidence claim/history context is dropped). Default OFF; flip per box after the prompt-anatomy view (PR #467) confirms the diary is dead weight. Only affects the done-gate — the on-demand `evaluate_goal` direction check keeps its history. |
-| `DEVCLAW_GOAL_REMOTE_CHECKS` | `1` | Ops kill-switch: whether the done-gate also queries the repo's remote CI (GitHub Actions) state. `0` disables — the internal verify gate is the only check. |
-| `DEVCLAW_CI_LOG_TAIL_LINES` | `120` | Lines of a failing CI job's log the red-verdict correction carries to the worker, per failing check (specs/tiny/red-ci-log-to-worker.md) — read by the host with the rollup; the sandbox holds no credential. The line count is the upper bound; the steering budget (4 000 chars) binds harder on a chatty log. |
-| `DEVCLAW_GOAL_BROWSER_GATE` | `1` | Whether the settle path enforces the browser-E2E gate: a change touching a web-UI path must carry a passing real-browser Playwright run (proven via the runner's `browser_report` counts) before it ships. `0` disables — UI changes are gated by verify + review only (the pre-2026-07-17 behaviour). The gate *stance* (`flexible`/`strict`) and the reachability escape valve are no longer env-tuned: stance is `task_queue.BROWSER_GATE_MODE` (fleet default `flexible`, per-project overridable via the registry's `browser_gate_mode`); the reachability valve is always on (strictly safe — can only relax a would-be block). |
-| `DEVCLAW_GOAL_NO_PROGRESS_S` | `21600` | Wall-clock seconds an executing goal may go without a delivery before the watchdog pings the owner once. Zero-token check; complements the per-task timeout. `0` disables. |
-| `DEVCLAW_GOAL_NOTIFY_URL` | — | Notify-relay endpoint for goal-level Telegram messages (free-text `/text` passthrough). |
-| `DEVCLAW_NOTIFY_ALTITUDE` | `owner` | Floor for goal-layer notifications: `owner` (only real blockers / direction questions / completions) or `task` (also includes per-task chatter). |
-| `DEVCLAW_SELF_REPO` | *(unset)* | `owner/name` of the repo devclaw files its own recurring problems against — **itself** (self-issue-filing Stage 1, spec 014 + `devclaw/goal/self_issue.py`). Fires on the same once-per-cycle report edge (zero LLM). **Unset = the whole feature is off** — no GitHub call, nothing shelled (the default + every test path). Since spec 032 US2 this is also how a worker-reported environment deficiency (`BLOCKED: env — <item>`, catalog row `block/env_deficiency`) becomes devclaw work — but that class does NOT wait for the cycle edge or the recurrence gate: spec 038 files it in the settle that places the `mechanical:env` hold, because the hold is what stops the failure from ever recurring. Unset here is stated, never silent — the hold reads `NOT filed as devclaw work: DEVCLAW_SELF_REPO is unset on this instance`. Issue creation uses a `GITHUB_TOKEN`/`GH_TOKEN` credential, never `ANTHROPIC_*` (OAuth-only cognition untouched). |
-<!-- DEVCLAW_RUN_CYCLE_START/END/TZ were retired 2026-09-07
-     (specs/tiny/cycle-is-when-devclaw-works): the run cycle is not its own
-     setting, it IS the operator's run schedule (set_run_schedule) — enabled,
-     that window; disabled (24/7), the calendar day. Two sources of truth for
-     "when does devclaw work" drifted the moment 24/7 was ruled and silently
-     stopped the self-issue filer. -->
-
-| `DEVCLAW_SELF_ISSUE_MIN_CYCLES` | `2` | Distinct run-cycles a problem must survive (with ≥1 terminal occurrence) before it earns a self-filed issue — the recurrence gate (rescues the ops-agent O4 trend-repeat threshold). A one-night burst is one cycle; two cycles running is a real, file-worthy problem (a 3-cycle bar proved unreachable — the session-led fix loop repairs recurrences in ~a day). It is a noise filter for *transient* failures: a class whose own handling stops it from recurring cannot satisfy it, which is why worker environment deficiencies file outside it (spec 038). |
-| `DEVCLAW_SELF_ISSUE_QUIET_DAYS` | `3` | Quiet span (≈ cycle-spans, cycles being ~daily) after which an OPEN self-filed issue auto-closes as stale — the age-out exit that keeps the board from accumulating (backlog #259). It reopens automatically if the problem recurs. |
-| `DEVCLAW_SELF_ISSUE_MAX_PER_CYCLE` | `3` | Cap on NEW self-filed issues opened per cycle (noise budget). Reopens and closes are not capped (not new noise); anything suppressed over the cap is **named** in the cycle-report line, never silently dropped. |
-| `DEVCLAW_SELF_FIX_CONCURRENCY` | `1` | How many self-fix goals may be in flight at once (self-issue-filing **Stage 2 / P2 — FIX pickup**). At the same once-per-cycle edge, a human-`accepted` + `devclaw:self-filed` issue is picked up as ONE `one_shot` self-fix goal that opens a PR for **human** review (no auto-merge — the tiered classifier is deferred to P2.1/P2.2). `1` serialises self-modification: parallel self-fixes multiply the self-brick surface and muddy failure attribution. Gated by `DEVCLAW_SELF_REPO` (unset ⇒ no pickup, nothing shelled). |
-| `DEVCLAW_PROBLEM_TIMEBOX_S` | `43200` | Seconds a typed Problem (spec 031) waits for the owner before the tick applies its default option; `0` disables defaulting. |
-
-
-## Instance health (drift detection)
-
-Read-only, zero-LLM environmental probes (spec 027 / issue #596). Run at most
-once per `DEVCLAW_HEALTH_INTERVAL_S` as a 4th heartbeat scheduled edge.
-Breaches are recorded in the problems catalog (deduped, aged, visible via
-`/problems.json` and the cycle report). A probe failing gracefully records
-nothing — unknown is not an alarm.
-
-| Var | Default | Purpose |
-|---|---|---|
-| `DEVCLAW_HEALTH_DISK_WARN_PCT` | `80` | Disk-used % at which a filesystem is flagged as `disk_usage_high` in the problems catalog. Applies to EVERY instance-critical filesystem enumerated by `health_drift._disk_surfaces` — the workspace volume (`DEVCLAW_GOALS_DIR`), the SQLite home (`DEVCLAW_DB`, configured independently and fatal when full), and the docker root (`docker info --format {{.DockerRootDir}}`) — reported once per distinct DEVICE, so a single-disk box raises one alarm naming all surfaces at risk while split volumes are reported separately. An undeterminable path is omitted, never guessed. 0/non-positive/unparseable → 80. |
-| `DEVCLAW_HEALTH_ORPHAN_DOCKER_WARN` | `10` | Count of docker toolchain volumes (`devclaw-toolchains-*`) with no registered project workspace above which an `orphan_docker_volumes` problem is recorded. Negative/unparseable → 10. Docker probe failure → no record. |
-| `DEVCLAW_HEALTH_STALE_WS_WARN` | `20` | Count of sweep-eligible workspace directories (terminal goal, past retention, still on disk) above which a `stale_workspaces` problem is recorded. Negative/unparseable → 20. |
-| `DEVCLAW_HEALTH_INTERVAL_S` | `3600` | Minimum wall-clock seconds between health drift probe runs. The gate is a cheap meta-key timestamp compare; probes (including the docker subprocess) only fire when the interval has elapsed. Non-positive/unparseable → 3600. |
-
-## Deploy hosting
-
-| Var | Default | Purpose |
-|---|---|---|
-| `DEVCLAW_DEPLOY_IMAGE` | falls back to `DEVCLAW_SANDBOX_IMAGE` | Image used for durable deploys. |
-| `DEVCLAW_DEPLOY_PORT_BASE` | `8200` | Lower bound of the per-slug deterministic deploy port range. |
-| `DEVCLAW_DEPLOY_PORT_SPAN` | `200` | Number of slots in the deploy port range (so `8200`–`8399` by default). |
-| `DEVCLAW_DEPLOY_MEMORY` | `512m` | Per-deploy memory ceiling. |
-| `DEVCLAW_DEPLOY_QUIESCENCE_S` | `21600` | Spec 025 US2 (self-deploy on merge): how long a pending instance self-deploy may wait for task quiescence (`count_running() == 0`) before it expires loudly (`deploy_last.outcome = expired`; re-armed by the next devclaw-repo close or operator resume). The trigger fires `gh workflow run deploy.yml -f auto=true`; the workflow's auto lane (`deploy/deploy-devclaw-auto.sh`) owns the health probe and the ONE automatic rollback. |
-| `DEVCLAW_DEPLOY_CPUS` | `1.0` | Per-deploy CPU limit. |
-| `DEVCLAW_DEPLOY_MAX` | `5` | Max concurrent durable deploys on the VPS. |
-
-## What's NOT here on purpose
-
-- The waiter agent's env (model, profile, allowed tools) lives in OpenClaw's `openclaw.json` on the VPS — not this repo. See [runbooks/vps-waiter-deploy.md](../runbooks/vps-waiter-deploy.md).
-- Per-project verify commands and goal `done_when` strings are runtime arguments to MCP tools, not env. They belong with the project, not the host.
-- The eval-harness `MEASURE_*` vars (see `evals/measure_passrate.py`) and the test-suite gates (`DEVCLAW_RUN_COGNITION_EVALS`, `DEVCLAW_TEST_*`) — offline tooling, not the runtime.
-- Internal tuning constants (timeouts, retry buffers, breaker thresholds, review diff caps) — named constants at their use sites, tuned by PR.
+| `DEVCLAW_VERIFY_TIMEOUT_S` | `900` | Wall-clock cap for one `.devclaw/verify` run |
+| `DEVCLAW_VERIFY_ROUNDS` | `3` | Red-verify rounds handed back to the same session before it ends |
+| `DEVCLAW_ACP_IDLE_TIMEOUT_S` | `1800` | The agent is killed after this long with no protocol traffic |
+| `DEVCLAW_VALIDATION_STEP_TIMEOUT_S` | `900` | Per-step cap of the agent-less validation runner path |

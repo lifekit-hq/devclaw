@@ -1,13 +1,7 @@
-"""The goal layer, wired — the folded-in goalclaw, now a subsystem of devclaw.
+"""The goal layer's facade + heartbeat (spec 046).
 
-Owns the durable goals under ``DEVCLAW_GOALS_DIR``, drives them across a heartbeat
-(a resident asyncio loop, woken either by the interval or — in-process — by a task
-settling), and exposes the steer/observe surface the MCP tools wrap
-(create/get/list/steer/evaluate). Dispatch is in-process via :class:`InProcessEngine`,
-so there is no HTTP, no bearer token, and no ``/wake`` endpoint anymore.
-
-Cognition (the planner + the evaluator) is injected; for the live service it
-binds devclaw's ``claude --print`` callers at the goal-planner / evaluator tiers.
+Create, cancel, decide, read. The loop runs the tick rule over every open
+goal, one session per project at a time, and fires the self-deploy edge.
 """
 
 from __future__ import annotations
@@ -15,1773 +9,248 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-import uuid
-from dataclasses import dataclass, replace
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import Optional
 
 from .. import config as _config
-from .. import env_cap as _env_cap_ids
-from ..advance_brief import display_goal as _display_goal
-from . import delivery_strategy as _delivery_strategy
-from . import evaluator as goal_evaluator
-from . import mergeability as goal_mergeability
-from . import issue_ref as _issue_ref
-from . import project_hold as _project_hold
-from . import remote_checks as goal_remote_checks
+from ..engine.workspace import remove_goal_checkout
+from ..state_store import Goal, StateStore, _now_ms
+from . import github as _gh
 from . import self_deploy as _self_deploy
-from ..engine.workspace import prepare_workspace
-from .engine import InProcessEngine
-from .evaluator import ClaudeCaller
-from .models import Goal, GoalStatus
-from .notify import HttpNotifier, Notifier, NullNotifier, QuietNotifier
-from .store import GoalStore
-from .tick import AUTODEPLOY_ENABLED, VERIFY_DONE, sweep_orphaned_refs, tick_all, tick_goal
-from .transitions import Event
-from . import problems as _problems
-from . import admission_lint as _lint
-from .models import Decision as _Decision
-#: the class-(c) judge, bound as a module global so tests patch it HERE
-#: (cognition-prompts rule: snapshot/judge collectors live in the caller's module)
-_judge_undecided = _lint.judge_undecided
-from ..dispatch_gate import next_window_open_ms, operator_block, schedule_blocks
-from ..loom import trace as _trace
-from ..state_store import StateStore, _now_ms
-from ..task_queue import TaskQueue
-
-
-def _iso_utc(ms: int) -> str:
-    """UTC ISO-8601 for an epoch-ms value — the shape the goal-status
-    timestamps already use on the read surfaces."""
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
-
-if TYPE_CHECKING:
-    from ..project_registry import ProjectRegistry
-
-
-# Telemetry: opt-out via env. Default ON in production so heartbeats leave a
-# durable trace in the sqlite traces table; set to "0" for tests / local runs
-# where the per-tick PersistentTracer would just be noise. Tests inject their
-# own tracer directly when they want to assert on events.
-_TRACE_PERSIST_ENABLED = True
-
-
-@dataclass(frozen=True)
-class GoalConfig:
-    goals_dir: Path
-    notify_url: str
-    tick_seconds: int
-    verify_done: bool
-    #: three-way: True/False pins the fleet; None (the default) = conditional —
-    #: deploy on completion only if the workspace has an app surface (#554).
-    autodeploy: "Optional[bool]" = AUTODEPLOY_ENABLED
-
-    @staticmethod
-    def from_env() -> "GoalConfig":
-        return GoalConfig(
-            goals_dir=Path(_config.goals_dir()),
-            notify_url=_config.goal_notify_url(),
-            tick_seconds=_config.goal_tick_seconds(),
-            verify_done=VERIFY_DONE,
-            autodeploy=AUTODEPLOY_ENABLED,
-        )
-
-
-def _should_repoke(outcomes: "dict[str, str]") -> bool:
-    """Whether the heartbeat should immediately re-tick after this sweep:
-    only on ``conflict`` (T1/PR4+) — a tick's write was abandoned because
-    another writer landed mid-tick. The writers that matter most (steer_goal
-    and the done-gate's corrections) poke the loop themselves, but a writer
-    that doesn't (a telemetry-only column write that still bumps the
-    version) would otherwise leave the
-    conflicted goal's pending work — steering, a just-finished action's
-    detail — waiting out the full interval. Retrying immediately is bounded:
-    the retry re-reads fresh state, and a successful re-tick consumes the
-    very work that made it fire.
-    """
-    return any(v == "conflict" for v in outcomes.values())
+from .notify import HttpNotifier, Notifier, NullNotifier
+from .tick import SPAWNING, TickContext, tick_goal
+from .world import WorldReader
 
 
 class GoalService:
-    def __init__(
-        self,
-        queue: TaskQueue,
-        store: StateStore,
-        config: Optional[GoalConfig] = None,
-        *,
-        evaluator_caller: Optional[ClaudeCaller] = None,
-        notifier: Optional[Notifier] = None,
-        project_registry: "Optional[ProjectRegistry]" = None,
-    ) -> None:
-        self._cfg = config or GoalConfig.from_env()
-        # Wire the goal store onto the SHARED StateStore (the one that owns
-        # devclaw.db) via the Tranche 1 `state=` seam, so goal_status lives
-        # beside the tasks table — the atomic-dispatch join later PRs need, and
-        # one fewer database to migrate. (Tests keep constructing
-        # GoalStore(tmp_path) with no `state=`, self-creating a private
-        # .goal-state.db, so they stay hermetic and unchanged.)
-        self._goal_store = GoalStore(self._cfg.goals_dir, state=store)
+    def __init__(self, queue, store: StateStore, *, project_registry=None,
+                 notifier: Optional[Notifier] = None, world_reader: Optional[WorldReader] = None,
+                 post_comment=None, merge=None, tick_seconds: Optional[int] = None) -> None:
         self._queue = queue
-        self._store = store  # task/event store — read by tail_goal for live events
-        self._engine = InProcessEngine(queue, store)
-        self._evaluator_caller = evaluator_caller
-        #: used to resolve per-project overrides (verify_done, autodeploy).
-        #: None is fine — each falls back to its devclaw-wide default.
-        self._project_registry = project_registry
-        # Quiet mode (spec 025 US3) wraps the notifier HERE — the one binding
-        # both send paths share (_notify AND the cycle report's direct send).
-        # Injected test notifiers are wrapped too: disarmed quiet mode is a
-        # pure passthrough, so nothing changes until an operator arms it.
-        self._notifier: Notifier = QuietNotifier(
-            notifier or (
-                HttpNotifier(self._cfg.notify_url) if self._cfg.notify_url else NullNotifier()
-            ),
-            store,
+        self._store = store
+        self._registry = project_registry
+        if notifier is None:
+            url = _config.goal_notify_url()
+            notifier = HttpNotifier(url) if url else NullNotifier()
+        self._notifier = notifier
+        if world_reader is None:
+            from ..probes import green_credentials
+            world_reader = WorldReader(credentials=green_credentials)
+        self._ctx = TickContext(
+            store=store, queue=queue, world=world_reader, notifier=notifier,
+            **({"post_comment": post_comment} if post_comment else {}),
+            **({"merge": merge} if merge else {}),
         )
-        #: the goal heartbeat task + its in-process wake event
-        self._loop_task: Optional[asyncio.Task] = None
+        self._tick_seconds = tick_seconds or _config.goal_tick_seconds()
         self._wake: Optional[asyncio.Event] = None
-        #: heartbeat freshness (#494) — stamped by tick_all on every completed
-        #: full pass, read by /health + /node.json. In-memory on purpose: the
-        #: signal is "THIS process's loop completed a pass", so it must die
-        #: with the process rather than outlive it in the db.
-        self.started_at_ms: int = _now_ms()
+        self._loop_task: Optional[asyncio.Task] = None
+        self.started_at_ms: Optional[int] = None
         self.last_tick_at_ms: Optional[int] = None
 
     @property
     def tick_seconds(self) -> int:
-        """Heartbeat interval — exposed so the health surfaces can self-describe
-        the staleness threshold instead of consumers duplicating config."""
-        return self._cfg.tick_seconds
+        return self._tick_seconds
 
-    @property
-    def goal_store(self) -> GoalStore:
-        """Read-only handle for diagnostic surfaces (the doctor tool). Writers
-        keep going through the service verbs — this is not a mutation seam."""
-        return self._goal_store
-
-    # ---- cognition callers (bound on first real use) -----------------------
-
-    def _registered_workspaces(self) -> "set[str]":
-        """Normalized workspace paths owned by a REGISTERED project.
-
-        The retention sweep must never release these: a project owns its
-        checkout for as long as it is registered, however many of its goals have
-        finished, and ``delete_project`` is the verb that releases it. Without a
-        registry this returns an empty set — meaning "no workspace is
-        project-owned", which is only safe because the sweep additionally
-        requires every goal on a workspace to be terminal.
-        """
-        from ..project_registry import _normalize_workspace
-
-        if self._project_registry is None:
-            return set()
-        out: "set[str]" = set()
-        for project in self._project_registry.list():
-            norm = _normalize_workspace(getattr(project, "workspace_dir", None))
-            if norm:
-                out.add(norm)
-        return out
-
-    def _registered_capabilities(self) -> "dict[str, tuple[str, ...]]":
-        """``project_id -> declared environment capabilities`` (spec 030).
-
-        Read from each registered project's own ``devclaw.json``, so the
-        admission gate is keyed by PROJECT and answers before any of its goals
-        has a prepared workspace — a goal's first-ever dispatch is held on a
-        red capability rather than fail-open (SC-002). Pure filesystem +
-        SQLite: zero LLM calls, called once per sweep.
-
-        Archived projects are skipped — nothing dispatches there, and their
-        declarations must not keep buying the fleet a recurring probe.
-
-        A project is recorded ONLY when its manifest was actually read. An
-        absent checkout, an absent ``devclaw.json`` and an unreadable one are
-        all "no answer", and the map is authoritative where it answers — so
-        recording them as declaring nothing would suppress the goal-workspace
-        fallback in ``tick_guards`` and fail a red capability OPEN, which is
-        the hole this per-project read was added to close in the first place.
-        Omitted means "ask the goal's own workspace".
-        """
-        from ..project_manifest import load_manifest
-
-        if self._project_registry is None:
-            return {}
-        out: "dict[str, tuple[str, ...]]" = {}
-        for project in self._project_registry.list():
-            if getattr(project, "status", "active") == "archived":
-                continue
-            workspace = getattr(project, "workspace_dir", None)
-            if not workspace:
-                continue
-            try:
-                manifest = load_manifest(workspace)
-            except Exception:  # noqa: BLE001 — see docstring
-                continue
-            if manifest is None:
-                continue
-            # spec 032 (Q3): every registered project's own CI is its
-            # verification environment — `ci:definition` is implicit here, the
-            # ONE place the implicit declaration lives; the manifest stays
-            # explicit-only for everything else (spec 030 FR-005).
-            caps = tuple(manifest.capabilities)
-            if _env_cap_ids.CAP_CI_DEFINITION not in caps:
-                caps = caps + (_env_cap_ids.CAP_CI_DEFINITION,)
-            out[project.id] = caps
-        return out
-
-    def _registered_repo_urls(self) -> "dict[str, str | None]":
-        """``project_id -> repo url`` — the subject the ``ci:definition`` probe is
-        about (spec 032): the project's own repository on GitHub. Read off the
-        listed rows like ``_registered_sandbox_images``."""
-        if self._project_registry is None:
-            return {}
-        return {
-            project.id: getattr(project, "repo_url", None)
-            for project in self._project_registry.list()
-        }
-
-    def _registered_sandbox_images(self) -> "dict[str, str | None]":
-        """``project_id -> pinned sandbox image`` (spec 030, project-scoped probes).
-
-        The subject a ``sandbox:image`` probe is about: a project pinning its
-        own image (ADR 0005) must be admitted against THAT image, never the
-        fleet default. Read straight off the listed rows rather than through
-        ``resolve_override`` per project — same value, one query instead of N,
-        and this runs once per sweep beside ``_registered_capabilities``.
-        A project with no pin maps to ``None`` = the engine default."""
-        if self._project_registry is None:
-            return {}
-        return {
-            project.id: getattr(project, "sandbox_image", None)
-            for project in self._project_registry.list()
-        }
-
-    def _evaluator(self) -> ClaudeCaller:
-        if self._evaluator_caller is None:
-            self._evaluator_caller = goal_evaluator.default_caller()
-        return self._evaluator_caller
-
-    def _remote_checker(self) -> "Optional[goal_remote_checks.RemoteChecker]":
-        """Grounded remote-checks verification at the done-gate (the 2026-07-06
-        benchmark fix). On by default; DEVCLAW_GOAL_REMOTE_CHECKS=0 disables —
-        the checker itself fails open on infra errors, so opting out is only
-        for environments with no gh at all."""
-        if not goal_remote_checks.REMOTE_CHECKS_ENABLED:
-            return None
-        return goal_remote_checks.default_checker()
-
-    def _verify_done(self, goal: "Optional[Goal]" = None) -> bool:
-        """The done-gate re-check policy for THIS goal's repo: its owning
-        project's ``verify_done`` override if set, else the devclaw-wide
-        ``DEVCLAW_GOAL_VERIFY_DONE`` default (carried on the config). ``goal=None``
-        or no registry → the global default."""
-        default = self._cfg.verify_done
-        if self._project_registry is None or goal is None:
-            return default
-        return self._project_registry.resolve_override(
-            goal.project_id, "verify_done", default
-        )
-
-    def _verify_done_resolver(self) -> "Callable[[Goal], bool]":
-        """Per-goal ``verify_done`` for tick_all's sweep — a project override
-        for one goal must not leak onto another (same reason as
-        :meth:`_verify_done_resolver`)."""
-        return self._verify_done
-
-    def _autodeploy(self, goal: "Optional[Goal]" = None) -> "Optional[bool]":
-        """The on-complete auto-deploy policy for THIS goal's repo: its owning
-        project's explicit ``autodeploy`` override if set, else the devclaw-wide
-        default (carried on the config). Three-way on purpose: an explicit
-        ``True``/``False`` (project pin) is honored as-is; ``None`` — nothing
-        pinned anywhere — means CONDITIONAL, and the done-gate deploys only if
-        the workspace has an app surface the preview launcher can serve (#554,
-        see tick_donegate._auto_deploy). A pure library never gets a preview
-        container unless its project pins ``autodeploy=on``."""
-        default = self._cfg.autodeploy
-        if self._project_registry is None or goal is None:
-            return default
-        return self._project_registry.resolve_override(
-            goal.project_id, "autodeploy", default
-        )
-
-    def _autodeploy_resolver(self) -> "Callable[[Goal], Optional[bool]]":
-        """Per-goal ``autodeploy`` for tick_all's sweep (same reason as
-        :meth:`_verify_done_resolver`)."""
-        return self._autodeploy
-
-    # ---- the heartbeat -----------------------------------------------------
+    # ---- heartbeat ----------------------------------------------------
 
     def start(self) -> None:
-        """Start the resident goal heartbeat. Idempotent. Called by the server
-        after the task queue starts ticking."""
-        if self._loop_task is None or self._loop_task.done():
-            self._wake = asyncio.Event()
-            self._loop_task = asyncio.ensure_future(self._loop())
+        if self._loop_task is not None and not self._loop_task.done():
+            return
+        self._wake = asyncio.Event()
+        self.started_at_ms = _now_ms()
+        self._loop_task = asyncio.ensure_future(self._loop())
 
     def poke(self) -> None:
-        """Wake the heartbeat NOW — wired to the task queue's on-settle hook so a
-        finished engine task triggers an immediate goal tick (the in-process
-        replacement for the old HTTP /wake). Safe to call from the event loop."""
         if self._wake is not None:
             self._wake.set()
 
     async def _loop(self) -> None:
-        n = len(self._goal_store.list_goal_ids())
-        sys.stderr.write(
-            f"goal-layer: heartbeat {self._cfg.tick_seconds}s over {self._cfg.goals_dir} "
-            f"({n} goal(s))\n"
-        )
         assert self._wake is not None
-        # Once-per-service-start orphan sweep (Tranche 1/PR7): re-adopts a
-        # goal's lost in-flight task/program ref (STATUS.md truncated by a
-        # crash mid-write, or leftover state from a pre-PR7 build). PR7's
-        # atomic dispatch makes losing a ref mid-flight structurally
-        # impossible on THIS build going forward, so this no longer needs to
-        # run every tick — see tick.sweep_orphaned_refs / _readopt_orphaned_ref.
-        # A sweep crash must not kill the heartbeat, same as a tick crash.
-        try:
-            swept = await sweep_orphaned_refs(self._goal_store, self._engine)
-            if swept:
-                sys.stderr.write(
-                    f"goal-layer: startup sweep re-adopted {len(swept)} orphaned "
-                    f"ref(s): {swept}\n"
-                )
-        except Exception as exc:  # noqa: BLE001 — a sweep crash must not kill the loop
-            sys.stderr.write(f"goal-layer: startup sweep crashed: {exc}\n")
         while True:
             try:
-                await asyncio.wait_for(self._wake.wait(), timeout=self._cfg.tick_seconds)
+                await asyncio.wait_for(self._wake.wait(), timeout=self._tick_seconds)
             except asyncio.TimeoutError:
                 pass
             self._wake.clear()
             try:
-                outcomes = await self.tick_all()
-                if _should_repoke(outcomes):
-                    self.poke()
+                await self.tick_all()
             except Exception as exc:  # noqa: BLE001 — a tick crash must not kill the loop
-                sys.stderr.write(f"goal-layer: tick crashed: {exc}\n")
-            # The cycle-window close report (ADR 0006 decision 3) — a mechanical,
-            # ZERO-LLM scheduled edge, independent of any goal's activity. Placed
-            # AFTER tick_all so it never precedes the cheap idle gates; its own
-            # try so a hiccup (bad clock, notifier outage) never kills the loop.
+                sys.stderr.write(f"goal-layer: tick crashed: {exc!r}\n")
             try:
-                await self._maybe_emit_cycle_report()
-            except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
-                sys.stderr.write(f"goal-layer: cycle-report edge crashed: {exc}\n")
-            # Self-deploy edge (spec 025 US2) — mechanical, zero-LLM: a free
-            # meta read when nothing is owed; when a devclaw-repo merge left a
-            # deploy pending it waits for task quiescence then fires the
-            # workflow. Own try for the same never-kill-the-loop reason.
+                await _self_deploy.maybe_trigger(self._store, now_ms=_now_ms())
+            except Exception as exc:  # noqa: BLE001
+                sys.stderr.write(f"goal-layer: self-deploy edge crashed: {exc!r}\n")
             try:
-                _deploy_outcome = await _self_deploy.maybe_trigger(
-                    self._store, now_ms=_now_ms())
-                if _deploy_outcome in ("expired", "trigger_failed"):
-                    # A merge that silently never deploys is the loop's own
-                    # "stopped when it shouldn't": the instance keeps running
-                    # old code and nothing says so. Since every push to main
-                    # arms this, an expiry means the box has been busy for the
-                    # whole bounded wait — the owner needs to know, not a
-                    # stderr line nobody reads.
-                    await self._notifier.send(
-                        f"⚠️ self-deploy {_deploy_outcome}: the instance is still "
-                        f"running its previous build. Re-armed by the next merge, "
-                        f"or deploy by hand."
-                    )
-            except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
-                sys.stderr.write(f"goal-layer: self-deploy edge crashed: {exc}\n")
-            # Health-drift edge (spec 027 / issue #596) — zero-LLM, read-only:
-            # probes disk headroom, orphaned docker volumes, and stale workspace
-            # dirs; records findings in the problems catalog. Rate-gated by a
-            # meta key so the docker subprocess runs at most once per
-            # DEVCLAW_HEALTH_INTERVAL_S, not every tick. Own try.
-            try:
-                await self._maybe_check_health_drift()
-            except Exception as exc:  # noqa: BLE001 — never kill the heartbeat
-                sys.stderr.write(f"goal-layer: health-drift edge crashed: {exc}\n")
-
-    def _make_tracer(self, goal_id: str) -> "Optional[_trace.PersistentTracer]":
-        """Per-goal-tick PersistentTracer that writes into the sqlite traces
-        table. Tests flip _TRACE_PERSIST_ENABLED off when tracing is noise.
-        Each tick gets a fresh ``trace_id`` so the full causal chain of one
-        wakeup can be replayed via ``get_trace(goal_id)``.
-
-        ``goals_dir`` is plumbed so cognition calls in the tick leave a full
-        prompt+response transcript under ``<goal_dir>/transcripts/`` (T0.5) —
-        the service already resolves the dir for GoalStore, so this is the
-        cleanest seam to the goal *directory* the tracer can't derive from the
-        goal id alone.
-        """
-        if not _TRACE_PERSIST_ENABLED:
-            return None
-        return _trace.PersistentTracer(
-            store=self._store,
-            trace_id=str(uuid.uuid4()),
-            goal_id=goal_id,
-            label=f"tick-{goal_id}",
-            goals_dir=self._cfg.goals_dir,
-        )
-
-    async def tick_all(self) -> dict:
-        outcomes = await tick_all(
-            store=self._goal_store, engine=self._engine,
-            evaluator_caller=self._evaluator(),
-            notifier=self._notifier, notify_url="",
-            verify_done=self._cfg.verify_done,
-            verify_done_resolver=self._verify_done_resolver(),
-            autodeploy=self._cfg.autodeploy, autodeploy_resolver=self._autodeploy_resolver(),
-            tracer_factory=self._make_tracer,
-            remote_checker=self._remote_checker(),
-            issue_fetcher=_issue_ref.fetch_issue,
-            mergeability_probe=goal_mergeability.pr_conflicting,
-            project_workspaces=self._registered_workspaces,
-            project_capabilities=self._registered_capabilities,
-            project_images=self._registered_sandbox_images,
-            project_repo_urls=self._registered_repo_urls,
-        )
-        # Freshness stamp (#494) — only on a COMPLETED pass: a perpetually
-        # crashing tick leaves this stale, which is exactly the signal an
-        # external dead-man watcher needs to see.
-        self.last_tick_at_ms = _now_ms()
-        return {gid: o.value for gid, o in outcomes.items()}
-
-    async def tick_one(self, goal_id: str) -> str:
-        goal = self._goal_store.load_goal(goal_id)
-        with _trace.tracer_scope(self._make_tracer(goal_id)):
-            outcome = await tick_goal(
-                goal_id, store=self._goal_store, engine=self._engine,
-                evaluator_caller=self._evaluator(),
-                notifier=self._notifier, notify_url="",
-                verify_done=self._verify_done(goal),
-                autodeploy=self._autodeploy(goal),
-                remote_checker=self._remote_checker(),
-                mergeability_probe=goal_mergeability.pr_conflicting,
-                project_caps=self._registered_capabilities(),
-                issue_fetcher=_issue_ref.fetch_issue,
-            )
-        return outcome.value
-
-    #: injectable PR-state seam (spec 018 US2) — same posture as the
-    #: remote-checks binding: production uses the gh-backed reader, tests
-    #: assign a fake so the stubbed suite never spawns a subprocess.
-    _pr_state_fetcher: "goal_remote_checks.PrStateFetcher" = staticmethod(
-        goal_remote_checks.pr_state
-    )
-
-    async def _refresh_pr_ledger(self) -> None:
-        """Read ground-truth state for every undecided in-window PR and stamp
-        the ledger (store method owns the write). Bounded: window + cap from
-        the store constants; per-URL failures land as 'unknown' (stamped —
-        the read RAN and could not decide), and the cap-truncation flag is
-        persisted so the scorecard reports the bound out loud."""
-        now = _now_ms()
-        since = now - self._store.PR_REFRESH_WINDOW_DAYS * 24 * 3600 * 1000
-        urls, truncated = self._store.undecided_pr_urls(
-            since_ms=since, limit=self._store.PR_REFRESH_CAP,
-        )
-        if not urls and not truncated:
-            # nothing undecided: still stamp the summary so staleness reads
-            # "refreshed, nothing to do", not "never ran".
-            self._store.upsert_pr_states({}, as_of_ms=now, truncated=False)
-            return
-        states: dict[str, str] = {}
-        for url in urls:
-            try:
-                states[url] = await self._pr_state_fetcher(url)
-            except Exception:  # noqa: BLE001 — one bad URL never stops the batch
-                states[url] = "unknown"
-        self._store.upsert_pr_states(states, as_of_ms=now, truncated=truncated)
-
-    async def _maybe_emit_cycle_report(self) -> Optional[str]:
-        """The scheduled-edge owner (ADR 0006 decision 3): once per per-cycle
-        run-window close, assemble the cycle's slice from existing rows and push
-        it through the notifier. Returns the ``cycle_key`` it emitted, or None
-        when the window hasn't closed / was already reported.
-
-        ZERO LLM — cheap SQL + timestamp math only:
-          1. compute the most-recent CLOSED window (pure clock math);
-          2. an existence check on ``cycle_reports`` (the PK is the once-per-cycle
-             idempotency guard) short-circuits every wakeup after the first;
-          3. only past that gate does it read eval_outcomes/problems and write.
-
-        The write goes THROUGH the store (single-writer: ``cycle_reports`` is
-        only ever written by ``record_cycle_report``). ``sent_at`` is NULL when
-        the notifier doesn't confirm the push (unconfigured / failed) — a
-        log-only report, never an error."""
-        from . import cycle_report as _nr
-
-        now = _now_ms()
-        # The cycle IS the operator's run window — enabled, that span; disabled
-        # (24/7), the calendar day. It used to be a separate hardcoded
-        # 22:00–05:00 setting, which silently stopped describing reality when
-        # 24/7 was ruled: problems outside those 7 hours entered no cycle, so
-        # the self-issue filer's recurrence count never advanced and it stopped
-        # filing (specs/tiny/cycle-is-when-devclaw-works).
-        _start, _end, _tz = _nr.cycle_window_for(self._store.get_run_schedule())
-        win = _nr.most_recent_closed_window(now, start=_start, end=_end, tz=_tz)
-        if win is None:  # unresolvable schedule (bad tz/time) — skip, never crash
-            return None
-        cycle_key, start_ms, end_ms = win
-        window_label = (
-            f"full day {_tz}" if _start == _end else f"{_start}–{_end} {_tz}"
-        )
-        if self._store.cycle_report_exists(cycle_key):
-            return None  # already reported this cycle (idempotent)
-
-        # PR-ledger refresh (spec 018 US2, clarified option B): the ONE place
-        # platform state enters the ledger — bounded (undecided in-window
-        # rows only, hard cap, truncation persisted loudly), riding this
-        # once-per-cycle edge so the scorecard read stays a pure store read
-        # and the idle tick stays subprocess-free. Telemetry-shaped: a
-        # refresh failure must never block the cycle report.
-        try:
-            await self._refresh_pr_ledger()
-        except Exception as exc:  # noqa: BLE001 — telemetry, never fatal
-            sys.stderr.write(f"goal-layer: pr-ledger refresh failed: {exc}\n")
-
-        report = _nr.assemble_cycle_report(
-            self._store, cycle_key, start_ms, end_ms, window_label=window_label,
-        )
-        # Push best-effort; NullNotifier / a relay outage returns False → log-only.
-        sent = False
-        try:
-            sent = await self._notifier.send(report.summary)
-        except Exception as exc:  # noqa: BLE001 — a notifier hiccup is never fatal
-            sys.stderr.write(f"goal-layer: cycle-report notify failed: {exc}\n")
-        self._store.record_cycle_report(
-            cycle_key=cycle_key,
-            window_start_ms=start_ms,
-            window_end_ms=end_ms,
-            clean=report.clean,
-            idle=report.idle,
-            wedges_json=json.dumps(report.wedges),
-            pauses_json=json.dumps(report.pauses),
-            summary=report.summary,
-            sent_at=(now if sent else None),
-        )
-        if not sent:
-            # Log-only path: the report still exists in the table; surface it so a
-            # notifier-less run still leaves a trace.
-            sys.stderr.write(f"goal-layer: cycle report {cycle_key} (log-only):\n{report.summary}\n")
-
-        # Self-issue-filing Stage 1 (``goal/self_issue.py`` docstring): at this
-        # SAME once-per-cycle edge (past the cycle_report_exists idempotency gate,
-        # so it fires once per cycle, never per tick), turn recurring problems into
-        # GitHub issues on the devclaw repo and age out stale ones. ZERO LLM.
-        # Env-gated (DEVCLAW_SELF_REPO unset ⇒ no-op, shells nothing — the default
-        # and every test path), and best-effort: a GitHub hiccup logs and is
-        # swallowed here, it never wedges the cycle edge (fail-loud-not-fatal).
-        try:
-            from . import self_issue as _si
-
-            si = await _si.run_self_issue_filing(
-                self._store, cycle_key=cycle_key,
-                start_ms=start_ms, end_ms=end_ms, now_ms=now,
-            )
-            line = si.report_line()
-            if line:
-                sys.stderr.write(f"goal-layer: cycle {cycle_key} {line}\n")
-        except Exception as exc:  # noqa: BLE001 — filing never fails the cycle edge
-            sys.stderr.write(f"goal-layer: self-issue filing failed: {exc}\n")
-
-        # Self-issue-filing STAGE 2 (P2 — FIX pickup, proposal §5A): at this SAME
-        # once-per-cycle edge, turn a human-`accepted` self-filed issue into ONE
-        # `one_shot` self-fix goal that opens a PR for HUMAN review — NO auto-merge
-        # (the tiered classifier is deferred to P2.1/P2.2). ZERO LLM to detect (a
-        # `gh issue list` + pure selection); env-gated on DEVCLAW_SELF_REPO (unset ⇒
-        # no-op, shells nothing) and best-effort — a pickup hiccup never wedges the
-        # cycle edge. Goal creation stays here (`self.create_goal`, injected).
-        try:
-            from . import self_issue as _si2
-
-            picked = await _si2.run_self_fix_pickup(self.create_goal)
-            pline = picked.report_line()
-            if pline:
-                sys.stderr.write(f"goal-layer: cycle {cycle_key} {pline}\n")
-        except Exception as exc:  # noqa: BLE001 — pickup never fails the cycle edge
-            sys.stderr.write(f"goal-layer: self-fix pickup failed: {exc}\n")
-        return cycle_key
-
-    async def _maybe_check_health_drift(self) -> None:
-        """Zero-LLM environmental health probe (spec 027 / issue #596).
-
-        Rate-gated by ``health_drift_last_check_ms`` meta key so probes run at
-        most once per ``DEVCLAW_HEALTH_INTERVAL_S`` (default 1 h). On idle ticks
-        within the window this is a cheap meta read + timestamp compare.
-
-        The full probe runs in a thread (``asyncio.to_thread``) because the docker
-        subprocess in the orphaned-volume probe is blocking. Never raises — the
-        caller wraps this in its own ``try`` for extra safety.
-        """
-        from . import health_drift as _hd
-
-        interval_ms = _config.health_check_interval_s() * 1000
-        now = _now_ms()
-        last_raw = self._store.get_meta(_hd._LAST_CHECK_META)
-        if last_raw is not None:
-            try:
-                if now - int(last_raw) < interval_ms:
-                    return  # interval not elapsed — cheap exit
-            except (ValueError, TypeError):
-                pass  # corrupt meta → run now
-
-        # Collect the inputs synchronously (fast SQLite + filesystem reads) then
-        # run the blocking probes off the event loop thread.
-        try:
-            goal_ids = self._goal_store.list_goal_ids()
-            goals = [self._goal_store.load_goal(gid) for gid in goal_ids]
-        except Exception:  # noqa: BLE001
-            goals = []
-        try:
-            project_workspaces: set[str] = (
-                {
-                    str(p.workspace_dir)
-                    for p in self._project_registry.list()
-                    if p.workspace_dir
-                }
-                if self._project_registry is not None
-                else set()
-            )
-        except Exception:  # noqa: BLE001
-            project_workspaces = set()
-
-        await asyncio.to_thread(
-            _hd.run_health_drift_checks,
-            store=self._store,
-            goals=goals,
-            project_workspaces=project_workspaces,
-            now_ms=now,
-            goals_dir=str(self._cfg.goals_dir),
-            db_path=_config.db_path(),
-            disk_warn_pct=_config.health_disk_warn_pct(),
-            orphan_docker_warn=_config.health_orphan_docker_warn(),
-            stale_ws_warn=_config.health_stale_ws_warn(),
-            docker_bin=_config.DOCKER_BIN,
-        )
-        self._store.set_meta(_hd._LAST_CHECK_META, str(now))
-
-    # ---- steer / observe surface (wrapped by MCP tools) --------------------
-
-    async def trigger_validation(self, project_id: str) -> Optional[str]:
-        """Spec 015 US3 — the post-deploy trigger. Finds the project's ``qa``
-        goal (none ⇒ no-op: the loop is opt-in per repo) and dispatches ONE
-        ``validate_product`` run through the standard goal-dispatch path, so
-        in-flight bookkeeping, settle polling and the run record all ride the
-        existing machinery. Returns the qa goal id when one was found."""
-        from .tick import validation_action
-        from .tick_dispatch import _dispatch_action
-        from dataclasses import replace as _replace
-
-        pid = (project_id or "").strip()
-        if not pid:
-            return None
-        for gid in self._goal_store.list_goal_ids():
-            try:
-                g = self._goal_store.load_goal(gid)
-                if g.mode != "qa" or (g.project_id or "").strip() != pid:
-                    continue
-                st = self._goal_store.load_status(gid)
-            except Exception:  # noqa: BLE001 — one bad goal must not eat the trigger
-                continue
-            if _project_hold.is_terminal(st):
-                continue
-            if st.in_flight is not None:
-                self._goal_store.append_log(
-                    gid, "qa: deploy completed while a validation run is in "
-                         "flight — not stacking a second run",
-                )
-                return gid
-            now = self._goal_store.now_iso()
-            base = _replace(st, last_plan_at=now, last_tick_at=now)
-            self._goal_store.append_log(
-                gid, f"qa: deploy completed for {pid} — triggering validation run"
-            )
-            await _dispatch_action(
-                gid, g, base, validation_action(g),
-                store=self._goal_store, engine=self._engine,
-                notifier=self._notifier, notify_url="",
-                prepare_ws=prepare_workspace,
-                project_caps=self._registered_capabilities(),
-            )
-            return gid
-        return None
-
-    #: the doorway's live-issue reader (spec 019 US2) — tests override the
-    #: instance attribute; production uses the gh-backed default.
-    _issue_fetcher: "_issue_ref.IssueFetcher" = staticmethod(_issue_ref.fetch_issue)
-
-    async def create_goal_async(self, goal_id: str, **kwargs) -> dict:
-        """The MCP doorway's entry (spec 019 US2): before the sync create, a
-        referenced goal that DEFAULTS its done_when must prove the contract is
-        buildable — every ref fetchable and carrying an acceptance section —
-        so the refusal lands at filing time with the fixing verb, not at 2am
-        as a blocked gate round. Hard refusal, nothing persisted (clarified
-        2026-08-25: no override)."""
-        issues = kwargs.get("issues")
-        done_when = (kwargs.get("done_when") or "").strip()
-        repo_url = kwargs.get("repo_url")
-        refs = _issue_ref.validate_refs(issues, repo_url=repo_url)
-        # The goal's own ``owner/name`` — what lets the admission lint tell a
-        # repository named as context from one named as where a change lands.
-        own_repo = goal_remote_checks.parse_owner_repo(repo_url or "")
-        if refs:
-            # Every referenced creation fetches its refs once (existence) and
-            # requires the earned readiness state (spec 019 US4): grooming
-            # the issue to ready is where the relocated context is REQUIRED
-            # to land — grade_backlog / regrade_intake are the unblocking
-            # verbs. Hard refusal, no override (clarified 2026-08-25).
-            snaps = []
-            for n in refs:
-                try:
-                    snaps.append(await self._issue_fetcher(repo_url or "", n))
-                except _issue_ref.IssueRefError as exc:
-                    raise ValueError(
-                        f"referenced issue #{n} could not be fetched at the "
-                        f"doorway: {exc} — fix the reference (or gh access), "
-                        "then re-file."
-                    )
-            unready = [s2.number for s2 in snaps if not _issue_ref.is_ready(s2)]
-            if unready:
-                nums = ", ".join(f"#{n}" for n in unready)
-                raise ValueError(
-                    f"issue(s) {nums} are not graded ready — a goal can only "
-                    "reference issues carrying the earned readiness state. "
-                    "Grade them first (grade_backlog for the repo, or "
-                    "regrade_intake per issue), then re-file."
-                )
-            if not done_when:
-                missing = [
-                    s2.number for s2 in snaps
-                    if _issue_ref.extract_acceptance(s2.body) is None
-                ]
-                if missing:
-                    nums = ", ".join(f"#{n}" for n in missing)
-                    raise ValueError(
-                        f"cannot default done_when from these references: no "
-                        f"acceptance section in issue(s) {nums}. Either groom "
-                        "the issue to carry an acceptance section (the "
-                        "readiness convention), or pass an explicit done_when."
-                    )
-                # #847: the referenced contract gets the same class-(a)
-                # refusal an explicit done_when gets — a clause the sandbox
-                # can never satisfy (a change in another repository, a
-                # credential, a human) refuses creation HERE, at the author,
-                # not as a done-gate Problem after the goal's real work is
-                # done. Only (a): the contract is the ticket's, read live at
-                # the gate, so a rewrite (b) has nowhere to persist and the
-                # readiness grader already judged the ticket's choices (c).
-                mech = _lint.lint_mechanical(
-                    _issue_ref.acceptance_contract(snaps), own_repo=own_repo)
-                if mech.refused:
-                    raise ValueError(
-                        _lint.refusal_message(mech)
-                        + "\n(the contract is the referenced issue's acceptance "
-                        "section — edit the issue, then re-file; companion work "
-                        "in another repository is its own issue there)"
-                    )
-        # Spec 031 US3 — the done_when admission lint, after the referenced-
-        # contract readiness check and BEFORE anything persists. (a) a clause
-        # the sandbox can never satisfy refuses creation (Q3 → A, nothing
-        # persisted); (b) a baseline-less absolute predicate is rewritten and
-        # recorded as an admission Decision; (c) an undecided design choice
-        # becomes a Problem to the author before any dispatch. The one
-        # cognition call ((c)) runs here, at creation — never on the tick.
-        done_when = (kwargs.get("done_when") or "").strip()
-        admission: dict = {}
-        if done_when:
-            mech = _lint.lint_mechanical(done_when, own_repo=own_repo)
-            if mech.refused:
-                raise ValueError(_lint.refusal_message(mech))
-            try:
-                undecided, note = await _judge_undecided(mech.done_when, self._evaluator())
-            except _lint.AdmissionLintError as exc:
-                raise ValueError(
-                    f"done_when not admitted: {exc} — nothing persisted; resubmit "
-                    "once cognition answers (constitution V: a lint that cannot "
-                    "judge admits nothing)"
-                ) from exc
-            if mech.rewrites:
-                kwargs["done_when"] = mech.done_when
-                admission["rewrites"] = [
-                    {"from": r.original, "to": r.rewritten} for r in mech.rewrites
-                ]
-            if note:
-                admission["note"] = note
-            created = self.create_goal(goal_id, **kwargs)
-            for r in mech.rewrites:
-                self._goal_store.record_decision(_Decision(
-                    id=f"dec_{__import__('uuid').uuid4().hex[:20]}", goal_id=goal_id,
-                    problem_id="", clause=r.rewritten, verb="decide", option_key="",
-                    text=f"admission rewrite of: {r.original}", provenance="admission",
-                    made_by="admission_lint", made_at=_now_ms(),
-                ))
-            if undecided:
-                u = undecided[0]
-                opts = tuple(
-                    _problems.ProblemOption(f"c{i + 1}", o[:160], "the contract is settled this way")
-                    for i, o in enumerate(u.options[:4])
-                )
-                prob = _problems.new_problem(
-                    goal_id, kind="admission", raised_by="admission_lint",
-                    what=f"undecided design choice: {u.choice}", clause=u.clause,
-                    why="the contract does not make this choice; a worker would guess it",
-                    options=opts, default_key="c1",
-                )
-                s = self._goal_store.load_status(goal_id)
-                with self._goal_store.transaction():
-                    _problems.raise_problem(self._goal_store, prob)
-                    self._goal_store.transition(
-                        goal_id, Event.BLOCK,
-                        replace(s, phase="blocked", blocked_on=_problems.summary_line(prob),
-                                blocked_kind="needs_answer", problem_id=prob.id),
-                        expect=s,
-                    )
-                self._goal_store.append_log(goal_id, f"admission: problem {prob.id} raised before any dispatch")
-                admission["problem"] = _problems.to_dict(prob)
-            if admission and isinstance(created, dict):
-                created["admission"] = admission
-            return created
-        return self.create_goal(goal_id, **kwargs)
-
-    def create_goal(
-        self, goal_id: str, *, objective: str, workspace_dir: str,
-        cadence: str = "1d", repo_url: Optional[str] = None,
-        verify_cmd: Optional[str] = None, open_pr: bool = True,
-        done_when: str = "", backlog: Optional[list[str]] = None,
-        spec: str = "",
-        mode: str = "long_lived",
-        strictness: Optional[str] = None,
-        project_id: Optional[str] = None,
-        out_of_scope: Optional[list[str]] = None,
-        invariants: Optional[list[str]] = None,
-        established: Optional[list[str]] = None,
-        issues: Optional[list[int]] = None,
-    ) -> dict:
-        """File a durable goal. Beyond ``objective`` and ``done_when``, a saga
-        is authored from three further NAMED SLOTS (spec 012 US2, FR-007):
-        ``out_of_scope``, ``invariants`` and ``established``. Each must be
-        FILLED — pass an empty list to declare explicitly that there are none;
-        omitting one is a structured admission rejection naming the slot
-        (FR-008), because silence and "there are none" render different prompts
-        and only one of them is a decision.
-
-        Goals stay durable: there is deliberately no ``update_goal``. The verb
-        for a changed contract is cancel + recreate."""
-        # Chef admission ("verified on all sides"). Goals that fail structural
-        # checks are REJECTED with a structured condition list — the caller
-        # (waiter or upstream chain) must fix and re-file. Warnings still flow
-        # through to the result dict as before. See devclaw/goal/admission.py.
-        from .admission import GoalAdmissionRejected, verify_goal as _verify
-        from .models import QA_DONE_WHEN
-
-        if mode not in ("long_lived", "one_shot", "qa"):
-            raise ValueError(
-                f"unknown goal mode {mode!r} — expected 'long_lived', 'one_shot' or 'qa'"
-            )
-        # First-class issue references (spec 019 US1) — hard refusal at the
-        # doorway, nothing persisted (clarified 2026-08-25: no override).
-        issue_refs = _issue_ref.validate_refs(issues, repo_url=repo_url)
-        if issue_refs:
-            # The length budget (spec 019 US3): a referenced goal's free text
-            # is ordering/scope glue, not the spec — the spec lives in the
-            # graded issue. Explicit done_when is a contract, not context,
-            # and is deliberately NOT counted (research D3).
-            # One issue → one LIVE goal (spec 019 US4, clarified: 007's
-            # single-claim semantics one layer earlier). Refiling means
-            # cancelling the holder first — the cancel+recreate doctrine.
-            for other_id in self._goal_store.list_goal_ids():
-                if other_id == goal_id:
-                    continue
-                try:
-                    other = self._goal_store.load_goal(other_id)
-                except Exception:  # noqa: BLE001 — an unreadable record can't hold a claim
-                    continue
-                if not other.issue_refs or other.repo_url != repo_url:
-                    continue
-                if self._goal_store.load_status(other_id).phase in ("done", "cancelled"):
-                    continue
-                overlap = sorted(set(issue_refs) & set(other.issue_refs))
-                if overlap:
-                    nums = ", ".join(f"#{n}" for n in overlap)
-                    raise ValueError(
-                        f"issue(s) {nums} are already referenced by live goal "
-                        f"{other_id!r} — one issue, one live goal. Cancel that "
-                        "goal first (cancel_goal) if this filing supersedes it."
-                    )
-            budget = _config.goal_text_budget()
-            if len(objective) > budget:
-                ref_list = ", ".join(f"#{n}" for n in issue_refs)
-                raise ValueError(
-                    f"objective is {len(objective)} chars — over the "
-                    f"{budget}-char budget for a referenced goal. The context "
-                    f"belongs in the referenced issue(s) {ref_list}: move it "
-                    "there (edit the issue, or regrade_intake after), keep "
-                    "the objective to ordering/scope glue, and re-file. "
-                    "(Budget: DEVCLAW_GOAL_TEXT_BUDGET; issue-less goals are "
-                    "exempt.)"
-                )
-        if mode == "qa":
-            # Spec 015 US3 — a qa goal's contract is fixed by construction:
-            # standing done_when (the done-gate could never close it), no
-            # cadence unless the owner explicitly armed one (the periodic
-            # schedule SHIPS OFF), and saga slots that exist only to satisfy
-            # admission — a validation run authors no feature saga.
-            done_when = (done_when or "").strip() or QA_DONE_WHEN
-            if cadence == "1d":  # the unmodified default = unarmed
-                cadence = ""
-            if out_of_scope is None:
-                out_of_scope = ["feature work — validation runs never modify the repository"]
-            if invariants is None:
-                invariants = ["a validation run never commits, pushes, or opens PRs"]
-            if established is None:
-                established = ["the repo's devclaw.json validation contract defines boot and suites"]
-        # None = "author didn't choose" (spec 016 FR-008): the key is not
-        # written, so the repo manifest's strictnessDefault applies live.
-        if strictness is not None and strictness not in ("trust", "strict"):
-            raise ValueError(f"unknown strictness {strictness!r} — expected 'trust' or 'strict'")
-        # Spec 024 US2: for ISSUE-BACKED goals the ticket is the authoring home
-        # — the saga sections live in the issue template and travel to grading
-        # and the worker brief as live issue content, so an omitted slot
-        # argument is "authored on the ticket", not an unfilled slot. Coalesce
-        # to declared-empty for storage; admission skips the slot checks on
-        # this lane (the issue-less lane keeps spec 012's rejection).
-        if issue_refs:
-            out_of_scope = out_of_scope if out_of_scope is not None else []
-            invariants = invariants if invariants is not None else []
-            established = established if established is not None else []
-
-        admission = _verify(
-            objective=objective, workspace_dir=workspace_dir, done_when=done_when,
-            backlog=backlog, repo_url=repo_url, verify_cmd=verify_cmd, spec=spec,
-            out_of_scope=out_of_scope, invariants=invariants, established=established,
-            has_issue_refs=bool(issue_refs),
-        )
-        if not admission.admitted:
-            raise GoalAdmissionRejected(admission)
-
-        self._goal_store.create_goal(
-            goal_id, objective=objective, workspace_dir=workspace_dir, cadence=cadence,
-            repo_url=repo_url, verify_cmd=verify_cmd, open_pr=open_pr,
-            done_when=done_when, backlog=backlog, mode=mode, strictness=strictness,
-            project_id=project_id, out_of_scope=out_of_scope, invariants=invariants,
-            established=established, issue_refs=issue_refs,
-        )
-        # The waiter may have grilled scope before filing the order — persist the
-        # spec it landed on so the evaluator judges done against the shared contract.
-        if spec and spec.strip():
-            self._goal_store.write_spec(goal_id, spec)
-        # ONE execution path (spec 008 shrink): both modes start executing —
-        # the worker plans via speckit in-sandbox; the investigating/firming
-        # detour is gone. "Executing" must be PERSISTED, not implied: a NULL
-        # lifecycle reads-as-executing on every display surface, but
-        # delivery_strategy.resolve_strategy requires the EXPLICIT
-        # ``executing`` string to put the goal on its ``goal/<id>``
-        # accumulation branch — NULL silently downgrades a fresh goal to
-        # per-action reset-to-main delivery, the exact amnesia #486 exists to
-        # kill (live-found: ledger night 1, 2026-08-10 — three unmerged
-        # scaffold PRs, main never moved).
-        self._goal_store.save_status(goal_id, GoalStatus(lifecycle="executing"))
-        self._goal_store.append_log(goal_id, "goal created")
-        self.poke()  # advance it on the next loop turn without waiting a full interval
-        result = self.get_goal(goal_id)
-        if admission.warnings:
-            # Keep the historical string-list shape so existing callers /
-            # tests / dashboards don't break — warnings were already prose.
-            result["warnings"] = [c.message for c in admission.warnings]
-        return result
-
-    async def dispatch_issue(
-        self,
-        *,
-        project_id: str,
-        workspace_dir: str,
-        repo_url: Optional[str],
-        issue_ref: int,
-        kind: str = "implement_feature",
-        objective: str = "",
-        verify_cmd: Optional[str] = None,
-        open_pr: bool = True,
-    ) -> dict:
-        """Create-or-attach a one_shot goal keyed to (project_id, issue_ref).
-
-        FR-002: if no active work exists for (project, issue), a one_shot goal
-        is created and started; if active work exists, a receipt is returned and
-        nothing starts. FR-003: the (project, issue) uniqueness is enforced at
-        the SQLite level — a racing second caller cannot win even running
-        simultaneously. FR-005: the issue is fetched live; closed or unreachable
-        issues block the dispatch. FR-011: if the issue is already in a live
-        long-lived goal's scope the dispatch is rejected, naming the goal and
-        the exact steer invocation. FR-012: a completed identity re-arms iff the
-        issue is open on the tracker at dispatch time.
-        """
-        from ..state_store import _now_ms as _now_ms_fn
-
-        issue_key = str(issue_ref)
-
-        # FR-005 + FR-012: fetch live — load-bearing, fail loud, never degrade.
-        if not repo_url:
-            raise ValueError(
-                f"project {project_id!r} has no repo_url — issue-keyed dispatch "
-                "requires a registered repository URL to fetch and identify the issue. "
-                "Update the project registration with repo_url."
-            )
-        try:
-            snap = await self._issue_fetcher(repo_url, issue_ref)
-        except _issue_ref.IssueRefError as exc:
-            raise ValueError(
-                f"cannot dispatch issue #{issue_ref}: {exc} — "
-                "check that the repo_url is correct and gh is authenticated, then retry"
-            ) from exc
-        if snap.state != "open":
-            raise ValueError(
-                f"issue #{issue_ref} is {snap.state!r} on the tracker — "
-                "devclaw only dispatches open issues. Reopen it on the tracker "
-                "if this work is still wanted, then dispatch again."
-            )
-
-        # FR-011: reject if the issue is already in a live long-lived goal's scope.
-        # Long-lived goals reference issues in their issue_refs (spec 019); steering
-        # stays a deliberate human verb — a dispatch must never silently mutate a
-        # long-lived goal's direction.
-        for other_id in self._goal_store.list_goal_ids():
-            try:
-                other = self._goal_store.load_goal(other_id)
-            except Exception:  # noqa: BLE001 — unreadable goal cannot hold a claim
-                continue
-            if other.mode != "long_lived":
-                continue
-            if not other.issue_refs or other.repo_url != repo_url:
-                continue
-            if self._goal_store.load_status(other_id).phase in ("done", "cancelled"):
-                continue
-            if issue_ref in other.issue_refs:
-                raise ValueError(
-                    f"issue #{issue_ref} is already in the scope of long-lived "
-                    f"goal {other_id!r} — companion dispatch is not allowed while "
-                    f"a long-lived goal owns this issue (steering stays a deliberate "
-                    f"human verb, no override exists). To prioritize this issue "
-                    f"inside that goal, steer it: "
-                    f'steer_goal("{other_id}", "prioritize issue #{issue_ref}")'
-                )
-
-        # Fast path: look up existing identity before allocating a goal_id.
-        existing_goal_id = self._goal_store.lookup_issue_identity(project_id, issue_key)
-        if existing_goal_id:
-            existing_status = self._goal_store.load_status(existing_goal_id)
-            if existing_status.phase not in ("done", "cancelled"):
-                # FR-002: active — return "attached" receipt and log the dedup.
-                self._goal_store.append_log(
-                    existing_goal_id,
-                    f"duplicate dispatch for issue #{issue_ref} — "
-                    "already active, no second execution started",
-                )
-                return {
-                    "result": "attached",
-                    "goal_id": existing_goal_id,
-                    "issue_ref": issue_ref,
-                    "message": (
-                        f"issue #{issue_ref} already has active work in goal "
-                        f"{existing_goal_id!r} — attached to it, no duplicate "
-                        f"started. Poll get_goal({existing_goal_id!r}) for status."
-                    ),
-                }
-            # FR-012: completed/cancelled — issue is open (checked above).
-            # Re-arm: CAS-replace the identity row.
-            new_goal_id = self._make_issue_goal_id(issue_ref, objective)
-            now_ms = _now_ms_fn()
-            if not self._goal_store.rearm_issue_identity(
-                project_id, issue_key, existing_goal_id, new_goal_id, now_ms
-            ):
-                # Concurrent re-arm won — re-read and return "attached".
-                winner_id = (
-                    self._goal_store.lookup_issue_identity(project_id, issue_key)
-                    or existing_goal_id
-                )
-                return {
-                    "result": "attached",
-                    "goal_id": winner_id,
-                    "issue_ref": issue_ref,
-                    "message": (
-                        f"concurrent re-dispatch for issue #{issue_ref}: "
-                        f"another caller won the re-arm. Attached to goal "
-                        f"{winner_id!r}."
-                    ),
-                }
-            goal_id = new_goal_id
-        else:
-            # No existing identity — try to claim it.
-            goal_id = self._make_issue_goal_id(issue_ref, objective)
-            now_ms = _now_ms_fn()
-            claimed, owner_id = self._goal_store.claim_issue_identity(
-                project_id, issue_key, goal_id, now_ms
-            )
-            if not claimed:
-                # FR-003: race loss — PRIMARY KEY constraint fired, another caller won.
-                self._goal_store.append_log(
-                    owner_id,
-                    f"duplicate dispatch for issue #{issue_ref} — "
-                    "identity race lost, attached to winning goal",
-                )
-                return {
-                    "result": "attached",
-                    "goal_id": owner_id,
-                    "issue_ref": issue_ref,
-                    "message": (
-                        f"issue #{issue_ref} dispatch race: another caller won. "
-                        f"Attached to goal {owner_id!r}."
-                    ),
-                }
-
-        # We own the identity. Create the one_shot goal.
-        issue_objective = objective or f"Work issue #{issue_ref}: {snap.title}"
-        # Spec 022 US2 FR-004: workspace prep to default-branch head before
-        # the first run. The tick's prepare_ws is the load-bearing mechanism
-        # for each subsequent action; this early prep ensures the workspace is
-        # on the default branch even if there is a delay before the tick fires.
-        # Best-effort: a prep hiccup at dispatch time is fine — the tick's
-        # _block_on_prep_failure handles persistent failures.
-        if workspace_dir and Path(workspace_dir).exists():
-            try:
-                await prepare_workspace(workspace_dir, repo_url)
-            except Exception:  # noqa: BLE001 — best-effort; tick is the backstop
+                self._store.maybe_prune_events()
+            except Exception:  # noqa: BLE001
                 pass
-        self.create_goal(
-            goal_id,
-            objective=issue_objective,
-            workspace_dir=workspace_dir,
-            repo_url=repo_url,
-            verify_cmd=verify_cmd,
-            open_pr=open_pr,
-            done_when="",  # has_issue_refs=True bypasses done_when admission check
-            mode="one_shot",
-            project_id=project_id,
-            spec=issue_objective,
-            issues=[issue_ref],
-            # The issue IS the spec (spec 024 direction); slots declared empty
-            # — a deliberate declaration, not an omission.
-            out_of_scope=[],
-            invariants=[],
-            established=[],
+
+    async def tick_all(self) -> dict[str, str]:
+        """Every open goal, one project lane at a time. Zero sessions unless
+        a goal's world moved."""
+        self.last_tick_at_ms = _now_ms()
+        outcomes: dict[str, str] = {}
+        await self._pause_ping()
+        by_project: dict[str, list[Goal]] = {}
+        for g in self._store.list_goals(open_only=True):
+            by_project.setdefault(g.project_id, []).append(g)
+        for project_id, goals in by_project.items():
+            if any(self._store.goal_has_live_task(g.id) for g in goals):
+                for g in goals:
+                    outcomes[g.id] = "running" if self._store.goal_has_live_task(g.id) else "lane busy"
+                continue
+            for g in goals:
+                try:
+                    outcome = await tick_goal(g, self._ctx)
+                except Exception as exc:  # noqa: BLE001 — one goal's crash never stops the sweep
+                    outcome = f"error: {exc!r}"
+                    sys.stderr.write(f"goal-layer: {g.id}: tick error: {exc!r}\n")
+                outcomes[g.id] = outcome
+                if outcome in SPAWNING:
+                    for other in goals:
+                        outcomes.setdefault(other.id, "lane busy")
+                    break
+        return outcomes
+
+    async def _pause_ping(self) -> None:
+        until, reason = self._store.global_pause()
+        if until and until > _now_ms():
+            if not self._store.pause_notified():
+                self._store.set_pause_notified(True, reason.split(":")[0])
+                await self._ctx.notifier.send(
+                    f"⏸ devclaw paused ({reason[:160]}) — resumes on its own when the limit lifts"
+                    + ("; re-login needed" if reason.startswith("auth") else "")
+                )
+        elif self._store.pause_notified():
+            self._store.set_pause_notified(False)
+
+    # ---- verbs --------------------------------------------------------
+
+    async def create_goal(self, goal_id: str, *, project_id: str, workspace_dir: str,
+                          repo_url: str, issues: list[int], objective: str = "") -> dict:
+        if self._store.get_goal(goal_id) is not None:
+            raise FileExistsError(goal_id)
+        if not issues:
+            raise ValueError("a goal needs at least one issue — the issue is the contract")
+        if not repo_url:
+            raise ValueError("the project has no repo_url — a goal needs a GitHub repository")
+        for other in self._store.list_goals(open_only=True):
+            overlap = sorted(set(other.issues) & set(issues))
+            if other.repo_url == repo_url and overlap:
+                raise ValueError(f"issue(s) {overlap} already belong to open goal {other.id!r} — cancel it first")
+        titles = []
+        for n in issues:
+            issue = await self._ctx.world.issue(repo_url, n)  # raises IssueError loudly
+            titles.append(issue.title)
+        goal = self._store.create_goal(
+            id=goal_id, project_id=project_id, workspace_dir=workspace_dir, repo_url=repo_url,
+            objective=objective or "; ".join(t for t in titles if t)[:300],
+            issues=list(issues), branch=f"goal/{goal_id}",
         )
-        return {
-            "result": "created",
-            "goal_id": goal_id,
-            "issue_ref": issue_ref,
-            "message": (
-                f"created one_shot goal {goal_id!r} for issue #{issue_ref} "
-                f"({snap.title!r}). Poll get_goal({goal_id!r}) for status."
-            ),
-        }
+        if self._registry is not None:
+            try:
+                self._registry.link_goal(project_id, goal_id)
+            except Exception:  # noqa: BLE001 — advisory link
+                pass
+        self.poke()
+        return self.get_goal(goal.id)
 
-    @staticmethod
-    def _make_issue_goal_id(issue_ref: int, objective: str = "") -> str:
-        """Stable-ish readable slug for an issue-keyed one_shot goal."""
-        import re as _re
+    def cancel_goal(self, goal_id: str) -> dict:
+        goal = self._store.get_goal(goal_id)
+        if goal is None:
+            raise KeyError(goal_id)
+        if not goal.open:
+            return {**self.get_goal(goal_id), "note": f"already {goal.outcome}"}
+        for t in self._store.list_tasks(parent_goal_id=goal_id, limit=5):
+            if t.status in ("pending", "running"):
+                self._queue.cancel_task(t.id)
+        self._store.close_goal(goal_id, "cancelled")
+        remove_goal_checkout(goal.workspace_dir, goal_id)
+        return self.get_goal(goal_id)
 
-        slug = f"issue-{issue_ref}"
-        if objective:
-            words = _re.findall(r"[a-z0-9]+", objective.lower())[:3]
-            if words:
-                slug = f"{slug}-{'-'.join(words)}"
-        slug = slug[:48].rstrip("-")
-        return f"{slug}-{uuid.uuid4().hex[:6]}"
+    async def decide(self, goal_id: str, text: str) -> dict:
+        """The owner's verb: an instruction on the goal's thread, recorded as
+        a Decision. The next tick sees a newer instruction and spawns."""
+        goal = self._store.get_goal(goal_id)
+        if goal is None:
+            raise KeyError(goal_id)
+        if not goal.open:
+            raise ValueError(f"goal {goal_id!r} is {goal.outcome}")
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("decide needs text")
+        mention = _config.mention()
+        body = text if mention.lower() in text.lower() else f"{mention} {text}"
+        number = goal.issues[0] if goal.issues else 0
+        url = await self._ctx.post_comment(goal.repo_url, number, body) if number else ""
+        if number and not url:
+            raise RuntimeError(f"could not post the decision on issue #{number} — is gh authenticated?")
+        decision = self._store.record_decision(goal_id, text, url)
+        self.poke()
+        return {"goal": self.get_goal(goal_id), "decision": decision.to_dict()}
 
-    def verify_goal(
-        self, *, objective: str, workspace_dir: str,
-        repo_url: Optional[str] = None, verify_cmd: Optional[str] = None,
-        done_when: str = "", backlog: Optional[list[str]] = None,
-        spec: str = "",
-        out_of_scope: Optional[list[str]] = None,
-        invariants: Optional[list[str]] = None,
-        established: Optional[list[str]] = None,
-    ) -> dict:
-        """Pre-flight check the waiter calls before ``create_goal`` so the
-        customer sees fixable conditions BEFORE thinking the order was filed.
-        Same validations as ``create_goal`` runs internally; never mutates
-        state; returns the structured :class:`AdmissionResult` as a dict."""
-        from .admission import verify_goal as _verify
-
-        return _verify(
-            objective=objective, workspace_dir=workspace_dir, done_when=done_when,
-            backlog=backlog, repo_url=repo_url, verify_cmd=verify_cmd, spec=spec,
-            out_of_scope=out_of_scope, invariants=invariants, established=established,
-        ).to_dict()
-
-    def _dispatch_hold(self, goal_id: Optional[str] = None) -> Optional[dict]:
-        """Why NEW dispatch is held right now, or None when it can flow.
-
-        Read-only projection for the status surfaces (get_goal / list_goals /
-        tail_goal): a held instance must SAY so — a quota pause or a closed
-        run-window otherwise renders as `in_flight`+`blocked_on: null`, i.e.
-        indistinguishable from healthy idle (the 2026-07-20 silent window-hold).
-        Precedence mirrors the write path: quota pause, then manual hold, then
-        the global window, then the per-goal window. Never raises — a read
-        surface degrades to None over a bad clock/schedule, it doesn't 500."""
-        try:
-            now = _now_ms()
-            until, reason = self._store.global_pause()
-            if until and now < until:
-                return {"kind": "quota_pause", "reason": reason,
-                        "until": _iso_utc(until)}
-            hold = self._store.operator_hold()
-            schedule = self._store.get_run_schedule()
-            blocked, why = operator_block(hold, schedule, now)
-            if not blocked and goal_id is not None:
-                schedule = self._store.get_run_schedule(goal_id)
-                blocked, why = schedule_blocks(schedule, now)
-            if not blocked:
-                return None
-            out: dict = {
-                "kind": "operator_hold" if hold[0] else "run_window",
-                "reason": why,
-            }
-            if not hold[0]:
-                nxt = next_window_open_ms(schedule, now)
-                if nxt is not None:
-                    out["until"] = _iso_utc(nxt)
-            return out
-        except Exception:  # noqa: BLE001 — display path; see docstring
-            return None
-
-    def has_goal(self, goal_id: str) -> bool:
-        """Cheap existence check (no goal load). The console problem-lifecycle
-        tracker uses it to tell a *filed* issue whose self-fix goal is running
-        (``fixing``) apart from one merely sitting in the backlog — N2/#372. The
-        join key is the deterministic ``self-fix-issue-<n>`` id."""
-        return self._goal_store.exists(goal_id)
-
-    def _delivery_view(self, goal_id: str) -> dict:
-        """The resolved delivery strategy + goal branch (#495) — the single most
-        load-bearing runtime decision per goal, previously visible nowhere but a
-        workspace reflog on the VPS. Display path: ``resolve_strategy`` keeps its
-        fail-loud ``on_corrupt="raise"`` semantics for the DELIVERY path, but a
-        read surface must not 500 over a corrupt contract (the tick already
-        blocks the goal loudly; ``blocked_on`` carries the signal) — so here a
-        resolution failure degrades to an explicit ``"unresolvable"``, never to
-        a silently-wrong strategy name."""
-        try:
-            strat = _delivery_strategy.resolve_strategy(self._goal_store, goal_id)
-        except Exception:
-            return {"delivery_strategy": "unresolvable", "goal_branch": None}
-        return {
-            "delivery_strategy": strat.name,
-            "goal_branch": strat.goal_branch(goal_id),
-        }
+    # ---- reads --------------------------------------------------------
 
     def get_goal(self, goal_id: str) -> dict:
-        if not self._goal_store.exists(goal_id):
+        goal = self._store.get_goal(goal_id)
+        if goal is None:
             raise KeyError(goal_id)
-        g = self._goal_store.load_goal(goal_id)
-        s = self._goal_store.load_status(goal_id)
-        # Single-writer project hold (spec 010 P1): whether this goal is waiting
-        # on another goal's project, DERIVED here rather than stored. The hold
-        # itself is derived (FR-005 as amended), and a persisted copy of a
-        # derived fact can disagree with it — so the operator-facing wait is
-        # computed on read, which also keeps a queued tick at zero writes.
-        # Best-effort: a hiccup degrades to "not queued", never a failed read.
-        queued_behind = None
+        tasks = self._store.list_tasks(parent_goal_id=goal_id, limit=10)
+        last = tasks[0] if tasks else None
         try:
-            if s.phase not in ("done", "cancelled"):
-                scope = _project_hold.scope_key(g)
-                if scope:
-                    holder = _project_hold.holder_map(self._goal_store).get(scope)
-                    if holder is not None and holder != goal_id:
-                        queued_behind = holder
-        except Exception:  # noqa: BLE001 — a display extra must never fail get_goal
-            queued_behind = None
+            seen = json.loads(goal.last_seen_json) if goal.last_seen_json else None
+        except ValueError:
+            seen = None
         return {
-            "id": g.id,
-            "objective": g.objective,
-            "done_when": g.done_when,
-            # The authored saga slots (spec 012 US2). RAW, like `lifecycle`
-            # above: null means the goal predates the schema, [] means the
-            # author declared the slot empty, and coalescing the two would hide
-            # exactly what an operator checks this surface to see.
-            "out_of_scope": g.out_of_scope,
-            "invariants": g.invariants,
-            "established": g.established,
-            # First-class refs (spec 019): non-empty = the referenced lane —
-            # the dispatch fetches these issues' live state; [] = issue-less.
-            "issue_refs": g.issue_refs,
-            "cadence": g.cadence,
-            "workspace_dir": g.workspace_dir,
-            "backlog": g.backlog,
-            "mode": g.mode,
-            # EFFECTIVE dial (explicit > devclaw.json strictnessDefault >
-            # trust) — what dispatch actually resolves, not the stored default.
-            "strictness": self._effective_strictness(g),
-            "phase": s.phase,
-            # RAW stored lifecycle (#496): report what is stored, never a
-            # coalesced guess. The #493 bug lived exactly in that gap — a
-            # display that said "executing" while delivery resolved otherwise.
-            # The #616 cutoff removed the second shape rather than the rule.
-            "lifecycle": s.lifecycle,
-            **self._delivery_view(goal_id),
-            # Display guard (#550): rows written before the dispatch-side fix
-            # may still store the raw advance brief — never surface it as the
-            # goal's "next"; render the embedded objective instead.
-            "next": _display_goal(s.next),
-            "blocked_on": s.blocked_on,
-            "blocked_kind": s.blocked_kind,
-            # Spec 031: the typed Problem (or None) and the current Decisions.
-            "problem": self._problem_view(s.problem_id),
-            "decisions": [
-                {"id": d.id, "clause": d.clause, "verb": d.verb,
-                 "option": d.option_key or None, "text": d.text or None,
-                 "provenance": d.provenance, "made_by": d.made_by, "made_at": d.made_at}
-                for d in self._goal_store.decisions(goal_id)
-            ],
-            # Spec 010 P1 — queued behind another goal on the same project.
-            # None when this goal holds its project (or has none), so existing
-            # consumers see no change. NOT a block: nothing is wrong, and no
-            # operator action is required — it starts by itself.
-            "queued_behind": queued_behind,
-            "queued_reason": (
-                _project_hold.waiting_reason(queued_behind) if queued_behind else None
-            ),
-            "in_flight": (
-                {"tool": s.in_flight.tool, "id": s.in_flight.id,
-                 "is_done_check": s.in_flight.is_done_check}
-                if s.in_flight else None
-            ),
-            "actions_dispatched": s.actions_dispatched,
-            "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
-            "direction": (
-                {"verdict": s.last_eval_verdict, "at": s.last_eval_at, "note": s.last_eval_note}
-                if s.last_eval_verdict else None
-            ),
-            "recent_log": self._goal_store.recent_log(goal_id, n=15),
-            "phase_history": [dict(e) for e in s.phase_history],
-            "dispatch_hold": self._dispatch_hold(goal_id),
-        }
-
-    def tail_goal(
-        self,
-        goal_id: str,
-        *,
-        log_lines: int = 40,
-        deliveries_chars: int = 6000,
-        event_limit: int = 30,
-    ) -> dict:
-        """The 'watch it run' surface — richer than get_goal, no SSH needed. On top
-        of get_goal's phase/direction/log it returns the grounded deliveries tail
-        (what each action actually shipped), the discovery brief + any waiter-
-        provided spec, and the tail of the LIVE event stream from whatever
-        task/program is in flight (so you can see the agent acting in near real
-        time). Everything is bounded — read-only, never mutates the goal."""
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        g = self._goal_store.load_goal(goal_id)
-        s = self._goal_store.load_status(goal_id)
-
-        live_events: list[dict] = []
-        if s.in_flight is not None:
-            ref = s.in_flight
-            # list_events is ASC + LIMIT (first N); pull a wide window and tail it
-            # in Python so we get the MOST RECENT events of a long-running task.
-            # A legacy pre-022 'program' ref has no live event stream to tail.
-            evs = (
-                self._store.list_events(limit=10000, task_id=ref.id)
-                if ref.ref_kind == "task"
-                else []
-            )
-            for e in evs[-event_limit:]:
-                preview = (e.payload_json or "")[:200]
-                live_events.append(
-                    {"type": e.type, "source": e.source, "ts": e.ts, "preview": preview}
-                )
-
-        return {
-            "id": g.id,
-            "objective": g.objective,
-            "done_when": g.done_when,
-            "phase": s.phase,
-            # RAW stored lifecycle (#496) — see get_goal; null is honest.
-            "lifecycle": s.lifecycle,
-            **self._delivery_view(goal_id),
-            # Display guard (#550) — see get_goal: older rows may store the brief.
-            "next": _display_goal(s.next),
-            "blocked_on": s.blocked_on,
-            "actions_dispatched": s.actions_dispatched,
-            "in_flight": (
-                {"tool": s.in_flight.tool, "id": s.in_flight.id,
-                 "ref_kind": s.in_flight.ref_kind,
-                 "is_done_check": s.in_flight.is_done_check}
-                if s.in_flight else None
-            ),
-            "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
-            "direction": (
-                {"verdict": s.last_eval_verdict, "at": s.last_eval_at,
-                 "note": s.last_eval_note}
-                if s.last_eval_verdict else None
-            ),
-            "recent_log": self._goal_store.recent_log(goal_id, n=log_lines),
-            "deliveries": self._goal_store.recent_deliveries(goal_id, chars=deliveries_chars),
-            "spec": self._goal_store.read_spec(goal_id),
-            "live_events": live_events,
-            "dispatch_hold": self._dispatch_hold(goal_id),
+            **goal.to_dict(),
+            "state": _state_word(goal, last),
+            "lastSeen": seen,
+            "lastSession": _task_view(last) if last else None,
+            "sessions": [_task_view(t) for t in tasks],
+            "decisions": [d.to_dict() for d in self._store.list_decisions(goal_id)],
         }
 
     def list_goals(self) -> list[dict]:
-        # Includes `project_id` so project_registry.project_rollup (and the
-        # server rollup twins) derive project↔goal association by the project
-        # reference key (#524 P3) — re-keyed off the old normalized-workspace
-        # match so a workspace rename or shared path can't drift it.
         out = []
-        # Account-wide hold (quota pause / manual hold / global window) computed
-        # ONCE — per-goal windows are get_goal detail, not worth N reads here.
-        hold = self._dispatch_hold()
-        _strict_memo: dict[str, str] = {}
-        for gid in self._goal_store.list_goal_ids():
-            g = self._goal_store.load_goal(gid)
-            s = self._goal_store.load_status(gid)
-            out.append({
-                "id": gid,
-                "objective": g.objective[:140],
-                "workspace_dir": g.workspace_dir,
-                "project_id": g.project_id,
-                "phase": s.phase,
-                # RAW stored lifecycle (#496) — see get_goal; null is honest.
-                "lifecycle": s.lifecycle,
-                **self._delivery_view(gid),
-                "blocked_on": s.blocked_on,
-                "problem": self._problem_view(s.problem_id),
-                "progress": {"last_at": s.last_progress_at, "stalled": s.no_progress_notified},
-                "direction": s.last_eval_verdict,
-                "actions_dispatched": s.actions_dispatched,
-                "strictness": self._effective_strictness(g, memo=_strict_memo),
-                "dispatch_hold": hold,
-            })
+        for g in self._store.list_goals():
+            last = self._store.latest_task_for_goal(g.id)
+            out.append({**g.to_dict(), "state": _state_word(g, last),
+                        "lastSession": _task_view(last) if last else None})
         return out
 
-    def _problem_view(self, problem_id: str) -> "dict | None":
-        if not problem_id:
-            return None
-        p = self._goal_store.problem_by_id(problem_id)
-        return _problems.to_dict(p) if p is not None else None
-
-    def resolve_problem(
-        self, goal_id: str, problem_id: str, *, verb: str,
-        option: "str | None" = None, text: "str | None" = None, made_by: str = "denys",
-    ) -> dict:
-        """Spec 031 US2 — one of exactly two typed moves resolves a Problem:
-        ``correct_implementation`` (the work was wrong; ``text`` is the
-        correction) or ``decide`` (the owner picks an ``option`` or writes a
-        decision ``text``). Records the Decision, closes the Problem, and
-        UNBLOCKs with the SAME budget-restoring shape as steer_goal — all in
-        ONE transaction (constitution IV). Never touches the steering inbox.
-        Raises ValueError on a stale problem id / bad verb / bad option."""
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        s = self._goal_store.load_status(goal_id)
-        cur = self._goal_store.problem_by_id(s.problem_id) if s.problem_id else None
-        if cur is None or cur.status != "open":
-            raise ValueError(f"goal {goal_id} has no open problem")
-        if problem_id != cur.id:
-            raise ValueError(
-                f"stale problem id {problem_id}; the current open problem is {cur.id}:\n"
-                + _problems.render_for_human(cur)
-            )
-        text = (text or "").strip()
-        option_key = ""
-        if verb == "correct_implementation":
-            if not text:
-                raise ValueError("correct_implementation requires a correction text")
-        elif verb == "decide":
-            if bool(option) == bool(text):
-                raise ValueError("decide takes exactly one of option or text")
-            if option:
-                if option not in {o.key for o in cur.options}:
-                    raise ValueError(
-                        f"option {option!r} is not one of {[o.key for o in cur.options]}"
-                    )
-                option_key = option
-        else:
-            raise ValueError("verb must be correct_implementation or decide")
-        dec = _Decision(
-            id=f"dec_{__import__('uuid').uuid4().hex[:20]}", goal_id=goal_id,
-            problem_id=cur.id, clause=cur.clause, verb=verb, option_key=option_key,
-            text=text, provenance="owner", made_by=made_by, made_at=_now_ms(),
-        )
-        if option_key == _problems.CANCEL.key:
-            # Spec 041 FR-005: a cancel Decision cancels, in the Decision's own
-            # transaction — never an idle goal carrying next="decide: cancel"
-            # for a cadence to find (the executor-less decision class).
-            with self._goal_store.transaction():
-                self._goal_store.record_decision(dec, problem_status="resolved")
-                self._goal_store.transition(
-                    goal_id, Event.CANCEL,
-                    replace(s, phase="cancelled", blocked_on="", in_flight=None,
-                            problem_id="", pending_done_proposal=False, ci_green_head="",
-                            next=f"{verb}: {option_key}"),
-                    expect=s,
-                )
-            self._goal_store.record_intervention(goal_id, verb, dec.id)
-            try:
-                ws = self._goal_store.load_goal(goal_id).workspace_dir
-            except Exception:  # noqa: BLE001
-                ws = None
-            self._goal_store.record_convergence(goal_id, "abandoned", ws)
-            self._goal_store.append_log(goal_id, f"problem {cur.id} resolved by decide: cancel — goal cancelled")
-            self.poke()
-            return {
-                "goal_id": goal_id, "resolved": True, "decision_id": dec.id, "verb": verb,
-                "clause": cur.clause, "option": option_key, "text": None, "cancelled": True,
-            }
-        with self._goal_store.transaction():
-            self._goal_store.record_decision(dec, problem_status="resolved")
-            self._goal_store.transition(
-                goal_id, Event.UNBLOCK,
-                replace(s, phase="idle", blocked_on="", actions_dispatched=0,
-                        heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                        donegate_progress=0,
-                        merge_heal_attempted=False, problem_id="",
-                        next=f"{verb}: {(text or option_key)[:120]}"),
-                expect=s,
-            )
-        self._goal_store.record_intervention(goal_id, verb, dec.id)
-        self._goal_store.append_log(
-            goal_id, f"problem {cur.id} resolved by {verb}: {(text or option_key)[:160]}"
-        )
-        self.poke()
+    def status(self) -> dict:
+        until, reason = self._store.global_pause()
+        hold_on, hold_reason = self._store.operator_hold()
         return {
-            "goal_id": goal_id, "resolved": True, "decision_id": dec.id, "verb": verb,
-            "clause": cur.clause, "option": option_key or None, "text": text or None,
+            "goals": self.list_goals(),
+            "running": self._store.count_running(),
+            "pause": {"until_ms": until, "reason": reason} if until else None,
+            "operatorHold": {"on": hold_on, "reason": hold_reason},
+            "schedule": self._store.get_run_schedule(),
+            "lastTickAt": self.last_tick_at_ms,
+            "tickSeconds": self._tick_seconds,
         }
 
-    def steer_goal(self, goal_id: str, message: str) -> dict:
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        # Spec 031 FR-006 (Q1 → A): prose steering is REFUSED while a Problem
-        # is open. The refusal carries the Problem and the two verbs; nothing
-        # is written.
-        pre = self._goal_store.load_status(goal_id)
-        if pre.problem_id:
-            cur = self._goal_store.problem_by_id(pre.problem_id)
-            if cur is not None and cur.status == "open":
-                raise ValueError(
-                    "steer_goal refused: this goal has an open problem.\n"
-                    + _problems.render_for_human(cur)
-                    + "\nResolve it with correct_implementation or decide; steering "
-                    "resumes once no problem is open."
-                )
-        self._goal_store.append_steering(goal_id, [message], source="denys")
-        self._goal_store.record_intervention(goal_id, "steer", message[:80])
-        self._goal_store.append_log(goal_id, f"steered: {message[:160]}")
-        # Steering unblocks a blocked goal — flip it to idle and clear the
-        # dispatch counter so the cap doesn't re-trigger on the very next tick.
-        # `s.phase == "blocked"` also matches firming-blocked (lifecycle=
-        # "firming"): UNBLOCK from FIRMING_BLOCKED legally targets
-        # FIRMING_IDLE, and replace(s, phase="idle") on a firming-lifecycle
-        # status derives exactly that — one call covers both cases. A
-        # TransitionConflict here (another writer landed between the load
-        # above and this write) is left to propagate as a visible MCP error —
-        # practically unreachable since nothing awaits between them.
-        s = self._goal_store.load_status(goal_id)
-        if s.phase == "blocked":
-            # heal_attempts=0 / next_heal_at=None: a HUMAN lifting the block
-            # restores the full mechanical auto-heal budget and clears the
-            # prep-recheck backoff window (see tick_guards._autoheal_corrupt_doc
-            # / _autoheal_prep) — the damping cap protects against unattended
-            # flapping, and the owner just attended.
-            # blocked_on="" so the answered question stops showing as live in
-            # get_goal/list_goals/the console — resume_goal already clears it,
-            # steer_goal used to leak it (a HUMAN answering via steer resolves
-            # the reason exactly as a resume does). blocked_kind is cleared by
-            # the store's non-blocked-write normalization; blocked_on is not, so
-            # it must be cleared here explicitly.
-            # merge_heal_attempted=False: a human re-direction restarts the
-            # spec-025 conflict-heal budget (pending_merge_pr is deliberately
-            # KEPT — an owed merge survives a steer; only a successful merge
-            # clears it).
-            self._goal_store.transition(
-                goal_id, Event.UNBLOCK,
-                replace(s, phase="idle", blocked_on="", actions_dispatched=0,
-                        heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                        donegate_progress=0, problem_id="",
-                        env_hold_notified=False,
-                        env_heal_attempts=0,
-                        merge_heal_attempted=False),
-                expect=s,
-            )
-        self.poke()
-        return {"goal_id": goal_id, "steered": True, "message": message}
 
-    def set_strictness(self, goal_id: str, strictness: str) -> dict:
-        """Flip the goal's gate strictness dial (ADR 0007) — the verb behind the
-        console toggle, the HTTP API, and the MCP tool. A narrow single-field
-        mutation (not a contract patch): dial-able gate failures either block
-        (``strict``) or ship-with-a-caveat (``trust``). Applies to future
-        dispatches. Raises ValueError on a bad value, KeyError on unknown goal.
-        """
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        g = self._goal_store.set_strictness(goal_id, strictness)
-        self._goal_store.append_log(goal_id, f"strictness set to {strictness}")
-        self.poke()
-        return {"goal_id": goal_id, "strictness": self._effective_strictness(g)}
+def _task_view(t) -> dict:
+    return {"id": t.id, "kind": t.kind, "status": t.status, "exit": t.exit,
+            "exitDetail": t.exit_detail, "prUrl": t.pr_url, "createdAt": t.created_at,
+            "completedAt": t.completed_at}
 
-    def _effective_strictness(self, g, memo: "dict[str, str] | None" = None) -> str:
-        """The dial dispatch will actually use (``engine._manifest_tiers``):
-        explicit per-goal setting > the project's ``devclaw.json``
-        ``strictnessDefault`` > ``trust``. A display read: never raises — a
-        malformed or unreadable manifest shows the stored value (dispatch
-        itself fails loud on it). ``memo`` dedups the manifest read across a
-        list of goals sharing one workspace. On 2026-09-06 the surfaces said
-        ``trust`` for goals whose every task ran ``strict`` from the manifest,
-        and the review-gate behaviour read as a dial bug."""
-        from ..project_manifest import effective_strictness, load_manifest_at_base
 
-        if g.strictness_explicit is not None:
-            return str(effective_strictness(g.strictness_explicit, None))
-        ws = (g.workspace_dir or "").strip()
-        if not ws:
-            return str(g.strictness)
-        if memo is not None and ws in memo:
-            return memo[ws]
-        try:
-            manifest = load_manifest_at_base(ws)
-            value = str(effective_strictness(None, manifest.strictness_default if manifest else None))
-        except Exception:  # noqa: BLE001 — a display read never raises
-            value = str(g.strictness)
-        if memo is not None:
-            memo[ws] = value
-        return value
+def _state_word(goal: Goal, last) -> str:
+    if not goal.open:
+        return goal.outcome or "closed"
+    if last is None:
+        return "new"
+    if last.status in ("pending", "running"):
+        return "running"
+    if last.exit == "BLOCKED":
+        return "blocked"
+    if last.exit == "DONE":
+        return "proposed done"
+    if last.exit == "INTERRUPTED":
+        return "interrupted"
+    return "waiting"
 
-    def set_verify_cmd(self, goal_id: str, verify_cmd: Optional[str]) -> dict:
-        """Override the goal's verification command (issue #711) — the verb
-        behind the console control, the HTTP API, and the MCP tool. A narrow
-        single-field mutation (not a contract patch): ``verify_cmd`` is an
-        operational parameter (how to verify), not a direction term. Pass
-        ``None`` or empty string to clear the goal-level value, letting the
-        manifest tier take effect on the next dispatch. Applies to future
-        dispatches; in-flight work keeps the value it was dispatched with.
-        Raises KeyError on unknown goal.
-        """
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        cmd = verify_cmd if verify_cmd and verify_cmd.strip() else None
-        g = self._goal_store.set_verify_cmd(goal_id, cmd)
-        self._goal_store.append_log(
-            goal_id,
-            f"verify_cmd set to {cmd!r}" if cmd else "verify_cmd cleared (falls back to manifest)",
-        )
-        self.poke()
-        return {"goal_id": goal_id, "verify_cmd": g.verify_cmd}
 
-    def resume_goal(self, goal_id: str) -> dict:
-        """Recovery verb: "the blocker is cleared — re-attempt the SAME
-        contract." Fires the existing UNBLOCK edge (BLOCKED → EXECUTING_IDLE)
-        WITHOUT recording steering, so a pure resume never becomes a direction
-        override in the next planner prompt (that's :meth:`steer_goal`'s job).
-        Not a field patch either — the goal contract (objective / done_when /
-        backlog) is untouched.
-
-        Legible no-op instead of an error: a non-blocked goal has no UNBLOCK
-        edge — return a message, never raise ``IllegalTransition`` (idempotent:
-        a second resume is a no-op).
-        """
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        s = self._goal_store.load_status(goal_id)
-        if s.phase != "blocked":
-            return {
-                "goal_id": goal_id, "resumed": False,
-                "message": f"goal is not blocked (phase={s.phase!r}) — nothing to resume",
-            }
-        was_blocked_on = s.blocked_on or ""
-        # Same unblock write shape as steer_goal (actions_dispatched=0 so the
-        # dispatch cap doesn't re-fire on the first re-plan), plus two resume-
-        # specific fields: blocked_on cleared (the reason is resolved — don't
-        # display it as live), and last_plan_at=None so cadence_due() reads
-        # True on the next tick. A bare UNBLOCK would otherwise park the goal
-        # until its cadence elapses — the tick's should_plan is
-        # `work OR cadence_due`, and resume (unlike steering) adds no work.
-        # A TransitionConflict propagates as a visible MCP error, exactly like
-        # steer_goal — practically unreachable since nothing awaits between
-        # the load above and this write.
-        # heal_attempts=0 / next_heal_at=None: same as steer_goal — a HUMAN
-        # lifting the block vouches for the goal, so the mechanical auto-heal
-        # budget (and any prep-backoff window) is restored in full.
-        # merge_heal_attempted=False (spec 045 FR-007): the conflict heal is
-        # one of those budgets — a resumed goal whose PR still conflicts gets
-        # its ONE bounded resolution increment back, instead of re-parking
-        # on the same conflict with a budget spent before the human acted.
-        self._goal_store.transition(
-            goal_id, Event.UNBLOCK,
-            replace(s, phase="idle", blocked_on="", actions_dispatched=0, last_plan_at=None,
-                    heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                    donegate_progress=0, problem_id="",
-                    env_hold_notified=False,
-                    env_heal_attempts=0, merge_heal_attempted=False),
-            expect=s,
-        )
-        # A worker-reported environment gap is recorded on the PROJECT, not the
-        # goal, and nothing can probe it green — a worker invents the
-        # capability id from prose. So the human vouch has to reach that row
-        # too: without this the goal unblocks, dispatches, hits the still-red
-        # row and re-blocks on the next tick. Declared-capability rows are NOT
-        # touched — those have real probes and heal on their own evidence
-        # (specs/tiny/env-hold-observes-the-capability).
-        cleared: "tuple[str, ...]" = ()
-        try:
-            _pid = (self._goal_store.load_goal(goal_id).project_id or "").strip()
-            if _pid:
-                cleared = _env_cap_ids.clear_worker_deficiencies(self._goal_store, _pid)
-        except Exception as exc:  # noqa: BLE001 — never fail the resume verb
-            sys.stderr.write(f"goal-layer: worker-cap clear failed for {goal_id}: {exc}\n")
-        self._goal_store.record_intervention(goal_id, "resume", was_blocked_on[:80])
-        self._goal_store.append_log(
-            goal_id,
-            f"resumed: blocker cleared ({was_blocked_on[:120]}) — re-attempting the same contract"
-            + (f"; cleared {len(cleared)} worker-reported env gap(s)" if cleared else ""),
-        )
-        self.poke()
-        return {"goal_id": goal_id, "resumed": True, "was_blocked_on": was_blocked_on}
-
-    def cancel_goal(self, goal_id: str) -> dict:
-        """Abort a durable goal. Sets phase to 'cancelled' (terminal — skipped on
-        every future tick) and tears down any in-flight task. Returns
-        a graceful no-op response if the goal is already in a terminal phase."""
-        if not self._goal_store.exists(goal_id):
-            raise KeyError(goal_id)
-        s = self._goal_store.load_status(goal_id)
-        if s.phase in ("cancelled", "done"):
-            return {
-                "goal_id": goal_id,
-                "cancelled": False,
-                "phase": s.phase,
-                "reason": f"goal is already in terminal phase '{s.phase}'",
-            }
-        if s.in_flight is not None:
-            ref = s.in_flight
-            if ref.ref_kind == "task":
-                self._queue.cancel_task(ref.id)
-            else:
-                # Legacy 'program' ref (pre-spec-022 row): the program/DAG lane
-                # was retired, nothing can still be running behind it — record
-                # loudly instead of crashing the cancel.
-                self._goal_store.append_log(
-                    goal_id,
-                    f"cancel: in-flight ref {ref.id} is a legacy 'program' ref — "
-                    "the program lane was retired (spec 022 US3); nothing live "
-                    "to tear down",
-                )
-        with self._goal_store.transaction():
-            if s.problem_id:
-                self._goal_store.supersede_open_problems(goal_id)
-            self._goal_store.transition(
-                goal_id, Event.CANCEL,
-                replace(s, phase="cancelled", in_flight=None, problem_id="",
-                        pending_done_proposal=False, ci_green_head=""), expect=s,
-            )
-        # Convergence ledger (spec 018 US1): a cancel is the abandoned
-        # terminal. After the CAS'd transition, same as the achieved close.
-        try:
-            ws = self._goal_store.load_goal(goal_id).workspace_dir
-        except Exception:
-            ws = None
-        self._goal_store.record_convergence(goal_id, "abandoned", ws)
-        self._goal_store.append_log(goal_id, "goal cancelled")
-        return {"goal_id": goal_id, "cancelled": True, "phase": "cancelled"}
+__all__ = ["GoalService", "_gh"]

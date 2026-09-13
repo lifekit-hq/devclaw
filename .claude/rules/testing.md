@@ -15,7 +15,7 @@ seeded-faults, and cheap structural guards (docs map, env-doc sync, tool
 re-export, route shadowing, no-docker-in-tests). Ordinary feature behavior is
 NOT unit-tested — the live instance, the done-gate, and post-merge review are
 its regression surface, and cognition quality is measured by evals
-(`tests/cognition/`, `evals/`), never by stubs.
+— the live instance, never stubs.
 
 ## Running
 
@@ -57,16 +57,16 @@ its regression surface, and cognition quality is measured by evals
 - **Never mint an instance-test; strengthen the class test.** When a tripwire
   class is already pinned, extend the existing named test's cases (parametrize)
   instead of adding a sibling.
-- Fixture map: `tests/goal_fakes.py` has `FakeClaude` (its `.calls` count IS the
-  zero-token quota assertion), `FakeEngine`, `RecordingNotifier`, `seed_goal`.
-  Goal-tick behavior → `tests/test_goal_tick.py`; transitions/CAS in isolation →
-  `test_goal_transitions.py`; queue/gate → `test_review_gate*.py`,
-  `test_task_retry.py`.
+- Fixture map: the queue is driven with a stub runner
+  (`TaskQueue(store, runner=fake)`); the goal layer with a fake `WorldReader`
+  and a recording `post_comment` / `merge` injected into `GoalService` or a
+  `TickContext` (`tests/test_goal_tick.py`). The count of tasks submitted IS
+  the zero-session quota assertion on an unchanged world.
 - Tests that build a "realistic repo" fixture copy the shape in
-  `tests/test_review_gate.py` (real `git init` + .NET/Angular marker files) —
+  `tests/test_rate_limit_pause.py` (real `git init`) —
   don't invent a new fixture style.
-- Zero-token guard tests (`FakeClaude.calls == 0` on idle/blocked paths) are
-  load-bearing. If your change makes one fail, the change is wrong — never the
+- Zero-session guard tests (no task submitted on an unchanged world or a
+  blocked goal) are load-bearing. If your change makes one fail, the change is wrong — never the
   test.
 - Prompt-content tests assert both presence AND absence; when asserting a
   marker is absent from a prompt, first prove it's absent from the raw template

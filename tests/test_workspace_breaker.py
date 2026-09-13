@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import pytest
 
-from devclaw.queue import settle as queue_settle, admission as queue_admission
+from devclaw.queue import admission as queue_admission
 from devclaw.engine import EngineRequest
 from devclaw.state_store import StateStore, _now_ms
 from devclaw.task_queue import TaskQueue
@@ -26,7 +26,6 @@ def _tight_breaker(monkeypatch):
     monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_THRESHOLD", 2)
     monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_WINDOW_S", 30.0)
     monkeypatch.setattr(queue_admission, "WORKSPACE_BREAK_HOLD_S", 30.0)
-    monkeypatch.setattr(queue_settle, "TASK_MAX_RETRIES", 0)  # one shot per submit
 
 
 async def _submit_and_fail(q: TaskQueue, workspace_dir: str) -> str:

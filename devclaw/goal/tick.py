@@ -1,1796 +1,233 @@
-"""The goal heartbeat — one wakeup.
+"""The tick rule — the whole control plane (spec 046, section 1).
 
-Folded in from goalclaw, extended with grounded direction evaluation. Order is
-load-bearing: the cheap, deterministic, ZERO-TOKEN check runs first and
-short-circuits when there's nothing to do. Cognition (plan + evaluate) runs ONLY
-past that gate. This is the quota guardrail — N idle ticks must cost ~0 tokens,
-or the Pro weekly quota dies (burned this way 2026-05-18).
+Every ~15 minutes, for every open goal: read the world, compare it to what
+the last session was given, and either spawn ONE session, run the done-gate,
+close, or do nothing. The host routes on facts the world holds (PR state,
+CI, the newest instruction and the newest devclaw record); it never stores
+why the world changed and never retries a stop.
 
-The evaluation tiers (mechanism gates cognition):
-  1. progress check          — Python, every tick, 0 tokens (poll in-flight)
-  2. per-delivery evidence    — in-proc, 0 tokens (write the grounded deliveries.md)
-     (the per-tick direction eval that used to sit here was removed — demolition
-      P1 → spec 008; direction is judged only at the
-      done-gate now, backed by the mechanical no-progress watchdog mid-flight.)
-  3. done-gate                — the planner's "done" is a proposal; it triggers a
-                                read-only review whose report the evaluator judges;
-                                only "achieved" actually closes the goal.
-
-Everything is injected (store, engine, planner/evaluator callers, notifier,
-prepare_ws) so a whole tick runs deterministically under test — no network, no
-claude — and the quota assertion is just "FakeClaude.calls == 0" on idle paths.
+Pure over its context: every read and verb is injected, so the tick is
+testable with zero subprocesses and the idle path costs zero sessions.
 """
 
 from __future__ import annotations
 
-import asyncio
-import os
-import re
+import datetime as _dt
+import sys
+from dataclasses import dataclass
+from typing import Awaitable, Callable, Optional
 
-from dataclasses import replace
-from datetime import datetime, timezone
-from typing import Callable
-
-from . import issue_ref as _issue_ref
-from . import slice_guard as _slice_guard
-from . import mergeability as _mergeability
-from . import prior_increments as _prior_increments
-from . import saga_framing as _saga_framing
-from . import project_hold as _project_hold
-from . import remote_checks as _remote_checks
-# _deploy stays at tick.py level even though only tick_donegate._auto_deploy calls
-# it: tests monkeypatch ``devclaw.goal.tick._deploy.deploy_project`` and both
-# modules bind the SAME ..delivery.deploy module object, so patching it here is
-# what makes the deploy stub visible to the moved _auto_deploy.
-from ..advance_brief import (
-    ADVANCE_BRIEF_MARKER,
-    ENVCAP_FAILURE_MARKER,
-    FAILURE_CONTEXT_MARKER,
-    STEERING_MARKER,
-)
-from ..delivery import deploy as _deploy  # noqa: F401 (re-export/monkeypatch anchor)
-from .engine import GoalEngine
-from .models import Action, Goal, GoalStatus
-from .notify import Notifier
-from ..llm_call import ClaudeCaller
-from .store import GoalStore
-from .transitions import Event, IllegalTransition, TransitionConflict
-from . import problems as _problems
-from . import decisions as _decisions
-from ..loom import trace as _trace
-from ..loom.limits import FailureKind, classify_failure, pause_seconds
-from ..state_store import _now_ms
-from ..engine import workspace as _workspace
-from ..engine.workspace import prepare_workspace
 from .. import config as _config
-from .. import loop_health as _loop_health
-from .prompt_budget import cap_steering as _cap_steering
-from .. import env_cap as _env_cap_mod
-from .. import project_manifest as _env_cap_manifest_mod  # aliased to dodge shadowing
-
-# ---- extracted-module re-export facade (behavior-preserving split) --------
-# Every symbol MOVED out of this file is re-exported here so
-# ``devclaw.goal.tick.<name>`` (and ~20 test imports / monkeypatch targets)
-# resolve exactly as before. Import graph stays acyclic:
-# tick_context <- tick_guards <- {tick_dispatch, tick_donegate} <- tick_settle.
-from .tick_context import (  # noqa: F401 (re-exported)
-    AUTODEPLOY_ENABLED,
-    NO_PROGRESS_S,
-    VERIFY_DONE,
-    NotifyLevel,
-    Outcome,
-    Phase,
-    TickContext,
-    WorkspacePrep,
-    _ALTITUDES,
-    _action_label,
-    _classify,
-    _engine_kick,
-    _notify,
-    _notify_floor,
-    _run_atomic,
-    _TICK_LOCKS,
-    _tick_lock,
+from ..engine.workspace import ensure_goal_checkout, goal_checkout_dir, prepare_workspace, remove_goal_checkout
+from ..state_store import (
+    EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REFUSED, EXIT_REVIEW, Goal, StateStore, Task,
 )
-from .tick_guards import (  # noqa: F401 (re-exported)
-    PREP_HEAL_CAP,
-    _autoheal_ci,
-    _autoheal_env_cap,
-    _autoheal_prep,
-    _block_on_env_cap,
-    _block_on_lost_ref,
-    _block_on_prep_failure,
-    _check_no_progress,
-    _progress_window_active,
-)
-from .tick_donegate import (  # noqa: F401 (re-exported)
-    _auto_deploy,
-    _done_gate_review_brief,
-    _open_done_gate,
-    _project_owns_its_deploy,
-    _resolve_done_gate,
-)
-from .tick_donegate import _finalize_pending_merge as _donegate_finalize_pending_merge
-from .tick_donegate import _finalize_accepted_close as _donegate_finalize_accepted_close
-from .tick_dispatch import (  # noqa: F401 (re-exported)
-    _dispatch_action,
-)
-from .tick_settle import (  # noqa: F401 (re-exported)
-    _readopt_orphaned_ref,
-    _readopt_ref,
-    _resolve_polling_action,
-    _resolve_polling_done_gate,
-    sweep_orphaned_refs,
-)
+from . import donegate as _donegate
+from . import github as _gh
+from .notify import Notifier
+from .prompts import review_brief, session_brief
+from .world import World, WorldReader
 
-#: ``mechanical:*`` kinds that are deliberately owner-cleared rather than
-#: auto-healed. ``mechanical:`` promises the condition is cheaply re-checkable
-#: without an LLM; these are re-checkable but must NOT clear themselves — each
-#: one means a human decision or action is the fix (raise sandbox sizing,
-#: restore a lost ref, review the open PRs, resolve a merge conflict), and a
-#: silent auto-clear would re-dispatch straight back into it.
-#:
-#: This is a DECLARED FACT, not a convention: any other ``mechanical:*`` kind
-#: the code can write must have a heal branch above, and
-#: ``tests/test_mechanical_blocks_are_recheckable.py`` fails the build
-#: otherwise. A mechanical block with neither a heal nor a place on this list
-#: strands the goals it parks with no way back — the defect that left
-#: ``mechanical:slice_hold`` a four-day dead end
-#: (specs/tiny/slice-guard-observes-the-goal).
-HUMAN_GATED_MECHANICAL_KINDS = frozenset({
-    "mechanical:lost_ref",
-    "mechanical:dispatch_cap",
-    "mechanical:merge_failed",
-    "mechanical:env_cap",
-    # Overloaded on purpose-by-history, and that is exactly why it must not
-    # heal: legacy rows mean "the goal's contract files are corrupt" (those
-    # files died with the 008 shrink — nothing mechanical is left to recheck),
-    # while the live raise site means "the chunk-plan tasks.md is unreadable".
-    # `_chunk_plan_corruption` cannot tell the two apart — it returns "" both
-    # for "clean" and for "no tasks.md at all" — so an auto-heal would clear a
-    # legacy block on the strength of a check that never looked at its cause.
-    # That is the false-heal class this batch exists to remove; a corrupt
-    # continuation contract earns a human. Pinned by
-    # test_autoheal_never_fires_on_human_gated_blocks.
-    "mechanical:corrupt_doc",
-})
+PostComment = Callable[[str, int, str], Awaitable[str]]
+Merge = Callable[[str, str], Awaitable[tuple[str, str]]]
+
+#: outcomes after which the goal HOLDS its project's lane this tick
+SPAWNING = frozenset({"spawned", "resumed", "gate", "running"})
 
 
+@dataclass
+class TickContext:
+    store: StateStore
+    queue: object  # TaskQueue — typed loosely so the goal layer stays above the queue
+    world: WorldReader
+    notifier: Notifier
+    post_comment: PostComment = _gh.post_comment
+    merge: Merge = _gh.squash_merge
+    now_ms: Callable[[], int] = lambda: int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
 
-async def _apply_problem_default(goal_id, goal, status, *, store, notifier):
-    """Apply an elapsed Problem's default option as a DEFAULTED Decision and
-    UNBLOCK with the human-vouch reset shape; one owner notice. Returns the
-    new status, or None when nothing applied (timebox not reached, Problem
-    gone, or the strict-hold). Pure mechanism — no cognition."""
-    from .models import Decision as _Decision
-    import uuid as _uuid
-    prob = store.problem_by_id(status.problem_id)
-    if prob is None or prob.status != "open":
-        return None
-    if _now_ms() < prob.timebox_at:
-        return None
-    default = prob.default
-    hold = "awaiting an explicit decide (strict): the default would close the goal"
-    if default.closes_goal and getattr(goal, "strictness", "trust") == "strict":
-        # once, not every tick: the hold line is the log's tail until the
-        # owner acts (the goal is blocked, so nothing else writes the log)
-        if not store.recent_log(goal_id, 1).rstrip().endswith(hold):
-            store.append_log(goal_id, hold)
-            await _notify(notifier, NotifyLevel.OWNER,
-                          f"🟡 [{goal_id}] problem {prob.id} timed out; its default would close "
-                          f"the goal and strictness is strict — only an explicit decide can close it.")
-        return None
-    dec = _Decision(
-        id=f"dec_{_uuid.uuid4().hex[:20]}", goal_id=goal_id, problem_id=prob.id,
-        clause=prob.clause, verb="decide", option_key=default.key, text="",
-        provenance="defaulted", made_by="tick", made_at=_now_ms(),
-    )
-    if default.key == _problems.CANCEL.key:
-        # Spec 041 FR-005: a cancel Decision cancels — in its own transaction,
-        # never as an idle goal carrying next="cancel" (the executor-less
-        # decision class). Abandoned convergence, same as cancel_goal.
-        with store.transaction():
-            store.record_decision(dec, problem_status="defaulted")
-            new = store.transition(
-                goal_id, Event.CANCEL,
-                replace(status, phase="cancelled", blocked_on="", in_flight=None,
-                        problem_id="", pending_done_proposal=False, ci_green_head="",
-                        next=f"defaulted: {default.label}"),
-                expect=status,
-            )
-        store.record_convergence(goal_id, "abandoned", goal.workspace_dir)
-        store.append_log(goal_id, f"problem {prob.id} defaulted → cancel; goal cancelled")
-        await _notify(notifier, NotifyLevel.OWNER,
-                      f"ℹ️ [{goal_id}] defaulted — cancelled on \"{prob.clause or 'contract'}\".")
-        return new
-    with store.transaction():
-        store.record_decision(dec, problem_status="defaulted")
-        new = store.transition(
-            goal_id, Event.UNBLOCK,
-            replace(status, phase="idle", blocked_on="", actions_dispatched=0,
-                    heal_attempts=0, next_heal_at=None, donegate_rounds=0,
-                    donegate_progress=0,
-                    merge_heal_attempted=False, problem_id="",
-                    next=f"defaulted: {default.label}"),
-            expect=status,
-        )
-    store.append_log(goal_id, f"problem {prob.id} defaulted → {default.key} ({default.label})")
-    await _notify(notifier, NotifyLevel.OWNER,
-                  f"ℹ️ [{goal_id}] defaulted — {default.label} on \"{prob.clause or 'contract'}\"; "
-                  f"override with decide.")
-    return new
+    def log(self, goal_id: str, line: str) -> None:
+        sys.stderr.write(f"goal-layer: {goal_id}: {line}\n")
 
 
-async def tick_goal(
-    goal_id: str,
-    *,
-    store: GoalStore,
-    engine: GoalEngine,
-    evaluator_caller: ClaudeCaller,
-    notifier: Notifier,
-    notify_url: str = "",
-    prepare_ws: WorkspacePrep = prepare_workspace,
-    verify_done: bool = VERIFY_DONE,
-    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
-    no_progress_s: int = NO_PROGRESS_S,
-    remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
-    holders: "dict[str, str] | None" = None,
-    project_caps: "dict[str, tuple[str, ...]] | None" = None,
-    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
-) -> Outcome:
-    """Run one heartbeat and record a single ``tick`` trace event with the
-    incoming (lifecycle, phase) and outgoing outcome — the only place the trace
-    sees a tick. All the cognition / dispatch / delivery / notify events fired
-    during the body land between this tick and the next.
-
-    The ENTIRE body runs under this goal's :func:`_tick_lock` (PR8) — a
-    concurrent tick for the SAME goal (tick_one racing tick_all's sweep) waits
-    here instead of both running cognition and one losing its round to a
-    TransitionConflict. See the lock's own comment for the full rationale.
-    Different goals use different Lock objects, so this never serializes the
-    fleet — only same-goal overlap."""
-    async with _tick_lock(goal_id):
-        status_before = store.load_status(goal_id)
-        phase_before = _classify(status_before)
-        lifecycle_before = status_before.lifecycle or "executing"
-        try:
-            outcome = await _tick_goal_impl(
-                goal_id,
-                store=store, engine=engine,
-                evaluator_caller=evaluator_caller,
-                notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
-                verify_done=verify_done, autodeploy=autodeploy,
-                no_progress_s=no_progress_s,
-                remote_checker=remote_checker,
-                mergeability_probe=mergeability_probe,
-                holders=holders,
-                project_caps=project_caps,
-                issue_fetcher=issue_fetcher,
-            )
-        except IllegalTransition as exc:
-            # A handler proposed an (event, target) the LEGAL table doesn't permit
-            # from the goal's CURRENT stored state — always a bug (the handler
-            # computed the wrong event, or LEGAL is missing a real code path),
-            # never an expected race (see TransitionConflict below for that). Force
-            # -block rather than let the tick loop crash-retry the same bug every
-            # heartbeat — loud failure over silent degradation (CLAUDE.md's
-            # hardening philosophy: verification fails closed, corruption blocks
-            # legibly, and this is the state-machine's version of the same rule).
-            store.append_log(goal_id, f"ILLEGAL transition — blocking: {exc}")
-            store.force_block(goal_id, f"illegal state transition: {exc}")
-            await _notify(
-                notifier, NotifyLevel.OWNER,
-                f"🟥 [{goal_id}] internal state error — I've paused this goal; steer to resume: {exc}",
-            )
-            outcome = Outcome.BLOCKED
-        except TransitionConflict as exc:
-            # Expected, not a bug: another writer (steer_goal / cancel_goal,
-            # typically) committed between this tick's load and its write. The
-            # tick's write is simply abandoned — nothing from this turn was
-            # persisted — and the NEXT tick reads the fresh state instead of
-            # clobbering it (the stale-snapshot un-cancel class this PR closes:
-            # today, without this catch, the tick's stale write would silently
-            # win and un-cancel the goal). Zero notify — benign and self-healing,
-            # a notification here would just be tick-cadence noise. Note: the
-            # PR8 lock makes a tick_one-vs-tick_all conflict on the SAME goal
-            # unreachable (they now serialize); this catch remains load-bearing
-            # for steer_goal/cancel_goal, which stay lock-free by design.
-            store.append_log(goal_id, f"tick abandoned — state changed mid-tick: {exc}")
-            outcome = Outcome.CONFLICT
-        _trace.record_tick(
-            goal_id=goal_id, lifecycle=lifecycle_before,
-            phase=phase_before.value, outcome=outcome.value,
-        )
-        return outcome
+def _utc_day_start_ms(now_ms: int) -> int:
+    day = _dt.datetime.fromtimestamp(now_ms / 1000, tz=_dt.timezone.utc).date()
+    return int(_dt.datetime(day.year, day.month, day.day, tzinfo=_dt.timezone.utc).timestamp() * 1000)
 
 
-async def _tick_goal_impl(
-    goal_id: str,
-    *,
-    store: GoalStore,
-    engine: GoalEngine,
-    evaluator_caller: ClaudeCaller,
-    notifier: Notifier,
-    notify_url: str = "",
-    prepare_ws: WorkspacePrep = prepare_workspace,
-    verify_done: bool = VERIFY_DONE,
-    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
-    no_progress_s: int = NO_PROGRESS_S,
-    remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
-    holders: "dict[str, str] | None" = None,
-    project_caps: "dict[str, tuple[str, ...]] | None" = None,
-    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
-) -> Outcome:
-    """Run one heartbeat. Reads the goal's status, classifies it into a
-    :class:`Phase`, dispatches to the matching handler.
-
-    Two design pillars carried over from the original implementation:
-      * **Terminal short-circuit** runs BEFORE the no-progress watchdog so done /
-        cancelled goals don't even read the clock.
-      * **Action-poll chains into EXECUTING** in the same tick — a settled
-        regular action records its delivery, clears ``in_flight``, and the
-        planner sees the just-finished detail without waiting another heartbeat.
-        (Discovery / done-gate polls do NOT chain — they have dedicated
-        resolution handlers.)
-    """
-    ctx = TickContext(
-        store=store, engine=engine,
-        evaluator_caller=evaluator_caller,
-        notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
-        verify_done=verify_done, autodeploy=autodeploy,
-        no_progress_s=no_progress_s,
-        remote_checker=remote_checker,
-        mergeability_probe=mergeability_probe,
-        holders=holders,
-        project_caps=project_caps,
-        issue_fetcher=issue_fetcher,
-    )
-
-    status = store.load_status(goal_id)
-    phase = _classify(status)
-
-    # Terminal short-circuit — skip even the watchdog: a done/cancelled goal
-    # must keep skipping at zero cost.
-    if phase is Phase.TERMINAL_DONE:
-        return Outcome.SKIP_DONE
-    if phase is Phase.TERMINAL_CANCELLED:
-        return Outcome.SKIP_CANCELLED
-
-    # The goal contract is goal.yaml alone; the worker's speckit artifacts
-    # live in the repo, and the store's goal docs (log/deliveries/inbox/spec)
-    # parse trivially.
-    goal = store.load_goal(goal_id)
-
-    # Mechanical auto-heal (F8): lift a mechanical:* block whose condition no
-    # longer holds — no LLM, ever (the mirror of the quota pause's
-    # timestamp-compare auto-resume in tick_all), damped by the persisted
-    # per-goal heal budget so a flapping condition can't turn the zero-token
-    # blocked steady-state into a plan + ping per cycle. The healable kinds:
-    # ``prep`` — its recheck costs a git subprocess (ls-remote), so it runs on
-    # the persisted next_heal_at exponential backoff, not every tick — plus
-    # ``env`` (spec 030) and ``ci`` (spec 032), whose rechecks are a
-    # persisted-row read and one bounded gh read, hence no backoff window. All
-    # are also human-clearable: resume_goal clears them. The kinds in
-    # HUMAN_GATED_MECHANICAL_KINDS stay owner-cleared by design, and
-    # needs_answer / bug are not mechanical at all. A refused heal (budget
-    # spent / window closed / still broken) leaves the blocked status
-    # untouched and the tick idles below at zero cognition, same as any
-    # blocked tick.
-    if status.phase == "blocked":
-        healed = None
-        # Spec 031 US2: a Problem whose timebox elapsed takes its default —
-        # a timestamp compare, zero cognition (constitution III). Under
-        # strict a default that would CLOSE the goal parks instead (Q2 → C).
-        if status.problem_id:
-            defaulted = await _apply_problem_default(
-                goal_id, goal, status, store=store, notifier=notifier,
-            )
-            if defaulted is not None:
-                status = defaulted
-                phase = _classify(status)
-                if phase is Phase.TERMINAL_CANCELLED:
-                    # a defaulted cancel (spec 041 FR-005) ends the tick here
-                    return Outcome.SKIP_CANCELLED
-        if status.blocked_kind == "mechanical:prep":
-            healed = await _autoheal_prep(
-                goal_id, goal, status, store=store, notifier=notifier,
-            )
-        elif status.blocked_kind == "mechanical:env":
-            # spec 030 FR-003: no backoff needed — just read the persisted row
-            # (zero network, zero LLM). The sweep refreshes probes before each
-            # sweep, so the result here is at most one sweep old.
-            healed = await _autoheal_env_cap(
-                goal_id, goal, status, store=store, notifier=notifier,
-                project_caps=project_caps,
-            )
-        elif status.blocked_kind == "mechanical:ci":
-            # spec 032 US1: one bounded gh read per heartbeat window; green
-            # lifts the hold and the pending proposal re-opens the gate below.
-            healed = await _autoheal_ci(
-                goal_id, goal, status, store=store, notifier=notifier,
-                remote_checker=remote_checker,
-            )
-        if healed is not None:
-            status = healed
-            phase = _classify(status)
-
-    # Zero-token no-progress watchdog: pure timestamp math; fires one owner ping
-    # if an executing goal hasn't shipped in too long. Mutates status; never
-    # transitions phase.
-    status = await _check_no_progress(
-        goal_id, goal, status,
-        store=store, notifier=notifier, window_s=no_progress_s,
-    )
-
-    # Polling phases — settle in-flight work first.
-    if phase is Phase.POLLING_DONE_GATE:
-        return await _resolve_polling_done_gate(goal_id, goal, status, ctx)
-
-    # Orphaned-ref reconcile used to run HERE, every tick (2026-07-09:
-    # closeloop-mission-v2 waited all night on a program that had already
-    # failed, because STATUS.md was truncated by a crash mid-write). PR7's
-    # atomic dispatch (task/program row + the DISPATCH transition + the log
-    # row as ONE unit) makes that class of loss structurally impossible on
-    # the in-process engine going forward — the in_flight ref can no longer
-    # commit without the row it points at (and vice versa). The remaining
-    # recovery surface — a goal whose ref was lost by an OLDER, pre-PR7
-    # build, or by something outside the dispatch path entirely (manual DB
-    # surgery, a cross-environment restore) — is handled ONCE per service
-    # start by sweep_orphaned_refs, not every tick — see GoalService._loop().
-
-    finished_detail = ""
-    if phase is Phase.POLLING_ACTION:
-        outcome = await _resolve_polling_action(goal_id, goal, status, ctx)
-        if isinstance(outcome, Outcome):
-            return outcome
-        # A regular action settled; chain to the lifecycle phase that the just-
-        # cleared status now classifies into (usually EXECUTING).
-        status, finished_detail = outcome
-        phase = _classify(status)
-
-    # Lifecycle phase (in_flight is None).
-    if phase is Phase.EXECUTING:
-        if goal.mode == "qa":
-            return await _handle_qa_goal(goal_id, goal, status, finished_detail, ctx)
-        return await _handle_long_lived_advance(goal_id, goal, status, finished_detail, ctx)
-
-    raise RuntimeError(f"unhandled phase {phase} for goal {goal_id}")
+def _thread_number(goal: Goal, world: World) -> int:
+    """Where devclaw records go: the PR when it exists, else the first issue."""
+    if world.pr.number:
+        return world.pr.number
+    return goal.issues[0] if goal.issues else 0
 
 
-
-# ---- phase handlers --------------------------------------------------------
-# One handler per Phase value. Each takes (goal_id, goal, status, ctx) — except
-# the polling handlers, which the orchestrator calls with status already loaded
-# — and returns either an :class:`Outcome` (terminal for this tick) or, for
-# ``_resolve_polling_action``, an ``(updated_status, finished_detail)`` tuple
-# so the EXECUTING handler can chain on the same tick.
-
-
-def _chunk_plan_corruption(workspace_dir: str) -> str:
-    """Why the goal's chunk-plan artifact (the current feature's committed
-    ``tasks.md``, spec 021 FR-004) cannot be read — or ``""`` when it can.
-
-    Load-bearing on a CONTINUATION: mid-arc, tasks.md is the execution
-    contract the next session continues from, so an unreadable one blocks the
-    goal loudly instead of dispatching a session that would silently re-plan
-    over prior work. Detection is narrow by design — only a feature dir that
-    EXISTS with a tasks.md that cannot be read/decoded counts (a repo that
-    never adopted speckit legitimately has none). Zero-LLM, pure fs; an
-    unexpected checker failure degrades to "" (a checker bug must not wedge
-    every dispatch). Module-global so tests patch it here."""
+async def _ping(ctx: TickContext, text: str) -> None:
     try:
-        feature = _slice_guard.current_feature_dir_sync(workspace_dir)
-        if not feature:
-            return ""
-        path = os.path.join(workspace_dir, feature, "tasks.md")
-        try:
-            with open(path, encoding="utf-8") as fh:
-                fh.read()
-        except UnicodeDecodeError:
-            return f"{feature}/tasks.md is not valid UTF-8"
-        except OSError as exc:
-            return f"{feature}/tasks.md unreadable: {exc}"
-        return ""
-    except Exception:  # noqa: BLE001 — narrow guard, never a dispatch wedge
-        return ""
+        await ctx.notifier.send(text)
+    except Exception:  # noqa: BLE001 — a ping never breaks a tick
+        pass
 
 
-def _wall_clock_fact() -> str:
-    """One line naming the session's wall-clock budget, or "" when unbounded.
-
-    Blank-safe on purpose: a deployment that disables the wall clock
-    (``DEVCLAW_TASK_TIMEOUT_S=0``) returns "" and the caller omits the line
-    entirely, rendering the brief byte-identically to before it existed."""
-    budget = _config.TASK_TIMEOUT_S
-    if budget <= 0:
-        return ""
-    return (
-        f"Wall clock: this session is torn down {int(budget // 60)} minutes after it "
-        "starts, whatever state it is in. Size the slice to fit and commit each "
-        "coherent piece as you finish it — uncommitted work at the limit is lost."
-    )
-
-
-def _advance_brief(
-    goal: Goal, steering: str, failure_context: str = "",
-    prior_increments: str = "", issue_context: str = "",
-    decisions: str = "",
-) -> str:
-    """The light pull-brief for a thin-path advance session (demolition P3;
-    speckit substrate, spec 008 US1).
-
-    Deliberately thin (§3a trust-the-input): the worker PULLS its context — the
-    speckit ``specs/*/`` artifacts + the repo's ``.specify/`` scripts + the repo
-    itself — the way a briefed subagent explores, rather than being handed a
-    pre-chewed dossier. This says only WHAT to pursue; HOW (the speckit
-    procedure) lives once, in the worker skill bundle, and is pointed at,
-    not repeated (spec 034 FR-009). Model-agnostic (Principle II): plain
-    imperative text, never Claude-Code slash-command wiring. Steering (an
-    owner input, or the done-gate's own corrections re-applied via
-    ``_apply_corrections``) rides in here for the worker to read — never
-    applied by a planner, because there isn't one."""
-    parts = [
-        # Built from the shared marker so the detectors (delivery's title/body
-        # guard, tick_dispatch's display choke point) can never drift from the
-        # generator (#547/#550).
-        ADVANCE_BRIEF_MARKER
-        + ", shippable increment using speckit, then stop.",
-        # The procedure (find the current feature, run the speckit steps,
-        # advance ONE story-slice, check off tasks.md, commit the artifacts
-        # with the code) has exactly one home — the speckit-artifacts skill
-        # in the worker's standard instructions (spec 034 FR-009). This
-        # line points; it does not repeat.
-        "Follow the speckit-artifacts procedure in your standard instructions "
-        "(the current feature, one story-slice, tasks.md checked off, artifacts "
-        "committed with the code) — it is not repeated here.",
-        "",
-        # The saga framing — five named slots, one generator, size-bounded
-        # (spec 012 US2). Re-sent in full every increment (FR-009a); a goal
-        # authored before the schema renders exactly as it did then.
-        _saga_framing.render(goal),
-    ]
-    # The session's wall clock, as a FACT (constitution IX: close a gap with a
-    # fact before a brake). The worker could not see its own budget, so it sized
-    # slices as if time were unbounded and lost everything — including work it
-    # had not committed — when the sandbox was torn down. Knowing where the wall
-    # is lets it land a smaller slice before the wall. Inserted rather than
-    # listed so an unbounded deployment renders byte-identically to before.
-    wall_clock = _wall_clock_fact()
-    if wall_clock:
-        parts.insert(2, wall_clock)
-    # The saga feed-forward (spec 012 US1): what earlier increments of THIS goal
-    # delivered and how each was judged. Re-sent in full every increment
-    # (FR-009a) — a fresh sandbox has no memory, so a pointer would be a request
-    # while a slot is a fact. Blank-safe: callers that pass nothing render
-    # byte-identically to before this feature.
-    # Referenced-lane context (spec 019 US1): the referenced issues' LIVE
-    # state, fetched at this dispatch — the worker reads current truth, never
-    # a creation-time copy. Blank-safe: issue-less goals render byte-identically.
-    if issue_context.strip():
-        parts += ["", issue_context.strip()]
-    if prior_increments.strip():
-        parts += ["", prior_increments.strip()]
-    if decisions.strip():
-        # spec 031 US4: the owner's rulings, directly after prior increments —
-        # devclaw-controlled facts the session applies, never re-derives.
-        parts += ["", decisions.strip()]
-    if failure_context.strip():
-        # Spec 020 FR-002a: an environment-cap (sandbox OOM) failure gets
-        # cap-aware bounding advice — the generic "smaller slice" directive is
-        # WRONG for this class (a smaller slice does not shrink the test
-        # suite; bounding the tooling does).
-        if ENVCAP_FAILURE_MARKER in failure_context:
-            adapt = (
-                " (failed task or failed gate) — its terminal reason, "
-                "verbatim. The sandbox hit its MEMORY CAP and the kernel "
-                "killed the previous session. ADAPT this session: bound your "
-                "tooling to the declared allocation (DEVCLAW_SANDBOX_MEMORY/"
-                "DEVCLAW_SANDBOX_CPUS in your environment) — cap test-runner "
-                "workers, run suites serially, limit node heap. Prefer a "
-                "slower bounded run over a faster parallel one; do NOT "
-                "re-run the previous attempt's commands unchanged:"
-            )
-        elif "[active_slice:" in failure_context:
-            # Spec 021 FR-008: the runner named the slice whose session
-            # overflowed the model context. An identical re-attempt of that
-            # slice is refused by construction — the brief demands a re-slice
-            # of the PLAN first.
-            adapt = (
-                " (failed task or failed gate) — its terminal reason, "
-                "verbatim. The previous session overflowed the model context "
-                "while working the NAMED slice. FIRST re-slice that slice in "
-                "its tasks.md into strictly smaller slices (edit the plan, "
-                "commit it); THEN implement only the first sub-slice. Do not "
-                "re-attempt the oversized slice unchanged:"
-            )
-        else:
-            adapt = (
-                " (failed task or failed gate) — its "
-                "terminal reason, verbatim. Read it and ADAPT this session (a "
-                "context overflow or timeout means: take a strictly smaller "
-                "slice); do not repeat the attempt unchanged:"
-            )
-        parts += [
-            "",
-            FAILURE_CONTEXT_MARKER + adapt,
-            failure_context.strip()[:800],
-        ]
-    if steering.strip():
-        parts += ["", STEERING_MARKER, _cap_steering(steering.strip())]
-    return "\n".join(parts)
+async def _spawn(ctx: TickContext, goal: Goal, world: World, kind: str, brief: str) -> None:
+    """Create the row inside one transaction with the fingerprint it was given."""
+    project_ws = goal.workspace_dir
+    checkout = goal_checkout_dir(project_ws, goal.id)
+    try:
+        import os
+        if not os.path.isdir(os.path.join(project_ws, ".git")):
+            await prepare_workspace(project_ws, goal.repo_url)
+        await ensure_goal_checkout(project_ws, goal.repo_url, goal.id)
+    except Exception as exc:  # noqa: BLE001 — the queue's prep will say so loudly
+        ctx.log(goal.id, f"checkout seeding degraded: {exc}")
+    with ctx.store.transaction():
+        ctx.queue.submit(  # type: ignore[attr-defined]
+            kind=kind, workspace_dir=checkout, goal=brief, verify_cmd=None,
+            deliver=(kind != "review_repository"), parent_goal_id=goal.id,
+            target_branch=goal.branch, project_id=goal.project_id, pump=False,
+        )
+        ctx.store.set_goal_last_seen(goal.id, world.fingerprint_json())
+    ctx.queue.pump()  # type: ignore[attr-defined]
 
 
-def validation_action(goal: Goal) -> Action:
-    """The one Action shape a validation run dispatches as (spec 015). Shared
-    by the qa cadence below and the deploy trigger (GoalService), so both
-    edges produce identical runs."""
-    return Action(
-        engine="devclaw",
-        tool="validate_product",
-        goal=(
-            "Validate the running product against the repo-declared "
-            f"devclaw.json validation contract (qa goal {goal.id}). Boot the "
-            "hermetic seeded instance, run the accumulated acceptance suites, "
-            "report every failure."
-        ),
-        verify_cmd=None,
-        open_pr=False,
-    )
+async def _close(ctx: TickContext, goal: Goal, outcome: str, note: str) -> str:
+    if ctx.store.close_goal(goal.id, outcome):
+        remove_goal_checkout(goal.workspace_dir, goal.id)
+        ctx.log(goal.id, f"closed ({outcome}): {note}")
+        await _ping(ctx, f"{'✅' if outcome == 'achieved' else '⏹'} {goal.id} {outcome} — {note}")
+    return "closed"
 
 
-async def _handle_qa_goal(
-    goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
-) -> Outcome:
-    """Spec 015 US3 — the ``qa`` mode's whole tick surface. A qa goal never
-    plans feature work and never proposes done: a settled validation run's
-    detail is appended as the RUN RECORD (the done-gate is never opened —
-    validation findings are intake, not verdicts), and the only self-initiated
-    dispatch is the owner-armed cadence. Unarmed (cadence empty — the shipped
-    default), an idle tick is a pure timestamp write: zero cognition, zero
-    subprocess (constitution III)."""
+async def _block(ctx: TickContext, goal: Goal, world: World, *, task_id: str, head: str,
+                 kind: str, text: str, default: str = "") -> str:
+    number = _thread_number(goal, world)
+    body = _donegate.render_block(task_id=task_id, head=head, kind=kind, text=text, default=default)
+    url = await ctx.post_comment(goal.repo_url, number, body) if number else ""
+    ctx.log(goal.id, f"blocked ({kind}): {text[:160]}")
+    await _ping(ctx, f"⛔ {goal.id} stopped — {kind}: {text[:300]}"
+                    + (f"\n{url}" if url else "") + "\nReply on the thread mentioning the bot, or decide().")
+    return "blocked"
+
+
+async def tick_goal(goal: Goal, ctx: TickContext) -> str:
+    """One goal, one tick. Returns a short outcome word for the log."""
     store = ctx.store
-    if finished_detail:
-        # The settle header/detail IS the run record (US2 scenario 3 — a run
-        # record, not silence). One line; the task row keeps the full detail.
-        first = finished_detail.split("\n", 1)[0][:400]
-        store.append_log(goal_id, f"qa run settled: {first}")
+    if store.goal_has_live_task(goal.id):
+        return "running"
+    open_, why = ctx.queue.dispatch_open()  # type: ignore[attr-defined]
+    if not open_:
+        return "held"
+    now = ctx.now_ms()
+    if store.count_goal_tasks_since(goal.id, _utc_day_start_ms(now)) >= _config.sessions_per_day():
+        return "capped"
 
-    cadence = (goal.cadence or "").strip()
-    if cadence and store.cadence_due(goal, status):
-        now = store.now_iso()
-        base = replace(status, last_plan_at=now, last_tick_at=now)
-        return await _dispatch_action(
-            goal_id, goal, base, validation_action(goal),
-            store=store, engine=ctx.engine, notifier=ctx.notifier,
-            notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws, consume_steering=[],
-            project_caps=ctx.project_caps,
-        )
+    world = await ctx.world.read(goal)
+    if world.pr.state == "unknown":
+        ctx.log(goal.id, f"world unreadable: {world.pr.ci_detail}")
+        return "unreadable"
+    if world.pr.state == "merged":
+        return await _close(ctx, goal, "achieved", f"PR merged: {world.pr.url}")
+    last: Optional[Task] = store.latest_task_for_goal(goal.id)
+    head = world.pr.head_sha
 
-    store.update_status_fields(goal_id, last_tick_at=store.now_iso())
-    return Outcome.IDLE
+    # a session that ended BLOCKED: post its question once, then wait
+    if last is not None and last.exit == EXIT_BLOCKED and not world.block_exists(task_id=last.id):
+        question, default = _donegate.block_default(last.exit_detail or "")
+        return await _block(ctx, goal, world, task_id=last.id, head=head, kind="session blocked",
+                            text=question or "(no question stated)", default=default)
+    if world.blocked:
+        return "blocked"
 
+    # a red CI on a delivered head is an environment gap: stop, never retry
+    if world.pr.state == "open" and world.pr.ci == "red" and not world.block_exists(head=head):
+        detail = world.pr.ci_detail
+        logs = "\n\n".join(f"**{n}**\n```\n{t[-2500:]}\n```" for n, t in world.pr.failing_logs[:3])
+        return await _block(ctx, goal, world, task_id=last.id if last else "", head=head,
+                            kind="red CI after a green local verify",
+                            text=f"{detail}\n\n{logs}".strip())
 
-async def _handle_long_lived_advance(
-    goal_id: str, goal: Goal, status: GoalStatus, finished_detail: str, ctx: TickContext,
-) -> Outcome:
-    """The ONE executing path for both modes (spec 008 shrink) — ZERO
-    per-tick planner cognition (the planner was cut, demolition P3b). The mode
-    dial selects only the re-evaluation cadence (ADR 0003): a one_shot goal
-    rides this same advance loop — its first advance fires immediately (no
-    ``last_plan_at`` yet ⇒ cadence due) and the done-gate's corrections chain
-    work-present advances until achieved, so it drives to done without
-    waiting out the cadence. The worker owns the plan (the speckit
-    ``specs/*/`` artifacts in the repo); the control plane only dispatches
-    "advance the goal via speckit" and lets the grounded done-gate judge
-    done:
+    if last is not None and last.exit == EXIT_INTERRUPTED:
+        await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last))
+        return "resumed"
 
-      * a SUCCESSFUL advance session just settled → propose done. The done-gate
-        verifies against ``done_when``: ``achieved`` closes the goal; not-achieved
-        re-applies its own corrections as steering and returns the goal to idle,
-        so the NEXT cadence advances again with those corrections in hand — a
-        ralph-loop, not a re-review-every-tick spin (the done-gate only fires
-        after a real session settles, never on an idle tick);
-      * otherwise (a fresh cadence tick, or a FAILED/gate-failed settle) → gate
-        on work-present/cadence (the zero-token idle guard — a blocked goal
-        unblocks only on work, never the timer) and dispatch ONE advance session.
+    if last is not None and last.exit == EXIT_REVIEW:
+        return await _settle_review(ctx, goal, world, last)
 
-    The done-TRIGGER is the worker's own session-success header — devclaw's
-    controlled ``status=done`` settle line (the same header the planner used to
-    read), NOT the worker's free-text self-report. It is a cheap trigger for the
-    expensive grounded gate, never a substitute for it: the worker's done-claim
-    is never trusted on faith (#358); the grounded done-gate is the authority."""
-    store = ctx.store
-    # A successful advance settled → propose done; the grounded done-gate decides.
-    # Read ONLY devclaw's controlled settle header — its FIRST line,
-    # "tool=… id=… status=…{gate/PR}" (tick_settle._resolve_polling_action). The
-    # worker's free-text narration follows the newline and must NOT be scanned:
-    # otherwise a worker could flip the control-plane's done-decision by writing
-    # "status=done" / "gate=FAILED" into its own summary — the exact #358 trust
-    # boundary this trigger exists to respect (never trust the worker's claim on
-    # faith; the grounded gate is the authority, the header is only a cheap
-    # trigger). invariant-guard reproduced the free-text crack, 2026-08-05.
-    header = finished_detail.split("\n", 1)[0] if finished_detail else ""
-    settled_ok = "status=done" in header and "gate=FAILED" not in header
-    # Spec 041 FR-003/FR-004: the owner's standing accept_close is the verdict.
-    # One store read, no cognition; ``None`` for every other goal.
-    accepted = _decisions.accepted_close(store.decisions(goal_id))
-    if settled_ok:
-        now = store.now_iso()
-        base = replace(status, last_plan_at=now, last_tick_at=now)
-        if accepted is not None:
-            store.append_log(goal_id, "thin: advance session settled — the owner's accept_close stands, closing without a gate round")
-            return await _donegate_finalize_accepted_close(
-                goal_id, goal, base, accepted,
-                store=store, notifier=ctx.notifier, autodeploy=ctx.autodeploy,
-                remote_checker=ctx.remote_checker,
-            )
-        store.append_log(goal_id, "thin: advance session settled — proposing done")
-        return await _open_done_gate(
-            goal_id, goal, base,
-            store=store, engine=ctx.engine, evaluator_caller=ctx.evaluator_caller,
-            notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
-            verify_done=ctx.verify_done, note="thin: advance session settled", remote_checker=ctx.remote_checker,
-            autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
-        )
+    if last is not None and last.exit == EXIT_DONE:
+        if world.pr.state == "none":
+            return await _block(ctx, goal, world, task_id=last.id, head="", kind="DONE without a PR",
+                                text="the session proposed DONE but nothing was ever delivered")
+        if world.pr.state == "open" and world.pr.ci == "pending":
+            return "ci pending"
+        if world.pr.state == "open" and world.pr.ci in ("green", "no_workflows"):
+            verdicts = world.verdicts_for_head(head)
+            unreadable = [v for v in verdicts if v.field("unreadable") == "1"]
+            if not verdicts or (len(verdicts) == len(unreadable) == 1):
+                await _spawn(ctx, goal, world, "review_repository", review_brief(goal, world))
+                return "gate"
+            if unreadable and len(unreadable) >= 2:
+                return await _block(ctx, goal, world, task_id=last.id, head=head,
+                                    kind="done-gate unreadable twice",
+                                    text="two reviews produced no readable verdict — a devclaw defect")
+            achieved = [v for v in verdicts if v.field("achieved") == "1"]
+            if achieved:
+                return await _merge(ctx, goal, world)
+        # conflicting / infra_broken / red-already-blocked: the world moved — fall through
 
-    # Pending merge (spec 025 FR-003): a done-gate `achieved` verdict already
-    # stands and only the MERGE is owed — the goal parked mechanical:merge_failed
-    # and a human resumed it. Retry the merge, never the gate: zero cognition.
-    # Placed BEFORE the project hold on purpose: merging is not a dispatch and
-    # touches no workspace, and under lane skip-over a successor goal may hold
-    # the lane while this goal finishes its merge.
-    if status.pending_merge_pr and status.phase != "blocked":
-        return await _donegate_finalize_pending_merge(
-            goal_id, goal, status,
-            store=store, notifier=ctx.notifier,
-            autodeploy=ctx.autodeploy, remote_checker=ctx.remote_checker,
-        )
-
-    # Spec 032 US1: a done proposal that was held on CI (mechanical:ci) and
-    # healed has no settle to be detected from — the persisted flag re-drives
-    # the gate. Zero cognition until the gate's own review dispatch; before
-    # the project hold for the same reason as the pending merge: the goal is
-    # finishing work it already owns, not starting new work.
-    if status.pending_done_proposal and status.phase != "blocked":
-        now = store.now_iso()
-        base = replace(status, last_plan_at=now, last_tick_at=now)
-        if accepted is not None:
-            store.append_log(goal_id, "ci settled — the owner's accept_close stands, closing without a gate round")
-            return await _donegate_finalize_accepted_close(
-                goal_id, goal, base, accepted,
-                store=store, notifier=ctx.notifier, autodeploy=ctx.autodeploy,
-                remote_checker=ctx.remote_checker,
-            )
-        store.append_log(goal_id, "ci settled — re-opening the done-gate")
-        return await _open_done_gate(
-            goal_id, goal, base,
-            store=store, engine=ctx.engine, evaluator_caller=ctx.evaluator_caller,
-            notifier=ctx.notifier, notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws,
-            verify_done=ctx.verify_done, note="ci settled", remote_checker=ctx.remote_checker,
-            autodeploy=ctx.autodeploy, issue_fetcher=ctx.issue_fetcher,
-        )
-
-    # Single-writer project hold (spec 010 P1). THE dispatch choke point: a
-    # goal that is not its project's holder dispatches nothing, so two
-    # independent plans can never run against one repository (the #553 class,
-    # closed by construction rather than mitigated).
-    #
-    # Placed here on purpose — after the settled-ok done-gate branch above, so a
-    # goal that still has in-flight work finishes settling it and nothing is
-    # orphaned (the spec's upgrade edge case). A queued tick must cost zero
-    # cognition and must not churn the goal's row or log: the hold is derived,
-    # so there is nothing here to acquire, stamp, or release.
-    #
-    # ``ctx.holders`` is the sweep-wide map when tick_all threaded one in;
-    # a direct tick_goal call (tick_one, tests) derives it here instead.
-    #
-    # What this goal would DO next — and therefore whether it needs the lane
-    # at all — is ONE derived fact, ``project_hold.next_move``, the same one
-    # the holder derivation above read for this goal (tinyspec
-    # ``one-definition-of-runnable``, 2026-09-08). Only a lane-free move (a
-    # merge retry, the owner's standing accept_close — a close on mechanical
-    # facts that touches no checkout) passes a held lane; every other move
-    # waits. The plan gate below reads the same move, so the two can never
-    # disagree again: before this, the owner's accept_close on three goals
-    # sat all evening behind a busy lane (2026-09-08), and a goal whose only
-    # work was a dispatching Decision was no candidate here yet dispatched
-    # there — two writers on one project in one sweep.
-    holders = ctx.holders if ctx.holders is not None else _project_hold.holder_map(store)
-    scope = _project_hold.scope_key(goal)
-    holder = holders.get(scope) if scope else None
-    move = _project_hold.next_move(goal, status, store, settled=bool(finished_detail))
-    if holder is not None and holder != goal_id and _project_hold.waits_for_lane(move):
-        # No log line and no status write: this fires every heartbeat for as
-        # long as the holder runs, and a per-tick append would bury the goal's
-        # real history under queue noise. The wait is legible where an operator
-        # actually looks — get_goal derives it from this same function (FR-002,
-        # SC-006).
-        return Outcome.QUEUED
-
-    # Steering + plan gate — the zero-token idle guard: a blocked goal
-    # unblocks only on a settle or HUMAN steering (machine rows — source
-    # ``auto-*``, e.g. the churn brake's own corrections — stay parked with
-    # the goal and are consumed by the first dispatch after a human acts), an
-    # idle goal plans only on work (a settle, unread steering, a pending
-    # Decision — spec 041 FR-001: the owner or the timebox said what to do,
-    # and the next tick does it instead of waiting out the cadence — or the
-    # owner's standing accept_close) or a due cadence. All of it is
-    # ``next_move``'s verdict above.
-    rows_by_source = store.unread_steering_sources(goal_id)
-    rows = [(rid, line) for rid, _src, line in rows_by_source]
-    steering = "\n".join(line for _, line in rows)
-    # unread_steering_rows() may have lazily ingested inbox lines, bumping
-    # version; reload so the dispatch's expect= CAS's against the current row
-    # (same reason as _handle_long_lived_advance).
-    status = store.load_status(goal_id)
-    if move not in _project_hold.PLANNING_MOVES:
-        store.update_status_fields(goal_id, last_tick_at=store.now_iso())
-        return Outcome.IDLE
-
-    consume_ids = [rid for rid, _ in rows]
-    # Spec 041 FR-003: the owner's accept_close, with nothing else to
-    # dispatch, closes NOW — no cadence, no worker, no gate round. Unread
-    # steering from a human, or a mechanical correction (a red-CI fix, the
-    # merge-conflict resolution row) dispatches first; the accept stands and
-    # the close re-runs when that work settles. The evaluator's OWN concern
-    # rows are not "something else" (spec 045 US3): they are the gap the
-    # accept accepted — the close consumes them and records them as
-    # follow-ups. Before this, fs-431's accept_close on 2026-09-09 ran a 3 h
-    # worker session on eight such rows before it closed.
-    if (
-        accepted is not None and not finished_detail
-        and not _decisions.outranks_accept(rows_by_source)
+    if last is not None and last.exit == EXIT_REFUSED and (
+        goal.last_seen_json == world.fingerprint_json()
     ):
-        return await _donegate_finalize_accepted_close(
-            goal_id, goal, status, accepted,
-            store=store, notifier=ctx.notifier, autodeploy=ctx.autodeploy,
-            remote_checker=ctx.remote_checker, consume_steering=consume_ids,
-            accepted_lines=tuple(line for _rid, _src, line in rows_by_source),
-        )
-    now = store.now_iso()
-    base = replace(status, last_plan_at=now, last_tick_at=now)
-    # A non-ok settle reaching this dispatch (failed task, or done-with-
-    # failed-gate) carries its terminal reason in finished_detail — thread it
-    # into the brief so the next session ADAPTS instead of re-running blind
-    # (the reason used to be collapsed to bool(finished_detail): the 3h
-    # context-overflow and the 1h wall-clock burns of 2026-08-19 were each
-    # followed by a byte-identical brief).
-    failure_context = finished_detail if finished_detail else ""
-    # Spec 020 FR-002a: the sandbox-OOM environment-cap class is deterministic
-    # for a given environment, so it earns exactly ONE adapted re-dispatch
-    # (the brief below carries cap-aware bounding advice). A recurrence past
-    # that budget parks the goal with the cap in the reason — raising sizing
-    # (or shrinking the verify workload) and resume_goal is the recovery path.
-    # The counter resets on a productive settle (tick_settle), mirroring
-    # heal_attempts.
-    if failure_context and ENVCAP_FAILURE_MARKER in failure_context:
-        if base.envcap_redispatches >= 1:
-            cap_m = re.search(r"sandbox OOM-killed \(cap=([^,)]+)", failure_context)
-            cap_txt = cap_m.group(1).strip() if cap_m else "the configured cap"
-            q = (
-                f"sandbox OOM at cap {cap_txt} after an adapted retry — the "
-                "container memory limit was exhausted and the kernel killed "
-                "the agent again. Raise sizing for this project (per-project "
-                "override or DEVCLAW_SANDBOX_MEMORY) or shrink its verify "
-                "workload, then resume_goal."
-            )
-            store.transition(
-                goal_id, Event.BLOCK,
-                replace(base, phase="blocked", blocked_on=q,
-                        blocked_kind="mechanical:env_cap", next=""),
-                expect=status, consume_steering=consume_ids,
-            )
-            await _notify(ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {q[:400]}")
-            return Outcome.BLOCKED
-        base = replace(base, envcap_redispatches=base.envcap_redispatches + 1)
-        store.append_log(
-            goal_id,
-            "sandbox OOM on the previous increment — dispatching the one "
-            "adapted (bounded-tooling) retry this class earns (spec 020)",
-        )
-    # Saga feed-forward (spec 012 US1) — read BELOW the should_plan gate so an
-    # idle or blocked tick performs no delivery read at all (constitution III;
-    # the zero-token idle guard covers I/O, not just cognition). Pure mechanism:
-    # two SQLite reads + string work, never an LLM call. Best-effort — a store
-    # hiccup degrades to "no feed-forward", never a wedged dispatch.
-    try:
-        increment_rows = store.increment_records(goal_id)
-        prior_increments = _prior_increments.render(increment_rows)
-    except Exception:  # noqa: BLE001
-        increment_rows = []
-        prior_increments = ""
-    # Spec 031 US4 — the owner's Decisions, same gate, same best-effort shape:
-    # one SQLite read, never an LLM call, a hiccup degrades to "no section".
-    try:
-        decisions = _decisions.render(store.decisions(goal_id))
-    except Exception:  # noqa: BLE001
-        decisions = ""
-    # Chunk-plan integrity (spec 021 FR-004): a continuation (prior increments
-    # exist) whose current feature's tasks.md cannot be read blocks LOUD —
-    # the committed speckit artifacts are the workspace's memory of the arc,
-    # and dispatching over a corrupt one silently re-plans prior work. The
-    # block is HUMAN-GATED (see HUMAN_GATED_MECHANICAL_KINDS): restore the
-    # file on the goal branch, then resume_goal. It does NOT self-heal — an
-    # earlier version of this comment claimed it did, which was never true in
-    # code and would have been unsafe if wired, because the recheck cannot
-    # distinguish a repaired artifact from an absent one.
-    if increment_rows:
-        corrupt = await asyncio.to_thread(
-            _chunk_plan_corruption, _workspace.goal_checkout_dir(goal.workspace_dir, goal_id)
-        )
-        if corrupt:
-            q = (
-                f"chunk-plan artifact unreadable: {corrupt} — the committed "
-                "speckit tasks.md is this goal's continuation contract. "
-                "Restore it on the goal branch (or cancel and re-file), then "
-                "resume_goal."
-            )
-            store.transition(
-                goal_id, Event.BLOCK,
-                replace(base, phase="blocked", blocked_on=q,
-                        blocked_kind="mechanical:corrupt_doc", next=""),
-                expect=status, consume_steering=consume_ids,
-            )
-            await _notify(ctx.notifier, NotifyLevel.OWNER, f"🛑 [{goal_id}] {q[:400]}")
-            return Outcome.BLOCKED
-    # Referenced lane (spec 019 US1): resolve every ref to LIVE issue state at
-    # this dispatch boundary — below the should_plan gate, so idle/blocked
-    # ticks fetch nothing. The fetch is LOAD-BEARING input (a worker brief,
-    # not optional grounding): a failure BLOCKS human-gated instead of
-    # degrading to a stale or empty ask.
-    issue_context = ""
-    if goal.issue_refs:
-        fetcher = ctx.issue_fetcher or _issue_ref.fetch_issue
-        snaps: list[_issue_ref.IssueSnapshot] = []
+        # the world did not move, but the refusal is a fact the next session
+        # must act on (revert the gate-input edit) — spawn once with it
+        prior = store.list_tasks(parent_goal_id=goal.id, limit=2)
+        if len(prior) >= 2 and prior[1].exit == EXIT_REFUSED and (prior[1].exit_detail == last.exit_detail):
+            return await _block(ctx, goal, world, task_id=last.id, head=head, kind="delivery refused twice",
+                                text=last.exit_detail or "")
+        await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last))
+        return "resumed"
+
+    if goal.last_seen_json == world.fingerprint_json():
+        return "idle"
+    await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last))
+    return "spawned"
+
+
+async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Task) -> str:
+    """The review session finished: record its verdict on the PR once, then
+    act on it — merge and close, or stop for the owner."""
+    head = world.pr.head_sha
+    existing = [v for v in world.verdicts_for_head(head) if v.field("task") == review.id]
+    if not existing:
+        import json as _json
         try:
-            for n in goal.issue_refs:
-                snaps.append(await fetcher(goal.repo_url or "", n))
-        except _issue_ref.IssueRefError as exc:
-            # Spec 041 FR-009: a fetch that fails is a remote that may come
-            # back — the mechanical:prep hold (ls-remote recheck on the
-            # persisted backoff, PREP_HEAL_CAP, then one owner ping), never a
-            # human-gated park: on 2026-09-08 a 20 s `gh` timeout filed fs-431
-            # under lost_ref, the kind for a destroyed in-flight ref, and the
-            # owner's recorded correction sat behind a resume. Steering is
-            # NOT consumed: the hold is a wait, the work is still owed.
-            q = (
-                f"referenced issue could not be fetched: {exc} — a referenced "
-                "goal dispatches only from live issue state, never a stale "
-                "copy; devclaw rechecks on a backoff and resumes when the "
-                "fetch succeeds (resume_goal skips the wait)."
-            )
-            store.append_log(goal_id, f"issue fetch failed — holding for a recheck: {exc}")
-            store.transition(
-                goal_id, Event.BLOCK,
-                replace(base, phase="blocked", blocked_on=q,
-                        blocked_kind="mechanical:prep", next=""),
-                expect=status,
-            )
-            await _notify(ctx.notifier, NotifyLevel.TASK, f"⏳ [{goal_id}] {q[:300]}")
-            return Outcome.BLOCKED
-        open_snaps = [
-            s for s in snaps if s.state == "open" and _issue_ref.is_ready(s)
-        ]
-        for s in snaps:
-            if s.state != "open":
-                store.append_log(
-                    goal_id,
-                    f"referenced issue #{s.number} is {s.state} — dropped from "
-                    "the remaining scope (dispatch-boundary freshness guard)",
-                )
-            elif not _issue_ref.is_ready(s):
-                # readiness revoked mid-goal (spec 019 US4 sc.3): the owner
-                # pulled the label — same freshness semantics as a close.
-                store.append_log(
-                    goal_id,
-                    f"referenced issue #{s.number} is no longer graded ready "
-                    "— skipped until re-graded (dispatch-boundary freshness "
-                    "guard)",
-                )
-        if not open_snaps:
-            unready_open = [s for s in snaps if s.state == "open"]
-            if unready_open:
-                # Open issues whose readiness was revoked: NOT done — the
-                # owner pulled the work back. Park human-gated (re-grade or
-                # cancel is their call); proposing done here would judge
-                # unfinished scenarios and churn the gate.
-                nums = ", ".join(f"#{s.number}" for s in unready_open)
-                q = (
-                    f"referenced issue(s) {nums} are open but no longer "
-                    "graded ready — the owner revoked readiness. Re-grade "
-                    "them (regrade_intake) and resume_goal, or cancel."
-                )
-                prob = _problems.new_problem(
-                    goal_id, kind="needs_answer", raised_by="dispatch_park", what=q,
-                    clause="", why="referenced issues lost their ready grade",
-                    options=(_problems.CORRECT, _problems.CANCEL), default_key="correct",
-                )
-                with store.transaction():
-                    _problems.raise_problem(store, prob)
-                    store.transition(
-                        goal_id, Event.BLOCK,
-                        replace(base, phase="blocked", blocked_on=_problems.summary_line(prob),
-                                blocked_kind="needs_answer", problem_id=prob.id, next=""),
-                        expect=status, consume_steering=consume_ids,
-                    )
-                await _notify(ctx.notifier, NotifyLevel.OWNER,
-                              f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
-                return Outcome.BLOCKED
-            # Spec 041 FR-002: the propose-done shortcut fires only when the
-            # tick has NOTHING to dispatch. Unread steering (a red-CI correction)
-            # or a recorded Decision (a correct_implementation) is work, and
-            # work beats the shortcut — otherwise a red rollup steers, the next
-            # tick re-proposes, red steers again: fs-431 ran eight worker-less
-            # rounds that way on 2026-09-08 and the owner's correction never ran.
-            #
-            # Derived HERE, at its one remaining use. The plan gate above is
-            # ``project_hold.next_move``'s verdict now — it already knows this
-            # goal has work — and this branch is the only place left that
-            # needs to know WHICH work, to name it in the log line. Deriving
-            # it back up at the gate is how the second definition of runnable
-            # grew last time.
-            pending = _decisions.pending_since(store.decisions(goal_id), status.last_plan_at)
-            if base.merge_heal_attempted:
-                # spec 025 FR-017: the conflict heal returned the goal to idle
-                # with the round counter reset, which is exactly the state the
-                # propose-done shortcut above keys on — so it skipped the owed
-                # resolution increment and re-ran straight into the same
-                # CONFLICT, parking the goal with a heal budget spent but never
-                # used. The increment is merge work, not scope work: it
-                # dispatches regardless of what the referenced issues say.
-                store.append_log(
-                    goal_id,
-                    "all referenced issues are closed but the cumulative PR "
-                    "conflicts with its base — dispatching the owed "
-                    "merge-conflict resolution increment",
-                )
-            elif steering or pending:
-                store.append_log(
-                    goal_id,
-                    "all referenced issues are closed, but there is work to dispatch ("
-                    + ("a recorded decision" if pending else "steering")
-                    + ") — dispatching worker; the closures stay an input to the brief",
-                )
-            elif base.donegate_rounds == 0:
-                # First pass: all issues closed, no prior done-gate refusal,
-                # nothing to dispatch. Out-of-band work may have fully
-                # satisfied the contract — propose done and let the grounded
-                # gate decide. If the gate refuses (donegate_rounds becomes
-                # > 0) the next tick raises the closed-contract Problem below.
-                store.append_log(
-                    goal_id,
-                    "all referenced issues are closed — proposing done without "
-                    "dispatching a worker",
-                )
-                return await _open_done_gate(
-                    goal_id, goal, base,
-                    store=store, engine=ctx.engine,
-                    evaluator_caller=ctx.evaluator_caller,
-                    notifier=ctx.notifier, notify_url=ctx.notify_url,
-                    prepare_ws=ctx.prepare_ws, verify_done=ctx.verify_done,
-                    note="all referenced issues closed", remote_checker=ctx.remote_checker,
-                    autodeploy=ctx.autodeploy, consume_steering=consume_ids,
-                    issue_fetcher=ctx.issue_fetcher,
-                )
-            else:
-                # The contract's SOURCE is gone and the gate has already
-                # refused. A pointer goal reads done_when live from its issues
-                # (spec 019), so with every issue closed no dispatch can amend
-                # the contract — while the gate keeps judging the pinned
-                # revision. Re-dispatching here is a loop by construction: it
-                # is what burned 8 rounds on fs-431 and 5 on fs-421 with the
-                # log contradicting itself every time ("dropped from the
-                # remaining scope" immediately followed by "dispatching worker
-                # to complete the remaining contract"). The freshness guard and
-                # the done-gate are each right alone; nobody owned their
-                # disagreement. Hand it to the owner — spec 031's shape.
-                # NOTE the first pass (donegate_rounds == 0) above is
-                # untouched: an issue closed by a partial implementation still
-                # gets a propose-done and a grounded verdict. Only AFTER a
-                # refusal do we have evidence of both an unmet contract and a
-                # vanished source.
-                nums = ", ".join(f"#{n}" for n in sorted(goal.issue_refs))
-                q = (
-                    f"every referenced issue ({nums}) is closed, but the "
-                    f"done-gate has refused {base.donegate_rounds} round(s). "
-                    "The contract is read live from those issues, so no "
-                    "dispatch can amend it and the gate will keep refusing. "
-                    "Either the closure means the work is done, or the "
-                    "contract was abandoned mid-flight — the loop cannot tell "
-                    "which."
-                )
-                prob = _problems.new_problem(
-                    goal_id, kind="needs_answer", raised_by="closed_contract",
-                    what=q,
-                    # the gate's own words: the owner needs to see WHY it
-                    # refuses, not merely that it does.
-                    clause=(base.last_eval_note or "").strip(),
-                    why="the contract's source is closed while the gate still refuses",
-                    options=(_problems.ACCEPT_CLOSE, _problems.CORRECT, _problems.CANCEL),
-                    default_key="accept_close",
-                )
-                with store.transaction():
-                    _problems.raise_problem(store, prob)
-                    store.transition(
-                        goal_id, Event.BLOCK,
-                        replace(base, phase="blocked",
-                                blocked_on=_problems.summary_line(prob),
-                                blocked_kind="needs_answer", problem_id=prob.id,
-                                next=""),
-                        expect=status, consume_steering=consume_ids,
-                    )
-                await _notify(ctx.notifier, NotifyLevel.OWNER,
-                              f"🟡 [{goal_id}] {_problems.render_for_human(prob)}")
-                return Outcome.BLOCKED
-            issue_context = _issue_ref.render_issue_context([], snaps)
-        else:
-            issue_context = _issue_ref.render_issue_context(
-                open_snaps, [s for s in snaps if s.state != "open"]
-            )
-    action = Action(
-        engine="devclaw",
-        tool="implement_feature",
-        goal=_advance_brief(
-            goal, steering, failure_context=failure_context,
-            prior_increments=prior_increments, issue_context=issue_context,
-            decisions=decisions,
-        ),
-        verify_cmd=goal.verify_cmd,
-        open_pr=goal.open_pr,
-    )
-    return await _dispatch_action(
-        goal_id, goal, base, action,
-        store=store, engine=ctx.engine, notifier=ctx.notifier,
-        notify_url=ctx.notify_url, prepare_ws=ctx.prepare_ws, consume_steering=consume_ids,
-        project_caps=ctx.project_caps,
-    )
+            result = _json.loads(review.result_json or "{}")
+        except ValueError:
+            result = {}
+        verdict = _donegate.parse_verdict(str(result.get("agent_output") or ""))
+        if review.status != "done":
+            verdict = _donegate.Verdict(False, unreadable=True, raw_error=review.error or "review session failed")
+        body = _donegate.render_verdict(verdict, head=head, task_id=review.id)
+        if world.pr.number:
+            await ctx.post_comment(goal.repo_url, world.pr.number, body)
+        ctx.log(goal.id, f"done-gate: achieved={verdict.achieved} unreadable={verdict.unreadable}")
+        if verdict.unreadable:
+            return "gate unreadable"
+        if not verdict.achieved:
+            await _ping(ctx, f"⛔ {goal.id} done-gate refused — {verdict.summary[:300]}\n{world.pr.url}")
+            return "blocked"
+        return await _merge(ctx, goal, world)
+    v = existing[-1]
+    if v.field("achieved") == "1":
+        return await _merge(ctx, goal, world)
+    return "blocked" if v.field("unreadable") != "1" else "gate unreadable"
 
 
-
-# ---- multi-goal driver -----------------------------------------------------
-
-
-async def tick_all(
-    *,
-    store: GoalStore,
-    engine: GoalEngine,
-    evaluator_caller: ClaudeCaller,
-    notifier: Notifier,
-    notify_url: str = "",
-    prepare_ws: WorkspacePrep = prepare_workspace,
-    verify_done: bool = VERIFY_DONE,
-    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
-    no_progress_s: int = NO_PROGRESS_S,
-    verify_done_resolver: "Callable[[Goal], bool] | None" = None,
-    autodeploy_resolver: "Callable[[Goal], bool | None] | None" = None,
-    tracer_factory: "Callable[[str], _trace.Tracer | None] | None" = None,
-    remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
-    project_workspaces: "Callable[[], set[str]] | None" = None,
-    project_capabilities: "Callable[[], dict[str, tuple[str, ...]]] | None" = None,
-    project_images: "Callable[[], dict[str, str | None]] | None" = None,
-    project_repo_urls: "Callable[[], dict[str, str | None]] | None" = None,
-    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
-) -> dict[str, Outcome]:
-    """Tick every goal (see :func:`_tick_all_pass`), then attribute the
-    interval since the previous sweep to ONE cause (spec 039 US1).
-
-    The attribution is the feature's single write point (FR-004a) and sits
-    BELOW every early return of the pass — a paused or held sweep is exactly
-    the interval that must be attributed. Pure SQLite through the engine seam,
-    zero cognition (constitution III), best-effort: a bookkeeping failure
-    never touches the outcomes.
-    """
-    outcomes = await _tick_all_pass(
-        store=store, engine=engine, evaluator_caller=evaluator_caller,
-        notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
-        verify_done=verify_done, autodeploy=autodeploy, no_progress_s=no_progress_s,
-        verify_done_resolver=verify_done_resolver, autodeploy_resolver=autodeploy_resolver,
-        tracer_factory=tracer_factory, remote_checker=remote_checker,
-        mergeability_probe=mergeability_probe, project_workspaces=project_workspaces,
-        project_capabilities=project_capabilities, project_images=project_images,
-        project_repo_urls=project_repo_urls, issue_fetcher=issue_fetcher,
-    )
-    _record_loop_sample(engine, store, outcomes)
-    return outcomes
-
-
-def _record_loop_sample(engine: GoalEngine, store: GoalStore, outcomes: "dict[str, Outcome]") -> None:
-    """Derive the sweep's one cause (``loop_health.derive_loop_cause``) from
-    what the tick already read — pause, hold, window, per-goal statuses and
-    outcomes — and hand it to the engine's ``record_loop_sample`` seam. A
-    test double without the seam records nothing; a store hiccup is
-    swallowed (bookkeeping must never break the heartbeat)."""
-    fn = getattr(engine, "record_loop_sample", None)
-    if not callable(fn):
-        return
-    try:
-        now = _now_ms()
-        until, reason = _engine_pause(engine)
-        pause_active = bool(until and now < until)
-        hold_fn = getattr(engine, "operator_hold_state", None)
-        hold_on, hold_reason = hold_fn() if callable(hold_fn) else (False, "")
-        blocked, why = _engine_operator_block(engine)
-        views: list[_loop_health.GoalView] = []
-        for gid in store.list_goal_ids():
-            try:
-                st = store.load_status(gid)
-            except Exception:  # noqa: BLE001 — one bad row must not lose the sample
-                continue
-            g_blocked, _ = _engine_goal_operator_block(engine, gid)
-            out = outcomes.get(gid)
-            views.append(_loop_health.GoalView(
-                goal_id=gid,
-                terminal=_project_hold.is_terminal(st),
-                phase=str(st.phase or ""),
-                blocked_kind=str(st.blocked_kind or ""),
-                outcome=out.value if out is not None else "",
-                window_closed=bool(g_blocked),
-            ))
-        # spec 039 US6: graded-ready issues no goal references — the one
-        # fact that turns "all planned done" into "no goal armed". A store
-        # read (intake_grades ⋈ goal refs), zero cognition.
-        unarmed = 0
-        count_fn = getattr(store, "count_ready_issues_without_goal", None)
-        if callable(count_fn):
-            from .. import intake as _intake  # lazy: READY_LABEL's one home
-            unarmed = int(count_fn(_intake.READY_LABEL) or 0)
-        cause, detail = _loop_health.derive_loop_cause(
-            goals=views,
-            pause_active=pause_active, pause_reason=reason or "",
-            operator_hold=bool(hold_on), hold_reason=hold_reason or "",
-            window_closed=bool(blocked and not hold_on), window_reason=why or "",
-            unarmed_ready_issues=unarmed,
-        )
-        fn(now_ms=now, cause=cause, detail=detail)
-    except Exception:  # noqa: BLE001 — measurement must not break the heartbeat
-        pass
-
-
-async def _tick_all_pass(
-    *,
-    store: GoalStore,
-    engine: GoalEngine,
-    evaluator_caller: ClaudeCaller,
-    notifier: Notifier,
-    notify_url: str = "",
-    prepare_ws: WorkspacePrep = prepare_workspace,
-    verify_done: bool = VERIFY_DONE,
-    autodeploy: "bool | None" = AUTODEPLOY_ENABLED,
-    no_progress_s: int = NO_PROGRESS_S,
-    verify_done_resolver: "Callable[[Goal], bool] | None" = None,
-    autodeploy_resolver: "Callable[[Goal], bool | None] | None" = None,
-    tracer_factory: "Callable[[str], _trace.Tracer | None] | None" = None,
-    remote_checker: "_remote_checks.RemoteChecker | None" = None,
-    mergeability_probe: "_mergeability.MergeabilityProbe | None" = None,
-    project_workspaces: "Callable[[], set[str]] | None" = None,
-    project_capabilities: "Callable[[], dict[str, tuple[str, ...]]] | None" = None,
-    project_images: "Callable[[], dict[str, str | None]] | None" = None,
-    project_repo_urls: "Callable[[], dict[str, str | None]] | None" = None,
-    issue_fetcher: "_issue_ref.IssueFetcher | None" = None,
-) -> dict[str, Outcome]:
-    """Tick every goal. One goal's failure never stops the others, and a usage
-    limit pauses the whole layer (0 tokens) rather than crashing per-goal.
-
-    ``tracer_factory(goal_id) -> Tracer | None`` is the seam GoalService uses
-    to attach a :class:`PersistentTracer` per goal-tick so the cascade's
-    cognition / dispatch / delivery events land in the durable trace store.
-
-    ``verify_done_resolver`` and ``autodeploy_resolver`` compute the done-gate
-    re-check flag and the on-complete deploy flag FRESH per goal (a project's
-    override must not leak from one goal onto another in the same sweep), each
-    taking precedence over its flat counterpart.
-    """
-    outcomes: dict[str, Outcome] = {}
-
-    # Unified quota pause: the OAuth quota is account-wide, so if anything (a task
-    # or earlier goal cognition) paused dispatch, skip ALL goal cognition until it
-    # lifts — zero tokens while paused. Auto-clear + resume once it expires.
-    until, reason = _engine_pause(engine)
-    if until and _now_ms() < until:
-        # Tell the owner ONCE per pause (a weekly cap can halt everything for
-        # days — silence here looks like devclaw died). The goal layer owns the
-        # Notifier, so the ping lives here and covers pauses set by EITHER
-        # layer (task queue or goal cognition). The persisted flag is what
-        # keeps this to one ping, not one per tick.
-        if not _engine_pause_notified(engine):
-            resume_hhmm = datetime.fromtimestamp(
-                until / 1000, tz=timezone.utc
-            ).strftime("%H:%M")
-            if reason.startswith(FailureKind.AUTH.value):
-                # An auth pause is ACTIONABLE, not weather: waiting won't fix a
-                # broken login, a human re-login will (2026-07-20 night: the old
-                # REAL classification burned the whole run window in silent
-                # terminal failures). Name the exact credential path so the
-                # operator doesn't re-login to the wrong user/path (2026-08-19:
-                # root re-login changed nothing because the container reads a
-                # different home; the hour-long archaeology is the cost of
-                # omitting this line — issue #569).
-                cred_path = _config.host_claude_dir() + "/.credentials.json"
-                msg = (
-                    f"🔑 paused — Claude auth/login failure ({reason}). "
-                    f"A re-login must land in `{cred_path}` (the path this "
-                    f"instance reads — a login elsewhere changes nothing). "
-                    f"Fastest fix: `claude setup-token` via the container, or "
-                    f"copy a fresh `.credentials.json` into that path. "
-                    f"Verify with a probe call — the pause "
-                    f"auto-resumes on the next probe ~{resume_hhmm} UTC; "
-                    f"I'll re-ping if still broken."
-                )
-                # The instance-dead class (spec 025 US3): an auth failure only
-                # a human re-login fixes must pierce quiet mode — an unsent
-                # auth ping silently kills an unattended week.
-                await _notify(notifier, NotifyLevel.OWNER, msg, critical=True)
-            elif reason.startswith(FailureKind.SERVER_ERROR.value):
-                # A provider outage is weather, not an account state: saying
-                # "usage limit" here would send the owner hunting a cap that
-                # isn't there (#817 — three goals parked on a 529 outage).
-                # Not `critical`: there is nothing for a human to do, and it
-                # auto-resumes.
-                msg = (
-                    f"⏸️ paused — the model provider is returning server errors "
-                    f"({reason}); nothing to do, resuming ~{resume_hhmm} UTC"
-                )
-                await _notify(notifier, NotifyLevel.OWNER, msg)
-            else:
-                msg = f"⏸️ paused on a usage limit — {reason}; resuming ~{resume_hhmm} UTC"
-                await _notify(notifier, NotifyLevel.OWNER, msg)
-            kind = (
-                FailureKind.AUTH.value
-                if reason.startswith(FailureKind.AUTH.value)
-                else FailureKind.SERVER_ERROR.value
-                if reason.startswith(FailureKind.SERVER_ERROR.value)
-                else "limit"
-            )
-            _engine_set_pause_notified(engine, True, kind=kind)
-        return {gid: Outcome.RATE_LIMITED for gid in store.list_goal_ids()}
-    if until:
-        _engine_clear_pause(engine)
-    # Resume ping — the counterpart of the pause ping above, once per pause.
-    # Checked whenever no pause is ACTIVE (not only on the expiry tick that
-    # cleared it): the task queue lazily clears an expired pause too, and the
-    # owner must still hear the resume in that race. An AUTH episode is the
-    # exception: its pause expiring means "re-probe now", not "the limit
-    # lifted" — announcing a resume would be a lie while the login may still be
-    # broken. The auth check keys on the kind PERSISTED with the ping (the
-    # queue's 10s pump wipes the live pause_reason first on the dominant
-    # ordering — invariant-guard find, 2026-07-21), with the live reason as a
-    # fallback for engines predating the kind accessor. Skip the ping but still
-    # clear the flag: if the probe re-trips auth, the fresh pause re-pings (the
-    # periodic still-broken reminder); if the login was fixed, work just
-    # resumes and the next delivery speaks for itself.
-    if _engine_pause_notified(engine):
-        auth_episode = (
-            _engine_pause_notified_kind(engine) == FailureKind.AUTH.value
-            or bool(until and reason.startswith(FailureKind.AUTH.value))
-        )
-        if not auth_episode:
-            # The resume must name what actually lifted — the pause ping told
-            # the owner "provider server errors", so "usage limit lifted"
-            # would contradict it. Same kind-first/reason-fallback read as the
-            # auth check above.
-            server_episode = (
-                _engine_pause_notified_kind(engine) == FailureKind.SERVER_ERROR.value
-                or bool(until and reason.startswith(FailureKind.SERVER_ERROR.value))
-            )
-            await _notify(
-                notifier, NotifyLevel.OWNER,
-                "▶️ provider server errors cleared — resuming work"
-                if server_episode else "▶️ usage limit lifted — resuming work",
-            )
-        _engine_set_pause_notified(engine, False)
-
-    # Operator controls: a manual pause toggle or a daily run-window can hold ALL
-    # goal cognition (0 tokens) the same way the quota pause does. Tasks already
-    # dispatched finish; nothing new is planned while gated. Re-checked every tick.
-    blocked, _why = _engine_operator_block(engine)
-    if blocked:
-        return {gid: Outcome.RATE_LIMITED for gid in store.list_goal_ids()}
-
-    # Retention (volume hygiene): AFTER the cheap gates above, BEFORE any
-    # per-goal work — daily, batched, pure-SQLite DELETEs of the two
-    # highest-volume append-only logs past their retention windows: traces
-    # (DEVCLAW_TRACE_RETENTION_DAYS, 2026-07-15) and events (raw runner SDK
-    # events, DEVCLAW_EVENTS_RETENTION_DAYS, 2026-07-18). Zero LLM calls, so the
-    # zero-token idle guarantee is untouched; StateStore owns the actual writes
-    # (single-writer invariant), the engine is just the seam.
-    _engine_prune_traces(engine)
-    _engine_prune_events(engine)
-    # Settled-task result_json compaction (DEVCLAW_TASK_RESULT_RETENTION_DAYS,
-    # 2026-08-30 DB audit) — transcripts, the DB's biggest payload, get the
-    # same daily bounded pass; the settle summary + eval_outcomes stay forever.
-    _engine_compact_task_results(engine)
-    # Usage-ledger backfill (spec 039 FR-010a): one-shot, watermarked, pure
-    # SQL — the permanent usage record is seeded from whatever transcripts
-    # retention has not yet pruned, BEFORE the compaction above can take
-    # more of them. Same cheap slot, same zero-LLM guarantee.
-    _engine_backfill_usage_ledger(engine)
-    # Reclaim the disk those DELETEs free — a weekly, freelist-gated VACUUM
-    # (SQLite reuses freed pages but never shrinks the .db file on its own).
-    # Same cheap-path slot, same zero-LLM guarantee.
-    _engine_vacuum(engine)
-    # Same cheap slot, same zero-LLM guarantee: release the workspace of a
-    # goal that ended long enough ago that nobody will look at it again
-    # (#595). Bounded per tick and watermark-gated inside the engine, so a
-    # 34-directory backlog drains across ticks instead of wedging one.
-    _engine_reap_workspaces(engine, store, project_workspaces)
-    # Loud-not-silent DB-size alarm: if the .db has grown past the threshold
-    # despite retention+VACUUM, ping the owner ONCE (re-armed when it drops back
-    # under) — a silent disk-fill wedge is the failure mode this whole tranche
-    # exists to prevent. Zero LLM (raw owner ping).
-    await _maybe_alert_db_size(engine, notifier)
-
-    # Single-writer project hold (spec 010 P1): derive who holds each project
-    # ONCE for the whole sweep. The derivation reads every goal, so deriving it
-    # per goal would make one sweep an N² scan. Cheap and zero-LLM — it belongs
-    # in this same pre-loop slot as the other mechanical housekeeping above.
-    holders = _project_hold.holder_map(store)
-
-    # Env-cap capability scan + probe refresh (spec 030 FR-004): read every
-    # declaration and run the stale probes ONCE per sweep, BEFORE the per-goal
-    # ticks. Each tick reads only persisted meta rows (zero network) — this is
-    # the only place that probes networks, and it spends zero LLM calls, so the
-    # idle-tick quota guarantee is untouched.
-    #
-    # The declarations come from the PROJECT REGISTRY: a goal's capability
-    # dependencies belong to its project, and the registry answers for a
-    # project whose goal has never been dispatched — which the previous
-    # live-goals-only scan could not, leaving a brand-new goal's first dispatch
-    # unguarded against a capability that was already red on record (the
-    # SC-002 hole). The map is threaded down to the per-goal ticks so the
-    # dispatch guard and the auto-heal read the same declaration.
-    #
-    # Live goals' workspaces are still scanned ON TOP, for goals belonging to
-    # no registered project. Terminal goals are skipped there (same rule as the
-    # hold derivation above): a done or cancelled goal can no longer be
-    # dispatched into, so its declaration must not keep buying the fleet a
-    # recurring network/docker probe forever. Blocked goals deliberately still
-    # count — the env hold IS a block, and dropping it here would strand the
-    # auto-resume it feeds (US2).
-    #
-    # Best-effort throughout: a probe failure degrades to ``unknown``
-    # (fail-open per FR-007), never wedges the sweep.
-    caps_by_project: "dict[str, tuple[str, ...]]" = {}
-    try:
-        if project_capabilities is not None:
-            caps_by_project = project_capabilities() or {}
-        images_by_project = (project_images() or {}) if project_images is not None else {}
-        repos_by_project = (project_repo_urls() or {}) if project_repo_urls is not None else {}
-        # Keyed by the row a result is CACHED under, so an instance-scoped
-        # capability declared by five projects is probed once while a
-        # project-scoped one is probed per project (spec 030 CAP_SCOPES) —
-        # the dedup rule and the cache key stay the same rule.
-        _targets: "dict[tuple[str, str | None], _env_cap_mod.CapTarget]" = {}
-
-        def _want_caps(cap_ids: "tuple[str, ...]", project_id: str) -> None:
-            pid = (project_id or "").strip() or None
-            for cap_id in cap_ids:
-                scoped = pid if _env_cap_mod.CAP_SCOPES.get(cap_id) == "project" else None
-                if cap_id == _env_cap_mod.CAP_CI_DEFINITION:
-                    subject = repos_by_project.get(scoped) if scoped else None
-                else:
-                    subject = images_by_project.get(scoped) if scoped else None
-                _targets.setdefault(
-                    (cap_id, scoped),
-                    _env_cap_mod.CapTarget(cap_id=cap_id, project_id=scoped, subject=subject),
-                )
-
-        for _pid, _declared in caps_by_project.items():
-            _want_caps(_declared, _pid)
-        for _gid in store.list_goal_ids():
-            try:
-                if _project_hold.is_terminal(store.load_status(_gid)):
-                    continue
-                _g = store.load_goal(_gid)
-                if (_g.project_id or "").strip() in caps_by_project:
-                    continue  # the registry already answered for this project
-                _m = _env_cap_manifest_mod.load_manifest(_g.workspace_dir)
-                if _m and _m.capabilities:
-                    _want_caps(tuple(_m.capabilities), _g.project_id or "")
-            except Exception:  # noqa: BLE001 — one bad manifest must not sink the sweep
-                pass
-        if _targets:
-            _env_cap_mod.refresh_needed(store, _targets.values())
-    except Exception:  # noqa: BLE001 — the probe sweep must never wedge the heartbeat
-        pass
-
-    for goal_id in store.list_goal_ids():
-        # Per-goal run-window: a goal can carry its OWN night/off-hours schedule
-        # on top of the engine-wide gate above (e.g. a token-heavy standing loop
-        # confined to nights while other goals run all day). Outside its window,
-        # skip just this goal — 0 tokens for it — while the others still tick.
-        g_blocked, _gwhy = _engine_goal_operator_block(engine, goal_id)
-        if g_blocked:
-            outcomes[goal_id] = Outcome.RATE_LIMITED
-            continue
-        tracer = tracer_factory(goal_id) if tracer_factory else None
-        goal_verify_done = verify_done
-        goal_autodeploy = autodeploy
-        # Load the goal once for whichever per-goal resolvers are wired (a bad
-        # goal.yaml must not sink the sweep — fall back to the flat values).
-        if any(r is not None for r in (verify_done_resolver, autodeploy_resolver)):
-            try:
-                _g = store.load_goal(goal_id)
-                if verify_done_resolver is not None:
-                    goal_verify_done = verify_done_resolver(_g)
-                if autodeploy_resolver is not None:
-                    goal_autodeploy = autodeploy_resolver(_g)
-            except Exception:  # noqa: BLE001 — a bad goal.yaml must not sink the sweep
-                goal_verify_done, goal_autodeploy = verify_done, autodeploy
-        try:
-            with _trace.tracer_scope(tracer):
-                outcomes[goal_id] = await tick_goal(
-                    goal_id, store=store, engine=engine,
-                    evaluator_caller=evaluator_caller,
-                    notifier=notifier, notify_url=notify_url, prepare_ws=prepare_ws,
-                    verify_done=goal_verify_done,
-                    autodeploy=goal_autodeploy, no_progress_s=no_progress_s,
-                    remote_checker=remote_checker,
-                    mergeability_probe=mergeability_probe,
-                    holders=holders,
-                    project_caps=caps_by_project,
-                    issue_fetcher=issue_fetcher,
-                )
-        except Exception as exc:  # noqa: BLE001 — isolate per-goal blast radius
-            # the goal's OWN cognition (claude --print) hitting a limit pauses the
-            # whole layer instead of crash-looping + burning quota; anything else is
-            # logged with its real cause (never a blind 'crashed') and isolated.
-            paused = _maybe_pause(engine, store, goal_id, str(exc))
-            if paused is not None:
-                outcomes[goal_id] = paused
-            else:
-                store.append_log(goal_id, f"tick error (isolated): {str(exc)[:160]}")
-                outcomes[goal_id] = Outcome.ERROR
-
-    # One goal, one checkout: a terminal goal's <project>/.goals/<id> is
-    # removed here, derived from the store every sweep — no bookkeeping row,
-    # self-healing, zero LLM, a stat per terminal goal. Never breaks the
-    # heartbeat.
-    try:
-        sweep_goal_checkouts(store)
-    except Exception:  # noqa: BLE001 — housekeeping must not break the heartbeat
-        pass
-
-    return outcomes
-
-
-def sweep_goal_checkouts(store: GoalStore) -> list[str]:
-    """Remove the goal checkouts of terminal goals. Returns the goal ids
-    whose directory was removed this sweep."""
-    removed: list[str] = []
-    for gid in store.list_goal_ids():
-        try:
-            if not _project_hold.is_terminal(store.load_status(gid)):
-                continue
-            g = store.load_goal(gid)
-        except Exception:  # noqa: BLE001 — one bad goal must not stop the sweep
-            continue
-        if _workspace.remove_goal_checkout(g.workspace_dir, gid):
-            removed.append(gid)
-    return removed
-
-
-def _engine_pause(engine: GoalEngine) -> tuple[int, str]:
-    """Read the shared quota pause via the engine, if it exposes one (the
-    in-process engine does; test doubles may not → treated as no pause)."""
-    fn = getattr(engine, "global_pause", None)
-    return fn() if callable(fn) else (0, "")
-
-
-def _engine_reap_workspaces(
-    engine: GoalEngine,
-    store: GoalStore,
-    project_workspaces: "Callable[[], set[str]] | None",
-) -> None:
-    """Run the daily goal-workspace retention sweep via the engine, if it
-    exposes one. Best-effort — a maintenance failure must never break the
-    heartbeat, exactly like the trace prune.
-
-    ``project_workspaces`` resolves which workspaces belong to REGISTERED
-    projects; those are released by ``delete_project``, never swept because
-    their goals happen to be terminal. No resolver (or one that raises) means
-    the sweep does nothing — never that everything is fair game."""
-    fn = getattr(engine, "reap_workspaces", None)
-    if not callable(fn):
-        return
-    try:
-        owned = project_workspaces() if project_workspaces else None
-    except Exception:  # noqa: BLE001 — unknown ownership sweeps nothing
-        return
-    rows: list[dict] = []
-    for gid in store.list_goal_ids():
-        # id + workspace_dir live on the durable Goal; phase/direction/timestamps
-        # on the mutable GoalStatus. The sweep needs both, so flatten here.
-        try:
-            goal = store.load_goal(gid)
-            status = store.load_status(gid)
-        except Exception:  # noqa: BLE001 — an unreadable goal is simply not swept
-            continue
-        rows.append(
-            {
-                "id": gid,
-                "workspace_dir": goal.workspace_dir,
-                "phase": status.phase,
-                "direction": getattr(status, "direction", None),
-                "blocked_on": status.blocked_on,
-                "last_progress_at": getattr(status, "last_progress_at", None),
-                "last_tick_at": getattr(status, "last_tick_at", None),
-                "last_eval_at": getattr(status, "last_eval_at", None),
-                "last_plan_at": getattr(status, "last_plan_at", None),
-            }
-        )
-    try:
-        fn(rows, owned)
-    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
-        pass
-
-
-def _engine_prune_traces(engine: GoalEngine) -> None:
-    """Run the daily trace-retention prune via the engine, if it exposes one
-    (the in-process engine does; test doubles may not → no prune). Best-effort:
-    a maintenance failure must never break the heartbeat — the traces table
-    just stays bigger until a later tick succeeds."""
-    fn = getattr(engine, "prune_traces", None)
-    if not callable(fn):
-        return
-    try:
-        fn()
-    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
-        pass
-
-
-def _engine_compact_task_results(engine: GoalEngine) -> None:
-    """Run the daily settled-task result_json compaction via the engine, if it
-    exposes one (the in-process engine does; test doubles may not → no
-    compaction). Best-effort: a maintenance failure must never break the
-    heartbeat — old transcripts just stay bigger until a later tick succeeds."""
-    fn = getattr(engine, "compact_task_results", None)
-    if not callable(fn):
-        return
-    try:
-        fn()
-    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
-        pass
-
-
-def _engine_backfill_usage_ledger(engine: GoalEngine) -> None:
-    """Run the one-shot usage-ledger backfill via the engine, if it exposes
-    one (test doubles may not → no backfill). Best-effort, like the prunes."""
-    fn = getattr(engine, "backfill_usage_ledger", None)
-    if not callable(fn):
-        return
-    try:
-        fn()
-    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
-        pass
-
-
-def _engine_prune_events(engine: GoalEngine) -> None:
-    """Run the daily events-retention prune via the engine, if it exposes one
-    (the in-process engine does; test doubles may not → no prune). Best-effort:
-    a maintenance failure must never break the heartbeat — the events table
-    just stays bigger until a later tick succeeds."""
-    fn = getattr(engine, "prune_events", None)
-    if not callable(fn):
-        return
-    try:
-        fn()
-    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
-        pass
-
-
-def _engine_vacuum(engine: GoalEngine) -> None:
-    """Run the weekly, freelist-gated VACUUM via the engine, if it exposes one
-    (the in-process engine does; test doubles may not → no vacuum). Best-effort:
-    a maintenance failure must never break the heartbeat — the .db just stays at
-    its current size until a later tick reclaims it."""
-    fn = getattr(engine, "vacuum", None)
-    if not callable(fn):
-        return
-    try:
-        fn()
-    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
-        pass
-
-
-async def _maybe_alert_db_size(engine: GoalEngine, notifier: Notifier) -> None:
-    """Check the DB-size alarm via the engine and, if it just crossed the
-    threshold, ping the owner ONCE with the raw alert. Best-effort on both
-    legs: a stat failure or a notifier outage must never break the heartbeat.
-
-    Zero-token: ``check_db_size_alert`` returns a message ONLY on the tick the
-    .db crosses the threshold (deduped by the ``db_size_alerted`` meta flag);
-    every other tick returns ``None`` here. No cognition on this path."""
-    fn = getattr(engine, "check_db_size_alert", None)
-    if not callable(fn):
-        return
-    try:
-        msg = fn()
-    except Exception:  # noqa: BLE001 — maintenance must not break the heartbeat
-        return
-    if not msg:
-        return
-    await _notify(notifier, NotifyLevel.OWNER, msg)
-
-
-def _engine_clear_pause(engine: GoalEngine) -> None:
-    fn = getattr(engine, "clear_global_pause", None)
-    if callable(fn):
-        fn()
-
-
-def _engine_pause_notified(engine: GoalEngine) -> bool:
-    """Read the owner-was-pinged-about-this-pause flag via the engine, if it
-    exposes one (the in-process engine does; test doubles may not → False)."""
-    fn = getattr(engine, "pause_notified", None)
-    return bool(fn()) if callable(fn) else False
-
-
-def _engine_set_pause_notified(engine: GoalEngine, on: bool, kind: str = "") -> None:
-    fn = getattr(engine, "set_pause_notified", None)
-    if not callable(fn):
-        return
-    if on and kind:
-        try:
-            fn(on, kind)
-        except TypeError:  # older double without the kind param — degrade
-            fn(on)
-    else:
-        fn(on)
-
-
-def _engine_pause_notified_kind(engine: GoalEngine) -> str:
-    """The kind persisted WITH the pause ping ("" when the engine/double
-    doesn't carry one). This — not the live pause_reason — is what the resume
-    path keys on: the queue's 10s pump lazily clears an expired pause (reason
-    included) before the heartbeat looks, on the dominant ordering."""
-    fn = getattr(engine, "pause_notified_kind", None)
-    return str(fn() or "") if callable(fn) else ""
-
-
-def _engine_next_pause_episode_step(engine: GoalEngine) -> int:
-    """The 0-based index of the provider-outage pause being set now, recorded
-    as it is read (see StateStore). A double without the accessor gets 0 — the
-    base backoff, i.e. exactly the pre-ladder behaviour."""
-    fn = getattr(engine, "next_pause_episode_step", None)
-    return int(fn() or 0) if callable(fn) else 0
-
-
-def _engine_operator_block(engine: GoalEngine) -> tuple[bool, str]:
-    """Read the operator hold + run-window gate via the engine, if it exposes one
-    (the in-process engine does; test doubles may not → treated as open)."""
-    fn = getattr(engine, "operator_block", None)
-    return fn(_now_ms()) if callable(fn) else (False, "")
-
-
-def _engine_goal_operator_block(engine: GoalEngine, goal_id: str) -> tuple[bool, str]:
-    """Read one goal's OWN run-window gate via the engine, if it exposes one (the
-    in-process engine does; test doubles may not → treated as open, so existing
-    fakes tick every goal exactly as before)."""
-    fn = getattr(engine, "goal_operator_block", None)
-    return fn(goal_id, _now_ms()) if callable(fn) else (False, "")
-
-
-def _maybe_pause(engine: GoalEngine, store: GoalStore, goal_id: str, err: str) -> "Outcome | None":
-    """If ``err`` is a usage/rate-limit or an auth failure, set the shared quota
-    pause and return Outcome.RATE_LIMITED; otherwise None (the caller handles it
-    as a real error). Centralizes the goal-side pause guard so every cognition
-    call can use it. AUTH pausing here is what turned the 2026-07-20 night's
-    ~58 terminal planner failures into one pause + one actionable ping."""
-    # now_utc lets absolute reset wording ("resets 10pm (UTC)") become a real
-    # hint; a stated hint is trusted past the default cap (pause_seconds).
-    cls = classify_failure(err, now_utc=datetime.now(timezone.utc))
-    if not (cls.is_pausing and hasattr(engine, "set_global_pause")):
-        return None
-    step = (
-        _engine_next_pause_episode_step(engine)
-        if cls.kind is FailureKind.SERVER_ERROR else 0
-    )
-    backoff = pause_seconds(
-        cls.retry_after_s, stated=cls.stated, kind=cls.kind, episode_step=step,
-    )
-    engine.set_global_pause(_now_ms() + backoff * 1000, f"{cls.kind.value} (goal cognition)")
-    store.append_log(goal_id, f"paused — {cls.kind.value}; resuming in ~{backoff}s")
-    return Outcome.RATE_LIMITED
+async def _merge(ctx: TickContext, goal: Goal, world: World) -> str:
+    if world.pr.state == "conflicting":
+        return "conflicting"  # the fingerprint moved: the next tick spawns the resolution
+    if world.pr.state == "open" and world.pr.ci not in ("green", "no_workflows"):
+        return "ci pending" if world.pr.ci == "pending" else "merge held"
+    outcome, detail = await ctx.merge(goal.repo_url, world.pr.url)
+    if outcome == "merged":
+        return await _close(ctx, goal, "achieved", f"merged {world.pr.url}")
+    ctx.log(goal.id, f"merge {outcome}: {detail}")
+    return f"merge {outcome}"

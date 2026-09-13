@@ -1,22 +1,14 @@
-"""Control-plane meta wrappers — the typed helpers over the ``meta`` key/value
-table: the account-wide quota pause, the operator hold, per-goal run windows,
-per-workspace circuit-breakers, and the
-bookmark state.
-
-Split out of ``StateStore`` as a mixin on the SAME instance — every method here
-runs against the ``self._db`` / ``self._lock`` / ``self._commit`` the core store
-owns, so the single-connection / single-writer semantics are byte-identical to
-the pre-split monolith.
+"""Control-plane flags over the ``meta`` table: the account-wide quota pause,
+the operator hold, the run window, the concurrency dial, the self-deploy
+intent, the per-workspace circuit breaker. A mixin on the StateStore instance.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from typing import TYPE_CHECKING, Optional
 
 from .. import config as _config
-from .rows import _now_ms
 
 if TYPE_CHECKING:
     import sqlite3
@@ -25,16 +17,12 @@ if TYPE_CHECKING:
 
 class ControlPlaneMixin:
     if TYPE_CHECKING:
-        # The composing class owns these (its docstring names the same contract in
-        # prose); declared under TYPE_CHECKING so the seam is checked, never run.
         _db: sqlite3.Connection
         _lock: threading.RLock
 
         def _commit(self) -> None: ...
-        def record_problem(self, *, category: str, kind: str, message: str,
-                           recovered: bool, goal_id: str = "", task_id: str = "") -> None: ...
 
-    # ---- meta / global flags (the quota pause) ---------------------------
+    # ---- meta ---------------------------------------------------------
 
     def set_meta(self, key: str, value: str) -> None:
         with self._lock:
@@ -55,42 +43,16 @@ class ControlPlaneMixin:
             self._db.execute("DELETE FROM meta WHERE key = ?", (key,))
             self._commit()
 
-    def list_meta_keys(self, prefix: str = "") -> list[str]:
-        """Meta keys, optionally filtered to those starting with ``prefix``. Used
-        to enumerate per-goal run-windows (``run_schedule:<goal_id>``)."""
-        with self._lock:
-            if prefix:
-                rows = self._db.execute(
-                    "SELECT key FROM meta WHERE key LIKE ? ESCAPE '\\'",
-                    (prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%",),
-                ).fetchall()
-            else:
-                rows = self._db.execute("SELECT key FROM meta").fetchall()
-        return [r["key"] for r in rows]
+    # ---- the quota / auth / outage pause (money) ----------------------
 
     def set_global_pause(self, until_ms: int, reason: str) -> None:
-        """Pause ALL dispatch until ``until_ms`` (epoch ms) — the whole OAuth quota
-        is account-wide, so a limit on one task pauses everything. Persisted so a
-        restart still honours it."""
+        """Pause ALL dispatch until ``until_ms`` — the OAuth quota is
+        account-wide. Persisted so a restart honours it."""
         self.set_meta("pause_until_ms", str(int(until_ms)))
         self.set_meta("pause_reason", reason or "")
-        # Observability: a usage/rate-limit pause is a RECOVERED problem — the
-        # account auto-resumes when the cap resets, so this is exactly the
-        # "captured even though it recovered" case. Single choke point: both the
-        # task-queue pause and the goal-cognition pause route through here. The
-        # reason is `f"{kind}: {msg}"` / `f"{kind} (goal cognition)"`, so its
-        # leading token is the limit kind (quota|rate_limit). record_problem is
-        # best-effort — a hiccup never breaks the pause.
-        kind = re.split(r"[:\s(]", (reason or "").strip(), maxsplit=1)[0] or "unknown"
-        self.record_problem(
-            category="limit",
-            kind=kind,
-            message=reason or "",
-            recovered=True,
-        )
 
     def global_pause(self) -> tuple[int, str]:
-        """Return (until_ms, reason). until_ms is 0 when no pause is set."""
+        """``(until_ms, reason)``; ``until_ms`` is 0 when no pause is set."""
         raw = self.get_meta("pause_until_ms")
         try:
             until = int(raw) if raw else 0
@@ -102,99 +64,25 @@ class ControlPlaneMixin:
         self.delete_meta("pause_until_ms")
         self.delete_meta("pause_reason")
 
-    # The pause-NOTIFIED flag lives beside the pause but is NOT cleared by
-    # clear_global_pause on purpose: either layer (task queue or goal tick) may
-    # lazily clear an expired pause first, and the resume notification must
-    # still fire exactly once afterwards — the goal tick owns the flag's
-    # lifecycle (set on the pause ping, cleared on the resume ping).
-
     def set_pause_notified(self, on: bool, kind: str = "") -> None:
-        """Record (``on=True``) / reset (``on=False``) that the owner was told
-        about the current global pause, so they're pinged once per pause and
-        once on resume — not every tick. ``kind`` (e.g. "auth") rides in the
-        same meta value: the resume path must know WHAT episode was announced
-        even after the pause itself is gone — the queue's 10s pump lazily
-        clears an expired pause (reason included) long before the ~15-min
-        heartbeat looks, so keying resume behavior on the live pause_reason
-        silently misses the dominant ordering (invariant-guard find, 2026-07-21)."""
+        """The owner was told about the current pause (one ping per pause)."""
         if on:
             self.set_meta("pause_notified", kind or "1")
         else:
             self.delete_meta("pause_notified")
 
     def pause_notified(self) -> bool:
-        """Whether the owner has already been pinged about the current pause."""
         return self.get_meta("pause_notified") is not None
 
-    def pause_notified_kind(self) -> str:
-        """The classified kind recorded with the pause ping ("" for a
-        kind-less ping, which stores the bare "1" sentinel)."""
-        raw = self.get_meta("pause_notified")
-        return "" if raw in (None, "1") else raw
-
-    # The provider-outage EPISODE counter (spec 036 US2). A usage cap states
-    # when it lifts; a provider outage doesn't, so consecutive pauses of one
-    # episode climb ``loom.limits.escalated_pause_seconds`` instead of
-    # re-probing at a flat interval — five probes then span ~95 minutes rather
-    # than 25, inside the unchanged ``MAX_PAUSE_REQUEUES`` bound. The ladder
-    # itself is pure and lives in limits.py; only the count is state, and it
-    # lives here with the rest of the episode's fields.
-
-    def next_pause_episode_step(self) -> int:
-        """The 0-based index of the pause being set right now, recording that it
-        happened. Read-and-advance in ONE locked call so the two pause writers
-        (the queue pump and the heartbeat) can't interleave a read with a write.
-
-        A step is one PROBE ROUND, not one failure: up to
-        ``DEVCLAW_MAX_CONCURRENT`` tasks are in flight when an outage starts and
-        they all fail within seconds of each other. Counting each of them would
-        jump the ladder to its ceiling on the first round, and since the pause
-        write is last-one-wins, the length actually applied could be any of the
-        steps burned. So a failure arriving while this episode's pause is still
-        in force returns the step ALREADY in force — every racer computes the
-        same backoff and the ladder only climbs when a probe after the pause
-        expires fails again."""
-        with self._lock:
-            step = self.pause_episode_step()
-            until, _ = self.global_pause()
-            if step and until > _now_ms():
-                return step - 1
-            self.set_meta("pause_episode_step", str(step + 1))
-        return step
-
-    def pause_episode_step(self) -> int:
-        """How many provider-outage pauses the current episode has set (0 when
-        no episode is running). Corrupt or negative degrades to 0 — a wrong
-        step costs one short pause, never a wedge."""
-        raw = self.get_meta("pause_episode_step")
-        try:
-            step = int(str(raw).strip()) if raw is not None else 0
-        except (TypeError, ValueError):
-            return 0
-        return max(0, step)
-
-    def clear_pause_episode(self) -> None:
-        """End the episode, so the next provider outage starts from the base
-        backoff. Without this the ladder ratchets to its ceiling and stays
-        there for the life of the instance. A no-op when no episode is open —
-        this runs on EVERY productive settle."""
-        if self.get_meta("pause_episode_step") is not None:
-            self.delete_meta("pause_episode_step")
-
-    # ---- operator dispatch controls (manual pause + daily run window) ----
-    # Human-facing siblings of the quota pause above. Distinct meta keys, so the
-    # automatic quota pause expiring/clearing never lifts a hold a person set on
-    # purpose (and vice-versa). Read by ``dispatch_gate`` at both heartbeat gates.
+    # ---- operator hold + run window -----------------------------------
 
     def set_operator_hold(self, on: bool, reason: str = "") -> None:
-        """Manually pause (``on=True``) or resume (``on=False``) ALL new dispatch."""
         if on:
             self.set_meta("operator_hold", json.dumps({"on": True, "reason": reason or ""}))
         else:
             self.delete_meta("operator_hold")
 
     def operator_hold(self) -> tuple[bool, str]:
-        """Return ``(on, reason)``. ``(False, "")`` when no hold is set."""
         raw = self.get_meta("operator_hold")
         if not raw:
             return False, ""
@@ -204,40 +92,37 @@ class ControlPlaneMixin:
         except (ValueError, TypeError):
             return False, ""
 
-    # ---- live concurrency cap --------------------------------------------
-    # The global sandboxed-task cap as an OPERATOR DIAL, not a deployment
-    # constant. DEVCLAW_MAX_CONCURRENT is read once at import by config.py, so
-    # changing it used to mean editing /srv/devclaw/.env and redeploying — and
-    # before 2026-08-31 the compose block did not even forward it, making the
-    # env-file line a silent no-op. Same class as the sandbox-sizing knobs spec
-    # 020 moved into the project registry: a knob the operator must be able to
-    # turn WITHOUT a restart belongs in the control plane beside the run-window
-    # and the manual hold.
-    #
-    # Absence is the signal for "use the configured default" — never a stored
-    # copy of it, so changing DEVCLAW_MAX_CONCURRENT still moves the floor for
-    # an instance that has never set an override. Corrupt or out-of-range degrades
-    # to absence (the reader falls back), never to 0: a zero cap would wedge
-    # every dispatch, which is exactly the silent-stall this dial exists to
-    # avoid.
+    def set_run_schedule(self, enabled: bool, start: str, end: str, tz: str) -> None:
+        self.set_meta("run_schedule", json.dumps(
+            {"enabled": bool(enabled), "start": start, "end": end, "tz": tz}
+        ))
+
+    def get_run_schedule(self) -> dict:
+        raw = self.get_meta("run_schedule")
+        if not raw:
+            return dict(_config.DEFAULT_RUN_SCHEDULE)
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return dict(_config.DEFAULT_RUN_SCHEDULE)
+        return {
+            "enabled": bool(data.get("enabled")),
+            "start": str(data.get("start") or _config.DEFAULT_RUN_SCHEDULE["start"]),
+            "end": str(data.get("end") or _config.DEFAULT_RUN_SCHEDULE["end"]),
+            "tz": str(data.get("tz") or _config.DEFAULT_RUN_SCHEDULE["tz"]),
+        }
+
+    # ---- concurrency dial ---------------------------------------------
 
     def set_max_concurrent(self, n: "int | None") -> None:
-        """Set (``n>=1``) or clear (``None``) the operator override for the
-        global concurrent-task cap. Takes effect on the next queue pump — no
-        restart, no redeploy."""
         if n is None:
             self.delete_meta("max_concurrent")
             return
         if isinstance(n, bool) or not isinstance(n, int) or n < 1:
-            raise ValueError(
-                "max_concurrent must be a whole number >= 1 (None clears the "
-                "override); 0 would wedge every dispatch"
-            )
+            raise ValueError("max_concurrent must be a whole number >= 1 (None clears the override)")
         self.set_meta("max_concurrent", str(int(n)))
 
     def max_concurrent(self) -> "int | None":
-        """The operator override, or ``None`` when unset/corrupt — the caller
-        falls back to the configured default."""
         raw = self.get_meta("max_concurrent")
         if raw is None:
             return None
@@ -247,96 +132,14 @@ class ControlPlaneMixin:
             return None
         return n if n >= 1 else None
 
-    def set_max_host_cognition(self, n: "int | None") -> None:
-        """Set (``n>=1``) or clear (``None``) the operator override for the
-        concurrent host-side ``claude --print`` cap. Sibling of
-        :meth:`set_max_concurrent`; same conventions, different population —
-        that one counts sandboxed tasks, this one counts host subprocesses."""
-        if n is None:
-            self.delete_meta("max_host_cognition")
-            return
-        if isinstance(n, bool) or not isinstance(n, int) or n < 1:
-            raise ValueError(
-                "max_host_cognition must be a whole number >= 1 (None clears "
-                "the override); 0 would deadlock every cognition call"
-            )
-        self.set_meta("max_host_cognition", str(int(n)))
-
-    def max_host_cognition(self) -> "int | None":
-        """The operator override, or ``None`` when unset/corrupt — the caller
-        falls back to ``DEVCLAW_MAX_HOST_COGNITION``."""
-        raw = self.get_meta("max_host_cognition")
-        if raw is None:
-            return None
-        try:
-            n = int(str(raw).strip())
-        except (TypeError, ValueError):
-            return None
-        return n if n >= 1 else None
-
-    # ---- quiet mode (spec 025 US3) ---------------------------------------
-    # One instance-wide switch: while armed, only instance-dead pings go out;
-    # everything else is recorded into suppressed_pings. operator_hold
-    # conventions: absence == off, corrupt JSON degrades to off.
-
-    def set_quiet_mode(self, on: bool, *, until_ms: "int | None" = None,
-                       armed_at_ms: int = 0) -> None:
-        if on:
-            self.set_meta("quiet_mode", json.dumps(
-                {"until_ms": until_ms, "armed_at": int(armed_at_ms)}
-            ))
-        else:
-            self.delete_meta("quiet_mode")
-
-    def quiet_mode(self) -> "tuple[bool, int | None]":
-        """``(armed, until_ms)``. ``(False, None)`` when off/corrupt. Expiry is
-        the READER's job (QuietNotifier disarms lazily) — this is a plain read."""
-        raw = self.get_meta("quiet_mode")
-        if not raw:
-            return False, None
-        try:
-            data = json.loads(raw)
-            until = data.get("until_ms")
-            return True, (int(until) if until is not None else None)
-        except (ValueError, TypeError):
-            return False, None
-
-    def record_suppressed_ping(self, text: str, ts_ms: int) -> None:
-        with self._lock:
-            self._db.execute(
-                "INSERT INTO suppressed_pings (ts_ms, text) VALUES (?, ?)",
-                (int(ts_ms), text),
-            )
-            self._commit()
-
-    def list_suppressed_pings(self, limit: int = 200) -> "list[dict]":
-        """The catch-up surface (FR-014): oldest first, LIMIT-bounded."""
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT ts_ms, text FROM suppressed_pings ORDER BY id ASC LIMIT ?",
-                (max(1, int(limit)),),
-            ).fetchall()
-        return [{"ts_ms": r["ts_ms"], "text": r["text"]} for r in rows]
-
-    def suppressed_ping_count(self) -> int:
-        with self._lock:
-            row = self._db.execute("SELECT COUNT(*) AS n FROM suppressed_pings").fetchone()
-        return int(row["n"] or 0)
-
-    # ---- self-deploy intent (spec 025 US2) -------------------------------
-    # One pending self-deploy at a time (a newer merge simply overwrites the
-    # sha — deploying the latest main covers both). Same conventions as
-    # operator_hold: absence == none, corrupt JSON degrades to none.
+    # ---- self-deploy intent -------------------------------------------
 
     def set_deploy_pending(self, sha: str, goal_id: str, since_ms: int) -> None:
-        """Record that a devclaw-repo goal merged and the instance owes itself
-        a redeploy once quiescent."""
         self.set_meta("deploy_pending", json.dumps(
             {"sha": sha or "", "goal_id": goal_id, "since_ms": int(since_ms)}
         ))
 
     def deploy_pending(self) -> "tuple[str, str, int] | None":
-        """``(sha, goal_id, since_ms)`` or ``None`` when nothing is owed."""
         raw = self.get_meta("deploy_pending")
         if not raw:
             return None
@@ -352,9 +155,6 @@ class ControlPlaneMixin:
 
     def record_deploy_last(self, *, sha: str, goal_id: str, outcome: str,
                            at_ms: int, detail: str = "") -> None:
-        """The last self-deploy edge (``triggered`` / ``expired`` /
-        ``trigger_failed``) — the operator-visible record that survives the
-        deploy itself (the workflow owns probe/rollback truth beyond this)."""
         self.set_meta("deploy_last", json.dumps({
             "sha": sha or "", "goal_id": goal_id, "outcome": outcome,
             "at_ms": int(at_ms), "detail": (detail or "")[:400],
@@ -370,90 +170,22 @@ class ControlPlaneMixin:
         except (ValueError, TypeError):
             return None
 
-    #: meta-key prefix for a per-goal run-window. The global window keeps the bare
-    #: ``run_schedule`` key; a goal's own window is ``run_schedule:<goal_id>``.
-    _GOAL_SCHEDULE_PREFIX = "run_schedule:"
-
-    def _schedule_key(self, goal_id: "str | None") -> str:
-        return "run_schedule" if not goal_id else f"{self._GOAL_SCHEDULE_PREFIX}{goal_id}"
-
-    def set_run_schedule(
-        self, enabled: bool, start: str, end: str, tz: str, goal_id: "str | None" = None
-    ) -> None:
-        """Daily window during which dispatch is allowed. Outside it, new dispatch
-        is gated (in-flight finishes). ``start``/``end`` are ``'HH:MM'`` in ``tz``.
-
-        With ``goal_id`` set this writes a PER-GOAL window (an extra narrowing on
-        top of the global one), stored under ``run_schedule:<goal_id>``; without
-        it, the engine-wide window."""
-        self.set_meta(self._schedule_key(goal_id), json.dumps(
-            {"enabled": bool(enabled), "start": start, "end": end, "tz": tz}
-        ))
-
-    def clear_run_schedule(self, goal_id: "str | None" = None) -> None:
-        """Remove a schedule so it stops restricting dispatch (a per-goal window
-        cleared this way falls back to the global window only)."""
-        self.delete_meta(self._schedule_key(goal_id))
-
-    def get_run_schedule(self, goal_id: "str | None" = None) -> dict:
-        """The run-schedule dict; a disabled 09:00–18:00 Europe/Kyiv default when
-        none is set (or the stored value is corrupt). Shape mirrors
-        ``config.DEFAULT_RUN_SCHEDULE``. With ``goal_id`` set, returns that
-        goal's own window (disabled-default when it has none — the global window
-        is applied separately at the outer gate, so an unset per-goal window must
-        add no restriction)."""
-        raw = self.get_meta(self._schedule_key(goal_id))
-        if not raw:
-            return dict(_config.DEFAULT_RUN_SCHEDULE)
-        try:
-            data = json.loads(raw)
-        except (ValueError, TypeError):
-            return dict(_config.DEFAULT_RUN_SCHEDULE)
-        return {
-            "enabled": bool(data.get("enabled")),
-            "start": str(data.get("start") or _config.DEFAULT_RUN_SCHEDULE["start"]),
-            "end": str(data.get("end") or _config.DEFAULT_RUN_SCHEDULE["end"]),
-            "tz": str(data.get("tz") or _config.DEFAULT_RUN_SCHEDULE["tz"]),
-        }
-
-    def list_goal_schedules(self) -> dict[str, dict]:
-        """Every per-goal window keyed by goal_id (skips the global one). Lets the
-        console/control surface show which goals carry their own window."""
-        out: dict[str, dict] = {}
-        for key in self.list_meta_keys(prefix=self._GOAL_SCHEDULE_PREFIX):
-            goal_id = key[len(self._GOAL_SCHEDULE_PREFIX):]
-            if goal_id:
-                out[goal_id] = self.get_run_schedule(goal_id)
-        return out
-
-    # ---- workspace circuit-breaker (per-workspace pause) -----------------
+    # ---- per-workspace circuit breaker --------------------------------
 
     def count_recent_task_failures(self, workspace_dir: str, since_ms: int) -> int:
-        """Number of tasks that failed for one workspace since ``since_ms``.
-        Used by the circuit-breaker to trip a per-workspace hold when a run of
-        failures piles up in a short window (the 2026-07-02 quota-burn pattern:
-        one broken workspace keeps re-attempting until Denys notices)."""
         with self._lock:
             row = self._db.execute(
-                "SELECT COUNT(*) AS n FROM tasks "
-                "WHERE workspace_dir = ? AND status = 'failed' "
+                "SELECT COUNT(*) AS n FROM tasks WHERE workspace_dir = ? AND status = 'failed' "
                 "AND completed_at IS NOT NULL AND completed_at >= ?",
                 (workspace_dir, since_ms),
             ).fetchone()
         return int(row["n"])
 
-    def set_workspace_break(
-        self, workspace_dir: str, until_ms: int, reason: str
-    ) -> None:
-        """Hold dispatch for ONE workspace until ``until_ms`` (epoch ms). Sibling
-        of the global quota pause but scoped — other workspaces keep running."""
-        self.set_meta(
-            f"workspace_break:{workspace_dir}",
-            json.dumps({"until_ms": int(until_ms), "reason": reason or ""}),
-        )
+    def set_workspace_break(self, workspace_dir: str, until_ms: int, reason: str) -> None:
+        self.set_meta(f"workspace_break:{workspace_dir}",
+                      json.dumps({"until_ms": int(until_ms), "reason": reason or ""}))
 
     def get_workspace_break(self, workspace_dir: str) -> tuple[int, str]:
-        """Return (until_ms, reason). until_ms is 0 when no break is set."""
         raw = self.get_meta(f"workspace_break:{workspace_dir}")
         if not raw:
             return 0, ""
@@ -465,44 +197,3 @@ class ControlPlaneMixin:
 
     def clear_workspace_break(self, workspace_dir: str) -> None:
         self.delete_meta(f"workspace_break:{workspace_dir}")
-
-
-    def prune_stale_trend_meta(self, live_workspaces: "set[str]") -> int:
-        """Delete trend cooldown/fingerprint/bookmark meta keys whose project
-        workspace is no longer registered — trend state expires WITH the
-        project instead of accreting forever (the 2026-08-30 DB audit found
-        215 keys pinned to workspaces deleted weeks earlier). Harness-self
-        scope keys are never project-keyed and are never touched. Returns the
-        number of keys deleted. Pure SQLite — zero LLM, safe on the idle
-        path."""
-        stale: list[str] = []
-        with self._lock:
-            rows = self._db.execute(
-                "SELECT key FROM meta WHERE key LIKE 'trend_%'"
-            ).fetchall()
-        for (key,) in rows:
-            if key.startswith(("trend_cooldown:project:", "trend_fingerprint:project:")):
-                # trend_<kind>:project:<workspace>:<signal_id> — the signal id
-                # is the last :-segment; the workspace is everything between.
-                ws = key.split(":project:", 1)[1].rsplit(":", 1)[0]
-            elif key.startswith("trend_bookmark:"):
-                ws = key.split(":", 1)[1]
-            else:
-                continue  # harness-self or unknown shape — leave it alone
-            if ws not in live_workspaces:
-                stale.append(key)
-        for key in stale:
-            self.delete_meta(key)
-        return len(stale)
-
-    def set_trend_bookmark(self, workspace_dir: str, sha: str) -> None:
-        """Persist the trend detector's last-seen SHA for one workspace. This
-        is the DETECTOR'S OWN namespace — distinct from any future
-        engineer-brief bookmark, so D1/D2 advancing the detector's view of
-        "what changed" can't interfere with the engineer's catch-up read."""
-        self.set_meta(f"trend_bookmark:{workspace_dir}", sha)
-
-    def get_trend_bookmark(self, workspace_dir: str) -> Optional[str]:
-        """The trend detector's last-seen SHA for one workspace, or ``None``
-        if unset (first observation — bookmark-aware signals seed-and-skip)."""
-        return self.get_meta(f"trend_bookmark:{workspace_dir}")

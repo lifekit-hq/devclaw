@@ -46,10 +46,10 @@ SANDBOX_MEMORY_BYTES = _parse_mem(SANDBOX_MEMORY)
 #: headroom kept free for the host ``claude --print`` cognition + OS so it is not
 #: the OOM victim. Env-tunable per host (``DEVCLAW_COGNITION_MEM_RESERVE``); the
 #: floor to admit one more sandbox launch is sandbox-ceiling + this reserve.
-COGNITION_MEM_RESERVE_BYTES = _parse_mem(
-    _config.COGNITION_MEM_RESERVE
+HOST_MEM_RESERVE_BYTES = _parse_mem(
+    _config.HOST_MEM_RESERVE
 )
-MEM_LAUNCH_FLOOR_BYTES = SANDBOX_MEMORY_BYTES + COGNITION_MEM_RESERVE_BYTES
+MEM_LAUNCH_FLOOR_BYTES = SANDBOX_MEMORY_BYTES + HOST_MEM_RESERVE_BYTES
 
 #: per-workspace circuit-breaker: N task failures on the same workspace_dir
 #: within WINDOW_S trips a hold for HOLD_S. Sibling of the global quota pause but
@@ -127,7 +127,7 @@ class AdmissionMixin:
         operator-hold logging pattern so a memory hold is visible in the logs."""
         budget = self._mem_budget
         need = SANDBOX_MEMORY_BYTES if need_bytes is None else int(need_bytes)
-        floor = need + COGNITION_MEM_RESERVE_BYTES
+        floor = need + HOST_MEM_RESERVE_BYTES
         if budget is None or budget >= floor:
             return True
         if not getattr(self, "_mem_deny_logged", False):
@@ -135,7 +135,7 @@ class AdmissionMixin:
                 f"task-queue: dispatch held — host MemAvailable {budget >> 20}MB "
                 f"< floor {floor >> 20}MB (sandbox "
                 f"{need >> 20}MB + reserve "
-                f"{COGNITION_MEM_RESERVE_BYTES >> 20}MB); deferring launches so the "
+                f"{HOST_MEM_RESERVE_BYTES >> 20}MB); deferring launches so the "
                 f"host claude --print isn't OOM-killed\n"
             )
             self._mem_deny_logged = True

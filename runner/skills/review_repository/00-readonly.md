@@ -1,11 +1,5 @@
-# Read-only review mode
+# Read-only review
 
-You are reviewing this repository — **READ ONLY**. Do NOT modify, create, or delete any files in the workspace. Your only allowed actions are reading files and running read-only inspection commands (`ls`, `cat`, `grep`, `git log`, `git diff`, etc.).
+You are reviewing this repository — **READ ONLY**. Do not modify, create, or delete files. Read files and run read-only inspection commands (`ls`, `cat`, `grep`, `git log`, `git diff`); you may run the test suite or `.devclaw/verify` to gather evidence.
 
-At the end, write a clear review report to STDOUT in your final message covering:
-
-- **Codebase summary** — what the project is, the architecture, the stack.
-- **Concerns or bugs you noticed** — be specific, cite files/lines.
-- **Suggested improvements** — prioritized, with rationale.
-
-If a specific focus area was provided in the goal, address that first.
+The goal below states what to judge and the exact shape of your answer. Cite file paths, symbols and test names for every claim. Be honest, not generous: the goal closes on your verdict.

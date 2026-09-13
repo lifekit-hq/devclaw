@@ -1,17 +1,7 @@
-"""The durable goal layer — the standing-intent altitude above the task queue.
+"""The durable goal layer (spec 046): one tick rule, one session prompt, one
+done-gate, GitHub as the state. ~1,500 lines is the ceiling — a size guard
+holds it (tests/test_goal_layer_stays_readable.py)."""
 
-A ``program`` is bounded; a ``goal`` is open-ended and driven across many
-heartbeats: each tick reads what shipped, plans the next action, dispatches it
-into the task queue, and (periodically) evaluates whether the delivered work
-is achieving the objective. Modules:
+from .service import GoalService
 
-  - ``models``    — Goal / Action / EvalResult / InFlight dataclasses
-  - ``store``     — durable on-disk storage (goal.yaml + STATUS.md + log.md + …)
-  - ``evaluator`` — judges direction vs ``done_when``, writes corrections back
-  - ``summary``   — plain-prose summary of an action for ``deliveries.md``
-  - ``mergeability`` — read-only probe: has a delivered PR gone CONFLICTING?
-  - ``notify``    — notify hooks (HTTP webhook + null fallback)
-  - ``engine``    — dispatches actions into the task queue in-process
-  - ``tick``      — the heartbeat loop (the chef's clock)
-  - ``service``   — the ``GoalService`` facade the server wires up
-"""
+__all__ = ["GoalService"]

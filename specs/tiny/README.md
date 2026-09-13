@@ -1,10 +1,6 @@
-# specs/tiny/ — the tinyspec lane
+# The tiny lane
 
-Single-file specs for work below spec size (bug fixes, mechanical refactors,
-small bounded changes) — see `.claude/rules/speckit-workflow.md`, "Below spec
-size". Written by `/speckit-tinyspec-tinyspec`, executed by
-`/speckit-tinyspec-implement`, each file self-contained: What / Context /
-Requirements / Plan / Tasks / Done-When. Deliberately OUTSIDE the `NNN-`
-sequential numbering: tiny specs never collide with, block, or masquerade as
-pipeline features. A tiny spec that grows scope graduates to
-`/speckit-specify` — it does not accrete here.
+Bug fixes, mechanical refactors and single bounded PRs run through ONE file
+here — `/speckit-tinyspec-tinyspec` writes it, `/speckit-tinyspec-implement`
+executes it. Every tinyspec names its north-star case. The v1 tinyspecs were
+superseded by spec 046 on 2026-09-13 (`git show v1.2.0:specs/tiny/`).

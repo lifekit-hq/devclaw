@@ -1,101 +1,51 @@
-"""Module-level state for the devclaw MCP server.
-
-Owns the FastMCP instance + the four long-lived services (state store, task
-queue, goal service, project registry) + env-driven config. Imported by
-`tools`, `http`, and `lifecycle` — those modules attach decorators or call
-methods, they don't create state.
-"""
+"""Module-level state for the devclaw MCP server: the FastMCP instance and
+the long-lived services (state store, task queue, goal service, registry).
+Imported by ``tools``, ``http`` and ``lifecycle`` — they attach decorators or
+call methods; they never create state."""
 
 from __future__ import annotations
 
 import sys
 import urllib.parse
 
-# Load a .env into os.environ FIRST — before any os.environ.get below. Real env
-# vars (shell / systemd / compose) still win; .env is the per-machine default.
 from .._env_loader import load_dotenv as _load_dotenv
 
 _load_dotenv()
 
-from fastmcp import FastMCP
-from pydantic import Field
+from fastmcp import FastMCP  # noqa: E402
 
-from .. import __version__
-from .. import config as _config
-from ..goal.service import GoalService
-from ..project_registry import ProjectRegistry
-from ..state_store import StateStore
-from ..task_queue import TaskQueue
+from .. import __version__  # noqa: E402
+from .. import config as _config  # noqa: E402
+from ..goal.service import GoalService  # noqa: E402
+from ..project_registry import ProjectRegistry  # noqa: E402
+from ..state_store import StateStore  # noqa: E402
+from ..task_queue import TaskQueue  # noqa: E402
 
 SERVER_NAME = "devclaw"
 DB_PATH = _config.db_path()
 HTTP_PORT = _config.HTTP_PORT
-# Default 0.0.0.0 so sibling compose containers (e.g. openclaw-gateway) can
-# reach the endpoint. Set DEVCLAW_HOST=127.0.0.1 to restrict to loopback.
 HTTP_HOST = _config.HTTP_HOST
-# Optional bearer-token guard for the HTTP transport. When DEVCLAW_TOKEN is set,
-# every route except /health requires it — via `Authorization: Bearer <token>`
-# (MCP clients) or a `?token=<token>` query param (the browser dashboard +
-# EventSource, which can't set headers). Unset -> auth disabled (local dev).
 AUTH_TOKEN = _config.AUTH_TOKEN
 TOKEN_QS = f"?token={urllib.parse.quote(AUTH_TOKEN)}" if AUTH_TOKEN else ""
 
 store = StateStore(DB_PATH)
 
-
-def record_grade(grade: dict) -> None:
-    """Spec 039 US6 (FR-021): the intake grader's prediction becomes a
-    machine-readable row. Bound HERE because this module owns the store; the
-    intake orchestrator (layer 3's caller) holds none and reaches it through
-    a callback. Used by the MCP intake tools, the webhook grade and the
-    startup recovery sweep — one binding, three callers."""
-    store.record_intake_grade(**grade)
 _engine = _config.ENGINE
 if _engine == "stub":
-    # Harness-validation mode: deterministic stub engine + cognition, no docker,
-    # no claude. Proves the plumbing around the agent; never use in production.
     from ..engine.stub import stub_engine
 
-    sys.stderr.write(
-        "⚠ DEVCLAW_ENGINE=stub — deterministic stub engine + cognition "
-        "(NO sandbox, NO claude). For harness validation only.\n"
-    )
+    sys.stderr.write("⚠ DEVCLAW_ENGINE=stub — deterministic stub engine (NO sandbox, NO claude).\n")
     queue = TaskQueue(store, runner=stub_engine)
 elif _engine == "host":
-    # Real cognition + the real worker runner, but on the HOST with NO sandbox.
     from ..engine.host import run_host
 
-    sys.stderr.write(
-        "⚠ DEVCLAW_ENGINE=host — the worker runs on the HOST with NO sandbox "
-        "isolation (agent has full filesystem access). Dev/validation only.\n"
-    )
+    sys.stderr.write("⚠ DEVCLAW_ENGINE=host — the worker runs on the HOST with NO sandbox.\n")
     queue = TaskQueue(store, runner=run_host)
 else:
     queue = TaskQueue(store)
 
-# The project registry (control plane): the single source of truth for "which
-# repos is devclaw working on, and what's the status of each". Thin — it links to
-# goals by id and joins their live status on read (project_rollup), never caching
-# phase. Shares the SQLite file with the state store. Constructed before the goal
-# layer because GoalService reads it to resolve per-project overrides.
 registry = ProjectRegistry(DB_PATH)
-
-# Wire the registry into the queue so the pre-PR review gate can honour a
-# per-project review_gate override (the queue is built before the registry, so
-# this is a post-construction setter rather than a constructor arg).
 queue.set_registry(registry)
-
-# The goal layer (folded-in goalclaw): durable, steerable, evaluated goals driven
-# across heartbeats, dispatching into the SAME queue in-process. Owns goals under
-# DEVCLAW_GOALS_DIR; the heartbeat + on-settle wake are started in the entrypoint.
 goals = GoalService(queue, store, project_registry=registry)
 
-
-def _goal_get(goal_id: str) -> dict:
-    """Read-only goal status getter for the project rollup (raises KeyError)."""
-    return goals.get_goal(goal_id)
-
-
 mcp: FastMCP = FastMCP(SERVER_NAME, version=__version__)
-
-LimitField = Field(ge=1, le=1000)

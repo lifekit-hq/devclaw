@@ -35,7 +35,7 @@ async def test_on_event_lifted_still_tags_task_id(store):
     store.create_task(
         id="t1", kind="implement_feature", workspace_dir="/ws", goal="g",
     )
-    store.claim_pending("t1")  # running — the state _run_and_settle settles from
+    store.claim_pending("t1")  # running — the state _execute settles from
 
     async def emitting_runner(req: EngineRequest):
         # The engine streams one observation back through the on_event sink,
@@ -44,7 +44,7 @@ async def test_on_event_lifted_still_tags_task_id(store):
         return {"status": "ok", "workspaceDir": req.workspace_dir, "message": "done"}
 
     q = TaskQueue(store, runner=emitting_runner)
-    await q._run_and_settle("t1", "implement_feature", "/ws", "g")
+    await q._execute("t1", "implement_feature", "/ws", "g")
 
     logged = [e for e in store.list_events(task_id="t1") if e.type == "log"]
     assert logged, "the streamed engine event was not persisted"
@@ -152,7 +152,7 @@ async def test_global_cap_limits_concurrent_runs(store, monkeypatch):
 
     # cap=1 → exactly one task may be running; the other is held pending (backpressure)
     assert store.count_running() == 1
-    assert len(store.list_pending_standalone()) == 1
+    assert len(store.list_pending()) == 1
 
     gate.set()
     await q.drain()

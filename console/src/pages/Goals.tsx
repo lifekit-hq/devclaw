@@ -1,47 +1,47 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchAllGoals, tokenQueryString, type GoalWithProject } from "../api";
-import { phaseColor, phaseIsLive } from "../status";
+import { fetchGoals, tokenQueryString, type GoalRow } from "../api";
+import { exitColor, stateColor, stateIsLive } from "../status";
 import { relativeTime } from "../util/time";
 import { EmptyState, ErrorNote, Loading, StatusDot } from "../ui";
 
-type Filter = "all" | "running" | "blocked" | "done";
-
+type Filter = "open" | "blocked" | "closed" | "all";
 const FILTERS: { id: Filter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "running", label: "Running" },
+  { id: "open", label: "Open" },
   { id: "blocked", label: "Blocked" },
-  { id: "done", label: "Done" },
+  { id: "closed", label: "Closed" },
+  { id: "all", label: "All" },
 ];
 
-function match(g: GoalWithProject, f: Filter): boolean {
+function match(g: GoalRow, f: Filter): boolean {
   if (f === "all") return true;
-  if (f === "running") return phaseIsLive(g.phase);
-  if (f === "blocked") return g.phase === "blocked";
-  return g.phase === "done" || g.phase === "achieved" || g.phase === "cancelled";
+  if (f === "closed") return !!g.outcome;
+  if (f === "blocked") return g.state === "blocked";
+  return !g.outcome;
 }
 
-const COLS = "minmax(0,1.4fr) 150px 120px minmax(0,1fr) 110px";
+const COLS = "minmax(0,1.6fr) 130px 130px minmax(0,1fr) 110px";
 
 export function Goals() {
   const nav = useNavigate();
   const qs = tokenQueryString();
-  const [rows, setRows] = useState<GoalWithProject[] | null>(null);
+  const [rows, setRows] = useState<GoalRow[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<Filter>("open");
 
   useEffect(() => {
     let alive = true;
-    fetchAllGoals()
-      .then((r) => alive && setRows(r))
-      .catch((e) => alive && setErr(String(e)));
+    const load = () => fetchGoals().then((r) => alive && setRows(r)).catch((e) => alive && setErr(String(e)));
+    load();
+    const t = setInterval(load, 15000);
     return () => {
       alive = false;
+      clearInterval(t);
     };
   }, []);
 
   const counts = useMemo(() => {
-    const c: Record<Filter, number> = { all: 0, running: 0, blocked: 0, done: 0 };
+    const c: Record<Filter, number> = { open: 0, blocked: 0, closed: 0, all: 0 };
     for (const g of rows ?? []) for (const f of FILTERS) if (match(g, f.id)) c[f.id]++;
     return c;
   }, [rows]);
@@ -50,77 +50,46 @@ export function Goals() {
 
   return (
     <div className="page">
-      <h1 style={{ fontSize: 22, fontWeight: 650, letterSpacing: "-0.02em", margin: "0 0 4px" }}>
-        Goals
-      </h1>
+      <h1 style={{ fontSize: 22, fontWeight: 650, letterSpacing: "-0.02em", margin: "0 0 4px" }}>Goals</h1>
       <p className="secondary" style={{ margin: "0 0 20px", fontSize: 13.5 }}>
-        Every goal across all projects.
+        One issue, one branch, one PR. The thread on GitHub is the record; this is the index.
       </p>
-
       <div style={{ display: "flex", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
         {FILTERS.map((f) => (
-          <button
-            key={f.id}
-            className={`btn sm${filter === f.id ? " primary" : ""}`}
-            onClick={() => setFilter(f.id)}
-          >
+          <button key={f.id} className={`btn sm${filter === f.id ? " primary" : ""}`} onClick={() => setFilter(f.id)}>
             {f.label}
             <span className="mono" style={{ opacity: 0.7, fontSize: 11 }}>{counts[f.id]}</span>
           </button>
         ))}
       </div>
-
       {err && <ErrorNote>{err}</ErrorNote>}
       {!rows && !err && <Loading />}
-      {rows && shown.length === 0 && (
-        <EmptyState title="Nothing here" hint="No goals match this filter." />
-      )}
-
+      {rows && shown.length === 0 && <EmptyState title="Nothing here" hint="No goals match this filter." />}
       {shown.length > 0 && (
         <div className="card" style={{ overflow: "hidden" }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: COLS,
-              gap: 16,
-              padding: "10px 16px",
-              borderBottom: "1px solid var(--border)",
-            }}
-          >
+          <div style={{ display: "grid", gridTemplateColumns: COLS, gap: 16, padding: "10px 16px", borderBottom: "1px solid var(--border)" }}>
             <span className="eyebrow">Goal</span>
             <span className="eyebrow">Project</span>
-            <span className="eyebrow">Phase</span>
-            <span className="eyebrow">Action</span>
-            <span className="eyebrow" style={{ textAlign: "right" }}>Updated</span>
+            <span className="eyebrow">State</span>
+            <span className="eyebrow">Last session</span>
+            <span className="eyebrow" style={{ textAlign: "right" }}>Seen</span>
           </div>
           {shown.map((g) => (
-            <div
-              key={`${g.projectId}:${g.id}`}
-              className="rowlink"
-              onClick={() => nav(`/goals/${g.id}${qs}`)}
-              style={{
-                display: "grid",
-                gridTemplateColumns: COLS,
-                gap: 16,
-                alignItems: "center",
-                padding: "13px 16px",
-                borderBottom: "1px solid var(--border)",
-                opacity: g.archived ? 0.6 : 1,
-              }}
-            >
+            <div key={g.id} className="rowlink" onClick={() => nav(`/goals/${encodeURIComponent(g.id)}${qs}`)}
+              style={{ display: "grid", gridTemplateColumns: COLS, gap: 16, alignItems: "center", padding: "13px 16px", borderBottom: "1px solid var(--border)", opacity: g.outcome ? 0.6 : 1 }}>
               <div style={{ minWidth: 0 }}>
                 <div className="truncate" style={{ fontWeight: 550, fontSize: 13 }}>{g.objective || g.id}</div>
-                <div className="mono muted truncate" style={{ fontSize: 11, marginTop: 2 }}>{g.id}</div>
+                <div className="mono muted truncate" style={{ fontSize: 11, marginTop: 2 }}>{g.id} · #{g.issues.join(", #")}</div>
               </div>
-              <span className="truncate secondary" style={{ fontSize: 12.5 }}>{g.projectName}</span>
+              <span className="truncate secondary" style={{ fontSize: 12.5 }}>{g.projectId}</span>
               <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5 }}>
-                <StatusDot color={phaseColor(g.phase)} live={phaseIsLive(g.phase)} />
-                {g.phaseLabel}
+                <StatusDot color={stateColor(g.outcome ?? g.state)} live={stateIsLive(g.state)} />
+                {g.outcome ?? g.state}
               </span>
-              <span className="mono truncate secondary" style={{ fontSize: 12 }}>{g.action || "—"}</span>
-              <span className="mono secondary" style={{ textAlign: "right", fontSize: 12.5 }}>
-                {relativeTime(g.lastUpdateMs)}
+              <span className="mono truncate" style={{ fontSize: 12, color: exitColor(g.lastSession?.exit) }}>
+                {g.lastSession ? `${g.lastSession.exit ?? g.lastSession.status}${g.lastSession.exitDetail ? ": " + g.lastSession.exitDetail : ""}` : "—"}
               </span>
+              <span className="mono secondary" style={{ textAlign: "right", fontSize: 12.5 }}>{relativeTime(g.lastSeenAt)}</span>
             </div>
           ))}
         </div>

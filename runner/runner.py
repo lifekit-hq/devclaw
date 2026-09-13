@@ -184,23 +184,16 @@ def _run_hook(name: str, *args: str) -> list[str]:
 # "form your own opinion as a senior engineer." Vendor-neutral plain markdown —
 # the model-agnostic worker layer carries no vendor tool-wiring.
 _RETURN_CONTRACT = (
-    "## When you finish — hand back a structured summary\n\n"
-    "End your final message with a hand-back in exactly this shape — one line "
-    "per field, plain text, no code fence — so devclaw can read your result "
-    "without guessing:\n\n"
-    "STATUS: DONE  — or  BLOCKED: env — <the tool, service, credential or access "
-    "your ENVIRONMENT lacks>  when the sandbox cannot do the work (never patch "
-    "the repo around it)  — or  BLOCKED: <one-line reason>  for any other reason "
-    "you could not finish.\n"
-    "CHANGED: the files/areas you changed, one clause each, and what each change does.\n"
-    "VERIFIED: the checks you ACTUALLY ran and their result — tests, lint, "
-    "type-check, build (name the commands).\n"
-    "ACCEPTANCE: for each acceptance criterion stated in the Goal, whether it is "
-    "met and the evidence; write 'none stated' if the Goal listed none.\n"
-    "FOLLOW-UPS: anything you had to work around, left unfinished, or that needs "
-    "a human — or 'none'.\n\n"
-    "Report only checks you truly ran, not ones you intended to. If you write "
-    "BLOCKED, still fill CHANGED / VERIFIED / ACCEPTANCE with how far you got."
+    "## When you finish — the hand-back\n\n"
+    "End your final message with exactly ONE of these lines, plain text, so "
+    "devclaw can read how this session ended without guessing:\n\n"
+    "DELIVERED: <what landed on the branch this session>\n"
+    "DONE: <why every clause of the contract is met — the done-gate reviews it>\n"
+    "BLOCKED: <the one question the owner must answer> — default: <what you would do>\n"
+    "BLOCKED: env — <the tool, service, credential or access your ENVIRONMENT lacks>\n"
+    "NOTHING: <why there was nothing to do>\n\n"
+    "Above that line, say what you changed and which checks you actually ran. "
+    "Report only checks you truly ran."
 )
 
 
@@ -282,6 +275,91 @@ def _run_verify(cmd: str, workspace_dir: str, timeout: int = _VERIFY_TIMEOUT_S) 
     return {
         "ran": True, "cmd": cmd, "passed": proc.returncode == 0,
         "exit_code": proc.returncode, "timed_out": False, "output": combined[-4000:],
+    }
+
+
+#: Spec 046: the sandbox runs what CI runs BEFORE the session ends. The
+#: session derives ``.devclaw/verify`` from the project's CI on its first run;
+#: a red run is fed back to the SAME session, bounded by DEVCLAW_VERIFY_ROUNDS.
+_VERIFY_ROUNDS = int(os.environ.get("DEVCLAW_VERIFY_ROUNDS", "3") or 3)
+_VERIFY_SCRIPT_REL = os.path.join(".devclaw", "verify")
+_VERIFY_MISSING_PROMPT = (
+    "Before you finish, `.devclaw/verify` must exist: an executable script that "
+    "runs what this project's CI runs (derive it from `.github/workflows`; keep "
+    "it honest — a check CI runs that the script skips is a red CI later). "
+    "Create it, run it until green, commit it, and hand back again with your "
+    "exit line."
+)
+_VERIFY_FAILED_PROMPT = (
+    "`{cmd}` failed (exit {code}) — this is what CI would see. Fix the cause, "
+    "never the check; re-run it until green; commit; then hand back again with "
+    "your exit line. Output tail:\n\n{tail}"
+)
+
+
+def _discover_verify(workspace_dir: str) -> "str | None":
+    path = os.path.join(workspace_dir, _VERIFY_SCRIPT_REL)
+    if not os.path.isfile(path):
+        return None
+    return f"./{_VERIFY_SCRIPT_REL}" if os.access(path, os.X_OK) else f"bash {_VERIFY_SCRIPT_REL}"
+
+
+def _emit_verify_event(verify: dict) -> None:
+    _emit_event({
+        "id": "verify", "type": "VerifyResult", "source": "devclaw",
+        "ts": int(time.time() * 1000),
+        "payload": {"cmd": verify["cmd"], "passed": verify["passed"],
+                    "exit_code": verify["exit_code"], "timed_out": verify["timed_out"]},
+    })
+
+
+def _run_verify_here(cmd: str, workspace_dir: str) -> dict:
+    report_path = os.path.join(workspace_dir, _BROWSER_REPORT_REL)
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+    os.environ["PLAYWRIGHT_JSON_OUTPUT_NAME"] = report_path
+    _resync_mise_env(workspace_dir)
+    verify = _run_verify(cmd, workspace_dir)
+    browser_report = _read_browser_report(workspace_dir)
+    if browser_report is not None:
+        verify["browser_report"] = browser_report
+    _emit_verify_event(verify)
+    return verify
+
+
+def _verify_loop(client, kind: str, workspace_dir: str, verify_cmd: "str | None") -> "dict | None":
+    """Run the verify; on red, hand the output back to the SAME session and
+    run again, up to ``_VERIFY_ROUNDS`` fixes. A session that ends BLOCKED is
+    left alone. A code-writing session that leaves no verify script after
+    being asked ends with a FAILED verify — never an unverified pass."""
+    if kind not in _WRITES_CODE_KINDS:
+        return None
+    verify: "dict | None" = None
+    asked = False
+    for _ in range(max(1, _VERIFY_ROUNDS)):
+        if _parse_blocked_reason(client.last_agent_message) is not None:
+            return verify
+        cmd = verify_cmd or _discover_verify(workspace_dir)
+        if not cmd:
+            if asked:
+                break
+            asked = True
+            client.prompt(_VERIFY_MISSING_PROMPT)
+            continue
+        verify = _run_verify_here(cmd, workspace_dir)
+        if verify["passed"]:
+            return verify
+        client.prompt(_VERIFY_FAILED_PROMPT.format(
+            cmd=cmd, code=verify["exit_code"], tail=(verify["output"] or "")[-3000:],
+        ))
+    if _parse_blocked_reason(client.last_agent_message) is not None:
+        return verify
+    cmd = verify_cmd or _discover_verify(workspace_dir)
+    if cmd:
+        return _run_verify_here(cmd, workspace_dir)
+    return {
+        "ran": True, "cmd": _VERIFY_SCRIPT_REL, "passed": False, "exit_code": None,
+        "timed_out": False,
+        "output": "no .devclaw/verify script after the session was asked to create one",
     }
 
 
@@ -1929,6 +2007,8 @@ def main() -> None:
                     "agent turn was cancelled without a runner-initiated "
                     "landing — treating as a failure, never an ok result"
                 )
+            # Spec 046: the sandbox runs what CI runs before the session ends.
+            verify = _verify_loop(client, kind, workspace_dir, verify_cmd)
         finally:
             client.close()
         usage = outcome.usage
@@ -2047,44 +2127,8 @@ def main() -> None:
     if hook_warnings:
         result_payload["hook_warnings"] = hook_warnings
 
-    # Verify gate: the agent loop finished, but "done" means the project's own
-    # test/build command passes — run it now and attach the verdict. The host
-    # (TaskQueue) decides done-vs-failed from `verify.passed`; here we just run it
-    # and report. Emitted as an event too so it shows in the live stream.
-    if verify_cmd:
-        # Point Playwright's JSON reporter at a devclaw-owned path so that IF the
-        # verify gate runs browser E2E (`npx playwright test --reporter=json`),
-        # the run's real counts survive to the host browser-gate. Set
-        # unconditionally — harmless when the gate isn't a browser suite (nothing
-        # writes the file, and the host reads its absence as fail-closed only for
-        # a frontend change with a playwright config).
-        report_path = os.path.join(workspace_dir, _BROWSER_REPORT_REL)
-        os.makedirs(os.path.dirname(report_path), exist_ok=True)
-        os.environ["PLAYWRIGHT_JSON_OUTPUT_NAME"] = report_path
-        # Re-sync the mise toolchain env so a gate like `dotnet test` finds an
-        # SDK the agent provisioned mid-task (a .csproj/.sln repo the pre-agent
-        # step couldn't detect). MUST run before _run_verify, which inherits
-        # os.environ. Best-effort — see _resync_mise_env.
-        _resync_mise_env(workspace_dir)
-        verify = _run_verify(verify_cmd, workspace_dir)
-        browser_report = _read_browser_report(workspace_dir)
-        if browser_report is not None:
-            verify["browser_report"] = browser_report
+    if verify is not None:
         result_payload["verify"] = verify
-        _emit_event(
-            {
-                "id": "verify",
-                "type": "VerifyResult",
-                "source": "devclaw",
-                "ts": int(time.time() * 1000),
-                "payload": {
-                    "cmd": verify["cmd"],
-                    "passed": verify["passed"],
-                    "exit_code": verify["exit_code"],
-                    "timed_out": verify["timed_out"],
-                },
-            }
-        )
 
     _emit_result(result_payload)
 

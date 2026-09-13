@@ -1,8 +1,5 @@
-"""Operator dispatch controls — run-window + manual hold.
-
-The same levers the CLI (``devclaw schedule ...``) and the /control/* HTTP
-routes drive; they write the control-plane meta table, never goal state.
-"""
+"""Operator dispatch controls — the run window, the manual hold, the quota
+pause, the concurrency dial. They write control-plane flags, never goal state."""
 
 from __future__ import annotations
 
@@ -11,85 +8,43 @@ from typing import Optional
 
 from fastmcp.exceptions import ToolError
 
-from ...dispatch_gate import (
-    _parse_hhmm,
-    next_window_open_ms,
-    operator_block,
-    schedule_blocks,
-)
+from ...dispatch_gate import _parse_hhmm, next_window_open_ms, operator_block
 from ...state_store import _now_ms
 from .._state import mcp, store
 
 
-# ===== operator dispatch controls ============================================
-# Flip the run-window / manual hold from MCP — the same levers the CLI
-# (`devclaw schedule ...`) and the /control/* HTTP routes drive, so the operator
-# can open or close dispatch on demand without SSHing to the box. These write the
-# control-plane meta table (StateStore.ControlPlaneMixin), NOT goal state, so the
-# goal-transition CAS choke point doesn't apply — they mirror the existing HTTP
-# write path 1:1. Both gates affect NEW dispatch only; in-flight tasks finish.
-
-
 @mcp.tool
-async def get_run_schedule(goal_id: Optional[str] = None) -> str:
-    """Show the current dispatch controls: the daily run-window, the manual
-    operator hold, and whether new dispatch is open RIGHT NOW. With ``goal_id``,
-    returns that goal's OWN window (an extra narrowing on top of the global one)
-    instead of the engine-wide window.
-
-    Read-only. New dispatch is gated when the manual hold is on OR the current
-    time is outside the (enabled) window; in-flight tasks always finish. Change it
-    with set_run_schedule / set_operator_hold."""
-    now = _now_ms()
-    hold = store.operator_hold()
-    schedule = store.get_run_schedule(goal_id)
-    if goal_id:
-        blocked, why = schedule_blocks(schedule, now)
-    else:
-        blocked, why = operator_block(hold, schedule, now)
+async def get_run_schedule() -> str:
+    """The daily run window, the manual hold, the quota pause, and whether
+    new dispatch is open right now. Read-only."""
     from ...task_queue import GLOBAL_MAX_CONCURRENT
 
+    now = _now_ms()
+    hold = store.operator_hold()
+    schedule = store.get_run_schedule()
+    blocked, why = operator_block(hold, schedule, now)
+    until, reason = store.global_pause()
     override = store.max_concurrent()
-    out = {
-        "goal_id": goal_id,
+    return json.dumps({
         "schedule": schedule,
         "operator_hold": {"on": hold[0], "reason": hold[1]},
-        "dispatch_open": not blocked,
+        "pause": {"until_ms": until, "reason": reason} if until and until > now else None,
+        "dispatch_open": not blocked and not (until and until > now),
         "why_blocked": why or None,
         "next_window_open_ms": next_window_open_ms(schedule, now),
-        "max_concurrent": {
-            "effective": override or GLOBAL_MAX_CONCURRENT,
-            "override": override,
-            "default": GLOBAL_MAX_CONCURRENT,
-        },
-        "max_host_cognition": _host_cognition_view(),
-    }
-    return json.dumps(out, indent=2)
+        "max_concurrent": {"effective": override or GLOBAL_MAX_CONCURRENT, "override": override,
+                           "default": GLOBAL_MAX_CONCURRENT},
+    }, indent=2)
 
 
 @mcp.tool
-async def set_run_schedule(
-    enabled: bool,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    tz: Optional[str] = None,
-    goal_id: Optional[str] = None,
-) -> str:
-    """Set the daily run-window during which new dispatch is allowed. Outside it,
-    new dispatch is gated (in-flight finishes). ``start``/``end`` are ``'HH:MM'``
-    (24h) in IANA ``tz`` (e.g. "Europe/Kyiv"); omitted fields keep their current
-    value.
-
-    To OPEN the window on demand (let held work dispatch now), pass
-    ``enabled=false`` — a disabled window never gates. With ``goal_id`` this sets
-    that goal's OWN window (a narrowing on top of the global one) rather than the
-    engine-wide window.
-
-    A malformed time or unknown timezone is REJECTED (the gate fails open, so a
-    typo must not silently disable the window) — mirrors POST /control/schedule."""
+async def set_run_schedule(enabled: bool, start: Optional[str] = None, end: Optional[str] = None,
+                           tz: Optional[str] = None) -> str:
+    """Set the daily window (``HH:MM`` in IANA ``tz``) during which new
+    sessions start; in-flight sessions finish. ``enabled=false`` = 24/7."""
     from zoneinfo import ZoneInfo
 
-    cur = store.get_run_schedule(goal_id)
+    cur = store.get_run_schedule()
     start = start or cur["start"]
     end = end or cur["end"]
     tz = tz or cur["tz"]
@@ -98,22 +53,14 @@ async def set_run_schedule(
     try:
         ZoneInfo(tz)
     except Exception:
-        raise ToolError(
-            f"unknown timezone {tz!r} — use an IANA name, e.g. Europe/Kyiv"
-        ) from None
-    store.set_run_schedule(bool(enabled), start, end, tz, goal_id=goal_id)
-    return json.dumps(
-        {"goal_id": goal_id, "schedule": store.get_run_schedule(goal_id)}, indent=2
-    )
+        raise ToolError(f"unknown timezone {tz!r} — use an IANA name, e.g. Europe/Dublin") from None
+    store.set_run_schedule(bool(enabled), start, end, tz)
+    return json.dumps({"schedule": store.get_run_schedule()}, indent=2)
 
 
 @mcp.tool
 async def set_operator_hold(on: bool, reason: str = "") -> str:
-    """Manually pause (``on=true``) or resume (``on=false``) ALL new dispatch —
-    the big red button. The manual hold WINS over the run-window (an explicit
-    pause is never overridden by an open window) and is independent of the
-    automatic quota pause. In-flight tasks always finish. Mirrors
-    POST /control/pause + /control/resume."""
+    """The big red button: hold (``on=true``) or release ALL new dispatch."""
     store.set_operator_hold(bool(on), reason)
     hold = store.operator_hold()
     return json.dumps({"operator_hold": {"on": hold[0], "reason": hold[1]}}, indent=2)
@@ -121,92 +68,20 @@ async def set_operator_hold(on: bool, reason: str = "") -> str:
 
 @mcp.tool
 async def clear_usage_pause() -> str:
-    """Clear an active account-wide usage/auth pause NOW — the operator's
-    "I fixed the cause" verb. The automatic pause assumes its reason still
-    holds until the re-probe (quota: the cap reset; auth: a fixed cadence);
-    when the operator has already repaired the cause — re-login, a rotated
-    setup-token, a deployed fix — this clears the persisted ``paused_until``
-    so dispatch resumes immediately instead of waiting out the clock.
-    Safe: a no-op when no pause is active, and clearing a pause whose cause
-    is still real merely lets the next limited call re-pause with a fresh
-    timestamp. Distinct from the manual hold (set_operator_hold) and the
-    run-window — those gate independently and are untouched."""
+    """Clear an active quota/auth pause now — "I fixed the cause". A no-op
+    when nothing is paused; a still-real limit simply re-pauses."""
     until, reason = store.global_pause()
     store.clear_global_pause()
-    return json.dumps(
-        {"cleared": bool(until), "was_until_ms": until, "was_reason": reason},
-        indent=2,
-    )
-
-
-@mcp.tool
-async def set_quiet_mode(on: bool, until: "Optional[str]" = None, reason: str = "") -> str:
-    """Arm (``on=true``) or disarm quiet mode (spec 025 US3). While armed,
-    ONLY instance-dead pings reach the owner (an auth pause a re-probe can't
-    heal; a failed self-deploy rollback) — every other ping class is recorded
-    and readable on return via ``list_suppressed_pings``. ``until`` (ISO
-    date/datetime, UTC assumed when naive) sets a self-disarm expiry —
-    RECOMMENDED for a holiday window so a forgotten toggle can't mute the
-    instance forever. Disarming keeps the suppressed backlog."""
-    until_ms: "int | None" = None
-    if on and until:
-        from datetime import datetime, timezone
-
-        try:
-            dt = datetime.fromisoformat(until)
-        except ValueError:
-            raise ToolError(
-                f"until must be an ISO date/datetime, got {until!r}"
-            ) from None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        until_ms = int(dt.timestamp() * 1000)
-    store.set_quiet_mode(bool(on), until_ms=until_ms, armed_at_ms=_now_ms())
-    armed, until_out = store.quiet_mode()
-    return json.dumps({
-        "quiet": armed,
-        "until_ms": until_out,
-        "suppressed_so_far": store.suppressed_ping_count(),
-    }, indent=2)
-
-
-@mcp.tool
-async def list_suppressed_pings(limit: int = 200) -> str:
-    """The quiet-mode catch-up surface (spec 025 FR-014): every owner ping
-    withheld while quiet mode was armed, oldest first, LIMIT-bounded. A
-    record, not state — reading it changes nothing."""
-    return json.dumps({
-        "count": store.suppressed_ping_count(),
-        "quiet": store.quiet_mode()[0],
-        "pings": store.list_suppressed_pings(limit),
-    }, indent=2, default=str)
+    store.set_pause_notified(False)
+    return json.dumps({"cleared": bool(until), "was_until_ms": until, "was_reason": reason}, indent=2)
 
 
 @mcp.tool
 async def set_max_concurrent(n: Optional[int] = None) -> str:
-    """Set the global cap on concurrently-running sandboxed tasks — the
-    backpressure dial. ``n=1`` is strictly serial (one sandbox at a time), the
-    unattended-operation setting: concurrent sandboxes contend for ONE account
-    quota while the usage-limit pause budget is counted per task, so a high cap
-    trades reliability for parallelism. Omit ``n`` (or pass null) to CLEAR the
-    override and fall back to the ``DEVCLAW_MAX_CONCURRENT`` default.
-
-    Takes effect on the next queue pump — no restart, no redeploy. In-flight
-    tasks always finish; lowering the cap never kills running work, it just
-    stops new launches until the count drops below it.
-
-    This is backpressure, not a safety gate: it cannot stop dispatch entirely
-    (``n`` must be >= 1). To halt all new work use set_operator_hold; to gate it
-    by time of day use set_run_schedule. Read the current value with
-    get_run_schedule.
-
-    Host-side cognition subprocesses are NOT counted here — they have their own
-    cap (``DEVCLAW_MAX_HOST_COGNITION``)."""
+    """The cap on concurrently-running sandboxes (``1`` = strictly serial,
+    the unattended setting). Omit ``n`` to clear the override."""
     if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
-        raise ToolError(
-            "n must be a whole number >= 1, or null to clear the override — "
-            "0 would wedge every dispatch; use set_operator_hold to stop work"
-        )
+        raise ToolError("n must be a whole number >= 1, or null to clear the override")
     try:
         store.set_max_concurrent(n)
     except ValueError as exc:
@@ -214,65 +89,5 @@ async def set_max_concurrent(n: Optional[int] = None) -> str:
     from ...task_queue import GLOBAL_MAX_CONCURRENT
 
     override = store.max_concurrent()
-    return json.dumps(
-        {
-            "max_concurrent": {
-                "effective": override or GLOBAL_MAX_CONCURRENT,
-                "override": override,
-                "default": GLOBAL_MAX_CONCURRENT,
-            }
-        },
-        indent=2,
-    )
-
-
-def _host_cognition_view() -> dict:
-    """The cognition cap as {effective, override, default} — the same shape as
-    max_concurrent so one read tool reports both populations identically."""
-    from ...llm_call import (
-        _max_host_cognition_from_env,
-        host_cognition_cap,
-    )
-    from ... import config as _cfg
-
-    return {
-        "effective": host_cognition_cap(),
-        "override": store.max_host_cognition(),
-        "default": _max_host_cognition_from_env(_cfg.max_host_cognition_raw()),
-    }
-
-
-@mcp.tool
-async def set_max_host_cognition(n: Optional[int] = None) -> str:
-    """Set the cap on CONCURRENT host-side ``claude --print`` subprocesses —
-    the done-gate, evaluator, review gate and triage calls. This is a DIFFERENT
-    population from set_max_concurrent: that one counts sandboxed tasks, this
-    one counts host processes, and neither is visible to the other. Both caps
-    apply at once — capping tasks at 1 does not stop two gates running beside
-    that task.
-
-    Omit ``n`` (or pass null) to CLEAR the override and fall back to the
-    ``DEVCLAW_MAX_HOST_COGNITION`` default.
-
-    Takes effect on the next acquire — no restart, no redeploy. In-flight
-    cognition calls always finish; lowering the cap only makes the next call
-    wait its turn. Queued callers never error, and the wait does not count
-    against a call's timeout budget (the timeout starts after the acquire).
-
-    Sizing: these are the memory-hungry ones. Four concurrent review gates plus
-    goal cognition is what the kernel OOM-killed 117 times before this cap
-    existed, so raise it only if the box has headroom. ``n`` must be >= 1 — zero
-    would deadlock every cognition call."""
-    if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
-        raise ToolError(
-            "n must be a whole number >= 1, or null to clear the override — "
-            "0 would deadlock every cognition call"
-        )
-    from ...llm_call import set_host_cognition_cap
-
-    try:
-        store.set_max_host_cognition(n)
-    except ValueError as exc:
-        raise ToolError(str(exc)) from None
-    set_host_cognition_cap(n)
-    return json.dumps({"max_host_cognition": _host_cognition_view()}, indent=2)
+    return json.dumps({"max_concurrent": {"effective": override or GLOBAL_MAX_CONCURRENT,
+                                          "override": override, "default": GLOBAL_MAX_CONCURRENT}}, indent=2)
