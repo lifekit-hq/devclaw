@@ -2,6 +2,26 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.1.0](https://github.com/lifekit-hq/devclaw/compare/v2.0.0...v2.1.0) (2026-09-14)
+
+
+### Features
+
+* **console:** drill down project → goal → session (spec 047 US2) ([#917](https://github.com/lifekit-hq/devclaw/issues/917)) ([a135cf9](https://github.com/lifekit-hq/devclaw/commit/a135cf92dbf162de908cde2f7ca9375f4b6b1e32))
+* **console:** needs-you — a block is one click on the session's option (spec 047 US1) ([#915](https://github.com/lifekit-hq/devclaw/issues/915)) ([efad77e](https://github.com/lifekit-hq/devclaw/commit/efad77e42fd30eb5228cd418ebff66a8af8f09ec))
+* **console:** usage inline, the instance total as a /metrics counter (spec 047 US3) ([#918](https://github.com/lifekit-hq/devclaw/issues/918)) ([ee5bb2f](https://github.com/lifekit-hq/devclaw/commit/ee5bb2fbf5f3a42691355bbd6fb17eb936c381fe))
+* **console:** verdicts — every done-gate review, clause by clause (spec 047 US4) ([#920](https://github.com/lifekit-hq/devclaw/issues/920)) ([5eda963](https://github.com/lifekit-hq/devclaw/commit/5eda9633e718c585e2043e1f3a0512eb13c20035))
+
+
+### Bug Fixes
+
+* **server:** restore /metrics, the dead-man signal the v2 rewrite dropped ([#912](https://github.com/lifekit-hq/devclaw/issues/912)) ([491e911](https://github.com/lifekit-hq/devclaw/commit/491e911e12420022f37eb18dc2bf6dd9baac27c3)), closes [#911](https://github.com/lifekit-hq/devclaw/issues/911)
+
+
+### Documentation
+
+* **spec:** 047 the read side of v2 — needs-you, drill-down, usage, verdicts ([#914](https://github.com/lifekit-hq/devclaw/issues/914)) ([61074dc](https://github.com/lifekit-hq/devclaw/commit/61074dc44d8f318848d30c715e2f73f1c92b5040))
+
 ## [2.0.0](https://github.com/lifekit-hq/devclaw/compare/v1.2.0...v2.0.0) (2026-09-13)
 
 
