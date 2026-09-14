@@ -3,8 +3,8 @@
 **A software-development loop you supervise instead of operate.**
 
 You file a GitHub issue with a `## Done when` section. devclaw hands it to a
-session — Claude Code in a per-session docker sandbox — that plans with speckit
-inside the repository, lands one reviewable increment on the goal's branch,
+session — Claude Code in a per-session docker sandbox — that plans the way the
+repository itself plans, lands one reviewable increment on the goal's branch,
 runs what the project's CI runs before it finishes, and hands back one line:
 `DELIVERED`, `DONE`, `BLOCKED`, or `NOTHING`. Every ~15 minutes the host reads
 the world — the PR, its CI, the threads — and spawns the next session only when

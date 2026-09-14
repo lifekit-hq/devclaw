@@ -109,10 +109,6 @@ COPY --chown=agent:agent runner/acp_client.py /opt/devclaw/acp_client.py
 # best-effort bash scripts runner.py invokes around the agent loop.
 COPY --chown=agent:agent runner/skills/ /opt/devclaw/skills/
 COPY --chown=agent:agent runner/hooks/  /opt/devclaw/hooks/
-# The speckit scaffold a session copies into a repo that has none (spec 046).
-COPY --chown=agent:agent .specify/templates /opt/devclaw/specify/templates
-COPY --chown=agent:agent .specify/scripts   /opt/devclaw/specify/scripts
-COPY --chown=agent:agent .specify/.gitignore /opt/devclaw/specify/.gitignore
 # OOM shield (spec 020 US2): sourced by every non-interactive bash via
 # BASH_ENV (runner.py sets it) so workload commands self-raise oom_score_adj
 # and the kernel prefers them over the agent/runner on memory exhaustion.

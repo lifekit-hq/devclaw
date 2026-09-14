@@ -6,6 +6,7 @@ loader is exercised against the same files that get baked.
 """
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -195,31 +196,37 @@ def test_the_skill_bundle_licenses_no_gate_bypass(runner, skill_dir):
         assert "gate inputs" in bundle.lower()
 
 
-def test_feature_id_is_collision_proof_and_never_an_issue_number(runner, skill_dir):
-    """The feature identifier is unique WITHOUT coordination between checkouts,
-    and the handoff rule resolves to exactly one directory.
+def test_handoff_is_the_branch_and_devclaw_names_no_planning_harness(runner, skill_dir):
+    """devclaw owns no planning harness, and the handoff cannot tie.
 
-    One goal, one checkout (2026-09-06): each goal runs in a clone carrying
-    only its own branch, so `create-new-feature.sh`'s sequential allocator —
-    which reads the `specs/` it can see — hands every goal branching off one
-    default branch the SAME number. finance-sentry on the fs-431 branch: four
-    `044-` directories, two `042-`, two `043-`, plus `421-asset-dossier` where
-    a worker put a GitHub issue number in the feature slot. Same class as the
-    two-goals-one-directory finding of 2026-09-06 — a per-checkout allocator
-    minting a global identifier.
+    The handoff half is the surviving generalisation of #887. A per-checkout
+    allocator minting a global identifier collided: one goal, one checkout
+    (2026-09-06) means each goal's clone carries only its own branch, so
+    `create-new-feature.sh`'s sequential allocator handed every goal branching
+    off one default branch the SAME number — finance-sentry on the fs-431
+    branch grew four `044-` directories, two `042-`, two `043-`, plus a
+    `421-asset-dossier` where a worker put a GitHub issue number in the feature
+    slot. "The smallest not-yet-complete `specs/NNN-*/`" then tied four ways and
+    a session could adopt another goal's plan as its own prior self's. The rule
+    is the BRANCH — the goal's identity, which cannot tie.
 
-    The consequence that bites is the handoff: "the smallest not-yet-complete
-    `specs/NNN-*/`" ties four ways, and `421-` sorts after `046-`, so a session
-    can adopt another goal's plan as its own prior self's. The rule is now the
-    branch, which is the goal's identity and cannot tie.
+    The harness half is the 2026-09-14 ruling (issue #923): devclaw bakes no
+    scaffold and names no planning tool, because a tool it chose writes
+    artifacts the target repo's own convention cannot place. What the repo does
+    is read live from `.devclaw/workflow.md`, derived on the first run. Naming a
+    tool here is the regression — the grep below is the same check the ruling's
+    done-when clause states.
     """
+    named_harness = re.compile(r"speckit|specify|create-new-feature|--timestamp", re.I)
     for kind in ("implement_feature", "fix_bug"):
         bundle = runner._load_skills(kind)
-        # the identifier is minted collision-free, never by the allocator
-        assert "--timestamp" in bundle
+        # the manifest is the one source of how this repo plans…
+        assert ".devclaw/workflow.md" in bundle
+        # …and no planning tool is named for the session to reach for
+        assert not named_harness.search(bundle)
         # the handoff is scoped to what THIS branch added — no tie, and no
-        # adopting a directory that belongs to another goal
-        assert "--diff-filter=A origin/HEAD...HEAD -- specs/" in bundle
+        # adopting a plan that belongs to another goal
+        assert "THIS branch" in bundle
         # …and the retired tie-prone rule is gone
         assert "smallest not-yet-complete" not in bundle
         # a bare number is not a commit scope: the issue rides `Fixes #<n>`,
@@ -228,7 +235,9 @@ def test_feature_id_is_collision_proof_and_never_an_issue_number(runner, skill_d
         assert "Fixes #<n>" in bundle
     # absence proven against the raw sources too, not just the assembled brief
     for path in sorted(skill_dir.rglob("*.md")):
-        assert "specs/NNN-*" not in path.read_text(encoding="utf-8"), path
+        text = path.read_text(encoding="utf-8")
+        assert "specs/NNN-*" not in text, path
+        assert not named_harness.search(text), path
 
 
 def test_common_skill_instructs_reading_architecture_map(runner, skill_dir):

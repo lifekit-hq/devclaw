@@ -141,6 +141,59 @@ def test_verify_gate_still_runs_and_reports(tmp_path):
     assert len(verify_events) == 1 and verify_events[0]["payload"]["passed"] is True
 
 
+def _git(workspace: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=t@e.st", "-c", "user.name=t", *args],
+        cwd=workspace, check=True, capture_output=True,
+    )
+
+
+def _repo_with_manifest(tmp_path, ignored: "str | None" = None) -> Path:
+    """A git repo carrying both first-run manifest files, with `ignored`
+    (a repo-relative path) present on disk but kept out of the index."""
+    workspace = tmp_path / "ws"
+    (workspace / ".devclaw").mkdir(parents=True, exist_ok=True)
+    (workspace / ".devclaw" / "verify").write_text("#!/bin/sh\nexit 0\n")
+    (workspace / ".devclaw" / "workflow.md").write_text("# workflow\n\nPlanning: none.\n")
+    _git(workspace, "init", "-q", "-b", "main")
+    if ignored is not None:
+        (workspace / ".gitignore").write_text(f"/{ignored}\n")
+    _git(workspace, "add", "-A")
+    _git(workspace, "commit", "-qm", "seed")
+    return workspace
+
+
+@pytest.mark.parametrize("ignored,expected", [
+    (None, None),
+    (".devclaw/verify", ".devclaw/verify"),
+    (".devclaw/workflow.md", ".devclaw/workflow.md"),
+    (".devclaw/", ".devclaw/verify"),
+])
+def test_first_run_manifest_must_be_tracked_on_the_branch(tmp_path, ignored, expected):
+    """Fail-closed gate (issue #923): the end-of-session check reads the git
+    INDEX, not the working tree. A repo whose `.gitignore` swallows `.devclaw/`
+    leaves the manifest on disk and delivers a branch carrying neither, so every
+    later session re-derives from scratch and the runner cannot tell. Dogfood
+    evidence: session 4a1232b0 on finance-sentry wrote `.devclaw/verify` + a
+    memory fact, ran verify green, committed — and branch 44e9bc9b carried no
+    `.devclaw/` at all. A green verify is NOT a pass while a manifest path is
+    untracked, and the failure names the path so the session can fix it.
+    """
+    workspace = _repo_with_manifest(tmp_path, ignored)
+    _, _, result, _ = _run_runner(
+        tmp_path, "ok",
+        req_extra={"verify_cmd": "echo verify-ran"},
+        env_extra={"DEVCLAW_VERIFY_ROUNDS": "1"},
+    )
+    assert (workspace / ".devclaw" / "workflow.md").is_file()  # on disk either way
+    if expected is None:
+        assert result["verify"]["passed"] is True
+        return
+    assert result["verify"]["passed"] is False, "green verify passed an untracked manifest"
+    assert expected in result["verify"]["output"]
+    assert "not tracked" in result["verify"]["output"]
+
+
 def test_runner_writes_no_vendor_harness_config_into_workspace(tmp_path):
     """Named regression (FR-004): the workspace stays vendor-neutral — no
     agent-brand settings, native skill dirs, or hook manifests are written by

@@ -122,6 +122,14 @@ a code-writing session that leaves no script after being asked ends with a
 failed verify. The host's `verify` gate then fails a red run closed
 (`INTERRUPTED`, resumed).
 
+A green run is not yet a pass. The same gate then checks that the first-run
+manifest — `.devclaw/verify` and `.devclaw/workflow.md`, how the repo verifies
+and how it plans — is TRACKED in the git index, not merely present in the
+working tree. A repository whose `.gitignore` swallows `.devclaw/` would
+otherwise deliver a branch carrying neither, and every later session would
+re-derive from scratch with nothing able to notice. The untracked path is named
+back to the session, which un-ignores and commits it.
+
 ### Failure is loud
 
 A gate crash fails closed. A delivery that cannot push fails the row. A

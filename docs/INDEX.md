@@ -22,7 +22,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — written 2026-09-13 for spec 046 |
+| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-09-14 (the first-run manifest gate; written 2026-09-13 for spec 046) |
 
 ## Flows
 

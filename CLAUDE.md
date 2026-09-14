@@ -9,7 +9,8 @@ code wins — cross-check before you trust either.
 **Some Python for what is determined, a model for what is reasoned, and one
 line between them** (spec 046, ruled by Denys 2026-09-10/13). You hand devclaw
 a GitHub issue; a session — Claude Code in a per-session docker sandbox — reads
-the issue as the contract, plans with speckit inside the repo, lands one
+the issue as the contract, plans the repository's own way
+(`.devclaw/workflow.md`, derived on the first run), lands one
 reviewable increment on the goal's branch, and hands back one exit line. The
 host reads the world (the PR, its CI, the threads) every ~15 minutes and spawns
 a session only when the world moved. Done is never the agent's word: a proposal
@@ -39,7 +40,9 @@ action a change adds is a defect. The checklist is `.claude/rules/north-star.md`
 3. **The issue is the contract.** Its `## Done when` / `## Acceptance` section
    is what the done-gate judges, read live. The host never grades or rewrites it.
 4. **The session is the engineer.** One prompt (`devclaw/prompts/session.md`),
-   speckit in the sandbox, recovery = read the repo, the PR, the CI and continue.
+   the REPOSITORY's own planning harness — devclaw bakes none and names none.
+   The first run on a repo derives `.devclaw/workflow.md` from it; every later
+   session reads it. Recovery = read the repo, the PR, the CI and continue.
    Exits: `DELIVERED` / `DONE` / `BLOCKED` / `NOTHING`.
 5. **The host holds no derived state.** Goals, decisions, the quota pause, and
    the last world fingerprint each session was given. No failure kinds, budgets,
@@ -78,6 +81,13 @@ reads GitHub as state.
   runner hands a red run back to the same session (`DEVCLAW_VERIFY_ROUNDS`).
   A red CI on a delivered head is therefore an environment gap: the goal stops,
   never retries (ruled 2026-09-13).
+- **The first run on a repository leaves a manifest, in git.** `.devclaw/verify`
+  (how it verifies) and `.devclaw/workflow.md` (how it plans, builds and ships)
+  are derived from the repository itself and must be TRACKED when the session
+  ends — the runner reads the git index, not the working tree, so a `.gitignore`
+  that swallows `.devclaw/` fails the gate instead of silently discarding the
+  manifest (ruled 2026-09-14). devclaw bakes no planning scaffold and names no
+  planning tool; a repo with no harness gets an explicit `none`.
 - **One definition of the change.** `devclaw/task_change.py` materializes the
   span once (`pre_run_sha..post_run_sha` less what the base branch carries) and
   every gate and delivery read it. An undeterminable span fails closed.

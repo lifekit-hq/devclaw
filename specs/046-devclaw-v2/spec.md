@@ -52,7 +52,9 @@ reads the world fresh and holds nothing it concluded.
    PR out; `decide`, `cancel`). Python outside these five needs a written reason.
 3. **The issue is the contract.** One schema, end to end, done-gate included. The host never
    triages, grades or rewrites it.
-4. **The session is the engineer.** One generic prompt. Speckit inside the sandbox. Recovery
+4. **The session is the engineer.** One generic prompt. The REPOSITORY's own planning
+   harness, read from `.devclaw/workflow.md` and derived from the repo on the first run —
+   devclaw bakes no scaffold and names no planning tool (ruled 2026-09-14). Recovery
    = read the repo, the PR and the CI, and continue, the way a developer does on Monday. The
    only exits are a delivery, a done proposal, or `BLOCKED` with one question.
 5. **The host holds no derived state.** It stores decisions, the quota pause, and the
@@ -147,8 +149,9 @@ Since the last session: {@devclaw comments — owner decisions, gate verdicts, C
 Last session ended: {exit line}.
 
 Do the next thing a developer would: if the PR conflicts or CI is red, fix that first;
-if no plan exists in the repo, run speckit (specify → clarify with defaults → plan →
-tasks) into the repo; otherwise take the next unfinished task. Read .devclaw/ first and
+read .devclaw/workflow.md and follow it — if it does not exist this is the first run on
+the repository, so derive it from the repository and commit it; otherwise continue what
+THIS branch added and take the next unfinished piece. Read .devclaw/ first and
 leave your notes there. Verify locally before pushing. Do not merge. Do not edit CI or
 gate inputs. Do not ask for anything you can find in the repo. For a reversible choice take the
 sensible default, say so in the PR, and continue; BLOCK only on scope or irreversible
@@ -210,7 +213,7 @@ a decision is a defect.
 | # | Case | Goes well | Goes wrong | Owner | Tokens |
 |---|---|---|---|---|---|
 | 1 | **Create a goal** from an issue | goal row + lane; first tick spawns | no repo/project registered → refused at create; issue unreadable or no done section → the SESSION blocks with the question, the host never grades | decide only | 0 until spawn |
-| 2 | **First session** (plan) | speckit artifacts committed in-repo, increment 1 landed, host opens the PR, `DELIVERED` | undecided design choice in the contract → `BLOCKED: <question> — default: <x>` before any implementation | `decide` (or "take your default") | 1 session |
+| 2 | **First session** (plan) | `.devclaw/workflow.md` derived from the repo and committed (with `.devclaw/` un-ignored if it was), increment 1 landed, host opens the PR, `DELIVERED` | undecided design choice in the contract → `BLOCKED: <question> — default: <x>` before any implementation | `decide` (or "take your default") | 1 session |
 | 3 | **Next increments** | each session takes the next unfinished task; `DELIVERED`; CI runs in parallel | session times out / context exhausted → host commits WIP, `INTERRUPTED`, next tick resumes from the repo notes | none | 1 session each |
 | 4 | **CI red** on the delivered head | should not happen: the pre-push hook ran CI's checks in the sandbox | host blocks the goal at once with the CI log next to the local run — an environment gap, fixed once per repo (verify script or image), never retried | decide: fix the gap, then `@devclaw` | 0 |
 | 5 | **Merge conflict** with main | `conflicting` → session merges main, resolves, pushes; the span excludes main's paths (spec 045) | a conflict the contract does not settle → `BLOCKED` | decide | 1 session |
