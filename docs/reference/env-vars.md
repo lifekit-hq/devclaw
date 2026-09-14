@@ -15,7 +15,7 @@ vars always win over `.env`.
 | `DEVCLAW_TRANSPORT` | `stdio` | `stdio` (local dev / tests) or `http` (the long-running service) |
 | `DEVCLAW_PORT` | `8000` | HTTP port when `DEVCLAW_TRANSPORT=http` |
 | `DEVCLAW_HOST` | `0.0.0.0` | HTTP bind address; `127.0.0.1` restricts to loopback |
-| `DEVCLAW_TOKEN` | — | Bearer token for every HTTP route except `/health` (`Authorization: Bearer` or `?token=`). Unset = no auth. |
+| `DEVCLAW_TOKEN` | — | Bearer token for every HTTP route except `/health` and `/metrics` (`Authorization: Bearer` or `?token=`). Unset = no auth. |
 | `DEVCLAW_DOTENV` | `.env` (cwd) | Path of the `.env` file loaded at startup |
 | `DEVCLAW_GIT_SHA` | — | Deployed commit, baked at build time; shown on `/health` |
 | `DEVCLAW_BUILT_AT` | — | Image build timestamp, same provenance |
