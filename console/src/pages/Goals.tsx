@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { fetchGoals, tokenQueryString, type GoalRow } from "../api";
 import { exitColor, stateColor, stateIsLive } from "../status";
 import { relativeTime } from "../util/time";
-import { EmptyState, ErrorNote, Loading, StatusDot } from "../ui";
+import { EmptyState, ErrorNote, Loading, StatusDot, UsageChip } from "../ui";
 
 type Filter = "open" | "blocked" | "closed" | "all";
 const FILTERS: { id: Filter; label: string }[] = [
@@ -20,7 +20,7 @@ function match(g: GoalRow, f: Filter): boolean {
   return !g.outcome;
 }
 
-const COLS = "minmax(0,1.6fr) 130px 130px minmax(0,1fr) 110px";
+const COLS = "minmax(0,1.6fr) 130px 130px minmax(0,1fr) 110px 90px";
 
 export function Goals() {
   const nav = useNavigate();
@@ -72,6 +72,7 @@ export function Goals() {
             <span className="eyebrow">Project</span>
             <span className="eyebrow">State</span>
             <span className="eyebrow">Last session</span>
+            <span className="eyebrow">Tokens</span>
             <span className="eyebrow" style={{ textAlign: "right" }}>Seen</span>
           </div>
           {shown.map((g) => (
@@ -91,6 +92,7 @@ export function Goals() {
                 title={g.lastSession ? "open the session" : undefined}>
                 {g.lastSession ? `${g.lastSession.exit ?? g.lastSession.status}${g.lastSession.exitDetail ? ": " + g.lastSession.exitDetail : ""}` : "—"}
               </span>
+              <UsageChip usage={g.usage} compact />
               <span className="mono secondary" style={{ textAlign: "right", fontSize: 12.5 }}>{relativeTime(g.lastSeenAt)}</span>
             </div>
           ))}

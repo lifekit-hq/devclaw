@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { fetchTask, fetchTaskEvents, tokenQueryString, type TaskDetail, type TaskEvent } from "../api";
 import { exitColor } from "../status";
 import { relativeTime } from "../util/time";
-import { ErrorNote, Loading, SectionLabel } from "../ui";
+import { ErrorNote, Loading, SectionLabel, UsageChip } from "../ui";
 
 function when(ms: number | null): string {
   return ms ? `${new Date(ms).toISOString().replace("T", " ").slice(0, 19)}Z (${relativeTime(ms)})` : "—";
@@ -102,6 +102,7 @@ export function SessionDetail() {
           <span>branch</span><span>{t.targetBranch || "not recorded"}</span>
           <span>workspace</span><span>{t.workspaceDir}</span>
           <span>delivers</span><span>{t.deliver ? "yes" : "no"}</span>
+          <span>tokens</span><span><UsageChip usage={d.usage} /></span>
         </div>
       </div>
 

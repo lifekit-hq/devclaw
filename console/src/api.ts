@@ -42,6 +42,22 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return r.json();
 }
 
+// The runner's usage block for one session, or null = "not reported".
+export interface Usage {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  source?: string;
+}
+
+// A live sum over sessions that reported; the difference between the two
+// counts is the "not reported" number shown next to every total.
+export interface UsageTotals extends Usage {
+  sessions_total: number;
+  sessions_reported: number;
+}
+
 export interface SessionRow {
   id: string;
   kind: string;
@@ -51,6 +67,7 @@ export interface SessionRow {
   prUrl: string | null;
   createdAt: number;
   completedAt: number | null;
+  usage: Usage | null;
 }
 
 export interface Answered {
@@ -104,6 +121,7 @@ export interface GoalRow {
   state: string;
   lastSession: SessionRow | null;
   attention: Attention | null;
+  usage: UsageTotals;
 }
 
 export interface Decision {
@@ -138,6 +156,7 @@ export interface ProjectRow {
   workspaceDir: string | null;
   health: string;
   goals: ProjectGoalRow[];
+  usage: UsageTotals;
 }
 
 export interface TaskRow extends SessionRow {
@@ -162,6 +181,7 @@ export interface TaskDetail {
   change: Record<string, unknown> | null;
   agentOutput: string | null;
   block: BlockFields | null;
+  usage: Usage | null;
 }
 
 export interface TaskEvent {

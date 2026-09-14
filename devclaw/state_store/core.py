@@ -157,6 +157,40 @@ class StateStore(ControlPlaneMixin, EventsMixin, GoalsMixin):
             ).fetchall()
         return [_row_to_task(r) for r in rows]
 
+    #: the four token kinds the runner's usage block carries (spec 039 US3)
+    USAGE_KINDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens")
+
+    def usage_totals(self, *, parent_goal_id: Optional[str] = None,
+                     project_id: Optional[str] = None) -> dict:
+        """Tokens summed over the sessions that reported a usage block, plus how
+        many sessions there were and how many reported — ONE pass with json1,
+        never a stored aggregate (spec 047 US3, constitution IV). A row whose
+        result is not JSON counts as unreported, never as zero."""
+        where: list[str] = []
+        args: list[object] = []
+        if parent_goal_id is not None:
+            where.append("parent_goal_id = ?")
+            args.append(parent_goal_id)
+        if project_id is not None:
+            where.append("project_id = ?")
+            args.append(project_id)
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+        valid = "(result_json IS NOT NULL AND json_valid(result_json) AND json_type(result_json, '$.usage') = 'object')"
+        sums = ", ".join(
+            f"COALESCE(SUM(CASE WHEN {valid} THEN json_extract(result_json, '$.usage.{k}') END), 0) AS {k}"
+            for k in self.USAGE_KINDS
+        )
+        with self._lock:
+            row = self._db.execute(
+                f"SELECT {sums}, COUNT(*) AS sessions_total, "
+                f"COALESCE(SUM(CASE WHEN {valid} THEN 1 ELSE 0 END), 0) AS sessions_reported "
+                f"FROM tasks {where_sql}", tuple(args),
+            ).fetchone()
+        out = {k: int(row[k] or 0) for k in self.USAGE_KINDS}
+        out["sessions_total"] = int(row["sessions_total"])
+        out["sessions_reported"] = int(row["sessions_reported"])
+        return out
+
     def latest_task_for_goal(self, goal_id: str) -> Optional[Task]:
         with self._lock:
             row = self._db.execute(

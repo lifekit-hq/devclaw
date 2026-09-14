@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchProjects, tokenQueryString, type ProjectRow } from "../api";
-import { EmptyState, ErrorNote, Loading } from "../ui";
+import { EmptyState, ErrorNote, Loading, UsageChip } from "../ui";
 
 export function Projects() {
   const [rows, setRows] = useState<ProjectRow[] | null>(null);
@@ -25,6 +25,7 @@ export function Projects() {
                 <Link to={`/projects/${encodeURIComponent(p.id)}${qs}`}>{p.name}</Link> <span className="mono muted" style={{ fontSize: 11 }}>{p.id}</span>
               </div>
               <div className="mono secondary" style={{ fontSize: 12, marginTop: 2 }}>{p.repoUrl || "no repo_url"} · {p.workspaceDir || "no workspace"}</div>
+              <div style={{ marginTop: 4 }}><UsageChip usage={p.usage} /></div>
             </div>
             <span className="badge">{p.health}</span>
           </div>

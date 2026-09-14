@@ -234,7 +234,16 @@ class GoalService:
 def _task_view(t) -> dict:
     return {"id": t.id, "kind": t.kind, "status": t.status, "exit": t.exit,
             "exitDetail": t.exit_detail, "prUrl": t.pr_url, "createdAt": t.created_at,
-            "completedAt": t.completed_at}
+            "completedAt": t.completed_at, "usage": _usage_of(t.result_json)}
+
+
+def _usage_of(result_json) -> Optional[dict]:
+    """The runner's usage block, or None ("not reported") — never zeros."""
+    try:
+        u = json.loads(result_json or "{}").get("usage")
+    except (ValueError, AttributeError):
+        return None
+    return u if isinstance(u, dict) else None
 
 
 def _state_word(goal: Goal, last) -> str:

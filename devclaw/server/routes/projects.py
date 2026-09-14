@@ -10,6 +10,11 @@ from .._state import goals, mcp, registry, store
 from ._attention import control_facts, with_attention
 
 
+def _with_usage(row: dict) -> dict:
+    row["usage"] = store.usage_totals(project_id=row["id"])
+    return row
+
+
 def _goal_rows() -> list[dict]:
     control = control_facts(store)
     return [with_attention(g, store, control) for g in goals.list_goals()]
@@ -20,10 +25,10 @@ async def project_json(request: Request) -> Response:
     p = registry.get(request.path_params["project_id"])
     if p is None:
         return JSONResponse({"error": "not_found"}, status_code=404)
-    return JSONResponse(project_rollup(p, _goal_rows()))
+    return JSONResponse(_with_usage(project_rollup(p, _goal_rows())))
 
 
 @mcp.custom_route("/projects.json", methods=["GET"])
 async def projects_json(_request: Request) -> Response:
     all_goals = _goal_rows()
-    return JSONResponse([project_rollup(p, all_goals) for p in registry.list()])
+    return JSONResponse([_with_usage(project_rollup(p, all_goals)) for p in registry.list()])
