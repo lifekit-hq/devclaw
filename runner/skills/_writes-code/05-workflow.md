@@ -9,7 +9,7 @@ Work outlives your session. **Read `.devclaw/workflow.md` first and follow it**:
 - **Conventions** — branch naming, commit format, PR expectations, where plans and docs live.
 - **Traps** — a pointer to `.devclaw/memory/`.
 
-If `.gitignore` ignores `.devclaw/`, un-ignore it in the same increment — `.gitignore` is a product file, not a gate input, and a manifest that never lands on the branch teaches the next session nothing.
+If `.gitignore` ignores `.devclaw/`, un-ignore it in the same increment — `.gitignore` is a product file, not a gate input, and a manifest that never lands on the branch teaches the next session nothing. Keep ignoring the per-run scratch inside it (`.devclaw/playwright-report.json`): the manifest is tracked, the run artifacts are not.
 
 Then, every run:
 

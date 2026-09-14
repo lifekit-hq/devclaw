@@ -50,5 +50,12 @@ tests (`.claude/rules/testing.md`).
 
 ## Traps
 
-`.devclaw/memory/` — durable repo facts, one per file, indexed in
-`.devclaw/MEMORY.md`.
+- The test suite runs parallel by default (`-n auto` in pyproject addopts),
+  which reads the HOST's core count — `.devclaw/verify` bounds it to the
+  sandbox's. Use `-n0` when you need `pdb` or ordered failures.
+- Run pytest with a private `TMPDIR`: `/tmp/pytest-of-<user>` can be root-owned
+  on this host and crashes every `tmp_path` fixture.
+- Durable project knowledge for THIS repo lives in the vault
+  (`~/memory/projects/devclaw/`), not in `.devclaw/memory/` — see the
+  "Memory (vault)" section of `CLAUDE.md`. A session without vault access
+  leaves its facts in the commit message.

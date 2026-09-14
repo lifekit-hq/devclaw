@@ -163,13 +163,16 @@ def _repo_with_manifest(tmp_path, ignored: "str | None" = None) -> Path:
     return workspace
 
 
-@pytest.mark.parametrize("ignored,expected", [
-    (None, None),
-    (".devclaw/verify", ".devclaw/verify"),
-    (".devclaw/workflow.md", ".devclaw/workflow.md"),
-    (".devclaw/", ".devclaw/verify"),
+@pytest.mark.parametrize("ignored,corrupt,expected", [
+    (None, False, None),
+    (".devclaw/verify", False, ".devclaw/verify"),
+    (".devclaw/workflow.md", False, ".devclaw/workflow.md"),
+    (".devclaw/", False, ".devclaw/verify"),
+    # git present but REFUSING (exit 128, same status as "not a repository"):
+    # cannot-tell must never read as a pass.
+    (None, True, ".devclaw/verify"),
 ])
-def test_first_run_manifest_must_be_tracked_on_the_branch(tmp_path, ignored, expected):
+def test_first_run_manifest_must_be_tracked_on_the_branch(tmp_path, ignored, corrupt, expected):
     """Fail-closed gate (issue #923): the end-of-session check reads the git
     INDEX, not the working tree. A repo whose `.gitignore` swallows `.devclaw/`
     leaves the manifest on disk and delivers a branch carrying neither, so every
@@ -180,6 +183,8 @@ def test_first_run_manifest_must_be_tracked_on_the_branch(tmp_path, ignored, exp
     untracked, and the failure names the path so the session can fix it.
     """
     workspace = _repo_with_manifest(tmp_path, ignored)
+    if corrupt:
+        (workspace / ".git" / "HEAD").write_text("not a ref\n")
     _, _, result, _ = _run_runner(
         tmp_path, "ok",
         req_extra={"verify_cmd": "echo verify-ran"},

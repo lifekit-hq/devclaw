@@ -28,9 +28,10 @@ packages = ["devclaw"]
 # ships without a console (server 503s). Glob matches the vite output tree.
 artifacts = ["devclaw/server/console_dist/**"]
 
-# Since spec 046 the scaffold is baked into the SANDBOX image
-# (/opt/devclaw/specify) and the session copies it into a repo that has none;
-# the host package no longer carries it.
+# No planning scaffold ships anywhere: devclaw owns no planning harness (ruled
+# 2026-09-14). The first session on a repo derives .devclaw/workflow.md from
+# the repository's own conventions — neither the wheel nor the sandbox image
+# carries a template for it.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

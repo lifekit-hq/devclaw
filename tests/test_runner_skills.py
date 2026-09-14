@@ -217,7 +217,13 @@ def test_handoff_is_the_branch_and_devclaw_names_no_planning_harness(runner, ski
     tool here is the regression — the grep below is the same check the ruling's
     done-when clause states.
     """
-    named_harness = re.compile(r"speckit|specify|create-new-feature|--timestamp", re.I)
+    # `.specify` / `specify …` the TOOL, never the English verb ("specify the
+    # schema" is ordinary doctrine prose and must stay allowed).
+    named_harness = re.compile(
+        r"speckit|\.specify\b|/specify\b|\bspecify (?:init|run|check|extension|workflow)\b"
+        r"|create-new-feature|--timestamp",
+        re.I,
+    )
     for kind in ("implement_feature", "fix_bug"):
         bundle = runner._load_skills(kind)
         # the manifest is the one source of how this repo plans…

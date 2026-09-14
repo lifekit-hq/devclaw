@@ -341,20 +341,33 @@ def _run_verify_here(cmd: str, workspace_dir: str) -> dict:
     return verify
 
 
+def _has_git_dir(workspace_dir: str) -> bool:
+    """Whether a `.git` exists at or above the workspace — the ONE exemption
+    from the tracking check, decided on the filesystem rather than on git's
+    exit code. `git rev-parse` refuses with 128 for dubious ownership and for a
+    corrupt repo exactly as it does for "not a repository", so trusting its
+    status would turn "cannot tell" into a pass."""
+    path = os.path.abspath(workspace_dir)
+    while True:
+        if os.path.exists(os.path.join(path, ".git")):
+            return True
+        parent = os.path.dirname(path)
+        if parent == path:
+            return False
+        path = parent
+
+
 def _untracked_manifest(workspace_dir: str) -> "str | None":
     """The first ``_TRACKED_MANIFEST_RELS`` path git does not carry, or None.
 
     Reads the index (``ls-files --error-unmatch``), so an ignored-but-present
-    file counts as missing. A workspace that is not a git repo has no index to
-    read and no branch to deliver — the check does not apply there.
+    file counts as missing. A workspace with no repo at all has no index to read
+    and no branch to deliver; everything else fails CLOSED, because an index the
+    runner cannot read is not proof the manifest landed.
     """
+    if not _has_git_dir(workspace_dir):
+        return None
     try:
-        in_repo = subprocess.run(
-            ["git", "rev-parse", "--git-dir"], cwd=workspace_dir,
-            capture_output=True, timeout=30,
-        ).returncode == 0
-        if not in_repo:
-            return None
         for rel in _TRACKED_MANIFEST_RELS:
             tracked = subprocess.run(
                 ["git", "ls-files", "--error-unmatch", "--", rel], cwd=workspace_dir,
