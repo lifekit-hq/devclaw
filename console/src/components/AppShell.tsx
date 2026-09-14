@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { fetchControl, fetchGoals, tokenQueryString, type ControlState } from "../api";
-import { IconAlert, IconGoals, IconMoon, IconProjects, IconSettings, IconSun } from "../icons";
+import { IconAlert, IconEvals, IconGoals, IconMoon, IconProjects, IconSettings, IconSun } from "../icons";
 import { useTheme } from "../theme";
 import { StatusDot } from "../ui";
 
@@ -9,6 +9,7 @@ const NAV = [
   { to: "/needs-you", label: "Needs you", Icon: IconAlert },
   { to: "/goals", label: "Goals", Icon: IconGoals },
   { to: "/projects", label: "Projects", Icon: IconProjects },
+  { to: "/verdicts", label: "Verdicts", Icon: IconEvals },
   { to: "/settings", label: "Settings", Icon: IconSettings },
 ];
 

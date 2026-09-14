@@ -109,13 +109,13 @@ Host: `devclaw/…`, sandbox harness: `runner/runner.py`, console: `console/src/
 
 ### Implementation
 
-- [ ] T025 [US4] In `devclaw/state_store/core.py::list_tasks` add an optional `exit: str | None` filter (WHERE `exit = ?`), keeping the existing signature otherwise.
-- [ ] T026 [US4] Create `devclaw/server/routes/verdicts.py` with `GET /verdicts.json` (`json_limit`): `store.list_tasks(exit=EXIT_REVIEW, limit=…)` newest first → rows per data-model §4 via `devclaw.goal.donegate.parse_verdict(result.agent_output)`, `head = pre_run_sha`, `prUrl` from the goal's newest session with a PR url; a review row with `status != "done"` ⇒ `unreadable` with `rawError = error`. Register it in `devclaw/server/http.py` BEFORE `console` (route-shadowing test).
-- [ ] T027 [US4] In `devclaw/server/routes/goals.py` add `verdicts[]` (same row builder, filtered by `parent_goal_id`) to `/goals/{id}.json`; move the row builder to `verdicts.py` and import it.
-- [ ] T028 [P] [US4] In `console/src/api.ts` add `VerdictRow` and `Clause` types, `fetchVerdicts(limit?)`, and `verdicts: VerdictRow[]` on `GoalDetail`.
-- [ ] T029 [US4] Create `console/src/pages/Verdicts.tsx`: list newest first (goal link, head short sha, achieved / not achieved / unreadable, `satisfied/total`, time), expandable to clauses (text, ✓/✗, evidence verbatim), structural health, concerns, the reviewer's question, PR link; "truncated" note when the feed says so; empty state "No reviews yet."; and a `VerdictList` component reused on `GoalDetail.tsx` as a "Verdicts" section.
-- [ ] T030 [US4] Wire route `verdicts` in `console/src/main.tsx`, NAV entry in `AppShell.tsx`, `crumb()` label.
-- [ ] T031 [US4] Run quickstart §P4; suite + gates + `npm run build`; PR `feat/047-verdicts`; spec `Status` → `SHIPPED` naming the remaining live task (SC-002/SC-003 read after 14 nights) with an issue.
+- [X] T025 [US4] In `devclaw/state_store/core.py::list_tasks` add an optional `exit: str | None` filter (WHERE `exit = ?`), keeping the existing signature otherwise.
+- [X] T026 [US4] Create `devclaw/server/routes/verdicts.py` with `GET /verdicts.json` (`json_limit`): `store.list_tasks(exit=EXIT_REVIEW, limit=…)` newest first → rows per data-model §4 via `devclaw.goal.donegate.parse_verdict(result.agent_output)`, `head = pre_run_sha`, `prUrl` from the goal's newest session with a PR url; a review row with `status != "done"` ⇒ `unreadable` with `rawError = error`. Register it in `devclaw/server/http.py` BEFORE `console` (route-shadowing test).
+- [X] T027 [US4] In `devclaw/server/routes/goals.py` add `verdicts[]` (same row builder, filtered by `parent_goal_id`) to `/goals/{id}.json`; move the row builder to `verdicts.py` and import it.
+- [X] T028 [P] [US4] In `console/src/api.ts` add `VerdictRow` and `Clause` types, `fetchVerdicts(limit?)`, and `verdicts: VerdictRow[]` on `GoalDetail`.
+- [X] T029 [US4] Create `console/src/pages/Verdicts.tsx`: list newest first (goal link, head short sha, achieved / not achieved / unreadable, `satisfied/total`, time), expandable to clauses (text, ✓/✗, evidence verbatim), structural health, concerns, the reviewer's question, PR link; "truncated" note when the feed says so; empty state "No reviews yet."; and a `VerdictList` component reused on `GoalDetail.tsx` as a "Verdicts" section.
+- [X] T030 [US4] Wire route `verdicts` in `console/src/main.tsx`, NAV entry in `AppShell.tsx`, `crumb()` label.
+- [X] T031 [US4] Run quickstart §P4; suite + gates + `npm run build`; PR `feat/047-verdicts`; spec `Status` → `SHIPPED` naming the remaining live task (SC-002/SC-003 read after 14 nights) with an issue.
 
 **Checkpoint**: the "ran and produced garbage" axis is readable across goals.
 
@@ -123,8 +123,8 @@ Host: `devclaw/…`, sandbox harness: `runner/runner.py`, console: `console/src/
 
 ## Phase 7: Polish & cross-cutting
 
-- [ ] T032 Docs honesty in the SAME PR as each story: `docs/INDEX.md` currency tags for `docs/reference/env-vars.md` (unchanged) and any doc naming the console pages or `/metrics` gauges (`docs/runbooks/devclaw-self-deploy.md` §67-70 lists the gauges); `README.md` console section names the four pages.
-- [ ] T033 After US4 merges: record in `~/memory/projects/devclaw/log.md` one dated line (shipped; SC-002/SC-003 regrade date) and file the lifekit-stack Grafana panel as an issue there.
+- [X] T032 Docs honesty in the SAME PR as each story: `docs/INDEX.md` currency tags for `docs/reference/env-vars.md` (unchanged) and any doc naming the console pages or `/metrics` gauges (`docs/runbooks/devclaw-self-deploy.md` §67-70 lists the gauges); `README.md` console section names the four pages.
+- [X] T033 After US4 merges: record in `~/memory/projects/devclaw/log.md` one dated line (shipped; SC-002/SC-003 regrade date) and file the lifekit-stack Grafana panel as an issue there.
 
 ---
 

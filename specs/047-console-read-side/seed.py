@@ -52,4 +52,5 @@ blocked = task("implement_feature", "BLOCKED",
                 "question": "SQLite or Postgres for the ledger?", "options": ["SQLite", "Postgres"],
                 "default": "SQLite", "recommended": 0, "usage": usage,
                 "agent_output": "BLOCKED: SQLite or Postgres for the ledger? — options: (a) SQLite | (b) Postgres — default: (a)"})
-print(json.dumps({"project": pid, "goal": gid, "delivered": delivered, "review": review, "blocked": blocked}))
+unreadable = task("review_repository", "REVIEW", "", {"status": "ok", "agent_output": "the review ran out of context before answering"})
+print(json.dumps({"project": pid, "goal": gid, "delivered": delivered, "review": review, "blocked": blocked, "unreadable": unreadable}))
