@@ -149,3 +149,7 @@ vendored speckit-* commands).
 - [`specs/046-devclaw-v2/spec.md`](./specs/046-devclaw-v2/spec.md) — the design: pillars, the tick rule, the prompts, twenty use cases.
 - [`docs/INDEX.md`](./docs/INDEX.md) — every doc, one-line purpose, currency tag.
 - [`docs/architecture.md`](./docs/architecture.md) — the mental model and the locked contracts.
+
+## Memory (vault)
+
+Durable knowledge about this project lives in the vault, not in provider memory: `~/memory/projects/devclaw/` - `plan.md` (facts), `STATUS.md` (in-flight, only while parked), `log.md` (dated events). Read `plan.md` + `STATUS.md` when starting work here; verify live state live (`gh`, `docker ps`). Write durable decisions and gotchas back to those pages in the same session (contract: `~/memory/README.md`). Claude Code auto-memory is disabled by policy (`CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`); Codex/other agents follow the same pointer via `AGENTS.md`.
