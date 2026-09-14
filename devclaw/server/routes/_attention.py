@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 from typing import Optional
 
+from ...dispatch_gate import operator_block
 from ...goal import donegate as _donegate
+from ...state_store import _now_ms
 from ...state_store.rows import (
     EXIT_BLOCKED, EXIT_DONE, EXIT_REFUSED, EXIT_REVIEW, Decision, Task,
 )
@@ -101,4 +103,27 @@ def attention(goal: dict, last: Optional[Task], decisions: list[Decision],
                            "commentUrl": newest.comment_url, "waitingOn": _waiting_on(control)}
     else:
         row["answered"] = None
+    return row
+
+
+def control_facts(store) -> dict:
+    """The dispatch facts an answered row explains itself with, read once per request."""
+    now = _now_ms()
+    hold_on, _r = store.operator_hold()
+    blocked, _why = operator_block(store.operator_hold(), store.get_run_schedule(), now)
+    until, _reason = store.global_pause()
+    return dispatch_facts(hold=hold_on, window_closed=blocked and not hold_on,
+                          paused=bool(until and until > now), running=store.count_running())
+
+
+def with_attention(row: dict, store, control: dict) -> dict:
+    """Attach ``attention`` to one served goal row (mutates and returns it)."""
+    last = store.latest_task_for_goal(row["id"])
+    g = store.get_goal(row["id"])
+    try:
+        seen = json.loads(g.last_seen_json) if g is not None and g.last_seen_json else None
+    except ValueError:
+        seen = None
+    row["attention"] = attention(row, last, store.list_decisions(row["id"]),
+                                 seen if isinstance(seen, dict) else None, control)
     return row

@@ -54,6 +54,7 @@ function crumb(pathname: string): string {
   const seg = pathname.replace(/^\//, "").split("/").filter(Boolean);
   if (seg.length === 0) return "Needs you";
   if (seg[0] === "needs-you") return "Needs you";
+  if (seg[0] === "sessions") return `Session › ${decodeURIComponent(seg[1] || "").slice(0, 8)}`;
   const head = seg[0][0].toUpperCase() + seg[0].slice(1);
   return seg[1] ? `${head} › ${decodeURIComponent(seg[1])}` : head;
 }

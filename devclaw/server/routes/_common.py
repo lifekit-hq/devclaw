@@ -24,4 +24,6 @@ def _task_row(t) -> dict:
         "id": t.id, "kind": t.kind, "status": t.status, "workspaceDir": t.workspace_dir,
         "parentGoalId": t.parent_goal_id, "createdAt": t.created_at, "completedAt": t.completed_at,
         "prUrl": t.pr_url, "exit": t.exit, "exitDetail": t.exit_detail,
+        "startedAt": t.started_at, "preRunSha": t.pre_run_sha, "targetBranch": t.target_branch,
+        "projectId": t.project_id, "verifyCmd": t.verify_cmd, "deliver": t.deliver,
     }
