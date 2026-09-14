@@ -98,9 +98,11 @@ async def _close(ctx: TickContext, goal: Goal, outcome: str, note: str) -> str:
 
 
 async def _block(ctx: TickContext, goal: Goal, world: World, *, task_id: str, head: str,
-                 kind: str, text: str, default: str = "") -> str:
+                 kind: str, text: str, default: str = "", options: "list[str]" = (),  # type: ignore[assignment]
+                 recommended: int = -1) -> str:
     number = _thread_number(goal, world)
-    body = _donegate.render_block(task_id=task_id, head=head, kind=kind, text=text, default=default)
+    body = _donegate.render_block(task_id=task_id, head=head, kind=kind, text=text, default=default,
+                                  options=options, recommended=recommended)
     url = await ctx.post_comment(goal.repo_url, number, body) if number else ""
     ctx.log(goal.id, f"blocked ({kind}): {text[:160]}")
     await _ping(ctx, f"⛔ {goal.id} stopped — {kind}: {text[:300]}"
@@ -131,9 +133,10 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
 
     # a session that ended BLOCKED: post its question once, then wait
     if last is not None and last.exit == EXIT_BLOCKED and not world.block_exists(task_id=last.id):
-        question, default = _donegate.block_default(last.exit_detail or "")
+        b = _donegate.block_fields(last.result_json, last.exit_detail)
         return await _block(ctx, goal, world, task_id=last.id, head=head, kind="session blocked",
-                            text=question or "(no question stated)", default=default)
+                            text=b["question"] or "(no question stated)", default=b["default"],
+                            options=b["options"], recommended=b["recommended"])
     if world.blocked:
         return "blocked"
 

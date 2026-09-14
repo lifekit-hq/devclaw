@@ -4,7 +4,7 @@ Prerequisites: a venv with `pip install -e ".[dev]"`, `console/` built (`npm ci 
 
 ```bash
 export DEVCLAW_TRANSPORT=http DEVCLAW_ENGINE=stub DEVCLAW_TOKEN=t DEVCLAW_PORT=18765 \
-       DEVCLAW_HOST=127.0.0.1 DEVCLAW_DB_PATH=$PWD/.qs/devclaw.db DEVCLAW_STATE_DIR=$PWD/.qs
+       DEVCLAW_HOST=127.0.0.1 DEVCLAW_DB=$PWD/.qs/devclaw.db DEVCLAW_STATE_DIR=$PWD/.qs
 python -m devclaw.server &
 ```
 

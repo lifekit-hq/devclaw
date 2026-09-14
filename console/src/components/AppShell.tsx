@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
-import { fetchControl, tokenQueryString, type ControlState } from "../api";
-import { IconGoals, IconMoon, IconProjects, IconSettings, IconSun } from "../icons";
+import { fetchControl, fetchGoals, tokenQueryString, type ControlState } from "../api";
+import { IconAlert, IconGoals, IconMoon, IconProjects, IconSettings, IconSun } from "../icons";
 import { useTheme } from "../theme";
 import { StatusDot } from "../ui";
 
 const NAV = [
+  { to: "/needs-you", label: "Needs you", Icon: IconAlert },
   { to: "/goals", label: "Goals", Icon: IconGoals },
   { to: "/projects", label: "Projects", Icon: IconProjects },
   { to: "/settings", label: "Settings", Icon: IconSettings },
@@ -34,9 +35,25 @@ function useControl(): ControlState | null {
   return ctrl;
 }
 
+function useNeedsYouCount(): number {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetchGoals().then((gs) => alive && setN(gs.filter((g) => g.attention && !g.attention.answered).length)).catch(() => {});
+    load();
+    const t = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
+  return n;
+}
+
 function crumb(pathname: string): string {
   const seg = pathname.replace(/^\//, "").split("/").filter(Boolean);
-  if (seg.length === 0) return "Goals";
+  if (seg.length === 0) return "Needs you";
+  if (seg[0] === "needs-you") return "Needs you";
   const head = seg[0][0].toUpperCase() + seg[0].slice(1);
   return seg[1] ? `${head} › ${decodeURIComponent(seg[1])}` : head;
 }
@@ -45,12 +62,16 @@ export function AppShell() {
   const loc = useLocation();
   const { theme, toggle } = useTheme();
   const d = dispatchState(useControl());
+  const needs = useNeedsYouCount();
   const qs = tokenQueryString();
 
   const navLinks = NAV.map(({ to, label, Icon }) => (
     <NavLink key={to} to={`${to}${qs}`} className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}>
       <Icon />
       {label}
+      {to === "/needs-you" && needs > 0 && (
+        <span className="mono" style={{ marginLeft: "auto", fontSize: 11, color: "var(--amber)" }}>{needs}</span>
+      )}
     </NavLink>
   ));
 
