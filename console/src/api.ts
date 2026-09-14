@@ -132,10 +132,44 @@ export interface Decision {
   madeAt: number;
 }
 
+export interface Clause {
+  clause: string;
+  satisfied: boolean;
+  evidence: string;
+}
+
+// One done-gate review, re-parsed from the review session's output with the
+// gate's own parser: what the gate decided, unreadable included.
+export interface VerdictRow {
+  taskId: string;
+  goalId: string | null;
+  createdAt: number;
+  completedAt: number | null;
+  head: string;
+  achieved: boolean;
+  unreadable: boolean;
+  rawError: string;
+  question: string;
+  structuralHealth: string;
+  concerns: string[];
+  summary: string;
+  clauses: Clause[];
+  satisfied: number;
+  total: number;
+  prUrl: string;
+}
+
+export interface VerdictFeed {
+  verdicts: VerdictRow[];
+  count: number;
+  truncated: boolean;
+}
+
 export interface GoalDetail extends GoalRow {
   lastSeen: Record<string, unknown> | null;
   sessions: SessionRow[];
   decisions: Decision[];
+  verdicts: VerdictRow[];
 }
 
 export interface ProjectGoalRow {
@@ -211,6 +245,7 @@ export interface ControlState {
 export const fetchGoals = () => getJSON<GoalRow[]>("/goals.json");
 export const fetchGoal = (id: string) => getJSON<GoalDetail>(`/goals/${encodeURIComponent(id)}.json`);
 export const fetchProjects = () => getJSON<ProjectRow[]>("/projects.json");
+export const fetchVerdicts = (limit = 100) => getJSON<VerdictFeed>(`/verdicts.json?limit=${limit}`);
 export const fetchProject = (id: string) => getJSON<ProjectRow>(`/projects/${encodeURIComponent(id)}.json`);
 export const fetchTask = (id: string) => getJSON<TaskDetail>(`/tasks/${encodeURIComponent(id)}.json`);
 export const fetchTaskEvents = (id: string, since?: number | null) =>

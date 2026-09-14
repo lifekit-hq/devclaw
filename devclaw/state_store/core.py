@@ -140,7 +140,8 @@ class StateStore(ControlPlaneMixin, EventsMixin, GoalsMixin):
         return _row_to_task(row) if row else None
 
     def list_tasks(self, *, status: Optional[TaskStatus] = None,
-                   parent_goal_id: Optional[str] = None, limit: int = 100) -> list[Task]:
+                   parent_goal_id: Optional[str] = None, exit: Optional[str] = None,
+                   limit: int = 100) -> list[Task]:
         where: list[str] = []
         args: list[object] = []
         if status:
@@ -149,6 +150,9 @@ class StateStore(ControlPlaneMixin, EventsMixin, GoalsMixin):
         if parent_goal_id is not None:
             where.append("parent_goal_id = ?")
             args.append(parent_goal_id)
+        if exit is not None:
+            where.append("exit = ?")
+            args.append(exit)
         where_sql = f"WHERE {' AND '.join(where)}" if where else ""
         args.append(limit)
         with self._lock:

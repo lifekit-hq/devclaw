@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-14
 
-**Status**: PARTIAL — owner: Denys, date: 2026-09-28 — US1 needs-you (#915), US2 drill-down (#917), US3 usage built 2026-09-14; US4 verdicts next
+**Status**: SHIPPED — 2026-09-14: US1 needs-you (#915), US2 drill-down (#917), US3 usage (#918), US4 verdicts. Remainder is a live read, not a build: SC-002/SC-003 after 14 nights and the cut condition — issue #919 (owner Denys, by 2026-09-28); the Grafana token panel is lifekit-stack#153.
 
 **Input**: Denys, 2026-09-14: "what I don't like about the recent demolishing of devclaw is
 that we removed evals and the problems page. And we removed drill-down from project to goal

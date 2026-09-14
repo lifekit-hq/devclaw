@@ -10,6 +10,7 @@ import { ProjectDetail } from "./pages/ProjectDetail";
 import { Projects } from "./pages/Projects";
 import { SessionDetail } from "./pages/SessionDetail";
 import { Settings } from "./pages/Settings";
+import { Verdicts } from "./pages/Verdicts";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
@@ -23,6 +24,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="projects" element={<Projects />} />
           <Route path="projects/:id" element={<ProjectDetail />} />
           <Route path="sessions/:id" element={<SessionDetail />} />
+          <Route path="verdicts" element={<Verdicts />} />
           <Route path="settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/needs-you" replace />} />
         </Route>

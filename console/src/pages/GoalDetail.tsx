@@ -4,6 +4,7 @@ import { cancelGoal, decideGoal, fetchGoal, tokenQueryString, type GoalDetail as
 import { exitColor, stateColor, stateIsLive } from "../status";
 import { relativeTime } from "../util/time";
 import { AttentionCard } from "../components/AttentionCard";
+import { VerdictList } from "../components/VerdictList";
 import { ErrorNote, Loading, SectionLabel, StatusDot, UsageChip } from "../ui";
 
 function repoIssueUrl(repoUrl: string, n: number): string {
@@ -120,6 +121,12 @@ export function GoalDetail() {
             <Link className="mono truncate" style={{ fontSize: 11 }} to={`/sessions/${encodeURIComponent(s.id)}${qs}`}>{s.id.slice(0, 8)} →</Link>
           </div>
         ))}
+      </div>
+
+      <div className="card" style={{ padding: 16, marginTop: 14 }}>
+        <SectionLabel count={goal.verdicts.length}>Verdicts</SectionLabel>
+        {goal.verdicts.length === 0 && <p className="secondary" style={{ fontSize: 12.5 }}>No done-gate review yet.</p>}
+        {goal.verdicts.length > 0 && <VerdictList rows={goal.verdicts} />}
       </div>
 
       <div className="card" style={{ padding: 16, marginTop: 14 }}>
