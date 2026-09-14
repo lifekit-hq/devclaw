@@ -42,15 +42,16 @@ async def task_json(request: Request) -> Response:
     row = _task_row(t)
     row["error"] = t.error
     row["goal"] = t.goal
-    verify = delivery = change = agent_output = None
+    verify = delivery = change = agent_output = usage = None
     if t.result_json:
         try:
             rj = json.loads(t.result_json)
             if isinstance(rj, dict):
                 verify, delivery, change = rj.get("verify"), rj.get("delivery"), rj.get("change")
                 agent_output = rj.get("agent_output")
+                usage = rj.get("usage") if isinstance(rj.get("usage"), dict) else None
         except ValueError:
             pass
     block = _donegate.block_fields(t.result_json, t.exit_detail) if t.exit == EXIT_BLOCKED else None
     return JSONResponse({"task": row, "verify": verify, "delivery": delivery, "change": change,
-                         "agentOutput": agent_output, "block": block})
+                         "agentOutput": agent_output, "block": block, "usage": usage})

@@ -4,7 +4,7 @@ import { cancelGoal, decideGoal, fetchGoal, tokenQueryString, type GoalDetail as
 import { exitColor, stateColor, stateIsLive } from "../status";
 import { relativeTime } from "../util/time";
 import { AttentionCard } from "../components/AttentionCard";
-import { ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
+import { ErrorNote, Loading, SectionLabel, StatusDot, UsageChip } from "../ui";
 
 function repoIssueUrl(repoUrl: string, n: number): string {
   return `${repoUrl.replace(/\.git$/, "")}/issues/${n}`;
@@ -65,6 +65,7 @@ export function GoalDetail() {
           <div className="mono secondary" style={{ fontSize: 12 }}>
             {goal.id} · <Link to={`/projects/${encodeURIComponent(goal.projectId)}${qs}`}>{goal.projectId}</Link> · <code>{goal.branch}</code>
           </div>
+          <div style={{ marginTop: 4 }}><UsageChip usage={goal.usage} /></div>
         </div>
         <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13 }}>
           <StatusDot color={stateColor(goal.outcome ?? goal.state)} live={stateIsLive(goal.state)} />
@@ -111,10 +112,11 @@ export function GoalDetail() {
         <SectionLabel>Sessions</SectionLabel>
         {goal.sessions.length === 0 && <p className="secondary" style={{ fontSize: 12.5 }}>No session yet.</p>}
         {goal.sessions.map((s) => (
-          <div key={s.id} style={{ display: "grid", gridTemplateColumns: "150px 110px minmax(0,1fr) 90px", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, alignItems: "center" }}>
+          <div key={s.id} style={{ display: "grid", gridTemplateColumns: "150px 110px minmax(0,1fr) 110px 90px", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--border)", fontSize: 12.5, alignItems: "center" }}>
             <span className="mono secondary">{relativeTime(s.createdAt)} · {s.kind === "review_repository" ? "review" : "session"}</span>
             <span className="mono" style={{ color: exitColor(s.exit) }}>{s.exit ?? s.status}</span>
             <span className="truncate">{s.exitDetail || ""}</span>
+            <UsageChip usage={s.usage} compact />
             <Link className="mono truncate" style={{ fontSize: 11 }} to={`/sessions/${encodeURIComponent(s.id)}${qs}`}>{s.id.slice(0, 8)} →</Link>
           </div>
         ))}

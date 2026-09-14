@@ -41,6 +41,14 @@ _STATES: tuple[str, ...] = ("new", "running", "waiting", "interrupted", "blocked
                             "proposed done", "achieved", "cancelled")
 
 
+#: the counter's label values → the runner's usage-block keys (spec 047 US3).
+#: Tasks are never pruned, so the sum only grows — a legal counter.
+_TOKEN_KINDS: tuple[tuple[str, str], ...] = (
+    ("input", "input_tokens"), ("output", "output_tokens"),
+    ("cache_read", "cache_read_tokens"), ("cache_creation", "cache_creation_tokens"),
+)
+
+
 def _fmt(value: float | int | None) -> str:
     if value is None:
         return "NaN"
@@ -67,6 +75,9 @@ def render_metrics(
     running_tasks: int,
     version: str,
     git_sha: str | None,
+    tokens: dict[str, int] | None = None,
+    sessions_total: int = 0,
+    sessions_reported: int = 0,
 ) -> str:
     """The pure half: data in, exposition text out. Tested directly."""
     anchor = last_tick_at_ms or started_at_ms
@@ -100,6 +111,19 @@ def render_metrics(
         "# HELP devclaw_tasks_running Sessions currently running in a sandbox.",
         "# TYPE devclaw_tasks_running gauge",
         f"devclaw_tasks_running {int(running_tasks)}",
+        "# HELP devclaw_tokens_total Tokens the sandbox sessions reported, summed over all recorded sessions.",
+        "# TYPE devclaw_tokens_total counter",
+    ]
+    t = tokens or {}
+    for kind, key in _TOKEN_KINDS:
+        lines.append(f'devclaw_tokens_total{{kind="{kind}"}} {int(t.get(key, 0) or 0)}')
+    lines += [
+        "# HELP devclaw_sessions_total Recorded sessions.",
+        "# TYPE devclaw_sessions_total gauge",
+        f"devclaw_sessions_total {int(sessions_total)}",
+        "# HELP devclaw_sessions_reported_usage Recorded sessions that carried a usage block.",
+        "# TYPE devclaw_sessions_reported_usage gauge",
+        f"devclaw_sessions_reported_usage {int(sessions_reported)}",
     ]
     return "\n".join(lines) + "\n"
 
@@ -113,6 +137,7 @@ def _collect() -> str:
     for g in goals.list_goals():
         word = str(g.get("state") or "unknown")
         states[word] = states.get(word, 0) + 1
+    usage = store.usage_totals()
     return render_metrics(
         now_ms=now,
         last_tick_at_ms=goals.last_tick_at_ms,
@@ -124,6 +149,9 @@ def _collect() -> str:
         running_tasks=store.count_running(),
         version=__version__,
         git_sha=_config.git_sha(),
+        tokens=usage,
+        sessions_total=usage["sessions_total"],
+        sessions_reported=usage["sessions_reported"],
     )
 
 

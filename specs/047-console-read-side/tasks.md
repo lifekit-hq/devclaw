@@ -86,16 +86,16 @@ Host: `devclaw/…`, sandbox harness: `runner/runner.py`, console: `console/src/
 
 ### Tests (tripwire: the money-domain metric)
 
-- [ ] T018 [US3] Extend `tests/test_deadman_metrics.py`: `render_metrics(..., tokens={...}, sessions_total=n, sessions_reported=m)` renders the four `devclaw_tokens_total{kind}` samples and the two session gauges; all-zero input renders `0` samples (never absent) with `devclaw_sessions_reported_usage 0`.
+- [X] T018 [US3] Extend `tests/test_deadman_metrics.py`: `render_metrics(..., tokens={...}, sessions_total=n, sessions_reported=m)` renders the four `devclaw_tokens_total{kind}` samples and the two session gauges; all-zero input renders `0` samples (never absent) with `devclaw_sessions_reported_usage 0`.
 
 ### Implementation
 
-- [ ] T019 [US3] In `devclaw/state_store/core.py` add `usage_totals(self, *, parent_goal_id: str | None = None, project_id: str | None = None) -> dict` (data-model §3) as ONE query using `json_extract(result_json, '$.usage.<kind>')` sums plus `COUNT(*)` and a count of rows whose `$.usage` is not null; filters by `parent_goal_id` or `project_id` when given.
-- [ ] T020 [US3] Attach usage: `devclaw/goal/service.py::_task_view` gains `usage` (from `result_json.usage` or `null`); `devclaw/server/routes/goals.py` rows and detail gain `usage = store.usage_totals(parent_goal_id=…)`; `devclaw/server/routes/projects.py::project_rollup` callers gain `usage = store.usage_totals(project_id=…)`; `devclaw/server/routes/tasks.py` adds `usage` to `/tasks/{id}.json`. Keep the goal layer under its ceiling (`_task_view` is a 2-line change).
-- [ ] T021 [US3] In `devclaw/server/routes/metrics.py` extend `render_metrics` and `_collect` per `contracts/metrics.md` (`devclaw_tokens_total{kind}` counter ×4, `devclaw_sessions_total`, `devclaw_sessions_reported_usage`) from `store.usage_totals()`.
-- [ ] T022 [P] [US3] In `console/src/api.ts` add `Usage` (block) and `UsageTotals` types on `SessionRow`, `GoalRow`, `GoalDetail`, `ProjectRow`, `TaskDetail`.
-- [ ] T023 [US3] Render inline: a `UsageChip` in `console/src/ui.tsx` (input/output/cache tokens, "not reported" when null, "n of m reported" for totals); use it on `SessionDetail.tsx`, `GoalDetail.tsx` (header + per session row), `Goals.tsx` (column), `Projects.tsx` and `ProjectDetail.tsx` (total).
-- [ ] T024 [US3] Run quickstart §P3; suite + gates + `npm run build`; PR `feat/047-usage-inline`; spec `Status` names US1–US3 built. Note in the PR body the lifekit-stack follow-up: a Grafana panel `increase(devclaw_tokens_total[1d]) by (kind)`.
+- [X] T019 [US3] In `devclaw/state_store/core.py` add `usage_totals(self, *, parent_goal_id: str | None = None, project_id: str | None = None) -> dict` (data-model §3) as ONE query using `json_extract(result_json, '$.usage.<kind>')` sums plus `COUNT(*)` and a count of rows whose `$.usage` is not null; filters by `parent_goal_id` or `project_id` when given.
+- [X] T020 [US3] Attach usage: `devclaw/goal/service.py::_task_view` gains `usage` (from `result_json.usage` or `null`); `devclaw/server/routes/goals.py` rows and detail gain `usage = store.usage_totals(parent_goal_id=…)`; `devclaw/server/routes/projects.py::project_rollup` callers gain `usage = store.usage_totals(project_id=…)`; `devclaw/server/routes/tasks.py` adds `usage` to `/tasks/{id}.json`. Keep the goal layer under its ceiling (`_task_view` is a 2-line change).
+- [X] T021 [US3] In `devclaw/server/routes/metrics.py` extend `render_metrics` and `_collect` per `contracts/metrics.md` (`devclaw_tokens_total{kind}` counter ×4, `devclaw_sessions_total`, `devclaw_sessions_reported_usage`) from `store.usage_totals()`.
+- [X] T022 [P] [US3] In `console/src/api.ts` add `Usage` (block) and `UsageTotals` types on `SessionRow`, `GoalRow`, `GoalDetail`, `ProjectRow`, `TaskDetail`.
+- [X] T023 [US3] Render inline: a `UsageChip` in `console/src/ui.tsx` (input/output/cache tokens, "not reported" when null, "n of m reported" for totals); use it on `SessionDetail.tsx`, `GoalDetail.tsx` (header + per session row), `Goals.tsx` (column), `Projects.tsx` and `ProjectDetail.tsx` (total).
+- [X] T024 [US3] Run quickstart §P3; suite + gates + `npm run build`; PR `feat/047-usage-inline`; spec `Status` names US1–US3 built. Note in the PR body the lifekit-stack follow-up: a Grafana panel `increase(devclaw_tokens_total[1d]) by (kind)`.
 
 **Checkpoint**: every page that names a session, goal or project shows what it cost, or that it was not reported.
 

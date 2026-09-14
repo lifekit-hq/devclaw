@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { fetchProject, tokenQueryString, type ProjectRow } from "../api";
 import { exitColor, stateColor, stateIsLive } from "../status";
 import { relativeTime } from "../util/time";
-import { ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
+import { ErrorNote, Loading, SectionLabel, StatusDot, UsageChip } from "../ui";
 
 const COLS = "minmax(0,1.6fr) 130px minmax(0,1fr) 110px";
 
@@ -38,6 +38,7 @@ export function ProjectDetail() {
             {p.repoUrl && <> · <a href={p.repoUrl.replace(/\.git$/, "")} target="_blank" rel="noreferrer">{p.repoUrl.replace(/\.git$/, "")}</a></>}
           </div>
           <div className="mono muted" style={{ fontSize: 11.5, marginTop: 2 }}>{p.workspaceDir || "no workspace"}</div>
+          <div style={{ marginTop: 4 }}><UsageChip usage={p.usage} /></div>
         </div>
         <span className="badge">{p.health}</span>
       </div>

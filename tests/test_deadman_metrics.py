@@ -64,3 +64,26 @@ def test_metrics_route_is_registered_and_open():
 
     assert http._routes_metrics.__name__.endswith("routes.metrics")
     assert "/metrics" in OPEN_PATHS
+
+
+# ---- the money domain's one read (spec 047 US3) -----------------------------
+# The per-day token history is Grafana's (`increase(devclaw_tokens_total[1d])`),
+# so the counter must render every kind, always — a missing series is a blind
+# panel — and an instance with nothing reported renders 0 with the reported
+# count at 0, never a fabricated spend.
+
+
+@pytest.mark.parametrize("tokens,total,reported,expected", [
+    ({"input_tokens": 1200, "output_tokens": 340, "cache_read_tokens": 5000, "cache_creation_tokens": 800}, 3, 2,
+     ['devclaw_tokens_total{kind="input"} 1200\n', 'devclaw_tokens_total{kind="output"} 340\n',
+      'devclaw_tokens_total{kind="cache_read"} 5000\n', 'devclaw_tokens_total{kind="cache_creation"} 800\n',
+      "devclaw_sessions_total 3\n", "devclaw_sessions_reported_usage 2\n"]),
+    (None, 0, 0,
+     ['devclaw_tokens_total{kind="input"} 0\n', 'devclaw_tokens_total{kind="cache_creation"} 0\n',
+      "devclaw_sessions_total 0\n", "devclaw_sessions_reported_usage 0\n"]),
+])
+def test_token_counter_renders_every_kind_and_never_fakes_a_spend(tokens, total, reported, expected):
+    out = _render(tokens=tokens, sessions_total=total, sessions_reported=reported)
+    assert "# TYPE devclaw_tokens_total counter\n" in out
+    for line in expected:
+        assert line in out

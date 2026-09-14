@@ -9,16 +9,22 @@ from .._state import goals, mcp, store
 from ._attention import control_facts, with_attention
 
 
+def _with_usage(row: dict) -> dict:
+    row["usage"] = store.usage_totals(parent_goal_id=row["id"])
+    return row
+
+
 @mcp.custom_route("/goals.json", methods=["GET"])
 async def goals_json(_request: Request) -> Response:
     control = control_facts(store)
-    return JSONResponse([with_attention(g, store, control) for g in goals.list_goals()])
+    return JSONResponse([_with_usage(with_attention(g, store, control)) for g in goals.list_goals()])
 
 
 @mcp.custom_route("/goals/{goal_id}.json", methods=["GET"])
 async def goal_json(request: Request) -> Response:
     try:
-        return JSONResponse(with_attention(goals.get_goal(request.path_params["goal_id"]), store, control_facts(store)))
+        row = with_attention(goals.get_goal(request.path_params["goal_id"]), store, control_facts(store))
+        return JSONResponse(_with_usage(row))
     except KeyError:
         return JSONResponse({"error": "not_found"}, status_code=404)
 

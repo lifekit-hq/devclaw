@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-14
 
-**Status**: PARTIAL — owner: Denys, date: 2026-09-28 — US1 needs-you (#915) and US2 drill-down built 2026-09-14; US3 usage, US4 verdicts next, one PR each
+**Status**: PARTIAL — owner: Denys, date: 2026-09-28 — US1 needs-you (#915), US2 drill-down (#917), US3 usage built 2026-09-14; US4 verdicts next
 
 **Input**: Denys, 2026-09-14: "what I don't like about the recent demolishing of devclaw is
 that we removed evals and the problems page. And we removed drill-down from project to goal

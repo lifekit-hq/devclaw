@@ -309,3 +309,41 @@ export function Trend({
     </div>
   );
 }
+
+
+// ---- usage (spec 047 US3) -------------------------------------------------
+
+function k(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}k`;
+  return String(n);
+}
+
+// Tokens for one session or a live total. Absent ⇒ "not reported", never 0;
+// a total says how many of its sessions reported.
+export function UsageChip({
+  usage,
+  compact,
+}: {
+  usage: { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
+           sessions_total?: number; sessions_reported?: number } | null;
+  compact?: boolean;
+}) {
+  if (!usage) return <span className="mono muted" style={{ fontSize: 11.5 }}>not reported</span>;
+  const total = usage.sessions_total;
+  const rep = usage.sessions_reported;
+  const unreported = total !== undefined && rep !== undefined ? total - rep : 0;
+  const title = `in ${usage.input_tokens} · out ${usage.output_tokens} · cache read ${usage.cache_read_tokens} · cache write ${usage.cache_creation_tokens}`
+    + (total !== undefined ? ` · ${rep} of ${total} sessions reported` : "");
+  if (total !== undefined && rep === 0) return <span className="mono muted" style={{ fontSize: 11.5 }} title={title}>not reported</span>;
+  return (
+    <span className="mono" style={{ fontSize: 11.5, color: "var(--text-secondary)", whiteSpace: "nowrap" }} title={title}>
+      {compact ? (
+        <>{k(usage.input_tokens + usage.cache_read_tokens + usage.cache_creation_tokens)}→{k(usage.output_tokens)}</>
+      ) : (
+        <>in {k(usage.input_tokens)} · out {k(usage.output_tokens)} · cache {k(usage.cache_read_tokens)}r/{k(usage.cache_creation_tokens)}w</>
+      )}
+      {unreported > 0 && <span className="muted"> · {unreported} not reported</span>}
+    </span>
+  );
+}
