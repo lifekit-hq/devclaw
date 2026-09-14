@@ -15,7 +15,7 @@ Thumbs.db
 /tmp-workspaces/
 
 # Python
-.venv/
+.venv
 *.log
 
 # Runtime state — never belongs in the repo
