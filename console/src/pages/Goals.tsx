@@ -86,7 +86,9 @@ export function Goals() {
                 <StatusDot color={stateColor(g.outcome ?? g.state)} live={stateIsLive(g.state)} />
                 {g.outcome ?? g.state}
               </span>
-              <span className="mono truncate" style={{ fontSize: 12, color: exitColor(g.lastSession?.exit) }}>
+              <span className="mono truncate" style={{ fontSize: 12, color: exitColor(g.lastSession?.exit) }}
+                onClick={(e) => { if (g.lastSession) { e.stopPropagation(); nav(`/sessions/${encodeURIComponent(g.lastSession.id)}${qs}`); } }}
+                title={g.lastSession ? "open the session" : undefined}>
                 {g.lastSession ? `${g.lastSession.exit ?? g.lastSession.status}${g.lastSession.exitDetail ? ": " + g.lastSession.exitDetail : ""}` : "—"}
               </span>
               <span className="mono secondary" style={{ textAlign: "right", fontSize: 12.5 }}>{relativeTime(g.lastSeenAt)}</span>

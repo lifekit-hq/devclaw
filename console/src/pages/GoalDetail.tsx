@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { cancelGoal, decideGoal, fetchGoal, type GoalDetail as Detail } from "../api";
+import { Link, useParams } from "react-router-dom";
+import { cancelGoal, decideGoal, fetchGoal, tokenQueryString, type GoalDetail as Detail } from "../api";
 import { exitColor, stateColor, stateIsLive } from "../status";
 import { relativeTime } from "../util/time";
 import { AttentionCard } from "../components/AttentionCard";
@@ -12,6 +12,7 @@ function repoIssueUrl(repoUrl: string, n: number): string {
 
 export function GoalDetail() {
   const { id = "" } = useParams();
+  const qs = tokenQueryString();
   const [goal, setGoal] = useState<Detail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -62,7 +63,7 @@ export function GoalDetail() {
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: 22, fontWeight: 650, letterSpacing: "-0.02em", margin: "0 0 4px" }}>{goal.objective || goal.id}</h1>
           <div className="mono secondary" style={{ fontSize: 12 }}>
-            {goal.id} · {goal.projectId} · <code>{goal.branch}</code>
+            {goal.id} · <Link to={`/projects/${encodeURIComponent(goal.projectId)}${qs}`}>{goal.projectId}</Link> · <code>{goal.branch}</code>
           </div>
         </div>
         <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13 }}>
@@ -114,7 +115,7 @@ export function GoalDetail() {
             <span className="mono secondary">{relativeTime(s.createdAt)} · {s.kind === "review_repository" ? "review" : "session"}</span>
             <span className="mono" style={{ color: exitColor(s.exit) }}>{s.exit ?? s.status}</span>
             <span className="truncate">{s.exitDetail || ""}</span>
-            <span className="mono muted truncate" style={{ fontSize: 11 }}>{s.id.slice(0, 8)}</span>
+            <Link className="mono truncate" style={{ fontSize: 11 }} to={`/sessions/${encodeURIComponent(s.id)}${qs}`}>{s.id.slice(0, 8)} →</Link>
           </div>
         ))}
       </div>

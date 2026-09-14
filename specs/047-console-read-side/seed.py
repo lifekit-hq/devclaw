@@ -31,6 +31,7 @@ def task(kind: str, exit: str, exit_detail: str, result: dict, *, pre_run_sha: s
                       parent_goal_id=gid, project_id=pid)
     if pre_run_sha:
         store.set_task_pre_run_sha(tid, pre_run_sha)
+    store.append_event(task_id=tid, type="seeded", source="quickstart", payload_json=json.dumps({"kind": kind, "exit": exit}))
     store.mark_done(tid, json.dumps(result), exit=exit, exit_detail=exit_detail)
     return tid
 

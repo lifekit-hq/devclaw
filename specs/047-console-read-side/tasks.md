@@ -68,11 +68,11 @@ Host: `devclaw/…`, sandbox harness: `runner/runner.py`, console: `console/src/
 
 ### Implementation
 
-- [ ] T013 [P] [US2] In `console/src/api.ts` add `TaskDetail` (`task`, `verify`, `delivery`, `change`, `agentOutput`, `block`, `usage`) and `TaskEvent` types plus `fetchTask(id)` and `fetchTaskEvents(id)`; add `fetchProject(id)` returning `ProjectRow`.
-- [ ] T014 [US2] Create `console/src/pages/ProjectDetail.tsx`: name, status, repo link, workspace, then the goals list as links (`/goals/:id`) with state word and last exit; unknown id ⇒ "No such project."
-- [ ] T015 [US2] Create `console/src/pages/SessionDetail.tsx`: header (goal link, kind, exit + exitDetail, created/started/completed, PR link), cards for verify / delivery / change span / block (US1 fields) / agent output, each rendering "not recorded" when absent; events list in order (type, source, time, payload summary) with a "load more" on `nextCursor`; unknown id ⇒ "No such session."
-- [ ] T016 [US2] Wire routes `projects/:id` and `sessions/:id` in `console/src/main.tsx`; make project names links in `console/src/pages/Projects.tsx`; make session rows links in `console/src/pages/GoalDetail.tsx` and in the Goals list's "Last session" column (`console/src/pages/Goals.tsx`); extend `crumb()` in `AppShell.tsx` for `projects/<id>` and `sessions/<id>`.
-- [ ] T017 [US2] Run quickstart §P2; suite + gates + `npm run build`; PR `feat/047-drill-down`; spec `Status` names US1+US2 built.
+- [X] T013 [P] [US2] In `console/src/api.ts` add `TaskDetail` (`task`, `verify`, `delivery`, `change`, `agentOutput`, `block`, `usage`) and `TaskEvent` types plus `fetchTask(id)` and `fetchTaskEvents(id)`; add `fetchProject(id)` returning `ProjectRow`.
+- [X] T014 [US2] Create `console/src/pages/ProjectDetail.tsx`: name, status, repo link, workspace, then the goals list as links (`/goals/:id`) with state word and last exit; unknown id ⇒ "No such project."
+- [X] T015 [US2] Create `console/src/pages/SessionDetail.tsx`: header (goal link, kind, exit + exitDetail, created/started/completed, PR link), cards for verify / delivery / change span / block (US1 fields) / agent output, each rendering "not recorded" when absent; events list in order (type, source, time, payload summary) with a "load more" on `nextCursor`; unknown id ⇒ "No such session."
+- [X] T016 [US2] Wire routes `projects/:id` and `sessions/:id` in `console/src/main.tsx`; make project names links in `console/src/pages/Projects.tsx`; make session rows links in `console/src/pages/GoalDetail.tsx` and in the Goals list's "Last session" column (`console/src/pages/Goals.tsx`); extend `crumb()` in `AppShell.tsx` for `projects/<id>` and `sessions/<id>`.
+- [X] T017 [US2] Run quickstart §P2; suite + gates + `npm run build`; PR `feat/047-drill-down`; spec `Status` names US1+US2 built.
 
 **Checkpoint**: any recorded session is three clicks from Projects.
 

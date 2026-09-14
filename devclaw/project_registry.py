@@ -689,7 +689,10 @@ def project_rollup(project: Project, all_goals: list[dict]) -> dict:
     one health word: blocked > working > idle > done > archived."""
     goals = [g for g in all_goals if g.get("projectId") == project.id]
     out = project.to_dict()
-    out["goals"] = [{"id": g.get("id"), "state": g.get("state"), "outcome": g.get("outcome")} for g in goals]
+    out["goals"] = [{"id": g.get("id"), "state": g.get("state"), "outcome": g.get("outcome"),
+                     "objective": g.get("objective"), "issues": g.get("issues") or [],
+                     "lastSession": g.get("lastSession"),
+                     "attentionKind": (g.get("attention") or {}).get("kind")} for g in goals]
     out["health"] = _health(project.status, out["goals"])
     return out
 

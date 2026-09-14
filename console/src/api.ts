@@ -11,8 +11,14 @@ export function tokenQueryString(): string {
   return tokenQS();
 }
 
+function withToken(path: string): string {
+  const qs = tokenQS();
+  if (!qs) return path;
+  return path.includes("?") ? `${path}&${qs.slice(1)}` : `${path}${qs}`;
+}
+
 async function getJSON<T>(path: string): Promise<T> {
-  const r = await fetch(`${path}${tokenQS()}`);
+  const r = await fetch(withToken(path));
   if (!r.ok) throw new Error(`${path} ${r.status}`);
   return r.json();
 }
@@ -114,6 +120,16 @@ export interface GoalDetail extends GoalRow {
   decisions: Decision[];
 }
 
+export interface ProjectGoalRow {
+  id: string;
+  state: string;
+  outcome: string | null;
+  objective: string;
+  issues: number[];
+  lastSession: SessionRow | null;
+  attentionKind: AttentionKind | null;
+}
+
 export interface ProjectRow {
   id: string;
   name: string;
@@ -121,7 +137,46 @@ export interface ProjectRow {
   repoUrl: string | null;
   workspaceDir: string | null;
   health: string;
-  goals: { id: string; state: string; outcome: string | null }[];
+  goals: ProjectGoalRow[];
+}
+
+export interface TaskRow extends SessionRow {
+  workspaceDir: string;
+  parentGoalId: string | null;
+  startedAt: number | null;
+  preRunSha: string | null;
+  targetBranch: string | null;
+  projectId: string | null;
+  verifyCmd: string | null;
+  deliver: boolean;
+  error: string | null;
+  goal: string;
+}
+
+// One session, everything the host recorded: absent parts are null and the
+// page says "not recorded" — never an empty value that looks like a result.
+export interface TaskDetail {
+  task: TaskRow;
+  verify: Record<string, unknown> | null;
+  delivery: Record<string, unknown> | null;
+  change: Record<string, unknown> | null;
+  agentOutput: string | null;
+  block: BlockFields | null;
+}
+
+export interface TaskEvent {
+  id: number;
+  taskId: string;
+  type: string;
+  source: string;
+  payloadJson: string;
+  ts: number;
+}
+
+export interface TaskEvents {
+  events: TaskEvent[];
+  count: number;
+  nextCursor: number | null;
 }
 
 export interface ControlState {
@@ -136,6 +191,10 @@ export interface ControlState {
 export const fetchGoals = () => getJSON<GoalRow[]>("/goals.json");
 export const fetchGoal = (id: string) => getJSON<GoalDetail>(`/goals/${encodeURIComponent(id)}.json`);
 export const fetchProjects = () => getJSON<ProjectRow[]>("/projects.json");
+export const fetchProject = (id: string) => getJSON<ProjectRow>(`/projects/${encodeURIComponent(id)}.json`);
+export const fetchTask = (id: string) => getJSON<TaskDetail>(`/tasks/${encodeURIComponent(id)}.json`);
+export const fetchTaskEvents = (id: string, since?: number | null) =>
+  getJSON<TaskEvents>(`/tasks/${encodeURIComponent(id)}/events.json${since ? `?since=${since}` : ""}`);
 export const fetchControl = () => getJSON<ControlState>("/control.json");
 export const cancelGoal = (id: string) => postJSON<GoalDetail>(`/goals/${encodeURIComponent(id)}/cancel`, {});
 export const decideGoal = (id: string, text: string) =>
