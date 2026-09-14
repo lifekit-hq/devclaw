@@ -15,15 +15,20 @@ from ..boot_guard import assert_required_env
 from ._state import AUTH_TOKEN, DB_PATH, HTTP_HOST, HTTP_PORT, SERVER_NAME, goals, mcp, queue
 
 
+#: Liveness reads that carry no secret and whose readers hold no token.
+OPEN_PATHS = frozenset({"/health", "/metrics"})
+
+
 class AuthMiddleware:
     """Pure-ASGI bearer-token gate. No-op when DEVCLAW_TOKEN is unset; /health
-    stays open so container health checks need no token."""
+    and /metrics stay open so the container healthcheck and the box's
+    Prometheus scrape (the dead-man watcher) need no token."""
 
     def __init__(self, app) -> None:
         self.app = app
 
     async def __call__(self, scope, receive, send) -> None:
-        if scope["type"] != "http" or not AUTH_TOKEN or scope.get("path") == "/health":
+        if scope["type"] != "http" or not AUTH_TOKEN or scope.get("path") in OPEN_PATHS:
             await self.app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
