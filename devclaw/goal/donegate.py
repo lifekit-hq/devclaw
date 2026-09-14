@@ -105,21 +105,40 @@ def render_verdict(verdict: Verdict, *, head: str, task_id: str) -> str:
     return "\n".join(lines)
 
 
-def render_block(*, task_id: str, head: str, kind: str, text: str, default: str = "") -> str:
+def render_block(*, task_id: str, head: str, kind: str, text: str, default: str = "",
+                 options: "list[str] | tuple[str, ...]" = (), recommended: int = -1) -> str:
     lines = [_gh.marker("block", task=task_id or "-", head=head or "-", why=kind.replace(" ", "_")),
              f"**devclaw stopped: {kind}**", "", text]
+    if options:
+        lines.append("")
+        for i, o in enumerate(options):
+            lines.append(f"- ({chr(97 + i)}) {o}" + (" — the session would take this" if i == recommended else ""))
     if default:
         lines += ["", f"Default the session would take: {default}"]
     lines += ["", "Reply on this thread mentioning the bot to continue, or cancel the goal."]
     return "\n".join(lines)
 
 
-def block_default(exit_detail: str) -> tuple[str, str]:
-    """Split a session's ``BLOCKED: <question> — default: <x>`` line."""
-    m = re.search(r"(.*?)[\s—-]+default:\s*(.+)$", exit_detail or "", re.IGNORECASE | re.DOTALL)
-    if not m:
-        return (exit_detail or "").strip(), ""
-    return m.group(1).strip(" —-"), m.group(2).strip()
+def block_fields(result_json: "str | None", exit_detail: "str | None") -> dict:
+    """The session's block as the runner parsed it (spec 047: ONE parser, in
+    the runner); a row without the fields reads as question-only."""
+    try:
+        r = json.loads(result_json or "{}")
+    except ValueError:
+        r = {}
+    if not isinstance(r, dict):
+        r = {}
+    raw_options = r.get("options")
+    options: list = raw_options if isinstance(raw_options, list) else []
+    rec = r.get("recommended", -1)  # 0 is a real index, never "absent"
+    return {
+        "question": str(r.get("question") or exit_detail or "").strip(),
+        "options": [str(o) for o in options],
+        "default": str(r.get("default") or ""),
+        "recommended": rec if isinstance(rec, int) and not isinstance(rec, bool) else -1,
+        "kind": str(r.get("block_kind") or "contract"),
+        "item": str(r.get("block_item") or ""),
+    }
 
 
-__all__ = ["Verdict", "parse_verdict", "render_verdict", "render_block", "block_default", "field"]
+__all__ = ["Verdict", "parse_verdict", "render_verdict", "render_block", "block_fields", "field"]

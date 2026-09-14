@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-14
 
-**Status**: DRAFT — owner: Denys, date: 2026-09-28 — clarified 2026-09-14 (four questions ruled, see Clarifications); ready for plan
+**Status**: PARTIAL — owner: Denys, date: 2026-09-28 — US1 needs-you built 2026-09-14 (PR feat/047-needs-you); US2 drill-down, US3 usage, US4 verdicts next, one PR each
 
 **Input**: Denys, 2026-09-14: "what I don't like about the recent demolishing of devclaw is
 that we removed evals and the problems page. And we removed drill-down from project to goal

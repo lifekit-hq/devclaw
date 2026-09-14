@@ -47,6 +47,43 @@ export interface SessionRow {
   completedAt: number | null;
 }
 
+export interface Answered {
+  text: string;
+  madeAt: number;
+  commentUrl: string;
+  waitingOn: "hold" | "pause" | "window" | "lane busy" | "tick";
+}
+
+export type AttentionKind =
+  | "session"
+  | "env"
+  | "done-gate refused"
+  | "red CI"
+  | "delivery refused"
+  | "DONE without a PR";
+
+// What a goal needs from the owner — the session's own words for a session
+// block, the host's fact for a host-authored stop. Derived per request.
+export interface Attention {
+  kind: AttentionKind;
+  question: string;
+  options: string[];
+  recommended: number;
+  default: string;
+  since: number;
+  link: string;
+  answered: Answered | null;
+}
+
+export interface BlockFields {
+  question: string;
+  options: string[];
+  default: string;
+  recommended: number;
+  kind: string;
+  item: string;
+}
+
 export interface GoalRow {
   id: string;
   projectId: string;
@@ -60,6 +97,7 @@ export interface GoalRow {
   lastSeenAt: number | null;
   state: string;
   lastSession: SessionRow | null;
+  attention: Attention | null;
 }
 
 export interface Decision {

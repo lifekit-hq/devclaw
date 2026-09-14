@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { cancelGoal, decideGoal, fetchGoal, type GoalDetail as Detail } from "../api";
 import { exitColor, stateColor, stateIsLive } from "../status";
 import { relativeTime } from "../util/time";
+import { AttentionCard } from "../components/AttentionCard";
 import { ErrorNote, Loading, SectionLabel, StatusDot } from "../ui";
 
 function repoIssueUrl(repoUrl: string, n: number): string {
@@ -80,6 +81,15 @@ export function GoalDetail() {
           {last?.prUrl && <a className="btn sm" href={last.prUrl} target="_blank" rel="noreferrer">the PR</a>}
         </div>
       </div>
+
+      {goal.attention && (
+        <div className="card" style={{ padding: 16, marginTop: 14 }}>
+          <SectionLabel>Needs you</SectionLabel>
+          <div style={{ marginTop: 8 }}>
+            <AttentionCard goalId={id} a={goal.attention} onDecided={load} onCancel={cancel} />
+          </div>
+        </div>
+      )}
 
       {!goal.outcome && (
         <div className="card" style={{ padding: 16, marginTop: 14 }}>

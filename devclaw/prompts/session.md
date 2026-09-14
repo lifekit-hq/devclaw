@@ -30,5 +30,7 @@ End your final message with exactly one of these lines:
 
     DELIVERED: <what landed on the branch this session>
     DONE: <why every clause of the contract is now met — the done-gate reviews it>
-    BLOCKED: <the one question the owner must answer> — default: <what you would do>
+    BLOCKED: <the one question the owner must answer> — options: <a> | <b> — default: <a>
+
+For a block give two to four options the owner can pick and say which one you would take.
     NOTHING: <why there was nothing to do>

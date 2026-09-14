@@ -189,7 +189,8 @@ _RETURN_CONTRACT = (
     "devclaw can read how this session ended without guessing:\n\n"
     "DELIVERED: <what landed on the branch this session>\n"
     "DONE: <why every clause of the contract is met — the done-gate reviews it>\n"
-    "BLOCKED: <the one question the owner must answer> — default: <what you would do>\n"
+    "BLOCKED: <the one question the owner must answer> — options: <a> | <b> — default: <a>\n"
+    "    (two to four options the owner can pick, and which one you would take)\n"
     "BLOCKED: env — <the tool, service, credential or access your ENVIRONMENT lacks>\n"
     "NOTHING: <why there was nothing to do>\n\n"
     "Above that line, say what you changed and which checks you actually ran. "
@@ -975,6 +976,52 @@ def _classify_block(reason: str | None) -> tuple[str, str]:
         if item:
             return "env", item
     return "contract", ""
+
+
+#: Spec 047 US1: the options form of a block. ``BLOCKED: <question> — options:
+#: <a> | <b> — default: <a>`` — the session lays out two to four choices and
+#: says which it would take. This is the ONE parser of that line; the host
+#: reads the fields from the blocked payload and never re-parses.
+_DEFAULT_SEP_RE = re.compile(r"\s+[—–-]+\s*default:\s*", re.IGNORECASE)
+_OPTIONS_SEP_RE = re.compile(r"\s+[—–-]+\s*options:\s*", re.IGNORECASE)
+_OPTION_LABEL_RE = re.compile(r"^\(?([a-dA-D])[\).:]\s*")
+_LETTER_RE = re.compile(r"^(?:option\s+)?\(?([a-dA-D])\)?\.?$", re.IGNORECASE)
+
+
+def _parse_block_line(reason: str | None) -> tuple[str, list[str], str, int]:
+    """``(question, options, default, recommended)`` out of a contract block's
+    reason. Options are kept only when two to four non-empty ones parse;
+    ``recommended`` is the index the default names (by letter, exact text or
+    case-insensitive prefix) else ``-1``. A reason with no separators is
+    today's ``(reason, [], "", -1)``. Never raises, never invents an option."""
+    text = (reason or "").strip()
+    head, default = text, ""
+    seps = list(_DEFAULT_SEP_RE.finditer(text))
+    if seps:
+        last_sep = seps[-1]
+        head, default = text[: last_sep.start()].strip(), text[last_sep.end():].strip()
+    question, options = head, []
+    opt_sep = _OPTIONS_SEP_RE.search(head)
+    if opt_sep:
+        raw = [o.strip() for o in head[opt_sep.end():].split("|")]
+        cleaned = [_OPTION_LABEL_RE.sub("", o).strip() for o in raw]
+        if 2 <= len(cleaned) <= 4 and all(cleaned):
+            question, options = head[: opt_sep.start()].strip(), cleaned
+    recommended = -1
+    if options and default:
+        lm = _LETTER_RE.match(default)
+        if lm:
+            idx = ord(lm.group(1).lower()) - ord("a")
+            if idx < len(options):
+                recommended, default = idx, options[idx]
+        else:
+            d = default.lower()
+            for i, o in enumerate(options):
+                ol = o.lower()
+                if ol == d or ol.startswith(d) or d.startswith(ol):
+                    recommended = i
+                    break
+    return question, options, default, recommended
 
 
 def _parse_blocked_reason(agent_message: str | None) -> str | None:
@@ -2072,12 +2119,20 @@ def main() -> None:
     blocked_reason = _parse_blocked_reason(client.last_agent_message)
     if blocked_reason is not None:
         block_kind, block_item = _classify_block(blocked_reason)
+        question, options, default, recommended = (
+            _parse_block_line(blocked_reason) if block_kind == "contract" else (blocked_reason, [], "", -1)
+        )
         blocked_payload: dict = {
             "status": "blocked",
             "reason": blocked_reason,
             # spec 032 US2: the typed form — "env" routes to the pipeline
             "block_kind": block_kind,
             "block_item": block_item,
+            # spec 047 US1: the owner's choices, the session's own words
+            "question": question,
+            "options": options,
+            "default": default,
+            "recommended": recommended,
             "workspace_dir": workspace_dir,
             "agent_output": _agent_last_words(
             client.last_agent_message, client.stderr_tail()

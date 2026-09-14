@@ -155,3 +155,46 @@ def test_a_pre_042_host_declares_nothing_and_is_never_refused(runner):
     _, absent = runner.partition_agent_credentials(req, {})
     assert absent == runner._PRE_042_AGENT_ENV
     assert runner.declared_hop_broken(req, absent) is False
+
+
+# ---- parser: the options form (spec 047 US1) --------------------------------
+# A malformed block still blocks and never fabricates an option: the runner is
+# the ONE parser of the line, and the console's buttons are only ever the
+# session's own words.
+
+
+@pytest.mark.parametrize("reason,expected", [
+    # two to four options, default by letter → resolved, default text = the option
+    ("use SQLite or Postgres? — options: (a) SQLite | (b) Postgres — default: (a)",
+     ("use SQLite or Postgres?", ["SQLite", "Postgres"], "SQLite", 0)),
+    ("which? — options: a) one | b) two | c) three | d) four — default: c",
+     ("which?", ["one", "two", "three", "four"], "three", 2)),
+    # default by exact text, and by prefix, case-insensitive
+    ("which? — options: keep the table | drop it — default: Drop it",
+     ("which?", ["keep the table", "drop it"], "Drop it", 1)),
+    ("which? — options: keep the table | drop it — default: keep",
+     ("which?", ["keep the table", "drop it"], "keep", 0)),
+    # a default naming none of the options → unranked, the default still stands
+    ("which? — options: x | y — default: z", ("which?", ["x", "y"], "z", -1)),
+    # today's form: no options → question/default split, nothing invented
+    ("keep the flag? — default: yes, keep it", ("keep the flag?", [], "yes, keep it", -1)),
+    # no separators at all → the reason is the question
+    ("the ticket contradicts the README", ("the ticket contradicts the README", [], "", -1)),
+    # one option or five → not a list; the head stays the question
+    ("which? — options: only one — default: only one", ("which? — options: only one", [], "only one", -1)),
+    ("which? — options: 1 | 2 | 3 | 4 | 5 — default: 1", ("which? — options: 1 | 2 | 3 | 4 | 5", [], "1", -1)),
+    # garbage after options: → no options
+    ("which? — options: | | — default: a", ("which? — options: | |", [], "a", -1)),
+    # ascii dashes tolerated
+    ("which? - options: p | q - default: q", ("which?", ["p", "q"], "q", 1)),
+])
+def test_block_options_parse_fail_closed_never_inventing_a_choice(runner, reason, expected):
+    assert runner._parse_block_line(reason) == expected
+
+
+def test_env_block_carries_no_options(runner):
+    kind, item = runner._classify_block("env — NODE_AUTH_TOKEN for npm ci")
+    assert (kind, item) == ("env", "NODE_AUTH_TOKEN for npm ci")
+    # the payload site skips the options parser for env blocks; the parser
+    # itself would also find nothing to rank here
+    assert runner._parse_block_line("env — NODE_AUTH_TOKEN for npm ci")[1] == []

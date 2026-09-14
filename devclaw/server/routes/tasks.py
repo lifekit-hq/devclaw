@@ -7,6 +7,8 @@ import json
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from ...goal import donegate as _donegate
+from ...state_store.rows import EXIT_BLOCKED
 from .._state import mcp, store
 from ._common import _task_row
 
@@ -49,5 +51,6 @@ async def task_json(request: Request) -> Response:
                 agent_output = rj.get("agent_output")
         except ValueError:
             pass
+    block = _donegate.block_fields(t.result_json, t.exit_detail) if t.exit == EXIT_BLOCKED else None
     return JSONResponse({"task": row, "verify": verify, "delivery": delivery, "change": change,
-                         "agentOutput": agent_output})
+                         "agentOutput": agent_output, "block": block})
