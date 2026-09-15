@@ -244,6 +244,15 @@ def test_handoff_is_the_branch_and_devclaw_names_no_planning_harness(runner, ski
         text = path.read_text(encoding="utf-8")
         assert "specs/NNN-*" not in text, path
         assert not named_harness.search(text), path
+    # …and against the OTHER surface devclaw speaks through. The worker skills
+    # and the host's two prompts are one instruction set to a session; pinning
+    # only the skills half would let a named tool back in through session.md,
+    # which is where #887 put it in the first place.
+    prompts_dir = _REPO_ROOT / "devclaw" / "prompts"
+    session = (prompts_dir / "session.md").read_text(encoding="utf-8")
+    assert ".devclaw/workflow.md" in session  # the manifest is what it points at
+    for path in sorted(prompts_dir.rglob("*.md")):
+        assert not named_harness.search(path.read_text(encoding="utf-8")), path
 
 
 def test_common_skill_instructs_reading_architecture_map(runner, skill_dir):
