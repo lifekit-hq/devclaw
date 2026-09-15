@@ -185,18 +185,24 @@ def test_first_run_manifest_must_be_tracked_on_the_branch(tmp_path, ignored, cor
     workspace = _repo_with_manifest(tmp_path, ignored)
     if corrupt:
         (workspace / ".git" / "HEAD").write_text("not a ref\n")
-    _, _, result, _ = _run_runner(
+    _, events, result, _ = _run_runner(
         tmp_path, "ok",
         req_extra={"verify_cmd": "echo verify-ran"},
         env_extra={"DEVCLAW_VERIFY_ROUNDS": "1"},
     )
     assert (workspace / ".devclaw" / "workflow.md").is_file()  # on disk either way
+    verify_events = [e for e in events if e["type"] == "VerifyResult"]
     if expected is None:
         assert result["verify"]["passed"] is True
         return
     assert result["verify"]["passed"] is False, "green verify passed an untracked manifest"
     assert expected in result["verify"]["output"]
     assert "not tracked" in result["verify"]["output"]
+    # The script's own green result is emitted before the tracking check; the
+    # refusal must reach the stream too, or the console contradicts the verdict.
+    assert verify_events[-1]["payload"]["passed"] is False, (
+        "event stream reported a pass for a session the gate refused"
+    )
 
 
 def test_runner_writes_no_vendor_harness_config_into_workspace(tmp_path):

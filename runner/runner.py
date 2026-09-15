@@ -393,12 +393,17 @@ def _gate(workspace_dir: str, cmd: str) -> "tuple[dict, str | None]":
     untracked = _untracked_manifest(workspace_dir)
     if untracked is None:
         return verify, None
-    return {
+    # `_run_verify_here` already emitted the GREEN script result; it is not this
+    # gate's verdict. Emit the refusal too, or the event stream tells the console
+    # `passed=True` for a session the gate failed.
+    refusal = {
         "ran": True, "cmd": f"git ls-files --error-unmatch {untracked}",
         "passed": False, "exit_code": None, "timed_out": False,
         "output": (f"`{untracked}` is not tracked on this branch — the manifest "
                    "never reaches the next session"),
-    }, _UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
+    }
+    _emit_verify_event(refusal)
+    return refusal, _UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
 
 
 def _verify_loop(client, kind: str, workspace_dir: str, verify_cmd: "str | None") -> "dict | None":

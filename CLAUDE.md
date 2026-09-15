@@ -129,7 +129,7 @@ devclaw/
 ├── loom/            limits (the pause classifier), test_integrity, untrusted (the prompt fence)
 ├── credentials.py · probes.py · config.py · task_queue.py · project_registry.py · doctor/ · cli.py
 runner/runner.py     the in-sandbox worker harness — drives the ACP agent; skills/ is the one home of worker instructions
-.sandcastle/Dockerfile   the sandbox image (bakes runner/, skills/, the speckit scaffold)
+.sandcastle/Dockerfile   the sandbox image (bakes runner/ and skills/ — no planning scaffold)
 tests/               pytest — fully stubbed
 ```
 
