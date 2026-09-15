@@ -183,6 +183,12 @@ Images are tagged by commit SHA, so rolling back is a pull — no source revert:
 bash deploy/deploy-devclaw.sh <prior-sha>
 ```
 
+The auto lane (`deploy-devclaw-auto.sh`) prunes old `devclaw-mcp`/`devclaw-sandbox`
+tags on the box after a healthy deploy — keeping only the new tag, the
+rollback anchor it read from `/health`, and `latest`, and never an image a
+container still uses. It runs only on the success path (never after a
+rollback) and a cleanup failure never fails the deploy.
+
 ---
 
 ## 6. Cold first-deploy (fresh host, no prior state)

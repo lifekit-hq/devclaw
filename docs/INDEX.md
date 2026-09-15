@@ -45,7 +45,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 | [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + docker) on one goal. | **CURRENT** — 2026-09-13 |
 | [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-09-13 |
 | [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | The OpenClaw waiter on the VPS and its tool menu. | **CURRENT** — 2026-09-13 (tool menu) |
-| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a push to main arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-09-13 (the mechanism is unchanged by 046; the arming route is `POST /control/deploy-pending`) |
+| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a push to main arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-09-15 (the auto lane now prunes old devclaw-mcp/devclaw-sandbox tags after a healthy deploy) |
 
 ## Where the docs are NOT
 
