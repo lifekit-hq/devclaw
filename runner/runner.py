@@ -284,6 +284,13 @@ def _run_verify(cmd: str, workspace_dir: str, timeout: int = _VERIFY_TIMEOUT_S) 
 #: a red run is fed back to the SAME session, bounded by DEVCLAW_VERIFY_ROUNDS.
 _VERIFY_ROUNDS = int(os.environ.get("DEVCLAW_VERIFY_ROUNDS", "3") or 3)
 _VERIFY_SCRIPT_REL = os.path.join(".devclaw", "verify")
+_WORKFLOW_MANIFEST_REL = os.path.join(".devclaw", "workflow.md")
+#: What the first run on a repository leaves behind: how it verifies, and how it
+#: plans/builds/ships. Both are checked in the git INDEX, never the working
+#: tree — a repo whose .gitignore swallows `.devclaw/` leaves both files on disk
+#: and carries neither onto the branch, so a tree-only check passes a session
+#: whose manifest is thrown away and makes the next session re-derive it blind.
+_TRACKED_MANIFEST_RELS = (_VERIFY_SCRIPT_REL, _WORKFLOW_MANIFEST_REL)
 _VERIFY_MISSING_PROMPT = (
     "Before you finish, `.devclaw/verify` must exist: an executable script that "
     "runs what this project's CI runs (derive it from `.github/workflows`; keep "
@@ -295,6 +302,13 @@ _VERIFY_FAILED_PROMPT = (
     "`{cmd}` failed (exit {code}) — this is what CI would see. Fix the cause, "
     "never the check; re-run it until green; commit; then hand back again with "
     "your exit line. Output tail:\n\n{tail}"
+)
+_UNTRACKED_MANIFEST_PROMPT = (
+    "`{path}` is not tracked on this branch — git does not carry it, so the "
+    "next session on this repository starts blind. Create it if it is missing; "
+    "if `.gitignore` ignores `.devclaw/`, un-ignore it (`.gitignore` is a "
+    "product file, not a gate input). Then `git add` it, commit, and hand back "
+    "again with your exit line."
 )
 
 
@@ -327,11 +341,76 @@ def _run_verify_here(cmd: str, workspace_dir: str) -> dict:
     return verify
 
 
+def _has_git_dir(workspace_dir: str) -> bool:
+    """Whether a `.git` exists at or above the workspace — the ONE exemption
+    from the tracking check, decided on the filesystem rather than on git's
+    exit code. `git rev-parse` refuses with 128 for dubious ownership and for a
+    corrupt repo exactly as it does for "not a repository", so trusting its
+    status would turn "cannot tell" into a pass."""
+    path = os.path.abspath(workspace_dir)
+    while True:
+        if os.path.exists(os.path.join(path, ".git")):
+            return True
+        parent = os.path.dirname(path)
+        if parent == path:
+            return False
+        path = parent
+
+
+def _untracked_manifest(workspace_dir: str) -> "str | None":
+    """The first ``_TRACKED_MANIFEST_RELS`` path git does not carry, or None.
+
+    Reads the index (``ls-files --error-unmatch``), so an ignored-but-present
+    file counts as missing. A workspace with no repo at all has no index to read
+    and no branch to deliver; everything else fails CLOSED, because an index the
+    runner cannot read is not proof the manifest landed.
+    """
+    if not _has_git_dir(workspace_dir):
+        return None
+    try:
+        for rel in _TRACKED_MANIFEST_RELS:
+            tracked = subprocess.run(
+                ["git", "ls-files", "--error-unmatch", "--", rel], cwd=workspace_dir,
+                capture_output=True, timeout=30,
+            ).returncode == 0
+            if not tracked:
+                return rel
+    except (OSError, subprocess.SubprocessError):
+        # Fail CLOSED: an unreadable index is not proof the manifest landed.
+        return _TRACKED_MANIFEST_RELS[0]
+    return None
+
+
+def _gate(workspace_dir: str, cmd: str) -> "tuple[dict, str | None]":
+    """The end-of-session verdict, plus the feedback to hand back when it is red
+    (None when green). Two fail-closed conditions: the project's own checks run
+    green, AND the first-run manifest is TRACKED on the branch."""
+    verify = _run_verify_here(cmd, workspace_dir)
+    if not verify["passed"]:
+        return verify, _VERIFY_FAILED_PROMPT.format(
+            cmd=cmd, code=verify["exit_code"], tail=(verify["output"] or "")[-3000:],
+        )
+    untracked = _untracked_manifest(workspace_dir)
+    if untracked is None:
+        return verify, None
+    # `_run_verify_here` already emitted the GREEN script result; it is not this
+    # gate's verdict. Emit the refusal too, or the event stream tells the console
+    # `passed=True` for a session the gate failed.
+    refusal = {
+        "ran": True, "cmd": f"git ls-files --error-unmatch {untracked}",
+        "passed": False, "exit_code": None, "timed_out": False,
+        "output": (f"`{untracked}` is not tracked on this branch — the manifest "
+                   "never reaches the next session"),
+    }
+    _emit_verify_event(refusal)
+    return refusal, _UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
+
+
 def _verify_loop(client, kind: str, workspace_dir: str, verify_cmd: "str | None") -> "dict | None":
-    """Run the verify; on red, hand the output back to the SAME session and
-    run again, up to ``_VERIFY_ROUNDS`` fixes. A session that ends BLOCKED is
-    left alone. A code-writing session that leaves no verify script after
-    being asked ends with a FAILED verify — never an unverified pass."""
+    """Run the gate; on red, hand the reason back to the SAME session and run
+    again, up to ``_VERIFY_ROUNDS`` fixes. A session that ends BLOCKED is left
+    alone. A code-writing session that leaves no verify script after being asked
+    ends with a FAILED verify — never an unverified pass."""
     if kind not in _WRITES_CODE_KINDS:
         return None
     verify: "dict | None" = None
@@ -346,17 +425,15 @@ def _verify_loop(client, kind: str, workspace_dir: str, verify_cmd: "str | None"
             asked = True
             client.prompt(_VERIFY_MISSING_PROMPT)
             continue
-        verify = _run_verify_here(cmd, workspace_dir)
-        if verify["passed"]:
+        verify, feedback = _gate(workspace_dir, cmd)
+        if feedback is None:
             return verify
-        client.prompt(_VERIFY_FAILED_PROMPT.format(
-            cmd=cmd, code=verify["exit_code"], tail=(verify["output"] or "")[-3000:],
-        ))
+        client.prompt(feedback)
     if _parse_blocked_reason(client.last_agent_message) is not None:
         return verify
     cmd = verify_cmd or _discover_verify(workspace_dir)
     if cmd:
-        return _run_verify_here(cmd, workspace_dir)
+        return _gate(workspace_dir, cmd)[0]
     return {
         "ran": True, "cmd": _VERIFY_SCRIPT_REL, "passed": False, "exit_code": None,
         "timed_out": False,
@@ -714,15 +791,18 @@ def _raise_own_oom_score() -> None:  # pragma: no cover — exercised pre-exec
 
 
 # ─── Chunk-slice watcher (spec 021, US1) ─────────────────────────────────────
-# One worker session executes ONE story-slice of the speckit plan, and the
-# limit is harness-enforced (clarified 2026-08-26): the watcher reads the
-# worker's own specs/*/tasks.md (never writes it — the worker stays the single
-# writer) and ends the turn when a full slice has flipped complete AND the
+# One worker session executes ONE story-slice of the plan, and the limit is
+# harness-enforced (clarified 2026-08-26): the watcher reads the worker's own
+# specs/*/tasks.md (never writes it — the worker stays the single writer) and
+# ends the turn when a full slice has flipped complete AND the
 # agent then touches task rows OUTSIDE every advanced slice. The grammar
 # mirrors devclaw/goal/slice_guard.py and is frozen in
 # specs/021-worker-context-budget/contracts/chunk-grammar.md — the runner is a
 # zero-dep standalone file and cannot import the host module, so the shared
-# fixtures in tests/ hold the two parsers together.
+# fixtures in tests/ hold the two parsers together. The watcher keys on a
+# checkbox task list under specs/; a repository that plans some other way (see
+# .devclaw/workflow.md) simply leaves it inert, which is the honest default —
+# it bounds a slice it can read, and claims nothing about one it cannot.
 
 _CHUNK_TASK_LINE = re.compile(r"^\s*[-*]\s+\[(?P<mark>[ xX])\]\s+(?P<rest>.+?)\s*$")
 _CHUNK_TASK_ID = re.compile(r"\bT\d+\b")
@@ -734,9 +814,9 @@ _CHUNK_STORY_TAG = re.compile(r"\bUS\d+\b")
 _LAND_SLICE_PROMPT = (
     "STOP — the story-slice you completed is this session's whole scope "
     "(one slice per session; the harness enforces the stop). Do not start "
-    "any further slice. Land what you have now: make tasks.md honest about "
-    "exactly what is done, run the relevant checks, commit the work with the "
-    "specs/ artifacts, and end with the structured hand-back."
+    "any further slice. Land what you have now: make the plan honest about "
+    "exactly what is done, run the relevant checks, commit the work with its "
+    "planning artifacts, and end with the structured hand-back."
 )
 
 
@@ -761,8 +841,8 @@ def _tripwire_threshold_pct() -> int:
 _LAND_BUDGET_PROMPT = (
     "STOP — your context budget is nearly spent (the harness measured it). "
     "Do not start anything new. Land a coherent partial increment now: make "
-    "tasks.md honest about exactly what is done, run the relevant checks, "
-    "commit the work with the specs/ artifacts, and end with the structured "
+    "the plan honest about exactly what is done, run the relevant checks, "
+    "commit the work with its planning artifacts, and end with the structured "
     "hand-back. Anything unfinished goes to FOLLOW-UPS — the next session "
     "continues from the workspace."
 )

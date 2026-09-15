@@ -61,7 +61,11 @@ node_modules/
 # Real proof baskets may reference private-product internals — keep only the template
 evals/baskets/*.json
 !evals/baskets/*.example.json
-/.devclaw/
+
+# .devclaw/ itself is TRACKED — it carries the first-run manifest (verify +
+# workflow.md) that every later session reads. Only the runner's own per-run
+# scratch inside it is ignored; delivery stages with `git add -A`.
+.devclaw/playwright-report.json
 
 # /live-shakedown scratch repos — generated agent output, never committed
 .shakedown/

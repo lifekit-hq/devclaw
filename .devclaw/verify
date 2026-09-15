@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# What CI gates on a PR (.github/workflows/ci.yml): the stubbed pytest suite
+# plus ruff + mypy + import-linter. Keep it honest — a check CI runs that this
+# script skips is a red CI later.
+#
+# Deliberately NOT here, with reasons:
+#   gitleaks — downloads a pinned binary from the network; a sandbox without
+#              egress would read a network flake as a secrets finding.
+#   yamllint — CI runs it with `|| true`; it gates nothing.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+# /tmp/pytest-of-<user> can be root-owned on some hosts, which crashes every
+# tmp_path fixture — give the run a private basetemp.
+export TMPDIR="${TMPDIR:-$(mktemp -d)}"
+
+# pyproject sets `-n auto`, which reads the HOST's nproc, not the sandbox's
+# cgroup limit — an unbounded xdist fan-out is what gets a run OOM-killed.
+workers="${DEVCLAW_SANDBOX_CPUS:-2}"
+workers="${workers%%.*}"
+[ -z "$workers" ] && workers=2
+
+python3 -m pytest -q -n "$workers"
+python3 -m ruff check .
+python3 -m mypy
+lint-imports
