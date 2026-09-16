@@ -108,8 +108,19 @@ if [[ "$_mode" != "600" ]]; then
   unset _oauth _reg _gh
   die "secrets file mode is $_mode, expected 600: chmod 600 $SECRETS_FILE — a credential file readable by others is not a home."
 fi
-printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\nNODE_AUTH_TOKEN=%s\nGH_TOKEN=%s\n' "$_oauth" "$_reg" "$_gh" > "$SECRETS_FILE"
-unset _oauth _reg _gh _mode
+# DEVCLAW_TOKEN (MCP bearer auth, devclaw/config.py) is NOT one of the three
+# credentials above — it is optional and this script never generates or sets
+# it. But it lives in this same file (the compose env_file), so the blind
+# rewrite below would silently drop it on every deploy and reopen the
+# tailnet to unauthenticated MCP calls. Carry over whatever value (if any)
+# is already on disk; an absent token must stay absent, never written as a
+# blank line that would change auth behaviour.
+_existing_devclaw_token="$(_from_file DEVCLAW_TOKEN)"
+{
+  printf 'CLAUDE_CODE_OAUTH_TOKEN=%s\nNODE_AUTH_TOKEN=%s\nGH_TOKEN=%s\n' "$_oauth" "$_reg" "$_gh"
+  [[ -n "$_existing_devclaw_token" ]] && printf 'DEVCLAW_TOKEN=%s\n' "$_existing_devclaw_token"
+} > "$SECRETS_FILE"
+unset _oauth _reg _gh _mode _existing_devclaw_token
 say "credentials: CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN + GH_TOKEN present, well-formed, written to ${SECRETS_FILE} (the one home)"
 
 export DEVCLAW_MCP_IMAGE="${REGISTRY}/devclaw-mcp:${TAG}"

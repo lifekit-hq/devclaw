@@ -58,6 +58,9 @@ two externally-declared seams: the `lifekit-shared` network and the
   ```bash
   sudo install -m 0600 -o lifekit -g lifekit /dev/null /srv/devclaw/secrets.env
   ```
+  If a `DEVCLAW_TOKEN=` line (the MCP bearer, `devclaw/config.py`) is already
+  in this file, `deploy-devclaw.sh` carries it over on every rewrite instead
+  of dropping it; it never generates one, and an absent token stays absent.
   A missing or blank credential fails the deploy before the box is touched, a
   missing file fails `docker compose up`, and the container refuses to start
   without both (`devclaw/boot_guard.py`) — nothing runs degraded. Why: on
