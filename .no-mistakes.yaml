@@ -1,0 +1,12 @@
+# Per-repo no-mistakes overrides (honored from the default-branch copy).
+#
+# Pin the Lint and Test steps to the commands .github/workflows/ci.yml already
+# runs, so validation is declared here instead of decided per run by the agent.
+# Three lint gates share one command: ruff (pyflakes + syntax), mypy (typed
+# half, zero-error baseline) and lint-imports (the layer order as a contract) -
+# all configured in pyproject.toml. Not declared: gitleaks (CI fetches a
+# sha256-pinned binary; it is a secrets scan, not lint) and yamllint (CI runs it
+# with `|| true`, so it gates nothing).
+commands:
+  lint: 'ruff check . && mypy && lint-imports'
+  test: 'TMPDIR=$(mktemp -d) python -m pytest -q'
