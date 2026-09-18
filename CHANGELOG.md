@@ -2,6 +2,20 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.1.1](https://github.com/lifekit-hq/devclaw/compare/v2.1.0...v2.1.1) (2026-09-18)
+
+
+### Bug Fixes
+
+* **deploy:** prune old devclaw-mcp/devclaw-sandbox tags after a healthy auto-deploy ([#925](https://github.com/lifekit-hq/devclaw/issues/925)) ([4e13d56](https://github.com/lifekit-hq/devclaw/commit/4e13d5619fba51d75a7ef4bce22c5573a36a8184))
+* **deploy:** stop deploy-devclaw.sh from dropping DEVCLAW_TOKEN on rewrite ([#926](https://github.com/lifekit-hq/devclaw/issues/926)) ([f3fbdae](https://github.com/lifekit-hq/devclaw/commit/f3fbdaec5c47e8cf72e125f9916877d1052cbd13))
+* **runner:** report the gate's real verdict on the event stream ([#924](https://github.com/lifekit-hq/devclaw/issues/924)) ([21e202d](https://github.com/lifekit-hq/devclaw/commit/21e202d47bf4b780378152f8330f0f76e3e24377))
+
+
+### Documentation
+
+* point agents at the vault for project memory ([#921](https://github.com/lifekit-hq/devclaw/issues/921)) ([f3191ec](https://github.com/lifekit-hq/devclaw/commit/f3191ec7ea6b52543134e0f4185da30be73e432d))
+
 ## [2.1.0](https://github.com/lifekit-hq/devclaw/compare/v2.0.0...v2.1.0) (2026-09-14)
 
 
