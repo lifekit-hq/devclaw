@@ -20,7 +20,7 @@ jobs:
     uses: lifekit-hq/.github/.github/workflows/python-ci.yml@v1
     with:
       runner: '"self-hosted"'
-      install: "-e .[dev]"
+      install: -e '.[dev]'
       cache-key-files: "pyproject.toml"
       run: |
         set -euo pipefail
