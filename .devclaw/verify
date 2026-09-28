@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # What CI gates on a PR (.github/workflows/ci.yml): the stubbed pytest suite
-# plus ruff + mypy + import-linter. Keep it honest — a check CI runs that this
-# script skips is a red CI later.
+# plus ruff + mypy + import-linter + yamllint. Keep it honest — a check CI
+# runs that this script skips is a red CI later.
 #
-# Deliberately NOT here, with reasons:
+# Deliberately NOT here, with reason:
 #   gitleaks — downloads a pinned binary from the network; a sandbox without
 #              egress would read a network flake as a secrets finding.
-#   yamllint — CI runs it with `|| true`; it gates nothing.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -25,3 +24,6 @@ python3 -m pytest -q -n "$workers"
 python3 -m ruff check .
 python3 -m mypy
 lint-imports
+yamllint \
+  -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' \
+  .github/workflows/

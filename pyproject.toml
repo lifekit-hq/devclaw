@@ -14,7 +14,7 @@ devclaw-mcp = "devclaw.server:main"
 devclaw = "devclaw.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist>=3.6", "ruff>=0.8", "mypy>=1.14", "import-linter>=2.15"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "pytest-xdist>=3.6", "ruff>=0.8", "mypy>=1.14", "import-linter>=2.15", "yamllint>=1.35", "pyyaml", "httpx"]
 
 [build-system]
 requires = ["hatchling"]
