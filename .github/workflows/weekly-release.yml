@@ -23,6 +23,9 @@ concurrency:
 
 jobs:
   release:
+    permissions:
+      contents: write
+      pull-requests: write
     uses: lifekit-hq/.github/.github/workflows/weekly-release.yml@v1
     with:
       app-id: ${{ vars.RELEASE_APP_ID }}
