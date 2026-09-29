@@ -3,20 +3,15 @@ name: Release Please
 on:
   push:
     branches: [main]
-  # Dispatched by weekly-release.yml after it merges the release PR: a merge done with
-  # GITHUB_TOKEN does not fire push workflows, so the tag/release step must be invoked
-  # explicitly (workflow_dispatch is exempt from that restriction).
+  # Manual "run it now" escape hatch — the weekly-release template merges with
+  # the release-bot app token, so that merge is a real push and fires this
+  # workflow's push trigger on its own; no explicit dispatch is needed.
   workflow_dispatch:
-
-permissions:
-  contents: write
-  pull-requests: write
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: googleapis/release-please-action@v4
-        with:
-          config-file: release-please-config.json
-          manifest-file: .release-please-manifest.json
+    uses: lifekit-hq/.github/.github/workflows/release-please.yml@v1
+    with:
+      app-id: ${{ vars.RELEASE_APP_ID }}
+    secrets:
+      app-private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
