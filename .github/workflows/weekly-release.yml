@@ -13,8 +13,8 @@ name: Weekly Release
 
 on:
   schedule:
-    - cron: "0 8 * * 1" # Mondays 08:00 UTC
-  workflow_dispatch: # manual "release now"
+    - cron: "0 8 * * 1"  # Mondays 08:00 UTC
+  workflow_dispatch:  # manual "release now"
 
 permissions:
   contents: write
