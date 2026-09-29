@@ -10,6 +10,9 @@ on:
 
 jobs:
   release-please:
+    permissions:
+      contents: write
+      pull-requests: write
     uses: lifekit-hq/.github/.github/workflows/release-please.yml@v1
     with:
       app-id: ${{ vars.RELEASE_APP_ID }}
