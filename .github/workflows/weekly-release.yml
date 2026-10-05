@@ -14,7 +14,7 @@ name: Weekly Release
 
 on:
   schedule:
-    - cron: "0 8 * * 1"  # Mondays 08:00 UTC
+    - cron: "7 0 * * 1"  # Mondays 00:07 UTC, off the top of the hour to avoid GitHub's :00 schedule pile-up
   workflow_dispatch:  # manual "release now"
 
 concurrency:
