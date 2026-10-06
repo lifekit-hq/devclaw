@@ -1,0 +1,52 @@
+{
+  "id": "g-running",
+  "projectId": "widgets",
+  "workspaceDir": "/work/widgets",
+  "repoUrl": "https://github.com/example/widgets",
+  "objective": "Speed up the search index rebuild",
+  "issues": [
+    52
+  ],
+  "branch": "devclaw/g-running",
+  "createdAt": 1791304136635,
+  "closedAt": null,
+  "outcome": null,
+  "lastSeenAt": null,
+  "state": "running",
+  "lastSeen": null,
+  "lastSession": {
+    "id": "t-running-0003",
+    "kind": "implement_feature",
+    "status": "running",
+    "exit": null,
+    "exitDetail": null,
+    "prUrl": null,
+    "createdAt": 1791304136706,
+    "completedAt": null,
+    "usage": null
+  },
+  "sessions": [
+    {
+      "id": "t-running-0003",
+      "kind": "implement_feature",
+      "status": "running",
+      "exit": null,
+      "exitDetail": null,
+      "prUrl": null,
+      "createdAt": 1791304136706,
+      "completedAt": null,
+      "usage": null
+    }
+  ],
+  "decisions": [],
+  "attention": null,
+  "verdicts": [],
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0,
+    "sessions_total": 1,
+    "sessions_reported": 0
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "id": "widgets",
+  "name": "widgets",
+  "repoUrl": "https://github.com/example/widgets",
+  "workspaceDir": "/work/widgets",
+  "previewUrl": null,
+  "status": "active",
+  "goalIds": [
+    "g-blocked",
+    "g-running",
+    "g-done"
+  ],
+  "notes": "",
+  "autodeploy": null,
+  "reviewGate": null,
+  "verifyDone": null,
+  "browserGateMode": null,
+  "sandboxImage": null,
+  "sandboxMemory": null,
+  "sandboxCpus": null,
+  "bench": false,
+  "createdAt": 1791304136621,
+  "updatedAt": 1791304136648,
+  "goals": [
+    {
+      "id": "g-blocked",
+      "state": "blocked",
+      "outcome": null,
+      "objective": "Add CSV export to the reports page",
+      "issues": [
+        41
+      ],
+      "lastSession": {
+        "id": "t-blocked-0002",
+        "kind": "implement_feature",
+        "status": "done",
+        "exit": "BLOCKED",
+        "exitDetail": "Should the export include archived reports?",
+        "prUrl": null,
+        "createdAt": 1791304136696,
+        "completedAt": 1791304136703,
+        "usage": {
+          "input_tokens": 64000,
+          "output_tokens": 2100,
+          "cache_read_tokens": 410000,
+          "cache_creation_tokens": 12000,
+          "source": "acp"
+        }
+      },
+      "attentionKind": "session"
+    },
+    {
+      "id": "g-running",
+      "state": "running",
+      "outcome": null,
+      "objective": "Speed up the search index rebuild",
+      "issues": [
+        52
+      ],
+      "lastSession": {
+        "id": "t-running-0003",
+        "kind": "implement_feature",
+        "status": "running",
+        "exit": null,
+        "exitDetail": null,
+        "prUrl": null,
+        "createdAt": 1791304136706,
+        "completedAt": null,
+        "usage": null
+      },
+      "attentionKind": null
+    },
+    {
+      "id": "g-done",
+      "state": "achieved",
+      "outcome": "achieved",
+      "objective": "Fix the timezone drift in daily digests",
+      "issues": [
+        37
+      ],
+      "lastSession": {
+        "id": "t-review-0005",
+        "kind": "review_repository",
+        "status": "done",
+        "exit": "REVIEW",
+        "exitDetail": null,
+        "prUrl": null,
+        "createdAt": 1791304136719,
+        "completedAt": 1791304136741,
+        "usage": {
+          "input_tokens": 40000,
+          "output_tokens": 1800,
+          "cache_read_tokens": 220000,
+          "cache_creation_tokens": 6000,
+          "source": "acp"
+        }
+      },
+      "attentionKind": null
+    }
+  ],
+  "health": "blocked",
+  "usage": {
+    "input_tokens": 286000,
+    "output_tokens": 13300,
+    "cache_read_tokens": 1880000,
+    "cache_creation_tokens": 59000,
+    "sessions_total": 5,
+    "sessions_reported": 3
+  }
+}

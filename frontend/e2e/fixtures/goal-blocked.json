@@ -1,0 +1,93 @@
+{
+  "id": "g-blocked",
+  "projectId": "widgets",
+  "workspaceDir": "/work/widgets",
+  "repoUrl": "https://github.com/example/widgets",
+  "objective": "Add CSV export to the reports page",
+  "issues": [
+    41
+  ],
+  "branch": "devclaw/g-blocked",
+  "createdAt": 1791304136627,
+  "closedAt": null,
+  "outcome": null,
+  "lastSeenAt": null,
+  "state": "blocked",
+  "lastSeen": null,
+  "lastSession": {
+    "id": "t-blocked-0002",
+    "kind": "implement_feature",
+    "status": "done",
+    "exit": "BLOCKED",
+    "exitDetail": "Should the export include archived reports?",
+    "prUrl": null,
+    "createdAt": 1791304136696,
+    "completedAt": 1791304136703,
+    "usage": {
+      "input_tokens": 64000,
+      "output_tokens": 2100,
+      "cache_read_tokens": 410000,
+      "cache_creation_tokens": 12000,
+      "source": "acp"
+    }
+  },
+  "sessions": [
+    {
+      "id": "t-blocked-0002",
+      "kind": "implement_feature",
+      "status": "done",
+      "exit": "BLOCKED",
+      "exitDetail": "Should the export include archived reports?",
+      "prUrl": null,
+      "createdAt": 1791304136696,
+      "completedAt": 1791304136703,
+      "usage": {
+        "input_tokens": 64000,
+        "output_tokens": 2100,
+        "cache_read_tokens": 410000,
+        "cache_creation_tokens": 12000,
+        "source": "acp"
+      }
+    },
+    {
+      "id": "t-deliver-0001",
+      "kind": "implement_feature",
+      "status": "done",
+      "exit": "DELIVERED",
+      "exitDetail": "CSV export behind the reports route",
+      "prUrl": "https://github.com/example/widgets/pull/58",
+      "createdAt": 1791304136655,
+      "completedAt": 1791304136665,
+      "usage": {
+        "input_tokens": 182000,
+        "output_tokens": 9400,
+        "cache_read_tokens": 1250000,
+        "cache_creation_tokens": 41000,
+        "source": "acp"
+      }
+    }
+  ],
+  "decisions": [],
+  "attention": {
+    "kind": "session",
+    "question": "Should the export include archived reports?",
+    "options": [
+      "Exclude archived reports",
+      "Include them behind a checkbox"
+    ],
+    "recommended": 1,
+    "default": "Exclude archived reports",
+    "link": "https://github.com/example/widgets/issues/41",
+    "since": 1791304136703,
+    "answered": null
+  },
+  "verdicts": [],
+  "usage": {
+    "input_tokens": 246000,
+    "output_tokens": 11500,
+    "cache_read_tokens": 1660000,
+    "cache_creation_tokens": 53000,
+    "sessions_total": 2,
+    "sessions_reported": 2
+  }
+}

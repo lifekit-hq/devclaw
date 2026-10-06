@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # What CI gates on a PR (.github/workflows/ci.yml): the stubbed pytest suite
-# plus ruff + mypy + import-linter + yamllint. Keep it honest — a check CI
+# plus ruff + mypy + import-linter + yamllint, and the Angular console's lint,
+# unit tests and build (frontend/). Keep it honest — a check CI
 # runs that this script skips is a red CI later.
 #
 # Deliberately NOT here, with reason:
 #   gitleaks — downloads a pinned binary from the network; a sandbox without
 #              egress would read a network flake as a secrets finding.
+#   frontend e2e — Playwright drives a downloaded Chromium that needs system
+#              libraries the sandbox image does not carry; CI runs it.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -27,3 +30,11 @@ lint-imports
 yamllint \
   -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' \
   .github/workflows/
+
+# The console (frontend/): @lifekit-hq/* installs from GitHub Packages with
+# NODE_AUTH_TOKEN, which the sandbox carries (devclaw/credentials.py).
+cd frontend
+npm ci --no-audit --no-fund
+npm run lint
+npm test
+npm run build

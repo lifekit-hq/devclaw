@@ -1,0 +1,49 @@
+{
+  "task": {
+    "id": "t-deliver-0001",
+    "kind": "implement_feature",
+    "status": "done",
+    "workspaceDir": "/work/widgets",
+    "parentGoalId": "g-blocked",
+    "createdAt": 1791304136655,
+    "completedAt": 1791304136665,
+    "prUrl": "https://github.com/example/widgets/pull/58",
+    "exit": "DELIVERED",
+    "exitDetail": "CSV export behind the reports route",
+    "startedAt": 1791304136659,
+    "preRunSha": "4f2c9e1a7b3d5c8e0f1a2b3c4d5e6f708192a3b4",
+    "targetBranch": "devclaw/g-blocked",
+    "projectId": "widgets",
+    "verifyCmd": ".devclaw/verify",
+    "deliver": true,
+    "error": null,
+    "goal": "#41"
+  },
+  "verify": {
+    "ok": true,
+    "rounds": 1,
+    "cmd": ".devclaw/verify"
+  },
+  "delivery": {
+    "pushed": true,
+    "branch": "devclaw/g-blocked",
+    "head": "4f2c9e1a7b3d5c8e0f1a2b3c4d5e6f708192a3b4"
+  },
+  "change": {
+    "files": [
+      "src/reports/export.py",
+      "tests/test_export.py"
+    ],
+    "insertions": 84,
+    "deletions": 3
+  },
+  "agentOutput": "Added the CSV writer and its route.\n\nDELIVERED",
+  "block": null,
+  "usage": {
+    "input_tokens": 182000,
+    "output_tokens": 9400,
+    "cache_read_tokens": 1250000,
+    "cache_creation_tokens": 41000,
+    "source": "acp"
+  }
+}

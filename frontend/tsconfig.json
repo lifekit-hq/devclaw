@@ -1,0 +1,6 @@
+{
+  "extends": "@lifekit-hq/config/tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node", "vitest/globals"]
+  }
+}

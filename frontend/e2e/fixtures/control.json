@@ -1,0 +1,18 @@
+{
+  "operatorHold": {
+    "on": false,
+    "reason": ""
+  },
+  "schedule": {
+    "enabled": true,
+    "start": "22:00",
+    "end": "07:00",
+    "tz": "Europe/Dublin"
+  },
+  "pause": null,
+  "blocked": true,
+  "whyBlocked": "outside run window 22:00\u201307:00 Europe/Dublin (local 17:28)",
+  "maxConcurrent": null,
+  "deployPending": null,
+  "deployLast": null
+}

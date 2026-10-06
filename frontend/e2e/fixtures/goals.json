@@ -1,0 +1,134 @@
+[
+  {
+    "id": "g-blocked",
+    "projectId": "widgets",
+    "workspaceDir": "/work/widgets",
+    "repoUrl": "https://github.com/example/widgets",
+    "objective": "Add CSV export to the reports page",
+    "issues": [
+      41
+    ],
+    "branch": "devclaw/g-blocked",
+    "createdAt": 1791304136627,
+    "closedAt": null,
+    "outcome": null,
+    "lastSeenAt": null,
+    "state": "blocked",
+    "lastSession": {
+      "id": "t-blocked-0002",
+      "kind": "implement_feature",
+      "status": "done",
+      "exit": "BLOCKED",
+      "exitDetail": "Should the export include archived reports?",
+      "prUrl": null,
+      "createdAt": 1791304136696,
+      "completedAt": 1791304136703,
+      "usage": {
+        "input_tokens": 64000,
+        "output_tokens": 2100,
+        "cache_read_tokens": 410000,
+        "cache_creation_tokens": 12000,
+        "source": "acp"
+      }
+    },
+    "attention": {
+      "kind": "session",
+      "question": "Should the export include archived reports?",
+      "options": [
+        "Exclude archived reports",
+        "Include them behind a checkbox"
+      ],
+      "recommended": 1,
+      "default": "Exclude archived reports",
+      "link": "https://github.com/example/widgets/issues/41",
+      "since": 1791304136703,
+      "answered": null
+    },
+    "usage": {
+      "input_tokens": 246000,
+      "output_tokens": 11500,
+      "cache_read_tokens": 1660000,
+      "cache_creation_tokens": 53000,
+      "sessions_total": 2,
+      "sessions_reported": 2
+    }
+  },
+  {
+    "id": "g-running",
+    "projectId": "widgets",
+    "workspaceDir": "/work/widgets",
+    "repoUrl": "https://github.com/example/widgets",
+    "objective": "Speed up the search index rebuild",
+    "issues": [
+      52
+    ],
+    "branch": "devclaw/g-running",
+    "createdAt": 1791304136635,
+    "closedAt": null,
+    "outcome": null,
+    "lastSeenAt": null,
+    "state": "running",
+    "lastSession": {
+      "id": "t-running-0003",
+      "kind": "implement_feature",
+      "status": "running",
+      "exit": null,
+      "exitDetail": null,
+      "prUrl": null,
+      "createdAt": 1791304136706,
+      "completedAt": null,
+      "usage": null
+    },
+    "attention": null,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "sessions_total": 1,
+      "sessions_reported": 0
+    }
+  },
+  {
+    "id": "g-done",
+    "projectId": "widgets",
+    "workspaceDir": "/work/widgets",
+    "repoUrl": "https://github.com/example/widgets",
+    "objective": "Fix the timezone drift in daily digests",
+    "issues": [
+      37
+    ],
+    "branch": "devclaw/g-done",
+    "createdAt": 1791304136643,
+    "closedAt": 1791304136748,
+    "outcome": "achieved",
+    "lastSeenAt": null,
+    "state": "achieved",
+    "lastSession": {
+      "id": "t-review-0005",
+      "kind": "review_repository",
+      "status": "done",
+      "exit": "REVIEW",
+      "exitDetail": null,
+      "prUrl": null,
+      "createdAt": 1791304136719,
+      "completedAt": 1791304136741,
+      "usage": {
+        "input_tokens": 40000,
+        "output_tokens": 1800,
+        "cache_read_tokens": 220000,
+        "cache_creation_tokens": 6000,
+        "source": "acp"
+      }
+    },
+    "attention": null,
+    "usage": {
+      "input_tokens": 40000,
+      "output_tokens": 1800,
+      "cache_read_tokens": 220000,
+      "cache_creation_tokens": 6000,
+      "sessions_total": 2,
+      "sessions_reported": 1
+    }
+  }
+]

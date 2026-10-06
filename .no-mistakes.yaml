@@ -7,9 +7,13 @@
 # yamllint (workflow YAML, a real gate) - all configured in pyproject.toml or
 # passed inline, matching ci.yml. Not declared: gitleaks (CI fetches a
 # sha256-pinned binary via the secrets-scan template; it is a secrets scan,
-# not lint).
+# not lint), and the console's Playwright e2e (it needs a downloaded browser;
+# CI's frontend job runs it).
 commands:
+  # Mirrors the CI frontend job's `npm ci`.
+  prepare: 'cd frontend && npm ci'
   lint: >-
     ruff check . && mypy && lint-imports &&
-    yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' .github/workflows/
-  test: 'TMPDIR=$(mktemp -d) python -m pytest -q'
+    yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' .github/workflows/ &&
+    cd frontend && npm run lint
+  test: 'TMPDIR=$(mktemp -d) python -m pytest -q && cd frontend && npm test && npm run build'
