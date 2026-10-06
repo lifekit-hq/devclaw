@@ -1,7 +1,7 @@
 # Keep the docker build context lean (applies to deploy/Dockerfile AND
 # .sandcastle/Dockerfile — both build from the repo root). Do NOT exclude
-# runner/ (the sandbox image COPYs it) or devclaw/server/console/src
-# (the MCP image builds the console from it).
+# runner/ (the sandbox image COPYs it) or frontend/ (the MCP image builds the
+# console from it).
 
 .git
 **/__pycache__/
@@ -16,7 +16,7 @@
 venv/
 
 # Built in-image; force-included into the wheel by hatchling.
-devclaw/server/console/dist/
+devclaw/server/console_dist/
 
 # Dev-harness worktrees + eval run artifacts — large, never needed at build.
 .claude/worktrees/

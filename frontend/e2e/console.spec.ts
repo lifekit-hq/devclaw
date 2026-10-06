@@ -36,7 +36,7 @@ test.beforeEach(async ({page}) => {
 test('Needs you lists the blocked goal with the session options', async ({page}) => {
   await page.goto('/');
 
-  await expect(page).toHaveURL(/\/needs-you$/);
+  await expect(page).toHaveURL(/\/console\/needs-you$/);
   await expect(page.getByRole('heading', {level: 1, name: 'Needs you'})).toBeVisible();
   await expect(page.getByRole('button', {name: '1 Needs you'})).toBeVisible();
   await expect(page.getByText('Should the export include archived reports?')).toBeVisible();
@@ -53,7 +53,7 @@ test('an option posts its full text on the decide route', async ({page}) => {
     posted = route.request().postDataJSON();
     return route.fulfill({json: {ok: true}});
   });
-  await page.goto('/needs-you');
+  await page.goto('/console/needs-you');
 
   await page.getByRole('button', {name: /Include them behind a checkbox/}).click();
 
@@ -66,7 +66,7 @@ test('the goal page decides in the owner’s own words and shows a refusal', asy
     posted.push(route.request().postDataJSON());
     return route.fulfill({status: 400, json: {error: 'goal is closed'}});
   });
-  await page.goto('/goals/g-blocked');
+  await page.goto('/console/goals/g-blocked');
 
   await expect(
     page.getByRole('heading', {level: 1, name: 'Add CSV export to the reports page'})
@@ -80,7 +80,7 @@ test('the goal page decides in the owner’s own words and shows a refusal', asy
 });
 
 test('Goals filters open from closed and opens one', async ({page}) => {
-  await page.goto('/goals');
+  await page.goto('/console/goals');
 
   await expect(page.getByRole('heading', {level: 1, name: 'Goals'})).toBeVisible();
   await expect(page.getByText('Add CSV export to the reports page')).toBeVisible();
@@ -91,12 +91,12 @@ test('Goals filters open from closed and opens one', async ({page}) => {
 
   await page.getByRole('button', {name: /Open/}).click();
   await page.getByText('Speed up the search index rebuild').click();
-  await expect(page).toHaveURL(/\/goals\/g-running$/);
+  await expect(page).toHaveURL(/\/console\/goals\/g-running$/);
   await expect(page.getByRole('region', {name: 'Sessions'})).toContainText('t-runnin');
 });
 
 test('a closed goal shows its verdict and no decide form', async ({page}) => {
-  await page.goto('/goals/g-done');
+  await page.goto('/console/goals/g-done');
 
   await expect(page.getByRole('region', {name: 'Verdicts'})).toContainText(
     "Daily digests use the subscriber's timezone"
@@ -105,18 +105,18 @@ test('a closed goal shows its verdict and no decide form', async ({page}) => {
 });
 
 test('Projects and a project page list the goals', async ({page}) => {
-  await page.goto('/projects');
+  await page.goto('/console/projects');
 
   await expect(page.getByRole('heading', {level: 1, name: 'Projects'})).toBeVisible();
   await page.getByRole('link', {name: 'widgets'}).first().click();
 
-  await expect(page).toHaveURL(/\/projects\/widgets$/);
+  await expect(page).toHaveURL(/\/console\/projects\/widgets$/);
   await expect(page.getByRole('heading', {level: 1, name: 'widgets'})).toBeVisible();
   await expect(page.getByRole('table')).toContainText('Add CSV export to the reports page');
 });
 
 test('a session page shows its exit, parts and events', async ({page}) => {
-  await page.goto('/sessions/t-deliver-0001');
+  await page.goto('/console/sessions/t-deliver-0001');
 
   await expect(page.getByRole('heading', {level: 1})).toContainText('Session');
   await expect(page.getByRole('region', {name: 'Exit'})).toContainText('DELIVERED');
@@ -125,7 +125,7 @@ test('a session page shows its exit, parts and events', async ({page}) => {
 });
 
 test('Verdicts lists each review clause by clause', async ({page}) => {
-  await page.goto('/verdicts');
+  await page.goto('/console/verdicts');
 
   await expect(page.getByRole('heading', {level: 1, name: 'Verdicts'})).toBeVisible();
   const clause = page.getByText("Daily digests use the subscriber's timezone");
@@ -140,7 +140,7 @@ test('Settings shows the run window and posts a hold', async ({page}) => {
     held = true;
     return route.fulfill({json: {operatorHold: {on: true, reason: 'held from the console'}}});
   });
-  await page.goto('/settings');
+  await page.goto('/console/settings');
 
   await expect(page.getByRole('heading', {level: 1, name: 'Settings'})).toBeVisible();
   const window = page.getByRole('region', {name: 'Run window'});
@@ -152,7 +152,7 @@ test('Settings shows the run window and posts a hold', async ({page}) => {
 
 test('the shell fits a phone and signs out', async ({page}, testInfo) => {
   await page.setViewportSize({width: 375, height: 700});
-  await page.goto('/needs-you');
+  await page.goto('/console/needs-you');
 
   await expect(page.getByText('Should the export include archived reports?')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);

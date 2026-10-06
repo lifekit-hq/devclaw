@@ -22,7 +22,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-06 (the code map names `console/` and its Angular successor `frontend/`; written 2026-09-13 for spec 046) |
+| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-07 (the code map names the Angular PWA `frontend/` as the console, React `console/` deleted; written 2026-09-13 for spec 046) |
 
 ## Flows
 
@@ -45,7 +45,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 | [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + docker) on one goal. | **CURRENT** — 2026-09-13 |
 | [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-09-13 |
 | [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | The OpenClaw waiter on the VPS and its tool menu. | **CURRENT** — 2026-09-13 (tool menu) |
-| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a push to main (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-06 (the heartbeat also arms a deploy when the running build trails main, so hand merges ship) |
+| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a push to main (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-07 (the manual image build passes the BuildKit `npm_token` secret for the console stage) |
 
 ## Where the docs are NOT
 

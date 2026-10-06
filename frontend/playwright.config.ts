@@ -10,6 +10,9 @@ export default defineConfig({
   use: {
     baseURL: origin,
     headless: true,
+    // page.route answers the feeds; a registered worker would fetch them itself, out of the
+    // route's sight. pwa.spec.ts opts back in to test the worker.
+    serviceWorkers: 'block',
   },
   webServer: {
     // The tests run against the production build; `npm run build` must have run first.

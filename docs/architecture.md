@@ -149,6 +149,5 @@ devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py 
 devclaw/loom/        limits.py · test_integrity.py · untrusted.py
 devclaw/credentials.py · probes.py · config.py · project_registry.py · doctor/ · cli.py
 runner/              runner.py · acp_client.py · skills/ · hooks/
-console/             the React console the image builds and /console serves today
-frontend/            its Angular successor on @lifekit-hq/ui — CI builds and tests it; it serves once it is cut over
+frontend/            the console: an Angular PWA on @lifekit-hq/ui, built into devclaw/server/console_dist and served at /console
 ```

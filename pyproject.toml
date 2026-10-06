@@ -25,7 +25,7 @@ packages = ["devclaw"]
 # The console bundle (devclaw/server/console_dist) is BUILT during the image
 # build (npm run build), not committed — it's .gitignored. hatchling respects
 # VCS ignores by default, so force-include the built output here or the wheel
-# ships without a console (server 503s). Glob matches the vite output tree.
+# ships without a console (server 503s). Glob matches the ng build output tree.
 artifacts = ["devclaw/server/console_dist/**"]
 
 # No planning scaffold ships anywhere: devclaw owns no planning harness (ruled
