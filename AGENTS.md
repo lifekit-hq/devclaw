@@ -19,3 +19,11 @@ world, the prompts, the done-gate) → `devclaw/task_queue.py` + `devclaw/queue/
 + `devclaw/engine/` + `devclaw/gates.py` + `devclaw/delivery/` (one session)
 → `runner/` (inside the sandbox). `docs/architecture.md` is the map;
 `docs/INDEX.md` lists every doc with a currency tag.
+
+## Platform first
+
+Use the framework's or platform's standard mechanism before writing a bespoke one, and name it in the PR.
+Already in use here, do not reimplement:
+
+- Python: Starlette `FileResponse` for serving the console bundle, no hand-rolled static server.
+- Angular (the console): standalone components, signals and zoneless change detection; `provideRouter` with lazy `loadComponent`; `HttpClient` (`provideHttpClient(withFetch())`) for requests; `inject()` for DI; `toSignal` for observables; `poll()` from `@lifekit-hq/core` for refresh; `CmnDialogService` and `ThemeService` from `@lifekit-hq/ui` for dialogs and theme; `@angular/service-worker` with `@lifekit-hq/core/pwa` for the PWA.
