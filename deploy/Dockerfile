@@ -1,8 +1,12 @@
+# syntax=docker/dockerfile:1
 # devclaw-mcp server image — built FROM the checked-out devclaw source.
 #
 # Build context is the REPO ROOT (so this Dockerfile can COPY the working tree
-# and the console source). Build from the repo root:
-#   docker build -f deploy/Dockerfile \
+# and the console source). Build from the repo root; the console stage reads
+# @lifekit-hq/* from GitHub Packages through a BuildKit secret (a read:packages
+# token), which is mounted for that one RUN and never lands in a layer:
+#   NODE_AUTH_TOKEN=<token> docker build -f deploy/Dockerfile \
+#       --secret id=npm_token,env=NODE_AUTH_TOKEN \
 #       --build-arg DEVCLAW_GIT_SHA="$(git rev-parse HEAD)" \
 #       --build-arg DEVCLAW_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 #       -t ghcr.io/lifekit-hq/devclaw-mcp:<sha> .
@@ -17,6 +21,18 @@
 # Auth: inherits Claude Code OAuth from the bind-mounted ~/.claude session at
 # runtime (compose). No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, ever
 # (Constitution I — OAuth-only).
+
+# ---- console bundle (its own stage; only the built dist reaches the image) ---
+# The Angular PWA in frontend/ is served by the Python server from
+# devclaw/server/console_dist (angular.json's outputPath). The lockfile layer
+# comes first so a source-only change reuses the installed node_modules.
+FROM node:22-trixie AS console
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
+RUN --mount=type=secret,id=npm_token,required=true \
+    NODE_AUTH_TOKEN="$(cat /run/secrets/npm_token)" npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
 
 # node:22-trixie (Debian 13) ships Python 3.13; the devclaw host runtime needs >=3.12.
 FROM node:22-trixie
@@ -86,13 +102,10 @@ USER root
 WORKDIR /app
 COPY . /app
 
-# ---- console bundle (built here, not committed — it's .gitignored) ---------
-# The Vite+React SPA is served by the Python server from
-# devclaw/server/console_dist. Build it BEFORE the pip install so hatchling's
-# force-include (pyproject `tool.hatch.build.targets.wheel.artifacts`) bakes the
-# freshly-built dist into the wheel.
-RUN npm --prefix console ci \
- && npm --prefix console run build
+# ---- console bundle (built in the console stage, not committed) ------------
+# Copied in BEFORE the pip install so hatchling's force-include (pyproject
+# `tool.hatch.build.targets.wheel.artifacts`) bakes it into the wheel.
+COPY --from=console /build/devclaw/server/console_dist /app/devclaw/server/console_dist
 
 # Install the devclaw Python package (FastMCP server + deps).
 # --break-system-packages: Debian trixie is PEP 668 externally-managed; no venv

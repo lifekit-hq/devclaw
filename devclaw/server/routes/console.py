@@ -1,9 +1,9 @@
 """The console web app: static serving + the retired-dashboard redirects.
 
-The SPA source is the top-level ``console/`` product; Vite builds it into
-``devclaw/server/console_dist`` so the wheel ships it (see pyproject). These
-routes serve that bundle and keep the pre-console ``/dashboard*`` URLs alive
-as redirects.
+The SPA source is the top-level ``frontend/`` Angular app; ``ng build`` writes
+it into ``devclaw/server/console_dist`` so the wheel ships it (see pyproject).
+These routes serve that bundle and keep the pre-console ``/dashboard*`` URLs
+alive as redirects.
 
 ``_CONSOLE_DIST`` is resolved from this module's location, so it follows the
 package wherever it is installed — never from the working directory.
@@ -53,11 +53,11 @@ async def dashboard_projects(request: Request) -> Response:
     return _console_redirect(request, "/console/projects")
 
 
-# ---- Console (Vite + React SPA, served as a static bundle) ----------------
-# The three-screen web console lives under `console/`. `npm run
-# build` writes `console/dist/`; the bytes on disk are what these routes serve.
-# The SPA does client-side routing under basename="/console", so any path that
-# doesn't map to a file falls through to `index.html`.
+# ---- Console (Angular PWA, served as a static bundle) ----------------------
+# The web console lives under `frontend/`. `npm run build` writes the bundle
+# here; the bytes on disk are what these routes serve. The SPA does
+# client-side routing under base href "/console/", so any path that doesn't
+# map to a file falls through to `index.html`.
 
 # The bundle ships in the SERVER package (deploy/Dockerfile builds it there;
 # pyproject's wheel `artifacts` glob names the same path) — this file lives one
@@ -65,12 +65,21 @@ async def dashboard_projects(request: Request) -> Response:
 # pins the two locations together (#625 moved this file and left `parent`).
 _CONSOLE_DIST = Path(__file__).resolve().parents[1] / "console_dist"
 
+# The files that decide which build a browser runs: the app shell, the
+# service worker and its manifest, and the web app manifest. They keep their
+# names across deploys, so the browser must revalidate them on every load or
+# it keeps running the previous build. The hashed bundle files cache as usual.
+_REVALIDATE = frozenset(
+    {"index.html", "ngsw.json", "ngsw-worker.js", "manifest.webmanifest"}
+)
+_NO_CACHE = {"Cache-Control": "no-cache"}
+
 
 def _serve_console_file(rel: str) -> Response:
     if not _CONSOLE_DIST.exists():
         return PlainTextResponse(
             "devclaw console bundle not built — run `npm --prefix "
-            "console run build`",
+            "frontend run build`",
             status_code=503,
         )
     # Resolve safely inside dist. `Path.resolve()` normalizes `..`, then we
@@ -82,12 +91,13 @@ def _serve_console_file(rel: str) -> Response:
         return PlainTextResponse("forbidden", status_code=403)
     if target.is_file():
         media, _ = mimetypes.guess_type(str(target))
-        return FileResponse(str(target), media_type=media)
+        headers = _NO_CACHE if target.name in _REVALIDATE else None
+        return FileResponse(str(target), media_type=media, headers=headers)
     # SPA fallback: unknown paths serve the app shell so client-side routing works.
     index = _CONSOLE_DIST / "index.html"
     if not index.is_file():
         return PlainTextResponse("console index.html missing from bundle", status_code=500)
-    return FileResponse(str(index), media_type="text/html")
+    return FileResponse(str(index), media_type="text/html", headers=_NO_CACHE)
 
 
 @mcp.custom_route("/", methods=["GET"])

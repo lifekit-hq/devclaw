@@ -104,11 +104,17 @@ jobs:
 
       # devclaw-mcp — built FROM the checked-out source (COPY, no git clone),
       # SHA baked so /health reports exactly this commit. Cache-respecting.
+      # The console stage installs @lifekit-hq/* from GitHub Packages with the
+      # read:packages NODE_AUTH_TOKEN, passed as a BuildKit secret: mounted for
+      # the one `npm ci`, never written into a layer or the image history.
       - name: Build + push devclaw-mcp
         if: steps.id.outputs.do_build == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           SHA="${{ steps.id.outputs.sha }}"
           docker build -f deploy/Dockerfile \
+            --secret id=npm_token,env=NODE_AUTH_TOKEN \
             --build-arg DEVCLAW_GIT_SHA="${SHA}" \
             --build-arg DEVCLAW_BUILT_AT="${{ steps.id.outputs.built_at }}" \
             -t "${REGISTRY}/devclaw-mcp:${SHA}" \

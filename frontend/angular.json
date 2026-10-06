@@ -18,13 +18,17 @@
           "builder": "@angular/build:application",
           "options": {
             "outputPath": {
-              "base": "dist",
+              "base": "../devclaw/server/console_dist",
               "browser": ""
             },
+            "baseHref": "/console/",
             "index": "src/index.html",
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
-            "assets": [],
+            "assets": [
+              {"glob": "**/*", "input": "public"},
+              {"glob": "**/*", "input": "node_modules/@lifekit-hq/tokens/brand/dist/dc"}
+            ],
             "styles": [
               "src/styles.scss",
               "node_modules/@lifekit-hq/tokens/fonts.css",
@@ -54,7 +58,8 @@
                   "maximumError": "4kb"
                 }
               ],
-              "outputHashing": "all"
+              "outputHashing": "all",
+              "serviceWorker": "ngsw-config.json"
             },
             "development": {
               "optimization": false,

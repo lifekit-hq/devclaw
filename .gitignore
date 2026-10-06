@@ -51,7 +51,7 @@ evals/runs/
 !.claude/agents/
 !.claude/commands/
 
-# Console build output — the Vite+React SPA is built at image-build time
+# Console build output — the Angular PWA (frontend/) is built at image-build time
 # (compose/devclaw-mcp/Dockerfile), not vendored. hatchling force-includes it
 # into the wheel via `tool.hatch.build.targets.wheel.artifacts` in pyproject.
 devclaw/server/console_dist/
