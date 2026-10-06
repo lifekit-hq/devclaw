@@ -34,8 +34,8 @@ async def reconcile(state, *, now_ms: int) -> bool:
 
     The push-to-main arm job is the fast path; a merge done by hand, or an arm
     that could not reach the instance, leaves main ahead with nothing armed.
-    A SHA already attempted (deployed, rolled back, failed) is never re-armed,
-    so a rollback cannot loop. Never raises."""
+    A SHA whose deploy fired is never re-armed, so a rollback cannot loop; an
+    expired or failed arm retries once the settle window has passed. Never raises."""
     running, slug = _config.git_sha(), _config.self_repo()
     if not running or not slug or state.deploy_pending() is not None:
         return False
@@ -43,7 +43,7 @@ async def reconcile(state, *, now_ms: int) -> bool:
     if last and now_ms - int(last.get("at_ms") or 0) < _SETTLE_MS:
         return False
     head = await _main_head(slug)
-    if not head or head == running or head == last.get("sha"):
+    if not head or head == running or (head == last.get("sha") and last.get("outcome") == "triggered"):
         return False
     state.set_deploy_pending(sha=head, goal_id="reconcile", since_ms=now_ms)
     sys.stderr.write(f"goal-layer: running {running[:12]} trails main {head[:12]}; self-deploy armed\n")

@@ -143,12 +143,21 @@ def test_a_hand_merge_is_deployed_once_quiescent(monkeypatch) -> None:
 
 
 def test_reconcile_never_loops_or_double_fires(monkeypatch) -> None:
-    """Level-triggered, so it must not re-arm: in sync, an already-attempted
+    """Level-triggered, so it must not re-arm: in sync, an already-deployed
     sha (a rollback leaves the box behind), or a deploy still landing."""
     for state, head in (
         (_ReconcileState(), "old1"),
-        (_ReconcileState(last={"sha": "new2", "at_ms": 1}), "new2"),
+        (_ReconcileState(last={"sha": "new2", "at_ms": 1, "outcome": "triggered"}), "new2"),
         (_ReconcileState(last={"sha": "mid", "at_ms": 9_999_000}), "new2"),
     ):
         assert _reconcile(monkeypatch, state, head=head) == []
         assert state.armed == []
+
+
+def test_an_unfired_arm_is_retried_after_the_settle_window(monkeypatch) -> None:
+    """An expired or failed arm never deployed anything: the box still trails
+    main, so the next heartbeat past the settle window arms the same sha again."""
+    for outcome in ("expired", "trigger_failed"):
+        state = _ReconcileState(last={"sha": "new2", "at_ms": 1, "outcome": outcome})
+        assert _reconcile(monkeypatch, state, head="new2") == ["lifekit-hq/devclaw"]
+        assert state.armed[0]["sha"] == "new2"
