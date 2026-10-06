@@ -88,13 +88,18 @@ async def control_resume(_request: Request) -> Response:
 @mcp.custom_route("/control/deploy-pending", methods=["POST"])
 async def control_deploy_pending(request: Request) -> Response:
     """Arm a self-deploy: main moved; the heartbeat deploys once no session
-    runs. A newer sha overwrites — deploying the latest main covers both."""
+    runs. A newer sha overwrites — deploying the latest main covers both. A sha
+    already running or already deployed is ignored, so a late arm is a no-op."""
     try:
         body = await request.json()
     except Exception:
         body = {}
     sha = str((body or {}).get("sha") or "").strip()
-    store.set_deploy_pending(sha=sha, goal_id="ci", since_ms=_now_ms())
+    last = store.deploy_last() or {}
+    already = sha and (sha == _config.git_sha()
+                       or (sha == last.get("sha") and last.get("outcome") == "triggered"))
+    if not already:
+        store.set_deploy_pending(sha=sha, goal_id="ci", since_ms=_now_ms())
     pending = store.deploy_pending()
     return JSONResponse({"deployPending": {"sha": pending[0] if pending else "",
                                            "armedBy": pending[1] if pending else ""}})
