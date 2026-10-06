@@ -54,8 +54,9 @@ ruff check . && mypy && lint-imports
 
 The console lives in `frontend/`: an Angular 21 PWA on the shared
 `@lifekit-hq/ui` stack, installable from `/console/` with a precache-only
-service worker. `npm run build` writes it into `devclaw/server/console_dist`,
-which the host serves at `/console` and the image bakes in. `npm ci` there reads
+service worker. `npm run build` writes it into the server package's gitignored
+`console_dist` directory, which the host serves at `/console` and the image
+bakes in. `npm ci` there reads
 `@lifekit-hq/*` from GitHub Packages, so it needs `NODE_AUTH_TOKEN` (the image
 build takes the same token as a BuildKit secret):
 
