@@ -3,8 +3,6 @@ import {
   Component,
   computed,
   input,
-  Pipe,
-  type PipeTransform,
 } from '@angular/core';
 
 import {type Usage, type UsageTotals} from '../api/devclaw.model';
@@ -55,13 +53,6 @@ export function formatUsage(usage: Usage | UsageTotals | null, compact = false):
     title,
     reported: true,
   };
-}
-
-@Pipe({name: 'usage'})
-export class UsagePipe implements PipeTransform {
-  public transform(usage: Usage | UsageTotals | null, compact = false): UsageText {
-    return formatUsage(usage, compact);
-  }
 }
 
 /** Token usage as text, the exact counts on hover. */
