@@ -95,3 +95,60 @@ def test_nothing_armed_costs_nothing(monkeypatch) -> None:
     assert _run(state) is None
     assert state.recorded == []
     assert not state.cleared
+
+
+class _ReconcileState(_State):
+    def __init__(self, *, last=None, running: int = 0) -> None:
+        super().__init__(pending=None, running=running)
+        self._last = last
+        self.armed: list[dict] = []
+
+    def deploy_last(self):
+        return self._last
+
+    def set_deploy_pending(self, **kw) -> None:
+        self.armed.append(kw)
+        self._pending = (kw["sha"], kw["goal_id"], kw["since_ms"])
+
+
+def _reconcile(monkeypatch, state, *, head: str, running_sha: str = "old1") -> list[str]:
+    fired: list[str] = []
+
+    async def _fake(slug):
+        fired.append(slug)
+        return True, ""
+
+    async def _head(_slug):
+        return head
+
+    monkeypatch.setattr(self_deploy, "_trigger", _fake)
+    monkeypatch.setattr(self_deploy, "_main_head", _head)
+    monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
+    monkeypatch.setenv("DEVCLAW_GIT_SHA", running_sha)
+    _run(state, now_ms=10_000_000)
+    return fired
+
+
+def test_a_hand_merge_is_deployed_once_quiescent(monkeypatch) -> None:
+    """Main moved with no arm (a merge done by hand): the heartbeat notices the
+    running build trails it, arms, and fires on quiescence — and still holds
+    for a running task."""
+    held = _ReconcileState(running=1)
+    assert _reconcile(monkeypatch, held, head="new2") == []
+    assert held.armed and not held.cleared
+
+    state = _ReconcileState()
+    assert _reconcile(monkeypatch, state, head="new2") == ["lifekit-hq/devclaw"]
+    assert state.armed[0]["sha"] == "new2"
+
+
+def test_reconcile_never_loops_or_double_fires(monkeypatch) -> None:
+    """Level-triggered, so it must not re-arm: in sync, an already-attempted
+    sha (a rollback leaves the box behind), or a deploy still landing."""
+    for state, head in (
+        (_ReconcileState(), "old1"),
+        (_ReconcileState(last={"sha": "new2", "at_ms": 1}), "new2"),
+        (_ReconcileState(last={"sha": "mid", "at_ms": 9_999_000}), "new2"),
+    ):
+        assert _reconcile(monkeypatch, state, head=head) == []
+        assert state.armed == []
