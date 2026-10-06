@@ -52,6 +52,15 @@ pytest          # the tripwire suite — no docker, no claude
 ruff check . && mypy && lint-imports
 ```
 
+The console's Angular successor lives in `frontend/` (Angular 21 on the shared
+`@lifekit-hq/ui` stack); the React `console/` keeps serving `/console` until it
+is cut over. `npm ci` there reads `@lifekit-hq/*` from GitHub Packages, so it
+needs `NODE_AUTH_TOKEN`:
+
+```bash
+cd frontend && npm ci && npm run lint && npm test && npm run build && npm run e2e
+```
+
 ## How it works
 
 | Layer | Code | Role |

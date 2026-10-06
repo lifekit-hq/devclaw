@@ -1,0 +1,35 @@
+{
+  "verdicts": [
+    {
+      "taskId": "t-review-0005",
+      "goalId": "g-done",
+      "createdAt": 1791304136719,
+      "completedAt": 1791304136741,
+      "head": "4f2c9e1a7b3d5c8e0f1a2b3c4d5e6f708192a3b4",
+      "achieved": true,
+      "unreadable": false,
+      "rawError": "",
+      "question": "",
+      "structuralHealth": "good",
+      "concerns": [],
+      "summary": "Digests are computed in UTC and the drift test pins it.",
+      "clauses": [
+        {
+          "clause": "Daily digests use the subscriber's timezone",
+          "satisfied": true,
+          "evidence": "tests/test_digest.py::test_tz_boundary"
+        },
+        {
+          "clause": "No digest is sent twice across a DST change",
+          "satisfied": true,
+          "evidence": "tests/test_digest.py::test_dst_once"
+        }
+      ],
+      "satisfied": 2,
+      "total": 2,
+      "prUrl": "https://github.com/example/widgets/pull/55"
+    }
+  ],
+  "count": 1,
+  "truncated": false
+}

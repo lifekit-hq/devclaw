@@ -32,6 +32,38 @@ jobs:
           -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' \
           .github/workflows/
 
+  # The Angular console (frontend/): lint, unit tests, the production build,
+  # then Playwright against that build with the feeds answered from fixtures.
+  frontend:
+    name: Frontend (lint, test, build, e2e)
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      packages: read  # @lifekit-hq/* from GitHub Packages
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Lint (ng lint)
+        run: npm run lint
+      - name: Test (ng test, vitest runner)
+        run: npm test
+      - name: Build (ng build)
+        run: npm run build
+      - name: E2E (Playwright on the built dist)
+        run: |
+          npx playwright install chromium
+          npm run e2e
+
   secrets-scan:
     name: Secrets scan (gitleaks)
     uses: lifekit-hq/.github/.github/workflows/secrets-scan.yml@v1

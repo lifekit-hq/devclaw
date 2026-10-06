@@ -1,0 +1,38 @@
+{
+  "events": [
+    {
+      "id": 1,
+      "taskId": "t-deliver-0001",
+      "type": "session_started",
+      "source": "runner",
+      "payloadJson": "{\"branch\": \"devclaw/g-blocked\"}",
+      "ts": 1791304136668
+    },
+    {
+      "id": 2,
+      "taskId": "t-deliver-0001",
+      "type": "tool_call",
+      "source": "runner",
+      "payloadJson": "{\"tool\": \"Edit\", \"path\": \"src/reports/export.py\"}",
+      "ts": 1791304136671
+    },
+    {
+      "id": 3,
+      "taskId": "t-deliver-0001",
+      "type": "verify",
+      "source": "runner",
+      "payloadJson": "{\"ok\": true, \"rounds\": 1}",
+      "ts": 1791304136678
+    },
+    {
+      "id": 4,
+      "taskId": "t-deliver-0001",
+      "type": "session_exit",
+      "source": "runner",
+      "payloadJson": "{\"exit\": \"DELIVERED\"}",
+      "ts": 1791304136684
+    }
+  ],
+  "count": 4,
+  "nextCursor": null
+}
