@@ -192,6 +192,16 @@ rollback anchor it read from `/health`, and `latest`, and never an image a
 container still uses. It runs only on the success path (never after a
 rollback) and a cleanup failure never fails the deploy.
 
+### Hand merges and missed arms
+
+The push-to-main job is the fast path. When it never lands (a merge done by
+hand, the instance down at that moment), the heartbeat reconciles: if no deploy
+is armed and the running `git_sha` differs from the head of `main`, it arms one
+itself and the usual quiescence gate fires it. A SHA whose deploy fired (even a
+rolled-back one) is never re-armed, nor is any SHA within an hour of the last
+deploy; an expired or failed arm retries once that hour has passed. The arm
+endpoint likewise ignores a SHA that is already running or already deployed.
+
 ---
 
 ## 6. Cold first-deploy (fresh host, no prior state)
