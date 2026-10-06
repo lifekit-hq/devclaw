@@ -10,10 +10,15 @@
 # not lint), and the console's Playwright e2e (it needs a downloaded browser;
 # CI's frontend job runs it).
 commands:
-  # Mirrors the CI frontend job's `npm ci`.
-  prepare: 'cd frontend && npm ci'
+  # The repo-local Python env (CI's `pip install -e '.[dev]'`, in .venv) and
+  # the CI frontend job's `npm ci`. lint and test call the env's tools by path,
+  # so the host PATH needs neither python nor ruff/mypy/yamllint.
+  prepare: >-
+    { [ -x .venv/bin/python ] || python3 -m venv .venv; } &&
+    .venv/bin/python -m pip install -q -e '.[dev]' &&
+    cd frontend && npm ci
   lint: >-
-    ruff check . && mypy && lint-imports &&
-    yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' .github/workflows/ &&
+    .venv/bin/ruff check . && .venv/bin/mypy && .venv/bin/lint-imports &&
+    .venv/bin/yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' .github/workflows/ &&
     cd frontend && npm run lint
-  test: 'TMPDIR=$(mktemp -d) python -m pytest -q && cd frontend && npm test && npm run build'
+  test: 'TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q && cd frontend && npm test && npm run build'
