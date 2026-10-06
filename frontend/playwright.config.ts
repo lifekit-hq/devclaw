@@ -1,16 +1,21 @@
 import {defineConfig} from '@playwright/test';
 
+// Not 4173 (vite preview's default): the self-hosted runner is shared with other repos' e2e jobs.
+const port = 4417;
+const origin = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
   testDir: './e2e',
   reporter: process.env['CI'] ? 'github' : 'list',
   use: {
-    baseURL: 'http://127.0.0.1:4173',
+    baseURL: origin,
     headless: true,
   },
   webServer: {
     // The tests run against the production build; `npm run build` must have run first.
     command: 'node e2e/serve-dist.mjs',
-    url: 'http://127.0.0.1:4173',
+    env: {PORT: String(port)},
+    url: origin,
     reuseExistingServer: !process.env['CI'],
     timeout: 15_000,
   },
