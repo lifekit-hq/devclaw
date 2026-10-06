@@ -83,7 +83,8 @@ Run on the VPS. Steps 1–3 do **not** touch the running instance.
 workflow with no tag, OR build manually:
 ```bash
 cd /path/to/devclaw && SHA=$(git rev-parse HEAD)
-docker build -f deploy/Dockerfile \
+NODE_AUTH_TOKEN=<read:packages token> docker build -f deploy/Dockerfile \
+  --secret id=npm_token,env=NODE_AUTH_TOKEN \
   --build-arg DEVCLAW_GIT_SHA="$SHA" \
   --build-arg DEVCLAW_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -t ghcr.io/lifekit-hq/devclaw-mcp:$SHA -t ghcr.io/lifekit-hq/devclaw-mcp:latest .
