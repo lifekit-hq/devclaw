@@ -59,6 +59,8 @@ jobs:
         run: npm test
       - name: Build (ng build)
         run: npm run build
+      - name: Browser chrome (lifekit-chrome-check)
+        run: npx lifekit-chrome-check --app dc --name devclaw --base-path /console/ ../devclaw/server/console_dist
       - name: E2E (Playwright on the built dist)
         run: |
           npx playwright install chromium
