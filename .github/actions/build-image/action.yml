@@ -1,0 +1,83 @@
+name: Build image
+description: >-
+  Build one devclaw image natively on the runner and optionally push it as
+  ghcr.io/lifekit-hq/<image>:<sha>. Expects the repository to be checked out.
+  The caller's job permissions decide whether pushing is possible at all.
+
+inputs:
+  image:
+    description: Image name; published as ghcr.io/lifekit-hq/<image>
+    required: true
+  dockerfile:
+    description: Dockerfile path, relative to the repository root (the build context)
+    required: true
+  token:
+    description: Token for the ghcr login and the console stage's npm registry secret (read:packages)
+    required: true
+  push:
+    description: Push :<sha> (and :latest while <sha> is still the head of main) and write the layer cache
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Log in to ghcr
+      uses: docker/login-action@v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.token }}
+
+    # DEVCLAW_BUILT_AT is the image's own build time, surfaced on /health next
+    # to DEVCLAW_GIT_SHA (deploy/Dockerfile bakes both in its last layer).
+    - name: Build identity
+      id: id
+      shell: bash
+      run: echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+    # One build per image, pushed by commit SHA only; :latest is moved in the
+    # next step. The :buildcache registry cache is read by every build and
+    # written only when pushing — a hosted runner starts with an empty local
+    # cache. provenance is off so a push stays a single manifest. The npm
+    # secret is consumed by deploy/Dockerfile's console stage only; the
+    # sandbox build ignores it and the two build args.
+    - name: Build image
+      uses: docker/build-push-action@v7
+      with:
+        context: ./
+        file: ${{ inputs.dockerfile }}
+        push: ${{ inputs.push == 'true' }}
+        provenance: false
+        tags: ghcr.io/lifekit-hq/${{ inputs.image }}:${{ github.sha }}
+        build-args: |
+          DEVCLAW_GIT_SHA=${{ github.sha }}
+          DEVCLAW_BUILT_AT=${{ steps.id.outputs.built_at }}
+        labels: |
+          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+        secrets: |
+          npm_token=${{ inputs.token }}
+        cache-from: type=registry,ref=ghcr.io/lifekit-hq/${{ inputs.image }}:buildcache
+        cache-to: ${{ inputs.push == 'true' && format('type=registry,ref=ghcr.io/lifekit-hq/{0}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true', inputs.image) || '' }}
+
+    # :latest is the compose file's fallback tag and the box's image cleanup
+    # keeps it, so it must never move backwards: a slower older build that
+    # finishes after a newer commit landed leaves it alone.
+    - name: Move :latest
+      if: inputs.push == 'true'
+      shell: bash
+      env:
+        IMAGE: ghcr.io/lifekit-hq/${{ inputs.image }}
+        SHA: ${{ github.sha }}
+      run: |
+        head=$(git ls-remote origin refs/heads/main | cut -f1)
+        if [ "$head" = "$SHA" ]; then
+          # a carbon copy of the :<sha> manifest, not a new index around it
+          docker buildx imagetools create --prefer-index=false -t "$IMAGE:latest" "$IMAGE:$SHA"
+        else
+          echo "Skipping :latest: $SHA is no longer the head of main ($head)"
+        fi

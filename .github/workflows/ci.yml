@@ -11,17 +11,17 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # NB: every job stays on self-hosted. devclaw is a PUBLIC repo but already
-  # runs the strict all_external_contributors policy, and its tests may
-  # depend on the VPS sandbox — hosted runners are not a fit here even though
-  # they work fine for this repo's release-please job.
+  # Every job runs on a GitHub-hosted runner: the suite is fully stubbed (no
+  # docker, no claude), and on the box's self-hosted runner CI queued behind
+  # deploys. The box keeps only what must run there — deploy.yml's arm and
+  # deploy jobs.
   ci:
     name: Tests + Lint (pytest, ruff, mypy, import-linter, yamllint)
     uses: lifekit-hq/.github/.github/workflows/python-ci.yml@v1
     with:
-      runner: '"self-hosted"'
+      # the Python the devclaw-mcp image runs (node:22-trixie ships 3.13)
+      python-version: "3.13"
       install: -e '.[dev]'
-      cache-key-files: "pyproject.toml"
       run: |
         set -euo pipefail
         TMPDIR=$(mktemp -d -p "$RUNNER_TEMP") python -m pytest -q
@@ -36,7 +36,7 @@ jobs:
   # then Playwright against that build with the feeds answered from fixtures.
   frontend:
     name: Frontend (lint, test, build, e2e)
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: read  # @lifekit-hq/* from GitHub Packages
@@ -61,16 +61,15 @@ jobs:
         run: npm run build
       - name: E2E (Playwright on the built dist)
         run: |
-          npx playwright install chromium
+          npx playwright install --with-deps chromium
           npm run e2e
 
   secrets-scan:
     name: Secrets scan (gitleaks)
     uses: lifekit-hq/.github/.github/workflows/secrets-scan.yml@v1
-    with:
-      runner: '"self-hosted"'
 
 # NB: there is deliberately NO deploy job here. A merge to main runs tests +
 # lint only — it MUST NOT rebuild-and-recreate the live VPS mid-run (spec 005,
-# FR-008), which used to SIGKILL in-flight overnight goal sandboxes. Deploy is
-# operator-triggered via .github/workflows/deploy.yml (workflow_dispatch).
+# FR-008), which used to SIGKILL in-flight overnight goal sandboxes. Images are
+# built off the box by docker-build.yml; the deploy runs through
+# .github/workflows/deploy.yml (workflow_dispatch, armed by a published build).

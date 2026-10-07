@@ -5,8 +5,8 @@
 #
 # It touches devclaw services ONLY: openclaw-gateway, openclaw-cli,
 # lifekit-dashboard and notify-relay (the lifekit-stack project) are never
-# recreated (SC-001). No build here — CI (.github/workflows/deploy.yml) builds
-# and pushes the images; this script pulls and recreates.
+# recreated (SC-001). No build here — CI (.github/workflows/docker-build.yml)
+# builds and pushes the images off the box; this script pulls and recreates.
 #
 # Usage:
 #   deploy-devclaw.sh [TAG]        # default TAG=latest; pass a SHA to roll back
