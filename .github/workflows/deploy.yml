@@ -12,15 +12,19 @@ name: Deploy devclaw
 #     automatic rollback to the previously running SHA, instance-dead relay
 #     ping if even the rollback fails.
 on:
-  # A merge to main ARMS a self-deploy; it does not deploy here. The instance
-  # owns the timing, because it is the only place that can see whether a task
-  # is running — see the `arm` job below.
-  push:
+  # A main commit whose images Docker Build published ARMS a self-deploy; it
+  # does not deploy here. The instance owns the timing, because it is the only
+  # place that can see whether a task is running — see the `arm` job below.
+  # Only a successful build of a push to main arms, so a failed or partial
+  # publish never reaches the box.
+  workflow_run:
+    workflows: [Docker Build]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Image tag to deploy (blank = build this commit and deploy its SHA)'
+        description: 'Image tag to deploy (blank = this commit, once Docker Build has published its SHA)'
         required: false
         default: ''
       auto:
@@ -28,12 +32,10 @@ on:
         required: false
         default: 'false'
 
-permissions:
-  contents: read
-  packages: write        # push devclaw-mcp + devclaw-sandbox to ghcr.io
+permissions: {}
 
 jobs:
-  # ---- arm lane (push to main) ------------------------------------------
+  # ---- arm lane (Docker Build published a main commit) ---------------------
   # Tells the instance "main moved". The heartbeat then waits for task
   # quiescence and fires this same workflow's auto lane (spec 025 US2), so an
   # in-flight sandbox is never SIGKILLed by a recreate. Runs on the self-hosted
@@ -44,10 +46,16 @@ jobs:
   # worse information, and a race between them is a killed sandbox.
   arm:
     name: Arm a self-deploy (instance picks the moment)
-    if: github.event_name == 'push'
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
     runs-on: self-hosted
+    permissions: {}
     steps:
       - name: Arm
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -uo pipefail
           # The token is read from the box's own env file, never from an Actions
@@ -59,7 +67,7 @@ jobs:
           code=$(curl -sS -o /tmp/arm.out -w '%{http_code}' -X POST \
             -H 'Content-Type: application/json' \
             ${TOKEN:+-H "Authorization: Bearer $TOKEN"} \
-            -d "{\"sha\": \"${GITHUB_SHA}\"}" \
+            -d "{\"sha\": \"${SHA}\"}" \
             http://127.0.0.1:18791/control/deploy-pending) || code=000
           echo "arm → HTTP $code"; cat /tmp/arm.out 2>/dev/null || true; echo
           if [ "$code" != "200" ]; then
@@ -67,73 +75,98 @@ jobs:
             exit 1
           fi
 
+  # ---- deploy lane (workflow_dispatch) -------------------------------------
+  # Resolves the tag and waits — on a hosted runner, so the box's runner is not
+  # held — until ghcr has both images for it. A blank tag is this commit's SHA,
+  # whose Docker Build may still be running (a hand-dispatched deploy of main's
+  # head). The auto lane names the armed SHA, whose images are already
+  # published. A named tag (a rollback) must already exist. Fails before the
+  # box is touched.
+  images:
+    name: Wait for the published images
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      actions: read      # the Docker Build run for this commit
+      packages: read     # manifest reads on ghcr.io
+    outputs:
+      tag: ${{ steps.id.outputs.tag }}
+    steps:
+      - name: Resolve the tag
+        id: id
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          tag="$(tr -d '[:space:]' <<< "${INPUT_TAG:-$GITHUB_SHA}")"
+          if ! [[ $tag =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "::error::'$tag' is not a valid image tag"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "deploying tag $tag"
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Wait for ghcr to carry both images
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.id.outputs.tag }}
+          NAMED: ${{ github.event.inputs.tag != '' }}
+        run: |
+          set -uo pipefail
+          published() {
+            docker manifest inspect "ghcr.io/lifekit-hq/devclaw-mcp:$TAG" >/dev/null 2>&1 &&
+            docker manifest inspect "ghcr.io/lifekit-hq/devclaw-sandbox:$TAG" >/dev/null 2>&1
+          }
+          deadline=$((SECONDS + 45 * 60)) seen=false
+          until published; do
+            if [[ $NAMED == true ]]; then
+              echo "::error::ghcr.io/lifekit-hq/devclaw-{mcp,sandbox}:$TAG not found — was that commit published by Docker Build?"
+              exit 1
+            fi
+            run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow docker-build.yml --commit "$TAG" \
+              --event push --limit 1 --json status,conclusion,url \
+              --jq '.[] | "\(.status) \(.conclusion) \(.url)"' 2>/dev/null || true)"
+            read -r status conclusion url <<< "$run"
+            [[ -n $status ]] && seen=true
+            if [[ $status == completed ]]; then
+              published && break   # it finished between the two reads
+              echo "::error::Docker Build for $TAG finished '$conclusion' without publishing both images: $url"
+              exit 1
+            fi
+            # Only a push to main publishes; a commit with no such run after a
+            # few minutes (a dispatch from a branch) never will.
+            if [[ $seen == false ]] && (( SECONDS >= 5 * 60 )); then
+              echo "::error::no Docker Build push run for $TAG — only a commit pushed to main is published"
+              exit 1
+            fi
+            if (( SECONDS >= deadline )); then
+              echo "::error::no published images for $TAG after 45 min (Docker Build: ${run:-no run found})"
+              exit 1
+            fi
+            echo "waiting for Docker Build of $TAG (${status:-no run yet})"
+            sleep 30
+          done
+          echo "ghcr carries devclaw-mcp:$TAG and devclaw-sandbox:$TAG"
+
   deploy:
-    name: Build → push (ghcr) → deploy to lifekit-vps
+    name: Pull (ghcr) → deploy to lifekit-vps
+    needs: images
     if: github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     concurrency:
       group: deploy-lifekit-vps
       cancel-in-progress: false
-    env:
-      REGISTRY: ghcr.io/lifekit-hq
+    permissions:
+      contents: read
+      packages: read     # pull devclaw-mcp + devclaw-sandbox from ghcr.io
     steps:
       - uses: actions/checkout@v4
 
-      # If a tag input is given we skip build and just (re)deploy that tag —
-      # this is the rollback path (deploy a prior SHA without a source revert).
-      - name: Resolve build identity
-        id: id
-        run: |
-          SHA="$(git rev-parse HEAD)"
-          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
-          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            echo "deploy_tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-            echo "do_build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "deploy_tag=${SHA}" >> "$GITHUB_OUTPUT"
-            echo "do_build=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Unconditional — the deploy step PULLS the (private) package even when
-      # the build is skipped; gating login on do_build broke every tag/rollback
-      # dispatch with "error from registry: denied" (dashboard cutover,
-      # 2026-08-16).
       - name: Log in to ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      # devclaw-mcp — built FROM the checked-out source (COPY, no git clone),
-      # SHA baked so /health reports exactly this commit. Cache-respecting.
-      # The console stage installs @lifekit-hq/* from GitHub Packages with the
-      # read:packages NODE_AUTH_TOKEN, passed as a BuildKit secret: mounted for
-      # the one `npm ci`, never written into a layer or the image history.
-      - name: Build + push devclaw-mcp
-        if: steps.id.outputs.do_build == 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
-        run: |
-          SHA="${{ steps.id.outputs.sha }}"
-          docker build -f deploy/Dockerfile \
-            --secret id=npm_token,env=NODE_AUTH_TOKEN \
-            --build-arg DEVCLAW_GIT_SHA="${SHA}" \
-            --build-arg DEVCLAW_BUILT_AT="${{ steps.id.outputs.built_at }}" \
-            -t "${REGISTRY}/devclaw-mcp:${SHA}" \
-            -t "${REGISTRY}/devclaw-mcp:latest" .
-          docker push "${REGISTRY}/devclaw-mcp:${SHA}"
-          docker push "${REGISTRY}/devclaw-mcp:latest"
-
-      # devclaw-sandbox — the per-task image the MCP server spawns, built from
-      # the SAME source (.sandcastle/Dockerfile) so it matches the MCP version
-      # without the md5-verify crutch (FR-002).
-      - name: Build + push devclaw-sandbox
-        if: steps.id.outputs.do_build == 'true'
-        run: |
-          SHA="${{ steps.id.outputs.sha }}"
-          docker build -f .sandcastle/Dockerfile \
-            -t "${REGISTRY}/devclaw-sandbox:${SHA}" \
-            -t "${REGISTRY}/devclaw-sandbox:latest" .
-          docker push "${REGISTRY}/devclaw-sandbox:${SHA}"
-          docker push "${REGISTRY}/devclaw-sandbox:latest"
 
       # Scoped deploy — pulls the tag, recreates ONLY the devclaw project,
       # verifies /health, fails loud. OpenClaw-side containers are untouched.
@@ -161,7 +194,7 @@ jobs:
           DEVCLAW_NOTIFY_URL: ${{ secrets.DEVCLAW_NOTIFY_URL }}
         run: |
           if [ "${{ github.event.inputs.auto }}" = "true" ]; then
-            bash deploy/deploy-devclaw-auto.sh "${{ steps.id.outputs.deploy_tag }}"
+            bash deploy/deploy-devclaw-auto.sh "${{ needs.images.outputs.tag }}"
           else
-            bash deploy/deploy-devclaw.sh "${{ steps.id.outputs.deploy_tag }}"
+            bash deploy/deploy-devclaw.sh "${{ needs.images.outputs.tag }}"
           fi

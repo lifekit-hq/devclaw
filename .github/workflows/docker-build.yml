@@ -1,0 +1,75 @@
+name: Docker Build
+
+# Builds devclaw's two images on a GitHub-hosted arm64 runner — never on the
+# box (the 2026-10-06 global OOM was two on-box `docker build`s). Every push to
+# main publishes both as ghcr.io/lifekit-hq/<image>:<sha>; Deploy devclaw
+# (deploy.yml) arms on this workflow's success and the box pulls those exact
+# tags. Pull requests build the same images without pushing, so a Dockerfile
+# break is a red PR, not a failed self-deploy.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  # PRs and dispatches: build, never push. Read-only token, so a PR build
+  # cannot publish even by mistake; the layer cache is read from ghcr only.
+  build:
+    if: github.event_name != 'push'
+    name: build (${{ matrix.image }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: devclaw-mcp
+            dockerfile: deploy/Dockerfile
+          - image: devclaw-sandbox
+            dockerfile: .sandcastle/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        uses: ./.github/actions/build-image
+        with:
+          image: ${{ matrix.image }}
+          dockerfile: ${{ matrix.dockerfile }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Pushes to main: build and publish :<sha> (+ :latest while still the head of
+  # main) and refresh the :buildcache layer cache. The only job with write access.
+  publish:
+    if: github.event_name == 'push'
+    name: publish (${{ matrix.image }})
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: devclaw-mcp
+            dockerfile: deploy/Dockerfile
+          - image: devclaw-sandbox
+            dockerfile: .sandcastle/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and push
+        uses: ./.github/actions/build-image
+        with:
+          image: ${{ matrix.image }}
+          dockerfile: ${{ matrix.dockerfile }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          push: 'true'

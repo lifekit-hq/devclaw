@@ -55,7 +55,7 @@ def test_a_running_task_holds_the_deploy(monkeypatch) -> None:
     fired: list[str] = []
     monkeypatch.setattr(
         self_deploy, "_trigger",
-        lambda slug: fired.append(slug) or (True, ""),  # type: ignore[func-returns-value]
+        lambda slug, sha: fired.append(slug) or (True, ""),  # type: ignore[func-returns-value]
     )
     monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
 
@@ -70,7 +70,7 @@ def test_quiescence_releases_the_held_deploy(monkeypatch) -> None:
     last task settles, the same armed deploy fires on the next heartbeat."""
     fired: list[str] = []
 
-    async def _fake(slug):
+    async def _fake(slug, sha):
         fired.append(slug)
         return True, ""
 
@@ -86,7 +86,7 @@ def test_quiescence_releases_the_held_deploy(monkeypatch) -> None:
 def test_nothing_armed_costs_nothing(monkeypatch) -> None:
     """The idle path stays a single meta read — no subprocess, no network, no
     cognition. The heartbeat runs this every sweep forever."""
-    def _boom(_slug):  # pragma: no cover — must never be reached
+    def _boom(_slug, _sha):  # pragma: no cover — must never be reached
         raise AssertionError("triggered with nothing armed")
 
     monkeypatch.setattr(self_deploy, "_trigger", _boom)
@@ -111,18 +111,23 @@ class _ReconcileState(_State):
         self._pending = (kw["sha"], kw["goal_id"], kw["since_ms"])
 
 
-def _reconcile(monkeypatch, state, *, head: str, running_sha: str = "old1") -> list[str]:
+def _reconcile(monkeypatch, state, *, head: str, running_sha: str = "old1",
+               images_ready: bool = True) -> list[str]:
     fired: list[str] = []
 
-    async def _fake(slug):
+    async def _fake(slug, sha):
         fired.append(slug)
         return True, ""
 
     async def _head(_slug):
         return head
 
+    async def _ready(_slug, _sha):
+        return images_ready
+
     monkeypatch.setattr(self_deploy, "_trigger", _fake)
     monkeypatch.setattr(self_deploy, "_main_head", _head)
+    monkeypatch.setattr(self_deploy, "_head_images_ready", _ready)
     monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
     monkeypatch.setenv("DEVCLAW_GIT_SHA", running_sha)
     _run(state, now_ms=10_000_000)
@@ -161,3 +166,38 @@ def test_an_unfired_arm_is_retried_after_the_settle_window(monkeypatch) -> None:
         state = _ReconcileState(last={"sha": "new2", "at_ms": 1, "outcome": outcome})
         assert _reconcile(monkeypatch, state, head="new2") == ["lifekit-hq/devclaw"]
         assert state.armed[0]["sha"] == "new2"
+
+
+def test_a_self_deploy_is_never_armed_before_the_heads_images_are_published(monkeypatch) -> None:
+    """Docker Build still running (or unreadable) for main's head: reconcile arms
+    nothing, so no deploy fires and waits on images while sessions start. Once
+    the build completed green the next heartbeat arms and fires."""
+    building = _ReconcileState()
+    assert _reconcile(monkeypatch, building, head="new2", images_ready=False) == []
+    assert building.armed == [] and building.deploy_pending() is None
+
+    built = _ReconcileState()
+    assert _reconcile(monkeypatch, built, head="new2", images_ready=True) == ["lifekit-hq/devclaw"]
+    assert built.armed[0]["sha"] == "new2"
+
+
+def test_a_self_deploy_deploys_exactly_the_armed_published_sha(monkeypatch) -> None:
+    """N was armed with its images published; main has since moved to N+1. The
+    dispatch names N, never N+1 (whose build may be running) and never blank. A
+    blank armed sha keeps the no-tag dispatch."""
+    for armed, tag in (("N", "N"), ("", "")):
+        dispatched: list[tuple[str, str]] = []
+
+        async def _fake(slug, sha):
+            dispatched.append((slug, sha))
+            return True, ""
+
+        async def _head(_slug):
+            return "N+1"
+
+        monkeypatch.setattr(self_deploy, "_trigger", _fake)
+        monkeypatch.setattr(self_deploy, "_main_head", _head)
+        monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
+
+        assert _run(_State(pending=(armed, "ci", 999_000), running=0)) == "triggered"
+        assert dispatched == [("lifekit-hq/devclaw", tag)]

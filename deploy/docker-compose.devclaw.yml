@@ -13,8 +13,9 @@
 # RUNTIME through shared, externally-declared seams — the `lifekit-shared`
 # network and the `devclaw-state` volume — so neither project owns the other.
 #
-# Images are pulled by tag from ghcr.io (built + pushed by devclaw's
-# .github/workflows/deploy.yml). No `build:` here — deploy pulls, never builds.
+# Images are pulled by tag from ghcr.io (built on a GitHub-hosted arm64 runner
+# and pushed by devclaw's .github/workflows/docker-build.yml). No `build:`
+# here — deploy pulls, never builds.
 # The former ops-agent watchdog is gone (tinyspec deadman-metrics, 2026-09-06):
 # devclaw-mcp exposes /metrics and the box's Prometheus + Grafana (lifekit-stack)
 # hold the dead-man alert. Its docker-socket mount and read-only state mounts

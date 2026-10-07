@@ -3,9 +3,11 @@
 Spec: [`specs/005-devclaw-self-deploy/spec.md`](../../specs/005-devclaw-self-deploy/spec.md).
 
 devclaw now owns its own deployment. Its image is built **from the checked-out
-source** (`deploy/Dockerfile` — no `git clone` inside the build), pushed to
-`ghcr.io/lifekit-hq/devclaw-mcp` + `…/devclaw-sandbox` by
-`.github/workflows/deploy.yml`, and run as its **own compose project**
+source** (`deploy/Dockerfile` — no `git clone` inside the build) on a
+GitHub-hosted arm64 runner — never on the box — and pushed to
+`ghcr.io/lifekit-hq/devclaw-mcp` + `…/devclaw-sandbox` as `:<commit sha>` by
+`.github/workflows/docker-build.yml` on every push to main. The box only pulls
+those exact tags (`.github/workflows/deploy.yml`) and runs them as its **own compose project**
 (`docker compose -p devclaw -f deploy/docker-compose.devclaw.yml`), separate
 from lifekit-stack's OpenClaw project. The two stay integrated at runtime through
 two externally-declared seams: the `lifekit-shared` network and the
@@ -23,18 +25,20 @@ two externally-declared seams: the `lifekit-shared` network and the
 | | Before (monolith) | After (self-deploy) |
 |---|---|---|
 | Image build | lifekit-stack `Dockerfile`, `git clone devclaw@main` at build | devclaw `deploy/Dockerfile`, `COPY` checked-out source |
-| Cache | forced `--no-cache` every deploy + md5-verify crutch | normal cache-respecting build |
+| Cache | forced `--no-cache` every deploy + md5-verify crutch | normal cache-respecting build (the `:buildcache` registry cache) |
+| Where it builds | on the box | GitHub-hosted arm64 (`docker-build.yml`); the box pulls by SHA and builds nothing |
 | Where it runs | `compose` project (with gateway, dashboard, …) | own `devclaw` project |
-| Deploy trigger | `ci.yml` deploy job auto-fires on every push to main | `deploy.yml` `workflow_dispatch`, two lanes: manual, and `auto=true` self-triggered by devclaw after a devclaw-repo merge-on-close via `deploy/deploy-devclaw-auto.sh` (probe + one rollback, spec 025 US2) |
+| Deploy trigger | `ci.yml` deploy job auto-fires on every push to main | `deploy.yml` `workflow_dispatch`, two lanes: manual, and `auto=true` self-triggered by devclaw once a published main commit armed it (`docker-build.yml` succeeded) and no session runs, via `deploy/deploy-devclaw-auto.sh` (probe + one rollback, spec 025 US2) |
 | Blast radius | full-stack rebuild SIGKILLs in-flight goals | devclaw-only recreate; OpenClaw untouched |
 
 ---
 
 ## 1. Prerequisites (once)
 
-- The self-hosted `lifekit-vps` runner can push to ghcr: the `deploy.yml` job
-  logs in with `GITHUB_TOKEN` (`packages: write`). Confirm the `lifekit-hq`
-  packages allow the repo to publish.
+- The repo can publish its `lifekit-hq` packages: `docker-build.yml` pushes
+  from a hosted runner with the job's `GITHUB_TOKEN` (`packages: write`), and
+  the self-hosted `lifekit-vps` runner's `deploy.yml` job pulls with its own
+  `GITHUB_TOKEN` (`packages: read`). No other registry credential exists.
 - The env file the compose fragment + deploy script read
   (`DEVCLAW_ENV_FILE`, default `/srv/devclaw/.env`) exists and is
   **devclaw-owned** — reading another entity's env file (the old
@@ -79,8 +83,9 @@ two externally-declared seams: the `lifekit-shared` network and the
 
 Run on the VPS. Steps 1–3 do **not** touch the running instance.
 
-**1. Build + push the images** (no live change yet). Trigger the `Deploy devclaw`
-workflow with no tag, OR build manually:
+**1. Build + push the images** (no live change yet). `Docker Build` publishes
+every commit pushed to main; break-glass only (ghcr or hosted runners down),
+build manually:
 ```bash
 cd /path/to/devclaw && SHA=$(git rev-parse HEAD)
 NODE_AUTH_TOKEN=<read:packages token> docker build -f deploy/Dockerfile \
@@ -195,10 +200,15 @@ rollback) and a cleanup failure never fails the deploy.
 
 ### Hand merges and missed arms
 
-The push-to-main job is the fast path. When it never lands (a merge done by
-hand, the instance down at that moment), the heartbeat reconciles: if no deploy
-is armed and the running `git_sha` differs from the head of `main`, it arms one
-itself and the usual quiescence gate fires it. A SHA whose deploy fired (even a
+The `arm` job is the fast path: it runs once `Docker Build` has published a
+main commit's images. When it never lands (the instance was down at that
+moment, a hand merge), the heartbeat reconciles: if no deploy is armed, the
+running `git_sha` differs from the head of `main`, and that head's `Docker
+Build` push run completed successfully, it arms one itself and the usual
+quiescence gate fires it. A commit whose build failed or is still running is
+never armed; a failed build shows only as a red `Docker Build` run. The auto
+dispatch names the armed SHA as the tag, so it deploys an already published
+image even when `main` has moved past it. A SHA whose deploy fired (even a
 rolled-back one) is never re-armed, nor is any SHA within an hour of the last
 deploy; an expired or failed arm retries once that hour has passed. The arm
 endpoint likewise ignores a SHA that is already running or already deployed.
