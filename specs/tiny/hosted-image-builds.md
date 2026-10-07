@@ -39,7 +39,7 @@ the compose project and container names do not change.
 | `.github/actions/build-image/action.yml` | One image: buildx, the `:buildcache` registry cache, push by SHA, move `:latest` |
 | `.github/workflows/deploy.yml` | `arm` after a published build; `images` (hosted wait); `deploy` (self-hosted, pull only) |
 | `.github/workflows/ci.yml` | Hosted runners; Python 3.13 matches the image |
-| `devclaw/goal/self_deploy.py` | Unchanged: it dispatches `deploy.yml -f auto=true` (blank tag = main's head) |
+| `devclaw/goal/self_deploy.py` | `reconcile` arms only a head whose Docker Build push run succeeded; the auto dispatch passes the armed SHA as `-f tag=` (blank = this commit) |
 
 ## Requirements
 
@@ -48,17 +48,18 @@ the compose project and container names do not change.
   the login it already used. There is no new secret, token or host change.
 - The console stage's `npm_token` is the job's `GITHUB_TOKEN`
   (`packages: read`), the same credential the frontend CI job uses for `npm ci`.
-- A dispatch whose commit has no images yet waits for its Docker Build run. The
-  reconcile path can fire before the build ends. The dispatch fails before
-  touching the box if that run failed, if no push run exists, or after 45 min.
-  A named tag (a rollback) must already exist.
+- A dispatch whose commit has no images yet (a hand-run blank tag) waits for
+  its Docker Build run. The dispatch fails before touching the box if that run
+  failed, if no push run exists, or after 45 min. A named tag (a rollback, or
+  the armed SHA of an auto dispatch) must already exist.
 
 ## Rejected alternatives
 
 - **Keep the arm on `push`**: the instance would fire a deploy as soon as it
   is quiescent, which is often before the hosted build ends, and the wait
-  would then always be paid. Arming on the published build makes the wait the
-  exception: only the reconcile path hits it.
+  would then always be paid. Arming on the published build, and gating
+  `reconcile` on the same fact, makes the wait the exception: only a hand-run
+  blank-tag dispatch hits it.
 - **Wait on the self-hosted runner**: that holds the box's one devclaw runner
   for the whole build. The wait job is hosted for that reason.
 - **Trivy gate as in finance-sentry**: a new failure mode on the first
