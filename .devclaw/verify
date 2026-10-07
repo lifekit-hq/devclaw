@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # What CI gates on a PR (.github/workflows/ci.yml): the stubbed pytest suite
 # plus ruff + mypy + import-linter + yamllint, and the Angular console's lint,
-# unit tests and build (frontend/). Keep it honest — a check CI
+# unit tests, build and chrome check (frontend/). Keep it honest — a check CI
 # runs that this script skips is a red CI later.
 #
 # Deliberately NOT here, with reason:
@@ -38,3 +38,4 @@ npm ci --no-audit --no-fund
 npm run lint
 npm test
 npm run build
+npx lifekit-chrome-check --app dc --name devclaw --base-path /console/ ../devclaw/server/console_dist
