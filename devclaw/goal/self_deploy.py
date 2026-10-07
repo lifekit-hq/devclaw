@@ -12,8 +12,9 @@ from .. import config as _config
 from .github import gh
 
 
-async def trigger_workflow(slug: str) -> "tuple[bool, str]":
-    rc, out = await gh("workflow", "run", "deploy.yml", "-R", slug, "-f", "auto=true")
+async def trigger_workflow(slug: str, sha: str = "") -> "tuple[bool, str]":
+    tag = ["-f", f"tag={sha}"] if sha else []
+    rc, out = await gh("workflow", "run", "deploy.yml", "-R", slug, "-f", "auto=true", *tag)
     return rc == 0, out
 
 
@@ -88,7 +89,7 @@ async def maybe_trigger(state, *, now_ms: int) -> "str | None":
                                  at_ms=now_ms, detail="DEVCLAW_SELF_REPO unset")
         state.clear_deploy_pending()
         return "trigger_failed"
-    ok, out = await _trigger(slug)
+    ok, out = await _trigger(slug, sha)
     outcome = "triggered" if ok else "trigger_failed"
     state.record_deploy_last(sha=sha, goal_id=goal_id, outcome=outcome, at_ms=now_ms, detail=out[:300])
     state.clear_deploy_pending()

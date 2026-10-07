@@ -201,16 +201,17 @@ rollback) and a cleanup failure never fails the deploy.
 ### Hand merges and missed arms
 
 The `arm` job is the fast path: it runs once `Docker Build` has published a
-main commit's images. When it never lands (the build failed, the instance was
-down at that moment), the heartbeat reconciles: if no deploy
-is armed and the running `git_sha` differs from the head of `main`, it arms one
-itself and the usual quiescence gate fires it. A SHA whose deploy fired (even a
+main commit's images. When it never lands (the instance was down at that
+moment, a hand merge), the heartbeat reconciles: if no deploy is armed, the
+running `git_sha` differs from the head of `main`, and that head's `Docker
+Build` push run completed successfully, it arms one itself and the usual
+quiescence gate fires it. A commit whose build failed or is still running is
+never armed; a failed build shows only as a red `Docker Build` run. The auto
+dispatch names the armed SHA as the tag, so it deploys an already published
+image even when `main` has moved past it. A SHA whose deploy fired (even a
 rolled-back one) is never re-armed, nor is any SHA within an hour of the last
 deploy; an expired or failed arm retries once that hour has passed. The arm
 endpoint likewise ignores a SHA that is already running or already deployed.
-A deploy the heartbeat fires before its commit's images exist waits for them
-on a hosted runner (`deploy.yml`'s `images` job, up to 45 min) and fails
-before the box is touched if `Docker Build` for that commit failed.
 
 ---
 

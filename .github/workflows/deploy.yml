@@ -78,9 +78,10 @@ jobs:
   # ---- deploy lane (workflow_dispatch) -------------------------------------
   # Resolves the tag and waits — on a hosted runner, so the box's runner is not
   # held — until ghcr has both images for it. A blank tag is this commit's SHA,
-  # whose Docker Build may still be running: the heartbeat can fire a deploy of
-  # main's head (the reconcile path) before its images are published. A named
-  # tag (a rollback) must already exist. Fails before the box is touched.
+  # whose Docker Build may still be running (a hand-dispatched deploy of main's
+  # head). The auto lane names the armed SHA, whose images are already
+  # published. A named tag (a rollback) must already exist. Fails before the
+  # box is touched.
   images:
     name: Wait for the published images
     if: github.event_name == 'workflow_dispatch'
