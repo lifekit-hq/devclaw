@@ -1,7 +1,8 @@
 """Self-deploy on merge: the instance redeploys itself onto its own merged
-main once no session is running. Armed by the deploy workflow's push-to-main
-job (``POST /control/deploy-pending``) or, when that never lands (a hand
-merge), by ``reconcile`` noticing the running build trails main; fired here."""
+main once no session is running. Armed by deploy.yml's ``arm`` job once Docker
+Build published a main commit (``POST /control/deploy-pending``) or, when that
+never lands (a hand merge), by ``reconcile`` noticing the running build trails
+main and that head's images are published; fired here."""
 
 from __future__ import annotations
 
@@ -29,13 +30,24 @@ async def main_head(slug: str) -> str:
 _main_head = main_head
 
 
+async def head_images_ready(slug: str, sha: str) -> bool:
+    rc, out = await gh("api", f"repos/{slug}/actions/workflows/docker-build.yml/runs"
+                       f"?head_sha={sha}&event=push&per_page=1",
+                       "--jq", r'.workflow_runs[0] | "\(.status) \(.conclusion)"')
+    return rc == 0 and out.strip() == "completed success"
+
+
+_head_images_ready = head_images_ready
+
+
 async def reconcile(state, *, now_ms: int) -> bool:
     """Arm a deploy when the running build trails main and no arm is pending.
 
-    The push-to-main arm job is the fast path; a merge done by hand, or an arm
+    deploy.yml's ``arm`` job is the fast path; a merge done by hand, or an arm
     that could not reach the instance, leaves main ahead with nothing armed.
-    A SHA whose deploy fired is never re-armed, so a rollback cannot loop; an
-    expired or failed arm retries once the settle window has passed. Never raises."""
+    Nothing arms before the head's images are published. A SHA whose deploy
+    fired is never re-armed, so a rollback cannot loop; an expired or failed
+    arm retries once the settle window has passed. Never raises."""
     running, slug = _config.git_sha(), _config.self_repo()
     if not running or not slug or state.deploy_pending() is not None:
         return False
@@ -44,6 +56,8 @@ async def reconcile(state, *, now_ms: int) -> bool:
         return False
     head = await _main_head(slug)
     if not head or head == running or (head == last.get("sha") and last.get("outcome") == "triggered"):
+        return False
+    if not await _head_images_ready(slug, head):
         return False
     state.set_deploy_pending(sha=head, goal_id="reconcile", since_ms=now_ms)
     sys.stderr.write(f"goal-layer: running {running[:12]} trails main {head[:12]}; self-deploy armed\n")

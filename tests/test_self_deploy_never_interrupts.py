@@ -111,7 +111,8 @@ class _ReconcileState(_State):
         self._pending = (kw["sha"], kw["goal_id"], kw["since_ms"])
 
 
-def _reconcile(monkeypatch, state, *, head: str, running_sha: str = "old1") -> list[str]:
+def _reconcile(monkeypatch, state, *, head: str, running_sha: str = "old1",
+               images_ready: bool = True) -> list[str]:
     fired: list[str] = []
 
     async def _fake(slug):
@@ -121,8 +122,12 @@ def _reconcile(monkeypatch, state, *, head: str, running_sha: str = "old1") -> l
     async def _head(_slug):
         return head
 
+    async def _ready(_slug, _sha):
+        return images_ready
+
     monkeypatch.setattr(self_deploy, "_trigger", _fake)
     monkeypatch.setattr(self_deploy, "_main_head", _head)
+    monkeypatch.setattr(self_deploy, "_head_images_ready", _ready)
     monkeypatch.setenv("DEVCLAW_SELF_REPO", "lifekit-hq/devclaw")
     monkeypatch.setenv("DEVCLAW_GIT_SHA", running_sha)
     _run(state, now_ms=10_000_000)
@@ -161,3 +166,16 @@ def test_an_unfired_arm_is_retried_after_the_settle_window(monkeypatch) -> None:
         state = _ReconcileState(last={"sha": "new2", "at_ms": 1, "outcome": outcome})
         assert _reconcile(monkeypatch, state, head="new2") == ["lifekit-hq/devclaw"]
         assert state.armed[0]["sha"] == "new2"
+
+
+def test_a_self_deploy_is_never_armed_before_the_heads_images_are_published(monkeypatch) -> None:
+    """Docker Build still running (or unreadable) for main's head: reconcile arms
+    nothing, so no deploy fires and waits on images while sessions start. Once
+    the build completed green the next heartbeat arms and fires."""
+    building = _ReconcileState()
+    assert _reconcile(monkeypatch, building, head="new2", images_ready=False) == []
+    assert building.armed == [] and building.deploy_pending() is None
+
+    built = _ReconcileState()
+    assert _reconcile(monkeypatch, built, head="new2", images_ready=True) == ["lifekit-hq/devclaw"]
+    assert built.armed[0]["sha"] == "new2"

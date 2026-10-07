@@ -1,6 +1,7 @@
 """Instance health + dispatch control: ``/health``, ``/node.json``,
 ``/control.json``, ``/control/pause|resume|schedule``, and the self-deploy
-arm ``/control/deploy-pending`` the deploy workflow posts on every push to main."""
+arm ``/control/deploy-pending`` the deploy workflow's ``arm`` job posts once
+Docker Build has published a main commit."""
 
 from __future__ import annotations
 
