@@ -72,7 +72,7 @@ _PATH_IN_BACKTICKS = re.compile(
 
 
 def _docs() -> list[Path]:
-    docs = [_ROOT / "CLAUDE.md", _ROOT / "README.md"]
+    docs = [_ROOT / "AGENTS.md", _ROOT / "README.md"]
     if _RULES_DIR.is_dir():
         docs += sorted(_RULES_DIR.glob("*.md"))
     return [d for d in docs if d.is_file()]
