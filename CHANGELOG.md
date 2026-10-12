@@ -2,6 +2,21 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.2.0](https://github.com/lifekit-hq/devclaw/compare/v2.1.1...v2.2.0) (2026-10-07)
+
+
+### Features
+
+* **console:** Angular console shell on the shared lifekit stack ([#936](https://github.com/lifekit-hq/devclaw/issues/936)) ([9d02653](https://github.com/lifekit-hq/devclaw/commit/9d0265364019cf42f3cca4bf1b919aff203bde9f))
+* **frontend:** add PWA to the Angular console and cut over from React ([#938](https://github.com/lifekit-hq/devclaw/issues/938)) ([cdfe45b](https://github.com/lifekit-hq/devclaw/commit/cdfe45b20f4c0da7a710458207b665839766db59))
+* **goal:** self-deploy arms itself when the running build trails main ([#933](https://github.com/lifekit-hq/devclaw/issues/933)) ([668e954](https://github.com/lifekit-hq/devclaw/commit/668e954f753509ad61222427ea52c7a59eb29219))
+
+
+### Documentation
+
+* add Platform first section to AGENTS.md ([#934](https://github.com/lifekit-hq/devclaw/issues/934)) ([e34c26e](https://github.com/lifekit-hq/devclaw/commit/e34c26e76361505dc2a72c8d96ea7dfcd0686551))
+* one instruction file per repo — merge CLAUDE.md into AGENTS.md ([#941](https://github.com/lifekit-hq/devclaw/issues/941)) ([1ed6e45](https://github.com/lifekit-hq/devclaw/commit/1ed6e45bdd42c7b0e4e543b551e514dfd0390adb))
+
 ## [2.1.1](https://github.com/lifekit-hq/devclaw/compare/v2.1.0...v2.1.1) (2026-09-18)
 
 
