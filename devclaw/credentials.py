@@ -63,7 +63,7 @@ GH_TOKEN_PREFIXES: tuple[str, ...] = ("ghp_", "github_pat_", "ghs_", "gho_")
 
 OAUTH_TOKEN = Credential(
     "CLAUDE_CODE_OAUTH_TOKEN",
-    purpose="subscription OAuth for host cognition and the in-sandbox agent",
+    purpose="subscription OAuth for the in-sandbox agent",
     scope="Pro/Max subscription setup-token (claude setup-token); never a metered key",
     required=True, sandbox=True, agent=True,
 )
@@ -85,18 +85,15 @@ REGISTRY_TOKEN = Credential(
 DELIVERY_TOKEN = Credential(
     "GH_TOKEN",
     purpose=(
-        "every host-side GitHub call: delivery (push, PR, merge), intake, the "
-        "issue doorway, the self-issue filer, and the failing-job log read that "
-        "feeds a red-CI correction"
+        "every host-side GitHub call: delivery (push, PR, merge), the goal "
+        "layer's reads of the issue, PR and CI, and the failing-job log read"
     ),
     scope=(
-        "repo — push/PR/merge on the driven repos, intake, the issue doorway, "
+        "repo — push/PR/merge on the driven repos, the goal layer's reads, "
         "and the Actions job-log read (`repo` covers the Actions API for a "
-        "classic/OAuth token; `actions:read` is a fine-grained-PAT permission "
-        "name, not a classic scope, and asking for it was a category error "
-        "corrected 2026-09-09). Declared rather than mounted because a "
+        "classic/OAuth token). Declared rather than mounted because a "
         "bind-mounted ~/.config/gh is a revocable personal login nothing "
-        "checks — the 2026-09-03 incident, 20h healthy on it"
+        "checks"
     ),
     required=True, sandbox=False, agent=False,
     prefixes=GH_TOKEN_PREFIXES,
@@ -148,7 +145,7 @@ def sandbox_env(environ: Mapping[str, str]) -> list[tuple[str, str]]:
 
 def strip_refused(env: Mapping[str, str]) -> dict[str, str]:
     """A copy of ``env`` without the refused metered keys — the ONE strip
-    every host subprocess (cognition, the docker CLI, the host runner) uses."""
+    every host subprocess (the docker CLI, the host runner) uses."""
     clean = dict(env)
     for name in REFUSED:
         clean.pop(name, None)

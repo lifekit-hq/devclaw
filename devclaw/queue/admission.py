@@ -1,7 +1,7 @@
 """Admission — the dispatch-admission brakes of the queue, split out as a mixin.
 
 :class:`AdmissionMixin` carries the two launch gates consulted by ``_pump``:
-the host-memory admission budget (the `claude --print` -9 OOM cure) and the
+the host-memory admission budget (the OOM cure) and the
 per-workspace failure circuit-breaker. Their tuning constants
 (``MEM_LAUNCH_FLOOR_BYTES``, ``WORKSPACE_BREAK_*``) are bound HERE — tests
 that tune the breaker patch THIS namespace. ``host_mem_available_bytes``
@@ -10,7 +10,7 @@ itself stays bound in ``task_queue`` (its reader ``_pump`` lives there).
 Split out of ``TaskQueue`` as a mixin on the SAME instance — every method here
 runs against the ``self._store`` / ``self._mem_budget`` the base ``TaskQueue``
 owns, so the fail-open-on-unmeasurable / one-shot-per-hold semantics are
-byte-identical to the pre-split monolith. This module must never import
+unchanged from the monolith. This module must never import
 ``devclaw.task_queue`` at runtime (the dependency points the other way).
 """
 
@@ -28,14 +28,12 @@ from ..state_store import _now_ms
 if TYPE_CHECKING:
     from ..state_store import StateStore
 
-# ---- host-memory admission (the `claude --print` -9 OOM cure) ----------------
+# ---- host-memory admission (the OOM cure) ------------------------------------
 # A COUNT cap (GLOBAL_MAX_CONCURRENT) plus a per-container `--memory` CEILING is
 # NOT the same as fitting the host: docker will start N containers each ALLOWED
 # 2g even when the box lacks N*2g (a --memory limit is a ceiling, not a
 # reservation). Under load the kernel's global OOM-killer then reaps the fattest
-# unbounded process — the host-side `claude --print` cognition running in the
-# root cgroup — as `exited -9`. #448/#449 classified that signal-death TRANSIENT
-# and retried it: survivable, but it never asked why the kernel was reaping us.
+# unbounded process — a host-side process in the root cgroup — as `exited -9`.
 # This gates dispatch on REAL free RAM so we never overcommit in the first place.
 # Mechanism, not appeasement (doctrine: fix the repo, don't appease it).
 
@@ -43,7 +41,7 @@ if TYPE_CHECKING:
 #: per-sandbox memory ceiling in bytes — the SAME value the launcher hands to
 #: ``docker --memory`` (imported, so the two can't drift).
 SANDBOX_MEMORY_BYTES = _parse_mem(SANDBOX_MEMORY)
-#: headroom kept free for the host ``claude --print`` cognition + OS so it is not
+#: headroom kept free for the host (devclaw itself + OS) so it is not
 #: the OOM victim. Env-tunable per host (``DEVCLAW_COGNITION_MEM_RESERVE``); the
 #: floor to admit one more sandbox launch is sandbox-ceiling + this reserve.
 HOST_MEM_RESERVE_BYTES = _parse_mem(
