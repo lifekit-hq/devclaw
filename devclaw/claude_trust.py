@@ -4,17 +4,11 @@ seam (runner's ``_mise_run`` / ``MISE_TRUSTED_CONFIG_PATHS``).
 Claude Code began hard-enforcing *workspace trust* around 2026-07: in a
 directory whose ``projects[<abs-path>].hasTrustDialogAccepted`` is not set in
 the user's ``.claude.json``, it **ignores that workspace's
-``.claude/settings.json`` permissions**, and a non-interactive
-``claude --print`` exits non-zero on the untrusted-workspace guard. Devclaw
-runs ``claude`` in two spots the host ``.claude.json`` never listed (its
-``projects`` map is keyed by *host* paths):
-
-- **cognition** — ``claude --print`` for the planner/evaluator/summary, run
-  from the devclaw-mcp container's cwd (``/app``); and
-- **the worker** — the in-sandbox agent, at ``/workspace``.
-
-Both dead-stopped once trust started being enforced. Seeding that one flag
-restores the prior behavior. This is pure Claude *config*: no ``ANTHROPIC_*``
+``.claude/settings.json`` permissions**, and a non-interactive ``claude`` exits
+non-zero on the untrusted-workspace guard. Devclaw runs the in-sandbox agent at
+``/workspace``, a path the host ``.claude.json`` never listed (its ``projects``
+map is keyed by *host* paths). Seeding that one flag restores the prior
+behavior. This is pure Claude *config*: no ``ANTHROPIC_*``
 key (the OAuth-only pillar is untouched), no permission *widening* — the
 curated allowlist is exactly what gets *restored* — and no devclaw state.
 Everything here is best-effort: a config we can't read/write is left alone so
