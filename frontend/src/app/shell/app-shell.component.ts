@@ -32,6 +32,7 @@ const TAB_ROUTES = ['/needs-you', '/goals', '/projects', '/verdicts'];
       [account]="account()"
       [tabRoutes]="tabRoutes"
       [versionLabel]="versionLabel"
+      [showThemeToggle]="true"
       (navClick)="navigate($event)"
       (avatarMenuSelect)="onAccountMenu($event)"
       brand="devclaw"
