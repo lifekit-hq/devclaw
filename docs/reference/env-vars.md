@@ -25,7 +25,7 @@ vars always win over `.env`.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_DB` | `./devclaw.db` | The SQLite home: tasks, events, goals, decisions, control flags |
+| `DEVCLAW_DB` | `./devclaw.db` | The SQLite home: tasks, events, goals, decisions, control flags, per-user console appearance |
 | `DEVCLAW_EVENTS_RETENTION_DAYS` | `30` | Days of session events kept; `0` disables the prune |
 
 ## Engine + sandbox
