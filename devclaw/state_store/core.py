@@ -19,11 +19,12 @@ from typing import Iterator, Optional
 from .control import ControlPlaneMixin
 from .events import EventsMixin
 from .goals import GoalsMixin
+from .preferences import PreferencesMixin
 from .rows import SQLITE_BUSY_TIMEOUT_MS, Task, TaskKind, TaskStatus, _now_ms, _row_to_task
 from .schema import bootstrap as _schema_bootstrap
 
 
-class StateStore(ControlPlaneMixin, EventsMixin, GoalsMixin):
+class StateStore(ControlPlaneMixin, EventsMixin, GoalsMixin, PreferencesMixin):
     def __init__(self, db_path: str) -> None:
         Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         self._db_path = str(Path(db_path).expanduser())

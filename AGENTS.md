@@ -126,7 +126,7 @@ devclaw/
 ├── delivery/        commit → push → the goal's one PR
 ├── gates.py         verify · materialize · change_class · integrity — always hard, fail closed
 ├── task_change.py   ONE mechanical answer to "what did the session change?"
-├── state_store/     tasks · events · goals · decisions · meta (the control flags)
+├── state_store/     tasks · events · goals · decisions · meta (the control flags) · user_preferences (appearance per gate identity)
 ├── loom/            limits (the pause classifier), test_integrity, untrusted (the prompt fence)
 ├── credentials.py · probes.py · config.py · task_queue.py · project_registry.py · doctor/ · cli.py
 runner/runner.py     the in-sandbox worker harness — drives the ACP agent; skills/ is the one home of worker instructions

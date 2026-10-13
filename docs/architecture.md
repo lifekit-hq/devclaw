@@ -111,7 +111,10 @@ passes. The verdict is posted on the PR; achieved squash-merges
 
 `goals` (identity, `last_seen`, outcome), `decisions`, `tasks` + `events`
 (the execution record), `meta` (the pause, the hold, the window, the dial,
-the deploy intent). `tests/test_goal_layer_stays_readable.py` fails the build
+the deploy intent), and `user_preferences`: the console's appearance per gate
+identity (the `X-Auth-Request-Email` the sso forwardAuth sets), written only by
+`PATCH /api/me/preferences`. It is a record of what a user chose, never a
+judgment. `tests/test_goal_layer_stays_readable.py` fails the build
 on a judgment column and on a goal layer past 1,500 lines.
 
 ### The sandbox runs what CI runs
@@ -139,13 +142,13 @@ world the host cannot read (`gh` down) does nothing and says so.
 ## The code map
 
 ```
-devclaw/server/      tools/ (goals, projects, control, doctor) · routes/ (health, control, goals, projects, tasks, webhooks, console) · lifecycle.py
+devclaw/server/      tools/ (goals, projects, control, doctor) · routes/ (health, control, goals, projects, tasks, webhooks, me, console) · lifecycle.py
 devclaw/goal/        tick.py · world.py · prompts.py · donegate.py · github.py · service.py · notify.py · self_deploy.py
 devclaw/prompts/     session.md · done-gate.md
 devclaw/task_queue.py · queue/settle.py · queue/admission.py
 devclaw/gates.py · task_change.py · delivery/__init__.py
 devclaw/engine/      sandcastle.py · host.py · stub.py · workspace.py · runner_io.py
-devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py · goals.py
+devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py · goals.py · preferences.py
 devclaw/loom/        limits.py · test_integrity.py · untrusted.py
 devclaw/credentials.py · probes.py · config.py · project_registry.py · doctor/ · cli.py
 runner/              runner.py · acp_client.py · skills/ · hooks/

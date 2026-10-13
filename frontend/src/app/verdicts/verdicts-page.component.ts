@@ -5,7 +5,6 @@ import {
   CardComponent,
   EmptyStateComponent,
   PageContainerComponent,
-  PageHeaderComponent,
 } from '@lifekit-hq/ui';
 
 import {DevclawApiService} from '../api/devclaw-api.service';
@@ -27,16 +26,15 @@ const POLL_MS = 30_000;
     CardComponent,
     EmptyStateComponent,
     PageContainerComponent,
-    PageHeaderComponent,
     VerdictListComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      <cmn-page-header
-        title="Verdicts"
-        subtitle="What the done-gate found, clause by clause, read from each review session's own output. Open a row to expand."
-      />
+      <p class="text-cmn-sm text-text-secondary">
+        What the done-gate found, clause by clause, read from each review session's own output. Open
+        a row to expand.
+      </p>
       @if (feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }

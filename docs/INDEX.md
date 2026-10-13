@@ -22,7 +22,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-07 (the code map names the Angular PWA `frontend/` as the console, React `console/` deleted; written 2026-09-13 for spec 046) |
+| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-13 (the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
 
 ## Flows
 
@@ -35,7 +35,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-09-13 |
+| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-10-13 (`DEVCLAW_DB` names the per-user console appearance it now holds) |
 
 ## Runbooks
 

@@ -86,12 +86,12 @@ function absent(value: unknown): boolean {
           @let t = d.task;
           <div class="flex flex-col gap-cmn-5">
             <header class="flex min-w-0 flex-col gap-cmn-1">
-              <h1 class="font-headline text-cmn-2xl font-semibold text-text-primary">
+              <h2 class="font-headline text-cmn-xl font-semibold text-text-primary">
                 {{ t.kind === 'review_repository' ? 'Review session' : 'Session' }}
                 <span class="font-mono text-cmn-sm text-text-secondary">{{
                   t.id.slice(0, shortId)
                 }}</span>
-              </h1>
+              </h2>
               <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
                 @if (t.parentGoalId) {
                   <a

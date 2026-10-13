@@ -12,18 +12,31 @@
     <link rel="icon" href="favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="apple-touch-icon.png" />
     <link rel="manifest" href="manifest.webmanifest" />
-    <script>
-      // Apply the stored/OS theme before first paint so the page never flashes light.
-      (function () {
-        var theme = 'light';
-        try {
-          var stored = localStorage.getItem('cmn-theme');
-          if (stored === 'dark' || stored === 'light') theme = stored;
-          else if (window.matchMedia('(prefers-color-scheme: dark)').matches) theme = 'dark';
-        } catch (e) {}
-        document.documentElement.setAttribute('data-theme', theme);
-      })();
-    </script>
+    <!-- theme-init:start - generated from @lifekit-hq/tokens by lifekit-theme-sync; do not edit. -->
+    <!-- prettier-ignore -->
+    <script>// Apply the stored/OS theme and the stored seed colour before first paint so pages never flash.
+(function () {
+  var root = document.documentElement;
+  var theme = 'light';
+  try {
+    var stored = localStorage.getItem('cmn-theme');
+    if (stored === 'dark' || stored === 'light') theme = stored;
+    else if (window.matchMedia('(prefers-color-scheme: dark)').matches) theme = 'dark';
+  } catch (e) {}
+  root.setAttribute('data-theme', theme);
+  try {
+    var seed = JSON.parse(localStorage.getItem('cmn-theme-seed'));
+    if (!seed || seed.v !== 1 || !seed.css) return;
+    var more = window.matchMedia('(prefers-contrast: more)').matches;
+    var tokens = seed.css[more ? theme + '-more' : theme] || {};
+    for (var name in tokens) {
+      if (/^--color-[a-z0-9-]+$/.test(name) && /^#[0-9a-f]{6}$/i.test(tokens[name]))
+        root.style.setProperty(name, tokens[name]);
+    }
+  } catch (e) {}
+})();
+</script>
+    <!-- theme-init:end -->
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
