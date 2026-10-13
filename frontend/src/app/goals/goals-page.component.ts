@@ -8,7 +8,6 @@ import {
   DataTableComponent,
   EmptyStateComponent,
   PageContainerComponent,
-  PageHeaderComponent,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
@@ -53,7 +52,6 @@ function matches(g: GoalRow, filter: Filter): boolean {
     DataTableComponent,
     EmptyStateComponent,
     PageContainerComponent,
-    PageHeaderComponent,
     RouterLink,
     StatusIndicatorComponent,
     TagComponent,
@@ -62,10 +60,9 @@ function matches(g: GoalRow, filter: Filter): boolean {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      <cmn-page-header
-        title="Goals"
-        subtitle="One issue, one branch, one PR. The thread on GitHub is the record; this is the index."
-      />
+      <p class="text-cmn-sm text-text-secondary">
+        One issue, one branch, one PR. The thread on GitHub is the record; this is the index.
+      </p>
       <div class="flex flex-wrap gap-cmn-2" role="group" aria-label="Filter goals">
         @for (f of filters; track f.id) {
           <cmn-chip [selected]="filter() === f.id" (clicked)="filter.set(f.id)">

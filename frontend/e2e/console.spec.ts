@@ -29,8 +29,21 @@ async function serveFeeds(page: Page): Promise<void> {
   );
 }
 
+// The account's preferences live behind the gate's identity header; a fresh account has none.
+async function servePreferences(page: Page, seen: unknown[] = []): Promise<void> {
+  await page.route('**/api/me/preferences', route => {
+    if (route.request().method() === 'PATCH') {
+      const body = route.request().postDataJSON();
+      seen.push(body);
+      return route.fulfill({json: body});
+    }
+    return route.fulfill({json: {appearance: {theme: 'system'}}});
+  });
+}
+
 test.beforeEach(async ({page}) => {
   await serveFeeds(page);
+  await servePreferences(page);
 });
 
 test('Needs you lists the blocked goal with the session options', async ({page}) => {
@@ -69,7 +82,7 @@ test('the goal page decides in the owner’s own words and shows a refusal', asy
   await page.goto('/console/goals/g-blocked');
 
   await expect(
-    page.getByRole('heading', {level: 1, name: 'Add CSV export to the reports page'})
+    page.getByRole('heading', {level: 2, name: 'Add CSV export to the reports page'})
   ).toBeVisible();
   const decide = page.getByRole('region', {name: 'Decide'});
   await decide.getByRole('textbox', {name: 'Your decision'}).fill('  Exclude them for now  ');
@@ -111,7 +124,7 @@ test('Projects and a project page list the goals', async ({page}) => {
   await page.getByRole('link', {name: 'widgets'}).first().click();
 
   await expect(page).toHaveURL(/\/console\/projects\/widgets$/);
-  await expect(page.getByRole('heading', {level: 1, name: 'widgets'})).toBeVisible();
+  await expect(page.getByRole('heading', {level: 2, name: 'widgets'})).toBeVisible();
   await expect(page.getByRole('table')).toContainText('Add CSV export to the reports page');
 });
 
@@ -134,7 +147,7 @@ test('Verdicts lists each review clause by clause', async ({page}) => {
   await expect(clause).toBeVisible();
 });
 
-test('Settings shows the run window and posts a hold', async ({page}) => {
+test('Settings shows the account, the run window and posts a hold', async ({page}) => {
   let held = false;
   await page.route('**/control/pause', route => {
     held = true;
@@ -143,6 +156,7 @@ test('Settings shows the run window and posts a hold', async ({page}) => {
   await page.goto('/console/settings');
 
   await expect(page.getByRole('heading', {level: 1, name: 'Settings'})).toBeVisible();
+  await expect(page.getByRole('region', {name: 'Account'})).toContainText('owner@example.com');
   const window = page.getByRole('region', {name: 'Run window'});
   await expect(window.getByRole('textbox', {name: 'Start'})).toHaveValue('22:00');
   await expect(window.getByRole('textbox', {name: 'Time zone'})).toHaveValue('Europe/Dublin');
@@ -150,16 +164,42 @@ test('Settings shows the run window and posts a hold', async ({page}) => {
   await expect.poll(() => held).toBe(true);
 });
 
-test('the shell fits a phone and signs out', async ({page}, testInfo) => {
+test('Appearance applies at once and is saved to the account', async ({page}) => {
+  const saved: unknown[] = [];
+  await servePreferences(page, saved);
+  await page.goto('/console/settings');
+
+  await page.getByRole('radio', {name: 'Dark'}).click();
+
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect.poll(() => JSON.stringify(saved)).toContain('"theme":"dark"');
+});
+
+test('the shell fits a phone: More holds the account and Sign out', async ({page}, testInfo) => {
   await page.setViewportSize({width: 375, height: 700});
   await page.goto('/console/needs-you');
 
   await expect(page.getByText('Should the export include archived reports?')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
   await page.screenshot({path: testInfo.outputPath('phone-needs-you.png'), fullPage: true});
+  await expect(page.getByRole('button', {name: 'Account menu'})).toHaveCount(0);
+
+  await page.goto('/console/more');
+  await expect(page.getByRole('heading', {level: 1, name: 'More'})).toBeVisible();
+  await expect(page.getByText('owner@example.com')).toBeVisible();
+  await page.screenshot({path: testInfo.outputPath('phone-more.png'), fullPage: true});
+  const signOut = page.waitForRequest(/\/oauth2\/sign_out\?rd=/);
+  await page.route('**/oauth2/sign_out**', route => route.fulfill({body: 'signed out'}));
+  await page.getByRole('button', {name: 'Sign out'}).click();
+  await signOut;
+});
+
+test('the wide shell signs out from the account menu', async ({page}) => {
+  await page.setViewportSize({width: 1280, height: 800});
+  await page.goto('/console/needs-you');
 
   await page.getByRole('button', {name: 'Account menu'}).click();
-  await expect(page.getByRole('menuitem', {name: 'owner@example.com'})).toBeDisabled();
+  await expect(page.getByRole('menuitem', {name: 'Settings'})).toBeVisible();
   const signOut = page.waitForRequest(/\/oauth2\/sign_out\?rd=/);
   await page.route('**/oauth2/sign_out**', route => route.fulfill({body: 'signed out'}));
   await page.getByRole('menuitem', {name: 'Sign out'}).click();

@@ -6,7 +6,6 @@ import {
   CardComponent,
   EmptyStateComponent,
   PageContainerComponent,
-  PageHeaderComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
 
@@ -23,7 +22,6 @@ import {UsageComponent} from '../shared/usage';
     CardComponent,
     EmptyStateComponent,
     PageContainerComponent,
-    PageHeaderComponent,
     RouterLink,
     TagComponent,
     UsageComponent,
@@ -31,7 +29,7 @@ import {UsageComponent} from '../shared/usage';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      <cmn-page-header title="Projects" subtitle="The repositories devclaw works on." />
+      <p class="text-cmn-sm text-text-secondary">The repositories devclaw works on.</p>
       @if (feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }

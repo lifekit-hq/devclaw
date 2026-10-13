@@ -6,7 +6,6 @@ import {
   CardComponent,
   EmptyStateComponent,
   PageContainerComponent,
-  PageHeaderComponent,
 } from '@lifekit-hq/ui';
 
 import {type GoalRow} from '../api/devclaw.model';
@@ -34,16 +33,15 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
     DispatchStatusComponent,
     EmptyStateComponent,
     PageContainerComponent,
-    PageHeaderComponent,
     RouterLink,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      <cmn-page-header
-        title="Needs you"
-        subtitle="A click posts your decision on the issue; the next tick reads it. The options are the session's own."
-      />
+      <p class="text-cmn-sm text-text-secondary">
+        A click posts your decision on the issue; the next tick reads it. The options are the
+        session's own.
+      </p>
       <dc-dispatch-status />
       @if (error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>

@@ -32,7 +32,9 @@
             "styles": [
               "src/styles.scss",
               "node_modules/@lifekit-hq/tokens/fonts.css",
-              "node_modules/@lifekit-hq/tokens/theme.css"
+              "node_modules/@lifekit-hq/tokens/theme.css",
+              "node_modules/@lifekit-hq/tokens/seeds/dc.css",
+              "node_modules/@lifekit-hq/tokens/base.css"
             ],
             "browser": "src/main.ts"
           },

@@ -1,26 +1,51 @@
-import {DOCUMENT} from '@angular/common';
 import {ChangeDetectionStrategy, Component, computed, inject} from '@angular/core';
 import {Router, RouterOutlet} from '@angular/router';
 import {
-  type AppLayoutAccount,
+  ACCOUNT_SIGN_OUT_ID,
+  APPEARANCE_PALETTE_ITEMS,
   AppLayoutComponent,
+  CmnShellService,
   type CommandPaletteItem,
   type MenuItem,
   type NavItem,
-  PALETTE_THEME_ACTION,
 } from '@lifekit-hq/ui';
 
-import {signOutUrl} from '../account/account';
+import {SETTINGS_ROUTE} from '../account/account';
 import {AccountService} from '../account/account.service';
 import {GoalsFeed} from '../api/feeds';
 import {VERSION} from '../version';
 
-const SIGN_OUT_ID = '_sign-out';
-const SIGNED_OUT_MENU: MenuItem[] = [{id: '_none', label: 'Not signed in', disabled: true}];
-/** The bottom tabs below md; Settings goes under "More". */
-const TAB_ROUTES = ['/needs-you', '/goals', '/projects', '/verdicts'];
+/** The console's four pages: the phone's tabs and the sidebar's entries. */
+export const NAV_ITEMS: NavItem[] = [
+  {label: 'Needs you', icon: 'CircleAlert', route: '/needs-you'},
+  {label: 'Goals', icon: 'Target', route: '/goals'},
+  {label: 'Projects', icon: 'FolderGit2', route: '/projects'},
+  {label: 'Verdicts', icon: 'Scale', route: '/verdicts'},
+];
 
-/** The console's frame: the shared layout owns the nav, palette, theme and account menu. */
+/** The phone's More tab: the account surface, which replaces the top bar's avatar there. */
+export const MORE_ROUTE = '/more';
+
+const PAGE_ITEMS: CommandPaletteItem[] = [
+  ...NAV_ITEMS.map((item): CommandPaletteItem => ({
+    id: item.route,
+    label: item.label,
+    icon: item.icon as string,
+    group: 'Pages',
+  })),
+  {id: SETTINGS_ROUTE, label: 'Settings', icon: 'Settings', group: 'Pages'},
+];
+const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
+  id: ACCOUNT_SIGN_OUT_ID,
+  label: 'Sign out',
+  icon: 'LogOut',
+  group: 'Actions',
+};
+
+/**
+ * The console's frame: the shared layout owns the nav, palette, appearance and account menu. On a
+ * phone the account lives on the More tab; Settings is the account menu's, never a tab.
+ */
 @Component({
   selector: 'dc-app-shell',
   imports: [AppLayoutComponent, RouterOutlet],
@@ -28,13 +53,14 @@ const TAB_ROUTES = ['/needs-you', '/goals', '/projects', '/verdicts'];
   template: `
     <cmn-app-layout
       [navItems]="navItems"
-      [paletteItems]="paletteItems"
-      [account]="account()"
+      [paletteItems]="paletteItems()"
+      [account]="layoutAccount()"
       [tabRoutes]="tabRoutes"
+      [moreRoute]="moreRoute"
       [versionLabel]="versionLabel"
-      [showThemeToggle]="true"
       (navClick)="navigate($event)"
-      (avatarMenuSelect)="onAccountMenu($event)"
+      (paletteAction)="onPaletteAction($event)"
+      (avatarMenuSelect)="onAccountItem($event)"
       brand="devclaw"
     >
       <router-outlet />
@@ -44,55 +70,45 @@ const TAB_ROUTES = ['/needs-you', '/goals', '/projects', '/verdicts'];
 })
 export class AppShellComponent {
   private readonly router = inject(Router);
-  private readonly document = inject(DOCUMENT);
-  private readonly signedIn = inject(AccountService).account;
+  private readonly shell = inject(CmnShellService);
+  private readonly accounts = inject(AccountService);
   private readonly goals = inject(GoalsFeed);
 
-  protected readonly navItems: NavItem[] = [
-    {
-      label: 'Needs you',
-      icon: 'CircleAlert',
-      route: '/needs-you',
-      badge: () => this.goals.waiting(),
-    },
-    {label: 'Goals', icon: 'Target', route: '/goals'},
-    {label: 'Projects', icon: 'FolderGit2', route: '/projects'},
-    {label: 'Verdicts', icon: 'Scale', route: '/verdicts'},
-    {label: 'Settings', icon: 'Settings', route: '/settings'},
-  ];
-  protected readonly paletteItems: CommandPaletteItem[] = [
-    ...this.navItems.map((item): CommandPaletteItem => ({
-      id: item.route,
-      label: item.label,
-      icon: item.icon,
-      group: 'Pages',
-    })),
-    {id: PALETTE_THEME_ACTION, label: 'Toggle Dark Mode', icon: 'Moon', group: 'Actions'},
-  ];
-  protected readonly tabRoutes = TAB_ROUTES;
+  protected readonly layoutAccount = this.accounts.layoutAccount;
+  protected readonly tabRoutes = NAV_ITEMS.map(item => item.route);
+  protected readonly moreRoute = MORE_ROUTE;
   protected readonly versionLabel = `v${VERSION}`;
-  protected readonly account = computed((): AppLayoutAccount => {
-    const who = this.signedIn();
-    if (!who) {
-      return {label: '?', menuItems: SIGNED_OUT_MENU};
-    }
-    return {
-      label: who.name || who.email,
-      menuItems: [
-        {id: '_identity', label: who.email || who.name, icon: 'User', disabled: true},
-        {id: SIGN_OUT_ID, label: 'Sign out', icon: 'LogOut', destructive: true},
-      ],
-    };
-  });
+  /** Needs you carries the number of goals waiting on the owner. */
+  protected readonly navItems = NAV_ITEMS.map((item): NavItem =>
+    item.route === '/needs-you' ? {...item, badge: () => this.goals.waiting()} : item
+  );
+  /** Sign out is offered in the palette only for a signed-in account. */
+  protected readonly paletteItems = computed((): CommandPaletteItem[] => [
+    ...PAGE_ITEMS,
+    ...APPEARANCE_PALETTE_ITEMS,
+    ...(this.accounts.account() ? [SIGN_OUT_PALETTE_ITEM] : []),
+  ]);
 
+  // On the phone tab bar the shell does the navigating (last screen, scroll, pop to root on a
+  // re-tap); navigating here too would fight it. The sidebar leaves navigation to the app.
   protected navigate(item: NavItem): void {
+    if (this.shell.isPhone()) {
+      return;
+    }
     void this.router.navigateByUrl(item.route);
   }
 
-  protected onAccountMenu(item: MenuItem): void {
-    if (item.id === SIGN_OUT_ID) {
-      const location = this.document.location;
-      location.assign(signOutUrl(location.origin));
+  // The layout navigates to a page entry and applies the appearance entries itself.
+  protected onPaletteAction(id: string): void {
+    if (id === ACCOUNT_SIGN_OUT_ID) {
+      this.accounts.signOut();
+    }
+  }
+
+  // The layout navigates to Settings itself; Sign out is the app's.
+  protected onAccountItem(item: MenuItem): void {
+    if (item.id === ACCOUNT_SIGN_OUT_ID) {
+      this.accounts.signOut();
     }
   }
 }

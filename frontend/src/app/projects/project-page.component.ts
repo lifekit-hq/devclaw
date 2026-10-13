@@ -49,9 +49,9 @@ const NOT_FOUND = 404;
           <div class="flex flex-col gap-cmn-5">
             <header class="flex flex-wrap items-start justify-between gap-cmn-4">
               <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
-                <h1 class="break-words font-headline text-cmn-2xl font-semibold text-text-primary">
+                <h2 class="break-words font-headline text-cmn-xl font-semibold text-text-primary">
                   {{ p.name }}
-                </h1>
+                </h2>
                 <p class="break-all font-mono text-cmn-xs text-text-secondary">
                   {{ p.id }} · {{ p.status }}
                   @if (repoLink(); as repo) {

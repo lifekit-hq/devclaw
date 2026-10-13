@@ -1,7 +1,9 @@
-"""The devclaw.db schema (spec 046): five tables. ``tasks`` and ``events`` are
-the execution record, ``goals`` and ``decisions`` are the goal layer's whole
-state, ``meta`` holds the control-plane flags (quota pause, operator hold,
-run window, deploy intent). Tables a v1 instance carries beyond these are left
+"""The devclaw.db schema (spec 046): five tables, plus ``user_preferences``.
+``tasks`` and ``events`` are the execution record, ``goals`` and ``decisions``
+are the goal layer's whole state, ``meta`` holds the control-plane flags (quota
+pause, operator hold, run window, deploy intent), and ``user_preferences`` holds
+each signed-in console user's appearance (presentation only, read by no gate).
+Tables a v1 instance carries beyond these are left
 untouched — the v1 database stays readable under its tag.
 
 Migration idiom: ``CREATE TABLE IF NOT EXISTS`` plus idempotent ``ALTER TABLE
@@ -77,6 +79,13 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
               text            TEXT NOT NULL,
               comment_url     TEXT NOT NULL DEFAULT '',
               made_at         INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS user_preferences (
+              subject         TEXT PRIMARY KEY,
+              theme           TEXT NOT NULL,
+              seed            TEXT,
+              intensity       REAL,
+              updated_at      INTEGER NOT NULL
             );
             """
         )
