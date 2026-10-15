@@ -11,7 +11,7 @@ import {
 
 import {DevclawApiService, errorText} from '../api/devclaw-api.service';
 import {POLL_MS} from '../api/feeds';
-import {liveFeed} from '../api/live-feed';
+import {feedStatus, liveFeed} from '../api/live-feed';
 import {AttentionCardComponent} from '../components/attention-card.component';
 import {DecideFormComponent} from '../components/decide-form.component';
 import {VerdictListComponent} from '../components/verdict-list.component';
@@ -48,10 +48,15 @@ export function issueUrl(repoUrl: string, issue: number): string {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      @if (error(); as message) {
+      @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      <cmn-async-state [status]="goal() ? 'success' : feed.state().error ? 'idle' : 'loading'">
+      <cmn-async-state
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="error() ?? ''"
+        (retry)="feed.reload()"
+        retryable
+      >
         <div class="flex flex-col gap-cmn-5">
           @if (goal(); as g) {
             <header class="flex flex-wrap items-start justify-between gap-cmn-4">
@@ -208,6 +213,7 @@ export class GoalPageComponent {
   /** The route's `:id`. */
   public readonly id = input.required<string>();
 
+  protected readonly feedStatus = feedStatus;
   protected readonly feed = liveFeed(id => this.api.goal(id), POLL_MS, this.id);
   protected readonly goal = computed(() => this.feed.state().data);
   protected readonly error = computed(() => this.verbError() ?? this.feed.state().error);

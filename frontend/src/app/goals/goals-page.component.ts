@@ -2,6 +2,7 @@ import {ChangeDetectionStrategy, Component, computed, inject, signal} from '@ang
 import {Router, RouterLink} from '@angular/router';
 import {
   AlertComponent,
+  AsyncStateComponent,
   ChipComponent,
   CmnCellDirective,
   CmnColumnComponent,
@@ -14,6 +15,7 @@ import {
 
 import {type GoalRow} from '../api/devclaw.model';
 import {GoalsFeed} from '../api/feeds';
+import {feedStatus} from '../api/live-feed';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
 import {AgoPipe} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
@@ -46,6 +48,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
   imports: [
     AgoPipe,
     AlertComponent,
+    AsyncStateComponent,
     ChipComponent,
     CmnCellDirective,
     CmnColumnComponent,
@@ -70,71 +73,80 @@ function matches(g: GoalRow, filter: Filter): boolean {
           </cmn-chip>
         }
       </div>
-      @if (feed.state().error; as message) {
+      @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      @if (feed.state().data && !shown().length) {
-        <cmn-empty-state message="Nothing here" subMessage="No goals match this filter." />
-      } @else {
-        <cmn-data-table
-          [rows]="shown()"
-          [loading]="!feed.state().data && !feed.state().error"
-          [trackBy]="trackById"
-          [rowsActionable]="true"
-          (rowClick)="open($event)"
-        >
-          <cmn-column key="objective" header="Goal" listSlot="primary">
-            <ng-template let-g cmnCell>
-              <span [class.opacity-60]="!!g.outcome" class="block min-w-0">
-                <span class="block truncate font-medium">{{ g.objective || g.id }}</span>
-                <span class="block truncate font-mono text-cmn-xs text-text-secondary">
-                  {{ g.id }} · #{{ g.issues.join(', #') }}
+      <cmn-async-state
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="feed.state().error ?? ''"
+        (retry)="feed.reload()"
+        retryable
+      >
+        @if (!shown().length) {
+          <cmn-empty-state message="Nothing here" subMessage="No goals match this filter." />
+        } @else {
+          <cmn-data-table
+            [rows]="shown()"
+            [trackBy]="trackById"
+            [rowsActionable]="true"
+            (rowClick)="open($event)"
+          >
+            <cmn-column key="objective" header="Goal" listSlot="primary">
+              <ng-template let-g cmnCell>
+                <span [class.opacity-60]="!!g.outcome" class="block min-w-0">
+                  <span class="block truncate font-medium">{{ g.objective || g.id }}</span>
+                  <span class="block truncate font-mono text-cmn-xs text-text-secondary">
+                    {{ g.id }} · #{{ g.issues.join(', #') }}
+                  </span>
                 </span>
-              </span>
-            </ng-template>
-          </cmn-column>
-          <cmn-column key="projectId" header="Project" listSlot="secondary" />
-          <cmn-column key="state" header="State" listSlot="trailing">
-            <ng-template let-g cmnCell>
-              <cmn-status-indicator
-                [variant]="stateVariant(g.outcome ?? g.state)"
-                [live]="stateIsLive(g.state)"
-              >
-                {{ g.outcome ?? g.state }}
-              </cmn-status-indicator>
-            </ng-template>
-          </cmn-column>
-          <cmn-column key="lastSession" header="Last session">
-            <ng-template let-g cmnCell>
-              @if (g.lastSession; as s) {
-                <a
-                  [routerLink]="['/sessions', s.id]"
-                  (click)="$event.stopPropagation()"
-                  title="open the session"
+              </ng-template>
+            </cmn-column>
+            <cmn-column key="projectId" header="Project" listSlot="secondary" />
+            <cmn-column key="state" header="State" listSlot="trailing">
+              <ng-template let-g cmnCell>
+                <cmn-status-indicator
+                  [variant]="stateVariant(g.outcome ?? g.state)"
+                  [live]="stateIsLive(g.state)"
                 >
-                  <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
-                    {{ s.exit ?? s.status }}{{ s.exitDetail ? ': ' + s.exitDetail : '' }}
-                  </cmn-tag>
-                </a>
-              } @else {
-                —
-              }
-            </ng-template>
-          </cmn-column>
-          <cmn-column key="usage" header="Tokens">
-            <ng-template let-g cmnCell><dc-usage [usage]="g.usage" [compact]="true" /></ng-template>
-          </cmn-column>
-          <cmn-column key="lastSeenAt" header="Seen" align="right" listSlot="trailing-secondary">
-            <ng-template let-g cmnCell>{{ g.lastSeenAt | ago }}</ng-template>
-          </cmn-column>
-        </cmn-data-table>
-      }
+                  {{ g.outcome ?? g.state }}
+                </cmn-status-indicator>
+              </ng-template>
+            </cmn-column>
+            <cmn-column key="lastSession" header="Last session">
+              <ng-template let-g cmnCell>
+                @if (g.lastSession; as s) {
+                  <a
+                    [routerLink]="['/sessions', s.id]"
+                    (click)="$event.stopPropagation()"
+                    title="open the session"
+                  >
+                    <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
+                      {{ s.exit ?? s.status }}{{ s.exitDetail ? ': ' + s.exitDetail : '' }}
+                    </cmn-tag>
+                  </a>
+                } @else {
+                  —
+                }
+              </ng-template>
+            </cmn-column>
+            <cmn-column key="usage" header="Tokens">
+              <ng-template let-g cmnCell
+                ><dc-usage [usage]="g.usage" [compact]="true"
+              /></ng-template>
+            </cmn-column>
+            <cmn-column key="lastSeenAt" header="Seen" align="right" listSlot="trailing-secondary">
+              <ng-template let-g cmnCell>{{ g.lastSeenAt | ago }}</ng-template>
+            </cmn-column>
+          </cmn-data-table>
+        }
+      </cmn-async-state>
     </cmn-page-container>
   `,
 })
 export class GoalsPageComponent {
   private readonly router = inject(Router);
 
+  protected readonly feedStatus = feedStatus;
   protected readonly feed = inject(GoalsFeed);
   protected readonly filters = FILTERS;
   protected readonly filter = signal<Filter>('open');

@@ -1,5 +1,12 @@
-import {ChangeDetectionStrategy, Component, computed, inject} from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  CUSTOM_ELEMENTS_SCHEMA,
+  inject,
+} from '@angular/core';
 import {Router, RouterOutlet} from '@angular/router';
+import {AppUpdateService} from '@lifekit-hq/core/pwa';
 import {
   ACCOUNT_SIGN_OUT_ID,
   APPEARANCE_PALETTE_ITEMS,
@@ -50,6 +57,7 @@ const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
   selector: 'dc-app-shell',
   imports: [AppLayoutComponent, RouterOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   template: `
     <cmn-app-layout
       [navItems]="navItems"
@@ -58,11 +66,20 @@ const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
       [tabRoutes]="tabRoutes"
       [moreRoute]="moreRoute"
       [versionLabel]="versionLabel"
+      [phoneOverlay]="true"
       (navClick)="navigate($event)"
       (paletteAction)="onPaletteAction($event)"
       (avatarMenuSelect)="onAccountItem($event)"
       brand="devclaw"
     >
+      <div cmnAppLayoutNotice>
+        <lk-offline-banner />
+        <lk-update-prompt
+          [ready]="update.updateReady()"
+          (lk-update-prompt-reload)="update.reload()"
+        />
+        <lk-install-hint />
+      </div>
       <router-outlet />
     </cmn-app-layout>
   `,
@@ -73,6 +90,8 @@ export class AppShellComponent {
   private readonly shell = inject(CmnShellService);
   private readonly accounts = inject(AccountService);
   private readonly goals = inject(GoalsFeed);
+
+  protected readonly update = inject(AppUpdateService);
 
   protected readonly layoutAccount = this.accounts.layoutAccount;
   protected readonly tabRoutes = NAV_ITEMS.map(item => item.route);

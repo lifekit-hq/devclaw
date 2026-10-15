@@ -11,6 +11,7 @@ import {
 import {type GoalRow} from '../api/devclaw.model';
 import {errorText} from '../api/devclaw-api.service';
 import {GoalsFeed} from '../api/feeds';
+import {feedStatus} from '../api/live-feed';
 import {AttentionCardComponent} from '../components/attention-card.component';
 import {GoalVerbs} from '../goals/goal-verbs.service';
 import {DispatchStatusComponent} from '../shared/dispatch-status.component';
@@ -43,11 +44,14 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
         session's own.
       </p>
       <dc-dispatch-status />
-      @if (error(); as message) {
+      @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        [status]="feed.state().data ? 'success' : feed.state().error ? 'idle' : 'loading'"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="error() ?? ''"
+        (retry)="feed.reload()"
+        retryable
       >
         <div class="flex flex-col gap-cmn-5">
           @if (feed.state().data && !open().length && !answered().length) {
@@ -102,6 +106,7 @@ export class NeedsYouPageComponent {
   private readonly verbs = inject(GoalVerbs);
   private readonly verbError = signal<string | null>(null);
 
+  protected readonly feedStatus = feedStatus;
   protected readonly feed = inject(GoalsFeed);
   protected readonly error = computed(() => this.verbError() ?? this.feed.state().error);
   protected readonly open = computed(() =>

@@ -14,7 +14,7 @@ import {
 import {type ProjectGoalRow} from '../api/devclaw.model';
 import {DevclawApiService} from '../api/devclaw-api.service';
 import {POLL_MS} from '../api/feeds';
-import {liveFeed} from '../api/live-feed';
+import {feedStatus, liveFeed} from '../api/live-feed';
 import {SectionComponent} from '../shared/section.component';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
 import {AgoPipe} from '../shared/time';
@@ -41,10 +41,15 @@ const NOT_FOUND = 404;
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      @if (error(); as message) {
+      @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      <cmn-async-state [status]="project() ? 'success' : feed.state().error ? 'idle' : 'loading'">
+      <cmn-async-state
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="error() ?? ''"
+        (retry)="feed.reload()"
+        retryable
+      >
         @if (project(); as p) {
           <div class="flex flex-col gap-cmn-5">
             <header class="flex flex-wrap items-start justify-between gap-cmn-4">
@@ -138,6 +143,7 @@ export class ProjectPageComponent {
   /** The route's `:id`. */
   public readonly id = input.required<string>();
 
+  protected readonly feedStatus = feedStatus;
   protected readonly feed = liveFeed(id => this.api.project(id), POLL_MS, this.id);
   protected readonly project = computed(() => this.feed.state().data);
   protected readonly error = computed(() => {

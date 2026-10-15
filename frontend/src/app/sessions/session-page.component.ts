@@ -19,7 +19,7 @@ import {
 
 import {type TaskEvent} from '../api/devclaw.model';
 import {DevclawApiService} from '../api/devclaw-api.service';
-import {liveFeed} from '../api/live-feed';
+import {feedStatus, liveFeed} from '../api/live-feed';
 import {SectionComponent} from '../shared/section.component';
 import {exitVariant} from '../shared/status';
 import {StampPipe} from '../shared/time';
@@ -78,10 +78,15 @@ function absent(value: unknown): boolean {
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      @if (error(); as message) {
+      @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      <cmn-async-state [status]="detail() ? 'success' : feed.state().error ? 'idle' : 'loading'">
+      <cmn-async-state
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="error() ?? ''"
+        (retry)="feed.reload()"
+        retryable
+      >
         @if (detail(); as d) {
           @let t = d.task;
           <div class="flex flex-col gap-cmn-5">
@@ -241,6 +246,7 @@ export class SessionPageComponent {
   public readonly id = input.required<string>();
 
   /** A session's record is final once it ends; read once per id, not polled. */
+  protected readonly feedStatus = feedStatus;
   protected readonly feed = liveFeed(id => this.api.task(id), 0, this.id);
   protected readonly detail = computed(() => this.feed.state().data);
   protected readonly error = computed(() => {

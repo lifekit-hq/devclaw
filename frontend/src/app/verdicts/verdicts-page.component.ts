@@ -8,7 +8,7 @@ import {
 } from '@lifekit-hq/ui';
 
 import {DevclawApiService} from '../api/devclaw-api.service';
-import {liveFeed} from '../api/live-feed';
+import {feedStatus, liveFeed} from '../api/live-feed';
 import {VerdictListComponent} from '../components/verdict-list.component';
 
 const LIMIT = 200;
@@ -35,11 +35,14 @@ const POLL_MS = 30_000;
         What the done-gate found, clause by clause, read from each review session's own output. Open
         a row to expand.
       </p>
-      @if (feed.state().error; as message) {
+      @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        [status]="feed.state().data ? 'success' : feed.state().error ? 'idle' : 'loading'"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="feed.state().error ?? ''"
+        (retry)="feed.reload()"
+        retryable
       >
         @if (feed.state().data; as f) {
           @if (f.count) {
@@ -66,5 +69,6 @@ const POLL_MS = 30_000;
 export class VerdictsPageComponent {
   private readonly api = inject(DevclawApiService);
 
+  protected readonly feedStatus = feedStatus;
   protected readonly feed = liveFeed(() => this.api.verdicts(LIMIT), POLL_MS);
 }
