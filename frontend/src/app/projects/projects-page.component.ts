@@ -10,7 +10,7 @@ import {
 } from '@lifekit-hq/ui';
 
 import {DevclawApiService} from '../api/devclaw-api.service';
-import {liveFeed} from '../api/live-feed';
+import {feedStatus, liveFeed} from '../api/live-feed';
 import {UsageComponent} from '../shared/usage';
 
 /** The repositories devclaw works on, each with its goals. */
@@ -30,11 +30,14 @@ import {UsageComponent} from '../shared/usage';
   template: `
     <cmn-page-container>
       <p class="text-cmn-sm text-text-secondary">The repositories devclaw works on.</p>
-      @if (feed.state().error; as message) {
+      @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        [status]="feed.state().data ? 'success' : feed.state().error ? 'idle' : 'loading'"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="feed.state().error ?? ''"
+        (retry)="feed.reload()"
+        retryable
       >
         <div class="flex flex-col gap-cmn-3">
           @for (p of feed.state().data ?? []; track p.id) {
@@ -86,5 +89,6 @@ import {UsageComponent} from '../shared/usage';
 export class ProjectsPageComponent {
   private readonly api = inject(DevclawApiService);
 
+  protected readonly feedStatus = feedStatus;
   protected readonly feed = liveFeed(() => this.api.projects(), 0);
 }

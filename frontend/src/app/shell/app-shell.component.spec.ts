@@ -4,6 +4,7 @@ import {provideZonelessChangeDetection, signal} from '@angular/core';
 import {TestBed} from '@angular/core/testing';
 import {provideRouter, Router, withComponentInputBinding} from '@angular/router';
 import {RouterTestingHarness} from '@angular/router/testing';
+import {AppUpdateService} from '@lifekit-hq/core/pwa';
 import {CmnShellService} from '@lifekit-hq/ui';
 
 import {APP_ROUTES} from '../app.routes';
@@ -32,6 +33,15 @@ function shellMode(mode: 'phone' | 'sidebar'): Partial<CmnShellService> {
   } as unknown as Partial<CmnShellService>;
 }
 
+// jsdom has no matchMedia, which the install hint in the notice slot reads.
+window.matchMedia ??= ((query: string) =>
+  ({
+    matches: false,
+    media: query,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+  }) as unknown as MediaQueryList) as typeof window.matchMedia;
+
 describe('AppShellComponent', () => {
   let http: HttpTestingController;
   let harness: RouterTestingHarness;
@@ -59,6 +69,10 @@ describe('AppShellComponent', () => {
       providers: [
         provideZonelessChangeDetection(),
         {provide: CmnShellService, useValue: shellMode(mode)},
+        {
+          provide: AppUpdateService,
+          useValue: {updateReady: signal(false), reload: () => undefined},
+        },
         provideRouter(APP_ROUTES, withComponentInputBinding()),
         provideHttpClient(),
         provideHttpClientTesting(),

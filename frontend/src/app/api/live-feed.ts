@@ -1,6 +1,7 @@
 import {type Signal, signal} from '@angular/core';
 import {toObservable, toSignal} from '@angular/core/rxjs-interop';
 import {poll} from '@lifekit-hq/core';
+import {type AsyncStateStatus} from '@lifekit-hq/ui';
 import {catchError, map, type Observable, of, scan, startWith, Subject, switchMap} from 'rxjs';
 
 import {errorText} from './devclaw-api.service';
@@ -67,4 +68,12 @@ export function liveFeed<T, K = null>(
     {initialValue: EMPTY}
   );
   return {state, reload: () => reloads$.next()};
+}
+
+/**
+ * What `cmn-async-state` shows for a feed: the last good read wins (a failed refresh keeps the
+ * page and shows a notice above it), a first read that failed is an error, and no read yet is loading.
+ */
+export function feedStatus(state: FeedState<unknown>): AsyncStateStatus {
+  return state.data ? 'success' : state.error ? 'error' : 'loading';
 }
