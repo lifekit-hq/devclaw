@@ -245,8 +245,9 @@ export class SessionPageComponent {
   /** The route's `:id`. */
   public readonly id = input.required<string>();
 
-  /** A session's record is final once it ends; read once per id, not polled. */
   protected readonly feedStatus = feedStatus;
+
+  /** A session's record is final once it ends; read once per id, not polled. */
   protected readonly feed = liveFeed(id => this.api.task(id), 0, this.id);
   protected readonly detail = computed(() => this.feed.state().data);
   protected readonly error = computed(() => {
