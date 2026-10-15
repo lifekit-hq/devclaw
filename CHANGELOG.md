@@ -2,6 +2,14 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.3.0](https://github.com/lifekit-hq/devclaw/compare/v2.2.0...v2.3.0) (2026-10-15)
+
+
+### Features
+
+* **frontend:** adopt lifekit-common 3.4 phone contract in the console ([#946](https://github.com/lifekit-hq/devclaw/issues/946)) ([212429f](https://github.com/lifekit-hq/devclaw/commit/212429fba61cf4b0cd72a01927bbee1140e6cc25))
+* **frontend:** migrate console to lifekit app-shell standard with per-user appearance ([#944](https://github.com/lifekit-hq/devclaw/issues/944)) ([b1d7747](https://github.com/lifekit-hq/devclaw/commit/b1d77478d5d49a3c5cda6d087157b21d9a16eb7d))
+
 ## [2.2.0](https://github.com/lifekit-hq/devclaw/compare/v2.1.1...v2.2.0) (2026-10-07)
 
 
