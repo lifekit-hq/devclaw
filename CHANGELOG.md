@@ -2,6 +2,15 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.3.1](https://github.com/lifekit-hq/devclaw/compare/v2.3.0...v2.3.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **frontend:** bring the console onto lifekit-common 3.8 and the phone viewport standard ([#949](https://github.com/lifekit-hq/devclaw/issues/949)) ([c3318ba](https://github.com/lifekit-hq/devclaw/commit/c3318baccbf3d45071598fb48ea2b6522f7f5d8b))
+* **frontend:** migrate console detail pages to shared lifekit-common components ([#950](https://github.com/lifekit-hq/devclaw/issues/950)) ([43b147d](https://github.com/lifekit-hq/devclaw/commit/43b147da74803c86acc17de487c7ad26f96f33a2))
+* **frontend:** space the dispatch status and use plain console page copy ([#947](https://github.com/lifekit-hq/devclaw/issues/947)) ([bd04048](https://github.com/lifekit-hq/devclaw/commit/bd04048dda717692407cba49e59f424c8215e5d9))
+
 ## [2.3.0](https://github.com/lifekit-hq/devclaw/compare/v2.2.0...v2.3.0) (2026-10-15)
 
 
