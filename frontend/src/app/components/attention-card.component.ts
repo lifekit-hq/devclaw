@@ -73,7 +73,6 @@ interface Option {
                 [disabled]="form.busy()"
                 [attr.title]="option.text"
                 (clicked)="form.decideWith(option.text)"
-                size="sm"
               >
                 {{ option.firstLine }}
                 @if (option.recommended) {
@@ -86,7 +85,6 @@ interface Option {
                 [disabled]="form.busy()"
                 [attr.title]="fallback"
                 (clicked)="form.decideWith(fallback)"
-                size="sm"
               >
                 take the default: {{ fallback }}
               </cmn-button>

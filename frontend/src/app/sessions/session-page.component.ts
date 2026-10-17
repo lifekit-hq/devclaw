@@ -224,11 +224,7 @@ function absent(value: unknown): boolean {
                 }
               </ul>
               @if (cursor()) {
-                <cmn-button
-                  [loading]="loadingMore()"
-                  (clicked)="more()"
-                  variant="secondary"
-                  size="sm"
+                <cmn-button [loading]="loadingMore()" (clicked)="more()" variant="secondary"
                   >load more</cmn-button
                 >
               }

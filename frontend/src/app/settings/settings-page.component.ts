@@ -90,11 +90,11 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
         @if (control(); as c) {
           <cmn-setting-row [description]="dispatchState()" label="Dispatch">
             @if (c.operatorHold.on) {
-              <cmn-button [loading]="busy()" (clicked)="release()" variant="primary" size="sm">
+              <cmn-button [loading]="busy()" (clicked)="release()" variant="primary">
                 Release the hold
               </cmn-button>
             } @else {
-              <cmn-button [loading]="busy()" (clicked)="hold()" variant="secondary" size="sm">
+              <cmn-button [loading]="busy()" (clicked)="hold()" variant="secondary">
                 Hold all new sessions
               </cmn-button>
             }
@@ -137,9 +137,7 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
             </cmn-form-field>
           </div>
           <div>
-            <cmn-button [loading]="busy()" (clicked)="save()" variant="primary" size="sm"
-              >Save</cmn-button
-            >
+            <cmn-button [loading]="busy()" (clicked)="save()" variant="primary">Save</cmn-button>
           </div>
         </cmn-settings-section>
       }
