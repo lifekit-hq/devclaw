@@ -1,6 +1,6 @@
 import {ChangeDetectionStrategy, Component, inject, input, output, signal} from '@angular/core';
 import {FormsModule} from '@angular/forms';
-import {ButtonComponent, FormFieldComponent, InputComponent} from '@lifekit-hq/ui';
+import {AlertComponent, ButtonComponent, FormFieldComponent, InputComponent} from '@lifekit-hq/ui';
 
 import {DevclawApiService, errorText} from '../api/devclaw-api.service';
 
@@ -10,7 +10,7 @@ import {DevclawApiService, errorText} from '../api/devclaw-api.service';
  */
 @Component({
   selector: 'dc-decide-form',
-  imports: [ButtonComponent, FormFieldComponent, FormsModule, InputComponent],
+  imports: [AlertComponent, ButtonComponent, FormFieldComponent, FormsModule, InputComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="flex flex-wrap items-end gap-cmn-2">
@@ -37,7 +37,7 @@ import {DevclawApiService, errorText} from '../api/devclaw-api.service';
       }
     </div>
     @if (error(); as message) {
-      <p class="mt-cmn-2 text-cmn-sm text-status-error" role="alert">{{ message }}</p>
+      <cmn-alert class="mt-cmn-2 block" variant="error">{{ message }}</cmn-alert>
     }
   `,
 })

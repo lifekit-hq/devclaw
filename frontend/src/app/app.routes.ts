@@ -1,4 +1,4 @@
-import {type Routes} from '@angular/router';
+import {type ActivatedRouteSnapshot, type Route, type Routes} from '@angular/router';
 import {type PageChromeData} from '@lifekit-hq/ui';
 
 import {AppShellComponent} from './shell/app-shell.component';
@@ -6,6 +6,20 @@ import {AppShellComponent} from './shell/app-shell.component';
 // What each page declares for the shell's top bar (title, back target); the pages render no
 // heading or back link of their own.
 const chrome = (data: PageChromeData): PageChromeData => data;
+
+const SHORT_ID = 8;
+
+/**
+ * A detail page names itself from its route param, once: the top bar's title and the tab title
+ * come from this one declaration, so the page body renders no heading of its own.
+ */
+const named = (name: (id: string) => string): Pick<Route, 'title' | 'resolve'> => {
+  const barTitle = (route: ActivatedRouteSnapshot): string => name(route.paramMap.get('id') ?? '');
+  return {
+    title: route => `${barTitle(route)} · devclaw`,
+    resolve: {title: barTitle},
+  };
+};
 
 export const APP_ROUTES: Routes = [
   {
@@ -28,8 +42,8 @@ export const APP_ROUTES: Routes = [
       },
       {
         path: 'goals/:id',
-        title: 'Goal · devclaw',
-        data: chrome({title: 'Goal', parent: '/goals'}),
+        ...named(id => `Goal ${id}`),
+        data: chrome({parent: '/goals'}),
         loadComponent: () => import('./goals/goal-page.component').then(m => m.GoalPageComponent),
       },
       {
@@ -41,8 +55,8 @@ export const APP_ROUTES: Routes = [
       },
       {
         path: 'projects/:id',
-        title: 'Project · devclaw',
-        data: chrome({title: 'Project', parent: '/projects'}),
+        ...named(id => `Project ${id}`),
+        data: chrome({parent: '/projects'}),
         loadComponent: () =>
           import('./projects/project-page.component').then(m => m.ProjectPageComponent),
       },
@@ -50,8 +64,8 @@ export const APP_ROUTES: Routes = [
       // the history the app itself made.
       {
         path: 'sessions/:id',
-        title: 'Session · devclaw',
-        data: chrome({title: 'Session'}),
+        ...named(id => `Session ${id.slice(0, SHORT_ID)}`),
+        data: chrome({}),
         loadComponent: () =>
           import('./sessions/session-page.component').then(m => m.SessionPageComponent),
       },

@@ -46,7 +46,9 @@ import {UsageComponent} from '../shared/usage';
                 <header class="flex flex-wrap items-start justify-between gap-cmn-3">
                   <div class="flex min-w-0 flex-col gap-cmn-1">
                     <p class="font-medium text-text-primary">
-                      <a [routerLink]="['/projects', p.id]" class="hover:underline">{{ p.name }}</a>
+                      <a [routerLink]="['/projects', p.id]" class="cmn-link cmn-link--primary">{{
+                        p.name
+                      }}</a>
                       <span class="ml-cmn-2 font-mono text-cmn-xs text-text-secondary">{{
                         p.id
                       }}</span>
@@ -61,10 +63,7 @@ import {UsageComponent} from '../shared/usage';
                 @if (p.goals.length) {
                   <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
                     @for (g of p.goals; track g.id) {
-                      <a
-                        [routerLink]="['/goals', g.id]"
-                        class="text-accent-default hover:underline"
-                      >
+                      <a [routerLink]="['/goals', g.id]" class="cmn-link">
                         {{ g.id }} ({{ g.outcome ?? g.state
                         }}{{ g.attentionKind ? ', needs you' : '' }})
                       </a>

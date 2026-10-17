@@ -81,9 +81,8 @@ test('the goal page decides in the owner’s own words and shows a refusal', asy
   });
   await page.goto('/console/goals/g-blocked');
 
-  await expect(
-    page.getByRole('heading', {level: 2, name: 'Add CSV export to the reports page'})
-  ).toBeVisible();
+  await expect(page.getByRole('heading', {level: 1, name: 'Goal g-blocked'})).toBeVisible();
+  await expect(page.getByText('Add CSV export to the reports page')).toBeVisible();
   const decide = page.getByRole('region', {name: 'Decide'});
   await decide.getByRole('textbox', {name: 'Your decision'}).fill('  Exclude them for now  ');
   await decide.getByRole('button', {name: 'Decide'}).click();
@@ -98,11 +97,11 @@ test('Goals filters open from closed and opens one', async ({page}) => {
   await expect(page.getByRole('heading', {level: 1, name: 'Goals'})).toBeVisible();
   await expect(page.getByText('Add CSV export to the reports page')).toBeVisible();
   await expect(page.getByText('Fix the timezone drift in daily digests')).toHaveCount(0);
-  await page.getByRole('button', {name: /Closed/}).click();
+  await page.getByRole('radio', {name: /Closed/}).click();
   await expect(page.getByText('Fix the timezone drift in daily digests')).toBeVisible();
   await expect(page.getByText('Add CSV export to the reports page')).toHaveCount(0);
 
-  await page.getByRole('button', {name: /Open/}).click();
+  await page.getByRole('radio', {name: /Open/}).click();
   await page.getByText('Speed up the search index rebuild').click();
   await expect(page).toHaveURL(/\/console\/goals\/g-running$/);
   await expect(page.getByRole('region', {name: 'Sessions'})).toContainText('t-runnin');
@@ -124,7 +123,7 @@ test('Projects and a project page list the goals', async ({page}) => {
   await page.getByRole('link', {name: 'widgets'}).first().click();
 
   await expect(page).toHaveURL(/\/console\/projects\/widgets$/);
-  await expect(page.getByRole('heading', {level: 2, name: 'widgets'})).toBeVisible();
+  await expect(page.getByRole('heading', {level: 1, name: 'Project widgets'})).toBeVisible();
   await expect(page.getByRole('table')).toContainText('Add CSV export to the reports page');
 });
 

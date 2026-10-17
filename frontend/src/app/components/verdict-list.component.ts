@@ -1,6 +1,11 @@
 import {ChangeDetectionStrategy, Component, input} from '@angular/core';
 import {RouterLink} from '@angular/router';
-import {DisclosureRowComponent, TagComponent, type TagVariant} from '@lifekit-hq/ui';
+import {
+  AlertComponent,
+  DisclosureRowComponent,
+  TagComponent,
+  type TagVariant,
+} from '@lifekit-hq/ui';
 
 import {type VerdictRow} from '../api/devclaw.model';
 import {ago} from '../shared/time';
@@ -22,7 +27,7 @@ export function verdictWord(v: VerdictRow): {text: string; variant: TagVariant} 
  */
 @Component({
   selector: 'dc-verdict-list',
-  imports: [DisclosureRowComponent, RouterLink, TagComponent],
+  imports: [AlertComponent, DisclosureRowComponent, RouterLink, TagComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @for (v of rows(); track v.taskId) {
@@ -35,21 +40,21 @@ export function verdictWord(v: VerdictRow): {text: string; variant: TagVariant} 
         <cmn-tag [variant]="word.variant" status>{{ word.text }}</cmn-tag>
         <div class="flex flex-col gap-cmn-2 px-cmn-4 pb-cmn-4 text-cmn-sm">
           @if (v.unreadable) {
-            <p class="text-status-warning">
+            <cmn-alert variant="warning">
               The review produced no readable verdict{{ v.rawError ? ': ' + v.rawError : '' }}.
-            </p>
+            </cmn-alert>
           }
           @if (v.clauses.length) {
             <ul class="flex flex-col gap-cmn-2">
               @for (c of v.clauses; track $index) {
                 @let met = c.satisfied && !!c.evidence;
-                <li class="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-cmn-2">
+                <li class="flex gap-cmn-2">
                   <span
                     [class]="met ? 'text-status-success' : 'text-status-error'"
-                    class="font-mono"
+                    class="w-cmn-5 shrink-0 font-mono"
                     >{{ met ? '✓' : '✗' }}</span
                   >
-                  <span>
+                  <span class="min-w-0 flex-1">
                     <span class="block text-text-primary">{{ c.clause }}</span>
                     <span
                       class="block whitespace-pre-wrap font-mono text-cmn-xs text-text-secondary"
@@ -77,19 +82,11 @@ export function verdictWord(v: VerdictRow): {text: string; variant: TagVariant} 
           }
           <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
             @if (showGoal() && v.goalId) {
-              <a [routerLink]="['/goals', v.goalId]" class="text-accent-default hover:underline"
-                >goal {{ v.goalId }}</a
-              >
+              <a [routerLink]="['/goals', v.goalId]" class="cmn-link">goal {{ v.goalId }}</a>
             }
-            <a [routerLink]="['/sessions', v.taskId]" class="text-accent-default hover:underline"
-              >review session</a
-            >
+            <a [routerLink]="['/sessions', v.taskId]" class="cmn-link">review session</a>
             @if (v.prUrl) {
-              <a
-                [href]="v.prUrl"
-                class="text-accent-default hover:underline"
-                target="_blank"
-                rel="noopener noreferrer"
+              <a [href]="v.prUrl" class="cmn-link" target="_blank" rel="noopener noreferrer"
                 >the PR</a
               >
             }

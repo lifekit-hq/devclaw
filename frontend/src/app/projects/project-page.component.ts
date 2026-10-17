@@ -54,20 +54,16 @@ const NOT_FOUND = 404;
           <div class="flex flex-col gap-cmn-5">
             <header class="flex flex-wrap items-start justify-between gap-cmn-4">
               <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
-                <h2 class="break-words font-headline text-cmn-xl font-semibold text-text-primary">
-                  {{ p.name }}
-                </h2>
+                @if (p.name !== p.id) {
+                  <p class="break-words text-cmn-md font-medium text-text-primary">{{ p.name }}</p>
+                }
                 <p class="break-all font-mono text-cmn-xs text-text-secondary">
-                  {{ p.id }} · {{ p.status }}
+                  {{ p.status }}
                   @if (repoLink(); as repo) {
                     ·
-                    <a
-                      [href]="repo"
-                      class="text-accent-default hover:underline"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >{{ repo }}</a
-                    >
+                    <a [href]="repo" class="cmn-link" target="_blank" rel="noopener noreferrer">{{
+                      repo
+                    }}</a>
                   }
                 </p>
                 <p class="break-all font-mono text-cmn-xs text-text-secondary">
@@ -78,7 +74,7 @@ const NOT_FOUND = 404;
               <cmn-tag>{{ p.health }}</cmn-tag>
             </header>
 
-            <dc-section [count]="p.goals.length" heading="Goals">
+            <dc-section [count]="p.goals.length" [flush]="true" heading="Goals">
               @if (p.goals.length) {
                 <cmn-data-table
                   [rows]="p.goals"
@@ -127,7 +123,9 @@ const NOT_FOUND = 404;
                   </cmn-column>
                 </cmn-data-table>
               } @else {
-                <p class="text-cmn-sm text-text-secondary">No goals on this project.</p>
+                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">
+                  No goals on this project.
+                </p>
               }
             </dc-section>
           </div>

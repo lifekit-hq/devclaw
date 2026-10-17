@@ -4,11 +4,13 @@ import {RouterLink} from '@angular/router';
 import {
   AlertComponent,
   AsyncStateComponent,
+  ListItemRowComponent,
   PageContainerComponent,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
 
+import {type SessionRow} from '../api/devclaw.model';
 import {DevclawApiService, errorText} from '../api/devclaw-api.service';
 import {POLL_MS} from '../api/feeds';
 import {feedStatus, liveFeed} from '../api/live-feed';
@@ -17,7 +19,7 @@ import {DecideFormComponent} from '../components/decide-form.component';
 import {VerdictListComponent} from '../components/verdict-list.component';
 import {SectionComponent} from '../shared/section.component';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
-import {AgoPipe} from '../shared/time';
+import {ago, AgoPipe} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
 import {GoalVerbs} from './goal-verbs.service';
 
@@ -37,6 +39,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
     AttentionCardComponent,
     DecideFormComponent,
     JsonPipe,
+    ListItemRowComponent,
     PageContainerComponent,
     RouterLink,
     SectionComponent,
@@ -61,16 +64,15 @@ export function issueUrl(repoUrl: string, issue: number): string {
           @if (goal(); as g) {
             <header class="flex flex-wrap items-start justify-between gap-cmn-4">
               <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
-                <h2 class="break-words font-headline text-cmn-xl font-semibold text-text-primary">
-                  {{ g.objective || g.id }}
-                </h2>
+                @if (g.objective) {
+                  <p class="break-words text-cmn-md font-medium text-text-primary">
+                    {{ g.objective }}
+                  </p>
+                }
                 <p class="font-mono text-cmn-xs text-text-secondary">
-                  {{ g.id }} ·
-                  <a
-                    [routerLink]="['/projects', g.projectId]"
-                    class="text-accent-default hover:underline"
-                    >{{ g.projectId }}</a
-                  >
+                  <a [routerLink]="['/projects', g.projectId]" class="cmn-link">{{
+                    g.projectId
+                  }}</a>
                   · <code>{{ g.branch }}</code>
                 </p>
                 <dc-usage [usage]="g.usage" />
@@ -88,18 +90,14 @@ export function issueUrl(repoUrl: string, issue: number): string {
                 @for (n of g.issues; track n) {
                   <a
                     [href]="issueUrl(g.repoUrl, n)"
-                    class="text-accent-default hover:underline"
+                    class="cmn-link"
                     target="_blank"
                     rel="noopener noreferrer"
                     >issue #{{ n }}</a
                   >
                 }
                 @if (g.lastSession?.prUrl; as pr) {
-                  <a
-                    [href]="pr"
-                    class="text-accent-default hover:underline"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <a [href]="pr" class="cmn-link" target="_blank" rel="noopener noreferrer"
                     >the PR</a
                   >
                 }
@@ -134,31 +132,25 @@ export function issueUrl(repoUrl: string, issue: number): string {
               </dc-section>
             }
 
-            <dc-section [count]="g.sessions.length" heading="Sessions">
-              <ul class="divide-y divide-border-default text-cmn-sm">
-                @for (s of g.sessions; track s.id) {
-                  <li class="flex flex-wrap items-center gap-x-cmn-3 gap-y-cmn-1 py-cmn-2">
-                    <span class="font-mono text-cmn-xs text-text-secondary">
-                      {{ s.createdAt | ago }} ·
-                      {{ s.kind === 'review_repository' ? 'review' : 'session' }}
-                    </span>
+            <dc-section [count]="g.sessions.length" [flush]="true" heading="Sessions">
+              @for (s of g.sessions; track s.id) {
+                <cmn-list-item-row [label]="s.exitDetail || '—'" [sublabel]="sublabel(s)">
+                  <span meta class="flex items-center gap-cmn-2">
                     <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
                       s.exit ?? s.status
                     }}</cmn-tag>
-                    <span class="min-w-0 flex-1 truncate text-text-primary">{{
-                      s.exitDetail
-                    }}</span>
-                    <dc-usage [usage]="s.usage" [compact]="true" />
-                    <a
-                      [routerLink]="['/sessions', s.id]"
-                      class="font-mono text-cmn-xs text-accent-default hover:underline"
-                      >{{ s.id.slice(0, shortId) }} →</a
-                    >
-                  </li>
-                } @empty {
-                  <li class="text-text-secondary">No session yet.</li>
-                }
-              </ul>
+                    <dc-usage [usage]="s.usage" [compact]="true" class="hidden sm:inline" />
+                  </span>
+                  <a
+                    [routerLink]="['/sessions', s.id]"
+                    actions
+                    class="cmn-link cmn-hit-slop font-mono text-cmn-xs"
+                    >{{ s.id.slice(0, shortId) }} →</a
+                  >
+                </cmn-list-item-row>
+              } @empty {
+                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">No session yet.</p>
+              }
             </dc-section>
 
             <dc-section [count]="g.verdicts.length" heading="Verdicts">
@@ -181,7 +173,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
                       ·
                       <a
                         [href]="d.commentUrl"
-                        class="text-accent-default hover:underline"
+                        class="cmn-link cmn-link--underlined"
                         target="_blank"
                         rel="noopener noreferrer"
                         >thread</a
@@ -195,9 +187,9 @@ export function issueUrl(repoUrl: string, issue: number): string {
             </dc-section>
 
             <dc-section heading="Last world the session was given">
-              <pre
-                class="overflow-auto whitespace-pre-wrap font-mono text-cmn-xs text-text-primary"
-                >{{ g.lastSeen ? (g.lastSeen | json) : '—' }}</pre>
+              <pre class="cmn-code-block cmn-code-block--bare">{{
+                g.lastSeen ? (g.lastSeen | json) : '—'
+              }}</pre>
             </dc-section>
           }
         </div>
@@ -222,6 +214,10 @@ export class GoalPageComponent {
   protected readonly stateVariant = stateVariant;
   protected readonly stateIsLive = stateIsLive;
   protected readonly exitVariant = exitVariant;
+
+  protected sublabel(s: SessionRow): string {
+    return `${ago(s.createdAt)} · ${s.kind === 'review_repository' ? 'review' : 'session'}`;
+  }
 
   protected cancel(): void {
     this.verbError.set(null);

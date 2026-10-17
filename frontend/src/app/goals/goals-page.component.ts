@@ -3,12 +3,13 @@ import {Router, RouterLink} from '@angular/router';
 import {
   AlertComponent,
   AsyncStateComponent,
-  ChipComponent,
   CmnCellDirective,
   CmnColumnComponent,
   DataTableComponent,
   EmptyStateComponent,
   PageContainerComponent,
+  SegmentedComponent,
+  type SegmentedOption,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
@@ -49,13 +50,13 @@ function matches(g: GoalRow, filter: Filter): boolean {
     AgoPipe,
     AlertComponent,
     AsyncStateComponent,
-    ChipComponent,
     CmnCellDirective,
     CmnColumnComponent,
     DataTableComponent,
     EmptyStateComponent,
     PageContainerComponent,
     RouterLink,
+    SegmentedComponent,
     StatusIndicatorComponent,
     TagComponent,
     UsageComponent,
@@ -66,13 +67,12 @@ function matches(g: GoalRow, filter: Filter): boolean {
       <p class="text-cmn-sm text-text-secondary">
         Every goal devclaw is working on, one per GitHub issue.
       </p>
-      <div class="flex flex-wrap gap-cmn-2" role="group" aria-label="Filter goals">
-        @for (f of filters; track f.id) {
-          <cmn-chip [selected]="filter() === f.id" (clicked)="filter.set(f.id)">
-            {{ f.label }} <span class="font-mono opacity-70">{{ counts()[f.id] }}</span>
-          </cmn-chip>
-        }
-      </div>
+      <cmn-segmented
+        [options]="options()"
+        [value]="filter()"
+        (valueChange)="choose($event)"
+        label="Filter goals"
+      />
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
@@ -118,6 +118,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
                   <a
                     [routerLink]="['/sessions', s.id]"
                     (click)="$event.stopPropagation()"
+                    class="cmn-link cmn-link--inherit"
                     title="open the session"
                   >
                     <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
@@ -148,7 +149,6 @@ export class GoalsPageComponent {
 
   protected readonly feedStatus = feedStatus;
   protected readonly feed = inject(GoalsFeed);
-  protected readonly filters = FILTERS;
   protected readonly filter = signal<Filter>('open');
   protected readonly counts = computed(() => {
     const goals = this.feed.state().data ?? [];
@@ -156,12 +156,22 @@ export class GoalsPageComponent {
       FILTERS.map(f => [f.id, goals.filter(g => matches(g, f.id)).length])
     ) as Record<Filter, number>;
   });
+  protected readonly options = computed<SegmentedOption[]>(() =>
+    FILTERS.map(f => ({value: f.id, label: `${f.label} ${this.counts()[f.id]}`}))
+  );
   protected readonly shown = computed(() =>
     (this.feed.state().data ?? []).filter(g => matches(g, this.filter()))
   );
   protected readonly stateVariant = stateVariant;
   protected readonly stateIsLive = stateIsLive;
   protected readonly exitVariant = exitVariant;
+
+  protected choose(value: string): void {
+    const picked = FILTERS.find(f => f.id === value);
+    if (picked) {
+      this.filter.set(picked.id);
+    }
+  }
 
   protected trackById(_index: number, g: GoalRow): string {
     return g.id;

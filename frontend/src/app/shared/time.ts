@@ -21,12 +21,6 @@ export function utcSecond(ms: number): string {
 }
 
 /** `2026-10-06 14:03:09Z (5m ago)`, for the session record. */
-@Pipe({name: 'stamp'})
-export class StampPipe implements PipeTransform {
-  public transform(ms: number | null | undefined): string {
-    if (!ms) {
-      return '—';
-    }
-    return `${utcSecond(ms)} (${formatRelativeTime(ms)})`;
-  }
+export function stamp(ms: number | null | undefined): string {
+  return ms ? `${utcSecond(ms)} (${formatRelativeTime(ms)})` : '—';
 }
