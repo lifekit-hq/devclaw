@@ -7,8 +7,6 @@ import {AppShellComponent} from './shell/app-shell.component';
 // heading or back link of their own.
 const chrome = (data: PageChromeData): PageChromeData => data;
 
-const SHORT_ID = 8;
-
 /**
  * A detail page names itself from its route param, once: the top bar's title and the tab title
  * come from this one declaration, so the page body renders no heading of its own.
@@ -64,7 +62,7 @@ export const APP_ROUTES: Routes = [
       // the history the app itself made.
       {
         path: 'sessions/:id',
-        ...named(id => `Session ${id.slice(0, SHORT_ID)}`),
+        ...named(id => `Session ${id}`),
         data: chrome({}),
         loadComponent: () =>
           import('./sessions/session-page.component').then(m => m.SessionPageComponent),
