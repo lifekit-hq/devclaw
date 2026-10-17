@@ -22,7 +22,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
 
 /**
  * The owner's one page: every goal waiting on a decision, oldest first, then the ones already
- * answered and waiting for the tick to read the answer.
+ * answered and waiting to be picked up.
  */
 @Component({
   selector: 'dc-needs-you-page',
@@ -40,8 +40,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
   template: `
     <cmn-page-container>
       <p class="text-cmn-sm text-text-secondary">
-        A click posts your decision on the issue; the next tick reads it. The options are the
-        session's own.
+        Goals waiting for your decision. Your answer is posted on the issue.
       </p>
       <dc-dispatch-status />
       @if (feed.state().data && error(); as message) {
@@ -51,6 +50,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        class="block"
         retryable
       >
         <div class="flex flex-col gap-cmn-5">
@@ -120,7 +120,7 @@ export class NeedsYouPageComponent {
   );
   protected readonly groups = computed(() => [
     {title: 'Waiting on you', goals: this.open()},
-    {title: 'Answered, waiting for the tick', goals: this.answered()},
+    {title: 'Answered, waiting to be picked up', goals: this.answered()},
   ]);
 
   protected cancel(goalId: string): void {

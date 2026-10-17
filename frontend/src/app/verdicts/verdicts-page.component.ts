@@ -32,8 +32,7 @@ const POLL_MS = 30_000;
   template: `
     <cmn-page-container>
       <p class="text-cmn-sm text-text-secondary">
-        What the done-gate found, clause by clause, read from each review session's own output. Open
-        a row to expand.
+        How each finished goal was checked against its requirements. Open a row for details.
       </p>
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>

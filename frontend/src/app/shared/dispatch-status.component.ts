@@ -31,6 +31,7 @@ export function dispatchState(control: ControlState | null): Dispatch | null {
   selector: 'dc-dispatch-status',
   imports: [StatusIndicatorComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: {class: 'block'},
   template: `
     @if (dispatch(); as d) {
       <cmn-status-indicator [variant]="d.variant" [live]="d.live">
