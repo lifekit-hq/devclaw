@@ -19,3 +19,8 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* A code block that scrolls inside its own box past this height (the lifekit-common hook). */
+.dc-code-capped {
+  --cmn-code-block-max-height: 24rem;
+}

@@ -76,7 +76,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
                       <header class="flex flex-wrap items-baseline justify-between gap-cmn-2">
                         <a
                           [routerLink]="['/goals', g.id]"
-                          class="min-w-0 truncate font-medium text-text-primary hover:underline"
+                          class="cmn-link cmn-link--primary min-w-0 truncate font-medium"
                         >
                           {{ g.objective || g.id }}
                         </a>

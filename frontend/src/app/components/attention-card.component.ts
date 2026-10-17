@@ -31,7 +31,7 @@ interface Option {
           ·
           <a
             [href]="answered.commentUrl"
-            class="text-accent-default hover:underline"
+            class="cmn-link cmn-link--underlined"
             target="_blank"
             rel="noopener noreferrer"
             >thread</a
@@ -46,13 +46,9 @@ interface Option {
         {{ a.kind }} · open {{ a.since | ago }}
         @if (a.link) {
           ·
-          <a
-            [href]="a.link"
-            class="text-accent-default hover:underline"
-            target="_blank"
-            rel="noopener noreferrer"
-            >{{ a.kind === 'session' || a.kind === 'env' ? 'issue' : 'thread' }}</a
-          >
+          <a [href]="a.link" class="cmn-link" target="_blank" rel="noopener noreferrer">{{
+            a.kind === 'session' || a.kind === 'env' ? 'issue' : 'thread'
+          }}</a>
         }
       </p>
       <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">{{ a.question }}</p>

@@ -13,20 +13,20 @@ import {
   AlertComponent,
   AsyncStateComponent,
   ButtonComponent,
+  ListItemRowComponent,
   PageContainerComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
 
-import {type TaskEvent} from '../api/devclaw.model';
+import {type TaskEvent, type TaskRow} from '../api/devclaw.model';
 import {DevclawApiService} from '../api/devclaw-api.service';
 import {feedStatus, liveFeed} from '../api/live-feed';
 import {SectionComponent} from '../shared/section.component';
 import {exitVariant} from '../shared/status';
-import {StampPipe} from '../shared/time';
+import {stamp} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
 
 const NOT_FOUND = 404;
-const SHORT_ID = 8;
 const SUMMARY_KEYS = 4;
 const SUMMARY_VALUE = 80;
 const SUMMARY_RAW = 160;
@@ -68,10 +68,10 @@ function absent(value: unknown): boolean {
     AsyncStateComponent,
     ButtonComponent,
     JsonPipe,
+    ListItemRowComponent,
     PageContainerComponent,
     RouterLink,
     SectionComponent,
-    StampPipe,
     TagComponent,
     UsageComponent,
   ],
@@ -91,33 +91,22 @@ function absent(value: unknown): boolean {
           @let t = d.task;
           <div class="flex flex-col gap-cmn-5">
             <header class="flex min-w-0 flex-col gap-cmn-1">
-              <h2 class="font-headline text-cmn-xl font-semibold text-text-primary">
-                {{ t.kind === 'review_repository' ? 'Review session' : 'Session' }}
-                <span class="font-mono text-cmn-sm text-text-secondary">{{
-                  t.id.slice(0, shortId)
-                }}</span>
-              </h2>
+              @if (t.kind === 'review_repository') {
+                <p class="text-cmn-md font-medium text-text-primary">Review session</p>
+              }
               <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
                 @if (t.parentGoalId) {
-                  <a
-                    [routerLink]="['/goals', t.parentGoalId]"
-                    class="text-accent-default hover:underline"
+                  <a [routerLink]="['/goals', t.parentGoalId]" class="cmn-link"
                     >goal {{ t.parentGoalId }}</a
                   >
                 }
                 @if (t.projectId) {
-                  <a
-                    [routerLink]="['/projects', t.projectId]"
-                    class="text-accent-default hover:underline"
+                  <a [routerLink]="['/projects', t.projectId]" class="cmn-link"
                     >project {{ t.projectId }}</a
                   >
                 }
                 @if (t.prUrl) {
-                  <a
-                    [href]="t.prUrl"
-                    class="text-accent-default hover:underline"
-                    target="_blank"
-                    rel="noopener noreferrer"
+                  <a [href]="t.prUrl" class="cmn-link" target="_blank" rel="noopener noreferrer"
                     >the PR</a
                   >
                 }
@@ -134,35 +123,30 @@ function absent(value: unknown): boolean {
                 }
               </p>
               @if (t.error) {
-                <p class="whitespace-pre-wrap text-cmn-sm text-status-error">{{ t.error }}</p>
+                <cmn-alert variant="error"
+                  ><span class="whitespace-pre-wrap">{{ t.error }}</span></cmn-alert
+                >
               }
-              <dl
-                class="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-cmn-3 gap-y-cmn-1 font-mono text-cmn-xs text-text-secondary"
-              >
-                <dt>status</dt>
-                <dd>{{ t.status }}</dd>
-                <dt>created</dt>
-                <dd>{{ t.createdAt | stamp }}</dd>
-                <dt>started</dt>
-                <dd>{{ t.startedAt | stamp }}</dd>
-                <dt>completed</dt>
-                <dd>{{ t.completedAt | stamp }}</dd>
-                <dt>pre-run sha</dt>
-                <dd class="break-all">{{ t.preRunSha || 'not recorded' }}</dd>
-                <dt>branch</dt>
-                <dd class="break-all">{{ t.targetBranch || 'not recorded' }}</dd>
-                <dt>workspace</dt>
-                <dd class="break-all">{{ t.workspaceDir }}</dd>
-                <dt>delivers</dt>
-                <dd>{{ t.deliver ? 'yes' : 'no' }}</dd>
-                <dt>tokens</dt>
-                <dd><dc-usage [usage]="d.usage" /></dd>
+              <dl class="flex flex-col gap-cmn-1 font-mono text-cmn-xs text-text-secondary">
+                @for (row of record(t); track row.name) {
+                  <div class="flex gap-cmn-3">
+                    <dt class="w-32 shrink-0">{{ row.name }}</dt>
+                    <dd class="min-w-0 flex-1 break-all">{{ row.value }}</dd>
+                  </div>
+                }
+                <div class="flex gap-cmn-3">
+                  <dt class="w-32 shrink-0">tokens</dt>
+                  <dd class="min-w-0 flex-1"><dc-usage [usage]="d.usage" /></dd>
+                </div>
               </dl>
             </dc-section>
 
             <dc-section heading="Brief the session was given">
               <pre
-                class="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-cmn-xs text-text-primary"
+                class="cmn-code-block cmn-code-block--bare dc-code-capped"
+                aria-label="Brief the session was given"
+                role="group"
+                tabindex="0"
                 >{{ t.goal || 'not recorded' }}</pre>
             </dc-section>
 
@@ -200,33 +184,31 @@ function absent(value: unknown): boolean {
                   <p class="text-cmn-sm text-text-secondary">not recorded</p>
                 } @else {
                   <pre
-                    class="max-h-[30rem] overflow-auto whitespace-pre-wrap font-mono text-cmn-xs text-text-primary"
+                    [attr.aria-label]="part.title"
+                    class="cmn-code-block cmn-code-block--bare dc-code-capped"
+                    role="group"
+                    tabindex="0"
                     >{{ part.text ?? (part.value | json) }}</pre>
                 }
               </dc-section>
             }
 
-            <dc-section [count]="events().length" heading="Events">
-              <ul class="divide-y divide-border-default font-mono text-cmn-xs">
-                @for (e of events(); track e.id) {
-                  <li class="flex flex-wrap gap-x-cmn-3 gap-y-cmn-1 py-cmn-2">
-                    <span class="text-text-secondary">{{ e.ts | stamp }}</span>
-                    <span class="text-text-primary">{{ e.type }}</span>
-                    <span class="text-text-secondary">{{ e.source }}</span>
-                    <span
-                      [attr.title]="e.payloadJson"
-                      class="min-w-0 basis-full truncate text-text-primary"
-                      >{{ summary(e) }}</span
-                    >
-                  </li>
-                } @empty {
-                  <li class="text-text-secondary">not recorded</li>
-                }
-              </ul>
+            <dc-section [count]="events().length" [flush]="true" heading="Events">
+              @for (e of events(); track e.id) {
+                <cmn-list-item-row
+                  [attr.title]="e.payloadJson"
+                  [label]="e.type"
+                  [sublabel]="eventLine(e)"
+                />
+              } @empty {
+                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">not recorded</p>
+              }
               @if (cursor()) {
-                <cmn-button [loading]="loadingMore()" (clicked)="more()" variant="secondary"
-                  >load more</cmn-button
-                >
+                <div class="border-t border-border-default p-cmn-3">
+                  <cmn-button [loading]="loadingMore()" (clicked)="more()" variant="secondary"
+                    >load more</cmn-button
+                  >
+                </div>
               }
             </dc-section>
           </div>
@@ -269,9 +251,7 @@ export class SessionPageComponent {
   protected readonly events = signal<TaskEvent[]>([]);
   protected readonly cursor = signal<number | null>(null);
   protected readonly loadingMore = signal(false);
-  protected readonly shortId = SHORT_ID;
   protected readonly exitVariant = exitVariant;
-  protected readonly summary = payloadSummary;
 
   constructor() {
     effect(onCleanup => {
@@ -287,6 +267,24 @@ export class SessionPageComponent {
       });
       onCleanup(() => sub.unsubscribe());
     });
+  }
+
+  /** The record's plain facts, one `name: value` row each. */
+  protected record(t: TaskRow): {name: string; value: string}[] {
+    return [
+      {name: 'status', value: t.status},
+      {name: 'created', value: stamp(t.createdAt)},
+      {name: 'started', value: stamp(t.startedAt)},
+      {name: 'completed', value: stamp(t.completedAt)},
+      {name: 'pre-run sha', value: t.preRunSha || 'not recorded'},
+      {name: 'branch', value: t.targetBranch || 'not recorded'},
+      {name: 'workspace', value: t.workspaceDir},
+      {name: 'delivers', value: t.deliver ? 'yes' : 'no'},
+    ];
+  }
+
+  protected eventLine(e: TaskEvent): string {
+    return `${stamp(e.ts)} · ${e.source} · ${payloadSummary(e)}`;
   }
 
   protected more(): void {
