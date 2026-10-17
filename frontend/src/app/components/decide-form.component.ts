@@ -21,23 +21,17 @@ import {DevclawApiService, errorText} from '../api/devclaw-api.service';
         class="min-w-0 flex-1 basis-64"
         label="Your decision"
       >
-        <cmn-input [placeholder]="placeholder()" size="sm" />
+        <cmn-input [placeholder]="placeholder()" />
       </cmn-form-field>
       <cmn-button
         [disabled]="busy() || !text().trim()"
         (clicked)="decideWith(text())"
         variant="secondary"
-        size="sm"
       >
         Decide
       </cmn-button>
       @if (cancellable()) {
-        <cmn-button
-          [disabled]="busy()"
-          (clicked)="cancelRequested.emit()"
-          variant="secondary"
-          size="sm"
-        >
+        <cmn-button [disabled]="busy()" (clicked)="cancelRequested.emit()" variant="secondary">
           Cancel goal
         </cmn-button>
       }
