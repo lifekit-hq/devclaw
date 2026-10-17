@@ -47,10 +47,10 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        class="block"
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        class="block"
         retryable
       >
         <div class="flex flex-col gap-cmn-5">
