@@ -63,7 +63,7 @@ interface Option {
       } @else {
         @if (options().length || takeDefault()) {
           <div
-            class="mt-cmn-3 flex flex-wrap gap-cmn-2"
+            class="mt-cmn-3 flex flex-col gap-cmn-2 sm:flex-row sm:flex-wrap [&_button]:w-full sm:[&_button]:w-auto"
             role="group"
             aria-label="The session's options"
           >
