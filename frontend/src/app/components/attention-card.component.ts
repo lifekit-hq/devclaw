@@ -39,7 +39,7 @@ interface Option {
         }
       </p>
       <p class="mt-cmn-1 font-mono text-cmn-xs text-text-secondary">
-        waiting to be picked up · {{ answered.waitingOn }}
+        waiting to be picked up{{ answered.waitingOn === 'tick' ? '' : ' · ' + answered.waitingOn }}
       </p>
     } @else {
       <p class="mb-cmn-2 font-mono text-cmn-xs text-text-secondary">

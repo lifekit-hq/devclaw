@@ -121,7 +121,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
             @if (!g.outcome) {
               <dc-section heading="Decide">
                 <p class="text-cmn-sm text-text-secondary">
-                  Posted on the issue as an instruction mentioning the bot; the next tick reads it.
+                  Posted on the issue as an instruction mentioning the bot; it is read on the next check.
                   This is the owner's one verb.
                 </p>
                 <dc-decide-form
