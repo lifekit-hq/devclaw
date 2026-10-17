@@ -29,7 +29,7 @@ import {UsageComponent} from '../shared/usage';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <cmn-page-container>
-      <p class="text-cmn-sm text-text-secondary">The repositories devclaw works on.</p>
+      <p class="text-cmn-sm text-text-secondary">The repositories devclaw works on for you.</p>
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }

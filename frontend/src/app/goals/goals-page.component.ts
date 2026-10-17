@@ -64,7 +64,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
   template: `
     <cmn-page-container>
       <p class="text-cmn-sm text-text-secondary">
-        One issue, one branch, one PR. The thread on GitHub is the record; this is the index.
+        Every goal devclaw is working on, one per GitHub issue.
       </p>
       <div class="flex flex-wrap gap-cmn-2" role="group" aria-label="Filter goals">
         @for (f of filters; track f.id) {
