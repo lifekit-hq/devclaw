@@ -12,6 +12,7 @@ docs/
 ├── flows/             one session's journey; how a session becomes a PR and a merge
 ├── reference/         env vars
 ├── runbooks/          doctor, live shakedown, webhooks, the VPS waiter, self-deploy
+├── spikes/            dated experiments that settle one design question
 └── assets/            console screenshots
 ```
 
@@ -46,6 +47,12 @@ every v1 spec is a superseded row in `specs/README.md`.
 | [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-09-13 |
 | [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | The OpenClaw waiter on the VPS and its tool menu. | **CURRENT** — 2026-10-12 (tool menu: the 18 v2 `@mcp.tool` verbs; v1 verbs removed from the waiter prompt) |
 | [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-07 (images build on hosted arm64 via `docker-build.yml`; the box pulls by SHA) |
+
+## Spikes
+
+| Doc | Purpose | Currency |
+|---|---|---|
+| [`spikes/no-mistakes-done-when.md`](./spikes/no-mistakes-done-when.md) | Whether no-mistakes' intent review judges a goal's `## Done when` clauses (#951): the run, the per-clause result, what it means for the done-gate. | **CURRENT** — 2026-10-21 (a dated record of one no-mistakes v1.99.0 run) |
 
 ## Where the docs are NOT
 
