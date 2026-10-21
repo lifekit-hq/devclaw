@@ -34,7 +34,7 @@ async def goal_json(request: Request) -> Response:
 @mcp.custom_route("/goals/{goal_id}/cancel", methods=["POST"])
 async def goal_cancel(request: Request) -> Response:
     try:
-        return JSONResponse(goals.cancel_goal(request.path_params["goal_id"]))
+        return JSONResponse(await goals.cancel_goal(request.path_params["goal_id"]))
     except KeyError:
         return JSONResponse({"error": "not_found"}, status_code=404)
 

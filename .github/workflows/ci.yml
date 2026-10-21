@@ -75,6 +75,6 @@ jobs:
 
 # NB: there is deliberately NO deploy job here. A merge to main runs tests +
 # lint only — it MUST NOT rebuild-and-recreate the live VPS mid-run (spec 005,
-# FR-008), which used to SIGKILL in-flight overnight goal sandboxes. Images are
+# FR-008), which used to SIGKILL in-flight overnight goal sessions. Images are
 # built off the box by docker-build.yml; the deploy runs through
 # .github/workflows/deploy.yml (workflow_dispatch, armed by a published build).

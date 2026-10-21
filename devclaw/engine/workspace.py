@@ -12,10 +12,15 @@ merged since the last action.
 
 from __future__ import annotations
 
-import re
+import asyncio
+import json
 import os
-import shutil
+import re
+import subprocess
 from pathlib import Path
+
+from .. import config as _config
+from ..credentials import strip_refused as _strip_refused
 from ..procutil import run as _run
 
 
@@ -29,13 +34,12 @@ def workspace_is_dispatchable(workspace_dir: str | None) -> str | None:
     human-actionable reason string when it is NOT dispatchable, or ``None`` when
     it is fine to proceed.
 
-    Zero-token and zero-container by construction — a couple of filesystem stats,
+    Zero-token by construction — a couple of filesystem stats,
     nothing more — so it stays on the cheap side of the dispatch seam and never
     trips the zero-token idle guard. Callers invoke it at ADMISSION (before a row
-    is claimed / any ``docker run``): the direct path rejects with a ToolError,
+    is claimed / any session starts): the direct path rejects with a ToolError,
     the goal path blocks-and-heals (``mechanical:prep``). This replaces the late,
-    post-claim, silent failure inside the sandbox (``engine/sandcastle.py`` only
-    checked existence at launch, not git-ness). Mirrors the ``.git`` predicate
+    post-claim, silent failure inside the session. Mirrors the ``.git`` predicate
     :func:`prepare_workspace` already uses below."""
     if not workspace_dir or not str(workspace_dir).strip():
         return "no workspace_dir to dispatch into"
@@ -55,87 +59,101 @@ def workspace_is_dispatchable(workspace_dir: str | None) -> str | None:
 
 
 
-#: One goal, one checkout (2026-09-06). A goal's tasks run in
-#: ``<project workspace>/.goals/<goal_id>`` — a full clone seeded locally from
-#: the project's checkout (hardlinked objects, seconds) with ``origin`` pointed
-#: at the real remote — so no other goal's task can ever move the directory a
-#: task is about to run in. The project checkout stays the identity anchor
-#: (manifest-at-base reads, project docs, trends, deploy, doctor) and a
-#: mirror to seed from; nothing runs in it any more except direct tasks.
-GOAL_CHECKOUTS_DIRNAME = ".goals"
-#: The pristine-tree clean, with the goal checkouts kept: ``clean -fdx``
-#: removes IGNORED files too, so without the exclude a direct task's prep on
-#: the project checkout would delete every in-flight goal's clone.
-_CLEAN_CMD = ("git", "clean", "-fdx", "-e", GOAL_CHECKOUTS_DIRNAME)
+#: One goal, one worktree (#952). A goal's tasks run in a treehouse worktree
+#: LEASED from the project checkout's pool (``treehouse get --lease``), its
+#: holder ``devclaw:<goal_id>`` — so no other goal's task can ever move the
+#: directory a task is about to run in, and the lease is returned when the
+#: goal closes. The project checkout stays the identity anchor (manifest-at-base
+#: reads, project docs, doctor) and the repository the pool hangs off.
+#: Treehouse owns where the pool lives (``TREEHOUSE_ROOT``, else its default).
+_CLEAN_CMD = ("git", "clean", "-fdx")
+_TREEHOUSE_TIMEOUT_S = 300
 
 
-def goal_checkout_dir(project_workspace: str, goal_id: str) -> str:
-    """Where a goal's tasks run: ``<project_workspace>/.goals/<goal_id>``.
-    Pure path arithmetic — derived, never stored (the row's ``workspace_dir``
-    carries it per task; the goal keeps the project path as its identity)."""
-    return os.path.join(project_workspace, GOAL_CHECKOUTS_DIRNAME, goal_id)
+def lease_holder(goal_id: str) -> str:
+    return f"devclaw:{goal_id}"
 
 
-def project_workspace_for(path: str) -> str:
-    """The identity axis for a bind path: a goal checkout maps back to its
-    project workspace (``…/.goals/<id>`` → ``…``); any other path is itself.
-    Used to key per-project resources (the toolchain cache volume) so every
-    goal of a project shares one cache, exactly as before."""
-    parent, leaf = os.path.split(path.rstrip("/"))
-    grand, marker = os.path.split(parent)
-    if leaf and marker == GOAL_CHECKOUTS_DIRNAME and grand:
-        return grand
-    return path
-
-
-async def ensure_goal_checkout(project_workspace: str, repo_url: "str | None", goal_id: str) -> None:
-    """Best-effort seeding of ``<project>/.goals/<goal_id>`` — never raises.
-
-    When the project checkout is a git repo: refresh its refs (the
-    manifest-at-base reads depend on them), keep ``.goals/`` out of its index
-    via ``.git/info/exclude`` (belt to the onboarding ``.gitignore`` braces),
-    and, if the goal checkout does not exist yet, ``git clone --local`` it
-    from the project checkout and point ``origin`` at the real remote.
-    :func:`prepare_workspace` then owns fetch + branch placement in the goal
-    checkout; when this seeding cannot happen (no project checkout yet) it
-    clones from ``repo_url`` itself and blocks loudly on failure."""
-    mirror = Path(project_workspace) if project_workspace else None
-    if mirror is None or not (mirror / ".git").exists():
-        return
+def _treehouse_sync(project_workspace: str, *args: str) -> "tuple[int, str]":
+    """``(exit, stdout)`` of one treehouse call run in the project checkout.
+    Banners and update notices go to stderr and are dropped. Never raises."""
     try:
-        exclude = mirror / ".git" / "info" / "exclude"
-        exclude.parent.mkdir(parents=True, exist_ok=True)
-        existing = exclude.read_text() if exclude.exists() else ""
-        if f"{GOAL_CHECKOUTS_DIRNAME}/" not in existing.split():
-            exclude.write_text(existing.rstrip("\n") + f"\n{GOAL_CHECKOUTS_DIRNAME}/\n")
-    except OSError:
-        pass
-    await _run("git", "fetch", "origin", "--prune", cwd=str(mirror))
-    checkout = Path(goal_checkout_dir(project_workspace, goal_id))
-    if (checkout / ".git").exists():
-        return
-    rc, url = await _run("git", "remote", "get-url", "origin", cwd=str(mirror))
-    origin = url.strip() if rc == 0 and url.strip() else (repo_url or "")
-    checkout.parent.mkdir(parents=True, exist_ok=True)
-    rc, _ = await _run("git", "clone", "--quiet", "--local", str(mirror), str(checkout))
+        proc = subprocess.run(
+            [_config.TREEHOUSE_BIN, *args], cwd=project_workspace, capture_output=True,
+            text=True, timeout=_TREEHOUSE_TIMEOUT_S, env=_strip_refused(dict(os.environ)),
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return 127, f"{_config.TREEHOUSE_BIN} not runnable: {exc}"
+    return proc.returncode, proc.stdout if proc.returncode == 0 else (proc.stderr or proc.stdout)
+
+
+def _leased_checkout(project_workspace: str, goal_id: str) -> "str | None":
+    """The worktree leased to ``goal_id``, or None when it holds none. Read from
+    treehouse's own lease state — devclaw stores no path. Raises
+    :class:`WorkspaceError` when that state cannot be read: unknown is not none."""
+    rc, out = _treehouse_sync(project_workspace, "status", "--json")
     if rc != 0:
-        shutil.rmtree(checkout, ignore_errors=True)
-        return
-    if origin:
-        await _run("git", "remote", "set-url", "origin", origin, cwd=str(checkout))
-        await _run("git", "remote", "set-head", "origin", "-a", cwd=str(checkout))
+        raise WorkspaceError(f"treehouse status failed: {out.strip()[-300:]}")
+    try:
+        pool = json.loads(out)
+    except ValueError:
+        pool = None
+    if not isinstance(pool, list):
+        raise WorkspaceError(f"treehouse status output unreadable: {out.strip()[-300:]}")
+    holder = lease_holder(goal_id)
+    for tree in pool:
+        if isinstance(tree, dict) and tree.get("status") == "leased" and tree.get("lease_holder") == holder:
+            path = tree.get("path")
+            if isinstance(path, str) and path:
+                return path
+    return None
+
+
+def goal_checkout_dir(project_workspace: str, goal_id: str) -> "str | None":
+    """The worktree leased to ``goal_id``, or None — also when treehouse cannot
+    say. Never raises."""
+    if not project_workspace or not (Path(project_workspace) / ".git").exists():
+        return None
+    try:
+        return _leased_checkout(project_workspace, goal_id)
+    except WorkspaceError:
+        return None
+
+
+async def lease_goal_checkout(project_workspace: str, repo_url: "str | None", goal_id: str) -> str:
+    """The goal's worktree: its existing lease, else a fresh one from the pool.
+    Clones the project checkout first when it is not there yet. Raises
+    :class:`WorkspaceError` when no worktree can be leased, or when treehouse
+    cannot say whether the goal already holds one — a goal never runs in a
+    directory another goal can move, and never holds two."""
+    if not (Path(project_workspace) / ".git").exists():
+        await prepare_workspace(project_workspace, repo_url)
+    existing = await asyncio.to_thread(_leased_checkout, project_workspace, goal_id)
+    if existing:
+        return existing
+    rc, out = await asyncio.to_thread(
+        _treehouse_sync, project_workspace, "get", "--lease", "--json", "--lease-holder", lease_holder(goal_id),
+    )
+    if rc != 0:
+        raise WorkspaceError(f"treehouse could not lease a worktree for {goal_id}: {out.strip()[-300:]}")
+    try:
+        path = json.loads(out)["path"]
+    except (ValueError, KeyError, TypeError):
+        raise WorkspaceError(f"treehouse lease output unreadable: {out.strip()[-300:]}")
+    return str(path)
 
 
 def remove_goal_checkout(project_workspace: str, goal_id: str) -> bool:
-    """Delete a goal's checkout (a terminal goal owns nothing any more).
-    Returns True when a directory was removed. Never raises."""
+    """Return a goal's worktree to the pool (a terminal goal owns nothing any
+    more). True when a lease was returned. Never raises."""
     if not project_workspace or not goal_id:
         return False
-    d = goal_checkout_dir(project_workspace, goal_id)
-    if not os.path.isdir(d):
+    path = goal_checkout_dir(project_workspace, goal_id)
+    if not path:
         return False
-    shutil.rmtree(d, ignore_errors=True)
-    return not os.path.isdir(d)
+    rc, _ = _treehouse_sync(project_workspace, "return", path, "--force",
+                            "--if-lease-holder", lease_holder(goal_id))
+    return rc == 0
 
 
 async def _default_branch(workspace_dir: str) -> str:

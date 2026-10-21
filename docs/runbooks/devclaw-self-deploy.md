@@ -5,7 +5,7 @@ Spec: [`specs/005-devclaw-self-deploy/spec.md`](../../specs/005-devclaw-self-dep
 devclaw now owns its own deployment. Its image is built **from the checked-out
 source** (`deploy/Dockerfile` — no `git clone` inside the build) on a
 GitHub-hosted arm64 runner — never on the box — and pushed to
-`ghcr.io/lifekit-hq/devclaw-mcp` + `…/devclaw-sandbox` as `:<commit sha>` by
+`ghcr.io/lifekit-hq/devclaw-mcp` as `:<commit sha>` by
 `.github/workflows/docker-build.yml` on every push to main. The box only pulls
 those exact tags (`.github/workflows/deploy.yml`) and runs them as its **own compose project**
 (`docker compose -p devclaw -f deploy/docker-compose.devclaw.yml`), separate
@@ -44,7 +44,7 @@ two externally-declared seams: the `lifekit-shared` network and the
   **devclaw-owned** — reading another entity's env file (the old
   `/srv/lifekit-stack/.env` / `/srv/openclaw/config/.env` default) is the exact
   cross-entity coupling the ecosystem decoupling removes. It carries every var
-  the fragment reads: the `LIFEKIT_*` host facts (docker GID, claude home,
+  the fragment reads: the `LIFEKIT_*` host facts (claude home,
   vault dir, workspaces dir — duplicated from the host on purpose; a little
   host-fact duplication is the price of entity independence), the operator-set
   `DEVCLAW_*` knobs, `DEVCLAW_TOKEN`, and on the cutover host
@@ -83,7 +83,7 @@ two externally-declared seams: the `lifekit-shared` network and the
 
 Run on the VPS. Steps 1–3 do **not** touch the running instance.
 
-**1. Build + push the images** (no live change yet). `Docker Build` publishes
+**1. Build + push the image** (no live change yet). `Docker Build` publishes
 every commit pushed to main; break-glass only (ghcr or hosted runners down),
 build manually:
 ```bash
@@ -93,9 +93,7 @@ NODE_AUTH_TOKEN=<read:packages token> docker build -f deploy/Dockerfile \
   --build-arg DEVCLAW_GIT_SHA="$SHA" \
   --build-arg DEVCLAW_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   -t ghcr.io/lifekit-hq/devclaw-mcp:$SHA -t ghcr.io/lifekit-hq/devclaw-mcp:latest .
-docker build -f .sandcastle/Dockerfile \
-  -t ghcr.io/lifekit-hq/devclaw-sandbox:$SHA -t ghcr.io/lifekit-hq/devclaw-sandbox:latest .
-docker push ghcr.io/lifekit-hq/devclaw-mcp:$SHA   # + :latest, + both sandbox tags
+docker push ghcr.io/lifekit-hq/devclaw-mcp:$SHA   # + :latest
 ```
 
 **2. Create the shared network** (empty, harmless):
@@ -119,7 +117,7 @@ docker volume inspect compose_devclaw-state >/dev/null && echo "volume OK"
 
 **4. Stop devclaw in the OLD project, bring it up in the NEW one.** This is the
 only moment the MCP server bounces (same as any redeploy — crash-recovery reaps
-and resumes in-flight sandboxes; keep this off a live overnight run):
+and resumes in-flight sessions; keep this off a live overnight run):
 ```bash
 # stop just devclaw in the shared project (leaves gateway et al. up)
 cd /srv/lifekit-stack/compose
@@ -192,7 +190,7 @@ Images are tagged by commit SHA, so rolling back is a pull — no source revert:
 bash deploy/deploy-devclaw.sh <prior-sha>
 ```
 
-The auto lane (`deploy-devclaw-auto.sh`) prunes old `devclaw-mcp`/`devclaw-sandbox`
+The auto lane (`deploy-devclaw-auto.sh`) prunes old `devclaw-mcp` (and any leftover `devclaw-sandbox`)
 tags on the box after a healthy deploy — keeping only the new tag, the
 rollback anchor it read from `/health`, and `latest`, and never an image a
 container still uses. It runs only on the success path (never after a

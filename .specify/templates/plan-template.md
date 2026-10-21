@@ -43,7 +43,7 @@
 One line per principle in `.specify/memory/constitution.md`; answer each, do not delete any.
 
 - [ ] **I. OAuth only** — no path lets a stray `ANTHROPIC_API_KEY` reach a spawn site.
-- [ ] **II. Model-agnostic worker layer** — skills stay plain markdown in `runner/skills/`; only the ACP seam knows the agent.
+- [ ] **II. Plain-markdown worker layer** — skills stay plain markdown in `devclaw/skills/`; the agent command is `DEVCLAW_CLAUDE_BIN`.
 - [ ] **III. Zero-token idle** — no tick-path cognition fires on an idle or blocked goal.
 - [ ] **IV. Single writer** — task rows via TaskQueue, goal state via `GoalStore` CAS; no view is read back.
 - [ ] **V. Fail-closed verification / done is a proposal** — a consulted gate that cannot verdict never ships; close stays with the done-gate.

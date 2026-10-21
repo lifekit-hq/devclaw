@@ -1,7 +1,7 @@
 [project]
 name = "devclaw"
 version = "2.3.1"
-description = "DevClaw — MCP server driving an autonomous software-development loop in per-task sandboxes"
+description = "DevClaw — MCP server driving an autonomous software-development loop in per-goal worktrees"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=3.3",
@@ -30,8 +30,7 @@ artifacts = ["devclaw/server/console_dist/**"]
 
 # No planning scaffold ships anywhere: devclaw owns no planning harness (ruled
 # 2026-09-14). The first session on a repo derives .devclaw/workflow.md from
-# the repository's own conventions — neither the wheel nor the sandbox image
-# carries a template for it.
+# the repository's own conventions — the wheel carries no template for it.
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -53,7 +52,7 @@ norecursedirs = ["evals/runs", ".venv", "build", "*.egg-info"]
 # type-lies this gate's introduction fixed). Default strictness on purpose:
 # zero errors at adoption, ratchet (strict flags, per-module) later, never loosen.
 [tool.mypy]
-files = ["devclaw", "runner"]
+files = ["devclaw"]
 python_version = "3.11"
 ignore_missing_imports = true
 
@@ -78,19 +77,13 @@ select = ["F", "E9"]
 # Import contracts — the modular monolith's boundaries, enforced (`lint-imports`;
 # CI gates it beside ruff and mypy). The layer order is the one CLAUDE.md states;
 # the leaf contracts pin the packages that must stay extraction-ready (loom is
-# the seam, the runner is standalone by spec 011). A contract is a declared
+# the seam). A contract is a declared
 # fact about the architecture: a new upward edge fails here, never silently
 # in a later refactor. Adding an `ignore_imports` line is taking on debt in
 # public — say why in the same PR. (tinyspec `import-contracts`, 2026-09-06)
 [tool.importlinter]
-root_packages = ["devclaw", "runner"]
+root_packages = ["devclaw"]
 exclude_type_checking_imports = true
-
-[[tool.importlinter.contracts]]
-name = "runner is a leaf — the sandbox runner never imports devclaw (spec 011)"
-type = "forbidden"
-source_modules = ["runner"]
-forbidden_modules = ["devclaw"]
 
 [[tool.importlinter.contracts]]
 name = "loom is a leaf — the extraction seam imports nothing from devclaw"
@@ -99,11 +92,11 @@ source_modules = ["devclaw.loom"]
 forbidden_modules = ["devclaw.*"]
 
 [[tool.importlinter.contracts]]
-name = "config is a leaf — only the dotenv bootstrap below it"
+name = "config is a leaf — only the dotenv bootstrap and the credential registry below it"
 type = "forbidden"
 source_modules = ["devclaw.config"]
 forbidden_modules = ["devclaw.*"]
-ignore_imports = ["devclaw.config -> devclaw._env_loader"]
+ignore_imports = ["devclaw.config -> devclaw._env_loader", "devclaw.config -> devclaw.credentials"]
 
 [[tool.importlinter.contracts]]
 name = "dispatch_gate is a leaf — pure window math over config"

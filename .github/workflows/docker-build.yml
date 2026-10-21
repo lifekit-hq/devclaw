@@ -1,10 +1,10 @@
 name: Docker Build
 
-# Builds devclaw's two images on a GitHub-hosted arm64 runner — never on the
-# box (the 2026-10-06 global OOM was two on-box `docker build`s). Every push to
-# main publishes both as ghcr.io/lifekit-hq/<image>:<sha>; Deploy devclaw
-# (deploy.yml) arms on this workflow's success and the box pulls those exact
-# tags. Pull requests build the same images without pushing, so a Dockerfile
+# Builds devclaw's image on a GitHub-hosted arm64 runner — never on the box
+# (the 2026-10-06 global OOM was two on-box `docker build`s). Every push to
+# main publishes it as ghcr.io/lifekit-hq/<image>:<sha>; Deploy devclaw
+# (deploy.yml) arms on this workflow's success and the box pulls that exact
+# tag. Pull requests build the same image without pushing, so a Dockerfile
 # break is a red PR, not a failed self-deploy.
 on:
   push:
@@ -35,8 +35,6 @@ jobs:
         include:
           - image: devclaw-mcp
             dockerfile: deploy/Dockerfile
-          - image: devclaw-sandbox
-            dockerfile: .sandcastle/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - name: Build
@@ -62,8 +60,6 @@ jobs:
         include:
           - image: devclaw-mcp
             dockerfile: deploy/Dockerfile
-          - image: devclaw-sandbox
-            dockerfile: .sandcastle/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - name: Build and push

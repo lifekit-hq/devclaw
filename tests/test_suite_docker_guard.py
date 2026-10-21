@@ -8,10 +8,14 @@ eat), while ordinary subprocesses stay usable."""
 
 import asyncio
 import sys
+from pathlib import Path
 
 import pytest
 
-from devclaw.engine import sandcastle as sc
+from devclaw import config as _config
+from devclaw.engine import EngineRequest
+from devclaw.engine import claude as engine
+from devclaw.engine import workspace as ws
 from devclaw.procutil import run as _run
 
 
@@ -25,11 +29,20 @@ def test_suite_guard_blocks_real_tailscale_invocations():
         asyncio.run(_run("tailscale", "status", "--json"))
 
 
-def test_suite_guard_blocks_sandcastle_sync_docker_seam():
-    """The sweep's synchronous seam is a separate escape hatch (subprocess.run,
-    not asyncio) — guarded independently."""
-    with pytest.raises(pytest.fail.Exception, match="BLOCKED.*_docker_run_sync"):
-        sc._docker_run_sync(["ps", "--filter", "label=devclaw.sandbox=1"])
+def test_suite_guard_blocks_real_treehouse_leases():
+    """The lease seam is synchronous (subprocess.run, not asyncio) and touches a
+    pool live sessions share — guarded independently."""
+    with pytest.raises(pytest.fail.Exception, match="BLOCKED.*treehouse"):
+        ws.goal_checkout_dir(str(Path(__file__).resolve().parents[1]), "g1")
+
+
+def test_suite_guard_blocks_the_real_claude_behind_the_session_shell(monkeypatch, tmp_path):
+    """The session spawns ``sh -c '… exec "$@"' sh claude …`` — the guard must
+    see the program the shell execs, not the shell."""
+    monkeypatch.setattr(_config, "CLAUDE_BIN", "claude")
+    req = EngineRequest(kind="review_repository", workspace_dir=str(tmp_path), goal="g")
+    with pytest.raises(pytest.fail.Exception, match="BLOCKED.*cognition"):
+        asyncio.run(engine.run_turn(req, "go", resume=None))
 
 
 def test_suite_guard_lets_non_docker_subprocesses_through():

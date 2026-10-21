@@ -23,30 +23,30 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-13 (the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
+| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the session engine is `engine/claude.py` in a treehouse worktree leased per goal, a silent stream — not a wall clock — interrupts a session, Safety names the worktree and the credential strip, no sandbox, `--resume` only on the quota pause path, an interrupted task's successor starts fresh — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
 
 ## Flows
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`flows/task-execution.md`](./flows/task-execution.md) | One session, hop by hop: tick → row → branch placement → sandbox → the verify loop → the gates → delivery → the exit. | **CURRENT** — 2026-09-13 |
-| [`flows/delivery.md`](./flows/delivery.md) | The goal branch, its one PR, the done-gate review, the merge-on-close. | **CURRENT** — 2026-09-13 |
+| [`flows/task-execution.md`](./flows/task-execution.md) | One session, hop by hop: tick → row → branch placement → the session in the goal's treehouse worktree → the verify loop → the gates → delivery → the exit. | **CURRENT** — 2026-10-21 (`claude -p` in a treehouse worktree, the silence watchdog, `--resume` only on the quota pause path while an interrupted task's successor starts fresh, the session env strips every host-only credential, a failed lease recorded `INTERRUPTED` and retried up to the daily session cap, the session and verify process groups reaped on exit and made the OOM killer's preferred victims — #952) |
+| [`flows/delivery.md`](./flows/delivery.md) | The goal branch, its one PR, the done-gate review, the merge-on-close. | **CURRENT** — 2026-10-21 (the session, not a sandbox, runs what CI runs — #952) |
 
 ## Reference
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-10-13 (`DEVCLAW_DB` names the per-user console appearance it now holds) |
+| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-10-21 (the Engine group: `DEVCLAW_CLAUDE_BIN`, the stream watchdog, the verify rounds, `DEVCLAW_TREEHOUSE_BIN`; the sandbox and Runner groups removed — #952; 2026-10-13: `DEVCLAW_DB` names the per-user console appearance it now holds) |
 
 ## Runbooks
 
 | Doc | Purpose | Currency |
 |---|---|---|
 | [`runbooks/doctor.md`](./runbooks/doctor.md) | The read-only post-deploy check: `doctor` tool / `devclaw doctor`. | **CURRENT** — 2026-09-13 |
-| [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + docker) on one goal. | **CURRENT** — 2026-09-13 |
+| [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + treehouse) on one goal. | **CURRENT** — 2026-10-21 (no sandbox image — #952) |
 | [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-09-13 |
 | [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | The OpenClaw waiter on the VPS and its tool menu. | **CURRENT** — 2026-10-12 (tool menu: the 18 v2 `@mcp.tool` verbs; v1 verbs removed from the waiter prompt) |
-| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-07 (images build on hosted arm64 via `docker-build.yml`; the box pulls by SHA) |
+| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-21 (one image, `devclaw-mcp`, builds on hosted arm64 via `docker-build.yml`; the box pulls by SHA; the sandbox image is gone — #952) |
 
 ## Spikes
 
@@ -59,4 +59,4 @@ every v1 spec is a superseded row in `specs/README.md`.
 - **The agent harness contract** — [`../CLAUDE.md`](../CLAUDE.md).
 - **The product narrative** — [`../README.md`](../README.md).
 - **The design** — [`../specs/046-devclaw-v2/spec.md`](../specs/046-devclaw-v2/spec.md).
-- **Worker-layer skills** — `runner/skills/` (the one home; baked into the sandbox image).
+- **Worker-layer skills** — `devclaw/skills/` (the one home; the engine prepends them to the session prompt).

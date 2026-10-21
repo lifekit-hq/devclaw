@@ -28,6 +28,7 @@ _TASK_COLUMNS = (
     ("exit", "TEXT"),
     ("exit_detail", "TEXT"),
     ("notified", "INTEGER NOT NULL DEFAULT 0"),
+    ("session_id", "TEXT"),
 )
 
 

@@ -1,9 +1,8 @@
 """DevClaw — a thin orchestration layer in front of a coding agent.
 
 This is the all-Python host runtime. The MCP server, SQLite state store, task
-queue, and docker-sandbox launcher all live here. The only other code is
-``runner/runner.py``, the worker harness that runs *inside* the per-task
-sandbox container and drives the agent over ACP (spec 011).
+queue, and the session engine — ``claude -p`` in the goal's treehouse worktree
+(:mod:`devclaw.engine.claude`) — all live here.
 """
 
 __all__ = ["__version__"]

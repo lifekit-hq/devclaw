@@ -34,18 +34,12 @@ _engine = _config.ENGINE
 if _engine == "stub":
     from ..engine.stub import stub_engine
 
-    sys.stderr.write("⚠ DEVCLAW_ENGINE=stub — deterministic stub engine (NO sandbox, NO claude).\n")
+    sys.stderr.write("⚠ DEVCLAW_ENGINE=stub — deterministic stub engine (NO claude).\n")
     queue = TaskQueue(store, runner=stub_engine)
-elif _engine == "host":
-    from ..engine.host import run_host
-
-    sys.stderr.write("⚠ DEVCLAW_ENGINE=host — the worker runs on the HOST with NO sandbox.\n")
-    queue = TaskQueue(store, runner=run_host)
 else:
     queue = TaskQueue(store)
 
 registry = ProjectRegistry(DB_PATH)
-queue.set_registry(registry)
 goals = GoalService(queue, store, project_registry=registry)
 
 mcp: FastMCP = FastMCP(SERVER_NAME, version=__version__)

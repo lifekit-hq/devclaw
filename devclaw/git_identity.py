@@ -1,6 +1,6 @@
 """devclaw's git author identity — ONE configurable identity for every commit
-devclaw produces, wherever the commit is made: the worker agent inside the
-sandbox, the host-engine worker, or the delivery layer's own safety-net commit.
+devclaw produces, wherever the commit is made: the session in the goal's
+worktree, or the delivery layer's own safety-net commit.
 
 Why this module exists (live finding, 2026-07-28): commits went out under
 whatever ambient git config the execution environment happened to inherit —
@@ -13,8 +13,8 @@ stays visible as co-author; devclaw is the author).
 
 Mechanism: the ``GIT_AUTHOR_*`` / ``GIT_COMMITTER_*`` env vars, not repo-local
 config — git gives environment precedence over every config level, so the
-identity holds regardless of what the sandbox image, a mounted homedir, or the
-agent itself configures. Point ``DEVCLAW_GIT_EMAIL`` at a machine account's
+identity holds regardless of what the host's gitconfig, a mounted homedir, or
+the agent itself configures. Point ``DEVCLAW_GIT_EMAIL`` at a machine account's
 GitHub noreply address to link the commits to a real GitHub profile; until
 then the default keeps the pre-existing ``devclaw@local``.
 """

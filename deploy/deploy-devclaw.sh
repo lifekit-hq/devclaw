@@ -38,8 +38,8 @@ die()  { printf '\033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # ─── Credentials: ONE durable home, written here, never blank ──────────────
 # The three credentials the instance cannot run without — CLAUDE_CODE_OAUTH_TOKEN
-# (the `claude setup-token` subscription credential: host cognition + sandbox
-# auth), NODE_AUTH_TOKEN (read:packages, in-sandbox `npm ci`) and GH_TOKEN
+# (the `claude setup-token` subscription credential: session cognition),
+# NODE_AUTH_TOKEN (read:packages, a session's `npm ci`) and GH_TOKEN
 # (host-side GitHub: delivery, intake, and the failing-job log read) — live in
 # ONE place on the box: $SECRETS_FILE, the env_file the compose file declares.
 # They are declared once in devclaw/credentials.py; this script is the deploy
@@ -81,7 +81,7 @@ _resolve_secret GH_TOKEN;                _gh="$_RESOLVED"
 unset _RESOLVED
 if [[ ! "$_reg" =~ ^(ghp_|github_pat_|ghs_|gho_) ]]; then
   unset _oauth _reg _gh
-  die "NODE_AUTH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). A malformed registry token reaches every sandbox and 401s there. Regenerate a read:packages-only classic PAT, \`gh secret set NODE_AUTH_TOKEN\`, and redeploy."
+  die "NODE_AUTH_TOKEN is set but is not a GitHub token (expected a ghp_/github_pat_/ghs_/gho_ prefix). A malformed registry token reaches every session and 401s there. Regenerate a read:packages-only classic PAT, \`gh secret set NODE_AUTH_TOKEN\`, and redeploy."
 fi
 # GH_TOKEN, not GITHUB_TOKEN: GitHub refuses to create an Actions secret whose
 # name starts with GITHUB_, and `gh` ranks GH_TOKEN above GITHUB_TOKEN anyway.
@@ -124,7 +124,6 @@ unset _oauth _reg _gh _mode _existing_devclaw_token
 say "credentials: CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN + GH_TOKEN present, well-formed, written to ${SECRETS_FILE} (the one home)"
 
 export DEVCLAW_MCP_IMAGE="${REGISTRY}/devclaw-mcp:${TAG}"
-export DEVCLAW_SANDBOX_IMAGE="${REGISTRY}/devclaw-sandbox:${TAG}"
 
 # The durable-state volume's real name — matches the compose fragment's
 # ${DEVCLAW_STATE_VOLUME:-devclaw-state}. On the cutover host this is
@@ -161,8 +160,6 @@ fi
 # ─── Pull the pinned images (no build) ──────────────────────────────────────
 say "pulling ${DEVCLAW_MCP_IMAGE}"
 docker pull "$DEVCLAW_MCP_IMAGE"
-say "pulling ${DEVCLAW_SANDBOX_IMAGE}"
-docker pull "$DEVCLAW_SANDBOX_IMAGE"
 
 # ─── Recreate ONLY the devclaw project ──────────────────────────────────────
 say "recreating devclaw project (${PROJECT}) @ ${TAG}"

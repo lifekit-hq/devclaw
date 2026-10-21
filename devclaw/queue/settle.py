@@ -3,7 +3,8 @@
 The spine: place the goal branch → run the engine once → classify how the
 session ended → materialize the span → run the four gates → deliver → settle
 the row WITH its exit. There is no retry loop: a session that could not
-finish is ``INTERRUPTED`` (resumed by the next tick), a delivery a gate
+finish is ``INTERRUPTED`` (its successor starts a fresh session on the reset
+goal branch; ``--resume`` is only for a quota-paused row), a delivery a gate
 refused is ``REFUSED`` (the next session is told why), and everything the
 session itself said (DELIVERED / DONE / BLOCKED / NOTHING) is recorded as its
 exit for the goal layer to read. A usage limit pauses the account and requeues
@@ -22,7 +23,6 @@ import sys
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
 
-from .. import config as _config
 from ..delivery import deliver_change, delivery_failed
 from ..engine import EngineEvent, EngineRequest
 from ..engine.workspace import WorkspaceError, prepare_workspace
@@ -52,11 +52,10 @@ if TYPE_CHECKING:
     from ..engine import Engine
     from ..state_store import StateStore
 
-TASK_TIMEOUT_S = _config.TASK_TIMEOUT_S
 #: usage-limit pause → requeue cycles one task gets before it is failed.
 MAX_PAUSE_REQUEUES = 5
 
-#: the session's exit line — last match wins (the runner already turned a
+#: the session's exit line — last match wins (the engine already turned a
 #: ``BLOCKED:`` line into a blocked result; this reads the other three).
 _EXIT_LINE_RE = re.compile(
     r"^[ \t>#*_-]*(DELIVERED|DONE|BLOCKED|NOTHING):[ \t]*(.*?)[ \t*_]*$", re.MULTILINE
@@ -72,11 +71,6 @@ def parse_exit_line(text: Optional[str]) -> "tuple[str | None, str]":
         return None, ""
     word, detail = found[-1]
     return word, detail.strip()
-
-
-def wall_clock_teardown_msg(timeout_s: float = TASK_TIMEOUT_S) -> str:
-    return (f"session exceeded the {timeout_s:.0f}s wall-clock timeout "
-            f"with no terminal result — sandbox torn down")
 
 
 # ---- async wrappers (module globals so tests patch them here) --------------
@@ -223,12 +217,9 @@ class SettleMixin:
     if TYPE_CHECKING:
         _store: StateStore
         _runner: Engine
-        _sandbox_owner: str
 
         def _pump(self) -> None: ...
         def _fire_settle(self) -> None: ...
-        def _sandbox_image(self, project_id: Optional[str]): ...
-        def _sandbox_sizing(self, project_id: Optional[str]) -> "tuple[Optional[str], Optional[str]]": ...
         def _check_and_trip_breaker(self, workspace_dir: str, task_id: str) -> None: ...
 
     def _append_task_event(self, task_id: str, event: EngineEvent) -> None:
@@ -253,7 +244,6 @@ class SettleMixin:
         if row is None:
             return
         resumed = row.pause_count > 0
-        project_id = row.project_id
 
         # 1. place the goal branch (a pause-resume keeps the tree as it is)
         if row.target_branch and not resumed:
@@ -289,22 +279,11 @@ class SettleMixin:
             kind=kind, workspace_dir=workspace_dir, goal=brief,
             on_event=functools.partial(self._append_task_event, task_id),
             verify_cmd=row.verify_cmd,
-            sandbox_image=self._sandbox_image(project_id),
-            sandbox_memory=self._sandbox_sizing(project_id)[0],
-            sandbox_cpus=self._sandbox_sizing(project_id)[1],
-            owner_id=self._sandbox_owner,
+            resume_session_id=row.session_id if resumed else None,
+            on_session=functools.partial(self._store.set_task_session_id, task_id),
         )
         try:
-            if TASK_TIMEOUT_S > 0:
-                result = await asyncio.wait_for(self._runner(request), timeout=TASK_TIMEOUT_S)
-            else:
-                result = await self._runner(request)
-        except asyncio.TimeoutError:
-            await _wip_commit(workspace_dir, f"wip(devclaw): interrupted by timeout (session {task_id[:8]})")
-            msg = wall_clock_teardown_msg()
-            self._store.mark_failed(task_id, msg, exit=EXIT_INTERRUPTED, exit_detail=msg)
-            self._check_and_trip_breaker(workspace_dir, task_id)
-            return
+            result = await self._runner(request)
         except Exception as err:  # noqa: BLE001 — a harness failure
             if await self._maybe_pause(task_id, workspace_dir, str(err)):
                 return
@@ -348,7 +327,7 @@ class SettleMixin:
         verdict = await run_gates(gate_input)
         if verdict is not None:
             if verdict.gate_id == "verify":
-                # the session's own unfinished work: keep it, resume next tick
+                # the session's own unfinished work: snapshot it; the successor starts fresh
                 await _wip_commit(workspace_dir, f"wip(devclaw): verify red (session {task_id[:8]})")
                 self._store.mark_failed(task_id, verdict.reason, exit=EXIT_INTERRUPTED,
                                         exit_detail=verdict.reason[:400])
@@ -414,5 +393,5 @@ class SettleMixin:
         return True
 
 
-__all__ = ["SettleMixin", "parse_exit_line", "wall_clock_teardown_msg", "MAX_PAUSE_REQUEUES",
+__all__ = ["SettleMixin", "parse_exit_line", "MAX_PAUSE_REQUEUES",
            "EXIT_DELIVERED", "EXIT_DONE", "EXIT_REVIEW"]

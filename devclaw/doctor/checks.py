@@ -17,7 +17,7 @@ def check_credentials(store, registry) -> list[Finding]:
     """Required credentials present, well-formed and (GitHub-shaped) live."""
     out: list[Finding] = []
     green = set(green_credentials())
-    for cred in _credentials.REGISTRY:
+    for cred in _credentials.probed():
         value = (os.environ.get(cred.var) or "").strip()
         if not value:
             out.append(Finding(f"credentials.{cred.var}", Verdict.FAIL if cred.required else Verdict.WARN,
@@ -35,9 +35,8 @@ def check_credentials(store, registry) -> list[Finding]:
 
 def check_tools(store, registry) -> list[Finding]:
     out = []
-    for binary in ("gh", "git", _config.DOCKER_BIN if not _config.ENGINE else None):
-        if not binary:
-            continue
+    engine = () if _config.ENGINE == "stub" else (_config.CLAUDE_BIN, _config.TREEHOUSE_BIN)
+    for binary in ("gh", "git", *engine):
         out.append(Finding(f"tools.{os.path.basename(binary)}",
                            Verdict.OK if shutil.which(binary) else Verdict.FAIL,
                            "on PATH" if shutil.which(binary) else "not on PATH"))
@@ -55,13 +54,14 @@ def check_pause(store, registry) -> list[Finding]:
 def check_goals(store, registry) -> list[Finding]:
     out = []
     for g in store.list_goals(open_only=True):
-        checkout = goal_checkout_dir(g.workspace_dir, g.id)
-        if not os.path.isdir(os.path.join(g.workspace_dir, ".git")):
+        if not os.path.exists(os.path.join(g.workspace_dir, ".git")):
             out.append(Finding(f"goal.{g.id}.workspace", Verdict.WARN,
                                f"project checkout {g.workspace_dir} is not a git repo yet",
                                remedy="the first session clones it"))
-        elif not os.path.isdir(os.path.join(checkout, ".git")):
-            out.append(Finding(f"goal.{g.id}.checkout", Verdict.OK, "no goal checkout yet (seeded at first spawn)"))
+            continue
+        checkout = goal_checkout_dir(g.workspace_dir, g.id)
+        if not checkout:
+            out.append(Finding(f"goal.{g.id}.checkout", Verdict.OK, "no worktree leased yet (leased at first spawn)"))
         else:
             out.append(Finding(f"goal.{g.id}.checkout", Verdict.OK, checkout))
     return out or [Finding("goals", Verdict.OK, "no open goals")]

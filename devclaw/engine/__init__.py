@@ -1,17 +1,17 @@
 """The engine seam.
 
 DevClaw's orchestration (task queue, planner, state store) drives an *Engine* —
-the thing that actually executes one coding task in isolation and streams back
-events. The worker-runner-in-a-docker-sandbox is the only implementation today
-(:func:`devclaw.engine.sandcastle.run_sandcastle`), but the orchestration
-depends ONLY on this interface, never on the agent behind it.
+the thing that actually executes one coding task and streams back events.
+``claude -p`` in the goal's worktree is the only implementation today
+(:func:`devclaw.engine.claude.run_claude`), but the orchestration depends ONLY
+on this interface, never on the agent behind it.
 
 That's the "orchestration ⊥ engine" decoupling from the architecture: the
 engine is pinned but swappable behind one method, and the
 orchestration stays testable with a stub engine (the tests inject one).
 
 An Engine is any async callable ``(EngineRequest) -> EngineResult`` — a plain
-async function satisfies it, which is why ``run_sandcastle`` is one.
+async function satisfies it, which is why ``run_claude`` is one.
 """
 
 from __future__ import annotations
@@ -24,8 +24,8 @@ from ..state_store import TaskKind
 
 @dataclass
 class EngineEvent:
-    """One observation streamed by the engine while a task runs. Mirrors the
-    ``event:`` line shape the in-sandbox runner emits."""
+    """One observation streamed by the engine while a task runs — one
+    stream-json frame of the session, or a verify verdict."""
 
     id: Optional[str]
     type: str
@@ -48,27 +48,13 @@ class EngineRequest:
     #: AFTER the agent finishes. Its exit code is the real definition of "done"
     #: (the agent's own "I'm finished" is not trusted). None → no gate.
     verify_cmd: Optional[str] = None
-    #: optional per-task sandbox image (ADR 0005) — the owning project's
-    #: ``sandbox_image`` override, resolved by the task queue at dispatch.
-    #: None → the engine's own DEVCLAW_SANDBOX_IMAGE default. Docker-less
-    #: engines (host, stub) ignore it.
-    sandbox_image: Optional[str] = None
-    #: optional per-task sandbox sizing (spec 020 US4) — the owning project's
-    #: ``sandbox_memory``/``sandbox_cpus`` overrides, resolved by the task
-    #: queue at dispatch beside ``sandbox_image``. None → the engine's own
-    #: DEVCLAW_SANDBOX_MEMORY / DEVCLAW_SANDBOX_CPUS defaults. Docker-less
-    #: engines (host, stub) ignore both.
-    sandbox_memory: Optional[str] = None
-    sandbox_cpus: Optional[str] = None
-    #: optional owner-instance id — stamps the sandbox's ``devclaw.owner``
-    #: label so the startup orphan sweep only ever reaps THIS instance's
-    #: leftovers, never a concurrent devclaw process's live sandboxes on the
-    #: same daemon. Docker-less engines (host, stub) ignore it.
-    owner_id: Optional[str] = None
-    #: spec 015: the repo-declared validation contract for ``validate_product``
-    #: runs — ``{"boot": …, "suites": …}``, resolved host-side from the merged
-    #: base. None for every other kind.
-    validation: Optional[dict] = None
+    #: the Claude Code session to continue (``--resume``) — the row's own
+    #: session after a quota pause kept its tree. None → a fresh session. A resume
+    #: id the agent no longer knows falls back to a fresh session.
+    resume_session_id: Optional[str] = None
+    #: optional callback, invoked once with the session id as soon as the
+    #: stream names it — persisted so a quota-paused session can be resumed.
+    on_session: Optional[Callable[[str], None]] = None
 
 
 #: Terminal verdict from one task. ``status == "ok"`` carries
@@ -79,13 +65,14 @@ class EngineRequest:
 #: pauses-and-resumes); ``status == "blocked"`` carries ``reason`` — the worker's
 #: honest self-report that it genuinely cannot finish (missing capability,
 #: contradictory/impossible instructions) — typed by ``block_kind``: ``"env"``
-#: (``block_item`` names what the sandbox lacks; spec 032 US2 — the pipeline
+#: (``block_item`` names what the environment lacks; spec 032 US2 — the pipeline
 #: holds the project) or ``"contract"`` (the owner is asked). A ``blocked``
 #: verdict is NOT an approval: the host fails it CLOSED and does NOT retry
 #: (a re-run re-blocks identically), surfacing the reason instead. When a ``verify_cmd`` ran,
 #: ``result["verify"]`` carries the gate verdict
 #: ``{ran, cmd, passed, exit_code, timed_out, output}`` — the orchestration
-#: (not the engine) decides done-vs-failed from ``passed``.
+#: (not the engine) decides done-vs-failed from ``passed``. Any status may
+#: carry ``session_id`` — the session that ran, resumable after a quota pause.
 EngineResult = dict
 
 

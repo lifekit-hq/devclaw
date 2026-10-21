@@ -12,8 +12,6 @@ Deliberately allowed:
 - ``config.py`` itself — the doorway.
 - ``_env_loader.py`` — the DEVCLAW_DOTENV bootstrap that must run before any
   config exists.
-- ``runner/`` — the in-sandbox worker is standalone by design (spec 011) and
-  is not scanned.
 - Reads through a *variable* key (the console's env-catalog introspection in
   server/routes/control.py reports the raw environment on purpose).
 

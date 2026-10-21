@@ -1,9 +1,11 @@
 # Live shakedown — the real pipeline on one goal
 
 The pytest suite is fully stubbed. This is the only way to see the real
-pipeline: a logged-in `claude`, docker, a `GH_TOKEN`, a real repository.
+pipeline: a logged-in `claude`, `treehouse` on `PATH`, a `GH_TOKEN`, a real
+repository. Sessions run on this host in the goal's treehouse worktree — not a
+sandbox — so use a throwaway repository.
 
-1. `docker build -t devclaw-sandbox:latest -f .sandcastle/Dockerfile .`
+1. `pip install -e .` and `devclaw doctor` (it names a missing `claude` or `treehouse`).
 2. `DEVCLAW_TRANSPORT=http devclaw-mcp` with `DEVCLAW_ENGINE` unset.
 3. `register_project(project_id, name, repo_url, workspace_dir)`.
 4. File an issue on the repo with a `## Done when` section; `create_goal(goal_id, project_id, issues=[N])`.

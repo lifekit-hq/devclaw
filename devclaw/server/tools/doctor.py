@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 from ...doctor import run_doctor
@@ -14,4 +15,4 @@ async def doctor() -> str:
     credentials present and live, the database reachable, the quota pause,
     every open goal's checkout, every project's workspace. Each finding
     names its remedy; doctor executes none."""
-    return json.dumps(run_doctor(store, registry).to_dict(), indent=2)
+    return json.dumps((await asyncio.to_thread(run_doctor, store, registry)).to_dict(), indent=2)

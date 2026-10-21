@@ -269,6 +269,11 @@ class StateStore(ControlPlaneMixin, EventsMixin, GoalsMixin, PreferencesMixin):
             self._db.execute("UPDATE tasks SET pre_run_sha = ? WHERE id = ?", (sha, task_id))
             self._commit()
 
+    def set_task_session_id(self, task_id: str, session_id: str) -> None:
+        with self._lock:
+            self._db.execute("UPDATE tasks SET session_id = ? WHERE id = ?", (session_id, task_id))
+            self._commit()
+
     def db_size_bytes(self) -> int:
         total = 0
         for suffix in ("", "-wal", "-shm"):

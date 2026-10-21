@@ -1,0 +1,34 @@
+# End-to-end browser testing with Playwright
+
+Read this when the change touches a web UI — pages, forms, navigation, anything a user would click. Install the browser the suite needs inside the worktree (`npx playwright install chromium`); never install system-wide.
+
+## What you have
+
+- In the devclaw-mcp runtime: a Playwright Chromium under `~/.cache/ms-playwright/`, `@playwright/mcp` installed globally, and the system libs `chromium.launch()` needs. Elsewhere, check before assuming.
+- No `.mcp.json` is written for you: the Playwright MCP tools are available only if the project configures them.
+
+## Two ways to use it
+
+1. **Via the MCP tool** (interactive, during your task): navigate, click, screenshot, dump console errors. Use this to *exercise* the UI yourself before claiming a flow works.
+2. **Via committed `@playwright/test` specs** (durable, gates regressions): write `.spec.ts` files in `e2e/` (or wherever the project's convention puts them) so the verify run can re-run them.
+
+## When the goal asks for E2E coverage
+
+Default to **TypeScript `@playwright/test`** unless the project already uses `pytest-playwright`. A typical setup:
+
+```
+playwright.config.ts          # at repo root; webServer block boots the app
+e2e/
+├── auth.spec.ts
+├── navigation.spec.ts
+├── <feature>.spec.ts
+└── regression/<bug>.spec.ts
+```
+
+Always attach `page.on('pageerror')` and `page.on('console')` listeners that fail the test on uncaught JS errors or `console.error`. A test that passes with red console messages is a test that catches nothing. (This is exactly the class of bug the suite exists to catch: an Angular component that unit-tests green but throws `NG05105`/a provider error the instant it renders in the real app.)
+
+After adding browser tests, `.devclaw/verify` must run `npx playwright test`, not just pytest.
+
+## Run the suite for real
+
+Run `npx playwright test` and let it finish; a run where everything is `skipped` proves nothing. The `webServer` block in `playwright.config.ts` must actually boot the app (`ng serve`, or `npm run build` then a static server). If the backend can't run in the worktree (its SDK is not on the host), stub it with `page.route(...)` — a frontend-only boot still catches the render/console-error class.

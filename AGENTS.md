@@ -8,7 +8,7 @@ code wins — cross-check before you trust either.
 
 **Some Python for what is determined, a model for what is reasoned, and one
 line between them** (spec 046, ruled by Denys 2026-09-10/13). You hand devclaw
-a GitHub issue; a session — Claude Code in a per-session docker sandbox — reads
+a GitHub issue; a session — `claude -p` in the goal's treehouse worktree — reads
 the issue as the contract, plans the repository's own way
 (`.devclaw/workflow.md`, derived on the first run), lands one
 reviewable increment on the goal's branch, and hands back one exit line. The
@@ -33,7 +33,7 @@ action a change adds is a defect. The checklist is `.claude/rules/north-star.md`
 1. **Two actors, one line.** Python decides what is determined; the model
    reasons everything else. The goal layer fits one afternoon of reading —
    `tests/test_goal_layer_stays_readable.py` fails the build past 1,500 lines.
-2. **Software owns five things.** Safety (sandbox, credential strip). Money
+2. **Software owns five things.** Safety (one worktree per goal, credential strip). Money
    (quota pause, sessions-per-day). State (single writer, one transaction).
    Verdict (CI green on the delivered head + one done-gate). Protocol (issue in,
    PR out, `decide`, `cancel`). Python outside these needs a written reason.
@@ -61,7 +61,7 @@ action a change adds is a defect. The checklist is `.claude/rules/north-star.md`
 | MCP surface | `devclaw/server/` | a tool, a route, auth, the console — pure protocol |
 | Goal layer | `devclaw/goal/` | the tick rule, the world fingerprint, the two prompts, the done-gate, GitHub reads/verbs |
 | Queue + engine | `devclaw/task_queue.py`, `devclaw/queue/`, `devclaw/engine/`, `devclaw/gates.py`, `devclaw/delivery/` | one session: place the branch, run, classify the exit, the four gates, deliver |
-| Worker harness | `runner/runner.py` (inside the sandbox) | the ACP turn-loop, the skill bundle, the in-session verify loop |
+| Session engine | `devclaw/engine/claude.py`, `devclaw/skills/` | the `claude -p` stream and its silence watchdog, the skill bundle, the in-session verify loop over `--resume` |
 
 The import order is a declared fact: `[tool.importlinter]` in `pyproject.toml`
 states it and `lint-imports` fails a new upward edge in CI. Only the goal layer
@@ -69,22 +69,26 @@ reads GitHub as state.
 
 ## Load-bearing invariants — DO NOT VIOLATE
 
-- **OAuth only.** `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are stripped at
-  the engine (`devclaw/engine/sandcastle.py`, `devclaw/engine/host.py`) and the
-  runner. Every credential that crosses a hop lives in ONE registry,
-  `devclaw/credentials.py`; the runner never names a credential.
-- **Model-agnostic worker layer.** Skills are plain markdown in `runner/skills/`
-  (one home, baked to `/opt/devclaw/skills/`); hooks are bash; the agent command
-  is the one swap seam (`DEVCLAW_ACP_COMMAND`). A missing bundle fails LOUD.
-- **The sandbox runs what CI runs before the session ends.** `.devclaw/verify`
+- **OAuth only.** `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are stripped from
+  every session's environment (`credentials.session_env`, used by
+  `devclaw/engine/claude.py`), and so is every host-only credential. Every
+  credential that crosses a hop lives in ONE registry, `devclaw/credentials.py`.
+- **A worktree is not a sandbox.** Each goal leases one treehouse worktree on
+  the host, returned on close; the session runs there with the host's tools and
+  filesystem. Nothing seals it — the credential strip is the boundary.
+- **Plain-markdown worker layer.** Skills are plain markdown in
+  `devclaw/skills/` (one home); the agent command is `DEVCLAW_CLAUDE_BIN`. A
+  missing bundle fails LOUD.
+- **The worktree runs what CI runs before the session ends.** `.devclaw/verify`
   is derived by the session from the project's workflows on its first run; the
-  runner hands a red run back to the same session (`DEVCLAW_VERIFY_ROUNDS`).
+  engine hands a red run back to the same session over `--resume`
+  (`DEVCLAW_VERIFY_ROUNDS`).
   A red CI on a delivered head is therefore an environment gap: the goal stops,
   never retries (ruled 2026-09-13).
 - **The first run on a repository leaves a manifest, in git.** `.devclaw/verify`
   (how it verifies) and `.devclaw/workflow.md` (how it plans, builds and ships)
   are derived from the repository itself and must be TRACKED when the session
-  ends — the runner reads the git index, not the working tree, so a `.gitignore`
+  ends — the engine reads the git index, not the working tree, so a `.gitignore`
   that swallows `.devclaw/` fails the gate instead of silently discarding the
   manifest (ruled 2026-09-14). devclaw bakes no planning scaffold and names no
   planning tool; a repo with no harness gets an explicit `none`.
@@ -97,8 +101,10 @@ reads GitHub as state.
   thread are marked `<!-- devclaw:<kind> … -->` and are never instructions.
 - **No retries.** A red CI or a done-gate refusal stops the goal with the fact
   posted on the thread; a blocked goal releases its project lane; only a newer
-  comment mentioning the bot (or `decide`) wakes it. `INTERRUPTED` (timeout,
-  quota, red local verify) resumes — that is the session's own unfinished work.
+  comment mentioning the bot (or `decide`) wakes it. `INTERRUPTED` (stream
+  silence, red local verify) is followed by a fresh session on the reset goal
+  branch; `--resume` is only for a quota-paused row (tree kept) and the
+  in-session verify loop.
 - **Usage limits pause-and-resume.** A quota, auth or provider-outage failure
   pauses the account, snapshots the work and requeues (`devclaw/loom/limits.py`).
   Only agent- or harness-origin text is classified; a session's own words never.
@@ -109,11 +115,10 @@ reads GitHub as state.
 
 ```bash
 pip install -e ".[dev]"
-TMPDIR=$(mktemp -d) python -m pytest -q   # the tripwire suite, all stubbed — no docker, no claude
+TMPDIR=$(mktemp -d) python -m pytest -q   # the tripwire suite, all stubbed — no claude, no treehouse
 ruff check .   # pyflakes + syntax errors; CI gates it
 mypy           # zero-error baseline; CI gates it
 lint-imports   # the layer order as a contract; CI gates it
-docker build -t devclaw-sandbox:latest -f .sandcastle/Dockerfile .   # the sandbox image
 ```
 
 ```
@@ -121,16 +126,15 @@ devclaw/
 ├── server/          MCP surface — tools/ (@mcp.tool), routes/, lifecycle.py (auth + serve), http.py
 ├── goal/            tick.py (the rule) · world.py (the fingerprint) · prompts.py · donegate.py · github.py · service.py
 ├── prompts/         session.md + done-gate.md — the two prompts the host writes
-├── queue/           settle.py (one session, executed and settled) · admission.py (memory + breaker)
-├── engine/          sandcastle.py (docker run --rm), host.py, stub.py, workspace.py (one goal, one checkout)
+├── queue/           settle.py (one session, executed and settled) · admission.py (the breaker)
+├── engine/          claude.py (claude -p, the watchdog, --resume), stub.py, workspace.py (one goal, one treehouse lease)
+├── skills/          the one home of worker instructions — plain markdown, prepended to every session
 ├── delivery/        commit → push → the goal's one PR
 ├── gates.py         verify · materialize · change_class · integrity — always hard, fail closed
 ├── task_change.py   ONE mechanical answer to "what did the session change?"
 ├── state_store/     tasks · events · goals · decisions · meta (the control flags) · user_preferences (appearance per gate identity)
 ├── loom/            limits (the pause classifier), test_integrity, untrusted (the prompt fence)
 ├── credentials.py · probes.py · config.py · task_queue.py · project_registry.py · doctor/ · cli.py
-runner/runner.py     the in-sandbox worker harness — drives the ACP agent; skills/ is the one home of worker instructions
-.sandcastle/Dockerfile   the sandbox image (bakes runner/ and skills/ — no planning scaffold)
 tests/               pytest — fully stubbed
 ```
 

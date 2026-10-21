@@ -34,7 +34,7 @@ def green_credentials(environ: Optional[Mapping[str, str]] = None) -> tuple[str,
     fingerprint (spec 046): adding a credential wakes a goal blocked on it."""
     env = os.environ if environ is None else environ
     green: list[str] = []
-    for cred in _credentials.REGISTRY:
+    for cred in _credentials.probed():
         value = (env.get(cred.var) or "").strip()
         if not value or not _credentials.well_formed(cred, value):
             continue

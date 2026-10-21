@@ -112,11 +112,16 @@ async def test_pump_holds_dispatch_while_paused(store):
     "session/prompt failed: Internal error: API Error: 529 Overloaded",
 ])
 async def test_resumes_after_pause_expires(store, error_text):
+    """The pause path keeps the tree, so the requeued row continues its OWN
+    Claude Code session (``--resume``)."""
     state = {"n": 0}
+    resumed: list = []
 
     async def rl_then_ok(req: EngineRequest):
         state["n"] += 1
+        resumed.append(req.resume_session_id)
         if state["n"] == 1:
+            req.on_session("s-paused")
             return {"status": "error", "error": error_text}
         return {"status": "ok", "workspaceDir": req.workspace_dir}
 
@@ -129,7 +134,30 @@ async def test_resumes_after_pause_expires(store, error_text):
     await q.drain()
     assert store.get_task(tid).status == "done"
     assert state["n"] == 2
+    assert resumed == [None, "s-paused"]
     assert store.global_pause()[0] == 0
+
+
+async def test_an_interrupted_tasks_successor_starts_a_fresh_session(store):
+    """An INTERRUPTED row's successor runs on a branch the queue reset, so it
+    must never ``--resume`` a session whose context holds edits that are gone."""
+    resumed: list = []
+
+    async def interrupted_then_ok(req: EngineRequest):
+        resumed.append(req.resume_session_id)
+        if len(resumed) == 1:
+            req.on_session("s-interrupted")
+            return {"status": "error", "error": "claude stream silent for 600s"}
+        return {"status": "ok", "workspaceDir": req.workspace_dir}
+
+    q = TaskQueue(store, runner=interrupted_then_ok)
+    first = q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", parent_goal_id="goal-1")
+    await q.drain()
+    assert store.get_task(first).exit == EXIT_INTERRUPTED
+    assert store.get_task(first).session_id == "s-interrupted"
+    q.submit(kind="implement_feature", workspace_dir="/ws", goal="g", parent_goal_id="goal-1")
+    await q.drain()
+    assert resumed == [None, None]
 
 
 async def test_stated_hint_survives_not_clobbered_to_max(store):

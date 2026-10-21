@@ -12,7 +12,8 @@ TaskKind = Literal["implement_feature", "fix_bug", "review_repository"]
 
 #: How a session ended, as the host observed it (spec 046). The session's own
 #: exit line (DELIVERED / DONE / BLOCKED / NOTHING) is parsed from its final
-#: message; the rest are host outcomes. ``INTERRUPTED`` means "resume next tick".
+#: message; the rest are host outcomes. ``INTERRUPTED`` means "a fresh
+#: session continues next tick".
 EXIT_DELIVERED = "DELIVERED"
 EXIT_DONE = "DONE"
 EXIT_BLOCKED = "BLOCKED"
@@ -56,6 +57,8 @@ class Task:
     exit_detail: Optional[str] = None
     #: the owner was told about this session's outcome (one ping per block)
     notified: bool = False
+    #: the Claude Code session that ran this task — resumed after a quota pause
+    session_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +82,7 @@ class Task:
             "projectId": self.project_id,
             "exit": self.exit,
             "exitDetail": self.exit_detail,
+            "sessionId": self.session_id,
         }
 
 
@@ -176,6 +180,7 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         exit=_col(r, "exit"),
         exit_detail=_col(r, "exit_detail"),
         notified=bool(_col(r, "notified", 0)),
+        session_id=_col(r, "session_id"),
     )
 
 

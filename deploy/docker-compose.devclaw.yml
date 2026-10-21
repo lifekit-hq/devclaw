@@ -19,7 +19,9 @@
 # The former ops-agent watchdog is gone (tinyspec deadman-metrics, 2026-09-06):
 # devclaw-mcp exposes /metrics and the box's Prometheus + Grafana (lifekit-stack)
 # hold the dead-man alert. Its docker-socket mount and read-only state mounts
-# went with it; devclaw-mcp's own socket mount (sandbox spawning) stays.
+# went with it, and devclaw-mcp's own socket mount went with the per-session
+# docker sandbox (#952): every session is `claude -p` in a treehouse worktree
+# inside this container.
 #
 # The `devclaw-state` volume (devclaw.db + goals) and the `lifekit-shared`
 # network are declared `external` so they keep their identity across the
@@ -45,18 +47,13 @@ services:
     deploy:
       resources:
         limits:
-          # 3g — devclaw spawns multiple concurrent `claude --print` subprocesses
-          # per tick (evaluator, gates, summaries); each Node Claude CLI is
-          # 200-400MB during a call. 1g OOM-killed subprocesses (2026-07-03).
-          memory: 3g
-    # group_add: grant the non-root `node` user access to the host docker
-    # socket so the MCP server can spawn per-task devclaw-sandbox containers.
-    # GID must match the host's `docker` group (990 on lifekit-vps).
-    group_add:
-      - "${LIFEKIT_DOCKER_GID:-999}"
+          # Every session — the `claude -p` process and the repository's own
+          # verify run — lives inside this one limit, DEVCLAW_MAX_CONCURRENT
+          # at a time. Each extra concurrent session needs about 2g more here.
+          memory: ${DEVCLAW_MCP_MEMORY:-3g}
     # The two credentials the instance cannot run without — the subscription
-    # OAuth setup-token (host cognition + sandbox auth) and the read:packages
-    # registry token (in-sandbox `npm ci`) — have ONE durable home: the on-box
+    # OAuth setup-token (session cognition) and the read:packages registry
+    # token (a session's `npm ci`) — have ONE durable home: the on-box
     # secrets file declared here. deploy/deploy-devclaw.sh writes it from the
     # repo's Actions secrets on every run; a hand `docker compose up` from the
     # box reads the same file, so every creation path yields the same
@@ -86,50 +83,29 @@ services:
       # with blank). GH_TOKEN also supersedes the ~/.config/gh mount below for
       # every `gh` call and for git's `gh auth git-credential` helper; the
       # mount stays until a live push has proven the env path.
-      # The per-task sandbox image, pulled from ghcr by tag (built from the same
-      # source as this MCP image — no md5-verify crutch; both are this commit).
-      DEVCLAW_SANDBOX_IMAGE: ${DEVCLAW_SANDBOX_IMAGE:-ghcr.io/lifekit-hq/devclaw-sandbox:latest}
-      # Sandbox sizing — operator knobs from /srv/devclaw/.env. Without these
-      # substitution lines the knobs never reach the container and setting them
-      # in the env file is a silent no-op (2026-08-26 OOM incident: a 2g cap
-      # cannot hold the in-sandbox agent plus an Angular test run). Defaults
-      # mirror devclaw/config.py.
-      # Global sandboxed-task concurrency cap. Same silent-no-op trap as the
-      # sizing knobs below: config.py reads it and task_queue.py enforces it,
-      # but without this line an env-file setting never reaches the container.
-      # 1 = strictly serial (one sandbox at a time) — the unattended-week mode:
-      # concurrent sandboxes contend for one account quota, and on 2026-08-29
-      # that killed six tasks at "exceeded 5 usage-limit pauses" with nothing
-      # delivered. Default mirrors devclaw/config.py.
-      DEVCLAW_MAX_CONCURRENT: ${DEVCLAW_MAX_CONCURRENT:-4}
-      DEVCLAW_SANDBOX_MEMORY: ${DEVCLAW_SANDBOX_MEMORY:-2g}
-      DEVCLAW_SANDBOX_CPUS: ${DEVCLAW_SANDBOX_CPUS:-2.0}
-      # The rest of the sandbox/worker execution dials — everything
-      # engine/sandcastle.py reads. Same silent-no-op trap as the sizing knobs
-      # above: config.py reads them, sandcastle.py acts on them, and without a
-      # line here an env-file setting never reaches the container. That trap
-      # was called out for DEVCLAW_MAX_CONCURRENT and fixed for that ONE var;
-      # these five were left inert. DEVCLAW_EXEC_MODEL is the one that stung —
-      # docs/reference/env-vars.md calls it "the token/quota bulk" and it could
-      # not be set on the deployed instance at all.
-      # tests/test_env_vars_doc_sync.py now fails if a new sandcastle dial
-      # lands without a line here.
+      # Session concurrency cap. Without this substitution line an env-file
+      # setting never reaches the container (the silent-no-op trap). 1 =
+      # strictly serial — the unattended-week mode: concurrent sessions
+      # contend for one account quota, and on 2026-08-29 that killed six tasks
+      # with nothing delivered. Default mirrors devclaw/config.py.
+      DEVCLAW_MAX_CONCURRENT: ${DEVCLAW_MAX_CONCURRENT:-1}
+      # The engine dials — everything engine/claude.py and engine/workspace.py read. Same trap: without
+      # a line here an env-file setting is inert on the deployed instance.
+      # tests/test_env_vars_doc_sync.py fails if a new dial lands without one.
       DEVCLAW_EXEC_MODEL: ${DEVCLAW_EXEC_MODEL:-}
-      DEVCLAW_ACP_COMMAND: ${DEVCLAW_ACP_COMMAND:-}
-      DEVCLAW_CONTEXT_TRIPWIRE_PCT: ${DEVCLAW_CONTEXT_TRIPWIRE_PCT:-75}
-      DEVCLAW_DOCKER_BIN: ${DEVCLAW_DOCKER_BIN:-docker}
-      DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST: ${DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST:-}
-      DEVCLAW_HOST_MEM_RESERVE: ${DEVCLAW_HOST_MEM_RESERVE:-1536m}
+      DEVCLAW_CLAUDE_BIN: ${DEVCLAW_CLAUDE_BIN:-claude}
+      DEVCLAW_TREEHOUSE_BIN: ${DEVCLAW_TREEHOUSE_BIN:-treehouse}
+      DEVCLAW_FIRST_FRAME_S: ${DEVCLAW_FIRST_FRAME_S:-120}
+      DEVCLAW_SILENCE_S: ${DEVCLAW_SILENCE_S:-1800}
+      DEVCLAW_VERIFY_ROUNDS: ${DEVCLAW_VERIFY_ROUNDS:-3}
+      DEVCLAW_VERIFY_TIMEOUT_S: ${DEVCLAW_VERIFY_TIMEOUT_S:-900}
       DEVCLAW_SELF_REPO: ${DEVCLAW_SELF_REPO:-}
       # Git author/committer identity for every commit devclaw produces
-      # (devclaw/git_identity.py, forwarded into each sandbox). Blank ⇒ the
+      # (devclaw/git_identity.py, set on each session). Blank ⇒ the
       # code default (`devclaw <devclaw@local>`); point DEVCLAW_GIT_EMAIL at a
       # bot's GitHub noreply address to link the commits to a real profile.
       DEVCLAW_GIT_NAME: ${DEVCLAW_GIT_NAME:-}
       DEVCLAW_GIT_EMAIL: ${DEVCLAW_GIT_EMAIL:-}
-      DEVCLAW_HOST_CLAUDE_DIR: ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}
-      DEVCLAW_CONTAINER_PATH_PREFIX: /var/lib/devclaw/workspaces
-      DEVCLAW_HOST_PATH_PREFIX: ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}
       TZ: ${OPENCLAW_TZ:-UTC}
       # Point git's credential helper at gh's stored token (private-repo clone).
       GIT_CONFIG_COUNT: "1"
@@ -139,11 +115,10 @@ services:
       # Durable state — devclaw.db + goals. External volume: survives recreates
       # AND the cutover from the lifekit-stack project (goal-safety, FR-009).
       - devclaw-state:/var/lib/devclaw
-      # Workspaces — bind-mounted from the host so docker (on the host) can
-      # bind-mount the SAME path into each spawned devclaw-sandbox container.
+      # Workspaces — the project checkouts and the treehouse pool of per-goal
+      # worktrees (TREEHOUSE_ROOT in the image), on the host so a lease
+      # survives a recreate.
       - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/var/lib/devclaw/workspaces
-      # Host docker socket — spawns per-task sandcastle containers.
-      - /var/run/docker.sock:/var/run/docker.sock
       # Host tailscaled control socket — `tailscale serve` for durable deploys.
       - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
       # Claude Code OAuth — inherited from the host session (no API key, ever).

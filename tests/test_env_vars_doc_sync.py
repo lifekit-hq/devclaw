@@ -7,7 +7,7 @@ drift a failure instead of an archaeology project:
   - every ``DEVCLAW_*`` var the runtime reads must have a row in the doc;
   - every documented row must correspond to a real read in the code.
 
-Scope is the runtime: the ``devclaw`` package + the in-sandbox runner. Test
+Scope is the runtime: the ``devclaw`` package. Test
 fixtures (``DEVCLAW_TEST_*`` in tests/), the offline eval harness
 (``MEASURE_*`` in evals/), and Claude-harness hooks (.claude/) are not env
 surface and are deliberately outside the scan.
@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from devclaw import credentials
 
 _REPO = Path(__file__).resolve().parents[1]
 _DOC = _REPO / "docs" / "reference" / "env-vars.md"
@@ -29,14 +31,15 @@ _READ_RE = re.compile(
 _ROW_RE = re.compile(r"^\| `(DEVCLAW_[A-Z_]+)`", re.MULTILINE)
 
 _COMPOSE = _REPO / "deploy" / "docker-compose.devclaw.yml"
-_SANDCASTLE = _REPO / "devclaw" / "engine" / "sandcastle.py"
-# The launcher stamps the worker's git identity through this module, so its
-# config reads are sandbox dials too (DEVCLAW_GIT_NAME/EMAIL were documented,
+_ENGINE = _REPO / "devclaw" / "engine" / "claude.py"
+# The engine stamps the session's git identity through this module, so its
+# config reads are engine dials too (DEVCLAW_GIT_NAME/EMAIL were documented,
 # read, and inert in production until 2026-09-06 because the scan stopped at
-# sandcastle.py).
+# the launcher).
 _GIT_IDENTITY = _REPO / "devclaw" / "git_identity.py"
+_WORKSPACE = _REPO / "devclaw" / "engine" / "workspace.py"
 _CONFIG = _REPO / "devclaw" / "config.py"
-#: a `_config.<NAME>` reference in the container launcher
+#: a `_config.<NAME>` reference in the engine
 _CFG_REF_RE = re.compile(r"_config\.([A-Za-z_]+)")
 #: `NAME = os.environ.get("DEVCLAW_X"` or a `def name()` whose body reads one
 _CFG_BIND_RE = re.compile(
@@ -47,9 +50,8 @@ _CFG_BIND_RE = re.compile(
 
 def _runtime_reads() -> set[str]:
     files = list((_REPO / "devclaw").rglob("*.py"))
-    files += list((_REPO / "runner").glob("*.py"))
     assert files, "runtime source not found — repo layout changed?"
-    reads: set[str] = set()
+    reads: set[str] = {c.var for c in credentials.REGISTRY if c.var.startswith("DEVCLAW_")}
     for f in files:
         reads |= set(_READ_RE.findall(f.read_text(encoding="utf-8")))
     return reads
@@ -77,15 +79,15 @@ def test_every_documented_var_is_read():
     )
 
 
-def _sandcastle_env_vars() -> set[str]:
-    """Every ``DEVCLAW_*`` var the CONTAINER LAUNCHER acts on.
+def _engine_env_vars() -> set[str]:
+    """Every ``DEVCLAW_*`` var the ENGINE acts on.
 
     Resolved structurally rather than from a hand-kept list: collect the
-    ``_config.<NAME>`` references in ``engine/sandcastle.py``, then map each
-    back to the env var its binding in ``config.py`` reads. A new sandbox dial
-    is therefore covered the moment sandcastle reads it — no list to remember.
+    ``_config.<NAME>`` references in ``engine/claude.py``, then map each
+    back to the env var its binding in ``config.py`` reads. A new engine dial
+    is therefore covered the moment the engine reads it — no list to remember.
     """
-    src = _SANDCASTLE.read_text(encoding="utf-8") + _GIT_IDENTITY.read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in (_ENGINE, _GIT_IDENTITY, _WORKSPACE))
     names = set(_CFG_REF_RE.findall(src))
     config_src = _CONFIG.read_text(encoding="utf-8")
     found: set[str] = set()
@@ -109,8 +111,8 @@ def _sandcastle_env_vars() -> set[str]:
     return found
 
 
-def test_every_sandbox_dial_reaches_the_deployed_container():
-    """A dial the container launcher reads must be forwarded by the production
+def test_every_engine_dial_reaches_the_deployed_container():
+    """A dial the engine reads must be forwarded by the production
     compose file — otherwise it is documented, settable, and silently inert.
 
     The compose file forwards ONLY the vars it names; its one ``env_file`` is
@@ -120,15 +122,15 @@ def test_every_sandbox_dial_reaches_the_deployed_container():
     file itself for ``DEVCLAW_MAX_CONCURRENT`` — and was fixed for that one var
     only. ``DEVCLAW_EXEC_MODEL`` (documented as "the token/quota bulk") was
     among five that stayed inert, so the deployed worker could not be moved off
-    the default model at all. This pins the CLASS: any var sandcastle reads.
+    the default model at all. This pins the CLASS: any var the engine reads.
     """
     compose = _COMPOSE.read_text(encoding="utf-8")
     forwarded = set(re.findall(r"^\s{6}(DEVCLAW_[A-Z_]+):", compose, re.MULTILINE))
-    dials = _sandcastle_env_vars()
-    assert dials, "structural scan found no sandcastle dials — the regex rotted"
+    dials = _engine_env_vars()
+    assert dials, "structural scan found no engine dials — the regex rotted"
     missing = sorted(dials - forwarded)
     assert not missing, (
-        "these sandbox dials are read by engine/sandcastle.py but NOT forwarded "
+        "these engine dials are read by engine/claude.py but NOT forwarded "
         f"by deploy/docker-compose.devclaw.yml, so setting them on the deployed "
         f"instance silently does nothing: {missing}"
     )

@@ -37,7 +37,7 @@ and report it instead of proceeding:
    `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 8. Report the PR URL, diffstat, suite counts, AND the net-LOC line:
    `code Δ: +A/−B · tests Δ: +C/−D` (from `git diff origin/main --numstat`,
-   split devclaw/+runner/ vs tests/). Informational, never a gate — the
+   split devclaw/ vs tests/). Informational, never a gate — the
    number exists so growth is a choice, not a drift (ruled 2026-08-27).
    Do NOT merge — merging is the owner's call unless already authorized this
    session.

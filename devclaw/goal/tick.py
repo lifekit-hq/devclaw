@@ -12,13 +12,14 @@ testable with zero subprocesses and the idle path costs zero sessions.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import sys
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from .. import config as _config
-from ..engine.workspace import ensure_goal_checkout, goal_checkout_dir, prepare_workspace, remove_goal_checkout
+from ..engine.workspace import lease_goal_checkout, remove_goal_checkout
 from ..state_store import (
     EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REFUSED, EXIT_REVIEW, Goal, StateStore, Task,
 )
@@ -30,6 +31,7 @@ from .world import World, WorldReader
 
 PostComment = Callable[[str, int, str], Awaitable[str]]
 Merge = Callable[[str, str], Awaitable[tuple[str, str]]]
+Lease = Callable[[str, "str | None", str], Awaitable[str]]
 
 #: outcomes after which the goal HOLDS its project's lane this tick
 SPAWNING = frozenset({"spawned", "resumed", "gate", "running"})
@@ -43,6 +45,7 @@ class TickContext:
     notifier: Notifier
     post_comment: PostComment = _gh.post_comment
     merge: Merge = _gh.squash_merge
+    lease: Lease = lease_goal_checkout
     now_ms: Callable[[], int] = lambda: int(_dt.datetime.now(_dt.timezone.utc).timestamp() * 1000)
 
     def log(self, goal_id: str, line: str) -> None:
@@ -68,30 +71,33 @@ async def _ping(ctx: TickContext, text: str) -> None:
         pass
 
 
-async def _spawn(ctx: TickContext, goal: Goal, world: World, kind: str, brief: str) -> None:
-    """Create the row inside one transaction with the fingerprint it was given."""
-    project_ws = goal.workspace_dir
-    checkout = goal_checkout_dir(project_ws, goal.id)
+async def _spawn(ctx: TickContext, goal: Goal, world: World, kind: str, brief: str, outcome: str) -> str:
+    """Create the row inside one transaction with the fingerprint it was given,
+    in the goal's leased worktree. No worktree, no session: the row settles
+    ``INTERRUPTED`` with the lease error, so the next tick tries again."""
+    checkout, unplaced = goal.workspace_dir, None
     try:
-        import os
-        if not os.path.isdir(os.path.join(project_ws, ".git")):
-            await prepare_workspace(project_ws, goal.repo_url)
-        await ensure_goal_checkout(project_ws, goal.repo_url, goal.id)
-    except Exception as exc:  # noqa: BLE001 — the queue's prep will say so loudly
-        ctx.log(goal.id, f"checkout seeding degraded: {exc}")
+        checkout = await ctx.lease(goal.workspace_dir, goal.repo_url, goal.id)
+    except Exception as exc:  # noqa: BLE001
+        unplaced = f"no worktree leased: {exc}"
+        ctx.log(goal.id, unplaced)
     with ctx.store.transaction():
         ctx.queue.submit(  # type: ignore[attr-defined]
             kind=kind, workspace_dir=checkout, goal=brief, verify_cmd=None,
             deliver=(kind != "review_repository"), parent_goal_id=goal.id,
             target_branch=goal.branch, project_id=goal.project_id, pump=False,
+            unplaced=unplaced,
         )
         ctx.store.set_goal_last_seen(goal.id, world.fingerprint_json())
+    if unplaced is not None:
+        return "unleased"
     ctx.queue.pump()  # type: ignore[attr-defined]
+    return outcome
 
 
 async def _close(ctx: TickContext, goal: Goal, outcome: str, note: str) -> str:
     if ctx.store.close_goal(goal.id, outcome):
-        remove_goal_checkout(goal.workspace_dir, goal.id)
+        await asyncio.to_thread(remove_goal_checkout, goal.workspace_dir, goal.id)
         ctx.log(goal.id, f"closed ({outcome}): {note}")
         await _ping(ctx, f"{'✅' if outcome == 'achieved' else '⏹'} {goal.id} {outcome} — {note}")
     return "closed"
@@ -149,8 +155,7 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
                             text=f"{detail}\n\n{logs}".strip())
 
     if last is not None and last.exit == EXIT_INTERRUPTED:
-        await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last))
-        return "resumed"
+        return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "resumed")
 
     if last is not None and last.exit == EXIT_REVIEW:
         return await _settle_review(ctx, goal, world, last)
@@ -165,8 +170,7 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
             verdicts = world.verdicts_for_head(head)
             unreadable = [v for v in verdicts if v.field("unreadable") == "1"]
             if not verdicts or (len(verdicts) == len(unreadable) == 1):
-                await _spawn(ctx, goal, world, "review_repository", review_brief(goal, world))
-                return "gate"
+                return await _spawn(ctx, goal, world, "review_repository", review_brief(goal, world), "gate")
             if unreadable and len(unreadable) >= 2:
                 return await _block(ctx, goal, world, task_id=last.id, head=head,
                                     kind="done-gate unreadable twice",
@@ -185,13 +189,11 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
         if len(prior) >= 2 and prior[1].exit == EXIT_REFUSED and (prior[1].exit_detail == last.exit_detail):
             return await _block(ctx, goal, world, task_id=last.id, head=head, kind="delivery refused twice",
                                 text=last.exit_detail or "")
-        await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last))
-        return "resumed"
+        return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "resumed")
 
     if goal.last_seen_json == world.fingerprint_json():
         return "idle"
-    await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last))
-    return "spawned"
+    return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "spawned")
 
 
 async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Task) -> str:

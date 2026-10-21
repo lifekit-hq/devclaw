@@ -1,16 +1,11 @@
-"""Admission — the dispatch-admission brakes of the queue, split out as a mixin.
+"""Admission — the dispatch-admission brake of the queue, split out as a mixin.
 
-:class:`AdmissionMixin` carries the two launch gates consulted by ``_pump``:
-the host-memory admission budget (the OOM cure) and the
-per-workspace failure circuit-breaker. Their tuning constants
-(``MEM_LAUNCH_FLOOR_BYTES``, ``WORKSPACE_BREAK_*``) are bound HERE — tests
-that tune the breaker patch THIS namespace. ``host_mem_available_bytes``
-itself stays bound in ``task_queue`` (its reader ``_pump`` lives there).
+:class:`AdmissionMixin` carries the per-workspace failure circuit-breaker
+consulted by ``_pump``. Its tuning constants (``WORKSPACE_BREAK_*``) are bound
+HERE — tests that tune the breaker patch THIS namespace.
 
-Split out of ``TaskQueue`` as a mixin on the SAME instance — every method here
-runs against the ``self._store`` / ``self._mem_budget`` the base ``TaskQueue``
-owns, so the fail-open-on-unmeasurable / one-shot-per-hold semantics are
-unchanged from the monolith. This module must never import
+A mixin on the SAME instance — every method here runs against the
+``self._store`` the base ``TaskQueue`` owns. This module must never import
 ``devclaw.task_queue`` at runtime (the dependency points the other way).
 """
 
@@ -20,34 +15,10 @@ import json
 import sys
 from typing import TYPE_CHECKING
 
-from .. import config as _config
-from ..engine.sandcastle import SANDBOX_MEMORY
-from ..host_resources import _parse_mem
 from ..state_store import _now_ms
 
 if TYPE_CHECKING:
     from ..state_store import StateStore
-
-# ---- host-memory admission (the OOM cure) ------------------------------------
-# A COUNT cap (GLOBAL_MAX_CONCURRENT) plus a per-container `--memory` CEILING is
-# NOT the same as fitting the host: docker will start N containers each ALLOWED
-# 2g even when the box lacks N*2g (a --memory limit is a ceiling, not a
-# reservation). Under load the kernel's global OOM-killer then reaps the fattest
-# unbounded process — a host-side process in the root cgroup — as `exited -9`.
-# This gates dispatch on REAL free RAM so we never overcommit in the first place.
-# Mechanism, not appeasement (doctrine: fix the repo, don't appease it).
-
-
-#: per-sandbox memory ceiling in bytes — the SAME value the launcher hands to
-#: ``docker --memory`` (imported, so the two can't drift).
-SANDBOX_MEMORY_BYTES = _parse_mem(SANDBOX_MEMORY)
-#: headroom kept free for the host (devclaw itself + OS) so it is not
-#: the OOM victim. Env-tunable per host (``DEVCLAW_COGNITION_MEM_RESERVE``); the
-#: floor to admit one more sandbox launch is sandbox-ceiling + this reserve.
-HOST_MEM_RESERVE_BYTES = _parse_mem(
-    _config.HOST_MEM_RESERVE
-)
-MEM_LAUNCH_FLOOR_BYTES = SANDBOX_MEMORY_BYTES + HOST_MEM_RESERVE_BYTES
 
 #: per-workspace circuit-breaker: N task failures on the same workspace_dir
 #: within WINDOW_S trips a hold for HOLD_S. Sibling of the global quota pause but
@@ -65,8 +36,6 @@ class AdmissionMixin:
         # The composing class (TaskQueue) owns these; declared under
         # TYPE_CHECKING so the seam is checked, never run.
         _store: StateStore
-        _mem_budget: "int | None"
-        _mem_deny_logged: bool
 
     def _workspace_break_active(self, workspace_dir: str) -> bool:
         """True iff dispatch to ``workspace_dir`` is currently held by the
@@ -117,34 +86,3 @@ class AdmissionMixin:
             f"({count} failures in {WORKSPACE_BREAK_WINDOW_S:.0f}s) — "
             f"holding dispatch {WORKSPACE_BREAK_HOLD_S:.0f}s\n"
         )
-
-    def _mem_can_launch(self, need_bytes: "int | None" = None) -> bool:
-        """True if there's host RAM for one more sandbox — or if memory can't be
-        measured (fail OPEN: an unmeasurable host must never wedge the queue). On
-        denial, log ONCE per pump (loud, not a silent throttle), mirroring the
-        operator-hold logging pattern so a memory hold is visible in the logs."""
-        budget = self._mem_budget
-        need = SANDBOX_MEMORY_BYTES if need_bytes is None else int(need_bytes)
-        floor = need + HOST_MEM_RESERVE_BYTES
-        if budget is None or budget >= floor:
-            return True
-        if not getattr(self, "_mem_deny_logged", False):
-            sys.stderr.write(
-                f"task-queue: dispatch held — host MemAvailable {budget >> 20}MB "
-                f"< floor {floor >> 20}MB (sandbox "
-                f"{need >> 20}MB + reserve "
-                f"{HOST_MEM_RESERVE_BYTES >> 20}MB); deferring launches so the "
-                f"host claude --print isn't OOM-killed\n"
-            )
-            self._mem_deny_logged = True
-        return False
-
-    def _mem_commit_launch(self, need_bytes: "int | None" = None) -> None:
-        """Optimistically debit one sandbox's ceiling from this pump's budget so N
-        pending tasks can't all launch into RAM that only fits one (a fresh
-        container's RSS lags its start). The budget is re-measured from /proc each
-        pump, so a finished container's memory returns on the next tick."""
-        if self._mem_budget is not None:
-            self._mem_budget -= (
-                SANDBOX_MEMORY_BYTES if need_bytes is None else int(need_bytes)
-            )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Literal, Optional
 
@@ -51,17 +52,11 @@ async def project_status(project_id: str) -> str:
 async def update_project(project_id: str, name: Optional[str] = None, repo_url: Optional[str] = None,
                          workspace_dir: Optional[str] = None,
                          status: Optional[Literal["active", "paused", "archived"]] = None,
-                         notes: Optional[str] = None, sandbox_image: Optional[str] = None,
-                         sandbox_memory: Optional[str] = None, sandbox_cpus: Optional[str] = None) -> str:
-    """Change a project's facts — only the fields you pass. ``sandbox_*``
-    pin this project's sandbox image / memory / cpus ('inherit' clears)."""
-    kwargs: dict = {}
-    for k, v in (("sandbox_image", sandbox_image), ("sandbox_memory", sandbox_memory), ("sandbox_cpus", sandbox_cpus)):
-        if v is not None:
-            kwargs[k] = None if v == "inherit" else v
+                         notes: Optional[str] = None) -> str:
+    """Change a project's facts — only the fields you pass."""
     try:
         p = registry.update(project_id, name=name, repo_url=repo_url, workspace_dir=workspace_dir,
-                            status=status, notes=notes, **kwargs)
+                            status=status, notes=notes)
     except KeyError:
         raise ToolError(f"unknown project_id: {project_id}")
     except ValueError as exc:
@@ -72,8 +67,8 @@ async def update_project(project_id: str, name: Optional[str] = None, repo_url: 
 @mcp.tool
 async def delete_project(project_id: str) -> str:
     """Remove a project from the registry. Refused while any of its goals is
-    open — cancel them first. Goal checkouts under the workspace are removed;
-    the project checkout itself is left alone."""
+    open — cancel them first. Any worktree still leased to one of its goals is
+    returned; the project checkout itself is left alone."""
     p = registry.get(project_id)
     if p is None:
         raise ToolError(f"unknown project_id: {project_id}")
@@ -83,6 +78,6 @@ async def delete_project(project_id: str) -> str:
     if p.workspace_dir:
         for g in goals.list_goals():
             if g.get("projectId") == project_id:
-                remove_goal_checkout(p.workspace_dir, g["id"])
+                await asyncio.to_thread(remove_goal_checkout, p.workspace_dir, g["id"])
     registry.delete(project_id)
     return json.dumps({"project_id": project_id, "deleted": True}, indent=2)
