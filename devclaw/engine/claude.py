@@ -308,7 +308,16 @@ HANDOFF_PROMPT = (
     "owner can settle ends this session BLOCKED with it as the question.\n"
     "5. When the run reports its outcome, end your final message with your exit line again."
 )
-_STATUS_FIELD_RE = re.compile(r'^\s*(outcome|submitted_head|pr):\s*"?([^"\s]*)"?\s*$', re.MULTILINE)
+_STATUS_KEY_RE = re.compile(r'^( *)([A-Za-z_][A-Za-z0-9_]*)(?:\[\d+\](?:\{[^}]*\})?)?:[ \t]*(.*?)[ \t]*$')
+#: The run's own fields in ``axi status`` (TOON, v1.99.0; it has no
+#: machine-readable mode): its outcome at column 0, its PR under ``run:``, the
+#: head it was submitted at under ``branch_sync: > pipeline:``. A step row or
+#: another branch's ``other_branch_run:`` block never matches.
+_STATUS_RUN_FIELDS = {
+    ("outcome",): "outcome",
+    ("run", "pr"): "pr",
+    ("branch_sync", "pipeline", "submitted_head"): "submitted_head",
+}
 
 
 def host_env() -> dict[str, str]:
@@ -349,6 +358,33 @@ async def unshipped_head(workspace_dir: str) -> Optional[str]:
     return (await _host(workspace_dir, "git", "rev-parse", "HEAD"))[1] or None
 
 
+def parse_status(text: str) -> dict[str, str]:
+    """The run's ``outcome`` / ``pr`` / ``submitted_head`` from ``axi status``,
+    each read only at its own position in the document."""
+    fields: dict[str, str] = {}
+    stack: list[tuple[int, str]] = []
+    for line in text.splitlines():
+        m = _STATUS_KEY_RE.match(line)
+        if not m:
+            continue
+        indent, key, value = len(m.group(1)), m.group(2), m.group(3).strip('"')
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        name = _STATUS_RUN_FIELDS.get((*(k for _, k in stack), key))
+        if name:
+            fields.setdefault(name, value)
+        stack.append((indent, key))
+    return fields
+
+
+async def dirty_tree(workspace_dir: str) -> bool:
+    """True when the worktree holds uncommitted or untracked files. Fails CLOSED."""
+    if not _has_git_dir(workspace_dir):
+        return False
+    rc, out = await _host(workspace_dir, "git", "status", "--porcelain")
+    return rc != 0 or bool(out)
+
+
 async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str]:
     """``(pr_url, "")`` when the branch's newest no-mistakes run carries the
     unshipped ``head`` and passed, else ``(None, why)``. Carrying it proves the
@@ -357,7 +393,7 @@ async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str
     rc, out = await _host(workspace_dir, NO_MISTAKES, "axi", "status")
     if rc != 0:
         return None, f"no-mistakes axi status failed: {out[-300:]}"
-    fields = dict(_STATUS_FIELD_RE.findall(out))
+    fields = parse_status(out)
     submitted = fields.get("submitted_head", "")
     if not submitted or (await _host(workspace_dir, "git", "merge-base", "--is-ancestor", head, submitted))[0] != 0:
         return None, f"no no-mistakes run carries {head[:8]}"
@@ -578,6 +614,10 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             if reason is None and pr_url is None:
                 return {"status": "error", "error": f"the hand-off did not ship: {why}",
                         "agent_output": turn.text, "usage": usage, "session_id": turn.session_id}
+        elif await dirty_tree(req.workspace_dir):
+            return {"status": "error", "error": "the hand-off did not ship: the session left uncommitted "
+                    "changes and no commit", "agent_output": turn.text, "usage": usage,
+                    "session_id": turn.session_id}
     if reason is not None:
         out = blocked_result(reason, workspace_dir=req.workspace_dir, agent_output=turn.text, usage=usage)
         out["session_id"] = turn.session_id

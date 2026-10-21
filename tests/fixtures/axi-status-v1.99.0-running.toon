@@ -1,0 +1,60 @@
+run:
+  id: "01M5ERATGKS83QSZ0WSS9X5NYJ"
+  branch: fm/gh-dc-953
+  status: running
+  awaiting_agent: parked 1m52s
+  head: b786039d
+  head_sha: b786039d5c4ce58f628769fc53fd7f03f04b121a
+  verification_plan: none
+  findings: "1 awaiting, 1 auto-fix"
+  steps[9]{step,status,findings,duration_ms}:
+    intent,completed,0,46
+    rebase,completed,0,1197
+    review,awaiting_approval,2,108127
+    test,pending,0,0
+    document,pending,0,0
+    lint,pending,0,0
+    push,pending,0,0
+    pr,pending,0,0
+    ci,pending,0,0
+branch_sync:
+  state: pipeline_owned
+  changed: false
+  local:
+    branch: fm/gh-dc-953
+    head: a8dbb7bdbe2ad2054741fe1f859cd6603d4e002b
+    clean: true
+  pipeline:
+    run: "01M5ERATGKS83QSZ0WSS9X5NYJ"
+    status: running
+    phase: pre_push
+    submitted_head: a8dbb7bdbe2ad2054741fe1f859cd6603d4e002b
+    current_head: b786039d5c4ce58f628769fc53fd7f03f04b121a
+    pushed_head: ""
+    pushed_at: 0
+    push_generation: 0
+  target:
+    kind: ""
+    remote: origin
+    url: "https://github.com/lifekit-hq/devclaw.git"
+    ref: ""
+  remote:
+    observed_head: ""
+    freshness: pipeline_push
+    observed_at: 0
+  relation: unknown
+  safety: blocked_pipeline_owned
+  pr_state: none
+  note: the pipeline head has moved but has not been successfully pushed; do not make local follow-up commits yet
+  next_action:
+    code: continue_active_run
+    command: no-mistakes axi status
+gate:
+  step: review
+  status: awaiting_approval
+  risk: medium
+  note: "Review auto-fix is disabled by default (`auto_fix.review: 0`; a repo or global `auto_fix.review > 0` override re-enables it), so blocking and ask-user review findings park for your decision rather than being silently self-fixed."
+  findings[2]{id,severity,file,action,description}:
+    review-1,warning,devclaw/engine/claude.py,auto-fix,"The hand-off only runs when `unshipped_head` finds a commit `origin` has not seen. The deleted `task_change.materialize` used to stage and commit whatever the session left in the worktree. A session that edits files, passes verify and ends DELIVERED or DONE without committing now ships nothing. Verify passes on the dirty tree, `unshipped_head` returns None, no hand-off runs and `pr_url` is unset. `settle.py` then records the row with the agent's own exit word (DELIVERED) and no PR, so the work is silently lost. That contradicts the 'hand-off that did not ship is a failure' invariant in AGENTS.md. Also affects: the hand-off prompt tells the session to commit everything, but only when a commit already exists, so the all-dirty case never reaches that instruction (devclaw/engine/claude.py:571). Smallest fix: when the tree is dirty (`git status --porcelain`) and there is no unshipped commit, either run the hand-off or return an error result, so the row settles INTERRUPTED instead of looking delivered."
+    review-2,warning,devclaw/engine/claude.py,ask-user,"The hand-off's accept/reject decision rests on a regex over `no-mistakes axi status` output (`outcome`, `submitted_head`, `pr`). `tests/test_handoff_fails_closed.py` builds its own `_status()` text in the shape the regex expects, so no independent oracle (a captured real `axi status` output or a documented schema) ties the parser to the real tool. `docs/spikes/no-mistakes-done-when.md` records no status format either. The regex matches those keys at any indentation and `dict()` keeps the last occurrence. If the real output lists per-step `outcome:` or `pr:` lines after the run's own, the wrong value wins. The result fails closed, so every hand-off would end INTERRUPTED rather than pass wrongly. The test would still pass against the invented format. Oracle: a captured real `axi status` fixture from no-mistakes v1.99.0, or `axi status` with machine-readable output if the tool offers it. The test it should reject: a status whose final `outcome:` line belongs to a step, not the run. The remedy needs real tool output captured, which the reviewer cannot produce."
+help[6]: Run `no-mistakes axi respond --action approve` to accept this step and continue,"Run `no-mistakes axi respond --action fix --findings <ids> [--ignore <ids>]` to have the pipeline fix the selected findings (do not edit files yourself); list every finding below in `--findings` or `--ignore`, unless an earlier round of this step already decided it, and a finding that round chose to fix cannot be declined by a later response",Run `no-mistakes axi respond --action skip` to skip this step,Run `no-mistakes axi logs --step review --full` to read the complete step summary and log,"A long-running call is working, not stalled - background it if your harness needs to, but the run never advances past a gate on its own. Read every return; on a `gate:`, respond; loop until an `outcome:`.","Commit post-pipeline follow-up work on top of the existing branch so every pipeline fix commit remains present. Never abort-and-restart, reset, or replace the branch in a way that drops prior gate-fix commits."
