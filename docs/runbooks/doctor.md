@@ -3,9 +3,9 @@
 `doctor` (MCP) or `devclaw doctor` (CLI). Zero writes, zero cognition. Checks:
 
 - **credentials** — every registry credential present, well-formed, and (the GitHub-shaped ones) accepted by GitHub right now;
-- **tools** — `gh`, `git`, and `docker` on PATH;
+- **tools** — `gh` and `git` on PATH, and (unless `DEVCLAW_ENGINE=stub`) the `claude` and `treehouse` binaries the engine runs;
 - **pause** — an active quota/auth pause and when it lifts;
-- **goals** — every open goal's project checkout and goal checkout;
+- **goals** — every open goal's project checkout and its leased treehouse worktree (none until the first spawn);
 - **projects** — every project has a `repo_url` and a `workspace_dir`;
 - **database** — the file and its size.
 

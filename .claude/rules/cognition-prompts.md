@@ -18,5 +18,5 @@ asserts every path named here resolves.
 - **The hand-back is the protocol.** The four exit lines in `session.md` are
   parsed by `devclaw/queue/settle.py`; the review JSON in `done-gate.md` is
   validated by `devclaw/goal/donegate.py`. Change a template and its parser together.
-- **No host cognition.** There is no `claude --print` on the host; a judgment
-  the host needs is a read-only session in the sandbox.
+- **No host cognition.** There is no `claude --print` outside a session; a
+  judgment the host needs is a read-only session in a worktree.

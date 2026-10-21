@@ -11,7 +11,7 @@ docs/
 ├── architecture.md    the mental model + the locked contracts (spec 046)
 ├── flows/             one session's journey; how a session becomes a PR and a merge
 ├── reference/         env vars
-├── runbooks/          doctor, live shakedown, webhooks, the VPS waiter, self-deploy
+├── runbooks/          doctor, live shakedown, webhooks, self-deploy
 ├── spikes/            dated experiments that settle one design question
 └── assets/            console screenshots
 ```
@@ -23,7 +23,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the done-gate on the new engine: a review that changes its worktree fails closed, a verdict counts only for the head it read and the merge is pinned to it, an interrupted review is a review again, the owner's answer wakes a refused gate — #954; the home-built gates and delivery are gone: the session ships through no-mistakes, the engine requires a passed run carrying its head, CI stays the tick's read — #953; the session engine is `engine/claude.py` in a treehouse worktree leased per goal, a silent stream — not a wall clock — interrupts a session, Safety names the worktree and the credential strip, no sandbox, `--resume` only on the quota pause path, an interrupted task's successor starts fresh — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
+| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the four-layer diagram marks what the re-cut kept and what `claude -p`, a treehouse worktree and no-mistakes replaced; any MCP client drives the tools, no chat waiter — #955; the done-gate on the new engine: a review that changes its worktree fails closed, a verdict counts only for the head it read and the merge is pinned to it, an interrupted review is a review again, the owner's answer wakes a refused gate — #954; the home-built gates and delivery are gone: the session ships through no-mistakes, the engine requires a passed run carrying its head, CI stays the tick's read — #953; the session engine is `engine/claude.py` in a treehouse worktree leased per goal, a silent stream — not a wall clock — interrupts a session, Safety names the worktree and the credential strip, no sandbox, `--resume` only on the quota pause path, an interrupted task's successor starts fresh — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
 
 ## Flows
 
@@ -42,11 +42,10 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`runbooks/doctor.md`](./runbooks/doctor.md) | The read-only post-deploy check: `doctor` tool / `devclaw doctor`. | **CURRENT** — 2026-09-13 |
+| [`runbooks/doctor.md`](./runbooks/doctor.md) | The read-only post-deploy check: `doctor` tool / `devclaw doctor`. | **CURRENT** — 2026-10-21 (tools: `gh`, `git`, and the `claude` and `treehouse` binaries off the stub engine, no `docker`; a goal's leased worktree — #955) |
 | [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + treehouse) on one goal. | **CURRENT** — 2026-10-21 (no sandbox image — #952) |
-| [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-09-13 |
-| [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | The OpenClaw waiter on the VPS and its tool menu. | **CURRENT** — 2026-10-12 (tool menu: the 18 v2 `@mcp.tool` verbs; v1 verbs removed from the waiter prompt) |
-| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-21 (one image, `devclaw-mcp`, builds on hosted arm64 via `docker-build.yml`; the box pulls by SHA; the sandbox image is gone — #952) |
+| [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-10-21 (re-verified, unchanged) |
+| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-21 (§4 is the dated 2026-08-16 cutover record in past tense, making no current sandbox or waiter claim; the seam step attaches `notify-relay` only, no waiter seam, and the spec link points at its superseded row — #955; one image, `devclaw-mcp`, builds on hosted arm64 via `docker-build.yml`; the box pulls by SHA; the sandbox image is gone — #952) |
 
 ## Spikes
 

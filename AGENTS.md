@@ -15,8 +15,8 @@ reviewable increment on the goal's branch, and hands back one exit line. The
 host reads the world (the PR, its CI, the threads) every ~15 minutes and spawns
 a session only when the world moved. Done is never the agent's word: a proposal
 gets a fresh read-only review session judged mechanically, and a confirmed
-close squash-merges the goal's one PR. It sits behind MCP; an OpenClaw waiter
-translates chat into tool calls. Cognition is `claude` over Pro/Max OAuth — no
+close squash-merges the goal's one PR. It sits behind MCP; any MCP client
+calls its tools. Cognition is `claude` over Pro/Max OAuth — no
 API key, no metered billing.
 
 ## The north star

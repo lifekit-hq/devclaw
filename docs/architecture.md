@@ -6,20 +6,36 @@ design with its use cases is [`../specs/046-devclaw-v2/spec.md`](../specs/046-de
 
 ## Part I — the mental model
 
-### Four layers, one direction
+### Four layers, one direction: what the re-cut kept and replaced
 
 ```
-user ─► OpenClaw waiter ─► MCP tools            devclaw/server/
-                              │
-                              ▼
-                        the goal layer          devclaw/goal/      the tick rule, the world, the two prompts, the done-gate
-                              │  submit / pump
-                              ▼
-                        queue + engine          devclaw/task_queue.py, queue/, engine/
-                              │  claude -p (stream-json, --resume)
-                              ▼
-                        the session engine      engine/claude.py   in the goal's treehouse worktree: skills, the silence watchdog, the verify loop, the no-mistakes hand-off
+MCP client ─► MCP tools                 devclaw/server/       KEPT   tools, routes, the console, auth
+                 │
+                 ▼
+           the goal layer               devclaw/goal/         KEPT   the tick rule, the world, the two prompts, the done-gate
+                 │  submit / pump
+                 ▼
+           queue + engine               devclaw/task_queue.py, queue/, engine/
+                 │                                            KEPT   one session: place the branch, run, settle the exit; the quota pause
+                 │  claude -p (stream-json, --resume)
+                 ▼
+           the session engine           engine/claude.py      NEW    replaces runner/ (an ACP worker on a 60-minute wall clock):
+                 │                                                   the stream, its silence watchdog, skills, the verify loop
+                 │  in the goal's worktree
+                 ▼
+           a treehouse worktree         engine/workspace.py   NEW    replaces the per-task docker sandbox and the .goals/<id> clones:
+                 │                                                   one lease per goal, returned on close; not a sandbox
+                 │  no-mistakes axi run
+                 ▼
+           no-mistakes                  (an external tool)    NEW    replaces the home-built gates and delivery/:
+                                                                     review, test, lint, push, PR
 ```
+
+KEPT is devclaw's own part: the supervision, the done-gate and the owner's
+channel. NEW is a thin seam over an off-the-shelf single-purpose tool —
+`claude -p`, treehouse, no-mistakes — where home-built machinery ran before
+the re-cut (#952, #953, #954). Any MCP client (Claude Code, a chat agent)
+drives the tools; the console reads the same state over HTTP.
 
 The import order is declared in `pyproject.toml` (`[tool.importlinter]`) and
 `lint-imports` fails a new upward edge. Only the goal layer reads GitHub as
