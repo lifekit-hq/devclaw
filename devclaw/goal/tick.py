@@ -21,7 +21,7 @@ from typing import Awaitable, Callable, Optional
 from .. import config as _config
 from ..engine.workspace import lease_goal_checkout, remove_goal_checkout
 from ..state_store import (
-    EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REFUSED, EXIT_REVIEW, Goal, StateStore, Task,
+    EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REVIEW, Goal, StateStore, Task,
 )
 from . import donegate as _donegate
 from . import github as _gh
@@ -179,17 +179,6 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
             if achieved:
                 return await _merge(ctx, goal, world)
         # conflicting / infra_broken / red-already-blocked: the world moved — fall through
-
-    if last is not None and last.exit == EXIT_REFUSED and (
-        goal.last_seen_json == world.fingerprint_json()
-    ):
-        # the world did not move, but the refusal is a fact the next session
-        # must act on (revert the gate-input edit) — spawn once with it
-        prior = store.list_tasks(parent_goal_id=goal.id, limit=2)
-        if len(prior) >= 2 and prior[1].exit == EXIT_REFUSED and (prior[1].exit_detail == last.exit_detail):
-            return await _block(ctx, goal, world, task_id=last.id, head=head, kind="delivery refused twice",
-                                text=last.exit_detail or "")
-        return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "resumed")
 
     if goal.last_seen_json == world.fingerprint_json():
         return "idle"

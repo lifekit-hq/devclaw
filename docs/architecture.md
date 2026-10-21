@@ -15,10 +15,10 @@ user ─► OpenClaw waiter ─► MCP tools            devclaw/server/
                         the goal layer          devclaw/goal/      the tick rule, the world, the two prompts, the done-gate
                               │  submit / pump
                               ▼
-                        queue + engine          devclaw/task_queue.py, queue/, engine/, gates.py, delivery/
+                        queue + engine          devclaw/task_queue.py, queue/, engine/
                               │  claude -p (stream-json, --resume)
                               ▼
-                        the session engine      engine/claude.py   in the goal's treehouse worktree: skills, the silence watchdog, the verify loop
+                        the session engine      engine/claude.py   in the goal's treehouse worktree: skills, the silence watchdog, the verify loop, the no-mistakes hand-off
 ```
 
 The import order is declared in `pyproject.toml` (`[tool.importlinter]`) and
@@ -79,10 +79,9 @@ sha, run the engine once, then classify how it ended:
 | Result | Exit | Row |
 |---|---|---|
 | quota / auth / outage | (requeued) | account paused, work snapshotted, `pause_count` +1; the tree is kept and the row `--resume`s its own session |
-| stream silence (`DEVCLAW_FIRST_FRAME_S` / `DEVCLAW_SILENCE_S`), harness error, red local verify, delivery failure | `INTERRUPTED` | failed — next tick a fresh session runs on the reset goal branch (never `--resume`) |
-| a gate refused the span (gate-input edit, binary, undeterminable span, gutted tests) | `REFUSED` | failed — the next session is told why; twice in a row blocks |
+| stream silence (`DEVCLAW_FIRST_FRAME_S` / `DEVCLAW_SILENCE_S`), harness error, red local verify, a hand-off that did not ship | `INTERRUPTED` | failed — next tick a fresh session runs on the reset goal branch (never `--resume`) |
 | the session said `BLOCKED` | `BLOCKED` | done — the question goes on the thread |
-| ok, span delivered | `DELIVERED` / `DONE` / `NOTHING` (the session's own line) | done, with the PR url |
+| ok, branch shipped through no-mistakes (or nothing to ship) | `DELIVERED` / `DONE` / `NOTHING` (the session's own line) | done, with the PR url |
 | a review session | `REVIEW` | done — the verdict JSON in the result |
 
 ### The done-gate
@@ -104,7 +103,7 @@ passes. The verdict is posted on the PR; achieved squash-merges
 | Safety | one treehouse worktree per goal (`engine/workspace.py`, leased at the first spawn, returned on close) — **not a filesystem sandbox**; the credential strip at every spawn site (`credentials.session_env`), `credentials.py` as the one registry |
 | Money | the pause classifier (`loom/limits.py`) + `set_global_pause`; `DEVCLAW_GOAL_SESSIONS_PER_DAY`; `DEVCLAW_MAX_CONCURRENT`; the workspace breaker (`queue/admission.py`) |
 | State | `state_store/`: only the TaskQueue mutates task rows; the goal layer writes goals, decisions and `last_seen`; one `transaction()` |
-| Verdict | the project's CI on the delivered head (`goal/github.py`), the materialized span (`task_change.py`), the four gates (`gates.py`), the done-gate validator |
+| Verdict | the project's CI on the delivered head (`goal/github.py`), the session's verify run, the passed no-mistakes run the engine requires before a hand-off counts (`engine/claude.py`), the done-gate validator |
 | Protocol | the engine request (`engine/__init__.py`), the four exit lines, the review JSON, the MCP tools |
 
 ### What the host stores (pillar 5)
@@ -122,10 +121,10 @@ on a judgment column and on a goal layer past 1,500 lines.
 The engine (`engine/claude.py`) runs `.devclaw/verify` after the agent's turn
 and hands a red run back to the same session (`--resume`), up to `DEVCLAW_VERIFY_ROUNDS`;
 a code-writing session that leaves no script after being asked ends with a
-failed verify. The host's `verify` gate then fails a red run closed
-(`INTERRUPTED`; the next session starts fresh on the reset goal branch).
+failed verify. The host then fails a red run closed (`queue/settle.py`:
+`INTERRUPTED`; the next session starts fresh on the reset goal branch).
 
-A green run is not yet a pass. The same gate then checks that the first-run
+A green run is not yet a pass. The engine then checks that the first-run
 manifest — `.devclaw/verify` and `.devclaw/workflow.md`, how the repo verifies
 and how it plans — is TRACKED in the git index, not merely present in the
 working tree. A repository whose `.gitignore` swallows `.devclaw/` would
@@ -133,9 +132,25 @@ otherwise deliver a branch carrying neither, and every later session would
 re-derive from scratch with nothing able to notice. The untracked path is named
 back to the session, which un-ignores and commits it.
 
+### The branch ships through no-mistakes
+
+After a green verify on a branch its remote has not seen, the engine runs
+`no-mistakes init` on the host (it starts the daemon under the host env, which
+keeps the GitHub credential: the daemon pushes and opens the PR) and resumes
+the SAME session with one hand-off prompt: write the contract to an intent
+file, `no-mistakes axi run --intent-file … --skip ci --closes <issue>`, answer
+each gate (fix, approve, or a reviewer question from the contract; anything
+only the owner can settle ends `BLOCKED`). The session never pushes. CI is
+skipped in the pipeline because the tick reads it: a red CI still stops the
+goal with the failing log posted. The engine takes nobody's word for the
+outcome: the branch's newest run must carry the session's head and have
+passed, or the row is `INTERRUPTED`. Fix commits the pipeline pushes are on
+the remote branch the next session resets to. One session runs one pipeline,
+so `DEVCLAW_MAX_CONCURRENT` (default 1) bounds no-mistakes load too.
+
 ### Failure is loud
 
-A gate crash fails closed. A delivery that cannot push fails the row. A
+A gate crash fails closed. A hand-off that did not ship fails the row. A
 missing skill bundle refuses to run. An unreadable verdict never passes. A
 world the host cannot read (`gh` down) does nothing and says so.
 
@@ -146,11 +161,10 @@ devclaw/server/      tools/ (goals, projects, control, doctor) · routes/ (healt
 devclaw/goal/        tick.py · world.py · prompts.py · donegate.py · github.py · service.py · notify.py · self_deploy.py
 devclaw/prompts/     session.md · done-gate.md
 devclaw/task_queue.py · queue/settle.py · queue/admission.py
-devclaw/gates.py · task_change.py · delivery/__init__.py
 devclaw/engine/      claude.py · stub.py · workspace.py
 devclaw/skills/      the worker-kind instructions the engine prepends (_common.md, _writes-code/, <kind>/, craft/)
 devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py · goals.py · preferences.py
-devclaw/loom/        limits.py · test_integrity.py · untrusted.py
+devclaw/loom/        limits.py · untrusted.py
 devclaw/credentials.py · probes.py · config.py · project_registry.py · doctor/ · cli.py
 frontend/            the console: an Angular PWA on @lifekit-hq/ui, built into devclaw/server/console_dist and served at /console
 ```

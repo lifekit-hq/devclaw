@@ -345,16 +345,9 @@ async def test_snapshot_crash_never_blocks_the_pause(store, tmp_path, monkeypatc
     assert store.global_pause()[0] > _now_ms()
 
 
-async def test_resumed_task_gate_baseline_is_original_base_not_wip_snapshot(store, tmp_path, monkeypatch):
+async def test_resumed_task_baseline_is_original_base_not_wip_snapshot(store, tmp_path):
     repo = _git_repo(tmp_path)
     base_sha = _git_out(repo, "rev-parse", "HEAD").strip()
-    diff_bases: list = []
-
-    async def recording_diff(host_dir, base="", head="", paths=None):
-        diff_bases.append(base)
-        return ""
-
-    monkeypatch.setattr(queue_settle, "_git_diff", recording_diff)
     runs: list = []
 
     async def rl_then_ok(req: EngineRequest):
@@ -376,8 +369,8 @@ async def test_resumed_task_gate_baseline_is_original_base_not_wip_snapshot(stor
     store.set_global_pause(_now_ms() - 1000, "expired")
     q._pump()
     await q.drain()
-    assert store.get_task(tid).status == "done"
-    assert diff_bases and all(b == base_sha for b in diff_bases)
+    t = store.get_task(tid)
+    assert t.status == "done" and t.pre_run_sha == base_sha
 
 
 async def test_stale_persisted_baseline_degrades_to_fresh_capture(store, tmp_path):

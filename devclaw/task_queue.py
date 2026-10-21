@@ -23,7 +23,7 @@ from .dispatch_gate import operator_block
 from .engine import Engine
 from .engine.claude import run_claude
 from .queue.admission import AdmissionMixin
-from .queue.settle import SettleMixin, _capture_change, _diff_stats  # noqa: F401 — re-exported for tests
+from .queue.settle import SettleMixin
 from .state_store import EXIT_INTERRUPTED, StateStore, TaskKind, _now_ms
 
 #: default cap on concurrently-running sessions; ``set_max_concurrent`` beats it.

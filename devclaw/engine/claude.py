@@ -19,6 +19,14 @@ the engine runs ``.devclaw/verify`` after the session hands back and checks the
 first-run manifest is TRACKED; a red run is handed back to the SAME session
 (``--resume``), up to ``DEVCLAW_VERIFY_ROUNDS`` times.
 
+**The branch ships through no-mistakes** (#953). Once verify is green and the
+branch carries a commit ``origin`` has not seen, the SAME session runs
+``no-mistakes axi run`` (review, test, document, lint, push, PR) and answers
+its gates. Its CI step is skipped: the goal layer reads CI, and a red CI stops
+the goal. The engine never takes the session's word that it shipped: the
+branch's newest no-mistakes run must carry the session's head and have
+passed, or the session is an error.
+
 ⚠ This is not a filesystem sandbox: the agent runs as devclaw's user in a
 worktree. The credential strip (``credentials.session_env``) still holds —
 the metered API keys and every host-only credential never reach its env.
@@ -33,6 +41,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -279,6 +288,86 @@ async def untracked_manifest(workspace_dir: str) -> Optional[str]:
     return None
 
 
+# ---- the hand-off: no-mistakes ---------------------------------------------
+
+NO_MISTAKES = "no-mistakes"
+#: run outcomes that pushed the branch and opened or updated its PR
+SHIPPED_OUTCOMES = frozenset({"passed", "checks-passed", "passed-with-override", "passed-with-skips"})
+HANDOFF_PROMPT = (
+    "Verify is green. Ship the branch through no-mistakes: it reviews, tests, "
+    "pushes and opens or updates the pull request. Never `git push` yourself.\n\n"
+    "1. Commit everything; `git status` must be clean.\n"
+    "2. Write the contract (every issue section of your brief, verbatim) to `{intent_file}`.\n"
+    "3. Run `no-mistakes axi run --intent-file {intent_file} --skip ci --wait 100s{closes}`. "
+    "Never pass `--yes`. If it returns while the run is still going, run "
+    "`no-mistakes axi run --wait 100s` again to reattach; never abort the run.\n"
+    "4. Answer each gate with `no-mistakes axi respond`: `--action fix` a finding that needs a "
+    "change, approve one that needs none, and approve one that only says a contract clause is "
+    "not met yet when this session is DELIVERED. Answer a reviewer question with "
+    "`no-mistakes axi answer` when the contract settles it. A finding or question only the "
+    "owner can settle ends this session BLOCKED with it as the question.\n"
+    "5. When the run reports its outcome, end your final message with your exit line again."
+)
+_STATUS_FIELD_RE = re.compile(r'^\s*(outcome|submitted_head|pr):\s*"?([^"\s]*)"?\s*$', re.MULTILINE)
+
+
+def host_env() -> dict[str, str]:
+    """The env no-mistakes runs under: the host's minus the refused metered
+    keys. Its daemon pushes and opens the PR, so — unlike a session — it keeps
+    the GitHub credential."""
+    return {**_credentials.strip_refused(os.environ), **git_identity_env()}
+
+
+async def _host(workspace_dir: str, *argv: str, timeout: float = 120.0) -> tuple[int, str]:
+    """One host-side command in the worktree. Never raises: ``-1`` on a spawn
+    failure or a timeout."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, cwd=workspace_dir, env=host_env(),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+    except OSError as exc:
+        return -1, f"failed to run {argv[0]}: {exc}"
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return -1, f"{' '.join(argv[:3])} timed out after {timeout:.0f}s"
+    return proc.returncode or 0, (out or b"").decode("utf-8", "replace").strip()
+
+
+async def unshipped_head(workspace_dir: str) -> Optional[str]:
+    """HEAD when the branch carries a commit no ``origin`` ref has seen, else None
+    — a fresh goal branch still at its base ships nothing."""
+    if not _has_git_dir(workspace_dir):
+        return None
+    rc_b, branch = await _host(workspace_dir, "git", "rev-parse", "--abbrev-ref", "HEAD")
+    rc, unseen = await _host(workspace_dir, "git", "rev-list", "-n1", "HEAD", "--not", "--remotes=origin")
+    if rc != 0 or rc_b != 0 or branch == "HEAD" or not unseen:
+        return None
+    return (await _host(workspace_dir, "git", "rev-parse", "HEAD"))[1] or None
+
+
+async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str]:
+    """``(pr_url, "")`` when the branch's newest no-mistakes run carries the
+    unshipped ``head`` and passed, else ``(None, why)``. Carrying it proves the
+    run is this session's: no earlier run was submitted at a descendant of a
+    commit the remote has never seen."""
+    rc, out = await _host(workspace_dir, NO_MISTAKES, "axi", "status")
+    if rc != 0:
+        return None, f"no-mistakes axi status failed: {out[-300:]}"
+    fields = dict(_STATUS_FIELD_RE.findall(out))
+    submitted = fields.get("submitted_head", "")
+    if not submitted or (await _host(workspace_dir, "git", "merge-base", "--is-ancestor", head, submitted))[0] != 0:
+        return None, f"no no-mistakes run carries {head[:8]}"
+    if fields.get("outcome") not in SHIPPED_OUTCOMES:
+        return None, f"the no-mistakes run ended {fields.get('outcome') or 'without an outcome'}"
+    if not fields.get("pr"):
+        return None, "the no-mistakes run passed but names no PR"
+    return fields["pr"], ""
+
+
 # ---- one claude -p turn ----------------------------------------------------
 
 def session_env() -> dict[str, str]:
@@ -477,6 +566,18 @@ async def run_claude(req: EngineRequest) -> EngineResult:
                       "timed_out": False,
                       "output": "no .devclaw/verify script after the session was asked to create one"}
     reason = parse_blocked_reason(turn.text)
+    pr_url: Optional[str] = None
+    if reason is None and req.hand_off and verify is not None and verify.get("passed"):
+        head = await unshipped_head(req.workspace_dir)
+        if head:
+            turn, pr_url, why = await _hand_off(req, turn.session_id, head)
+            usage = _add_usage(usage, turn.usage)
+            if not turn.ok:
+                return failed(turn)
+            reason = parse_blocked_reason(turn.text)
+            if reason is None and pr_url is None:
+                return {"status": "error", "error": f"the hand-off did not ship: {why}",
+                        "agent_output": turn.text, "usage": usage, "session_id": turn.session_id}
     if reason is not None:
         out = blocked_result(reason, workspace_dir=req.workspace_dir, agent_output=turn.text, usage=usage)
         out["session_id"] = turn.session_id
@@ -485,7 +586,26 @@ async def run_claude(req: EngineRequest) -> EngineResult:
                             "agent_output": turn.text, "usage": usage, "session_id": turn.session_id}
     if verify is not None:
         result["verify"] = verify
+    if pr_url:
+        result["pr_url"] = pr_url
     return result
+
+
+async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str]:
+    """The ship turn: ``no-mistakes init`` on the host (it also starts the
+    daemon, under :func:`host_env`), then the SAME session drives the run.
+    ``(turn, pr_url, why)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
+    rc, out = await _host(req.workspace_dir, NO_MISTAKES, "init")
+    if rc != 0:
+        return Turn(session_id=session_id, error=f"no-mistakes init failed: {out[-500:]}"), None, ""
+    closes = "".join(f" --closes {n}" for n in req.closes)
+    with tempfile.TemporaryDirectory(prefix="devclaw-intent-") as tmp:
+        prompt = HANDOFF_PROMPT.format(intent_file=os.path.join(tmp, "intent.md"), closes=closes)
+        turn = await run_turn(req, prompt, resume=session_id)
+    if not turn.ok or parse_blocked_reason(turn.text) is not None:
+        return turn, None, ""
+    pr_url, why = await shipped_run(req.workspace_dir, head)
+    return turn, pr_url, why
 
 
 async def _gate(req: EngineRequest, cmd: str) -> tuple[dict, Optional[str]]:

@@ -16,7 +16,7 @@ For a reversible choice, take the default and continue instead.
 
 ## What is never yours to change
 
-CI workflows, AGENTS.md, test-runner and build configuration, pre-commit/husky hooks, install scripts, `.npmrc`, toolchain pins, and any binary. A change that touches one is refused before it ships. The exception: a ticket that is ABOUT those files names the path in scope.
+CI workflows, AGENTS.md, test-runner and build configuration, pre-commit/husky hooks, install scripts, `.npmrc`, toolchain pins, and any binary. The exception: a ticket that is ABOUT those files names the path in scope.
 
 ## `.devclaw/verify` is yours
 

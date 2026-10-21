@@ -95,6 +95,21 @@ RUN arch="$(dpkg --print-architecture)" \
  && rm "/tmp/$tarball" \
  && treehouse --version
 
+# ---- no-mistakes (the session ships its branch through it, #953) ----------
+# Pinned release, checksum-verified. The engine runs `no-mistakes init` and
+# reads `axi status`; the session drives `axi run` / `respond` / `answer`.
+ARG NO_MISTAKES_VERSION=v1.99.0
+ARG NO_MISTAKES_SHA256_AMD64=e891cc9ccc37bbbdd43897690788dc7a86567a3dcadfe8dd96eb62ddc71b416d
+ARG NO_MISTAKES_SHA256_ARM64=66d0699e4d4babdd4d63191b17a26a3c6306f5f6652ac26915be720644092f4e
+RUN arch="$(dpkg --print-architecture)" \
+ && case "$arch" in amd64) sum="$NO_MISTAKES_SHA256_AMD64" ;; arm64) sum="$NO_MISTAKES_SHA256_ARM64" ;; *) echo "no no-mistakes build for $arch" >&2; exit 1 ;; esac \
+ && tarball="no-mistakes-${NO_MISTAKES_VERSION}-linux-${arch}.tar.gz" \
+ && curl -fsSL -o "/tmp/$tarball" "https://github.com/kunchenguid/no-mistakes/releases/download/${NO_MISTAKES_VERSION}/$tarball" \
+ && echo "$sum  /tmp/$tarball" | sha256sum -c - \
+ && tar -xzf "/tmp/$tarball" -C /usr/local/bin no-mistakes \
+ && rm "/tmp/$tarball" \
+ && no-mistakes --version
+
 # ---- Playwright Chromium (runtime user, BEFORE the source COPY) ------------
 # Pre-fetch the ~150MB browser so the done-gate E2E phase doesn't download it
 # on first use, and so it stays cached across code-only rebuilds (it sits

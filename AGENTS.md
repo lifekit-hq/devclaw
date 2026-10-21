@@ -60,8 +60,8 @@ action a change adds is a defect. The checklist is `.claude/rules/north-star.md`
 |---|---|---|
 | MCP surface | `devclaw/server/` | a tool, a route, auth, the console — pure protocol |
 | Goal layer | `devclaw/goal/` | the tick rule, the world fingerprint, the two prompts, the done-gate, GitHub reads/verbs |
-| Queue + engine | `devclaw/task_queue.py`, `devclaw/queue/`, `devclaw/engine/`, `devclaw/gates.py`, `devclaw/delivery/` | one session: place the branch, run, classify the exit, the four gates, deliver |
-| Session engine | `devclaw/engine/claude.py`, `devclaw/skills/` | the `claude -p` stream and its silence watchdog, the skill bundle, the in-session verify loop over `--resume` |
+| Queue + engine | `devclaw/task_queue.py`, `devclaw/queue/`, `devclaw/engine/` | one session: place the branch, run, classify the exit |
+| Session engine | `devclaw/engine/claude.py`, `devclaw/skills/` | the `claude -p` stream and its silence watchdog, the skill bundle, the in-session verify loop over `--resume`, the no-mistakes hand-off |
 
 The import order is a declared fact: `[tool.importlinter]` in `pyproject.toml`
 states it and `lint-imports` fails a new upward edge in CI. Only the goal layer
@@ -92,9 +92,13 @@ reads GitHub as state.
   that swallows `.devclaw/` fails the gate instead of silently discarding the
   manifest (ruled 2026-09-14). devclaw bakes no planning scaffold and names no
   planning tool; a repo with no harness gets an explicit `none`.
-- **One definition of the change.** `devclaw/task_change.py` materializes the
-  span once (`pre_run_sha..post_run_sha` less what the base branch carries) and
-  every gate and delivery read it. An undeterminable span fails closed.
+- **The branch ships through no-mistakes** (#953). After a green verify the
+  same session runs `no-mistakes axi run --skip ci` (review, test, document,
+  lint, push, PR) and answers its gates; the engine accepts the hand-off only
+  when the branch's newest run carries the session's head and passed. CI stays
+  the goal layer's read. The no-mistakes daemon runs under the host env (it
+  pushes and opens the PR, so it holds the GitHub credential); its gate agents
+  inherit it, the session itself never does.
 - **Single writer to state.** Only the TaskQueue mutates task rows; the goal
   layer writes goals, decisions and `last_seen` and submits tasks inside one
   store transaction. GitHub carries everything else: devclaw's own records on a
@@ -102,14 +106,14 @@ reads GitHub as state.
 - **No retries.** A red CI or a done-gate refusal stops the goal with the fact
   posted on the thread; a blocked goal releases its project lane; only a newer
   comment mentioning the bot (or `decide`) wakes it. `INTERRUPTED` (stream
-  silence, red local verify) is followed by a fresh session on the reset goal
+  silence, red local verify, a hand-off that did not ship) is followed by a fresh session on the reset goal
   branch; `--resume` is only for a quota-paused row (tree kept) and the
   in-session verify loop.
 - **Usage limits pause-and-resume.** A quota, auth or provider-outage failure
   pauses the account, snapshots the work and requeues (`devclaw/loom/limits.py`).
   Only agent- or harness-origin text is classified; a session's own words never.
-- **Fail loud, never silent.** A gate crash is a failure; a delivery that cannot
-  push fails; an unreadable review verdict never passes.
+- **Fail loud, never silent.** A hand-off that did not ship is a failure; an
+  unreadable review verdict never passes.
 
 ## Run the tests
 
@@ -127,13 +131,10 @@ devclaw/
 ├── goal/            tick.py (the rule) · world.py (the fingerprint) · prompts.py · donegate.py · github.py · service.py
 ├── prompts/         session.md + done-gate.md — the two prompts the host writes
 ├── queue/           settle.py (one session, executed and settled) · admission.py (the breaker)
-├── engine/          claude.py (claude -p, the watchdog, --resume), stub.py, workspace.py (one goal, one treehouse lease)
+├── engine/          claude.py (claude -p, the watchdog, --resume, the no-mistakes hand-off), stub.py, workspace.py (one goal, one treehouse lease)
 ├── skills/          the one home of worker instructions — plain markdown, prepended to every session
-├── delivery/        commit → push → the goal's one PR
-├── gates.py         verify · materialize · change_class · integrity — always hard, fail closed
-├── task_change.py   ONE mechanical answer to "what did the session change?"
 ├── state_store/     tasks · events · goals · decisions · meta (the control flags) · user_preferences (appearance per gate identity)
-├── loom/            limits (the pause classifier), test_integrity, untrusted (the prompt fence)
+├── loom/            limits (the pause classifier), untrusted (the prompt fence)
 ├── credentials.py · probes.py · config.py · task_queue.py · project_registry.py · doctor/ · cli.py
 tests/               pytest — fully stubbed
 ```

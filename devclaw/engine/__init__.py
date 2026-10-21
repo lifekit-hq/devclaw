@@ -55,11 +55,17 @@ class EngineRequest:
     #: optional callback, invoked once with the session id as soon as the
     #: stream names it — persisted so a quota-paused session can be resumed.
     on_session: Optional[Callable[[str], None]] = None
+    #: ship a green, unpushed branch through ``no-mistakes axi run`` before
+    #: the session ends (#953) — the row's ``deliver`` flag
+    hand_off: bool = False
+    #: the issues the PR closes when it merges (``--closes``) — the goal's own
+    closes: tuple[int, ...] = ()
 
 
 #: Terminal verdict from one task. ``status == "ok"`` carries
 #: ``workspaceDir``/``message`` (+ ``agent_output`` — the agent's final
-#: message: the structured hand-back for code kinds, the report for reviews);
+#: message: the structured hand-back for code kinds, the report for reviews;
+#: + ``pr_url`` when the no-mistakes hand-off shipped the branch);
 #: ``status == "error"`` carries ``error`` (+ optional ``trace``);
 #: ``status == "rate_limited"`` carries ``error`` + ``retry_after`` (the host
 #: pauses-and-resumes); ``status == "blocked"`` carries ``reason`` — the worker's

@@ -119,14 +119,13 @@ forbidden_modules = ["devclaw.*"]
 ignore_imports = ["devclaw.state_store.* -> devclaw.config"]
 
 [[tool.importlinter.contracts]]
-name = "CLAUDE.md layer order (server > goal > queue > delivery/gates > engine > store > loom/config)"
+name = "CLAUDE.md layer order (server > goal > queue > engine > store > loom/config)"
 type = "layers"
 layers = [
     "devclaw.server | devclaw.cli",
     "devclaw.doctor",
     "devclaw.goal",
     "devclaw.task_queue : devclaw.queue",
-    "devclaw.delivery | devclaw.gates",
     "devclaw.engine",
     "devclaw.state_store",
     "devclaw.loom | devclaw.config",

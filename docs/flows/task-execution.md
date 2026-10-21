@@ -8,10 +8,12 @@ compare to last_seen               prepare_workspace(goal/<id>)    (or --resume 
 lease the goal's treehouse         capture pre_run_sha             the agent works, commits
   worktree (held until close)      run the engine (stream watchdog) .devclaw/verify runs; red → --resume
 submit the row + record last_seen                                  result: ok | blocked | error
-                                   classify the exit
-                                   materialize the span (task_change)
-                                   gates: verify · materialize · change_class · integrity
-                                   deliver: push goal/<id>, open or refresh the one PR
+                                   (the engine) no-mistakes init   green + unpushed → the same session
+                                                                     runs no-mistakes axi run --skip ci:
+                                                                     review · test · document · lint ·
+                                                                     push goal/<id> · open/update the PR
+                                   classify the exit (red verify,
+                                     no passed run → INTERRUPTED)
                                    mark_done(pr_url, exit) — one write
 tick again (settle wakes it)
 ```
@@ -30,17 +32,19 @@ tick again (settle wakes it)
   fresh session (never `--resume` — the old session's edits are not in the tree);
 - the verify is red after `DEVCLAW_VERIFY_ROUNDS` (each round `--resume`s the same session in-run) →
   `INTERRUPTED`; the next row starts a fresh session on the reset goal branch;
-- a gate refuses the span → `REFUSED`, the next session is told why; twice in a row → blocked;
-- the push or PR fails → `INTERRUPTED` with the reason.
+- the hand-off did not ship (`no-mistakes init` failed, or the branch's newest no-mistakes run does not carry the session's head or did not pass) → `INTERRUPTED` with the reason; a gate question only the owner can settle → `BLOCKED`.
 
 The request (`engine/__init__.py` → `EngineRequest`): `kind`, `workspace_dir`
 (the goal's worktree), `goal` (the brief), `verify_cmd` (None: the engine
 discovers `.devclaw/verify`), `resume_session_id` (the row's own session, set only
 when a quota pause requeued it), `on_session` (persists the session id the moment the stream names
-it). The session's env is the host's less the refused metered keys and the
+it), `hand_off` (the row's `deliver` flag: ship a green, unpushed branch through
+no-mistakes), `closes` (the goal's issues, passed as `--closes`). The session's env is the host's less the refused metered keys and the
 host-only credentials — `GH_TOKEN`, the MCP bearer `DEVCLAW_TOKEN`, the
-`DEVCLAW_GOAL_NOTIFY_URL` webhook (`credentials.session_env`). The result: `status`,
-`agent_output` (the final message, exit line included), `verify`, `usage`,
+`DEVCLAW_GOAL_NOTIFY_URL` webhook (`credentials.session_env`); `no-mistakes init`
+runs under the host env less only the metered keys, so the daemon it starts can
+push and open the PR. The result: `status`, `agent_output` (the final message,
+exit line included), `verify`, `pr_url` (when the hand-off shipped), `usage`,
 `session_id`.
 
 Both the `claude -p` child and the `.devclaw/verify` child run in their own

@@ -113,8 +113,8 @@ fix itself is accepted, with its reason, in `e2e/quality-exceptions.json`.
 |---|---|---|
 | MCP surface | `devclaw/server/` | tools, routes, the console, auth |
 | Goal layer | `devclaw/goal/` | the tick rule, the world fingerprint, the two prompts, the done-gate |
-| Queue + engine | `devclaw/task_queue.py`, `devclaw/queue/`, `devclaw/engine/`, `devclaw/gates.py`, `devclaw/delivery/` | one session: place the branch, run, the four gates, deliver |
-| Session engine | `devclaw/engine/claude.py`, `devclaw/skills/` | the `claude -p` stream and its silence watchdog, the skill bundle, the in-session verify loop over `--resume` |
+| Queue + engine | `devclaw/task_queue.py`, `devclaw/queue/`, `devclaw/engine/` | one session: place the branch, run, settle the exit |
+| Session engine | `devclaw/engine/claude.py`, `devclaw/skills/` | the `claude -p` stream and its silence watchdog, the skill bundle, the in-session verify loop over `--resume`, the no-mistakes hand-off (review, push, PR) |
 
 **One tick, per goal.** Read the world: the PR's head and state, the CI rollup
 for that head, the newest comment mentioning the bot, the newest devclaw
@@ -143,8 +143,8 @@ thread carries a marker and is a fact, never an instruction.
   not the host from the session.
 - **Not infallible.** Autonomous means "does not need the next prompt". What
   bounds the model judging the model's work is mechanical evidence: the
-  project's own CI on the exact delivered head, the materialized change span,
-  the session's own verify run.
+  project's own CI on the exact delivered head, the no-mistakes pipeline the
+  branch ships through, the session's own verify run.
 
 ## Docs
 

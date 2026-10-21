@@ -83,7 +83,7 @@ REGISTRY_TOKEN = Credential(
 DELIVERY_TOKEN = Credential(
     "GH_TOKEN",
     purpose=(
-        "every host-side GitHub call: delivery (push, PR, merge), the goal "
+        "every host-side GitHub call: the no-mistakes daemon (push, PR), the merge, the goal "
         "layer's reads of the issue, PR and CI, and the failing-job log read"
     ),
     scope=(
