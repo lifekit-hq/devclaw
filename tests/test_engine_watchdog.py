@@ -10,6 +10,7 @@ Driven with a fake ``claude`` script (a python file whose basename is not
 ``claude``, so the conftest cognition guard admits it) — no real cognition.
 """
 
+import os
 import sys
 import time
 
@@ -42,6 +43,11 @@ elif mode == "orphan":
         fh.write(str(child.pid))
     emit({"type": "result", "subtype": "success", "is_error": False,
           "result": "NOTHING: nothing to do", "session_id": "sess-orphan"})
+elif mode == "oom":
+    with open(os.environ["FAKE_CLAUDE_OOM"], "w") as fh:
+        fh.write(open("/proc/self/oom_score_adj").read().strip())
+    emit({"type": "result", "subtype": "success", "is_error": False,
+          "result": "NOTHING: nothing to do", "session_id": "sess-oom"})
 elif mode == "resume_missing" and resuming:
     emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
           "errors": ["No conversation found with session ID: gone"]})
@@ -141,3 +147,22 @@ async def test_nothing_a_session_or_its_verify_starts_outlives_it(fake_claude, t
         f"sleep 60 </dev/null >/dev/null 2>&1 & echo $! > {verify_pid}", str(tmp_path), timeout=30)
     assert result["passed"], result
     assert _gone(int(verify_pid.read_text()))
+
+
+@pytest.mark.skipif(not os.path.exists("/proc/self/oom_score_adj"), reason="no oom_score_adj")
+async def test_a_session_and_its_verify_are_the_preferred_oom_victims(fake_claude, tmp_path, monkeypatch):
+    """Sessions and verify share the server's cgroup: under memory pressure the
+    kernel kills the workload (oom_score_adj >= 800, the spec-020 shield), never
+    the server — and a child is never made less killable than its parent."""
+    with open("/proc/self/oom_score_adj") as fh:
+        expected = str(max(800, int(fh.read())))
+    fake_claude("oom")
+    seen = tmp_path / "oom.adj"
+    monkeypatch.setenv("FAKE_CLAUDE_OOM", str(seen))
+    out = await engine.run_turn(_req(tmp_path), "go", resume=None)
+    assert out.ok
+    assert seen.read_text() == expected
+
+    result = await engine.run_verify("cat /proc/self/oom_score_adj", str(tmp_path), timeout=30)
+    assert result["passed"], result
+    assert result["output"].strip() == expected

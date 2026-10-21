@@ -223,7 +223,7 @@ async def run_verify(cmd: str, workspace_dir: str, timeout: float) -> dict:
         proc = await asyncio.create_subprocess_exec(
             *_VERIFY_SHELL, cmd, cwd=workspace_dir, env=session_env(),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True,
+            start_new_session=True, preexec_fn=_prefer_oom_victim,
         )
     except OSError as exc:
         return {"ran": True, "cmd": cmd, "passed": False, "exit_code": None,
@@ -306,6 +306,22 @@ class Turn:
     stderr: list[str] = field(default_factory=list)
 
 
+_OOM_SCORE_ADJ = 800
+
+
+def _prefer_oom_victim() -> None:
+    """Runs in the child before exec: the session or verify run, and everything
+    it starts, is the OOM killer's preferred victim over the server sharing its
+    cgroup. Best-effort — never lowers the score, never fails the spawn."""
+    try:
+        with open("/proc/self/oom_score_adj", "r+") as fh:
+            if int(fh.read().strip() or 0) < _OOM_SCORE_ADJ:
+                fh.seek(0)
+                fh.write(str(_OOM_SCORE_ADJ))
+    except (OSError, ValueError):
+        pass
+
+
 def _kill(proc: asyncio.subprocess.Process) -> None:
     """The session and every process it started (it leads its own group)."""
     try:
@@ -334,6 +350,7 @@ async def run_turn(req: EngineRequest, prompt: str, *, resume: Optional[str]) ->
             *claude_argv(prompt, resume=resume), cwd=req.workspace_dir, env=session_env(),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=STREAM_LINE_LIMIT, start_new_session=True,
+            preexec_fn=_prefer_oom_victim,
         )
     except OSError as exc:
         turn.error = f"failed to spawn {_config.CLAUDE_BIN}: {exc}"
