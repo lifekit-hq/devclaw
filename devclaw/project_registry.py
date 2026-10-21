@@ -112,7 +112,7 @@ class Project:
     autodeploy: Optional[bool] = None     # None = conditional default (app surface ⇒ on, library ⇒ off)
     review_gate: Optional[bool] = None    # devclaw default: task_queue.REVIEW_GATE_ENABLED
     verify_done: Optional[bool] = None    # DEVCLAW_GOAL_VERIFY_DONE
-    browser_gate_mode: Optional[str] = None  # fleet default: task_queue.BROWSER_GATE_MODE (flexible|strict)
+    browser_gate_mode: Optional[str] = None  # stored only; no browser gate reads it since #952
     #: evidence/shakedown project (spec 018 US2): excluded from every
     #: ratchet-facing scorecard rate, reported separately. Plain bool —
     #: a project either is bench or isn't; there is no global default to

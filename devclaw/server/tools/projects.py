@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Literal, Optional
 
@@ -77,6 +78,6 @@ async def delete_project(project_id: str) -> str:
     if p.workspace_dir:
         for g in goals.list_goals():
             if g.get("projectId") == project_id:
-                remove_goal_checkout(p.workspace_dir, g["id"])
+                await asyncio.to_thread(remove_goal_checkout, p.workspace_dir, g["id"])
     registry.delete(project_id)
     return json.dumps({"project_id": project_id, "deleted": True}, indent=2)

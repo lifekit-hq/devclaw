@@ -23,7 +23,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the session engine is `engine/claude.py` in a treehouse worktree, Safety names the worktree and the credential strip, no sandbox — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
+| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the session engine is `engine/claude.py` in a treehouse worktree leased per goal, a silent stream — not a wall clock — interrupts a session, Safety names the worktree and the credential strip, no sandbox — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
 
 ## Flows
 

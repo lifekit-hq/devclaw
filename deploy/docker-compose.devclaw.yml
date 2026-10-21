@@ -49,7 +49,7 @@ services:
         limits:
           # Every session — the `claude -p` process and the repository's own
           # verify run — lives inside this one limit, DEVCLAW_MAX_CONCURRENT
-          # at a time. Size it for that many sessions plus the server.
+          # at a time. Each extra concurrent session needs about 2g more here.
           memory: ${DEVCLAW_MCP_MEMORY:-3g}
     # The two credentials the instance cannot run without — the subscription
     # OAuth setup-token (session cognition) and the read:packages registry
@@ -88,7 +88,7 @@ services:
       # strictly serial — the unattended-week mode: concurrent sessions
       # contend for one account quota, and on 2026-08-29 that killed six tasks
       # with nothing delivered. Default mirrors devclaw/config.py.
-      DEVCLAW_MAX_CONCURRENT: ${DEVCLAW_MAX_CONCURRENT:-4}
+      DEVCLAW_MAX_CONCURRENT: ${DEVCLAW_MAX_CONCURRENT:-1}
       # The engine dials — everything engine/claude.py reads. Same trap: without
       # a line here an env-file setting is inert on the deployed instance.
       # tests/test_env_vars_doc_sync.py fails if a new dial lands without one.

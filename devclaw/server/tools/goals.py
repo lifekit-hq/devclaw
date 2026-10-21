@@ -82,7 +82,7 @@ async def cancel_goal(goal_id: str) -> str:
     if not goal_id:
         raise ToolError("cancel_goal requires goal_id")
     try:
-        return json.dumps(goals.cancel_goal(goal_id), indent=2)
+        return json.dumps(await goals.cancel_goal(goal_id), indent=2)
     except KeyError:
         raise ToolError(f"unknown goal_id: {goal_id}")
 

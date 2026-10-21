@@ -12,6 +12,7 @@ testable with zero subprocesses and the idle path costs zero sessions.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import sys
 from dataclasses import dataclass
@@ -92,7 +93,7 @@ async def _spawn(ctx: TickContext, goal: Goal, world: World, kind: str, brief: s
 
 async def _close(ctx: TickContext, goal: Goal, outcome: str, note: str) -> str:
     if ctx.store.close_goal(goal.id, outcome):
-        remove_goal_checkout(goal.workspace_dir, goal.id)
+        await asyncio.to_thread(remove_goal_checkout, goal.workspace_dir, goal.id)
         ctx.log(goal.id, f"closed ({outcome}): {note}")
         await _ping(ctx, f"{'✅' if outcome == 'achieved' else '⏹'} {goal.id} {outcome} — {note}")
     return "closed"

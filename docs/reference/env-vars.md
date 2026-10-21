@@ -46,7 +46,7 @@ vars always win over `.env`.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_MAX_CONCURRENT` | `4` | Cap on concurrently-running sessions; `set_max_concurrent` overrides it live |
+| `DEVCLAW_MAX_CONCURRENT` | `1` | Cap on concurrently-running sessions; `set_max_concurrent` overrides it live |
 | `DEVCLAW_TICK_SECONDS` | `10` | The queue pump interval |
 
 ## Goal layer

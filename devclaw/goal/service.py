@@ -155,7 +155,7 @@ class GoalService:
         self.poke()
         return self.get_goal(goal.id)
 
-    def cancel_goal(self, goal_id: str) -> dict:
+    async def cancel_goal(self, goal_id: str) -> dict:
         goal = self._store.get_goal(goal_id)
         if goal is None:
             raise KeyError(goal_id)
@@ -165,7 +165,7 @@ class GoalService:
             if t.status in ("pending", "running"):
                 self._queue.cancel_task(t.id)
         self._store.close_goal(goal_id, "cancelled")
-        remove_goal_checkout(goal.workspace_dir, goal_id)
+        await asyncio.to_thread(remove_goal_checkout, goal.workspace_dir, goal_id)
         return self.get_goal(goal_id)
 
     async def decide(self, goal_id: str, text: str) -> dict:

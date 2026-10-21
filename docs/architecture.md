@@ -72,14 +72,14 @@ unreadable).
 
 ### One session
 
-`devclaw/queue/settle.py`. Place the goal branch in the goal's own checkout
-(`<project>/.goals/<id>`), capture the pre-run sha, run the engine once under
-the wall clock, then classify how it ended:
+`devclaw/queue/settle.py`. Place the goal branch in the goal's own treehouse
+worktree (leased per goal, returned when the goal closes), capture the pre-run
+sha, run the engine once, then classify how it ended:
 
 | Result | Exit | Row |
 |---|---|---|
 | quota / auth / outage | (requeued) | account paused, work snapshotted, `pause_count` +1 |
-| timeout, harness error, red local verify, delivery failure | `INTERRUPTED` | failed — resumed next tick |
+| stream silence (`DEVCLAW_FIRST_FRAME_S` / `DEVCLAW_SILENCE_S`), harness error, red local verify, delivery failure | `INTERRUPTED` | failed — resumed next tick |
 | a gate refused the span (gate-input edit, binary, undeterminable span, gutted tests) | `REFUSED` | failed — the next session is told why; twice in a row blocks |
 | the session said `BLOCKED` | `BLOCKED` | done — the question goes on the thread |
 | ok, span delivered | `DELIVERED` / `DONE` / `NOTHING` (the session's own line) | done, with the PR url |

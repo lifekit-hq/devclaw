@@ -79,7 +79,7 @@ def transport() -> str:
 
 # ---- task queue -----------------------------------------------------------
 
-GLOBAL_MAX_CONCURRENT = int(os.environ.get("DEVCLAW_MAX_CONCURRENT", "4"))
+GLOBAL_MAX_CONCURRENT = int(os.environ.get("DEVCLAW_MAX_CONCURRENT", "1"))
 TICK_SECONDS = float(os.environ.get("DEVCLAW_TICK_SECONDS", "10"))
 
 
