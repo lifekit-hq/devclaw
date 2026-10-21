@@ -51,7 +51,7 @@ class FakeWorld:
 class Recorder:
     def __init__(self, merge_outcome=("merged", "")):
         self.comments: list[tuple[int, str]] = []
-        self.merges: list[str] = []
+        self.merges: list[tuple[str, str]] = []
         self.pings: list[str] = []
         self.merge_outcome = merge_outcome
         self._next_id = 1000
@@ -61,8 +61,8 @@ class Recorder:
         self.comments.append((number, body))
         return f"https://github.com/o/r/issues/{number}#issuecomment-{self._next_id}"
 
-    async def merge(self, repo_url, pr_url):
-        self.merges.append(pr_url)
+    async def merge(self, repo_url, pr_url, head):
+        self.merges.append((pr_url, head))
         return self.merge_outcome
 
     async def send(self, text):
@@ -219,11 +219,18 @@ async def test_an_achieved_verdict_merges_and_closes(harness):
     verdict = '```json\n{"achieved": true, "clauses": [{"clause": "/health returns 200", "satisfied": true, "evidence": "app.py:health, tests/test_health.py"}], "summary": "ok"}\n```'
     store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
     assert await tick_goal(goal, ctx(FakeWorld(pr=green))) == "closed"
-    assert rec.merges == ["u"] and "achieved=1" in rec.comments[0][1]
+    assert rec.merges == [("u", "abc123")] and "achieved=1" in rec.comments[0][1]
     assert store.get_goal(goal.id).outcome == "achieved"
 
 
-async def test_a_refused_verdict_stops_the_goal_with_no_correction_round(harness):
+@pytest.mark.parametrize("settle, outcome, unreadable", [
+    ("refused", "blocked", "0"),
+    ("unreadable", "gate unreadable", "1"),
+    ("read-only broken", "gate unreadable", "1"),
+])
+async def test_a_refused_verdict_stops_the_goal_with_no_correction_round(harness, settle, outcome, unreadable):
+    """A verdict that is not achieved never merges and spawns nothing; only the
+    owner's answer on the thread wakes the goal."""
     store, queue, rec, goal, ctx = harness
     await tick_goal(goal, ctx(FakeWorld()))
     t = _sessions(store, goal.id)[0]
@@ -233,13 +240,44 @@ async def test_a_refused_verdict_stops_the_goal_with_no_correction_round(harness
     await tick_goal(goal, ctx(FakeWorld(pr=green)))
     review = _sessions(store, goal.id)[0]
     store.claim_pending(review.id)
-    verdict = '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": false, "evidence": "missing"}]}\n```'
-    store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
-    assert await tick_goal(goal, ctx(FakeWorld(pr=green))) == "blocked"
-    assert rec.merges == [] and "achieved=0" in rec.comments[0][1]
-    world = FakeWorld(pr=green, comments=[_comment(30, 5, "v", "verdict", head="abc123", task=review.id, achieved="0", unreadable="0")])
+    if settle == "refused":
+        verdict = '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": false, "evidence": "missing"}]}\n```'
+        store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
+    elif settle == "unreadable":
+        store.mark_done(review.id, json.dumps({"agent_output": "Looks good to me."}), exit=EXIT_REVIEW)
+    else:
+        achieved = '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n```'
+        store.mark_failed(review.id, "the review session moved HEAD", exit=EXIT_REVIEW,
+                          result_json=json.dumps({"agent_output": achieved}))
+    assert await tick_goal(goal, ctx(FakeWorld(pr=green))) == outcome
+    assert rec.merges == [] and "achieved=0" in rec.comments[0][1] and f"unreadable={unreadable}" in rec.comments[0][1]
+    assert len(rec.pings) == 1 and "done-gate refused" in rec.pings[0]
+    verdict_record = _comment(30, 5, "v", "verdict", head="abc123", task=review.id, achieved="0", unreadable=unreadable)
+    world = FakeWorld(pr=green, comments=[verdict_record])
     assert await tick_goal(goal, ctx(world)) == "blocked"
-    assert len(_sessions(store, goal.id)) == 2
+    assert len(_sessions(store, goal.id)) == 2 and rec.merges == []
+    answered = FakeWorld(pr=green, comments=[verdict_record, _comment(31, 5, "@devclaw keep going")])
+    assert await tick_goal(store.get_goal(goal.id), ctx(answered)) == "spawned"
+    assert _sessions(store, goal.id)[0].kind == "implement_feature" and rec.merges == []
+
+
+async def test_a_verdict_counts_only_for_the_head_it_read(harness):
+    """The PR moved while the review ran: its achieved verdict is about a head
+    that is no longer delivered, so nothing merges and a fresh session starts."""
+    store, queue, rec, goal, ctx = harness
+    await tick_goal(goal, ctx(FakeWorld()))
+    t = _sessions(store, goal.id)[0]
+    store.claim_pending(t.id)
+    store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
+    await tick_goal(goal, ctx(FakeWorld(pr=gh.PrFacts("open", 5, "u", "abc123", ci="green"))))
+    review = _sessions(store, goal.id)[0]
+    store.claim_pending(review.id)
+    store.set_task_pre_run_sha(review.id, "abc123")
+    verdict = '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n```'
+    store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
+    moved = gh.PrFacts("open", 5, "u", "def456", ci="green")
+    assert await tick_goal(store.get_goal(goal.id), ctx(FakeWorld(pr=moved))) == "spawned"
+    assert rec.merges == [] and rec.comments == []
 
 
 def test_the_verdict_claim_never_beats_the_clauses():
@@ -271,15 +309,18 @@ async def test_the_daily_session_cap_is_read_from_the_rows(harness, monkeypatch)
     assert len(_sessions(store, goal.id)) == 1
 
 
-async def test_an_interrupted_session_resumes_without_a_world_change(harness):
+@pytest.mark.parametrize("kind, outcome", [("implement_feature", "resumed"), ("review_repository", "gate")])
+async def test_an_interrupted_session_resumes_without_a_world_change(harness, kind, outcome):
+    """A fresh session of the same kind: an interrupted review is a review again,
+    never a code session that could propose DONE past the gate."""
     store, queue, rec, goal, ctx = harness
     world = FakeWorld()
-    await tick_goal(goal, ctx(world))
-    t = _sessions(store, goal.id)[0]
-    store.claim_pending(t.id)
-    store.mark_failed(t.id, "timeout", exit="INTERRUPTED", exit_detail="timeout")
-    assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "resumed"
-    assert len(_sessions(store, goal.id)) == 2
+    tid = queue.submit(kind=kind, workspace_dir=goal.workspace_dir, goal="g", parent_goal_id=goal.id, pump=False)
+    store.claim_pending(tid)
+    store.mark_failed(tid, "timeout", exit="INTERRUPTED", exit_detail="timeout")
+    assert await tick_goal(store.get_goal(goal.id), ctx(world)) == outcome
+    tasks = _sessions(store, goal.id)
+    assert len(tasks) == 2 and tasks[0].kind == kind
 
 
 async def test_a_green_credential_wakes_a_goal_blocked_on_it(harness):

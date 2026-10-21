@@ -30,7 +30,9 @@ from ..state_store import (
     EXIT_BLOCKED, EXIT_DELIVERED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_NOTHING,
     EXIT_REVIEW, TaskKind, _now_ms,
 )
-from ..task_git import _git_commit_exists_sync, _git_head_sync, _wip_commit_sync
+from ..task_git import (
+    _git_commit_exists_sync, _git_head_sync, _git_tracked_changes_sync, _wip_commit_sync,
+)
 
 if TYPE_CHECKING:
     from ..engine import Engine
@@ -74,6 +76,20 @@ async def _wip_commit(host_dir: str, message: str) -> str:
         return await asyncio.to_thread(_wip_commit_sync, host_dir, message)
     except Exception as err:  # noqa: BLE001
         return f"crashed: {err.__class__.__name__}: {err}"
+
+
+async def _review_touched(host_dir: str, base: str) -> str:
+    """Why a read-only review left its worktree changed, or ``""``. Fails
+    CLOSED: a tree git cannot read is not proof the review stayed read-only."""
+    head = await _git_head(host_dir)
+    if not base or head != base:
+        return f"the review session moved HEAD ({base[:10] or '?'} -> {head[:10] or '?'}); a review is read-only"
+    changes = await asyncio.to_thread(_git_tracked_changes_sync, host_dir)
+    if changes is None:
+        return "git could not read the review's worktree; a review is read-only"
+    if changes:
+        return f"the review session modified tracked files; a review is read-only:\n{changes[:600]}"
+    return ""
 
 
 def _verify_failure(verify: "dict | None") -> "str | None":
@@ -188,6 +204,13 @@ class SettleMixin:
             return
 
         if kind == "review_repository":
+            # read-only is checked, not trusted: a review that committed or
+            # edited a tracked file judged its own work, not the delivered head
+            touched = await _review_touched(workspace_dir, pre_run_sha)
+            if touched:
+                self._store.mark_failed(task_id, touched, exit=EXIT_REVIEW, exit_detail=touched[:400],
+                                        result_json=json.dumps(result))
+                return
             self._store.mark_done(task_id, json.dumps(result), exit=EXIT_REVIEW, exit_detail="")
             return
 
