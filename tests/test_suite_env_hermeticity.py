@@ -1,11 +1,10 @@
 """The suite owns its environment — a hermeticity pin is never a default.
 
-``tests/conftest.py`` pins ``DEVCLAW_DB`` and ``DEVCLAW_SKILLS_DIR`` before any
-``devclaw`` import, because ``devclaw.server._state`` builds a real StateStore
-and ProjectRegistry AT IMPORT TIME and the skills pin decides which copy of the
-worker instructions the prompt tests read (#610).
+``tests/conftest.py`` pins ``DEVCLAW_DB`` before any ``devclaw`` import,
+because ``devclaw.server._state`` builds a real StateStore and ProjectRegistry
+AT IMPORT TIME.
 
-Both used ``os.environ.setdefault``, which made them negotiable, and both lost:
+It used ``os.environ.setdefault``, which made it negotiable, and it lost:
 
 * Under ``-n auto`` the xdist controller imports conftest first and execnet
   spawns each worker with the controller's environ, so a worker's setdefault was
@@ -51,29 +50,22 @@ def test_db_pin_is_per_process_not_inherited():
 
 def test_pins_survive_a_hostile_ambient_environment():
     """CI runs on the deploy host. An ambient DEVCLAW_DB must never reach the
-    suite, and DEVCLAW_SKILLS_DIR must always resolve to the IN-REPO bundle —
-    never the baked /opt/devclaw/skills/ copy production reads (#610)."""
-    hostile = {**os.environ,
-               "DEVCLAW_DB": "/tmp/hostile-devclaw.db",
-               "DEVCLAW_SKILLS_DIR": "/opt/devclaw/skills"}
+    suite."""
+    hostile = {**os.environ, "DEVCLAW_DB": "/tmp/hostile-devclaw.db"}
     child = subprocess.run(
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, %r); import conftest, os; "
-         "print(os.environ['DEVCLAW_DB']); print(os.environ['DEVCLAW_SKILLS_DIR'])"
+         "print(os.environ['DEVCLAW_DB'])"
          % str(REPO / "tests")],
         capture_output=True, text=True, env=hostile, cwd=str(REPO),
     )
     assert child.returncode == 0, child.stderr
-    db, skills = child.stdout.strip().splitlines()
-    assert db != "/tmp/hostile-devclaw.db", "an ambient DEVCLAW_DB reached the suite"
-    assert skills == str(REPO / "runner" / "skills"), (
-        f"DEVCLAW_SKILLS_DIR resolved to {skills!r}, not the in-repo bundle"
-    )
+    assert child.stdout.strip() != "/tmp/hostile-devclaw.db", "an ambient DEVCLAW_DB reached the suite"
 
 
 def test_no_hermeticity_pin_uses_setdefault():
-    """Structural guard: the two env pins above conftest's first devclaw import
-    must be assignments. `setdefault` reads as equivalent and is not — it hands
+    """Structural guard: the env pin above conftest's first devclaw import
+    must be an assignment. `setdefault` reads as equivalent and is not — it hands
     the decision to whoever set the variable first."""
     src = (REPO / "tests" / "conftest.py").read_text()
     head = src.split("from devclaw", 1)[0]
@@ -82,8 +74,7 @@ def test_no_hermeticity_pin_uses_setdefault():
     code = "\n".join(
         ln for ln in head.splitlines() if not ln.lstrip().startswith("#")
     )
-    for var in ("DEVCLAW_DB", "DEVCLAW_SKILLS_DIR"):
-        assert f'os.environ["{var}"]' in code, f"{var} is not pinned by assignment"
+    assert 'os.environ["DEVCLAW_DB"]' in code, "DEVCLAW_DB is not pinned by assignment"
     assert "setdefault" not in code, (
         "a hermeticity pin was made negotiable again with setdefault"
     )

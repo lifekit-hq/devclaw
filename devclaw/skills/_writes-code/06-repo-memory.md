@@ -5,4 +5,4 @@ A durable repo fact a future session on a DIFFERENT task would need (a build qui
 - **Update over append**: edit the existing fact in place, never add a reworded sibling; delete a fact you proved wrong.
 - **Mechanize first**: a lesson a committed wrapper, config default or guard can enforce becomes that mechanism, with at most a pointer here.
 - **Never goal-scoped state** (what this goal attempted, why the last run failed, steering) — that rides the brief.
-- Commit memory edits with the increment; an uncommitted edit dies with the sandbox. No `.devclaw/` yet? Create it with the first fact.
+- Commit memory edits with the increment; an uncommitted edit dies with the worktree. No `.devclaw/` yet? Create it with the first fact.

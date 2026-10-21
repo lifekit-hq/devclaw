@@ -78,7 +78,7 @@ async def decide(goal_id: str, text: str) -> str:
 @mcp.tool
 async def cancel_goal(goal_id: str) -> str:
     """Permanently stop a goal: its running session is torn down, the goal
-    is closed ``cancelled``, its checkout removed. The branch and PR stay."""
+    is closed ``cancelled``, its worktree returned. The branch and PR stay."""
     if not goal_id:
         raise ToolError("cancel_goal requires goal_id")
     try:

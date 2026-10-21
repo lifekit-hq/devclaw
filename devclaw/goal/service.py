@@ -24,7 +24,7 @@ from .world import WorldReader
 class GoalService:
     def __init__(self, queue, store: StateStore, *, project_registry=None,
                  notifier: Optional[Notifier] = None, world_reader: Optional[WorldReader] = None,
-                 post_comment=None, merge=None, tick_seconds: Optional[int] = None) -> None:
+                 post_comment=None, merge=None, lease=None, tick_seconds: Optional[int] = None) -> None:
         self._queue = queue
         self._store = store
         self._registry = project_registry
@@ -39,6 +39,7 @@ class GoalService:
             store=store, queue=queue, world=world_reader, notifier=notifier,
             **({"post_comment": post_comment} if post_comment else {}),
             **({"merge": merge} if merge else {}),
+            **({"lease": lease} if lease else {}),
         )
         self._tick_seconds = tick_seconds or _config.goal_tick_seconds()
         self._wake: Optional[asyncio.Event] = None

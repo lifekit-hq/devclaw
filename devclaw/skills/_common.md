@@ -12,8 +12,8 @@ Filter before it lands: test/build runs to their failures (`| tail -30`, `grep -
 
 ## Per-repo skills
 
-If `.agent/skills/` exists, `ls` it and read any file whose name fits your task — PROJECT-OWNED notes that complement the doctrine here. Learned something non-obvious and repeatable? Drop a short note in `.agent/skills/<topic>.md`. Universal craft guides live in `/opt/devclaw/skills/craft/` (`frontend-design`, `playwright`) — read when relevant.
+If `.agent/skills/` exists, `ls` it and read any file whose name fits your task — PROJECT-OWNED notes that complement the doctrine here. Learned something non-obvious and repeatable? Drop a short note in `.agent/skills/<topic>.md`. Universal craft guides live in `{craft_dir}` (`frontend-design`, `playwright`) — read when relevant.
 
-## Bound every run by the sandbox
+## Stay inside the worktree
 
-`DEVCLAW_SANDBOX_MEMORY` and `DEVCLAW_SANDBOX_CPUS` are the real limits; `/proc/meminfo` and `nproc` report the host. Cap test-runner workers, limit node heap, run heavy suites serially. A command that dies with `Killed` hit the memory cap — bound it tighter, do not just retry.
+You run in a git worktree on a shared host — not a sandbox. Touch nothing outside it: no global installs, no edits under `~`, no stray processes left running. Cap test-runner workers, limit node heap, run heavy suites serially; other sessions share this machine. A command that dies with `Killed` hit the memory limit — bound it tighter, do not just retry.

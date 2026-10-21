@@ -16,9 +16,9 @@ user ─► OpenClaw waiter ─► MCP tools            devclaw/server/
                               │  submit / pump
                               ▼
                         queue + engine          devclaw/task_queue.py, queue/, engine/, gates.py, delivery/
-                              │  docker run --rm
+                              │  claude -p (stream-json, --resume)
                               ▼
-                        the worker harness      runner/runner.py   inside the sandbox: ACP agent, skills, the verify loop
+                        the session engine      engine/claude.py   in the goal's treehouse worktree: skills, the silence watchdog, the verify loop
 ```
 
 The import order is declared in `pyproject.toml` (`[tool.importlinter]`) and
@@ -41,7 +41,7 @@ settles or a webhook arrives, for every open goal (`devclaw/goal/tick.py`):
    post it (a `<!-- devclaw:block -->` record) and ping once.
 5. Blocked — a devclaw stop newer than the owner's last instruction → nothing.
 6. Red CI on a delivered head, not yet recorded → post the failing logs as a
-   block and ping. Never retried (ruled 2026-09-13: the sandbox already ran
+   block and ping. Never retried (ruled 2026-09-13: the session already ran
    what CI runs; a red CI is an environment gap).
 7. Last exit `INTERRUPTED` → spawn (resume the session's own unfinished work).
 8. Last exit `REVIEW` → post the verdict once; achieved → squash-merge and
@@ -101,11 +101,11 @@ passes. The verdict is posted on the PR; achieved squash-merges
 
 | Domain | Where |
 |---|---|
-| Safety | the sandbox (`engine/sandcastle.py`: `--cap-drop ALL`, `--pids-limit`, memory cap, tmpfs over `.claude`), the credential strip at every spawn site, `credentials.py` as the one registry |
-| Money | the pause classifier (`loom/limits.py`) + `set_global_pause`; `DEVCLAW_GOAL_SESSIONS_PER_DAY`; `DEVCLAW_MAX_CONCURRENT`; the host-memory admission and workspace breaker (`queue/admission.py`) |
+| Safety | one treehouse worktree per goal (`engine/workspace.py`, leased at the first spawn, returned on close) — **not a filesystem sandbox**; the credential strip at every spawn site (`credentials.session_env`), `credentials.py` as the one registry |
+| Money | the pause classifier (`loom/limits.py`) + `set_global_pause`; `DEVCLAW_GOAL_SESSIONS_PER_DAY`; `DEVCLAW_MAX_CONCURRENT`; the workspace breaker (`queue/admission.py`) |
 | State | `state_store/`: only the TaskQueue mutates task rows; the goal layer writes goals, decisions and `last_seen`; one `transaction()` |
 | Verdict | the project's CI on the delivered head (`goal/github.py`), the materialized span (`task_change.py`), the four gates (`gates.py`), the done-gate validator |
-| Protocol | the runner payload (`engine/__init__.py`), the four exit lines, the review JSON, the MCP tools |
+| Protocol | the engine request (`engine/__init__.py`), the four exit lines, the review JSON, the MCP tools |
 
 ### What the host stores (pillar 5)
 
@@ -117,10 +117,10 @@ identity (the `X-Auth-Request-Email` the sso forwardAuth sets), written only by
 judgment. `tests/test_goal_layer_stays_readable.py` fails the build
 on a judgment column and on a goal layer past 1,500 lines.
 
-### The sandbox runs what CI runs
+### The session runs what CI runs
 
-The runner (`runner/runner.py`) runs `.devclaw/verify` after the agent's turn
-and hands a red run back to the same session, up to `DEVCLAW_VERIFY_ROUNDS`;
+The engine (`engine/claude.py`) runs `.devclaw/verify` after the agent's turn
+and hands a red run back to the same session (`--resume`), up to `DEVCLAW_VERIFY_ROUNDS`;
 a code-writing session that leaves no script after being asked ends with a
 failed verify. The host's `verify` gate then fails a red run closed
 (`INTERRUPTED`, resumed).
@@ -147,10 +147,10 @@ devclaw/goal/        tick.py · world.py · prompts.py · donegate.py · github.
 devclaw/prompts/     session.md · done-gate.md
 devclaw/task_queue.py · queue/settle.py · queue/admission.py
 devclaw/gates.py · task_change.py · delivery/__init__.py
-devclaw/engine/      sandcastle.py · host.py · stub.py · workspace.py · runner_io.py
+devclaw/engine/      claude.py · stub.py · workspace.py
+devclaw/skills/      the worker-kind instructions the engine prepends (_common.md, _writes-code/, <kind>/, craft/)
 devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py · goals.py · preferences.py
 devclaw/loom/        limits.py · test_integrity.py · untrusted.py
 devclaw/credentials.py · probes.py · config.py · project_registry.py · doctor/ · cli.py
-runner/              runner.py · acp_client.py · skills/ · hooks/
 frontend/            the console: an Angular PWA on @lifekit-hq/ui, built into devclaw/server/console_dist and served at /console
 ```

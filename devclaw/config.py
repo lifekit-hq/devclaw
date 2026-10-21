@@ -5,8 +5,7 @@ one default, one parse (``tests/test_config_single_doorway.py`` enforces it;
 ``tests/test_env_vars_doc_sync.py`` keeps ``docs/reference/env-vars.md`` in
 lockstep). Import-time constants are read once; ``def`` accessors read live.
 
-Outside this module on purpose: ``runner/`` (the in-sandbox worker reads its
-own env inside the container), ``_env_loader``'s ``DEVCLAW_DOTENV`` bootstrap,
+Outside this module on purpose: ``_env_loader``'s ``DEVCLAW_DOTENV`` bootstrap
 and env *mutation* for subprocesses (the credential strip is an invariant, not
 configuration).
 """
@@ -14,7 +13,6 @@ configuration).
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from ._env_loader import load_dotenv as _load_dotenv
 
@@ -71,7 +69,7 @@ HTTP_PORT = int(os.environ.get("DEVCLAW_PORT", "8000"))
 HTTP_HOST = os.environ.get("DEVCLAW_HOST", "0.0.0.0")
 #: bearer token for the HTTP transport; "" disables auth (local dev).
 AUTH_TOKEN = os.environ.get("DEVCLAW_TOKEN", "")
-#: "" = production sandbox; "host" / "stub" select the dev/test engines.
+#: "" = the production ``claude -p`` engine; "stub" selects the test engine.
 ENGINE = os.environ.get("DEVCLAW_ENGINE", "")
 
 
@@ -82,10 +80,7 @@ def transport() -> str:
 # ---- task queue -----------------------------------------------------------
 
 GLOBAL_MAX_CONCURRENT = int(os.environ.get("DEVCLAW_MAX_CONCURRENT", "4"))
-#: host RAM kept free beyond the sandboxes (docker mem string).
-HOST_MEM_RESERVE = os.environ.get("DEVCLAW_HOST_MEM_RESERVE", "1536m")
 TICK_SECONDS = float(os.environ.get("DEVCLAW_TICK_SECONDS", "10"))
-TASK_TIMEOUT_S = float(os.environ.get("DEVCLAW_TASK_TIMEOUT_S", "3600"))
 
 
 # ---- goal layer -----------------------------------------------------------
@@ -118,43 +113,21 @@ def mention() -> str:
     return (os.environ.get("DEVCLAW_MENTION") or "@devclaw").strip()
 
 
-def context_tripwire_pct() -> int:
-    """Forwarded into the sandbox: the context-usage % at which the runner
-    lands the session. ``0`` disables."""
-    try:
-        return int(os.environ.get("DEVCLAW_CONTEXT_TRIPWIRE_PCT", "75"))
-    except ValueError:
-        return 75
+# ---- the engine & the worktree --------------------------------------------
 
-
-# ---- engines & sandbox ----------------------------------------------------
-
-SANDBOX_IMAGE = os.environ.get("DEVCLAW_SANDBOX_IMAGE", "devclaw-sandbox:latest")
-DOCKER_BIN = os.environ.get("DEVCLAW_DOCKER_BIN", "docker")
-#: the model the IN-SANDBOX worker runs; "" → the agent's own default.
+CLAUDE_BIN = os.environ.get("DEVCLAW_CLAUDE_BIN", "claude")
+#: the model the session runs; "" → the agent's own default.
 EXEC_MODEL = os.environ.get("DEVCLAW_EXEC_MODEL", "claude-sonnet-4-6") or None
-ACP_COMMAND = os.environ.get("DEVCLAW_ACP_COMMAND", "") or None
-SANDBOX_MEMORY = os.environ.get("DEVCLAW_SANDBOX_MEMORY", "2g")
-SANDBOX_CPUS = os.environ.get("DEVCLAW_SANDBOX_CPUS", "2.0")
-SANDBOX_CLAUDE_ALLOWLIST_RAW = os.environ.get("DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST", "")
-
-
-def container_path_prefix() -> "str | None":
-    return os.environ.get("DEVCLAW_CONTAINER_PATH_PREFIX")
-
-
-def host_path_prefix() -> "str | None":
-    return os.environ.get("DEVCLAW_HOST_PATH_PREFIX")
-
-
-def host_claude_dir() -> str:
-    return os.environ.get("DEVCLAW_HOST_CLAUDE_DIR") or str(Path.home() / ".claude")
-
-
-RUNNER_PY_OVERRIDE = os.environ.get("DEVCLAW_RUNNER_PY")
-SKILLS_DIR_OVERRIDE = os.environ.get("DEVCLAW_SKILLS_DIR")
-HOOKS_DIR_OVERRIDE = os.environ.get("DEVCLAW_HOOKS_DIR")
-RUNNER_PYTHON_OVERRIDE = os.environ.get("DEVCLAW_RUNNER_PYTHON")
+#: the silence watchdog (no duration cap): a session that emits no first frame
+#: within FIRST_FRAME_S, or no frame for SILENCE_S after that, is killed and
+#: settled INTERRUPTED — the next session resumes it.
+FIRST_FRAME_S = float(os.environ.get("DEVCLAW_FIRST_FRAME_S", "120"))
+SILENCE_S = float(os.environ.get("DEVCLAW_SILENCE_S", "1800"))
+#: red ``.devclaw/verify`` runs handed back to the same session before it settles.
+VERIFY_ROUNDS = int(os.environ.get("DEVCLAW_VERIFY_ROUNDS", "3"))
+VERIFY_TIMEOUT_S = float(os.environ.get("DEVCLAW_VERIFY_TIMEOUT_S", "900"))
+#: the treehouse binary that leases one worktree per goal.
+TREEHOUSE_BIN = os.environ.get("DEVCLAW_TREEHOUSE_BIN", "treehouse")
 
 
 # ---- retention ------------------------------------------------------------

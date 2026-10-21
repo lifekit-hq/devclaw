@@ -78,7 +78,7 @@ async def clear_usage_pause() -> str:
 
 @mcp.tool
 async def set_max_concurrent(n: Optional[int] = None) -> str:
-    """The cap on concurrently-running sandboxes (``1`` = strictly serial,
+    """The cap on concurrently-running sessions (``1`` = strictly serial,
     the unattended setting). Omit ``n`` to clear the override."""
     if n is not None and (isinstance(n, bool) or not isinstance(n, int) or n < 1):
         raise ToolError("n must be a whole number >= 1, or null to clear the override")

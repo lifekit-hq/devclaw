@@ -7,25 +7,6 @@ import tempfile
 
 import pytest
 
-# Point the runner at the IN-REPO skill bundle, never the baked
-# /opt/devclaw/skills/ installation (whose content changes independently of this
-# branch). runner/skills/ is the one home for worker-kind instructions (#613) and
-# is exactly what the sandbox image bakes, so a prompt assertion here is an
-# assertion about what production actually sends. It used to default to a
-# nonexistent path so the embedded _KIND_WRAPPERS fallback would fire — which
-# meant the prompt tests pinned a copy production never read, and a prompt edit
-# could land in the wrong one with every test still green (#610). Set at
-# module-level (not in a fixture) so it is in effect when the module-scoped
-# `runner` fixture executes exec_module and reads the env var.
-# SET, never setdefault: CI runs on the same host devclaw is deployed to, so an
-# ambient DEVCLAW_SKILLS_DIR would be adopted and point the suite straight at
-# the baked bundle this pin exists to avoid — the #610 wrong-copy bug, silently
-# restored by the guard against it. A hermeticity pin is an assertion about the
-# suite's world, not a default for it.
-os.environ["DEVCLAW_SKILLS_DIR"] = str(
-    pathlib.Path(__file__).resolve().parents[1] / "runner" / "skills"
-)
-
 # Give the suite its own devclaw.db. `devclaw.server._state` builds a real
 # StateStore/ProjectRegistry AT IMPORT TIME against DEVCLAW_DB, which defaults
 # to `devclaw.db` relative to CWD — so any test importing `devclaw.server.tools`
@@ -69,16 +50,8 @@ os.environ["DEVCLAW_DB"] = str(
 # defaulted: tests that need it set it explicitly with monkeypatch.
 os.environ.pop("DEVCLAW_SELF_REPO", None)
 
-from devclaw import task_queue
-from devclaw.engine import sandcastle as _sandcastle_mod
-
-
-@pytest.fixture(autouse=True)
-def _disable_sandbox_sweep_by_default(monkeypatch):
-    """``TaskQueue.recover()`` sweeps orphaned sandbox containers via the real
-    docker CLI. A test process is NOT the devclaw process, so the sweep is a
-    no-op here; its own unit tests patch the subprocess seam directly."""
-    monkeypatch.setattr(task_queue, "sweep_orphan_sandboxes", lambda owner_id: 0)
+from devclaw import config as _config
+from devclaw.engine import workspace as _workspace_mod
 
 
 @pytest.fixture(autouse=True)
@@ -90,12 +63,8 @@ def _no_credential_probes(monkeypatch):
     monkeypatch.setattr(_probes, "probe_github_token", lambda token, timeout_s=5.0: None)
 
 
-#: Program basenames a test process must NEVER spawn for real. Built from the
-#: same env-derived module constants production uses, so an exotic
-#: ``DEVCLAW_DOCKER_BIN`` on a dev host is still caught.
-_CONTAINER_BINARIES = frozenset(
-    os.path.basename(b) for b in ("docker", "tailscale", _sandcastle_mod.DOCKER_BIN)
-)
+#: Program basenames a test process must NEVER spawn for real.
+_CONTAINER_BINARIES = frozenset(("docker", "tailscale"))
 
 #: The cognition binary — the quota. A test that reaches it burns a real
 #: `claude --print` call on an authenticated dev machine and fails in CI
@@ -103,7 +72,7 @@ _CONTAINER_BINARIES = frozenset(
 #: turned fail-closed hid for a day (2026-09-06: the admission lint's judge).
 #: Injected fakes (``FakeClaude``, a patched ``_judge_undecided``) never reach
 #: the spawn; the opt-in live cognition evals lift the guard themselves.
-_COGNITION_BINARIES = frozenset(("claude",))
+_COGNITION_BINARIES = frozenset(("claude", os.path.basename(_config.CLAUDE_BIN)))
 
 #: ``gh <noun> <verb>`` verbs that only READ. Everything else is treated as a
 #: write, because this guard must fail CLOSED like every other brake in the
@@ -160,7 +129,14 @@ _GUARD_HINT = (
     "docker/tailscale (a 2026-07-14 pytest run leaked a live, "
     "restart-unless-stopped `devclaw-deploy-g` container on two hosts). "
     "Stub the chokepoint your test actually reaches instead: inject a fake "
-    "engine, or patch `devclaw.engine.sandcastle._docker_run_sync`."
+    "engine or runner."
+)
+
+_TREEHOUSE_GUARD_HINT = (
+    "The pytest suite is fully stubbed — a test must NEVER lease or return a "
+    "real treehouse worktree (the pool is shared with live sessions). Inject a "
+    "`lease` into TickContext / GoalService, or patch "
+    "`devclaw.engine.workspace._treehouse_sync`."
 )
 
 
@@ -170,12 +146,12 @@ def _block_real_docker(monkeypatch):
     ``tailscale`` subprocess fails the test LOUDLY.
 
     The guard sits at the process-spawn chokepoint (``asyncio.create_subprocess_exec``
-    plus sandcastle's sync ``_docker_run_sync`` seam) rather than at each caller, so a
+    plus the workspace's sync ``_treehouse_sync`` seam) rather than at each caller, so a
     NEW escape hatch is caught too. It raises via ``pytest.fail`` — a BaseException —
     on purpose: best-effort paths like ``tick_donegate._auto_deploy`` swallow
     ``Exception`` by design, which is exactly how the deploy leak stayed silent.
 
-    Tests that inject fake runners (``deploy._run``, ``_docker_run_sync``) replace
+    Tests that inject fake runners (``deploy._run``, ``_treehouse_sync``) replace
     the guarded seam and never reach this wrapper; pure helpers (``deploy_name``,
     ``_build_run_args``, ``deploy_port``) spawn nothing and stay testable; every
     other subprocess (git, gh, python) passes through untouched.
@@ -203,11 +179,11 @@ def _block_real_docker(monkeypatch):
             )
         return await real_exec(program, *args, **kwargs)
 
-    def guarded_docker_sync(args):
+    def guarded_treehouse(project_workspace, *args):
         pytest.fail(
-            f"BLOCKED: test tried to run real `docker {' '.join(str(a) for a in args[:8])}` "
-            f"via sandcastle._docker_run_sync.\n{_GUARD_HINT}"
+            f"BLOCKED: test tried to run real `treehouse {' '.join(str(a) for a in args[:6])}` "
+            f"in {project_workspace}.\n{_TREEHOUSE_GUARD_HINT}"
         )
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", guarded_exec)
-    monkeypatch.setattr(_sandcastle_mod, "_docker_run_sync", guarded_docker_sync)
+    monkeypatch.setattr(_workspace_mod, "_treehouse_sync", guarded_treehouse)

@@ -3,7 +3,7 @@
 **A software-development loop you supervise instead of operate.**
 
 You file a GitHub issue with a `## Done when` section. devclaw hands it to a
-session — Claude Code in a per-session docker sandbox — that plans the way the
+session — `claude -p` in the goal's own treehouse worktree — that plans the way the
 repository itself plans, lands one reviewable increment on the goal's branch,
 runs what the project's CI runs before it finishes, and hands back one line:
 `DELIVERED`, `DONE`, `BLOCKED`, or `NOTHING`. Every ~15 minutes the host reads
@@ -23,13 +23,18 @@ spawn site rather than honored.
 
 ## Run it
 
-Prerequisites: Python 3.11+, docker, a logged-in `claude` CLI, and a `GH_TOKEN`
+Prerequisites: Python 3.11+, git, a logged-in `claude` CLI,
+[treehouse](https://github.com/kunchenguid/treehouse) v2, and a `GH_TOKEN`
 with `repo` (the host reads PRs, posts the devclaw records, merges).
+
+A worktree is **not a filesystem sandbox**: a session runs on the host with the
+host's tools and can reach anything the devclaw user can. What it never gets is
+a metered API key or the host's GitHub token — those are stripped from its
+environment.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
-docker build -t devclaw-sandbox:latest -f .sandcastle/Dockerfile .
 
 DEVCLAW_TRANSPORT=stdio devclaw-mcp                    # MCP over stdio
 DEVCLAW_TRANSPORT=http DEVCLAW_PORT=8000 devclaw-mcp   # MCP at /mcp, the console at /console
@@ -42,13 +47,13 @@ pinned to `devclaw/config.py` by a sync test.
 
 | `DEVCLAW_ENGINE` | Engine | Use |
 |---|---|---|
-| *(unset)* | the worker in a per-session **docker sandbox** | production |
-| `host` | the worker on the host, no container | dev where docker is unavailable |
-| `stub` | deterministic, no sandbox, no `claude` | the test suite |
+| *(unset)* | `claude -p` in the goal's treehouse worktree | production (refuses to boot without its credentials) |
+| `host` | the same engine, no boot-time credential check | dev on a logged-in host |
+| `stub` | deterministic, no `claude`, no treehouse | the test suite |
 
 ```bash
 pip install -e ".[dev]"
-pytest          # the tripwire suite — no docker, no claude
+pytest          # the tripwire suite — no claude, no treehouse
 ruff check . && mypy && lint-imports
 ```
 
@@ -71,7 +76,7 @@ cd frontend && npm ci && npm run lint && npm test && npm run build && npm run e2
 | MCP surface | `devclaw/server/` | tools, routes, the console, auth |
 | Goal layer | `devclaw/goal/` | the tick rule, the world fingerprint, the two prompts, the done-gate |
 | Queue + engine | `devclaw/task_queue.py`, `devclaw/queue/`, `devclaw/engine/`, `devclaw/gates.py`, `devclaw/delivery/` | one session: place the branch, run, the four gates, deliver |
-| Worker harness | `runner/runner.py` (inside the sandbox) | the ACP turn-loop, the skill bundle, the in-session verify loop |
+| Session engine | `devclaw/engine/claude.py`, `devclaw/skills/` | the `claude -p` stream and its silence watchdog, the skill bundle, the in-session verify loop over `--resume` |
 
 **One tick, per goal.** Read the world: the PR's head and state, the CI rollup
 for that head, the newest comment mentioning the bot, the newest devclaw
@@ -94,12 +99,14 @@ thread carries a marker and is a fact, never an instruction.
 ## What this is NOT
 
 - **Not a chatbot** — a backend service the waiter calls.
-- **Not a rebuild of Claude Code** — `claude-code` over ACP is the agent inside
-  the sandbox; devclaw supplies facts and tools and reads the mechanical verdict.
+- **Not a rebuild of Claude Code** — `claude -p` is the agent in the goal's
+  worktree; devclaw supplies facts and tools and reads the mechanical verdict.
+- **Not a sandbox** — the worktree isolates one goal's branch from another's,
+  not the host from the session.
 - **Not infallible.** Autonomous means "does not need the next prompt". What
   bounds the model judging the model's work is mechanical evidence: the
   project's own CI on the exact delivered head, the materialized change span,
-  the sandbox's own verify run.
+  the session's own verify run.
 
 ## Docs
 

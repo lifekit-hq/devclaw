@@ -56,6 +56,8 @@ class Task:
     exit_detail: Optional[str] = None
     #: the owner was told about this session's outcome (one ping per block)
     notified: bool = False
+    #: the Claude Code session that ran this task — resumed after an interruption
+    session_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -79,6 +81,7 @@ class Task:
             "projectId": self.project_id,
             "exit": self.exit,
             "exitDetail": self.exit_detail,
+            "sessionId": self.session_id,
         }
 
 
@@ -176,6 +179,7 @@ def _row_to_task(r: sqlite3.Row) -> Task:
         exit=_col(r, "exit"),
         exit_detail=_col(r, "exit_detail"),
         notified=bool(_col(r, "notified", 0)),
+        session_id=_col(r, "session_id"),
     )
 
 

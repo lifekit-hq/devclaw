@@ -51,6 +51,6 @@ never remembered; the last recorded read is in
 ## When the skill is required, not optional
 
 A new spec or tinyspec (at specify and at clarify), a feature or tool we
-adopt, a PR that changes `devclaw/` or `runner/` (the `/ship` ritual runs
+adopt, a PR that changes `devclaw/` (the `/ship` ritual runs
 it), and a `/devclaw-morning` recommendation. Everywhere else the checklist
 above is the judgment, applied in the same breath as the proposal.

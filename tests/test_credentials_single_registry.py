@@ -55,21 +55,18 @@ def test_no_credential_name_is_spelled_outside_the_registry() -> None:
     )
 
 
-def test_registry_is_the_boot_guard_and_the_sandbox_set() -> None:
-    """The hops read the registry, not a copy of it."""
+def test_registry_is_the_boot_guard_and_the_session_env(monkeypatch) -> None:
+    """The hops read the registry, not a copy of it: the session keeps the
+    agent credentials and loses every host-only one and the metered keys."""
     from devclaw import boot_guard
-    from devclaw.engine import sandcastle
+    from devclaw.engine import claude
 
     assert boot_guard.REQUIRED_PRODUCTION_ENV == credentials.required_vars()
-    forwarded = sandcastle._build_payload_agent_env()
-    assert forwarded == list(credentials.agent_vars())
-
-
-def test_every_agent_credential_crosses_the_sandbox_first() -> None:
-    """A credential the agent's shell gets must also enter the container —
-    ``agent`` without ``sandbox`` is a hop that cannot exist."""
-    for c in credentials.REGISTRY:
-        assert not (c.agent and not c.sandbox), c.var
+    for var in (*(c.var for c in credentials.REGISTRY), *credentials.REFUSED):
+        monkeypatch.setenv(var, "x")
+    env = claude.session_env()
+    registered = {c.var for c in credentials.REGISTRY} | set(credentials.REFUSED)
+    assert {k for k in env if k in registered} == set(credentials.agent_vars())
 
 
 def test_least_privilege_is_declared() -> None:

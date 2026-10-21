@@ -4,8 +4,7 @@ Single source of truth for every env var the runtime reads — enforced by
 `tests/test_env_vars_doc_sync.py` (a var read in code but missing here, or
 documented here but read nowhere, fails the suite). The CODE home is
 `devclaw/config.py`, the one module allowed to read `DEVCLAW_*` vars
-(`tests/test_config_single_doorway.py`); the in-sandbox `runner/` reads its
-own env by design. Empty or unset means "the default in the table". Real env
+(`tests/test_config_single_doorway.py`). Empty or unset means "the default in the table". Real env
 vars always win over `.env`.
 
 ## Server transport + auth
@@ -28,37 +27,27 @@ vars always win over `.env`.
 | `DEVCLAW_DB` | `./devclaw.db` | The SQLite home: tasks, events, goals, decisions, control flags, per-user console appearance |
 | `DEVCLAW_EVENTS_RETENTION_DAYS` | `30` | Days of session events kept; `0` disables the prune |
 
-## Engine + sandbox
+## Engine
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_ENGINE` | *(unset)* | *(unset)* = the worker in a per-session docker sandbox (production); `host` = on the host, no sandbox (dev); `stub` = deterministic, no docker, no claude (the suite) |
-| `DEVCLAW_SANDBOX_IMAGE` | `devclaw-sandbox:latest` | The sandbox image (`.sandcastle/Dockerfile`) |
-| `DEVCLAW_DOCKER_BIN` | `docker` | The docker binary |
-| `DEVCLAW_EXEC_MODEL` | `claude-sonnet-4-6` | The model the in-sandbox worker runs; `""` = the agent's own default |
-| `DEVCLAW_ACP_COMMAND` | `claude-agent-acp` | The ACP agent the runner spawns — the one seam that swaps the agent (spec 011) |
-| `DEVCLAW_SANDBOX_MEMORY` | `2g` | Per-sandbox memory ceiling (a project may override it in the registry) |
-| `DEVCLAW_SANDBOX_CPUS` | `2.0` | Per-sandbox CPU cap |
-| `DEVCLAW_SANDBOX_CLAUDE_ALLOWLIST` | `.credentials.json,.claude.json` | Files from `~/.claude` mounted into the sandbox |
-| `DEVCLAW_HOST_CLAUDE_DIR` | `~/.claude` | Host path of the claude config to mount |
-| `DEVCLAW_CONTAINER_PATH_PREFIX` | — | Container-side workspace prefix for host↔container path translation |
-| `DEVCLAW_HOST_PATH_PREFIX` | — | Host-side counterpart |
-| `DEVCLAW_CONTEXT_TRIPWIRE_PCT` | `75` | Context-usage % at which the runner lands the session; `0` disables |
-| `DEVCLAW_GIT_NAME` | `devclaw` | Git author/committer name for every commit devclaw or the worker writes |
+| `DEVCLAW_ENGINE` | *(unset)* | *(unset)* = `claude -p` in the goal's treehouse worktree (production; refuses to boot without its credentials); `host` = the same engine with no boot-time credential check (a dev run on a logged-in host); `stub` = deterministic, no claude (the suite) |
+| `DEVCLAW_CLAUDE_BIN` | `claude` | The claude CLI each session runs |
+| `DEVCLAW_EXEC_MODEL` | `claude-sonnet-4-6` | The model each session runs; `""` = the CLI's own default |
+| `DEVCLAW_FIRST_FRAME_S` | `120` | A session that streams no first frame within this many seconds is killed and settles interrupted |
+| `DEVCLAW_SILENCE_S` | `1800` | A session silent this long after its first frame is killed and settles interrupted |
+| `DEVCLAW_VERIFY_TIMEOUT_S` | `900` | Wall-clock cap for one `.devclaw/verify` run |
+| `DEVCLAW_VERIFY_ROUNDS` | `3` | Red-verify rounds handed back to the same session (`--resume`) before it ends |
+| `DEVCLAW_TREEHOUSE_BIN` | `treehouse` | The treehouse CLI that leases one worktree per goal (pool root: treehouse's own `TREEHOUSE_ROOT`) |
+| `DEVCLAW_GIT_NAME` | `devclaw` | Git author/committer name for every commit devclaw or a session writes |
 | `DEVCLAW_GIT_EMAIL` | `devclaw@local` | Its email |
-| `DEVCLAW_RUNNER_PY` | — | Host-engine override: the runner script path |
-| `DEVCLAW_RUNNER_PYTHON` | — | Host-engine override: the interpreter |
-| `DEVCLAW_SKILLS_DIR` | `/opt/devclaw/skills` | Where the runner reads the skill bundle (`runner/skills/` in-repo for the host engine) |
-| `DEVCLAW_HOOKS_DIR` | `/opt/devclaw/hooks` | Where the runner reads the pre/post-run hooks |
 
 ## Queue (money brakes)
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_MAX_CONCURRENT` | `4` | Cap on concurrently-running sandboxes; `set_max_concurrent` overrides it live |
-| `DEVCLAW_HOST_MEM_RESERVE` | `1536m` | Host RAM kept free beyond the sandboxes before another launch is admitted |
+| `DEVCLAW_MAX_CONCURRENT` | `4` | Cap on concurrently-running sessions; `set_max_concurrent` overrides it live |
 | `DEVCLAW_TICK_SECONDS` | `10` | The queue pump interval |
-| `DEVCLAW_TASK_TIMEOUT_S` | `3600` | Wall-clock cap per session; a hit tears the sandbox down and the session is resumed next tick |
 
 ## Goal layer
 
@@ -71,12 +60,3 @@ vars always win over `.env`.
 | `DEVCLAW_GOAL_NOTIFY_URL` | — | Where owner pings go (`{"text": ...}` POST; the notify relay) |
 | `DEVCLAW_SELF_REPO` | — | `owner/name` of devclaw's own repo — the self-deploy target |
 | `DEVCLAW_DEPLOY_QUIESCENCE_S` | `21600` | How long a pending self-deploy waits for no session to run before it expires |
-
-## Runner (read inside the sandbox)
-
-| Var | Default | Purpose |
-|---|---|---|
-| `DEVCLAW_VERIFY_TIMEOUT_S` | `900` | Wall-clock cap for one `.devclaw/verify` run |
-| `DEVCLAW_VERIFY_ROUNDS` | `3` | Red-verify rounds handed back to the same session before it ends |
-| `DEVCLAW_ACP_IDLE_TIMEOUT_S` | `1800` | The agent is killed after this long with no protocol traffic |
-| `DEVCLAW_VALIDATION_STEP_TIMEOUT_S` | `900` | Per-step cap of the agent-less validation runner path |

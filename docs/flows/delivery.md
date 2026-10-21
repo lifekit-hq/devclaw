@@ -9,7 +9,7 @@ mid-flight.
 
 **The verdict of record is the project's CI on the delivered head**, read by
 the tick from `gh pr view` (`devclaw/goal/github.py`). Red → the goal stops
-with the failing job log on the thread; the sandbox already ran what CI runs,
+with the failing job log on the thread; the session already ran what CI runs,
 so a red CI is an environment gap, not a retry. Conflicting → a changed world;
 the next session merges the base branch and resolves.
 

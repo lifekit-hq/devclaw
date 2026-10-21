@@ -80,7 +80,7 @@ AUTH_PAUSE_S = 7200
 
 #: backoff for the FIRST provider-outage pause of an episode, when the provider
 #: states no reset. Short relative to a usage cap — an outage is minutes, not
-#: hours — but long enough that the re-probe (a whole sandbox session) isn't
+#: hours — but long enough that the re-probe (a whole session) isn't
 #: spent every few seconds.
 SERVER_ERROR_PAUSE_S = 300
 #: ceiling of the escalating ladder below. The per-task requeue bound
@@ -111,7 +111,7 @@ def escalated_pause_seconds(step: int) -> int:
     state and lives beside the other pause-episode fields in
     ``StateStore.control``, so this stays trivially testable. Escalating buys
     outage coverage without spending more doomed probes; raising
-    ``MAX_PAUSE_REQUEUES`` instead would buy the same span at more sandbox
+    ``MAX_PAUSE_REQUEUES`` instead would buy the same span at more
     sessions."""
     if step <= 0:
         return SERVER_ERROR_PAUSE_S
@@ -154,7 +154,7 @@ PAUSING_KINDS = (
 #: kinds a CHEAP caller may retry in-process before letting the failure reach
 #: the pause path. One home for that policy: a ``claude --print`` retry costs
 #: seconds, so a provider outage is worth re-trying there first, while a
-#: dispatched session costs a sandbox and pauses on the first hit.
+#: dispatched session costs a whole session and pauses on the first hit.
 RETRY_NOW_KINDS = (FailureKind.TRANSIENT, FailureKind.SERVER_ERROR)
 
 
@@ -174,11 +174,6 @@ class Classification:
 
 
 # --- patterns (checked in priority order; first hit wins) --------------------
-# NB: a vendored subset of these patterns (AUTH/QUOTA/RATE + the relative
-# retry-after parser) lives in runner/runner.py — the in-sandbox
-# runner can't import devclaw, so it carries its own copy to emit a structured
-# status="rate_limited" result. The retry-after half is pinned identical by
-# tests/test_runner_limits.py::test_vendored_retry_after_parser_matches_the_host.
 # AUTH first: harness-shaped auth wording must classify as AUTH even when the
 # text also mentions a rate-limit-shaped code — an expired login is never a
 # quota event. "authentication required" is the ACP/worker wording from the
@@ -192,9 +187,6 @@ class Classification:
 # pause + a false re-login ping. Only STRONG (harness-shaped) wording is AUTH;
 # WEAK matches stay REAL — still checked before quota/rate so a 401 with
 # rate-limit words nearby is never misrouted onto the pause-with-reset path.
-# NB: the vendored runner.py copy (_LIMIT_AUTH) keeps the strong∪weak UNION —
-# its only job is shielding auth text from the rate_limited tag; the host
-# re-classifies from the original wording.
 _AUTH = re.compile(
     r"invalid authentication|failed to authenticate|"
     r"authentication[ _]required|"
@@ -242,7 +234,7 @@ _SERVER = re.compile(
 #
 # SIGNAL DEATH ("claude --print exited -9"/"-15") is TRANSIENT too: a negative
 # exit code means the cognition subprocess was KILLED mid-call — a kernel OOM /
-# watchdog tear-down under host memory pressure (many concurrent sandboxes + host
+# watchdog tear-down under host memory pressure (many concurrent sessions + host
 # cognition sharing one VPS), not a clean failure. It's the same "the machine was
 # momentarily overwhelmed" family as a timeout, so it earns a short-backoff retry.
 # This promotes into the shared classifier the knowledge that until now lived only

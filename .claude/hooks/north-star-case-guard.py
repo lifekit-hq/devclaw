@@ -11,7 +11,7 @@ mechanical on purpose: it verifies the judgment was RECORDED, it does not
 make the judgment (that is the `north-star` skill).
 
   BLOCKED  gh pr create   when the branch changes behavior paths (devclaw/,
-                          runner/, .sandcastle/, deploy/) and no spec or
+                          deploy/) and no spec or
                           tinyspec on the branch carries a North-star case,
                           or the case still holds the template placeholders
   ALLOWED  everything else - docs-only, tests-only, harness-only (.claude/,
@@ -34,7 +34,7 @@ import re
 import subprocess
 import sys
 
-BEHAVIOR_PREFIXES = ("devclaw/", "runner/", ".sandcastle/", "deploy/")
+BEHAVIOR_PREFIXES = ("devclaw/", "deploy/")
 PLACEHOLDERS = (
     "stopped when it shouldn't |",          # the axis picker left unpicked
     "the loop-health / scorecard read",     # the number left as template
@@ -124,7 +124,7 @@ def blocks(command: str, payload_cwd: str) -> "str | None":
     artifacts = artifacts_on_branch(cwd, base, changed)
     if not artifacts:
         return (
-            "blocked: this branch changes behavior (devclaw/ runner/ …) and no "
+            "blocked: this branch changes behavior (devclaw/ deploy/) and no "
             "spec or tinyspec on it carries a North-star case (constitution 2.9.0). "
             "Run /north-star on the change, write the case into specs/NNN-*/spec.md "
             "or specs/tiny/<name>.md, and name that file in a commit message. "

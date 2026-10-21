@@ -43,8 +43,7 @@ runs:
     # next step. The :buildcache registry cache is read by every build and
     # written only when pushing — a hosted runner starts with an empty local
     # cache. provenance is off so a push stays a single manifest. The npm
-    # secret is consumed by deploy/Dockerfile's console stage only; the
-    # sandbox build ignores it and the two build args.
+    # secret is consumed by deploy/Dockerfile's console stage only.
     - name: Build image
       uses: docker/build-push-action@v7
       with:

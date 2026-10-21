@@ -163,7 +163,7 @@ def tail_by_job(log: str, *, lines: int) -> dict[str, str]:
 async def failed_check_logs(slug: str, head_sha: str, failing_names: tuple[str, ...],
                             *, lines: int) -> tuple[tuple[str, str], ...]:
     """The bounded tail of every failing check's job log — the fact the
-    session cannot read itself (the sandbox holds no GitHub credential)."""
+    session cannot read itself (the session's env holds no GitHub credential)."""
     if not head_sha or not failing_names or lines <= 0:
         return ()
     rc, out = await gh("run", "list", "--repo", slug, "--commit", head_sha,

@@ -38,20 +38,12 @@ RUN npm run build
 FROM node:22-trixie
 
 # ---- system deps -----------------------------------------------------------
-# docker-ce-cli: the MCP server spawns per-task devclaw-sandbox containers via
-#   the host docker socket bind-mounted by compose.
-# gh: GitHub CLI for the agent's tool access + git credential helper.
+# gh: GitHub CLI for the host's GitHub reads + git credential helper.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       python3 python3-venv python3-pip \
       git curl ca-certificates gnupg \
  && install -m 0755 -d /etc/apt/keyrings \
- && curl -fsSL https://download.docker.com/linux/debian/gpg \
-      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
- && chmod a+r /etc/apt/keyrings/docker.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
-https://download.docker.com/linux/debian trixie stable" \
-      > /etc/apt/sources.list.d/docker.list \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
  && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -59,11 +51,11 @@ https://download.docker.com/linux/debian trixie stable" \
 https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
  && apt-get update \
- && apt-get install -y --no-install-recommends docker-ce-cli gh \
+ && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
 # ---- chromium system libs for the done-gate E2E phase ----------------------
-# Same lib list as devclaw-sandbox and openclaw-gateway so we don't drift.
+# Same lib list as openclaw-gateway so we don't drift.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
         libxcomposite1 libxdamage1 libatspi2.0-0 libdrm2 libxkbcommon0 \
@@ -82,11 +74,26 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
  && apt-get install -y --no-install-recommends tailscale \
  && rm -rf /var/lib/apt/lists/*
 
-# ---- claude CLI + ACP bridge (npm, global) --------------------------------
+# ---- claude CLI (npm, global) ---------------------------------------------
+# Every session is `claude -p` in a treehouse worktree on this container.
 RUN npm install -g \
       @anthropic-ai/claude-code \
-      @agentclientprotocol/claude-agent-acp \
       @playwright/mcp@latest
+
+# ---- treehouse (one leased worktree per goal) ------------------------------
+# Pinned release, checksum-verified. The engine drives its v2 lease commands
+# (`get --lease`, `status --json`, `return --if-lease-holder`).
+ARG TREEHOUSE_VERSION=v2.3.0
+ARG TREEHOUSE_SHA256_AMD64=94fd2b2c20c35aac1ddc2941317890ad82c9916f5ccecbac4a50cda783eed10f
+ARG TREEHOUSE_SHA256_ARM64=408589ba72b58d5e942071ed863a83fd96566cfd1e514945daa59defde528bbb
+RUN arch="$(dpkg --print-architecture)" \
+ && case "$arch" in amd64) sum="$TREEHOUSE_SHA256_AMD64" ;; arm64) sum="$TREEHOUSE_SHA256_ARM64" ;; *) echo "no treehouse build for $arch" >&2; exit 1 ;; esac \
+ && tarball="treehouse-${TREEHOUSE_VERSION}-linux-${arch}.tar.gz" \
+ && curl -fsSL -o "/tmp/$tarball" "https://github.com/kunchenguid/treehouse/releases/download/${TREEHOUSE_VERSION}/$tarball" \
+ && echo "$sum  /tmp/$tarball" | sha256sum -c - \
+ && tar -xzf "/tmp/$tarball" -C /usr/local/bin treehouse \
+ && rm "/tmp/$tarball" \
+ && treehouse --version
 
 # ---- Playwright Chromium (runtime user, BEFORE the source COPY) ------------
 # Pre-fetch the ~150MB browser so the done-gate E2E phase doesn't download it
@@ -120,6 +127,7 @@ ENV DEVCLAW_TRANSPORT=http \
     DEVCLAW_DB=/var/lib/devclaw/devclaw.db \
     CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude \
     CLAUDE_CONFIG_DIR=/home/node/.claude \
+    TREEHOUSE_ROOT=/var/lib/devclaw/workspaces/.treehouse \
     DEVCLAW_SKILL_LIBRARY=/app/skill-library
 
 # ---- build identity (LAST layer — bust only this on each commit) -----------

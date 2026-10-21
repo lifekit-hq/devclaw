@@ -7,7 +7,7 @@ name: Deploy devclaw
 #   auto (auto=true): devclaw triggers this itself after a devclaw-repo
 #     merge-on-close, once the instance is task-quiescent (the quiescence gate
 #     lives instance-side — self_deploy.maybe_trigger — so a routine merge can
-#     never SIGKILL an in-flight sandbox, which was FR-008's original point).
+#     never SIGKILL an in-flight session, which was FR-008's original point).
 #     The deploy runs through deploy-devclaw-auto.sh: probe-checked, ONE
 #     automatic rollback to the previously running SHA, instance-dead relay
 #     ping if even the rollback fails.
@@ -38,12 +38,12 @@ jobs:
   # ---- arm lane (Docker Build published a main commit) ---------------------
   # Tells the instance "main moved". The heartbeat then waits for task
   # quiescence and fires this same workflow's auto lane (spec 025 US2), so an
-  # in-flight sandbox is never SIGKILLed by a recreate. Runs on the self-hosted
+  # in-flight session is never SIGKILLed by a recreate. Runs on the self-hosted
   # runner because the instance is reachable only on the box's loopback.
   #
   # Why arm instead of deploy: quiescence is a fact only the instance holds.
   # Checking it here would be a second gate answering the same question from
-  # worse information, and a race between them is a killed sandbox.
+  # worse information, and a race between them is a killed session.
   arm:
     name: Arm a self-deploy (instance picks the moment)
     if: >-
@@ -77,7 +77,7 @@ jobs:
 
   # ---- deploy lane (workflow_dispatch) -------------------------------------
   # Resolves the tag and waits — on a hosted runner, so the box's runner is not
-  # held — until ghcr has both images for it. A blank tag is this commit's SHA,
+  # held — until ghcr has the image for it. A blank tag is this commit's SHA,
   # whose Docker Build may still be running (a hand-dispatched deploy of main's
   # head). The auto lane names the armed SHA, whose images are already
   # published. A named tag (a rollback) must already exist. Fails before the
@@ -109,7 +109,7 @@ jobs:
       - name: Log in to ghcr.io
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Wait for ghcr to carry both images
+      - name: Wait for ghcr to carry the image
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.id.outputs.tag }}
@@ -117,13 +117,12 @@ jobs:
         run: |
           set -uo pipefail
           published() {
-            docker manifest inspect "ghcr.io/lifekit-hq/devclaw-mcp:$TAG" >/dev/null 2>&1 &&
-            docker manifest inspect "ghcr.io/lifekit-hq/devclaw-sandbox:$TAG" >/dev/null 2>&1
+            docker manifest inspect "ghcr.io/lifekit-hq/devclaw-mcp:$TAG" >/dev/null 2>&1
           }
           deadline=$((SECONDS + 45 * 60)) seen=false
           until published; do
             if [[ $NAMED == true ]]; then
-              echo "::error::ghcr.io/lifekit-hq/devclaw-{mcp,sandbox}:$TAG not found — was that commit published by Docker Build?"
+              echo "::error::ghcr.io/lifekit-hq/devclaw-mcp:$TAG not found — was that commit published by Docker Build?"
               exit 1
             fi
             run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow docker-build.yml --commit "$TAG" \
@@ -133,7 +132,7 @@ jobs:
             [[ -n $status ]] && seen=true
             if [[ $status == completed ]]; then
               published && break   # it finished between the two reads
-              echo "::error::Docker Build for $TAG finished '$conclusion' without publishing both images: $url"
+              echo "::error::Docker Build for $TAG finished '$conclusion' without publishing the image: $url"
               exit 1
             fi
             # Only a push to main publishes; a commit with no such run after a
@@ -149,7 +148,7 @@ jobs:
             echo "waiting for Docker Build of $TAG (${status:-no run yet})"
             sleep 30
           done
-          echo "ghcr carries devclaw-mcp:$TAG and devclaw-sandbox:$TAG"
+          echo "ghcr carries devclaw-mcp:$TAG"
 
   deploy:
     name: Pull (ghcr) → deploy to lifekit-vps
@@ -161,7 +160,7 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-      packages: read     # pull devclaw-mcp + devclaw-sandbox from ghcr.io
+      packages: read     # pull devclaw-mcp from ghcr.io
     steps:
       - uses: actions/checkout@v4
 
@@ -179,9 +178,9 @@ jobs:
         # (2026-09-03). Unset/blank or malformed ⇒ the script dies BEFORE
         # touching the box; the container refuses to start without them.
         env:
-          # subscription OAuth setup-token: host cognition + sandbox auth
+          # subscription OAuth setup-token: session cognition
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # read:packages registry token: in-sandbox `npm ci` on @lifekit-hq
+          # read:packages registry token: a session's `npm ci` on @lifekit-hq
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
           # host-side GitHub (`repo` + `actions:read`): delivery push/PR/merge,
           # intake, the issue doorway, and the failing-job log read that feeds a

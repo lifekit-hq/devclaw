@@ -108,10 +108,10 @@ def render_metrics(
         if state not in _STATES:  # a word the list does not know yet still counts
             lines.append(f'devclaw_goals{{state="{_label(state)}"}} {int(n)}')
     lines += [
-        "# HELP devclaw_tasks_running Sessions currently running in a sandbox.",
+        "# HELP devclaw_tasks_running Sessions currently running.",
         "# TYPE devclaw_tasks_running gauge",
         f"devclaw_tasks_running {int(running_tasks)}",
-        "# HELP devclaw_tokens_total Tokens the sandbox sessions reported, summed over all recorded sessions.",
+        "# HELP devclaw_tokens_total Tokens the sessions reported, summed over all recorded sessions.",
         "# TYPE devclaw_tokens_total counter",
     ]
     t = tokens or {}

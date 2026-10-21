@@ -82,40 +82,6 @@ async def test_recover_noop_when_nothing_orphaned(store):
     assert store.get_task("t1").status == "done"
 
 
-def test_recover_sweeps_orphaned_sandbox_containers(store, monkeypatch, capsys):
-    # The row reset alone re-runs the task in a NEW container while the dead
-    # process's ORIGINAL container keeps running (--rm dies with its docker
-    # client) — recover() must also reap those, and say how many it got.
-    from devclaw import task_queue as tq
-    from devclaw.engine.sandcastle import sandbox_owner_id
-
-    calls: list[str] = []
-
-    def fake_sweep(owner_id) -> int:
-        calls.append(owner_id)
-        return 3
-
-    monkeypatch.setattr(tq, "sweep_orphan_sandboxes", fake_sweep)
-    q = TaskQueue(store, runner=_ok_runner([]))
-    q.recover()
-    # Exactly one sweep per recover, scoped to THIS instance's owner id (derived
-    # from the state-DB path) — an unscoped sweep reaps a concurrent devclaw's
-    # live sandboxes (the 2026-07-21 mid-eval friendly fire).
-    import os
-
-    assert calls == [sandbox_owner_id(os.path.realpath(store.db_path))]
-    assert "reaped 3 orphaned sandbox container(s)" in capsys.readouterr().err
-
-
-def test_recover_sweep_is_silent_when_nothing_leaked(store, monkeypatch, capsys):
-    from devclaw import task_queue as tq
-
-    monkeypatch.setattr(tq, "sweep_orphan_sandboxes", lambda owner_id: 0)
-    q = TaskQueue(store, runner=_ok_runner([]))
-    q.recover()
-    assert "sandbox container" not in capsys.readouterr().err
-
-
 # ---- cheap-idle guard ----
 
 

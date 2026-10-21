@@ -4,7 +4,7 @@ A gate is a pure verdict producer: it reads the run artifacts and returns a
 verdict, never writes state. The pipeline short-circuits on the first failure.
 Every gate fails CLOSED — a crash is never an approval (#186).
 
-  verify        the sandbox's own verify run (a red run never ships)
+  verify        the session's own verify run (a red run never ships)
   materialize   the span itself could be determined (an undeterminable span
                 is not an empty one)
   change_class  no gate-input edit, no committed binary (the verdict of record

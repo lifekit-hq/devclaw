@@ -1,12 +1,11 @@
 # End-to-end browser testing with Playwright
 
-Read this when the change touches a web UI — pages, forms, navigation, anything a user would click. The sandbox image ships Chromium pre-installed and the `@playwright/mcp` server available.
+Read this when the change touches a web UI — pages, forms, navigation, anything a user would click. Install the browser the suite needs inside the worktree (`npx playwright install chromium`); never install system-wide.
 
 ## What you have
 
-- Chromium binary at `/home/agent/.cache/ms-playwright/chromium-*/` (or `/home/node/.cache/...` in the devclaw-mcp runtime).
-- `@playwright/mcp@latest` installed globally; `/workspace/.mcp.json` is auto-configured so claude can call the Playwright MCP tools directly.
-- All required system libs (libnss3, libxkbcommon0, etc.) are present — `chromium.launch()` works without extra apt installs.
+- In the devclaw-mcp runtime: a Playwright Chromium under `~/.cache/ms-playwright/`, `@playwright/mcp` installed globally, and the system libs `chromium.launch()` needs. Elsewhere, check before assuming.
+- No `.mcp.json` is written for you: the Playwright MCP tools are available only if the project configures them.
 
 ## Two ways to use it
 
@@ -36,4 +35,4 @@ The host browser-gate fails a web-UI change **closed** unless it sees a Playwrig
 
 - Run the suite as `npx playwright test --reporter=json` (or set `reporter: 'json'` in `playwright.config.ts`). The runner exports `PLAYWRIGHT_JSON_OUTPUT_NAME` pointing at the devclaw-owned artifact path — a `--reporter=json` run writes its `stats` there automatically, so you do **not** hardcode a path.
 - The gate reads `stats.expected/unexpected/flaky/skipped`. A run where everything is `skipped` (0 executed) counts as **never ran** and fails closed — a suite that skips itself proves nothing.
-- The `webServer` block in `playwright.config.ts` must actually boot the app (`ng serve`, or `npm run build` then a static server). If the backend can't run in-sandbox (no .NET SDK is baked), stub it with `page.route(...)` — a frontend-only boot still catches the render/console-error class.
+- The `webServer` block in `playwright.config.ts` must actually boot the app (`ng serve`, or `npm run build` then a static server). If the backend can't run in the worktree (its SDK is not on the host), stub it with `page.route(...)` — a frontend-only boot still catches the render/console-error class.

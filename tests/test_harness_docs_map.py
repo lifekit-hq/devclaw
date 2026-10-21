@@ -28,7 +28,7 @@ def _tracked() -> "frozenset[str]":
 
     These docs describe the REPOSITORY, so the repository — not the filesystem
     — is what they must be checked against. The two differ inside the worker
-    sandbox: ``engine/sandcastle.py`` mounts an empty tmpfs over the
+    sandbox: the retired docker sandbox mounted an empty tmpfs over the
     workspace's ``.claude/`` (spec 011 / #583) so the repo's contributor hooks
     cannot bind devclaw's own engineer, re-exposing only ``rules/``.
 
@@ -61,7 +61,7 @@ def _tracked() -> "frozenset[str]":
 #: paths rooted at a real top-level dir, so prose like `str.format` or a bare
 #: `AGENTS.md` (which names a file in the TARGET repo, not this one) is not
 #: mistaken for a claim about this tree.
-_TOP_LEVEL = ("devclaw", "runner", "tests", "evals", "docs", "specs", ".specify", ".claude", ".sandcastle")
+_TOP_LEVEL = ("devclaw", "tests", "evals", "docs", "specs", ".specify", ".claude")
 #: The comma is in the class ON PURPOSE: without it a brace-expanded path like
 #: ``devclaw/goal/{evaluator,summary}.py`` fails to match at all and becomes
 #: invisible to BOTH checks below — the precise blind spot that let five dead
@@ -197,7 +197,7 @@ def test_layout_trees_do_not_list_modules_that_were_deleted():
     not _RULES_DIR.is_dir(),
     reason=(
         ".claude/rules/ is absent. In devclaw's own sandbox this is expected and "
-        "deliberate: sandcastle.py mounts an EMPTY tmpfs over /workspace/.claude so "
+        "deliberate: the retired sandbox mounted an EMPTY tmpfs over /workspace/.claude so "
         "the target repo's vendor agent config never binds the worker (#583). The "
         "CLAUDE.md half of this guard still runs there; the rules half is covered on "
         "developer checkouts and in CI, which is where the docs are edited."
@@ -276,7 +276,7 @@ def test_every_claude_harness_dir_is_named_by_the_docs():
 
 
 # ---- the sandbox shadow must not change either verdict (#778) --------------
-# engine/sandcastle.py mounts an empty tmpfs over the workspace's .claude/ so
+# the retired docker sandbox mounted an empty tmpfs over the workspace's .claude/ so
 # the repo's contributor hooks cannot bind devclaw's own engineer, re-exposing
 # only rules/. Both guards above therefore have to judge the REPOSITORY, not
 # the mounted filesystem — otherwise the same revision is green in CI and red

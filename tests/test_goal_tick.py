@@ -21,6 +21,13 @@ from devclaw.task_queue import TaskQueue
 REPO = "https://github.com/o/r"
 
 
+def _lease_in_place(project_ws, repo_url, goal_id):
+    """No treehouse in the stubbed suite: the goal's worktree is the project dir."""
+    async def leased():
+        return project_ws
+    return leased()
+
+
 class FakeWorld:
     def __init__(self, *, pr=None, issues=None, comments=None, creds=()):
         self.pr = pr or gh.PrFacts("none")
@@ -87,7 +94,7 @@ def harness(tmp_path):
 
     def ctx(world: FakeWorld) -> TickContext:
         return TickContext(store=store, queue=queue, world=world.reader(), notifier=rec,
-                           post_comment=rec.post_comment, merge=rec.merge)
+                           post_comment=rec.post_comment, merge=rec.merge, lease=_lease_in_place)
 
     return store, queue, rec, goal, ctx
 
@@ -302,7 +309,7 @@ async def test_one_session_per_project_lane(tmp_path):
                           objective="o", issues=[1 if gid == "a" else 2], branch=f"goal/{gid}")
     world = FakeWorld(issues=[gh.Issue(1, "one", "x", "open"), gh.Issue(2, "two", "y", "open")])
     svc = GoalService(queue, store, notifier=rec, world_reader=world.reader(),
-                      post_comment=rec.post_comment, merge=rec.merge, tick_seconds=900)
+                      post_comment=rec.post_comment, merge=rec.merge, lease=_lease_in_place, tick_seconds=900)
     outcomes = await svc.tick_all()
     assert outcomes == {"a": "spawned", "b": "lane busy"}
     assert len(store.list_tasks(limit=10)) == 1
