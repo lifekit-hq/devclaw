@@ -32,7 +32,7 @@ tick again (settle wakes it)
   fresh session (never `--resume` — the old session's edits are not in the tree);
 - the verify is red after `DEVCLAW_VERIFY_ROUNDS` (each round `--resume`s the same session in-run) →
   `INTERRUPTED`; the next row starts a fresh session on the reset goal branch;
-- the hand-off did not ship (`no-mistakes init` failed, or the branch's newest no-mistakes run does not carry the session's head or did not pass) → `INTERRUPTED` with the reason; a gate question only the owner can settle → `BLOCKED`.
+- the hand-off did not ship (`no-mistakes init` failed, or the branch's newest no-mistakes run does not carry the session's head or did not pass, or the session left uncommitted changes and no commit) → `INTERRUPTED` with the reason; a gate question only the owner can settle → `BLOCKED`.
 
 The request (`engine/__init__.py` → `EngineRequest`): `kind`, `workspace_dir`
 (the goal's worktree), `goal` (the brief), `verify_cmd` (None: the engine
