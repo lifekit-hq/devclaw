@@ -156,6 +156,7 @@ thread carries a marker and is a fact, never an instruction.
 
 - [`docs/INDEX.md`](./docs/INDEX.md) — every doc, its purpose, a currency tag.
 - [`docs/architecture.md`](./docs/architecture.md) — the mental model and the locked contract.
+- [`docs/case-study.md`](./docs/case-study.md) — what it delivered, what failed, what it costs.
 - [`CLAUDE.md`](./CLAUDE.md) — the working contract an agent reads first.
 - [`specs/`](./specs/) — direction memory; v1's forty-five specs are superseded rows in its ledger.
 
