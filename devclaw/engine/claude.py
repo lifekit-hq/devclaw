@@ -209,6 +209,12 @@ UNTRACKED_MANIFEST_PROMPT = (
 _BASH = shutil.which("bash")
 _VERIFY_SHELL = [_BASH, "-o", "pipefail", "-c"] if _BASH else ["/bin/sh", "-c"]
 
+#: Prefixed to the shell that runs a session or a verify command: it, and
+#: everything it starts, is the OOM killer's preferred victim over the server
+#: sharing its cgroup. Never lowers the score; silent on refusal.
+_OOM_SHIELD = ('read -r _oom 2>/dev/null </proc/self/oom_score_adj; '
+               '[ "${_oom:-0}" -lt 800 ] 2>/dev/null && echo 800 2>/dev/null >/proc/self/oom_score_adj; ')
+
 
 def discover_verify(workspace_dir: str) -> Optional[str]:
     path = os.path.join(workspace_dir, VERIFY_SCRIPT_REL)
@@ -221,9 +227,9 @@ async def run_verify(cmd: str, workspace_dir: str, timeout: float) -> dict:
     """Never raises — a crash or a timeout is a failed gate."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            *_VERIFY_SHELL, cmd, cwd=workspace_dir, env=session_env(),
+            *_VERIFY_SHELL, _OOM_SHIELD + cmd, cwd=workspace_dir, env=session_env(),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            start_new_session=True, preexec_fn=_prefer_oom_victim,
+            start_new_session=True,
         )
     except OSError as exc:
         return {"ran": True, "cmd": cmd, "passed": False, "exit_code": None,
@@ -306,22 +312,6 @@ class Turn:
     stderr: list[str] = field(default_factory=list)
 
 
-_OOM_SCORE_ADJ = 800
-
-
-def _prefer_oom_victim() -> None:
-    """Runs in the child before exec: the session or verify run, and everything
-    it starts, is the OOM killer's preferred victim over the server sharing its
-    cgroup. Best-effort — never lowers the score, never fails the spawn."""
-    try:
-        with open("/proc/self/oom_score_adj", "r+") as fh:
-            if int(fh.read().strip() or 0) < _OOM_SCORE_ADJ:
-                fh.seek(0)
-                fh.write(str(_OOM_SCORE_ADJ))
-    except (OSError, ValueError):
-        pass
-
-
 def _kill(proc: asyncio.subprocess.Process) -> None:
     """The session and every process it started (it leads its own group)."""
     try:
@@ -347,10 +337,10 @@ async def run_turn(req: EngineRequest, prompt: str, *, resume: Optional[str]) ->
     turn = Turn(session_id=resume or "")
     try:
         proc = await asyncio.create_subprocess_exec(
-            *claude_argv(prompt, resume=resume), cwd=req.workspace_dir, env=session_env(),
+            "/bin/sh", "-c", _OOM_SHIELD + 'exec "$@"', "sh", *claude_argv(prompt, resume=resume),
+            cwd=req.workspace_dir, env=session_env(),
             stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, limit=STREAM_LINE_LIMIT, start_new_session=True,
-            preexec_fn=_prefer_oom_victim,
         )
     except OSError as exc:
         turn.error = f"failed to spawn {_config.CLAUDE_BIN}: {exc}"

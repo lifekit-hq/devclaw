@@ -162,6 +162,8 @@ def _block_real_docker(monkeypatch):
 
     async def guarded_exec(program, *args, **kwargs):
         base = os.path.basename(str(program))
+        if base in ("sh", "bash") and len(args) > 3 and args[0] == "-c":
+            base = os.path.basename(str(args[3]))
         if base in _CONTAINER_BINARIES:
             pytest.fail(
                 f"BLOCKED: test tried to spawn a real container-daemon subprocess: "

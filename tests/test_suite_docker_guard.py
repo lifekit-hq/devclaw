@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+from devclaw import config as _config
+from devclaw.engine import EngineRequest
+from devclaw.engine import claude as engine
 from devclaw.engine import workspace as ws
 from devclaw.procutil import run as _run
 
@@ -31,6 +34,15 @@ def test_suite_guard_blocks_real_treehouse_leases():
     pool live sessions share — guarded independently."""
     with pytest.raises(pytest.fail.Exception, match="BLOCKED.*treehouse"):
         ws.goal_checkout_dir(str(Path(__file__).resolve().parents[1]), "g1")
+
+
+def test_suite_guard_blocks_the_real_claude_behind_the_session_shell(monkeypatch, tmp_path):
+    """The session spawns ``sh -c '… exec "$@"' sh claude …`` — the guard must
+    see the program the shell execs, not the shell."""
+    monkeypatch.setattr(_config, "CLAUDE_BIN", "claude")
+    req = EngineRequest(kind="review_repository", workspace_dir=str(tmp_path), goal="g")
+    with pytest.raises(pytest.fail.Exception, match="BLOCKED.*cognition"):
+        asyncio.run(engine.run_turn(req, "go", resume=None))
 
 
 def test_suite_guard_lets_non_docker_subprocesses_through():
