@@ -87,20 +87,21 @@ def _treehouse_sync(project_workspace: str, *args: str) -> "tuple[int, str]":
     return proc.returncode, proc.stdout if proc.returncode == 0 else (proc.stderr or proc.stdout)
 
 
-def goal_checkout_dir(project_workspace: str, goal_id: str) -> "str | None":
-    """The worktree leased to ``goal_id``, or None. Read from treehouse's own
-    lease state — devclaw stores no path."""
-    if not project_workspace or not (Path(project_workspace) / ".git").exists():
-        return None
+def _leased_checkout(project_workspace: str, goal_id: str) -> "str | None":
+    """The worktree leased to ``goal_id``, or None when it holds none. Read from
+    treehouse's own lease state — devclaw stores no path. Raises
+    :class:`WorkspaceError` when that state cannot be read: unknown is not none."""
     rc, out = _treehouse_sync(project_workspace, "status", "--json")
     if rc != 0:
-        return None
+        raise WorkspaceError(f"treehouse status failed: {out.strip()[-300:]}")
     try:
         pool = json.loads(out)
     except ValueError:
-        return None
+        pool = None
+    if not isinstance(pool, list):
+        raise WorkspaceError(f"treehouse status output unreadable: {out.strip()[-300:]}")
     holder = lease_holder(goal_id)
-    for tree in pool if isinstance(pool, list) else []:
+    for tree in pool:
         if isinstance(tree, dict) and tree.get("status") == "leased" and tree.get("lease_holder") == holder:
             path = tree.get("path")
             if isinstance(path, str) and path:
@@ -108,14 +109,26 @@ def goal_checkout_dir(project_workspace: str, goal_id: str) -> "str | None":
     return None
 
 
+def goal_checkout_dir(project_workspace: str, goal_id: str) -> "str | None":
+    """The worktree leased to ``goal_id``, or None — also when treehouse cannot
+    say. Never raises."""
+    if not project_workspace or not (Path(project_workspace) / ".git").exists():
+        return None
+    try:
+        return _leased_checkout(project_workspace, goal_id)
+    except WorkspaceError:
+        return None
+
+
 async def lease_goal_checkout(project_workspace: str, repo_url: "str | None", goal_id: str) -> str:
     """The goal's worktree: its existing lease, else a fresh one from the pool.
     Clones the project checkout first when it is not there yet. Raises
-    :class:`WorkspaceError` when no worktree can be leased — a goal never runs
-    in a directory another goal can move."""
+    :class:`WorkspaceError` when no worktree can be leased, or when treehouse
+    cannot say whether the goal already holds one — a goal never runs in a
+    directory another goal can move, and never holds two."""
     if not (Path(project_workspace) / ".git").exists():
         await prepare_workspace(project_workspace, repo_url)
-    existing = await asyncio.to_thread(goal_checkout_dir, project_workspace, goal_id)
+    existing = await asyncio.to_thread(_leased_checkout, project_workspace, goal_id)
     if existing:
         return existing
     rc, out = await asyncio.to_thread(

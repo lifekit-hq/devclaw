@@ -19,7 +19,7 @@ tick again (settle wakes it)
 **Fails if** — every hop names its failure:
 
 - the world cannot be read → `unreadable`, nothing spawns, logged;
-- no treehouse worktree can be leased → `unleased`: an `INTERRUPTED` task is recorded carrying the lease error (`workspace prep failed: no worktree leased: …`) and no session runs; the next tick retries — each retry is another row, so it stops at the goal's daily session cap (`DEVCLAW_GOAL_SESSIONS_PER_DAY`) — and the retry runs as `implement_feature` in a fresh session, like any interrupted task's successor;
+- no treehouse worktree can be leased, or treehouse cannot say whether the goal already holds one → `unleased`: an `INTERRUPTED` task is recorded carrying the lease error (`workspace prep failed: no worktree leased: …`) and no session runs; the next tick retries — each retry is another row, so it stops at the goal's daily session cap (`DEVCLAW_GOAL_SESSIONS_PER_DAY`) — and the retry runs as `implement_feature` in a fresh session, like any interrupted task's successor;
 - the goal checkout cannot be placed on the branch → `INTERRUPTED`; the next tick starts a fresh session;
 - the engine refuses (missing skills) → `INTERRUPTED`;
 - a usage limit → the account pauses, the work is snapshotted, the row requeues
