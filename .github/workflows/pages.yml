@@ -1,0 +1,60 @@
+name: Demo (GitHub Pages)
+
+# The hosted demo: the console's production build with every feed answered
+# from the e2e fixtures (frontend/e2e/fixtures/, invented data), so it needs no
+# host and no token. Published from main only; `npm run build:demo` in
+# frontend/ builds the same site locally, and the frontend CI job builds it on
+# every PR. The repository's Pages source must be "GitHub Actions".
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+# One publish at a time; a newer main waits instead of cancelling a deploy.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the demo
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read  # @lifekit-hq/* from GitHub Packages
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run build:demo
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: frontend/dist/demo
+
+  deploy:
+    name: Publish to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

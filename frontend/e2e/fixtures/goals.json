@@ -9,7 +9,7 @@
       41
     ],
     "branch": "devclaw/g-blocked",
-    "createdAt": 1791304136627,
+    "createdAt": 1792564312488,
     "closedAt": null,
     "outcome": null,
     "lastSeenAt": null,
@@ -21,8 +21,8 @@
       "exit": "BLOCKED",
       "exitDetail": "Should the export include archived reports?",
       "prUrl": null,
-      "createdAt": 1791304136696,
-      "completedAt": 1791304136703,
+      "createdAt": 1792564312560,
+      "completedAt": 1792564312569,
       "usage": {
         "input_tokens": 64000,
         "output_tokens": 2100,
@@ -41,7 +41,7 @@
       "recommended": 1,
       "default": "Exclude archived reports",
       "link": "https://github.com/example/widgets/issues/41",
-      "since": 1791304136703,
+      "since": 1792564312569,
       "answered": null
     },
     "usage": {
@@ -63,7 +63,7 @@
       52
     ],
     "branch": "devclaw/g-running",
-    "createdAt": 1791304136635,
+    "createdAt": 1792564312497,
     "closedAt": null,
     "outcome": null,
     "lastSeenAt": null,
@@ -75,7 +75,7 @@
       "exit": null,
       "exitDetail": null,
       "prUrl": null,
-      "createdAt": 1791304136706,
+      "createdAt": 1792564312572,
       "completedAt": null,
       "usage": null
     },
@@ -99,8 +99,8 @@
       37
     ],
     "branch": "devclaw/g-done",
-    "createdAt": 1791304136643,
-    "closedAt": 1791304136748,
+    "createdAt": 1792564312509,
+    "closedAt": 1792564312600,
     "outcome": "achieved",
     "lastSeenAt": null,
     "state": "achieved",
@@ -111,8 +111,8 @@
       "exit": "REVIEW",
       "exitDetail": null,
       "prUrl": null,
-      "createdAt": 1791304136719,
-      "completedAt": 1791304136741,
+      "createdAt": 1792564312589,
+      "completedAt": 1792564312597,
       "usage": {
         "input_tokens": 40000,
         "output_tokens": 1800,

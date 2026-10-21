@@ -60,6 +60,8 @@ jobs:
         run: npm test
       - name: Build (ng build)
         run: npm run build
+      - name: Build the hosted demo (pages.yml publishes it from main)
+        run: npm run build:demo
       - name: Browser chrome (lifekit-chrome-check)
         run: npx lifekit-chrome-check --app dc --name devclaw --base-path /console/ ../devclaw/server/console_dist
       - name: Design scan engine (impeccable, sha256-pinned)

@@ -1,0 +1,28 @@
+{
+  "task": {
+    "id": "t-deliver-0004",
+    "kind": "fix_bug",
+    "status": "done",
+    "workspaceDir": "/work/widgets",
+    "parentGoalId": "g-done",
+    "createdAt": 1792564312579,
+    "completedAt": 1792564312583,
+    "prUrl": "https://github.com/example/widgets/pull/55",
+    "exit": "DELIVERED",
+    "exitDetail": "digest dates in UTC",
+    "startedAt": 1792564312581,
+    "preRunSha": null,
+    "targetBranch": "devclaw/g-done",
+    "projectId": "widgets",
+    "verifyCmd": null,
+    "deliver": true,
+    "error": null,
+    "goal": "#37"
+  },
+  "verify": null,
+  "delivery": null,
+  "change": null,
+  "agentOutput": "DELIVERED",
+  "block": null,
+  "usage": null
+}

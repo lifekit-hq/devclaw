@@ -8,7 +8,7 @@
     41
   ],
   "branch": "devclaw/g-blocked",
-  "createdAt": 1791304136627,
+  "createdAt": 1792564312488,
   "closedAt": null,
   "outcome": null,
   "lastSeenAt": null,
@@ -21,8 +21,8 @@
     "exit": "BLOCKED",
     "exitDetail": "Should the export include archived reports?",
     "prUrl": null,
-    "createdAt": 1791304136696,
-    "completedAt": 1791304136703,
+    "createdAt": 1792564312560,
+    "completedAt": 1792564312569,
     "usage": {
       "input_tokens": 64000,
       "output_tokens": 2100,
@@ -39,8 +39,8 @@
       "exit": "BLOCKED",
       "exitDetail": "Should the export include archived reports?",
       "prUrl": null,
-      "createdAt": 1791304136696,
-      "completedAt": 1791304136703,
+      "createdAt": 1792564312560,
+      "completedAt": 1792564312569,
       "usage": {
         "input_tokens": 64000,
         "output_tokens": 2100,
@@ -56,8 +56,8 @@
       "exit": "DELIVERED",
       "exitDetail": "CSV export behind the reports route",
       "prUrl": "https://github.com/example/widgets/pull/58",
-      "createdAt": 1791304136655,
-      "completedAt": 1791304136665,
+      "createdAt": 1792564312527,
+      "completedAt": 1792564312536,
       "usage": {
         "input_tokens": 182000,
         "output_tokens": 9400,
@@ -78,7 +78,7 @@
     "recommended": 1,
     "default": "Exclude archived reports",
     "link": "https://github.com/example/widgets/issues/41",
-    "since": 1791304136703,
+    "since": 1792564312569,
     "answered": null
   },
   "verdicts": [],
