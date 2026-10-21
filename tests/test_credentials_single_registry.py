@@ -92,6 +92,16 @@ def test_host_only_secret_never_reaches_the_session_or_its_verify(monkeypatch, t
     assert var not in names
 
 
+@pytest.mark.parametrize("var", ["DEVCLAW_TOKEN", "DEVCLAW_GOAL_NOTIFY_URL"])
+def test_a_host_only_optional_secret_never_moves_the_fingerprint(var) -> None:
+    """Setting or rotating the MCP token or the notify URL must not wake every
+    open goal: the world fingerprint's credential set ignores them."""
+    from devclaw.probes import green_credentials
+
+    base = {"CLAUDE_CODE_OAUTH_TOKEN": "placeholder"}
+    assert green_credentials(base) == green_credentials({**base, var: "placeholder"}) == ("CLAUDE_CODE_OAUTH_TOKEN",)
+
+
 def test_least_privilege_is_declared() -> None:
     """Every registered credential states the minimum scope it is issued with;
     a credential without a scope line cannot be granted least-privilege."""

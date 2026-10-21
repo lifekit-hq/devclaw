@@ -19,8 +19,8 @@ tick again (settle wakes it)
 **Fails if** — every hop names its failure:
 
 - the world cannot be read → `unreadable`, nothing spawns, logged;
-- no treehouse worktree can be leased → `unleased`: an `INTERRUPTED` task is recorded carrying the lease error (`workspace prep failed: no worktree leased: …`) and no session runs; the next tick retries — each retry is another row, so it stops at the goal's daily session cap (`DEVCLAW_GOAL_SESSIONS_PER_DAY`) — and the retry resumes as `implement_feature` like any interrupted task;
-- the goal checkout cannot be placed on the branch → `INTERRUPTED`, resumed;
+- no treehouse worktree can be leased → `unleased`: an `INTERRUPTED` task is recorded carrying the lease error (`workspace prep failed: no worktree leased: …`) and no session runs; the next tick retries — each retry is another row, so it stops at the goal's daily session cap (`DEVCLAW_GOAL_SESSIONS_PER_DAY`) — and the retry runs as `implement_feature` in a fresh session, like any interrupted task's successor;
+- the goal checkout cannot be placed on the branch → `INTERRUPTED`; the next tick starts a fresh session;
 - the engine refuses (missing skills) → `INTERRUPTED`;
 - a usage limit → the account pauses, the work is snapshotted, the row requeues
   with its tree kept and `--resume`s its own session — the only path that resumes one;
@@ -28,7 +28,8 @@ tick again (settle wakes it)
   `DEVCLAW_SILENCE_S` → the session's process group is killed, the tree is
   snapshotted, `INTERRUPTED`; the next row resets the goal branch and starts a
   fresh session (never `--resume` — the old session's edits are not in the tree);
-- the verify is red after `DEVCLAW_VERIFY_ROUNDS` → `INTERRUPTED` (the session's own unfinished work);
+- the verify is red after `DEVCLAW_VERIFY_ROUNDS` (each round `--resume`s the same session in-run) →
+  `INTERRUPTED`; the next row starts a fresh session on the reset goal branch;
 - a gate refuses the span → `REFUSED`, the next session is told why; twice in a row → blocked;
 - the push or PR fails → `INTERRUPTED` with the reason.
 

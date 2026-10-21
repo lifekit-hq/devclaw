@@ -101,8 +101,10 @@ reads GitHub as state.
   thread are marked `<!-- devclaw:<kind> … -->` and are never instructions.
 - **No retries.** A red CI or a done-gate refusal stops the goal with the fact
   posted on the thread; a blocked goal releases its project lane; only a newer
-  comment mentioning the bot (or `decide`) wakes it. `INTERRUPTED` (timeout,
-  quota, red local verify) resumes — that is the session's own unfinished work.
+  comment mentioning the bot (or `decide`) wakes it. `INTERRUPTED` (stream
+  silence, red local verify) is followed by a fresh session on the reset goal
+  branch; `--resume` is only for a quota-paused row (tree kept) and the
+  in-session verify loop.
 - **Usage limits pause-and-resume.** A quota, auth or provider-outage failure
   pauses the account, snapshots the work and requeues (`devclaw/loom/limits.py`).
   Only agent- or harness-origin text is classified; a session's own words never.

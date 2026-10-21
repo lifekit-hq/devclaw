@@ -121,7 +121,7 @@ CLAUDE_BIN = os.environ.get("DEVCLAW_CLAUDE_BIN", "claude")
 EXEC_MODEL = os.environ.get("DEVCLAW_EXEC_MODEL", "claude-sonnet-4-6") or None
 #: the silence watchdog (no duration cap): a session that emits no first frame
 #: within FIRST_FRAME_S, or no frame for SILENCE_S after that, is killed and
-#: settled INTERRUPTED — the next session resumes it.
+#: settled INTERRUPTED — its successor starts a fresh session.
 FIRST_FRAME_S = float(os.environ.get("DEVCLAW_FIRST_FRAME_S", "120"))
 SILENCE_S = float(os.environ.get("DEVCLAW_SILENCE_S", "1800"))
 #: red ``.devclaw/verify`` runs handed back to the same session before it settles.

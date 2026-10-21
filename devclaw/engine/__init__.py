@@ -72,7 +72,7 @@ class EngineRequest:
 #: ``result["verify"]`` carries the gate verdict
 #: ``{ran, cmd, passed, exit_code, timed_out, output}`` — the orchestration
 #: (not the engine) decides done-vs-failed from ``passed``. Any status may
-#: carry ``session_id`` — the session that ran, resumable after an interruption.
+#: carry ``session_id`` — the session that ran, resumable after a quota pause.
 EngineResult = dict
 
 

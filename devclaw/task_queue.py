@@ -129,7 +129,7 @@ class TaskQueue(SettleMixin, AdmissionMixin):
 
     def recover(self) -> int:
         """Once at startup: reset rows left ``running`` by a dead process to
-        ``pending`` — each resumes its own session on relaunch."""
+        ``pending`` — each reruns on the reset goal branch in a fresh session."""
         reaped = self._store.reset_running_to_pending()
         for tid in reaped:
             self._store.append_event(

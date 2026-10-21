@@ -131,6 +131,13 @@ def required_vars() -> tuple[str, ...]:
     return tuple(c.var for c in REGISTRY if c.required)
 
 
+def probed() -> tuple[Credential, ...]:
+    """The credentials doctor checks and the world fingerprint probes: the ones
+    the instance needs or a session uses. A host-only optional one is stripped
+    from the session and never probed."""
+    return tuple(c for c in REGISTRY if c.required or c.agent)
+
+
 def agent_vars() -> tuple[str, ...]:
     """Names a session's own shells keep."""
     return tuple(c.var for c in REGISTRY if c.agent)

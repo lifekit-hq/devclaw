@@ -3,8 +3,8 @@
 The spine: place the goal branch → run the engine once → classify how the
 session ended → materialize the span → run the four gates → deliver → settle
 the row WITH its exit. There is no retry loop: a session that could not
-finish is ``INTERRUPTED`` (the next tick resumes the same Claude Code session
-with ``--resume``), a delivery a gate
+finish is ``INTERRUPTED`` (its successor starts a fresh session on the reset
+goal branch; ``--resume`` is only for a quota-paused row), a delivery a gate
 refused is ``REFUSED`` (the next session is told why), and everything the
 session itself said (DELIVERED / DONE / BLOCKED / NOTHING) is recorded as its
 exit for the goal layer to read. A usage limit pauses the account and requeues
@@ -327,7 +327,7 @@ class SettleMixin:
         verdict = await run_gates(gate_input)
         if verdict is not None:
             if verdict.gate_id == "verify":
-                # the session's own unfinished work: keep it, resume next tick
+                # the session's own unfinished work: snapshot it; the successor starts fresh
                 await _wip_commit(workspace_dir, f"wip(devclaw): verify red (session {task_id[:8]})")
                 self._store.mark_failed(task_id, verdict.reason, exit=EXIT_INTERRUPTED,
                                         exit_detail=verdict.reason[:400])

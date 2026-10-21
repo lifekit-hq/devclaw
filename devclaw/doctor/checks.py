@@ -17,7 +17,7 @@ def check_credentials(store, registry) -> list[Finding]:
     """Required credentials present, well-formed and (GitHub-shaped) live."""
     out: list[Finding] = []
     green = set(green_credentials())
-    for cred in _credentials.REGISTRY:
+    for cred in _credentials.probed():
         value = (os.environ.get(cred.var) or "").strip()
         if not value:
             out.append(Finding(f"credentials.{cred.var}", Verdict.FAIL if cred.required else Verdict.WARN,
