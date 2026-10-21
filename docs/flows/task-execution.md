@@ -42,3 +42,10 @@ host-only credentials — `GH_TOKEN`, the MCP bearer `DEVCLAW_TOKEN`, the
 `DEVCLAW_GOAL_NOTIFY_URL` webhook (`credentials.session_env`). The result: `status`,
 `agent_output` (the final message, exit line included), `verify`, `usage`,
 `session_id`.
+
+Both the `claude -p` child and the `.devclaw/verify` child run in their own
+process group, and the group is killed when the child exits — normally or not —
+so a dev server or watcher a session backgrounded does not outlive it. Each
+also raises its `oom_score_adj` to 800 (never lowers it; silent if the kernel
+refuses), so under memory pressure it, not the server sharing the container's
+cgroup, is the OOM killer's preferred victim.

@@ -29,7 +29,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`flows/task-execution.md`](./flows/task-execution.md) | One session, hop by hop: tick → row → branch placement → the session in the goal's treehouse worktree → the verify loop → the gates → delivery → the exit. | **CURRENT** — 2026-10-21 (`claude -p` in a treehouse worktree, the silence watchdog, `--resume` only on the quota pause path while an interrupted task's successor starts fresh, the session env strips every host-only credential, a failed lease recorded `INTERRUPTED` and retried up to the daily session cap — #952) |
+| [`flows/task-execution.md`](./flows/task-execution.md) | One session, hop by hop: tick → row → branch placement → the session in the goal's treehouse worktree → the verify loop → the gates → delivery → the exit. | **CURRENT** — 2026-10-21 (`claude -p` in a treehouse worktree, the silence watchdog, `--resume` only on the quota pause path while an interrupted task's successor starts fresh, the session env strips every host-only credential, a failed lease recorded `INTERRUPTED` and retried up to the daily session cap, the session and verify process groups reaped on exit and made the OOM killer's preferred victims — #952) |
 | [`flows/delivery.md`](./flows/delivery.md) | The goal branch, its one PR, the done-gate review, the merge-on-close. | **CURRENT** — 2026-10-21 (the session, not a sandbox, runs what CI runs — #952) |
 
 ## Reference
