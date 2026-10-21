@@ -81,7 +81,7 @@ sha, run the engine once, then classify how it ended:
 
 | Result | Exit | Row |
 |---|---|---|
-| quota / auth / outage | (requeued) | account paused, work snapshotted, `pause_count` +1; the tree is kept and the row `--resume`s its own session |
+| quota / auth / outage | (requeued) | account paused, work snapshotted (a read-only review is not), `pause_count` +1; the tree is kept and the row `--resume`s its own session |
 | stream silence (`DEVCLAW_FIRST_FRAME_S` / `DEVCLAW_SILENCE_S`), harness error, red local verify, a hand-off that did not ship | `INTERRUPTED` | failed — next tick a fresh session runs on the reset goal branch (never `--resume`) |
 | the session said `BLOCKED` | `BLOCKED` | done — the question goes on the thread |
 | ok, branch shipped through no-mistakes (or nothing to ship) | `DELIVERED` / `DONE` / `NOTHING` (the session's own line) | done, with the PR url |

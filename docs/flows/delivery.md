@@ -18,7 +18,10 @@ the next session merges the base branch and resolves.
 **The done-gate.** A session's `DONE` line is a proposal. With green CI the
 tick spawns a read-only review session (`devclaw/prompts/done-gate.md`) over
 the same head; the host validates its JSON (every clause satisfied with
-evidence) and posts the verdict on the PR. Achieved → `gh pr merge --squash
---delete-branch` → the goal closes `achieved`, its checkout is removed, the
-owner is pinged once. Refused → the goal stops with the findings; the owner
-answers with `decide` or a comment mentioning the bot.
+evidence) and posts the verdict on the PR. A verdict counts only for the head
+the review read; a PR that moved since gets a fresh review. Achieved →
+`gh pr merge --squash --delete-branch --match-head-commit <the judged head>` →
+the goal closes `achieved`, its checkout is removed, the owner is pinged once.
+Refused or unreadable (including a review that changed its worktree) → the goal
+stops with the findings; the owner answers with `decide` or a comment mentioning
+the bot.
