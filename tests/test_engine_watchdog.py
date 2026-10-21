@@ -34,6 +34,14 @@ if mode == "silent":
 elif mode == "stall":
     emit({"type": "system", "subtype": "init", "session_id": "sess-stall"})
     time.sleep(60)
+elif mode == "orphan":
+    import subprocess
+    child = subprocess.Popen(["sleep", "60"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+    with open(os.environ["FAKE_CLAUDE_PID"], "w") as fh:
+        fh.write(str(child.pid))
+    emit({"type": "result", "subtype": "success", "is_error": False,
+          "result": "NOTHING: nothing to do", "session_id": "sess-orphan"})
 elif mode == "resume_missing" and resuming:
     emit({"type": "result", "subtype": "error_during_execution", "is_error": True,
           "errors": ["No conversation found with session ID: gone"]})
@@ -100,3 +108,36 @@ async def test_an_unknown_resume_id_falls_back_to_a_fresh_session(fake_claude, t
     calls = [line for line in log.read_text().splitlines() if line]
     assert len(calls) == 2
     assert '"--resume"' in calls[0] and '"--resume"' not in calls[1]
+
+
+def _alive(pid: int) -> bool:
+    try:
+        with open(f"/proc/{pid}/stat") as fh:
+            return fh.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except FileNotFoundError:
+        return False
+
+
+def _gone(pid: int) -> bool:
+    for _ in range(50):
+        if not _alive(pid):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+async def test_nothing_a_session_or_its_verify_starts_outlives_it(fake_claude, tmp_path, monkeypatch):
+    """A dev server or watcher the session or ``.devclaw/verify`` backgrounds
+    must not survive a NORMAL exit in the long-lived container."""
+    fake_claude("orphan")
+    pid_file = tmp_path / "orphan.pid"
+    monkeypatch.setenv("FAKE_CLAUDE_PID", str(pid_file))
+    out = await engine.run_turn(_req(tmp_path), "go", resume=None)
+    assert out.ok
+    assert _gone(int(pid_file.read_text()))
+
+    verify_pid = tmp_path / "verify.pid"
+    result = await engine.run_verify(
+        f"sleep 60 </dev/null >/dev/null 2>&1 & echo $! > {verify_pid}", str(tmp_path), timeout=30)
+    assert result["passed"], result
+    assert _gone(int(verify_pid.read_text()))

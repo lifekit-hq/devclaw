@@ -235,6 +235,7 @@ async def run_verify(cmd: str, workspace_dir: str, timeout: float) -> dict:
         await proc.wait()
         return {"ran": True, "cmd": cmd, "passed": False, "exit_code": None,
                 "timed_out": True, "output": f"verify timed out after {timeout:.0f}s"}
+    _kill(proc)
     text = (out or b"").decode("utf-8", "replace")
     return {"ran": True, "cmd": cmd, "passed": proc.returncode == 0,
             "exit_code": proc.returncode, "timed_out": False, "output": text[-4000:]}
@@ -381,6 +382,7 @@ async def run_turn(req: EngineRequest, prompt: str, *, resume: Optional[str]) ->
         if proc.returncode is None and result is None and not turn.error:
             _kill(proc)
         await proc.wait()
+        _kill(proc)
         await asyncio.gather(stderr_task, return_exceptions=True)
 
     if result is not None:
