@@ -14,12 +14,16 @@ export default defineConfig({
     // route's sight. pwa.spec.ts opts back in to test the worker.
     serviceWorkers: 'block',
   },
-  webServer: {
-    // The tests run against the production build; `npm run build` must have run first.
+  // The tests run against the production build; `npm run build` must have run first. The second
+  // server saves the dark theme for the account, for quality.spec.ts.
+  webServer: [
+    {theme: 'light', port},
+    {theme: 'dark', port: port + 1},
+  ].map(server => ({
     command: 'node e2e/serve-dist.mjs',
-    env: {PORT: String(port)},
-    url: origin,
+    env: {PORT: String(server.port), THEME: server.theme},
+    url: `http://127.0.0.1:${server.port}`,
     reuseExistingServer: !process.env['CI'],
     timeout: 15_000,
-  },
+  })),
 });

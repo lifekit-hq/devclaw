@@ -8,19 +8,7 @@ import {expect, type Page, test} from '@playwright/test';
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(__dirname, 'fixtures', `${name}.json`), 'utf8'));
 
-const FEEDS: Record<string, string> = {
-  '/goals.json': 'goals',
-  '/goals/g-blocked.json': 'goal-blocked',
-  '/goals/g-running.json': 'goal-running',
-  '/goals/g-done.json': 'goal-done',
-  '/projects.json': 'projects',
-  '/projects/widgets.json': 'project-widgets',
-  '/tasks/t-deliver-0001.json': 'task-deliver',
-  '/tasks/t-deliver-0001/events.json': 'task-deliver-events',
-  '/verdicts.json': 'verdicts',
-  '/control.json': 'control',
-  '/oauth2/userinfo': 'userinfo',
-};
+const FEEDS = fixture('feeds') as Record<string, string>;
 
 async function serveFeeds(page: Page): Promise<void> {
   await page.route(
@@ -75,14 +63,14 @@ test('an option posts its full text on the decide route', async ({page}) => {
 
 test('the goal page decides in the owner’s own words and shows a refusal', async ({page}) => {
   const posted: unknown[] = [];
-  await page.route('**/goals/g-blocked/decide', route => {
+  await page.route('**/goals/g-running/decide', route => {
     posted.push(route.request().postDataJSON());
     return route.fulfill({status: 400, json: {error: 'goal is closed'}});
   });
-  await page.goto('/console/goals/g-blocked');
+  await page.goto('/console/goals/g-running');
 
-  await expect(page.getByRole('heading', {level: 1, name: 'Goal g-blocked'})).toBeVisible();
-  await expect(page.getByText('Add CSV export to the reports page')).toBeVisible();
+  await expect(page.getByRole('heading', {level: 1, name: 'Goal g-running'})).toBeVisible();
+  await expect(page.getByText('Speed up the search index rebuild')).toBeVisible();
   const decide = page.getByRole('region', {name: 'Decide'});
   await decide.getByRole('textbox', {name: 'Your decision'}).fill('  Exclude them for now  ');
   await decide.getByRole('button', {name: 'Decide'}).click();

@@ -67,13 +67,13 @@ export function verdictWord(v: VerdictRow): {text: string; variant: TagVariant} 
           }
           @if (v.question) {
             <div>
-              <h3 class="text-cmn-xs font-semibold text-text-secondary">Question for the owner</h3>
+              <p class="text-cmn-xs font-semibold text-text-secondary">Question for the owner</p>
               <p class="text-text-primary">{{ v.question }}</p>
             </div>
           }
           @if (v.structuralHealth || v.concerns.length) {
             <div>
-              <h3 class="text-cmn-xs font-semibold text-text-secondary">Structural health</h3>
+              <p class="text-cmn-xs font-semibold text-text-secondary">Structural health</p>
               <p class="font-mono text-text-primary">{{ v.structuralHealth || '—' }}</p>
               @for (concern of v.concerns; track $index) {
                 <p class="text-cmn-xs text-text-secondary">· {{ concern }}</p>

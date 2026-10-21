@@ -1,0 +1,13 @@
+{
+  "/goals.json": "goals",
+  "/goals/g-blocked.json": "goal-blocked",
+  "/goals/g-running.json": "goal-running",
+  "/goals/g-done.json": "goal-done",
+  "/projects.json": "projects",
+  "/projects/widgets.json": "project-widgets",
+  "/tasks/t-deliver-0001.json": "task-deliver",
+  "/tasks/t-deliver-0001/events.json": "task-deliver-events",
+  "/verdicts.json": "verdicts",
+  "/control.json": "control",
+  "/oauth2/userinfo": "userinfo"
+}

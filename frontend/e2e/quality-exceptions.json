@@ -1,0 +1,37 @@
+{
+  "impeccable": [
+    {
+      "rule": "clipped-overflow-container",
+      "routes": ["*"],
+      "match": "clips a positioned child",
+      "max": 2,
+      "reason": "Detector false positive in lifekit's cmn-app-layout (accepted in lifekit-common's design baseline): the shell CSS-hides the nav it is not using, and a badge in that display:none subtree has no box, so its negative offsets read as escaping the clip."
+    },
+    {
+      "rule": "marquee",
+      "routes": ["*"],
+      "match": ".cmn-skeleton-sweep::after",
+      "reason": "A scan that lands before the feed answers sees the loading skeleton; its shimmer is a loading signal and stops under prefers-reduced-motion (accepted in lifekit-common's design baseline)."
+    },
+    {
+      "rule": "tight-leading",
+      "routes": ["sessions/t-deliver-0001"],
+      "max": 4,
+      "reason": "Detector false positive: the event rows' sublabel (cmn-list-item-row) is one truncated line, and line-height only spaces wrapped lines; the rule counts characters, not lines."
+    }
+  ],
+  "axe": [
+    {
+      "rule": "label-content-name-mismatch",
+      "routes": ["*"],
+      "match": "aria-label=\"Search\"",
+      "reason": "lifekit's cmn-top-bar search button: its name is \"Search\" and its visible text adds the \"⌘K\" key hint. The button belongs to the library, so the fix lands in lifekit-common."
+    },
+    {
+      "rule": "label-content-name-mismatch",
+      "routes": ["*"],
+      "match": "aria-label=\"Account menu\"",
+      "reason": "lifekit's cmn-top-bar account menu: its name is \"Account menu\" and its visible content is the avatar's initials. The trigger belongs to the library, so the fix lands in lifekit-common."
+    }
+  ]
+}

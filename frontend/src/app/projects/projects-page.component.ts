@@ -37,6 +37,7 @@ import {UsageComponent} from '../shared/usage';
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        class="block"
         retryable
       >
         <div class="flex flex-col gap-cmn-3">

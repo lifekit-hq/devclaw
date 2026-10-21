@@ -64,6 +64,12 @@ build takes the same token as a BuildKit secret):
 cd frontend && npm ci && npm run lint && npm test && npm run build && npm run e2e
 ```
 
+`npm run e2e` includes the design and accessibility gate
+(`e2e/quality.spec.ts`): every route, light and dark, desktop and phone,
+through the impeccable URL scan and axe. The scan's engine is fetched once by
+`e2e/impeccable-engine.sh` and pinned by sha256. A finding the console cannot
+fix itself is accepted, with its reason, in `e2e/quality-exceptions.json`.
+
 ## How it works
 
 | Layer | Code | Role |

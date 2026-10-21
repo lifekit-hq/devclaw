@@ -10,13 +10,7 @@ import {expect, type Page, test} from '@playwright/test';
 const fixture = (name: string): unknown =>
   JSON.parse(readFileSync(join(__dirname, 'fixtures', `${name}.json`), 'utf8'));
 
-const FEEDS: Record<string, string> = {
-  '/goals.json': 'goals',
-  '/projects.json': 'projects',
-  '/verdicts.json': 'verdicts',
-  '/control.json': 'control',
-  '/oauth2/userinfo': 'userinfo',
-};
+const FEEDS = fixture('feeds') as Record<string, string>;
 
 const PHONES = [375, 390, 402];
 const PAGES = ['needs-you', 'goals', 'projects', 'verdicts'];
