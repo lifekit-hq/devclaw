@@ -43,7 +43,7 @@ settles or a webhook arrives, for every open goal (`devclaw/goal/tick.py`):
 6. Red CI on a delivered head, not yet recorded → post the failing logs as a
    block and ping. Never retried (ruled 2026-09-13: the session already ran
    what CI runs; a red CI is an environment gap).
-7. Last exit `INTERRUPTED` → spawn (resume the session's own unfinished work).
+7. Last exit `INTERRUPTED` → spawn (a fresh session continues the unfinished work from the goal branch).
 8. Last exit `REVIEW` → post the verdict once; achieved → squash-merge and
    close; refused → blocked.
 9. Last exit `DONE` → CI pending: wait; CI green and no verdict for this head:
@@ -78,8 +78,8 @@ sha, run the engine once, then classify how it ended:
 
 | Result | Exit | Row |
 |---|---|---|
-| quota / auth / outage | (requeued) | account paused, work snapshotted, `pause_count` +1 |
-| stream silence (`DEVCLAW_FIRST_FRAME_S` / `DEVCLAW_SILENCE_S`), harness error, red local verify, delivery failure | `INTERRUPTED` | failed — resumed next tick |
+| quota / auth / outage | (requeued) | account paused, work snapshotted, `pause_count` +1; the tree is kept and the row `--resume`s its own session |
+| stream silence (`DEVCLAW_FIRST_FRAME_S` / `DEVCLAW_SILENCE_S`), harness error, red local verify, delivery failure | `INTERRUPTED` | failed — next tick a fresh session runs on the reset goal branch (never `--resume`) |
 | a gate refused the span (gate-input edit, binary, undeterminable span, gutted tests) | `REFUSED` | failed — the next session is told why; twice in a row blocks |
 | the session said `BLOCKED` | `BLOCKED` | done — the question goes on the thread |
 | ok, span delivered | `DELIVERED` / `DONE` / `NOTHING` (the session's own line) | done, with the PR url |
@@ -123,7 +123,7 @@ The engine (`engine/claude.py`) runs `.devclaw/verify` after the agent's turn
 and hands a red run back to the same session (`--resume`), up to `DEVCLAW_VERIFY_ROUNDS`;
 a code-writing session that leaves no script after being asked ends with a
 failed verify. The host's `verify` gate then fails a red run closed
-(`INTERRUPTED`, resumed).
+(`INTERRUPTED`; the next session starts fresh on the reset goal branch).
 
 A green run is not yet a pass. The same gate then checks that the first-run
 manifest — `.devclaw/verify` and `.devclaw/workflow.md`, how the repo verifies

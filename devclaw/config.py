@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 
+from . import credentials as _credentials
 from ._env_loader import load_dotenv as _load_dotenv
 
 _load_dotenv()
@@ -68,7 +69,7 @@ def built_at() -> "str | None":
 HTTP_PORT = int(os.environ.get("DEVCLAW_PORT", "8000"))
 HTTP_HOST = os.environ.get("DEVCLAW_HOST", "0.0.0.0")
 #: bearer token for the HTTP transport; "" disables auth (local dev).
-AUTH_TOKEN = os.environ.get("DEVCLAW_TOKEN", "")
+AUTH_TOKEN = os.environ.get(_credentials.MCP_TOKEN.var, "")
 #: "" = the production ``claude -p`` engine; "stub" selects the test engine.
 ENGINE = os.environ.get("DEVCLAW_ENGINE", "")
 
@@ -86,7 +87,7 @@ TICK_SECONDS = float(os.environ.get("DEVCLAW_TICK_SECONDS", "10"))
 # ---- goal layer -----------------------------------------------------------
 
 def goal_notify_url() -> str:
-    return os.environ.get("DEVCLAW_GOAL_NOTIFY_URL", "")
+    return os.environ.get(_credentials.NOTIFY_URL.var, "")
 
 
 def goal_tick_seconds() -> int:

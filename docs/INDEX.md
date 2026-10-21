@@ -23,13 +23,13 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the session engine is `engine/claude.py` in a treehouse worktree leased per goal, a silent stream — not a wall clock — interrupts a session, Safety names the worktree and the credential strip, no sandbox — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
+| [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the session engine is `engine/claude.py` in a treehouse worktree leased per goal, a silent stream — not a wall clock — interrupts a session, Safety names the worktree and the credential strip, no sandbox, `--resume` only on the quota pause path, an interrupted task's successor starts fresh — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
 
 ## Flows
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`flows/task-execution.md`](./flows/task-execution.md) | One session, hop by hop: tick → row → branch placement → the session in the goal's treehouse worktree → the verify loop → the gates → delivery → the exit. | **CURRENT** — 2026-10-21 (`claude -p` in a treehouse worktree, the silence watchdog, `--resume`, a failed lease recorded `INTERRUPTED` and retried up to the daily session cap — #952) |
+| [`flows/task-execution.md`](./flows/task-execution.md) | One session, hop by hop: tick → row → branch placement → the session in the goal's treehouse worktree → the verify loop → the gates → delivery → the exit. | **CURRENT** — 2026-10-21 (`claude -p` in a treehouse worktree, the silence watchdog, `--resume` only on the quota pause path while an interrupted task's successor starts fresh, the session env strips every host-only credential, a failed lease recorded `INTERRUPTED` and retried up to the daily session cap — #952) |
 | [`flows/delivery.md`](./flows/delivery.md) | The goal branch, its one PR, the done-gate review, the merge-on-close. | **CURRENT** — 2026-10-21 (the session, not a sandbox, runs what CI runs — #952) |
 
 ## Reference

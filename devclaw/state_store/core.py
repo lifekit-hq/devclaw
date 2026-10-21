@@ -204,17 +204,6 @@ class StateStore(ControlPlaneMixin, EventsMixin, GoalsMixin, PreferencesMixin):
             ).fetchone()
         return _row_to_task(row) if row else None
 
-    def previous_goal_task(self, goal_id: str, task_id: str) -> Optional[Task]:
-        """The goal's task created just before ``task_id`` — whose session an
-        interrupted run hands on to the next one."""
-        with self._lock:
-            row = self._db.execute(
-                "SELECT * FROM tasks WHERE parent_goal_id = ? AND id != ? AND created_at <= "
-                "(SELECT created_at FROM tasks WHERE id = ?) ORDER BY created_at DESC LIMIT 1",
-                (goal_id, task_id, task_id),
-            ).fetchone()
-        return _row_to_task(row) if row else None
-
     def goal_has_live_task(self, goal_id: str) -> bool:
         with self._lock:
             row = self._db.execute(

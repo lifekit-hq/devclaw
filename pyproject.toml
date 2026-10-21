@@ -92,11 +92,11 @@ source_modules = ["devclaw.loom"]
 forbidden_modules = ["devclaw.*"]
 
 [[tool.importlinter.contracts]]
-name = "config is a leaf — only the dotenv bootstrap below it"
+name = "config is a leaf — only the dotenv bootstrap and the credential registry below it"
 type = "forbidden"
 source_modules = ["devclaw.config"]
 forbidden_modules = ["devclaw.*"]
-ignore_imports = ["devclaw.config -> devclaw._env_loader"]
+ignore_imports = ["devclaw.config -> devclaw._env_loader", "devclaw.config -> devclaw.credentials"]
 
 [[tool.importlinter.contracts]]
 name = "dispatch_gate is a leaf — pure window math over config"

@@ -97,8 +97,22 @@ DELIVERY_TOKEN = Credential(
     prefixes=GH_TOKEN_PREFIXES,
 )
 
+MCP_TOKEN = Credential(
+    "DEVCLAW_TOKEN",
+    purpose="bearer auth on devclaw's own HTTP/MCP surface (decide, cancel_goal, …)",
+    scope="the owner's verbs on this instance; unset = no auth (local dev only)",
+    agent=False,
+)
+
+NOTIFY_URL = Credential(
+    "DEVCLAW_GOAL_NOTIFY_URL",
+    purpose="where owner pings go (a webhook URL that can embed its own secret)",
+    scope="post to the owner's notification channel only",
+    agent=False,
+)
+
 #: the registry — the order is the order every hop reports them in
-REGISTRY: tuple[Credential, ...] = (OAUTH_TOKEN, REGISTRY_TOKEN, DELIVERY_TOKEN)
+REGISTRY: tuple[Credential, ...] = (OAUTH_TOKEN, REGISTRY_TOKEN, DELIVERY_TOKEN, MCP_TOKEN, NOTIFY_URL)
 
 #: metered-billing keys that are actively refused at every hop (constitution I):
 #: stripped by the host before any subprocess

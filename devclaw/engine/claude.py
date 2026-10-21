@@ -10,7 +10,8 @@ final message and the usage block.
 **Liveness is the stream, never a clock** (ruled 2026-09-17, Q3). A session
 that emits no first frame within ``DEVCLAW_FIRST_FRAME_S`` or then goes silent
 for ``DEVCLAW_SILENCE_S`` is killed and returned as an error — the queue
-settles it ``INTERRUPTED`` and the next session resumes it with ``--resume``.
+settles it ``INTERRUPTED`` and the next row starts a fresh session on the reset
+goal branch; ``--resume`` continues a session only after a quota pause.
 There is no duration cap.
 
 **The worktree runs what CI runs before the session ends.** For a code kind
@@ -20,7 +21,7 @@ first-run manifest is TRACKED; a red run is handed back to the SAME session
 
 ⚠ This is not a filesystem sandbox: the agent runs as devclaw's user in a
 worktree. The credential strip (``credentials.session_env``) still holds —
-the metered API keys and the host-only GitHub token never reach its env.
+the metered API keys and every host-only credential never reach its env.
 """
 
 from __future__ import annotations

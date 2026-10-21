@@ -48,12 +48,12 @@ class EngineRequest:
     #: AFTER the agent finishes. Its exit code is the real definition of "done"
     #: (the agent's own "I'm finished" is not trusted). None → no gate.
     verify_cmd: Optional[str] = None
-    #: the Claude Code session to continue (``--resume``) — the session's own
-    #: unfinished work after an interruption. None → a fresh session. A resume
+    #: the Claude Code session to continue (``--resume``) — the row's own
+    #: session after a quota pause kept its tree. None → a fresh session. A resume
     #: id the agent no longer knows falls back to a fresh session.
     resume_session_id: Optional[str] = None
     #: optional callback, invoked once with the session id as soon as the
-    #: stream names it — persisted so an interrupted session can be resumed.
+    #: stream names it — persisted so a quota-paused session can be resumed.
     on_session: Optional[Callable[[str], None]] = None
 
 

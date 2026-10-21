@@ -13,7 +13,10 @@ can become a hop nobody wired.
 from __future__ import annotations
 
 import ast
+import asyncio
 import pathlib
+
+import pytest
 
 from devclaw import credentials
 
@@ -67,6 +70,26 @@ def test_registry_is_the_boot_guard_and_the_session_env(monkeypatch) -> None:
     env = claude.session_env()
     registered = {c.var for c in credentials.REGISTRY} | set(credentials.REFUSED)
     assert {k for k in env if k in registered} == set(credentials.agent_vars())
+
+
+@pytest.mark.parametrize("var", [
+    "DEVCLAW_TOKEN", "DEVCLAW_GOAL_NOTIFY_URL", "GH_TOKEN", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+])
+def test_host_only_secret_never_reaches_the_session_or_its_verify(monkeypatch, tmp_path, var) -> None:
+    """The worktree is not a sandbox, so the env strip is the boundary: the
+    MCP bearer token, the notify webhook, the GitHub token and the metered
+    keys must be absent from both the ``claude -p`` env and the verify run."""
+    from devclaw.engine import claude
+
+    monkeypatch.setenv(var, "placeholder")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "placeholder")
+    assert var not in claude.session_env()
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in claude.session_env()
+    result = asyncio.run(claude.run_verify("env | cut -d= -f1", str(tmp_path), timeout=30))
+    assert result["passed"], result
+    names = set(result["output"].split())
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in names
+    assert var not in names
 
 
 def test_least_privilege_is_declared() -> None:

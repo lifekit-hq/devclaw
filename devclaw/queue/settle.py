@@ -30,7 +30,7 @@ from ..gates import GateInput, run_gates
 from ..loom.limits import classify_failure, pause_seconds
 from ..state_store import (
     EXIT_BLOCKED, EXIT_DELIVERED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_NOTHING,
-    EXIT_REFUSED, EXIT_REVIEW, Task, TaskKind, _now_ms,
+    EXIT_REFUSED, EXIT_REVIEW, TaskKind, _now_ms,
 )
 from ..task_change import (
     CHANGE as _CHANGE_SOME,
@@ -279,7 +279,7 @@ class SettleMixin:
             kind=kind, workspace_dir=workspace_dir, goal=brief,
             on_event=functools.partial(self._append_task_event, task_id),
             verify_cmd=row.verify_cmd,
-            resume_session_id=self._resume_session(row),
+            resume_session_id=row.session_id if resumed else None,
             on_session=functools.partial(self._store.set_task_session_id, task_id),
         )
         try:
@@ -371,24 +371,6 @@ class SettleMixin:
             return
         self._store.mark_done(task_id, json.dumps(result), pr_url=pr_url,
                               exit=exit_word or EXIT_DELIVERED, exit_detail=exit_detail)
-
-    def _resume_session(self, row: Task) -> Optional[str]:
-        """The Claude Code session this run continues: its own (a pause or a
-        crash cut it off), else the newest session in the goal's unbroken run of
-        ``INTERRUPTED`` rows of the same kind just before it — unfinished work
-        resumes, a settled session never does."""
-        if row.session_id:
-            return row.session_id
-        if not row.parent_goal_id:
-            return None
-        seen = {row.id}
-        prev = self._store.previous_goal_task(row.parent_goal_id, row.id)
-        while prev is not None and prev.id not in seen and prev.exit == EXIT_INTERRUPTED and prev.kind == row.kind:
-            if prev.session_id:
-                return prev.session_id
-            seen.add(prev.id)
-            prev = self._store.previous_goal_task(row.parent_goal_id, prev.id)
-        return None
 
     async def _maybe_pause(self, task_id: str, workspace_dir: str, text: str) -> bool:
         """A usage / auth / provider-outage failure pauses the ACCOUNT and

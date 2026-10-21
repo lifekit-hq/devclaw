@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from devclaw import credentials
+
 _REPO = Path(__file__).resolve().parents[1]
 _DOC = _REPO / "docs" / "reference" / "env-vars.md"
 
@@ -49,7 +51,7 @@ _CFG_BIND_RE = re.compile(
 def _runtime_reads() -> set[str]:
     files = list((_REPO / "devclaw").rglob("*.py"))
     assert files, "runtime source not found — repo layout changed?"
-    reads: set[str] = set()
+    reads: set[str] = {c.var for c in credentials.REGISTRY if c.var.startswith("DEVCLAW_")}
     for f in files:
         reads |= set(_READ_RE.findall(f.read_text(encoding="utf-8")))
     return reads
