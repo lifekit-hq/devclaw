@@ -81,7 +81,7 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
 
       <cmn-settings-section
         heading="Workspace: Instance"
-        caption="Dispatch and the run window apply to everyone on this devclaw."
+        caption="Shared by everyone on this devclaw."
       >
         @if (error(); as message) {
           <cmn-alert variant="error">{{ message }}</cmn-alert>

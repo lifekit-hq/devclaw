@@ -3,9 +3,11 @@ import {Router} from '@angular/router';
 import {
   AlertComponent,
   AsyncStateComponent,
+  CardComponent,
   CmnCellDirective,
   CmnColumnComponent,
   DataTableComponent,
+  ListSectionComponent,
   PageContainerComponent,
   StatusIndicatorComponent,
   TagComponent,
@@ -15,7 +17,6 @@ import {type ProjectGoalRow} from '../api/devclaw.model';
 import {DevclawApiService} from '../api/devclaw-api.service';
 import {POLL_MS} from '../api/feeds';
 import {feedStatus, liveFeed} from '../api/live-feed';
-import {SectionComponent} from '../shared/section.component';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
 import {AgoPipe} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
@@ -29,11 +30,12 @@ const NOT_FOUND = 404;
     AgoPipe,
     AlertComponent,
     AsyncStateComponent,
+    CardComponent,
     CmnCellDirective,
     CmnColumnComponent,
     DataTableComponent,
+    ListSectionComponent,
     PageContainerComponent,
-    SectionComponent,
     StatusIndicatorComponent,
     TagComponent,
     UsageComponent,
@@ -48,6 +50,7 @@ const NOT_FOUND = 404;
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        class="block"
         retryable
       >
         @if (project(); as p) {
@@ -74,60 +77,68 @@ const NOT_FOUND = 404;
               <cmn-tag>{{ p.health }}</cmn-tag>
             </header>
 
-            <dc-section [count]="p.goals.length" [flush]="true" heading="Goals">
-              @if (p.goals.length) {
-                <cmn-data-table
-                  [rows]="p.goals"
-                  [trackBy]="trackById"
-                  [rowsActionable]="true"
-                  (rowClick)="open($event)"
-                >
-                  <cmn-column key="objective" header="Goal" listSlot="primary">
-                    <ng-template let-g cmnCell>
-                      <span [class.opacity-60]="!!g.outcome" class="block min-w-0">
-                        <span class="block truncate font-medium">{{ g.objective || g.id }}</span>
-                        <span class="block truncate font-mono text-cmn-xs text-text-secondary">
-                          {{ g.id }}{{ g.issues.length ? ' · #' + g.issues.join(', #') : '' }}
-                        </span>
-                      </span>
-                    </ng-template>
-                  </cmn-column>
-                  <cmn-column key="state" header="State" listSlot="trailing">
-                    <ng-template let-g cmnCell>
-                      <cmn-status-indicator
-                        [variant]="stateVariant(g.outcome ?? g.state)"
-                        [live]="stateIsLive(g.state)"
-                      >
-                        {{ g.outcome ?? g.state }}
-                      </cmn-status-indicator>
-                    </ng-template>
-                  </cmn-column>
-                  <cmn-column key="lastSession" header="Last session" listSlot="secondary">
-                    <ng-template let-g cmnCell>
-                      @if (g.lastSession; as s) {
-                        <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
-                          {{ s.exit ?? s.status }} · {{ s.completedAt ?? s.createdAt | ago }}
-                        </cmn-tag>
-                      } @else {
-                        —
-                      }
-                    </ng-template>
-                  </cmn-column>
-                  <cmn-column
-                    key="attentionKind"
-                    header="Needs"
-                    align="right"
-                    listSlot="trailing-secondary"
+            <!-- The card is declared here, not in dc-section, so the table drops its own frame. -->
+            <cmn-list-section [card]="false" heading="Goals">
+              <span cmnListSectionAside class="font-mono font-normal">{{ p.goals.length }}</span>
+              <cmn-card padding="none">
+                @if (p.goals.length) {
+                  <cmn-data-table
+                    [rows]="p.goals"
+                    [trackBy]="trackById"
+                    [rowsActionable]="true"
+                    (rowClick)="open($event)"
                   >
-                    <ng-template let-g cmnCell>{{ g.attentionKind ? 'you' : '' }}</ng-template>
-                  </cmn-column>
-                </cmn-data-table>
-              } @else {
-                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">
-                  No goals on this project.
-                </p>
-              }
-            </dc-section>
+                    <cmn-column key="objective" header="Goal" listSlot="primary">
+                      <ng-template let-g cmnCell>
+                        <span class="block min-w-0">
+                          <span
+                            [class.text-text-secondary]="!!g.outcome"
+                            class="block truncate font-medium"
+                            >{{ g.objective || g.id }}</span
+                          >
+                          <span class="block truncate font-mono text-cmn-xs text-text-secondary">
+                            {{ g.id }}{{ g.issues.length ? ' · #' + g.issues.join(', #') : '' }}
+                          </span>
+                        </span>
+                      </ng-template>
+                    </cmn-column>
+                    <cmn-column key="state" header="State" listSlot="trailing">
+                      <ng-template let-g cmnCell>
+                        <cmn-status-indicator
+                          [variant]="stateVariant(g.outcome ?? g.state)"
+                          [live]="stateIsLive(g.state)"
+                        >
+                          {{ g.outcome ?? g.state }}
+                        </cmn-status-indicator>
+                      </ng-template>
+                    </cmn-column>
+                    <cmn-column key="lastSession" header="Last session" listSlot="secondary">
+                      <ng-template let-g cmnCell>
+                        @if (g.lastSession; as s) {
+                          <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
+                            {{ s.exit ?? s.status }} · {{ s.completedAt ?? s.createdAt | ago }}
+                          </cmn-tag>
+                        } @else {
+                          —
+                        }
+                      </ng-template>
+                    </cmn-column>
+                    <cmn-column
+                      key="attentionKind"
+                      header="Needs"
+                      align="right"
+                      listSlot="trailing-secondary"
+                    >
+                      <ng-template let-g cmnCell>{{ g.attentionKind ? 'you' : '' }}</ng-template>
+                    </cmn-column>
+                  </cmn-data-table>
+                } @else {
+                  <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">
+                    No goals on this project.
+                  </p>
+                }
+              </cmn-card>
+            </cmn-list-section>
           </div>
         }
       </cmn-async-state>

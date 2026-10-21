@@ -54,7 +54,10 @@ export function formatUsage(usage: Usage | UsageTotals | null, compact = false):
 @Component({
   selector: 'dc-usage',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: {class: 'font-mono text-cmn-xs text-text-secondary'},
+  host: {
+    class: 'font-mono text-cmn-xs leading-normal text-text-secondary',
+    '[class.whitespace-nowrap]': 'compact()',
+  },
   template: '<span [attr.title]="view().title || null">{{ view().text }}</span>',
 })
 export class UsageComponent {

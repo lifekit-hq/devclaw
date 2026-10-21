@@ -58,6 +58,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        class="block"
         retryable
       >
         <div class="flex flex-col gap-cmn-5">
@@ -70,9 +71,11 @@ export function issueUrl(repoUrl: string, issue: number): string {
                   </p>
                 }
                 <p class="font-mono text-cmn-xs text-text-secondary">
-                  <a [routerLink]="['/projects', g.projectId]" class="cmn-link">{{
-                    g.projectId
-                  }}</a>
+                  <a
+                    [routerLink]="['/projects', g.projectId]"
+                    class="cmn-link cmn-link--underlined"
+                    >{{ g.projectId }}</a
+                  >
                   · <code>{{ g.branch }}</code>
                 </p>
                 <dc-usage [usage]="g.usage" />
@@ -114,9 +117,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
                   (cancelRequested)="cancel()"
                 />
               </dc-section>
-            }
-
-            @if (!g.outcome) {
+            } @else if (!g.outcome) {
               <dc-section heading="Decide">
                 <p class="text-cmn-sm text-text-secondary">
                   Posted on the issue as an instruction mentioning the bot; it is read on the next
@@ -186,7 +187,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
               </ul>
             </dc-section>
 
-            <dc-section heading="Last world the session was given">
+            <dc-section heading="World the last session saw">
               <pre class="cmn-code-block cmn-code-block--bare">{{
                 g.lastSeen ? (g.lastSeen | json) : '—'
               }}</pre>

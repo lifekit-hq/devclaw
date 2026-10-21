@@ -1,8 +1,9 @@
 """Regenerates the e2e fixtures from the host's own feed routes.
 
 Seeds a throwaway state store with one goal per console state, serves it with
-the stub engine and writes each feed's JSON next to this file, so the
-Playwright suite reads exactly what the routes return. Run from the repo root:
+the stub engine and writes each feed's JSON next to this file, with feeds.json
+mapping each feed path to its file, so the Playwright suite reads exactly what
+the routes return. Run from the repo root:
 
     .venv/bin/python frontend/e2e/fixtures/generate.py
 """
@@ -137,6 +138,10 @@ def main() -> None:
     (HERE / "userinfo.json").write_text(json.dumps(
         {"user": "owner", "email": "owner@example.com", "preferredUsername": "Example Owner"},
         indent=2) + "\n")
+    # The page's feed path -> its fixture, for the specs and serve-dist.mjs.
+    index = {path.split("?")[0]: name for name, path in feeds.items()}
+    index["/oauth2/userinfo"] = "userinfo"
+    (HERE / "feeds.json").write_text(json.dumps(index, indent=2) + "\n")
 
 
 if __name__ == "__main__":

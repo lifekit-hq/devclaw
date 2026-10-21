@@ -80,6 +80,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        class="block"
         retryable
       >
         @if (!shown().length) {
@@ -93,8 +94,12 @@ function matches(g: GoalRow, filter: Filter): boolean {
           >
             <cmn-column key="objective" header="Goal" listSlot="primary">
               <ng-template let-g cmnCell>
-                <span [class.opacity-60]="!!g.outcome" class="block min-w-0">
-                  <span class="block truncate font-medium">{{ g.objective || g.id }}</span>
+                <span class="block min-w-0">
+                  <span
+                    [class.text-text-secondary]="!!g.outcome"
+                    class="block truncate font-medium"
+                    >{{ g.objective || g.id }}</span
+                  >
                   <span class="block truncate font-mono text-cmn-xs text-text-secondary">
                     {{ g.id }} · #{{ g.issues.join(', #') }}
                   </span>
@@ -118,12 +123,15 @@ function matches(g: GoalRow, filter: Filter): boolean {
                   <a
                     [routerLink]="['/sessions', s.id]"
                     (click)="$event.stopPropagation()"
-                    class="cmn-link cmn-link--inherit"
+                    class="cmn-link cmn-link--inherit flex items-baseline gap-cmn-2"
                     title="open the session"
                   >
-                    <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
-                      {{ s.exit ?? s.status }}{{ s.exitDetail ? ': ' + s.exitDetail : '' }}
-                    </cmn-tag>
+                    <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
+                      s.exit ?? s.status
+                    }}</cmn-tag>
+                    @if (s.exitDetail) {
+                      <span class="text-cmn-sm text-text-secondary">{{ s.exitDetail }}</span>
+                    }
                   </a>
                 } @else {
                   —
