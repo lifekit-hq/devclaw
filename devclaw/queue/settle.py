@@ -374,15 +374,20 @@ class SettleMixin:
 
     def _resume_session(self, row: Task) -> Optional[str]:
         """The Claude Code session this run continues: its own (a pause or a
-        crash cut it off), else the goal's previous session when that one was
-        ``INTERRUPTED`` — unfinished work resumes, a settled session never does."""
+        crash cut it off), else the newest session in the goal's unbroken run of
+        ``INTERRUPTED`` rows of the same kind just before it — unfinished work
+        resumes, a settled session never does."""
         if row.session_id:
             return row.session_id
         if not row.parent_goal_id:
             return None
+        seen = {row.id}
         prev = self._store.previous_goal_task(row.parent_goal_id, row.id)
-        if prev is not None and prev.exit == EXIT_INTERRUPTED and prev.kind == row.kind:
-            return prev.session_id
+        while prev is not None and prev.id not in seen and prev.exit == EXIT_INTERRUPTED and prev.kind == row.kind:
+            if prev.session_id:
+                return prev.session_id
+            seen.add(prev.id)
+            prev = self._store.previous_goal_task(row.parent_goal_id, prev.id)
         return None
 
     async def _maybe_pause(self, task_id: str, workspace_dir: str, text: str) -> bool:
