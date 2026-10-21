@@ -74,3 +74,27 @@ async def test_a_review_that_changed_the_tree_never_settles_a_verdict(tmp_path, 
     if settled == "failed":
         assert "read-only" in (t.error or "")
     store.close()
+
+
+async def test_a_quota_paused_review_leaves_no_snapshot_and_resumes_clean(tmp_path, repo):
+    store = StateStore(str(tmp_path / "t.db"))
+    calls = []
+
+    async def review(req: EngineRequest):
+        calls.append(req)
+        if len(calls) == 1:
+            _untracked(repo)
+            return {"status": "error", "error": "API Error: 429 Too Many Requests"}
+        return {"status": "ok", "workspaceDir": req.workspace_dir, "agent_output": ACHIEVED}
+
+    q = TaskQueue(store, runner=review)
+    tid = q.submit(kind="review_repository", workspace_dir=str(repo), goal="review")
+    await q.drain()
+    assert store.get_task(tid).status == "pending"
+    log = subprocess.run(["git", "log", "--oneline"], cwd=repo, check=True, capture_output=True, text=True).stdout
+    assert "wip(devclaw)" not in log
+    store.clear_global_pause()
+    await q.drain()
+    t = store.get_task(tid)
+    assert t.status == "done" and t.exit == EXIT_REVIEW
+    store.close()

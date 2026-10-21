@@ -78,6 +78,12 @@ async def _wip_commit(host_dir: str, message: str) -> str:
         return f"crashed: {err.__class__.__name__}: {err}"
 
 
+async def _snapshot(kind: str, host_dir: str, message: str) -> str:
+    """A read-only review has no work to snapshot, and a WIP commit would move
+    the HEAD the read-only check compares against."""
+    return "" if kind == "review_repository" else await _wip_commit(host_dir, message)
+
+
 async def _review_touched(host_dir: str, base: str) -> str:
     """Why a read-only review left its worktree changed, or ``""``. Fails
     CLOSED: a tree git cannot read is not proof the review stayed read-only."""
@@ -176,7 +182,7 @@ class SettleMixin:
         try:
             result = await self._runner(request)
         except Exception as err:  # noqa: BLE001 — a harness failure
-            if await self._maybe_pause(task_id, workspace_dir, str(err)):
+            if await self._maybe_pause(task_id, kind, workspace_dir, str(err)):
                 return
             msg = f"engine error: {err}"
             self._store.mark_failed(task_id, msg[:2000], exit=EXIT_INTERRUPTED, exit_detail=msg[:400])
@@ -189,16 +195,16 @@ class SettleMixin:
             reason = (result.get("reason") or "").strip() or "no reason given"
             if result.get("block_kind") == "env" and result.get("block_item"):
                 reason = f"env — {result['block_item']}"
-            await _wip_commit(workspace_dir, f"wip(devclaw): blocked (session {task_id[:8]})")
+            await _snapshot(kind, workspace_dir, f"wip(devclaw): blocked (session {task_id[:8]})")
             self._store.mark_done(task_id, json.dumps(result), exit=EXIT_BLOCKED, exit_detail=reason)
             return
         if status != "ok":
             text = str(result.get("error") or "unknown error")
             if status == "rate_limited" and result.get("retry_after"):
                 text = f"rate limit; retry-after: {result['retry_after']}s"
-            if await self._maybe_pause(task_id, workspace_dir, text):
+            if await self._maybe_pause(task_id, kind, workspace_dir, text):
                 return
-            await _wip_commit(workspace_dir, f"wip(devclaw): interrupted (session {task_id[:8]})")
+            await _snapshot(kind, workspace_dir, f"wip(devclaw): interrupted (session {task_id[:8]})")
             self._store.mark_failed(task_id, text[:2000], exit=EXIT_INTERRUPTED, exit_detail=text[:400])
             self._check_and_trip_breaker(workspace_dir, task_id)
             return
@@ -234,7 +240,7 @@ class SettleMixin:
         goal = self._store.get_goal(goal_id) if goal_id else None
         return tuple(goal.issues) if goal is not None else ()
 
-    async def _maybe_pause(self, task_id: str, workspace_dir: str, text: str) -> bool:
+    async def _maybe_pause(self, task_id: str, kind: str, workspace_dir: str, text: str) -> bool:
         """A usage / auth / provider-outage failure pauses the ACCOUNT and
         requeues the row with its work snapshotted. True iff it paused."""
         cls = classify_failure(text, now_utc=datetime.now(timezone.utc))
@@ -248,7 +254,7 @@ class SettleMixin:
             self._store.mark_failed(task_id, msg, exit=EXIT_INTERRUPTED, exit_detail=msg[:400])
             self._check_and_trip_breaker(workspace_dir, task_id)
             return True
-        snapshot = await _wip_commit(workspace_dir, f"wip(devclaw): interrupted by usage limit (session {task_id[:8]})")
+        snapshot = await _snapshot(kind, workspace_dir, f"wip(devclaw): interrupted by usage limit (session {task_id[:8]})")
         self._store.requeue_task(task_id)
         sys.stderr.write(f"task-queue: session {task_id} hit {cls.kind.value} — pausing dispatch "
                          f"~{backoff}s, requeued (wip: {snapshot})\n")
