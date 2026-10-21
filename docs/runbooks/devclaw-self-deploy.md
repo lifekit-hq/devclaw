@@ -9,7 +9,8 @@ GitHub-hosted arm64 runner — never on the box — and pushed to
 `.github/workflows/docker-build.yml` on every push to main. The box only pulls
 those exact tags (`.github/workflows/deploy.yml`) and runs them as its **own compose project**
 (`docker compose -p devclaw -f deploy/docker-compose.devclaw.yml`), separate
-from lifekit-stack's OpenClaw project. The two stay integrated at runtime through
+from lifekit-stack's OpenClaw compose project (a neighbouring project, not part of
+devclaw). The two stay integrated at runtime through
 two externally-declared seams: the `lifekit-shared` network and the
 `devclaw-state` volume.
 
@@ -29,7 +30,7 @@ two externally-declared seams: the `lifekit-shared` network and the
 | Where it builds | on the box | GitHub-hosted arm64 (`docker-build.yml`); the box pulls by SHA and builds nothing |
 | Where it runs | `compose` project (with gateway, dashboard, …) | own `devclaw` project |
 | Deploy trigger | `ci.yml` deploy job auto-fires on every push to main | `deploy.yml` `workflow_dispatch`, two lanes: manual, and `auto=true` self-triggered by devclaw once a published main commit armed it (`docker-build.yml` succeeded) and no session runs, via `deploy/deploy-devclaw-auto.sh` (probe + one rollback, spec 025 US2) |
-| Blast radius | full-stack rebuild SIGKILLs in-flight goals | devclaw-only recreate; OpenClaw untouched |
+| Blast radius | full-stack rebuild SIGKILLs in-flight goals | devclaw-only recreate; lifekit-stack's OpenClaw project untouched |
 
 ---
 
@@ -146,11 +147,11 @@ curl -fsS http://127.0.0.1:18791/health | grep -o '"git_sha":"[^"]*"'
 
 # goals survived the cutover — count must match pre-cutover
 #   (list_goals via the MCP, or inspect the DB)
-# OpenClaw-side containers were NOT recreated — uptimes unbroken
+# lifekit-stack's containers (a separate project) were NOT recreated — uptimes unbroken
 docker ps --format '{{.Names}}\t{{.Status}}' | grep -E 'gateway|dashboard|notify-relay|cli'
 ```
 
-Success = new SHA on `/health`, goal count unchanged, OpenClaw uptimes unbroken.
+Success = new SHA on `/health`, goal count unchanged, lifekit-stack uptimes unbroken.
 
 ---
 
@@ -158,21 +159,23 @@ Success = new SHA on `/health`, goal count unchanged, OpenClaw uptimes unbroken.
 
 > Completed 2026-08-16 — kept as the cutover record.
 
-In the lifekit-stack repo (separate branch), the devclaw build is removed and
-the image is referenced by tag (spec FR-007):
+In the lifekit-stack repo (separate branch), the devclaw build was removed and
+the image referenced by tag (spec FR-007). What that change did, at the time:
 
-- **Delete** `compose/devclaw-mcp/Dockerfile` and `compose/devclaw-sandbox/Dockerfile`.
-- **Remove** the `devclaw-mcp`, `devclaw-sandbox`, and `ops-agent` *run/build*
+- Deleted `compose/devclaw-mcp/Dockerfile` and the then-existing
+  `compose/devclaw-sandbox/Dockerfile`.
+- Removed the `devclaw-mcp`, `devclaw-sandbox`, and `ops-agent` *run/build*
   stanzas from `compose/docker-compose.yml`. (The `ops-agent` build-only
-  service this step used to keep is gone too — the watchdog was retired on
+  service the step used to keep is gone too — the watchdog was retired on
   2026-09-06, tinyspec `deadman-metrics`.)
-- **Attach** `openclaw-gateway` + `notify-relay` to the external
-  `lifekit-shared` network (in addition to their default).
-- **Strip** the devclaw block from `scripts/deploy.sh`: the `--no-cache` rebuild
+- Attached `notify-relay` and, at the time, the since-retired `openclaw-gateway`
+  waiter to the external `lifekit-shared` network (in addition to their
+  default). Neither is part of devclaw; today the seam is `notify-relay` only.
+- Stripped the devclaw block from `scripts/deploy.sh`: the `--no-cache` rebuild
   of both images, the `docker tag devclaw-sandbox` step, and the entire
   md5-verify-against-GitHub stage.
-- `redeploy-devclaw.sh` in lifekit-stack is superseded by
-  devclaw's `deploy/deploy-devclaw.sh` — delete it.
+- Superseded `redeploy-devclaw.sh` in lifekit-stack with devclaw's
+  `deploy/deploy-devclaw.sh` and deleted it.
 
 After this, lifekit-stack contains no devclaw Dockerfile, no `git clone` of
 devclaw, no devclaw `build:` stanza, and no md5-verify (SC-006).
