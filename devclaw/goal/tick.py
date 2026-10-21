@@ -73,20 +73,24 @@ async def _ping(ctx: TickContext, text: str) -> None:
 
 async def _spawn(ctx: TickContext, goal: Goal, world: World, kind: str, brief: str, outcome: str) -> str:
     """Create the row inside one transaction with the fingerprint it was given,
-    in the goal's leased worktree. No worktree, no session: the world is not
-    recorded, so the next tick tries again."""
+    in the goal's leased worktree. No worktree, no session: the row settles
+    ``INTERRUPTED`` with the lease error, so the next tick tries again."""
+    checkout, unplaced = goal.workspace_dir, None
     try:
         checkout = await ctx.lease(goal.workspace_dir, goal.repo_url, goal.id)
     except Exception as exc:  # noqa: BLE001
-        ctx.log(goal.id, f"no worktree leased: {exc}")
-        return "unleased"
+        unplaced = f"no worktree leased: {exc}"
+        ctx.log(goal.id, unplaced)
     with ctx.store.transaction():
         ctx.queue.submit(  # type: ignore[attr-defined]
             kind=kind, workspace_dir=checkout, goal=brief, verify_cmd=None,
             deliver=(kind != "review_repository"), parent_goal_id=goal.id,
             target_branch=goal.branch, project_id=goal.project_id, pump=False,
+            unplaced=unplaced,
         )
         ctx.store.set_goal_last_seen(goal.id, world.fingerprint_json())
+    if unplaced is not None:
+        return "unleased"
     ctx.queue.pump()  # type: ignore[attr-defined]
     return outcome
 

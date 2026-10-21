@@ -46,7 +46,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 | [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + treehouse) on one goal. | **CURRENT** — 2026-10-21 (no sandbox image — #952) |
 | [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-09-13 |
 | [`runbooks/vps-waiter-deploy.md`](./runbooks/vps-waiter-deploy.md) | The OpenClaw waiter on the VPS and its tool menu. | **CURRENT** — 2026-10-12 (tool menu: the 18 v2 `@mcp.tool` verbs; v1 verbs removed from the waiter prompt) |
-| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-07 (one image, `devclaw-mcp`, builds on hosted arm64 via `docker-build.yml`; the box pulls by SHA; the sandbox image is gone — #952) |
+| [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-21 (one image, `devclaw-mcp`, builds on hosted arm64 via `docker-build.yml`; the box pulls by SHA; the sandbox image is gone — #952) |
 
 ## Spikes
 

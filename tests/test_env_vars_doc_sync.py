@@ -35,6 +35,7 @@ _ENGINE = _REPO / "devclaw" / "engine" / "claude.py"
 # read, and inert in production until 2026-09-06 because the scan stopped at
 # the launcher).
 _GIT_IDENTITY = _REPO / "devclaw" / "git_identity.py"
+_WORKSPACE = _REPO / "devclaw" / "engine" / "workspace.py"
 _CONFIG = _REPO / "devclaw" / "config.py"
 #: a `_config.<NAME>` reference in the engine
 _CFG_REF_RE = re.compile(r"_config\.([A-Za-z_]+)")
@@ -84,7 +85,7 @@ def _engine_env_vars() -> set[str]:
     back to the env var its binding in ``config.py`` reads. A new engine dial
     is therefore covered the moment the engine reads it — no list to remember.
     """
-    src = _ENGINE.read_text(encoding="utf-8") + _GIT_IDENTITY.read_text(encoding="utf-8")
+    src = "".join(p.read_text(encoding="utf-8") for p in (_ENGINE, _GIT_IDENTITY, _WORKSPACE))
     names = set(_CFG_REF_RE.findall(src))
     config_src = _CONFIG.read_text(encoding="utf-8")
     found: set[str] = set()

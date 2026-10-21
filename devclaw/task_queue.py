@@ -24,7 +24,7 @@ from .engine import Engine
 from .engine.claude import run_claude
 from .queue.admission import AdmissionMixin
 from .queue.settle import SettleMixin, _capture_change, _diff_stats  # noqa: F401 — re-exported for tests
-from .state_store import StateStore, TaskKind, _now_ms
+from .state_store import EXIT_INTERRUPTED, StateStore, TaskKind, _now_ms
 
 #: default cap on concurrently-running sessions; ``set_max_concurrent`` beats it.
 GLOBAL_MAX_CONCURRENT = _config.GLOBAL_MAX_CONCURRENT
@@ -102,16 +102,22 @@ class TaskQueue(SettleMixin, AdmissionMixin):
     def submit(self, *, kind: TaskKind, workspace_dir: str, goal: str,
                verify_cmd: Optional[str] = None, deliver: bool = False,
                parent_goal_id: Optional[str] = None, target_branch: Optional[str] = None,
-               project_id: Optional[str] = None, pump: bool = True) -> str:
+               project_id: Optional[str] = None, pump: bool = True,
+               unplaced: Optional[str] = None) -> str:
         """Create a pending row and (by default) reconcile at once. ``pump=False``
         lets a caller create the row inside its own transaction and pump after
-        it commits."""
+        it commits. ``unplaced`` is why the session has nowhere to run: the row
+        settles ``INTERRUPTED`` with it at once and never dispatches."""
         task_id = str(uuid.uuid4())
         self._store.create_task(
             id=task_id, kind=kind, workspace_dir=workspace_dir, goal=goal,
             verify_cmd=verify_cmd, deliver=deliver, parent_goal_id=parent_goal_id,
             target_branch=target_branch, project_id=project_id,
         )
+        if unplaced is not None:
+            detail = f"workspace prep failed: {unplaced}"
+            self._store.mark_failed(task_id, detail[:2000], exit=EXIT_INTERRUPTED, exit_detail=detail[:400])
+            return task_id
         if pump:
             self._pump()
         return task_id

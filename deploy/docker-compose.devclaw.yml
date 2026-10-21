@@ -89,11 +89,12 @@ services:
       # contend for one account quota, and on 2026-08-29 that killed six tasks
       # with nothing delivered. Default mirrors devclaw/config.py.
       DEVCLAW_MAX_CONCURRENT: ${DEVCLAW_MAX_CONCURRENT:-1}
-      # The engine dials — everything engine/claude.py reads. Same trap: without
+      # The engine dials — everything engine/claude.py and engine/workspace.py read. Same trap: without
       # a line here an env-file setting is inert on the deployed instance.
       # tests/test_env_vars_doc_sync.py fails if a new dial lands without one.
       DEVCLAW_EXEC_MODEL: ${DEVCLAW_EXEC_MODEL:-}
       DEVCLAW_CLAUDE_BIN: ${DEVCLAW_CLAUDE_BIN:-claude}
+      DEVCLAW_TREEHOUSE_BIN: ${DEVCLAW_TREEHOUSE_BIN:-treehouse}
       DEVCLAW_FIRST_FRAME_S: ${DEVCLAW_FIRST_FRAME_S:-120}
       DEVCLAW_SILENCE_S: ${DEVCLAW_SILENCE_S:-1800}
       DEVCLAW_VERIFY_ROUNDS: ${DEVCLAW_VERIFY_ROUNDS:-3}
