@@ -2,6 +2,28 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.4.0](https://github.com/lifekit-hq/devclaw/compare/v2.3.1...v2.4.0) (2026-10-21)
+
+
+### Features
+
+* **engine:** ship the branch through no-mistakes, drop home-built gates and delivery ([#964](https://github.com/lifekit-hq/devclaw/issues/964)) ([f7861f6](https://github.com/lifekit-hq/devclaw/commit/f7861f6f016b3883809d4f6f73ebdd2979b30bd8))
+* **engine:** swap the sandbox worker for claude -p in a treehouse worktree ([#961](https://github.com/lifekit-hq/devclaw/issues/961)) ([bcf7dbd](https://github.com/lifekit-hq/devclaw/commit/bcf7dbd8df9b2bff146e1e1613315c338363e034))
+* **frontend:** publish a fixture-backed console demo to GitHub Pages ([#963](https://github.com/lifekit-hq/devclaw/issues/963)) ([7628fa1](https://github.com/lifekit-hq/devclaw/commit/7628fa127b43d59719fef8084baf00a0d951e43b))
+
+
+### Bug Fixes
+
+* **frontend:** gate the console on the impeccable scan and axe, and polish each route ([#962](https://github.com/lifekit-hq/devclaw/issues/962)) ([412468b](https://github.com/lifekit-hq/devclaw/commit/412468bc242aedd2fb060b202add62ba6c734a0c))
+* **goal:** keep the done-gate on the claude -p engine ([#965](https://github.com/lifekit-hq/devclaw/issues/965)) ([028cd20](https://github.com/lifekit-hq/devclaw/commit/028cd202f527dde6049faa807e1ced857d447b5c))
+
+
+### Documentation
+
+* add the case study and evidence page ([#958](https://github.com/lifekit-hq/devclaw/issues/958)) ([#967](https://github.com/lifekit-hq/devclaw/issues/967)) ([24331cd](https://github.com/lifekit-hq/devclaw/commit/24331cdbac0a4dc08d658d1de5616c1ea954b472))
+* align README and docs with the claude -p / treehouse / no-mistakes re-cut ([#966](https://github.com/lifekit-hq/devclaw/issues/966)) ([b18665b](https://github.com/lifekit-hq/devclaw/commit/b18665b247d536c11aff4c1d9fe772384708da05))
+* **spikes:** record whether no-mistakes judges a goal's Done when ([#959](https://github.com/lifekit-hq/devclaw/issues/959)) ([8558de4](https://github.com/lifekit-hq/devclaw/commit/8558de4b3eba70e7adb0fbc5d6660097afedfa9c)), closes [#951](https://github.com/lifekit-hq/devclaw/issues/951)
+
 ## [2.3.1](https://github.com/lifekit-hq/devclaw/compare/v2.3.0...v2.3.1) (2026-10-17)
 
 
