@@ -94,6 +94,7 @@ async def test_a_quota_paused_review_leaves_no_snapshot_and_resumes_clean(tmp_pa
     log = subprocess.run(["git", "log", "--oneline"], cwd=repo, check=True, capture_output=True, text=True).stdout
     assert "wip(devclaw)" not in log
     store.clear_global_pause()
+    q.pump()
     await q.drain()
     t = store.get_task(tid)
     assert t.status == "done" and t.exit == EXIT_REVIEW
