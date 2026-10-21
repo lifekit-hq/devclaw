@@ -65,15 +65,29 @@ const ready = async (page: Page, url: string, theme: string): Promise<void> => {
   await page.evaluate(() => document.fonts.ready);
 };
 
-// Every route the router declares is scanned (with the fixture's ids for its params).
-test('the gate covers every route of the console', () => {
-  const declared = [
-    ...readFileSync(join(__dirname, '../src/app/app.routes.ts'), 'utf8').matchAll(
-      /path: '([^'*]+)'/g
-    ),
-  ].map(m => m[1]);
-  const scanned = new Set(ROUTES.map(r => r.replace(/\/[^/]+$/, '/:id')));
-  expect(declared.filter(path => !scanned.has(path))).toEqual([]);
+// ROUTES stays in step with the router. The router's table is not importable into Playwright's
+// Node loader (Angular ships ESM chunks it cannot link), so the built app answers instead: every
+// listed route resolves to itself (the `**` redirect would change the URL), and every console
+// link on those pages leads to a route of the same shape as one listed.
+test('the gate covers every route of the console', async ({page}) => {
+  const shape = (route: string): string => route.replace(/\/[^/]+$/, '/:id');
+  const scanned = new Set(ROUTES.map(shape));
+  const linked = new Set<string>();
+  for (const route of ROUTES) {
+    await ready(page, `${THEMES.light}/console/${route}`, 'light');
+    expect(new URL(page.url()).pathname).toBe(`/console/${route}`);
+    const hrefs = await page
+      .locator('a[href]')
+      .evaluateAll(links => links.map(link => (link as HTMLAnchorElement).href));
+    for (const href of hrefs) {
+      const url = new URL(href);
+      const path = url.pathname.replace(/^\/console\/?/, '');
+      if (url.origin === THEMES.light && url.pathname.startsWith('/console') && path) {
+        linked.add(shape(path));
+      }
+    }
+  }
+  expect([...linked].filter(path => !scanned.has(path))).toEqual([]);
 });
 
 test.describe('impeccable', () => {
