@@ -9,11 +9,12 @@ and this tag in the same PR.
 ```
 docs/
 ├── architecture.md    the mental model + the locked contracts (spec 046)
+├── case-study.md      what devclaw delivered, what failed, what it costs
 ├── flows/             one session's journey; how a session becomes a PR and a merge
 ├── reference/         env vars
 ├── runbooks/          doctor, live shakedown, webhooks, self-deploy
 ├── spikes/            dated experiments that settle one design question
-└── assets/            console screenshots
+└── assets/            console screenshots (the case study's)
 ```
 
 Direction memory lives in [`../specs/`](../specs/): spec 046 is the design;
@@ -24,6 +25,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 | Doc | Purpose | Currency |
 |---|---|---|
 | [`architecture.md`](./architecture.md) | **Start here.** The four layers, the tick rule, the world fingerprint, what the host stores and what GitHub carries, the invariants and where each is enforced. | **CURRENT** — 2026-10-21 (the four-layer diagram marks what the re-cut kept and what `claude -p`, a treehouse worktree and no-mistakes replaced; any MCP client drives the tools, no chat waiter — #955; the done-gate on the new engine: a review that changes its worktree fails closed, a verdict counts only for the head it read and the merge is pinned to it, an interrupted review is a review again, the owner's answer wakes a refused gate — #954; the home-built gates and delivery are gone: the session ships through no-mistakes, the engine requires a passed run carrying its head, CI stays the tick's read — #953; the session engine is `engine/claude.py` in a treehouse worktree leased per goal, a silent stream — not a wall clock — interrupts a session, Safety names the worktree and the credential strip, no sandbox, `--resume` only on the quota pause path, an interrupted task's successor starts fresh — #952; 2026-10-13: the code map adds the `me` route and `state_store/preferences.py`, and the stored state names `user_preferences`; the console is the Angular PWA `frontend/`, React `console/` deleted; written 2026-09-13 for spec 046) |
+| [`case-study.md`](./case-study.md) | The case study and evidence page: what makes devclaw distinct, current console screenshots, the delivered PRs and how they were verified, the v0.1 result and lessons, the cost model. | **CURRENT** — 2026-10-21 (written for #958; screenshots taken from the hosted demo, PRs verified from GitHub's records) |
 
 ## Flows
 
