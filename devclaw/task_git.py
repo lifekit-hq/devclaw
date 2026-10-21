@@ -32,6 +32,17 @@ def _git_head_sync(host_dir: str) -> str:
     return p.stdout.strip() if p.returncode == 0 else ""
 
 
+def _git_tracked_changes_sync(host_dir: str) -> "str | None":
+    """Changes to tracked files (``git status --porcelain``, untracked files
+    left out), ``""`` on a clean tree, None when git cannot tell."""
+    try:
+        p = subprocess.run(["git", "-C", host_dir, "status", "--porcelain", "--untracked-files=no"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return p.stdout.strip() if p.returncode == 0 else None
+
+
 def _wip_commit_sync(host_dir: str, message: str) -> str:
     """Commit any uncommitted changes as a WIP commit. Returns ``"committed"``,
     ``"clean tree"``, or a short reason. Never raises."""

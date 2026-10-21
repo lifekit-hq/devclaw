@@ -30,7 +30,7 @@ from .prompts import review_brief, session_brief
 from .world import World, WorldReader
 
 PostComment = Callable[[str, int, str], Awaitable[str]]
-Merge = Callable[[str, str], Awaitable[tuple[str, str]]]
+Merge = Callable[[str, str, str], Awaitable[tuple[str, str]]]
 Lease = Callable[[str, "str | None", str], Awaitable[str]]
 
 #: outcomes after which the goal HOLDS its project's lane this tick
@@ -155,10 +155,16 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
                             text=f"{detail}\n\n{logs}".strip())
 
     if last is not None and last.exit == EXIT_INTERRUPTED:
+        if last.kind == "review_repository":
+            return await _spawn(ctx, goal, world, "review_repository", review_brief(goal, world), "gate")
         return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "resumed")
 
-    if last is not None and last.exit == EXIT_REVIEW:
-        return await _settle_review(ctx, goal, world, last)
+    # a verdict is about the head the review read; a PR that moved since
+    # falls through to a fresh session on the new head
+    if last is not None and last.exit == EXIT_REVIEW and (last.pre_run_sha or head) == head:
+        settled = await _settle_review(ctx, goal, world, last)
+        if settled is not None:
+            return settled
 
     if last is not None and last.exit == EXIT_DONE:
         if world.pr.state == "none":
@@ -185,9 +191,10 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
     return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "spawned")
 
 
-async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Task) -> str:
+async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Task) -> Optional[str]:
     """The review session finished: record its verdict on the PR once, then
-    act on it — merge and close, or stop for the owner."""
+    act on it — merge and close, or stop for the owner. None once the owner
+    has answered a refusal: the caller routes the moved world."""
     head = world.pr.head_sha
     existing = [v for v in world.verdicts_for_head(head) if v.field("task") == review.id]
     if not existing:
@@ -203,16 +210,15 @@ async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Tas
         if world.pr.number:
             await ctx.post_comment(goal.repo_url, world.pr.number, body)
         ctx.log(goal.id, f"done-gate: achieved={verdict.achieved} unreadable={verdict.unreadable}")
-        if verdict.unreadable:
-            return "gate unreadable"
         if not verdict.achieved:
-            await _ping(ctx, f"⛔ {goal.id} done-gate refused — {verdict.summary[:300]}\n{world.pr.url}")
-            return "blocked"
+            why = verdict.raw_error if verdict.unreadable else verdict.summary
+            await _ping(ctx, f"⛔ {goal.id} done-gate refused — {why[:300]}\n{world.pr.url}")
+            return "gate unreadable" if verdict.unreadable else "blocked"
         return await _merge(ctx, goal, world)
-    v = existing[-1]
-    if v.field("achieved") == "1":
+    if existing[-1].field("achieved") == "1":
         return await _merge(ctx, goal, world)
-    return "blocked" if v.field("unreadable") != "1" else "gate unreadable"
+    # refused, and the goal is not blocked: the owner has answered since
+    return None
 
 
 async def _merge(ctx: TickContext, goal: Goal, world: World) -> str:
@@ -220,7 +226,7 @@ async def _merge(ctx: TickContext, goal: Goal, world: World) -> str:
         return "conflicting"  # the fingerprint moved: the next tick spawns the resolution
     if world.pr.state == "open" and world.pr.ci not in ("green", "no_workflows"):
         return "ci pending" if world.pr.ci == "pending" else "merge held"
-    outcome, detail = await ctx.merge(goal.repo_url, world.pr.url)
+    outcome, detail = await ctx.merge(goal.repo_url, world.pr.url, world.pr.head_sha)
     if outcome == "merged":
         return await _close(ctx, goal, "achieved", f"merged {world.pr.url}")
     ctx.log(goal.id, f"merge {outcome}: {detail}")

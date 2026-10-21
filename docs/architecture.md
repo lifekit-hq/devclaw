@@ -43,9 +43,12 @@ settles or a webhook arrives, for every open goal (`devclaw/goal/tick.py`):
 6. Red CI on a delivered head, not yet recorded → post the failing logs as a
    block and ping. Never retried (ruled 2026-09-13: the session already ran
    what CI runs; a red CI is an environment gap).
-7. Last exit `INTERRUPTED` → spawn (a fresh session continues the unfinished work from the goal branch).
-8. Last exit `REVIEW` → post the verdict once; achieved → squash-merge and
-   close; refused → blocked.
+7. Last exit `INTERRUPTED` → spawn a fresh session of the same kind (a code
+   session continues the unfinished work from the goal branch; an interrupted
+   review is a review again).
+8. Last exit `REVIEW` on the head the review read → post the verdict once;
+   achieved → squash-merge and close; refused → blocked until the owner
+   answers. A PR that moved since the review read it falls through.
 9. Last exit `DONE` → CI pending: wait; CI green and no verdict for this head:
    spawn the read-only review session.
 10. Fingerprint unchanged since the last session was given it → nothing.
@@ -78,11 +81,11 @@ sha, run the engine once, then classify how it ended:
 
 | Result | Exit | Row |
 |---|---|---|
-| quota / auth / outage | (requeued) | account paused, work snapshotted, `pause_count` +1; the tree is kept and the row `--resume`s its own session |
+| quota / auth / outage | (requeued) | account paused, work snapshotted (a read-only review is not), `pause_count` +1; the tree is kept and the row `--resume`s its own session |
 | stream silence (`DEVCLAW_FIRST_FRAME_S` / `DEVCLAW_SILENCE_S`), harness error, red local verify, a hand-off that did not ship | `INTERRUPTED` | failed — next tick a fresh session runs on the reset goal branch (never `--resume`) |
 | the session said `BLOCKED` | `BLOCKED` | done — the question goes on the thread |
 | ok, branch shipped through no-mistakes (or nothing to ship) | `DELIVERED` / `DONE` / `NOTHING` (the session's own line) | done, with the PR url |
-| a review session | `REVIEW` | done — the verdict JSON in the result |
+| a review session | `REVIEW` | done — the verdict JSON in the result; failed when it moved HEAD or changed a tracked file (read-only is checked, never trusted) |
 
 ### The done-gate
 
@@ -92,7 +95,8 @@ into clauses, cite evidence per clause, answer in JSON. `devclaw/goal/donegate.p
 validates it mechanically — achieved only when every clause is satisfied with
 evidence and no question is open; no readable JSON is `unreadable` and never
 passes. The verdict is posted on the PR; achieved squash-merges
-(`gh pr merge --squash`) and closes the goal.
+(`gh pr merge --squash --match-head-commit <the judged head>`) and closes
+the goal.
 
 ## Part II — the locked contracts
 

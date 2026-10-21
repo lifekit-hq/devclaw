@@ -75,7 +75,9 @@ def attention(goal: dict, last: Optional[Task], decisions: list[Decision],
                    "recommended": b["recommended"], "default": b["default"], "link": _issue_url(goal)}
     elif last.exit == EXIT_REVIEW:
         v = _donegate.parse_verdict(str(_result(last).get("agent_output") or ""))
-        if last.status != "done" or v.unreadable:
+        if last.status != "done":
+            v = _donegate.Verdict(False, unreadable=True, raw_error=last.error or "review session failed")
+        if v.unreadable:
             row = {"kind": "done-gate refused", "question": "the review produced no readable verdict"
                    + (f": {v.raw_error}" if v.raw_error else "")}
         elif not v.achieved:

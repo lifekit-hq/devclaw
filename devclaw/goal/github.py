@@ -354,9 +354,10 @@ async def post_comment(repo_url: str, number: int, body: str) -> str:
 
 # ---- the merge (the confirmed-achieved close) -----------------------------------
 
-async def squash_merge(repo_url: str, pr_url: str) -> tuple[str, str]:
-    """``("merged" | "conflict" | "error", detail)``."""
-    rc, out = await gh("pr", "merge", pr_url, "--squash", "--delete-branch")
+async def squash_merge(repo_url: str, pr_url: str, head: str) -> tuple[str, str]:
+    """``("merged" | "conflict" | "error", detail)``. GitHub refuses the merge
+    unless the PR's head is still ``head``, the commit the done-gate judged."""
+    rc, out = await gh("pr", "merge", pr_url, "--squash", "--delete-branch", "--match-head-commit", head)
     if rc == 0:
         return "merged", out[:200]
     low = out.lower()
