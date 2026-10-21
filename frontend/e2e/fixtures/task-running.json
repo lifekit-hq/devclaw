@@ -1,0 +1,28 @@
+{
+  "task": {
+    "id": "t-running-0003",
+    "kind": "implement_feature",
+    "status": "running",
+    "workspaceDir": "/work/widgets",
+    "parentGoalId": "g-running",
+    "createdAt": 1792564312572,
+    "completedAt": null,
+    "prUrl": null,
+    "exit": null,
+    "exitDetail": null,
+    "startedAt": 1792564312577,
+    "preRunSha": null,
+    "targetBranch": "devclaw/g-running",
+    "projectId": "widgets",
+    "verifyCmd": null,
+    "deliver": true,
+    "error": null,
+    "goal": "#52"
+  },
+  "verify": null,
+  "delivery": null,
+  "change": null,
+  "agentOutput": null,
+  "block": null,
+  "usage": null
+}

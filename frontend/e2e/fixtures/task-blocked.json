@@ -1,0 +1,44 @@
+{
+  "task": {
+    "id": "t-blocked-0002",
+    "kind": "implement_feature",
+    "status": "done",
+    "workspaceDir": "/work/widgets",
+    "parentGoalId": "g-blocked",
+    "createdAt": 1792564312560,
+    "completedAt": 1792564312569,
+    "prUrl": null,
+    "exit": "BLOCKED",
+    "exitDetail": "Should the export include archived reports?",
+    "startedAt": 1792564312565,
+    "preRunSha": null,
+    "targetBranch": "devclaw/g-blocked",
+    "projectId": "widgets",
+    "verifyCmd": null,
+    "deliver": true,
+    "error": null,
+    "goal": "#41"
+  },
+  "verify": null,
+  "delivery": null,
+  "change": null,
+  "agentOutput": null,
+  "block": {
+    "question": "Should the export include archived reports?",
+    "options": [
+      "Exclude archived reports",
+      "Include them behind a checkbox"
+    ],
+    "default": "Exclude archived reports",
+    "recommended": 1,
+    "kind": "contract",
+    "item": ""
+  },
+  "usage": {
+    "input_tokens": 64000,
+    "output_tokens": 2100,
+    "cache_read_tokens": 410000,
+    "cache_creation_tokens": 12000,
+    "source": "acp"
+  }
+}

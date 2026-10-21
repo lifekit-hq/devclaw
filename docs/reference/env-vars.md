@@ -31,7 +31,7 @@ vars always win over `.env`.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `DEVCLAW_ENGINE` | *(unset)* | *(unset)* = `claude -p` in the goal's treehouse worktree (production; refuses to boot without its credentials); `host` = the same engine with no boot-time credential check (a dev run on a logged-in host); `stub` = deterministic, no claude (the suite) |
+| `DEVCLAW_ENGINE` | *(unset)* | *(unset)* = `claude -p` in the goal's treehouse worktree (production; refuses to boot without its credentials); `host` = the same engine with no boot-time credential check (a dev run on a logged-in host); `stub` = deterministic, no claude, no treehouse (the suite, and trying the host without credentials: README *Try it*) |
 | `DEVCLAW_CLAUDE_BIN` | `claude` | The claude CLI each session runs |
 | `DEVCLAW_EXEC_MODEL` | `claude-sonnet-4-6` | The model each session runs; `""` = the CLI's own default |
 | `DEVCLAW_FIRST_FRAME_S` | `120` | A session that streams no first frame within this many seconds is killed and settles interrupted |

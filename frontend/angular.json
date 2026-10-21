@@ -68,6 +68,22 @@
               "extractLicenses": false,
               "sourceMap": true,
               "namedChunks": true
+            },
+            "demo": {
+              "outputPath": {
+                "base": "dist/demo",
+                "browser": ""
+              },
+              "baseHref": "/devclaw/",
+              "assets": [
+                {"glob": "**/*", "input": "public"},
+                {"glob": "**/*", "input": "node_modules/@lifekit-hq/tokens/brand/dist/dc"},
+                {"glob": "*.json", "input": "e2e/fixtures", "output": "demo"}
+              ],
+              "fileReplacements": [
+                {"replace": "src/app/demo/demo.ts", "with": "src/app/demo/demo.pages.ts"}
+              ],
+              "serviceWorker": false
             }
           },
           "defaultConfiguration": "production"

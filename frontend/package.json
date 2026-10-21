@@ -6,6 +6,7 @@
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
+    "build:demo": "ng build -c production,demo && cp dist/demo/index.html dist/demo/404.html && perl -pi -e 's{\"/console/\"}{\"/devclaw/\"}g' dist/demo/manifest.webmanifest",
     "lint": "lifekit-theme-sync --check && npm run drift && ng lint --max-warnings 0",
     "drift": "lifekit-chrome-check drift src public",
     "sync:theme": "lifekit-theme-sync",

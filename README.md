@@ -21,6 +21,33 @@ into tool calls. Cognition is `claude` over a Pro/Max OAuth session — **no
 `ANTHROPIC_API_KEY`, no metered billing**: a stray key is stripped at every
 spawn site rather than honored.
 
+## Try it
+
+**The console, in your browser, no install and no token:**
+[lifekit-hq.github.io/devclaw](https://lifekit-hq.github.io/devclaw/). It
+runs on invented data: one goal waiting on your decision, one running, and one
+merged with its review verdict. Open the waiting goal on *Needs you*, follow it
+to its session and project, and read the verdict under *Verdicts*. The demo is
+read-only: a verb answers with a notice and sends nothing. CI publishes it from
+`main` (`.github/workflows/pages.yml`) with every feed answered from
+`frontend/e2e/fixtures/`, the fixtures the console's e2e suite runs on.
+
+**The host, with no docker, no `claude` and no token** (the stub engine, which
+fakes the session and the review deterministically):
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+DEVCLAW_ENGINE=stub DEVCLAW_DB=/tmp/devclaw-try.db \
+  DEVCLAW_TRANSPORT=http DEVCLAW_HOST=127.0.0.1 DEVCLAW_PORT=8000 devclaw-mcp
+```
+
+MCP answers at `http://127.0.0.1:8000/mcp` and the feeds the console reads at
+`http://127.0.0.1:8000/goals.json`, `/projects.json` and `/control.json`. The
+store starts empty. A goal reads its issue from GitHub, so `create_goal` needs
+a `GH_TOKEN`, and the console at `/console` needs its bundle built first
+(below).
+
 ## Run it
 
 Prerequisites: Python 3.11+, git, a logged-in `claude` CLI,
@@ -49,7 +76,7 @@ pinned to `devclaw/config.py` by a sync test.
 |---|---|---|
 | *(unset)* | `claude -p` in the goal's treehouse worktree | production (refuses to boot without its credentials) |
 | `host` | the same engine, no boot-time credential check | dev on a logged-in host |
-| `stub` | deterministic, no `claude`, no treehouse | the test suite |
+| `stub` | deterministic, no `claude`, no treehouse | the test suite, [trying the host](#try-it) |
 
 ```bash
 pip install -e ".[dev]"
@@ -68,6 +95,11 @@ build takes the same token as a BuildKit secret):
 ```bash
 cd frontend && npm ci && npm run lint && npm test && npm run build && npm run e2e
 ```
+
+`npm run build:demo` builds the hosted demo into `frontend/dist/demo`: the
+same production bundle under `/devclaw/`, with `src/app/demo/demo.pages.ts`
+swapped in (an Angular `fileReplacements`) to answer every feed from the e2e
+fixtures and refuse every verb.
 
 `npm run e2e` includes the design and accessibility gate
 (`e2e/quality.spec.ts`): every route, light and dark, desktop and phone,

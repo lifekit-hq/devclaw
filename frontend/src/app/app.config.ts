@@ -14,6 +14,7 @@ import {provideAppearanceSync, provideToastPreferenceErrors} from '@lifekit-hq/u
 import {AppPreferencesStore} from './account/preferences';
 import {accessTokenInterceptor, AccessTokenUrlSerializer} from './api/access-token';
 import {APP_ROUTES} from './app.routes';
+import {DEMO, DEMO_INTERCEPTORS} from './demo/demo';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -21,7 +22,10 @@ export const appConfig: ApplicationConfig = {
     provideZonelessChangeDetection(),
     provideRouter(APP_ROUTES, withComponentInputBinding()),
     {provide: UrlSerializer, useClass: AccessTokenUrlSerializer},
-    provideHttpClient(withFetch(), withInterceptors([accessTokenInterceptor])),
+    provideHttpClient(
+      withFetch(),
+      withInterceptors([accessTokenInterceptor, ...DEMO_INTERCEPTORS])
+    ),
     // Appearance (mode, seed colour) follows the account: applied from the device cache at once,
     // written through to /api/me/preferences, and a failed save toasts. Also starts the theme.
     provideAppearanceSync(AppPreferencesStore),
@@ -34,9 +38,10 @@ export const appConfig: ApplicationConfig = {
     }),
     // Precache-only: ngsw-config.json lists the bundle and /console/ navigations, never a feed.
     // `ng serve` has no ngsw, so the worker registers only in the production build; `none` makes
-    // the browser revalidate the worker script instead of trusting its HTTP cache.
+    // the browser revalidate the worker script instead of trusting its HTTP cache. The hosted demo
+    // ships no worker.
     provideServiceWorker('ngsw-worker.js', {
-      enabled: !isDevMode(),
+      enabled: !isDevMode() && !DEMO,
       registrationStrategy: 'registerWhenStable:30000',
       updateViaCache: 'none',
     }),

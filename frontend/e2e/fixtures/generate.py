@@ -128,6 +128,15 @@ def main() -> None:
         "project-widgets": "/projects/widgets.json",
         "task-deliver": "/tasks/t-deliver-0001.json",
         "task-deliver-events": "/tasks/t-deliver-0001/events.json",
+        # Every session a page links to, so the hosted demo (built from these) has no dead end.
+        "task-blocked": "/tasks/t-blocked-0002.json",
+        "task-blocked-events": "/tasks/t-blocked-0002/events.json",
+        "task-running": "/tasks/t-running-0003.json",
+        "task-running-events": "/tasks/t-running-0003/events.json",
+        "task-fix": "/tasks/t-deliver-0004.json",
+        "task-fix-events": "/tasks/t-deliver-0004/events.json",
+        "task-review": "/tasks/t-review-0005.json",
+        "task-review-events": "/tasks/t-review-0005/events.json",
         "verdicts": "/verdicts.json?limit=200",
         "control": "/control.json",
     }
