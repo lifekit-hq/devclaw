@@ -1,6 +1,6 @@
 # DevClaw — self-deploy cutover runbook
 
-Spec: [`specs/005-devclaw-self-deploy/spec.md`](../../specs/005-devclaw-self-deploy/spec.md).
+Spec: 005, superseded by 046 (a row in [`specs/README.md`](../../specs/README.md); the text is `git show v1.2.0:specs/005-devclaw-self-deploy/spec.md`).
 
 devclaw now owns its own deployment. Its image is built **from the checked-out
 source** (`deploy/Dockerfile` — no `git clone` inside the build) on a
@@ -129,11 +129,10 @@ cd /path/to/devclaw
 bash deploy/deploy-devclaw.sh "$SHA"   # reads /srv/devclaw/.env + secrets.env by default
 ```
 
-**5. Attach the OpenClaw seam services to the shared network** so the waiter
-(in `openclaw-gateway`) can still reach `devclaw-mcp`, and devclaw can still
+**5. Attach the seam service to the shared network** so devclaw can still
 reach `notify-relay`. Apply the lifekit-stack companion change (§4 below) and
-`docker compose -p compose up -d openclaw-gateway notify-relay` — this recreates
-only those two, once.
+`docker compose -p compose up -d notify-relay` — this recreates only that
+service, once.
 
 **6. Verify** (see §3).
 
@@ -149,9 +148,6 @@ curl -fsS http://127.0.0.1:18791/health | grep -o '"git_sha":"[^"]*"'
 #   (list_goals via the MCP, or inspect the DB)
 # OpenClaw-side containers were NOT recreated — uptimes unbroken
 docker ps --format '{{.Names}}\t{{.Status}}' | grep -E 'gateway|dashboard|notify-relay|cli'
-
-# the waiter can still reach devclaw over the network
-docker exec compose-openclaw-gateway-1 curl -fsS http://devclaw-mcp:8000/health >/dev/null && echo "seam OK"
 ```
 
 Success = new SHA on `/health`, goal count unchanged, OpenClaw uptimes unbroken.

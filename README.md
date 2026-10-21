@@ -16,8 +16,8 @@ posted to the thread, and a comment mentioning the bot wakes it.
 Some Python for what is determined, a model for what is reasoned, and one line
 between them. The design is [`specs/046-devclaw-v2/spec.md`](./specs/046-devclaw-v2/spec.md).
 
-It sits behind MCP; an [OpenClaw](https://openclaw.ai) waiter translates chat
-into tool calls. Cognition is `claude` over a Pro/Max OAuth session — **no
+It sits behind MCP: any MCP client (Claude Code, a chat agent) calls its tools,
+and the console reads the same state over HTTP. Cognition is `claude` over a Pro/Max OAuth session — **no
 `ANTHROPIC_API_KEY`, no metered billing**: a stray key is stripped at every
 spawn site rather than honored.
 
@@ -51,8 +51,10 @@ a `GH_TOKEN`, and the console at `/console` needs its bundle built first
 ## Run it
 
 Prerequisites: Python 3.11+, git, a logged-in `claude` CLI,
-[treehouse](https://github.com/kunchenguid/treehouse) v2, and a `GH_TOKEN`
-with `repo` (the host reads PRs, posts the devclaw records, merges).
+[treehouse](https://github.com/kunchenguid/treehouse) v2,
+[no-mistakes](https://github.com/kunchenguid/no-mistakes) (the session ships
+its branch through it), and a `GH_TOKEN` with `repo` (the host reads PRs,
+posts the devclaw records, merges).
 
 A worktree is **not a filesystem sandbox**: a session runs on the host with the
 host's tools and can reach anything the devclaw user can. What it never gets is
@@ -116,6 +118,10 @@ fix itself is accepted, with its reason, in `e2e/quality-exceptions.json`.
 | Queue + engine | `devclaw/task_queue.py`, `devclaw/queue/`, `devclaw/engine/` | one session: place the branch, run, settle the exit |
 | Session engine | `devclaw/engine/claude.py`, `devclaw/skills/` | the `claude -p` stream and its silence watchdog, the skill bundle, the in-session verify loop over `--resume`, the no-mistakes hand-off (review, push, PR) |
 
+The diagram in [`docs/architecture.md`](./docs/architecture.md) marks which
+parts devclaw kept and which the re-cut replaced with `claude -p`, a treehouse
+worktree per goal and no-mistakes.
+
 **One tick, per goal.** Read the world: the PR's head and state, the CI rollup
 for that head, the newest comment mentioning the bot, the newest devclaw
 record, the credentials that probe green. Merged → close. Blocked (a devclaw
@@ -136,7 +142,7 @@ thread carries a marker and is a fact, never an instruction.
 
 ## What this is NOT
 
-- **Not a chatbot** — a backend service the waiter calls.
+- **Not a chatbot** — a backend service an MCP client calls.
 - **Not a rebuild of Claude Code** — `claude -p` is the agent in the goal's
   worktree; devclaw supplies facts and tools and reads the mechanical verdict.
 - **Not a sandbox** — the worktree isolates one goal's branch from another's,
