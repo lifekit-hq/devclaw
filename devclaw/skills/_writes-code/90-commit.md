@@ -18,6 +18,6 @@ kept the offset param for back-compat.
 Fixes #42
 ```
 
-Prefer one commit. Do NOT push or open a PR — devclaw delivers it as a branch + PR. Gate inputs and binaries are never yours to change (see the blocks skill).
+Prefer one commit. Never `git push` or open a PR yourself — after a green verify you ship the branch through no-mistakes, which pushes it and opens the PR. Gate inputs and binaries are never yours to change (see the blocks skill).
 
-This is about the MESSAGE, not completeness: devclaw captures everything in the workspace either way, so anything unstaged is reviewed and shipped regardless. A good commit buys a reviewer who can see what you decided and why.
+Only what is committed ships: uncommitted work never reaches the PR. A good commit buys a reviewer who can see what you decided and why.

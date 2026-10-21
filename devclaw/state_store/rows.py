@@ -19,7 +19,7 @@ EXIT_DONE = "DONE"
 EXIT_BLOCKED = "BLOCKED"
 EXIT_NOTHING = "NOTHING"
 EXIT_INTERRUPTED = "INTERRUPTED"
-EXIT_REFUSED = "REFUSED"      # a host gate refused the delivery (gate inputs, binaries, span)
+EXIT_REFUSED = "REFUSED"      # historic: a host gate refused the delivery (the gates left in #953)
 EXIT_REVIEW = "REVIEW"        # a read-only done-gate review session
 EXITS = (EXIT_DELIVERED, EXIT_DONE, EXIT_BLOCKED, EXIT_NOTHING,
          EXIT_INTERRUPTED, EXIT_REFUSED, EXIT_REVIEW)

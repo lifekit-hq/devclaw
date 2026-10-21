@@ -4,8 +4,7 @@ Seven modules used to carry byte-identical private copies of this wrapper
 (their docstrings even said "mirrors ``delivery/repo.py``") — the #630 class
 of smell: the same fact computed N ways drifts N ways. Modules that need a
 *different* contract (a sync+timeout git reader,
-``mergeability``'s ``-1``-on-spawn-failure probe, ``task_change``'s git
-boundary) deliberately keep their own; this is the home for the common shape
+``mergeability``'s ``-1``-on-spawn-failure probe) deliberately keep their own; this is the home for the common shape
 only.
 """
 

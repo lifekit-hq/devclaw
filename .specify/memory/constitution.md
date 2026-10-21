@@ -40,8 +40,7 @@ wrong, never the test.
 A `DONE` proposal gets a fresh read-only review session; its JSON is validated
 mechanically — every clause satisfied with evidence — before the merge. An
 unreadable verdict never passes. This is the one place fail-closed survives as
-a host gate; the other three (materialize, change_class, test integrity) are
-mechanical facts about the span.
+a host gate; the pre-PR review, test and lint gates are no-mistakes' (#953).
 
 ### VII. No retries — fix the system, not the attempt
 The sandbox runs what CI runs before a session ends (`.devclaw/verify`, derived

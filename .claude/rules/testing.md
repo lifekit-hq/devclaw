@@ -10,7 +10,7 @@ that keep an *unattended autonomous loop* safe — not to pin every behavior.
 The tripwire classes are: zero-token idle guards, fail-closed gates, the
 CAS/single-writer state machine, OAuth stripping + the sandbox fence, the
 pause-and-resume brakes (quota/auth pause, retry caps, watchdogs, admission,
-resource release), the one-definition-of-change (materialize span), doctor
+resource release), the hand-off that must prove it shipped, doctor
 seeded-faults, and cheap structural guards (docs map, env-doc sync, tool
 re-export, route shadowing, no-docker-in-tests). Ordinary feature behavior is
 NOT unit-tested — the live instance, the done-gate, and post-merge review are

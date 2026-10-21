@@ -47,8 +47,9 @@ services:
     deploy:
       resources:
         limits:
-          # Every session — the `claude -p` process and the repository's own
-          # verify run — lives inside this one limit, DEVCLAW_MAX_CONCURRENT
+          # Every session — the `claude -p` process, the repository's own
+          # verify run and the session's one no-mistakes pipeline run — lives
+          # inside this one limit, DEVCLAW_MAX_CONCURRENT
           # at a time. Each extra concurrent session needs about 2g more here.
           memory: ${DEVCLAW_MCP_MEMORY:-3g}
     # The two credentials the instance cannot run without — the subscription

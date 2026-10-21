@@ -10,24 +10,6 @@ import subprocess
 from .git_identity import git_identity_env
 
 
-def _git_diff_sync(host_dir: str, base: str, head: str, paths: "list[str] | None" = None) -> "str | None":
-    """The judged span as a unified diff, ``git diff <base> <head>``. ``paths``
-    restricts the rendering (spec 045); ``[]`` is an empty span. ``None`` means
-    git could not answer — NOT an empty diff."""
-    if not base or not head:
-        return None
-    if paths is not None and not paths:
-        return ""
-    try:
-        p = subprocess.run(
-            ["git", "-C", host_dir, "diff", base, head, *(("--", *paths) if paths else ())],
-            capture_output=True, text=True, errors="replace", timeout=60,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    return p.stdout if p.returncode == 0 else None
-
-
 def _git_commit_exists_sync(host_dir: str, sha: str) -> bool:
     if not sha:
         return False

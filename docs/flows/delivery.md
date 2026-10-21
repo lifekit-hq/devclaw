@@ -1,11 +1,13 @@
 # From a session to a merge
 
 **One goal, one branch, one PR.** Every session of a goal works on
-`goal/<goal_id>` in the goal's own checkout. Delivery (`devclaw/delivery/`)
-pushes the branch and opens the PR on the first delivery, then refreshes its
-title and body on every later one (the title follows the latest increment's
-commit subject; the body lists the increments landed). Nothing merges
-mid-flight.
+`goal/<goal_id>` in the goal's own checkout. The session ships the branch
+itself through `no-mistakes axi run --skip ci` (`devclaw/engine/claude.py`):
+the pipeline reviews, tests, documents and lints the change, pushes the branch
+and opens the PR on the first run, then updates it on every later one; its
+intent is the issue contract and `--closes` names the goal's issues. The engine
+counts the hand-off only when the branch's newest run carries the session's
+head and passed. Nothing merges mid-flight.
 
 **The verdict of record is the project's CI on the delivered head**, read by
 the tick from `gh pr view` (`devclaw/goal/github.py`). Red → the goal stops

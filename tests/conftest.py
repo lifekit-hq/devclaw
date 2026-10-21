@@ -92,7 +92,7 @@ _GH_GUARD_HINT = (
     "The pytest suite is fully stubbed — a test must NEVER perform a real "
     "GitHub write (it lands in a live repository and outlives the test). Stub "
     "the seam your test reaches: inject a fake `post_comment` / `merge` into "
-    "the GoalService, or patch `devclaw.delivery._run`. "
+    "the GoalService. "
     "If this really is a READ, add its verb to _GH_READ_VERBS in conftest."
 )
 
