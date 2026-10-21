@@ -16,6 +16,11 @@ posted to the thread, and a comment mentioning the bot wakes it.
 Some Python for what is determined, a model for what is reasoned, and one line
 between them. The design is [`specs/046-devclaw-v2/spec.md`](./specs/046-devclaw-v2/spec.md).
 
+It sits behind MCP; an [OpenClaw](https://openclaw.ai) waiter translates chat
+into tool calls. Cognition is `claude` over a Pro/Max OAuth session — **no
+`ANTHROPIC_API_KEY`, no metered billing**: a stray key is stripped at every
+spawn site rather than honored.
+
 ## Try it
 
 **The console, in your browser, no install and no token:**
@@ -42,11 +47,6 @@ MCP answers at `http://127.0.0.1:8000/mcp` and the feeds the console reads at
 store starts empty. A goal reads its issue from GitHub, so `create_goal` needs
 a `GH_TOKEN`, and the console at `/console` needs its bundle built first
 (below).
-
-It sits behind MCP; an [OpenClaw](https://openclaw.ai) waiter translates chat
-into tool calls. Cognition is `claude` over a Pro/Max OAuth session — **no
-`ANTHROPIC_API_KEY`, no metered billing**: a stray key is stripped at every
-spawn site rather than honored.
 
 ## Run it
 
