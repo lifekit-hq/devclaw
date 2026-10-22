@@ -80,6 +80,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        emptySubMessage="Goals appear here once an issue is handed to devclaw."
         class="block"
         retryable
       >
