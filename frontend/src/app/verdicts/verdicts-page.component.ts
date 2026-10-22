@@ -41,6 +41,7 @@ const POLL_MS = 30_000;
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        emptySubMessage="No verdicts have been recorded yet."
         class="block"
         retryable
       >

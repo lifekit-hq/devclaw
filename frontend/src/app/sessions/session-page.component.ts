@@ -85,6 +85,7 @@ function absent(value: unknown): boolean {
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        emptySubMessage="This session has no detail to show yet."
         class="block"
         retryable
       >

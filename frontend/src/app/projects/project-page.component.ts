@@ -50,6 +50,7 @@ const NOT_FOUND = 404;
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        emptySubMessage="This project has nothing to show yet."
         class="block"
         retryable
       >
