@@ -1,6 +1,6 @@
 [project]
 name = "devclaw"
-version = "2.3.1"
+version = "2.4.0"
 description = "DevClaw — MCP server driving an autonomous software-development loop in per-goal worktrees"
 requires-python = ">=3.11"
 dependencies = [
