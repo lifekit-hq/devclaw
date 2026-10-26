@@ -7,8 +7,16 @@
 # Deliberately NOT here, with reason:
 #   gitleaks — downloads a pinned binary from the network; a sandbox without
 #              egress would read a network flake as a secrets finding.
-#   frontend e2e — Playwright drives a downloaded Chromium that needs system
-#              libraries the sandbox image does not carry; CI runs it.
+#   frontend e2e — needs browser bits the sandbox image does not carry; CI runs
+#              it (`npx playwright install --with-deps chromium`). To drive it
+#              here anyway: the Playwright Chromium needs libXfixes.so.3, which
+#              is absent and cannot be apt-installed without root (extract it
+#              from the Debian package into a scratch dir and point
+#              LD_LIBRARY_PATH at it). That gets `playwright test` running, but
+#              quality.spec.ts's `impeccable` scan still fails — it launches its
+#              OWN Chrome, and this host restricts unprivileged user namespaces
+#              ("No usable sandbox!"). So the most a sandbox run proves is
+#              "everything but impeccable".
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

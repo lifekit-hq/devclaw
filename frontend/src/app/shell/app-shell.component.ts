@@ -72,18 +72,16 @@ const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
       (avatarMenuSelect)="onAccountItem($event)"
       brand="devclaw"
     >
-      <div cmnAppLayoutNotice>
-        <lk-offline-banner />
-        <lk-update-prompt
-          [ready]="update.updateReady()"
-          (lk-update-prompt-reload)="update.reload()"
-        />
-        <lk-install-hint />
-      </div>
+      <lk-offline-banner cmnAppLayoutNotice />
+      <lk-update-prompt
+        [ready]="update.updateReady()"
+        (lk-update-prompt-reload)="update.reload()"
+        cmnAppLayoutNotice
+      />
+      <lk-install-hint cmnAppLayoutNotice />
       <router-outlet />
     </cmn-app-layout>
   `,
-  host: {class: 'block h-full'},
 })
 export class AppShellComponent {
   private readonly router = inject(Router);
