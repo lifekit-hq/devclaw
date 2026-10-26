@@ -22,3 +22,13 @@ commands:
     .venv/bin/yamllint -d '{extends: default, rules: {line-length: disable, document-start: disable, truthy: disable}}' .github/workflows/ &&
     cd frontend && npm run lint
   test: 'TMPDIR=$(mktemp -d) .venv/bin/python -m pytest -q && cd frontend && npm test && npm run build'
+
+# Review rules. "**" is the catch-all: every path gets the blocking-only policy.
+review:
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Block only on what would break: wrong behavior, a broken contract, money or data loss, a security gap, or changed behavior with no test. Do not raise style, naming, wording or cleanup findings. Every finding names file:line, the input that fails and what goes wrong. If nothing blocks, say so plainly.
+    - path: "devclaw/**"
+      instructions: |
+        Part II of docs/architecture.md holds the locked contracts. Flag a violation of them; do not restate the contracts.
