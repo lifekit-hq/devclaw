@@ -2,6 +2,13 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.4.1](https://github.com/lifekit-hq/devclaw/compare/v2.4.0...v2.4.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **console:** align the phone shell with Finance Sentry and pin its geometry ([#972](https://github.com/lifekit-hq/devclaw/issues/972)) ([2bde99b](https://github.com/lifekit-hq/devclaw/commit/2bde99b47f575265915cef708d6458750d54fddc)), closes [#971](https://github.com/lifekit-hq/devclaw/issues/971)
+
 ## [2.4.0](https://github.com/lifekit-hq/devclaw/compare/v2.3.1...v2.4.0) (2026-10-21)
 
 
