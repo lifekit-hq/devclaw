@@ -137,6 +137,10 @@ Ranked candidates, with what would settle each:
 - [x] `host: {class: 'block h-full'}` removed from `dc-app-shell`
 - [x] Controlled run of the spec against both notice wirings, for the evidence
 - [ ] The cause of the real-phone gap, named with its evidence (needs a device)
+- [x] `@lifekit-hq/*` to `^4.2.2` (lifekit-common PRs 224 and 225): the shell
+      re-measures only after the keyboard closes, as in 4.2.0, so the tab bar
+      reaches the bottom edge of the home-screen app. This is the fix for
+      cause 2 above; confirming it on the owner's phone is still the open item.
 
 ## Done When
 
