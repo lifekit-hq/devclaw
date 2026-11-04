@@ -8,12 +8,6 @@
       "reason": "Detector false positive in lifekit's cmn-app-layout (accepted in lifekit-common's design baseline): the shell CSS-hides the nav it is not using, and a badge in that display:none subtree has no box, so its negative offsets read as escaping the clip."
     },
     {
-      "rule": "marquee",
-      "routes": ["*"],
-      "match": ".cmn-skeleton-sweep::after",
-      "reason": "A scan that lands before the feed answers sees the loading skeleton; its shimmer is a loading signal and stops under prefers-reduced-motion (accepted in lifekit-common's design baseline)."
-    },
-    {
       "rule": "tight-leading",
       "routes": ["sessions/t-deliver-0001"],
       "max": 4,

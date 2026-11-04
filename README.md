@@ -105,7 +105,8 @@ fixtures and refuse every verb.
 
 `npm run e2e` includes the design and accessibility gate
 (`e2e/quality.spec.ts`): every route, light and dark, desktop and phone,
-through the impeccable URL scan and axe. The scan's engine is fetched once by
+through the impeccable URL scan and axe. The scan is repeated until the route
+has settled, so the judge never accepts a loading skeleton. The scan's engine is fetched once by
 `e2e/impeccable-engine.sh` and pinned by sha256. A finding the console cannot
 fix itself is accepted, with its reason, in `e2e/quality-exceptions.json`.
 

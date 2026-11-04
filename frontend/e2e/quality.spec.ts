@@ -6,13 +6,16 @@ import {promisify} from 'node:util';
 import AxeBuilder from '@axe-core/playwright';
 import {chromium, expect, type Page, test} from '@playwright/test';
 
+import {scanUntilSettled} from './settle';
+
 // The design and accessibility gate: every route of the fixture build, in light and dark, at a
 // desktop and a phone viewport, through the impeccable URL scan (lifekit-common's design
 // detector) and axe-core (WCAG 2.2 AA). A primary impeccable finding, or a serious or critical
 // axe violation, fails unless quality-exceptions.json accepts it with a reason; `match` narrows
 // an entry to findings whose snippet (impeccable) or node HTML (axe) contains it, and an
 // impeccable entry covers at most `max` findings per scan (default 1). Fix findings in the page,
-// not here.
+// not here. The scan waits for the route to settle: a skeleton in the scan is retried, never
+// accepted.
 
 const ROUTES = [
   'needs-you',
@@ -35,6 +38,8 @@ const AXE_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'];
 const BLOCKING_IMPACTS = new Set(['serious', 'critical']);
 const FINDINGS_EXIT = 2;
 const SCAN_TIMEOUT_MS = 120_000;
+const SETTLE_TIMEOUT_MS = 60_000;
+const SETTLE_RETRY_MS = 1_000;
 
 interface Finding {
   antipattern: string;
@@ -56,6 +61,24 @@ const exceptions = JSON.parse(readFileSync(join(__dirname, 'quality-exceptions.j
 
 const covers = (entry: Accepted, route: string): boolean =>
   entry.routes.includes('*') || entry.routes.includes(route);
+
+const scanUrl = (engine: string, url: string, width: number, height: number) =>
+  promisify(execFile)(
+    engine,
+    ['detect', '--json', '--no-config', '--no-advisory', '--viewport', `${width}x${height}`, url],
+    {env: {...process.env, IMPECCABLE_BROWSER: chromium.executablePath()}}
+  ).then(
+    ({stdout}) => ({code: 0, stdout}),
+    (e: {code?: number; stdout?: string; stderr?: string}) => {
+      if (e.code !== FINDINGS_EXIT) {
+        throw new Error(`impeccable failed on ${url} (exit ${e.code}): ${e.stderr}`);
+      }
+      return {code: e.code, stdout: e.stdout ?? ''};
+    }
+  );
+
+const isSkeleton = (stdout: string): boolean =>
+  (JSON.parse(stdout) as Finding[]).some(f => f.snippet.includes('cmn-skeleton'));
 
 const ready = async (page: Page, url: string, theme: string): Promise<void> => {
   await page.goto(url);
@@ -106,26 +129,19 @@ test.describe('impeccable', () => {
         test(`${route} ${theme} ${name}`, async () => {
           test.setTimeout(SCAN_TIMEOUT_MS);
           const url = `${origin}/console/${route}`;
-          const scan = await promisify(execFile)(
-            engine,
-            [
-              'detect',
-              '--json',
-              '--no-config',
-              '--no-advisory',
-              '--viewport',
-              `${width}x${height}`,
-              url,
-            ],
-            {env: {...process.env, IMPECCABLE_BROWSER: chromium.executablePath()}}
-          ).then(
-            ({stdout}) => ({code: 0, stdout}),
-            (e: {code?: number; stdout?: string; stderr?: string}) => {
-              if (e.code !== FINDINGS_EXIT) {
-                throw new Error(`impeccable failed on ${url} (exit ${e.code}): ${e.stderr}`);
-              }
-              return {code: e.code, stdout: e.stdout ?? ''};
-            }
+          // The engine scans about a second after load and has no wait option, so a scan that
+          // still sees the loading skeleton (its shimmer is the marker) judged an unsettled
+          // screen: scan again until the route has settled, within SETTLE_TIMEOUT_MS.
+          const scan = await scanUntilSettled(
+            {
+              scan: () => scanUrl(engine, url, width, height),
+              sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+              now: Date.now,
+            },
+            result => isSkeleton(result.stdout),
+            SETTLE_TIMEOUT_MS,
+            SETTLE_RETRY_MS,
+            url
           );
           const findings = JSON.parse(scan.stdout) as Finding[];
           expect(findings.length > 0).toBe(scan.code === FINDINGS_EXIT);
