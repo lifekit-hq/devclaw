@@ -6,6 +6,8 @@ import {promisify} from 'node:util';
 import AxeBuilder from '@axe-core/playwright';
 import {chromium, expect, type Page, test} from '@playwright/test';
 
+import {scanUntilSettled} from './settle';
+
 // The design and accessibility gate: every route of the fixture build, in light and dark, at a
 // desktop and a phone viewport, through the impeccable URL scan (lifekit-common's design
 // detector) and axe-core (WCAG 2.2 AA). A primary impeccable finding, or a serious or critical
@@ -130,16 +132,17 @@ test.describe('impeccable', () => {
           // The engine scans about a second after load and has no wait option, so a scan that
           // still sees the loading skeleton (its shimmer is the marker) judged an unsettled
           // screen: scan again until the route has settled, within SETTLE_TIMEOUT_MS.
-          const deadline = Date.now() + SETTLE_TIMEOUT_MS;
-          let scan = await scanUrl(engine, url, width, height);
-          while (isSkeleton(scan.stdout) && Date.now() < deadline) {
-            await new Promise(resolve => setTimeout(resolve, SETTLE_RETRY_MS));
-            scan = await scanUrl(engine, url, width, height);
-          }
-          expect(
-            isSkeleton(scan.stdout),
-            `${url} never settled: the scan still saw a skeleton`
-          ).toBe(false);
+          const scan = await scanUntilSettled(
+            {
+              scan: () => scanUrl(engine, url, width, height),
+              sleep: ms => new Promise(resolve => setTimeout(resolve, ms)),
+              now: Date.now,
+            },
+            result => isSkeleton(result.stdout),
+            SETTLE_TIMEOUT_MS,
+            SETTLE_RETRY_MS,
+            url
+          );
           const findings = JSON.parse(scan.stdout) as Finding[];
           expect(findings.length > 0).toBe(scan.code === FINDINGS_EXIT);
 
