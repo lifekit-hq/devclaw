@@ -127,7 +127,7 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
 - [x] `tests/test_doctor_seeded_faults.py` — the missing-binary sweep
       parametrized over all five, the home's states (present / absent /
       defaulted / symlinked / a file on the path / a dangling symlink at the
-      leaf or mid-path / relative / padded / unwritable parent / unwritable
+      leaf or mid-path / relative / padded / a default `$HOME` cannot resolve / unwritable parent / unwritable
       home / unreadable), the stub engine,
       registration in
       `CHECKS`, and the exit code end to end plus the verdict → code mapping
