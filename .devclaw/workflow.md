@@ -34,9 +34,10 @@ but the whole spec is the commitment.
 lint, unit tests, build and chrome check (`frontend/`). It skips gitleaks and
 the console's Playwright e2e, each with its reason at the top of the script. It
 bootstraps the declared deps into a worktree-local `.venv` when the interpreter
-lacks them — the deployed image carries the runtime deps only — so a round
-whose `.venv` is already complete is offline, and any round that has to build
-or top one up needs the package index.
+lacks them — the deployed image carries the runtime deps only. That bootstrap
+is a probe and a PATH prepend on a round whose `.venv` is already complete;
+a round that has to build or top one up needs the package index (the console's
+`npm ci` reaches GitHub Packages on every round regardless).
 
 The suite is **fully stubbed** — no docker, no `claude` binary. It is a
 TRIPWIRE NET, not a coverage instrument: a PR ships a test only when it touches
