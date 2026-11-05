@@ -128,9 +128,10 @@ def _handoff_home() -> Finding:
 def _nearest_existing(path: str) -> str:
     """The deepest ancestor of an absent ``path`` that exists — the directory
     ``mkdir -p`` would create the rest under, and the one an operator has to
-    fix when it cannot."""
+    fix when it cannot. A dangling symlink counts as existing, as ``mkdir -p``
+    treats it: the entry is there, and it refuses to replace it."""
     ancestor = os.path.dirname(path)
-    while not os.path.exists(ancestor) and ancestor != os.path.dirname(ancestor):
+    while not os.path.lexists(ancestor) and ancestor != os.path.dirname(ancestor):
         ancestor = os.path.dirname(ancestor)
     return ancestor
 

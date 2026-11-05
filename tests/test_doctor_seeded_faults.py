@@ -136,6 +136,14 @@ def test_the_handoff_home_separates_what_a_goal_heals_from_what_it_cannot(
         assert finding.verdict is Verdict.FAIL, broken
         assert str(broken) in finding.evidence and _RUNBOOK in finding.remedy
 
+    # a dangling symlink in the MIDDLE of the path: `mkdir -p` refuses it
+    # ("File exists"), so no session heals it, and the remedy names the link
+    # the operator has to clear — not the leaf, at any depth
+    for through_dangling in (dangling / "nm", dangling / "a" / "nm"):
+        finding = _home(monkeypatch, tmp_path, str(through_dangling))
+        assert finding.verdict is Verdict.FAIL, through_dangling
+        assert f"make {dangling} a writable" in finding.remedy
+
     # a relative NM_HOME resolves against whatever cwd doctor happens to run
     # in — never a home, even when a directory of that name exists here
     (tmp_path / "relative-nm").mkdir()
