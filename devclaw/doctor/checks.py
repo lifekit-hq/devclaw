@@ -92,8 +92,16 @@ def _handoff_home() -> Finding:
     #: unexpanded, so expanding it here would clear the likeliest misconfig.
     home = raw or os.path.expanduser(NM_HOME_DEFAULT)
     if not os.path.isabs(home):
-        return Finding("handoff.home", Verdict.FAIL, f"NM_HOME does not resolve to an absolute path ({raw!r})",
-                       remedy=f"set it to an absolute path on the state volume — {_RUNBOOK}")
+        # Two different misconfigurations reach here, and they need different
+        # evidence. Set-but-relative blames the operator's value; unset means
+        # `expanduser` found no home to expand the default into (no $HOME, and
+        # no passwd entry for this uid), which names NO variable the operator
+        # ever touched — so say which one is missing and what to set instead.
+        return Finding("handoff.home", Verdict.FAIL,
+                       f"NM_HOME does not resolve to an absolute path ({raw!r})" if raw
+                       else f"NM_HOME is unset and the default {NM_HOME_DEFAULT} cannot be expanded"
+                            " ($HOME is unset and this uid has no home directory)",
+                       remedy=f"set NM_HOME to an absolute path on the state volume — {_RUNBOOK}")
     try:
         present_and_dir = stat.S_ISDIR(os.stat(home).st_mode)
     except FileNotFoundError:
@@ -120,7 +128,10 @@ def _handoff_home() -> Finding:
     # `init` writes state.sqlite and the daemon files into it. Doctor's own
     # uid answers, the same caveat `_creatable` states.
     if not os.access(home, os.W_OK | os.X_OK):
-        return Finding("handoff.home", Verdict.FAIL, f"{home} is not writable",
+        # Both bits, so the evidence says "written into" rather than "writable":
+        # a mode-0600 home is writable and still unusable, because `init` cannot
+        # search it to place a file.
+        return Finding("handoff.home", Verdict.FAIL, f"{home} cannot be written into",
                        remedy=f"make {home} a writable directory on the state volume — {_RUNBOOK}")
     return Finding("handoff.home", Verdict.OK, home)
 

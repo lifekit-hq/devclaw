@@ -115,11 +115,26 @@ def test_the_handoff_home_separates_what_a_goal_heals_from_what_it_cannot(
     assert str(tmp_path / "gone") in absent.evidence and _RUNBOOK in absent.remedy
 
     # unset ⇒ no-mistakes' own documented default (docs/reference/env-vars.md),
-    # expanded — asserted as the literal, so the constant cannot drift silently
+    # expanded against $HOME rather than left as a tilde. $HOME is pinned to
+    # tmp_path: reading the runner's own would make the verdict depend on
+    # whether the developer happens to have a ~/.no-mistakes.
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".no-mistakes").mkdir()
     default = _home(monkeypatch, tmp_path, None)
-    assert NM_HOME_DEFAULT == "~/.no-mistakes"
-    assert os.path.expanduser("~/.no-mistakes") in default.evidence
+    assert default == Finding("handoff.home", Verdict.OK, str(tmp_path / ".no-mistakes"))
     assert "~" not in default.evidence
+
+    # ...and a $HOME that cannot be expanded is a fail that names the default
+    # and the variable to set, never a line blaming an NM_HOME nobody set.
+    # A nested context, not `undo()`: the engine pin above rides this same
+    # monkeypatch, and unwinding it would run the rest under a stub engine.
+    with pytest.MonkeyPatch.context() as no_home:
+        no_home.delenv("HOME", raising=False)
+        no_home.setattr(os.path, "expanduser", lambda p: p)
+        unexpandable = _home(monkeypatch, tmp_path, None)
+    assert unexpandable.verdict is Verdict.FAIL
+    assert NM_HOME_DEFAULT in unexpandable.evidence and "''" not in unexpandable.evidence
+    assert "set NM_HOME to an absolute path" in unexpandable.remedy
 
     # a symlink to a real directory is a home, not a misconfiguration
     link = tmp_path / "link-to-nm"
@@ -242,11 +257,15 @@ def test_a_handoff_home_no_goal_can_create_is_not_the_self_healing_warn(
         assert deep.verdict is Verdict.FAIL
         assert f"make {read_only} a writable" in deep.remedy
         # Present but sealed: `init` cannot put state.sqlite in it. The leaf
-        # stats fine, so without its own probe this is the `ok` branch.
-        finding = _home(monkeypatch, tmp_path, str(sealed_home))
-        assert finding.verdict is Verdict.FAIL
-        assert "not writable" in finding.evidence
-        assert f"make {sealed_home} a writable" in finding.remedy and _RUNBOOK in finding.remedy
+        # stats fine, so without its own probe this is the `ok` branch. Both
+        # missing bits are the same verdict — 0o500 cannot be written, 0o600
+        # cannot be searched to place a file in — hence the evidence's noun.
+        for mode in (0o500, 0o600):
+            sealed_home.chmod(mode)
+            finding = _home(monkeypatch, tmp_path, str(sealed_home))
+            assert finding.verdict is Verdict.FAIL, mode
+            assert "cannot be written into" in finding.evidence, mode
+            assert f"make {sealed_home} a writable" in finding.remedy and _RUNBOOK in finding.remedy
     finally:
         read_only.chmod(0o700)
         sealed_home.chmod(0o700)

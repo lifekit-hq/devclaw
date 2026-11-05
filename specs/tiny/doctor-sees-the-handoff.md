@@ -2,7 +2,7 @@
 
 **Branch**: goal/dc-doctor-no-mistakes-982
 **Date**: 2026-11-05
-**Status**: in review (self-review round 2: the home's unreadable and uncreatable states were landing in the self-healing `warn`; round 3: `expanduser` on the operator's value cleared a tilde home no-mistakes resolves elsewhere; no-mistakes review rounds: a present-but-unwritable home read as `ok`, the uncreatable remedy named a missing component instead of the read-only ancestor, and a dangling symlink in the middle of the path read as absent — all three now `fail`)
+**Status**: in review (self-review round 2: the home's unreadable and uncreatable states were landing in the self-healing `warn`; round 3: `expanduser` on the operator's value cleared a tilde home no-mistakes resolves elsewhere; no-mistakes review rounds: a present-but-unwritable home read as `ok`, the uncreatable remedy named a missing component instead of the read-only ancestor, and a dangling symlink in the middle of the path read as absent — all three now `fail`; round 4: the unset-and-unexpandable home blamed an `NM_HOME` nobody set, the sealed-home evidence read "not writable" for a home that is writable but not searchable, and the default's test read the runner's own `$HOME`)
 **Complexity**: small (one doctor check, one test file, four doc lines, and `.devclaw/verify`'s bootstrap — see Context)
 **Issue**: #982 — doctor names a missing `claude` or `treehouse`, but not the
 no-mistakes hand-off the goal layer now depends on
