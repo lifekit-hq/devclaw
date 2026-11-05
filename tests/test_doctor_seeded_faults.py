@@ -124,18 +124,27 @@ def test_the_handoff_home_separates_what_a_goal_heals_from_what_it_cannot(
     assert default == Finding("handoff.home", Verdict.OK, str(tmp_path / ".no-mistakes"))
     assert "~" not in default.evidence
 
-    # ...and a $HOME that cannot be expanded is a fail that names the default
+    # ...and a $HOME no-mistakes cannot resolve is a fail that names the default
     # and the variable to set, never a line blaming an NM_HOME nobody set.
+    # Oracle: `env -i no-mistakes doctor` prints "error resolving paths ($HOME
+    # is not defined)" for an unset AND for an empty $HOME (Go's UserHomeDir has
+    # no passwd fallback) — so doctor must not expand the default through the
+    # passwd home and certify a directory the tool itself never finds.
     # A nested context, not `undo()`: the engine pin above rides this same
     # monkeypatch, and unwinding it would run the rest under a stub engine.
-    with pytest.MonkeyPatch.context() as no_home:
-        no_home.delenv("HOME", raising=False)
-        no_home.setattr(os.path, "expanduser", lambda p: p)
-        unexpandable = _home(monkeypatch, tmp_path, None)
-    assert unexpandable.verdict is Verdict.FAIL
-    assert NM_HOME_DEFAULT in unexpandable.evidence and "''" not in unexpandable.evidence
-    assert "set NM_HOME to an absolute path" in unexpandable.remedy
-    assert "$HOME is unset" in unexpandable.evidence
+    passwd_home = os.path.expanduser("~")
+    for unresolvable in (None, ""):
+        with pytest.MonkeyPatch.context() as no_home:
+            if unresolvable is None:
+                no_home.delenv("HOME", raising=False)
+            else:
+                no_home.setenv("HOME", unresolvable)
+            unexpandable = _home(monkeypatch, tmp_path, None)
+        assert unexpandable.verdict is Verdict.FAIL, unresolvable
+        assert NM_HOME_DEFAULT in unexpandable.evidence and "''" not in unexpandable.evidence
+        assert "set NM_HOME to an absolute path" in unexpandable.remedy
+        assert "$HOME is not defined" in unexpandable.evidence
+        assert passwd_home not in unexpandable.evidence
 
     # ...and the OTHER way the default stays relative: a $HOME that is itself
     # relative. Same verdict, but the evidence must not assert the cause above —
@@ -145,7 +154,7 @@ def test_the_handoff_home_separates_what_a_goal_heals_from_what_it_cannot(
         relative_home = _home(monkeypatch, tmp_path, None)
     assert relative_home.verdict is Verdict.FAIL
     assert "'relhome'" in relative_home.evidence
-    assert "$HOME is unset" not in relative_home.evidence
+    assert "$HOME is not defined" not in relative_home.evidence
 
     # a symlink to a real directory is a home, not a misconfiguration
     link = tmp_path / "link-to-nm"

@@ -87,22 +87,30 @@ def _handoff_home() -> Finding:
     into an ``ok``. The sole normalisation is that an empty value means unset,
     which no-mistakes reads the same way."""
     raw = os.environ.get("NM_HOME") or ""
+    remedy = f"set NM_HOME to an absolute path on the state volume — {_RUNBOOK}"
+    host_home = os.environ.get("HOME") or ""
+    if not raw and not host_home:
+        # no-mistakes resolves its default from $HOME alone (Go's UserHomeDir:
+        # "$HOME is not defined" on unset AND empty, no passwd fallback), so
+        # doctor must not expand the default through passwd and certify a home
+        # the tool itself cannot find.
+        return Finding("handoff.home", Verdict.FAIL,
+                       f"NM_HOME is unset and no-mistakes cannot resolve the default {NM_HOME_DEFAULT}"
+                       " ($HOME is not defined)", remedy=remedy)
     #: Only the DEFAULT is expanded. no-mistakes does not expand a tilde in
     #: NM_HOME — `NM_HOME=~/x` makes it a literal `~` directory in its cwd —
     #: and a compose `environment:` block passes `~/.no-mistakes` through
     #: unexpanded, so expanding it here would clear the likeliest misconfig.
     home = raw or os.path.expanduser(NM_HOME_DEFAULT)
     if not os.path.isabs(home):
-        # Two different misconfigurations reach here, and they need different
-        # evidence. Set-but-relative blames the operator's value; unset means
-        # `expanduser` found no absolute home to expand the default into, which
-        # names NO variable the operator ever touched — so name the one that is
-        # actually wrong rather than asserting a cause that may be false.
+        # Set-but-relative blames the operator's value; unset means the default
+        # was expanded into a $HOME that is itself relative — name the variable
+        # that is actually wrong, not an NM_HOME nobody set.
         return Finding("handoff.home", Verdict.FAIL,
                        f"NM_HOME does not resolve to an absolute path ({raw!r})" if raw
                        else f"NM_HOME is unset and the default {NM_HOME_DEFAULT} cannot be expanded"
-                            f" ({_no_absolute_home()})",
-                       remedy=f"set NM_HOME to an absolute path on the state volume — {_RUNBOOK}")
+                            f" ($HOME is itself relative ({host_home!r}))",
+                       remedy=remedy)
     # Structure is probed on the path without its trailing separator, which
     # `lstat` resolves as a directory: `islink("/x/dangling/")` is False, and
     # with it the dangling-symlink evidence. The operator's spelling stays in
@@ -148,16 +156,6 @@ def _handoff_home() -> Finding:
                        f" (no {' or '.join(missing)} permission for this uid)",
                        remedy=f"make {home} a writable directory on the state volume — {_RUNBOOK}")
     return Finding("handoff.home", Verdict.OK, home)
-
-
-def _no_absolute_home() -> str:
-    """Why ``expanduser`` left the default relative — the cause an operator can
-    act on. ``$HOME`` set to a relative path and ``$HOME`` absent are different
-    hosts, and an empty ``$HOME`` never reaches here (``posixpath`` reads it as
-    the root)."""
-    host_home = os.environ.get("HOME")
-    return (f"$HOME is itself relative ({host_home!r})" if host_home
-            else "$HOME is unset and this uid has no home directory")
 
 
 def _nearest_existing(path: str) -> str:
