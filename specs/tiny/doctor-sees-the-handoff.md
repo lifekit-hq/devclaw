@@ -47,9 +47,12 @@ A `handoff` check in `devclaw/doctor/checks.py`, between `tools` and `pause`:
   when nothing is there yet; `fail` for every home no session heals — a path
   that does not resolve absolute, a file or dangling symlink on it, an
   unwritable parent (`mkdir -p` semantics: the nearest existing ancestor must
-  be a writable directory), a home that exists but cannot be written (`init`
-  puts `state.sqlite` and the daemon files in it), or a home `os.stat` cannot
-  read. `$NM_HOME` is judged as the TOOL receives it:
+  be a writable directory), a home that exists but lacks the write or the search bit (`init`
+  puts `state.sqlite` and the daemon files in it, which needs both), or a home
+  `os.stat` cannot read — a permission wall, a file on the walk, a symlink
+  loop. Each verdict's evidence names the component the operator fixes, never
+  a variable they did not set: an unset `NM_HOME` whose default cannot be
+  expanded names `$HOME`, not `NM_HOME`. `$NM_HOME` is judged as the TOOL receives it:
   the engine hands no-mistakes the raw environment (`host_env`), so stripping
   or expanding the operator's value would clear a host that cannot ship. The
   tilde is the case that matters — no-mistakes does not expand one either (it
