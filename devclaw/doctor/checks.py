@@ -102,7 +102,8 @@ def _handoff_home() -> Finding:
             return Finding("handoff.home", Verdict.FAIL, f"{home} is a dangling symlink", remedy=_UNCREATABLE)
         if not _creatable(home):
             return Finding("handoff.home", Verdict.FAIL, f"no directory at {home}, and it cannot be created",
-                           remedy=f"make {_blocked_at(home)} a writable directory on the state volume — {_RUNBOOK}")
+                           remedy=f"make {_nearest_existing(home)} a writable directory on the state volume"
+                                  f" — {_RUNBOOK}")
         return Finding("handoff.home", Verdict.WARN, f"no directory at {home} yet",
                        remedy=f"the first goal's `no-mistakes init` creates it — {_RUNBOOK}")
     except OSError as exc:
@@ -124,22 +125,31 @@ def _handoff_home() -> Finding:
     return Finding("handoff.home", Verdict.OK, home)
 
 
+def _nearest_existing(path: str) -> str:
+    """The deepest ancestor of an absent ``path`` that exists — the directory
+    ``mkdir -p`` would create the rest under, and the one an operator has to
+    fix when it cannot."""
+    ancestor = os.path.dirname(path)
+    while not os.path.exists(ancestor) and ancestor != os.path.dirname(ancestor):
+        ancestor = os.path.dirname(ancestor)
+    return ancestor
+
+
 def _creatable(path: str) -> bool:
     """``mkdir -p`` semantics: the nearest existing ancestor must be a
     directory this process can write into. Read-only — probes, never creates.
 
     It answers for doctor's own uid, which is the uid the session's ``init``
     runs under on this deployment (one container, one user)."""
-    ancestor = os.path.dirname(path)
-    while not os.path.exists(ancestor) and ancestor != os.path.dirname(ancestor):
-        ancestor = os.path.dirname(ancestor)
+    ancestor = _nearest_existing(path)
     return os.path.isdir(ancestor) and os.access(ancestor, os.W_OK | os.X_OK)
 
 
 def _blocked_at(path: str) -> str:
-    """The shallowest ancestor of an absolute ``path`` an operator has to fix:
-    the first one that is not a directory this process can descend into.
-    Falls back to ``path`` itself, which is the answer for a symlink loop.
+    """For a ``path`` the stat walk could not read: the shallowest ancestor an
+    operator has to fix, the first one that is not a directory this process can
+    descend into. Falls back to ``path`` itself, which is the answer for a
+    symlink loop.
 
     A wrongly-owned mount point is reported at the mount point, not at the leaf
     the operator configured — otherwise the line leaves them to bisect."""

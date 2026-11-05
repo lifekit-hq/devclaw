@@ -200,11 +200,12 @@ def test_an_unreadable_handoff_home_never_reads_as_the_self_healing_warn(
 
         # the remedy names the sealed PARENT, not the leaf the operator set —
         # otherwise the line leaves them to bisect the chain
-        assert str(sealed) in unreadable.remedy
+        assert f"make {sealed} a readable" in unreadable.remedy
 
         # and the same for a home that is merely absent under it
         uncreatable = _home(monkeypatch, tmp_path, str(sealed / "not-yet"))
         assert uncreatable.verdict is Verdict.FAIL
+        assert f"make {sealed} a readable" in uncreatable.remedy
     finally:
         sealed.chmod(0o700)
 
@@ -225,13 +226,18 @@ def test_a_handoff_home_no_goal_can_create_is_not_the_self_healing_warn(
         finding = _home(monkeypatch, tmp_path, str(read_only / "nm"))
         assert finding.verdict is Verdict.FAIL
         assert "cannot be created" in finding.evidence
-        assert str(read_only) in finding.remedy and _RUNBOOK in finding.remedy
+        assert f"make {read_only} a writable" in finding.remedy and _RUNBOOK in finding.remedy
+        # several missing components deep, the answer is still the read-only
+        # ancestor — not the first component mkdir -p would have created
+        deep = _home(monkeypatch, tmp_path, str(read_only / "a" / "b" / "nm"))
+        assert deep.verdict is Verdict.FAIL
+        assert f"make {read_only} a writable" in deep.remedy
         # Present but sealed: `init` cannot put state.sqlite in it. The leaf
         # stats fine, so without its own probe this is the `ok` branch.
         finding = _home(monkeypatch, tmp_path, str(sealed_home))
         assert finding.verdict is Verdict.FAIL
         assert "not writable" in finding.evidence
-        assert str(sealed_home) in finding.remedy and _RUNBOOK in finding.remedy
+        assert f"make {sealed_home} a writable" in finding.remedy and _RUNBOOK in finding.remedy
     finally:
         read_only.chmod(0o700)
         sealed_home.chmod(0o700)
