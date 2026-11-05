@@ -215,16 +215,26 @@ def test_a_handoff_home_no_goal_can_create_is_not_the_self_healing_warn(
 ):
     """`mkdir -p` semantics. An absent home under a read-only parent is absent
     forever — reporting it as "the first goal's `no-mistakes init` creates it"
-    is an exit 0 and a false remedy."""
+    is an exit 0 and a false remedy. A home that exists but this uid cannot
+    write into is the same class: `init` fails on state.sqlite every session."""
     read_only = tmp_path / "ro"
     read_only.mkdir(mode=0o555)
+    sealed_home = tmp_path / "sealed"
+    sealed_home.mkdir(mode=0o500)
     try:
         finding = _home(monkeypatch, tmp_path, str(read_only / "nm"))
         assert finding.verdict is Verdict.FAIL
         assert "cannot be created" in finding.evidence
         assert str(read_only) in finding.remedy and _RUNBOOK in finding.remedy
+        # Present but sealed: `init` cannot put state.sqlite in it. The leaf
+        # stats fine, so without its own probe this is the `ok` branch.
+        finding = _home(monkeypatch, tmp_path, str(sealed_home))
+        assert finding.verdict is Verdict.FAIL
+        assert "not writable" in finding.evidence
+        assert str(sealed_home) in finding.remedy and _RUNBOOK in finding.remedy
     finally:
         read_only.chmod(0o700)
+        sealed_home.chmod(0o700)
 
 
 def test_the_stub_engine_never_needs_the_handoff(monkeypatch, tmp_path):

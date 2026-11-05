@@ -77,8 +77,8 @@ def _handoff_home() -> Finding:
     Three states, not two. A home that is merely not created yet is a ``warn``
     — the engine's pre-session ``no-mistakes init`` creates it, so a goal heals
     it. A home no session can heal is a ``fail`` rather than an exit 0 that
-    reads as a healthy instance: one ``init`` cannot create, or one doctor
-    cannot even read.
+    reads as a healthy instance: one ``init`` cannot create or write into, or
+    one doctor cannot even read.
 
     The operator's value is judged as the tool receives it — the engine passes
     no-mistakes the raw environment (``engine.claude.host_env``) — so a padded,
@@ -116,6 +116,11 @@ def _handoff_home() -> Finding:
                        else f"make {blocked} a readable directory on the state volume — {_RUNBOOK}")
     if not present_and_dir:
         return Finding("handoff.home", Verdict.FAIL, f"{home} is not a directory", remedy=_UNCREATABLE)
+    # `init` writes state.sqlite and the daemon files into it. Doctor's own
+    # uid answers, the same caveat `_creatable` states.
+    if not os.access(home, os.W_OK | os.X_OK):
+        return Finding("handoff.home", Verdict.FAIL, f"{home} is not writable",
+                       remedy=f"make {home} a writable directory on the state volume — {_RUNBOOK}")
     return Finding("handoff.home", Verdict.OK, home)
 
 

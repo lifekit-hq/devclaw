@@ -42,12 +42,14 @@ A `handoff` check in `devclaw/doctor/checks.py`, between `tools` and `pause`:
   the verdict a missing `claude` / `treehouse` already gets, so
   `devclaw doctor` exits 1 on it exactly as it does for those.
 - `handoff.home` — `ok` with the expanded path when `$NM_HOME` (default
-  `~/.no-mistakes`) is a directory; `warn` naming the path and the fact that
-  the first goal's `no-mistakes init` creates it when nothing is there yet;
-  `fail` for every home no session heals — a path that does not resolve
-  absolute, a file or dangling symlink on it, an unwritable parent (`mkdir -p`
-  semantics: the nearest existing ancestor must be a writable directory), or a
-  home `os.stat` cannot read. `$NM_HOME` is judged as the TOOL receives it:
+  `~/.no-mistakes`) is a directory doctor's uid can write into; `warn` naming
+  the path and the fact that the first goal's `no-mistakes init` creates it
+  when nothing is there yet; `fail` for every home no session heals — a path
+  that does not resolve absolute, a file or dangling symlink on it, an
+  unwritable parent (`mkdir -p` semantics: the nearest existing ancestor must
+  be a writable directory), a home that exists but cannot be written (`init`
+  puts `state.sqlite` and the daemon files in it), or a home `os.stat` cannot
+  read. `$NM_HOME` is judged as the TOOL receives it:
   the engine hands no-mistakes the raw environment (`host_env`), so stripping
   or expanding the operator's value would clear a host that cannot ship. The
   tilde is the case that matters — no-mistakes does not expand one either (it
@@ -83,7 +85,7 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
 - The line for the home reports the resolved `$NM_HOME` (or the expanded
   default) and its state: a home that is not there yet AND creatable is
   `warn`, never `fail`; every home no session heals is `fail` — uncreatable,
-  unreadable, or not a directory. A state the checker cannot observe must
+  unwritable, unreadable, or not a directory. A state the checker cannot observe must
   never fall into the self-healing `warn`: `os.path.isdir` and
   `os.path.lexists` both swallow `EACCES`, which is why the home is stat'd
   explicitly.
@@ -120,7 +122,8 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
 - [x] `tests/test_doctor_seeded_faults.py` — the missing-binary sweep
       parametrized over all five, the home's states (present / absent /
       defaulted / symlinked / a file on the path / relative / padded /
-      unwritable parent / unreadable), the stub engine, registration in
+      unwritable parent / unwritable home / unreadable), the stub engine,
+      registration in
       `CHECKS`, and the exit code end to end plus the verdict → code mapping
 - [x] `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/runbooks/live-shakedown.md`,
       `docs/reference/env-vars.md` + their `docs/INDEX.md` currency tags

@@ -80,7 +80,7 @@ naming this runbook when it is missing, like a missing `claude` or
 not created yet, a `fail` for one no session heals: a path that is not
 absolute — including a `~` nothing expands, which is why the value set above
 is spelled out in full — a file or dangling symlink on it, an unwritable
-parent, or a home doctor cannot read) — so a host with no binary or an unusable home is a finding before a
+parent, an unwritable home, or a home doctor cannot read) — so a host with no binary or an unusable home is a finding before a
 goal has to discover it one exit line at a time. It does not probe the daemon
 or the gate registry; the live check below is still the way to see those.
 
