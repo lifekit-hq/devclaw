@@ -2,7 +2,7 @@
 
 **Branch**: goal/dc-doctor-no-mistakes-982
 **Date**: 2026-11-05
-**Status**: in review (self-review round 2: the home's unreadable and uncreatable states were landing in the self-healing `warn`; round 3: `expanduser` on the operator's value cleared a tilde home no-mistakes resolves elsewhere)
+**Status**: in review (self-review round 2: the home's unreadable and uncreatable states were landing in the self-healing `warn`; round 3: `expanduser` on the operator's value cleared a tilde home no-mistakes resolves elsewhere; no-mistakes review rounds: a present-but-unwritable home read as `ok`, the uncreatable remedy named a missing component instead of the read-only ancestor, and a dangling symlink in the middle of the path read as absent — all three now `fail`)
 **Complexity**: small (one doctor check, one test file, four doc lines, and `.devclaw/verify`'s bootstrap — see Context)
 **Issue**: #982 — doctor names a missing `claude` or `treehouse`, but not the
 no-mistakes hand-off the goal layer now depends on
@@ -118,11 +118,14 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
 
 - [x] `check_handoff` + registered in `CHECKS`, with the home's three states
       (`ok` / `warn` not-yet-created-and-creatable / `fail` everything a
-      session cannot heal) in `_handoff_home` + `_creatable`
+      session cannot heal) in `_handoff_home` + `_creatable` /
+      `_nearest_existing` (the `mkdir -p` ancestor) + `_blocked_at` (the
+      unreadable ancestor)
 - [x] `tests/test_doctor_seeded_faults.py` — the missing-binary sweep
       parametrized over all five, the home's states (present / absent /
-      defaulted / symlinked / a file on the path / relative / padded /
-      unwritable parent / unwritable home / unreadable), the stub engine,
+      defaulted / symlinked / a file on the path / a dangling symlink at the
+      leaf or mid-path / relative / padded / unwritable parent / unwritable
+      home / unreadable), the stub engine,
       registration in
       `CHECKS`, and the exit code end to end plus the verdict → code mapping
 - [x] `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/runbooks/live-shakedown.md`,
