@@ -2,6 +2,15 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.4.2](https://github.com/lifekit-hq/devclaw/compare/v2.4.1...v2.4.2) (2026-11-05)
+
+
+### Bug Fixes
+
+* **console:** make the impeccable design scan wait for a settled route ([#977](https://github.com/lifekit-hq/devclaw/issues/977)) ([f458fa6](https://github.com/lifekit-hq/devclaw/commit/f458fa60812491121c9bf0faaf9a99afc6ee2809))
+* **deploy:** run the no-mistakes pipeline inside the devclaw container ([#981](https://github.com/lifekit-hq/devclaw/issues/981)) ([5536f14](https://github.com/lifekit-hq/devclaw/commit/5536f14a0e8da14b681851651af9d298c9c570cb))
+* **frontend:** bump @lifekit-hq/* to 4.2.2 so the phone tab bar reaches the bottom edge ([#975](https://github.com/lifekit-hq/devclaw/issues/975)) ([cba6872](https://github.com/lifekit-hq/devclaw/commit/cba6872971375c7eb25434d3b62d2ba1f39b4b63))
+
 ## [2.4.1](https://github.com/lifekit-hq/devclaw/compare/v2.4.0...v2.4.1) (2026-10-26)
 
 
