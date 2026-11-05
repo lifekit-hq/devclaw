@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # What CI gates on a PR (.github/workflows/ci.yml): the stubbed pytest suite
 # plus ruff + mypy + import-linter + yamllint, and the Angular console's lint,
-# unit tests, build and chrome check (frontend/). Keep it honest — a check CI
-# runs that this script skips is a red CI later.
+# unit tests, build, demo build and chrome check (frontend/). Keep it honest —
+# a check CI runs that this script skips is a red CI later.
 #
 # Deliberately NOT here, with reason:
 #   gitleaks — downloads a pinned binary from the network; a sandbox without
 #              egress would read a network flake as a secrets finding.
-#   frontend e2e — needs browser bits the sandbox image does not carry; CI runs
-#              it (`npx playwright install --with-deps chromium`). To drive it
+#   frontend e2e — and with it CI's `sh e2e/impeccable-engine.sh` step, which
+#              only fetches the impeccable detector that quality.spec.ts runs
+#              inside the e2e step. Needs browser bits the sandbox image does
+#              not carry; CI runs it (`npx playwright install --with-deps
+#              chromium`). To drive it
 #              here anyway: the Playwright Chromium needs libXfixes.so.3, which
 #              is absent and cannot be apt-installed without root (extract it
 #              from the Debian package into a scratch dir and point
@@ -100,4 +103,5 @@ npm ci --no-audit --no-fund
 npm run lint
 npm test
 npm run build
+npm run build:demo
 npx lifekit-chrome-check --app dc --name devclaw --base-path /console/ ../devclaw/server/console_dist
