@@ -27,16 +27,50 @@ cd "$(dirname "$0")/.."
 # die on the first line with "No module named pytest" — a script that cannot
 # run is a script that lies. Bootstrap them into a worktree-local .venv, the
 # same shape `.no-mistakes.yaml`'s `prepare` step already uses (it reuses this
-# .venv). A .venv that exists is probed with ITS interpreter and installed into
-# only when that probe fails, so a repeat round (each `--resume` of the verify
-# loop) is a probe and a PATH prepend, never a trip to the package index; a
-# host that already has the extras and no .venv is left untouched.
-probe="import pytest, pytest_asyncio, xdist, ruff, mypy, importlinter, yamllint"
-if [ -x .venv/bin/python ]; then
-  .venv/bin/python -c "$probe" 2>/dev/null || .venv/bin/python -m pip install -q -e '.[dev]'
+# .venv).
+#
+# The probe asks for every name pyproject DECLARES — the runtime deps as well
+# as the dev extra, by distribution name (importlib.metadata normalizes, so
+# there is no module-name table to drift out of step). Both halves matter: a
+# new dev extra must not be skipped by a .venv that predates it (it would pass
+# the probe and then die at pytest collection on a missing plugin), and an
+# install cut short mid-run — watchdog, OOM, SIGTERM — can leave the dev tools
+# present and `fastmcp` gone, which every devclaw/server/tools module imports
+# at collection.
+probe='import re, tomllib, importlib.metadata as md
+project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+for dep in project["dependencies"] + project["optional-dependencies"]["dev"]:
+    md.distribution(re.split(r"[<>=!~;\[ ]", dep)[0])'
+
+if [ -x .venv/bin/python ] && .venv/bin/python -c "$probe" 2>/dev/null; then
+  # Complete: a repeat round (each `--resume` of the verify loop) is a probe
+  # and a PATH prepend, never a trip to the package index.
   export PATH="$PWD/.venv/bin:$PATH"
-elif ! python3 -c "$probe" 2>/dev/null; then
-  python3 -m venv .venv
+elif python3 -c "$probe" 2>/dev/null && [ ! -e .venv ]; then
+  :  # the host already carries the extras and nothing shadows them
+else
+  # An interpreter that RUNS is topped up in place — the probe fails for an
+  # incomplete env too (a dep added since the venv was built), and rebuilding
+  # that one would pull every declared distribution back from the index inside
+  # the verify timeout. Anything else is replaced: a tree with no usable
+  # interpreter (half-created, or a dangling bin/python that `venv` will not
+  # re-link because the symlink exists), or a plain file on the path, both of
+  # which otherwise kill the script under `set -e` before the first gate with
+  # no remedy anywhere in the output the session gets back. (`.no-mistakes.yaml`'s
+  # `prepare` builds the same .venv and has not learned this; it is covered
+  # only because verify runs first and repairs the tree.)
+  # `pip --version` as well as a bare start: an interpreter that runs with no
+  # pip module (a `pip` self-upgrade cut short) would otherwise be topped up
+  # by a `pip` that cannot be imported — exit 1 before the first gate, with
+  # the tree left in place so every later round repeats it. Rebuilding
+  # restores pip via ensurepip.
+  if [ -x .venv/bin/python ] && .venv/bin/python -c "" 2>/dev/null \
+     && .venv/bin/python -m pip --version >/dev/null 2>&1; then
+    :
+  else
+    if [ -e .venv ] || [ -L .venv ]; then rm -rf .venv; fi  # -e misses a dangling link
+    python3 -m venv .venv
+  fi
   .venv/bin/python -m pip install -q -e '.[dev]'
   export PATH="$PWD/.venv/bin:$PATH"
 fi
