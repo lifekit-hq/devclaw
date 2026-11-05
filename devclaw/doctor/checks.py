@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import shutil
 import stat
@@ -94,46 +95,69 @@ def _handoff_home() -> Finding:
     if not os.path.isabs(home):
         # Two different misconfigurations reach here, and they need different
         # evidence. Set-but-relative blames the operator's value; unset means
-        # `expanduser` found no home to expand the default into (no $HOME, and
-        # no passwd entry for this uid), which names NO variable the operator
-        # ever touched — so say which one is missing and what to set instead.
+        # `expanduser` found no absolute home to expand the default into, which
+        # names NO variable the operator ever touched — so name the one that is
+        # actually wrong rather than asserting a cause that may be false.
         return Finding("handoff.home", Verdict.FAIL,
                        f"NM_HOME does not resolve to an absolute path ({raw!r})" if raw
                        else f"NM_HOME is unset and the default {NM_HOME_DEFAULT} cannot be expanded"
-                            " ($HOME is unset and this uid has no home directory)",
+                            f" ({_no_absolute_home()})",
                        remedy=f"set NM_HOME to an absolute path on the state volume — {_RUNBOOK}")
+    # Structure is probed on the path without its trailing separator, which
+    # `lstat` resolves as a directory: `islink("/x/dangling/")` is False, and
+    # with it the dangling-symlink evidence. The operator's spelling stays in
+    # the evidence — the tool receives it verbatim.
+    probe = home.rstrip(os.sep) or os.sep
     try:
         present_and_dir = stat.S_ISDIR(os.stat(home).st_mode)
     except FileNotFoundError:
         # The leaf is absent; the walk to it succeeded, so islink is honest here.
-        if os.path.islink(home):
+        if os.path.islink(probe):
             return Finding("handoff.home", Verdict.FAIL, f"{home} is a dangling symlink", remedy=_UNCREATABLE)
-        if not _creatable(home):
+        if not _creatable(probe):
             return Finding("handoff.home", Verdict.FAIL, f"no directory at {home}, and it cannot be created",
-                           remedy=f"make {_nearest_existing(home)} a writable directory on the state volume"
+                           remedy=f"make {_nearest_existing(probe)} a writable directory on the state volume"
                                   f" — {_RUNBOOK}")
         return Finding("handoff.home", Verdict.WARN, f"no directory at {home} yet",
                        remedy=f"the first goal's `no-mistakes init` creates it — {_RUNBOOK}")
     except OSError as exc:
         # Permission, a non-directory on the walk, a symlink loop: states that
         # neither `init` nor a session resolves, so never the self-healing warn.
-        blocked = _blocked_at(home)
+        blocked = _blocked_at(probe)
+        # A loop and a file on the path are cleared, not chmod'd — the same
+        # remedy a dangling leaf gets. Only a permission wall is fixable in place.
+        unclearable = isinstance(exc, NotADirectoryError) or exc.errno == errno.ELOOP
         return Finding("handoff.home", Verdict.FAIL,
                        f"{home} cannot be read ({exc.strerror or type(exc).__name__}"
-                       + (f", at {blocked}" if blocked != home else "") + ")",
-                       remedy=_UNCREATABLE if isinstance(exc, NotADirectoryError)
+                       + (f", at {blocked}" if blocked != probe else "") + ")",
+                       remedy=_UNCREATABLE if unclearable
                        else f"make {blocked} a readable directory on the state volume — {_RUNBOOK}")
     if not present_and_dir:
         return Finding("handoff.home", Verdict.FAIL, f"{home} is not a directory", remedy=_UNCREATABLE)
-    # `init` writes state.sqlite and the daemon files into it. Doctor's own
-    # uid answers, the same caveat `_creatable` states.
-    if not os.access(home, os.W_OK | os.X_OK):
-        # Both bits, so the evidence says "written into" rather than "writable":
-        # a mode-0600 home is writable and still unusable, because `init` cannot
-        # search it to place a file.
-        return Finding("handoff.home", Verdict.FAIL, f"{home} cannot be written into",
+    # `init` writes state.sqlite and the daemon files into it, which needs both
+    # bits. Doctor's own uid answers, the same caveat `_creatable` states.
+    # Read is NOT required: a home no one can list still takes a file by name,
+    # and failing it would cry wolf on a host that ships.
+    missing = [name for bit, name in ((os.W_OK, "write"), (os.X_OK, "search"))
+               if not os.access(home, bit)]
+    if missing:
+        # Name the bit rather than one noun for both: a 0o500 home cannot be
+        # written, and a 0o600 one cannot be searched to place a file in.
+        return Finding("handoff.home", Verdict.FAIL,
+                       f"{home} is a directory `no-mistakes init` cannot use"
+                       f" (no {' or '.join(missing)} permission for this uid)",
                        remedy=f"make {home} a writable directory on the state volume — {_RUNBOOK}")
     return Finding("handoff.home", Verdict.OK, home)
+
+
+def _no_absolute_home() -> str:
+    """Why ``expanduser`` left the default relative — the cause an operator can
+    act on. ``$HOME`` set to a relative path and ``$HOME`` absent are different
+    hosts, and an empty ``$HOME`` never reaches here (``posixpath`` reads it as
+    the root)."""
+    host_home = os.environ.get("HOME")
+    return (f"$HOME is itself relative ({host_home!r})" if host_home
+            else "$HOME is unset and this uid has no home directory")
 
 
 def _nearest_existing(path: str) -> str:
@@ -167,7 +191,7 @@ def _blocked_at(path: str) -> str:
     the operator configured — otherwise the line leaves them to bisect."""
     parts = path.split(os.sep)
     for depth in range(2, len(parts)):
-        ancestor = os.sep.join(parts[:depth]) or os.sep
+        ancestor = os.sep.join(parts[:depth])
         if not os.path.isdir(ancestor) or not os.access(ancestor, os.X_OK):
             return ancestor
     return path

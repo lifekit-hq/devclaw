@@ -74,15 +74,15 @@ daemon files).
 
 ## Check the live instance (read-only)
 
-`devclaw doctor` reports the hand-off too — `no-mistakes` on PATH (a `fail`
-naming this runbook when it is missing, like a missing `claude` or
-`treehouse`) and the state of `$NM_HOME` (a `warn` while the home is merely
-not created yet, a `fail` for one no session heals: a path that is not
-absolute — including a `~` nothing expands, which is why the value set above
-is spelled out in full — a file or dangling symlink on it, an unwritable
-parent, an unwritable home, or a home doctor cannot read) — so a host with no binary or an unusable home is a finding before a
-goal has to discover it one exit line at a time. It does not probe the daemon
-or the gate registry; the live check below is still the way to see those.
+`devclaw doctor` reports the hand-off too: `no-mistakes` on PATH, and the
+state of the `$NM_HOME` set above — so a host that cannot ship a branch is a
+finding here, before a goal discovers it one exit line at a time. A missing
+binary is a `fail` — the verdict a missing `claude` already gets, so the same
+exit code — and it carries this runbook as its remedy. The home is a `warn`
+while it is merely not created yet (the next `init` makes it) and a `fail` for
+any state no session heals, which includes an `NM_HOME` holding a literal `~`,
+since nothing expands it — so spell the path out in full. Doctor spawns nothing: the daemon and the gate registry are
+the live check below.
 
 ```bash
 docker exec devclaw-devclaw-mcp-1 sh -c 'echo $NM_HOME; ls $NM_HOME/repos; no-mistakes daemon status | tail -1'

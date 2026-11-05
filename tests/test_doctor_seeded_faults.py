@@ -135,6 +135,17 @@ def test_the_handoff_home_separates_what_a_goal_heals_from_what_it_cannot(
     assert unexpandable.verdict is Verdict.FAIL
     assert NM_HOME_DEFAULT in unexpandable.evidence and "''" not in unexpandable.evidence
     assert "set NM_HOME to an absolute path" in unexpandable.remedy
+    assert "$HOME is unset" in unexpandable.evidence
+
+    # ...and the OTHER way the default stays relative: a $HOME that is itself
+    # relative. Same verdict, but the evidence must not assert the cause above —
+    # an operator told "$HOME is unset" about a $HOME they set looks elsewhere.
+    with pytest.MonkeyPatch.context() as rel_home:
+        rel_home.setenv("HOME", "relhome")
+        relative_home = _home(monkeypatch, tmp_path, None)
+    assert relative_home.verdict is Verdict.FAIL
+    assert "'relhome'" in relative_home.evidence
+    assert "$HOME is unset" not in relative_home.evidence
 
     # a symlink to a real directory is a home, not a misconfiguration
     link = tmp_path / "link-to-nm"
@@ -151,6 +162,22 @@ def test_the_handoff_home_separates_what_a_goal_heals_from_what_it_cannot(
         finding = _home(monkeypatch, tmp_path, str(broken))
         assert finding.verdict is Verdict.FAIL, broken
         assert str(broken) in finding.evidence and _RUNBOOK in finding.remedy
+
+    # a TRAILING SLASH must not cost the diagnosis: `lstat` resolves `x/` as a
+    # directory, so islink says False and a dangling home would read as merely
+    # absent — a different (and wrong) remedy for the same host
+    trailing = _home(monkeypatch, tmp_path, f"{dangling}{os.sep}")
+    assert trailing.verdict is Verdict.FAIL
+    assert "dangling symlink" in trailing.evidence
+    assert "clear the path" in trailing.remedy and _RUNBOOK in trailing.remedy
+
+    # a symlink LOOP: no chmod resolves it, so the remedy clears the path like
+    # every other unclearable entry — never "make it readable"
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+    looped = _home(monkeypatch, tmp_path, str(loop))
+    assert looped.verdict is Verdict.FAIL
+    assert "clear the path" in looped.remedy and "readable directory" not in looped.remedy
 
     # a dangling symlink in the MIDDLE of the path: `mkdir -p` refuses it
     # ("File exists"), so no session heals it, and the remedy names the link
@@ -260,12 +287,18 @@ def test_a_handoff_home_no_goal_can_create_is_not_the_self_healing_warn(
         # stats fine, so without its own probe this is the `ok` branch. Both
         # missing bits are the same verdict — 0o500 cannot be written, 0o600
         # cannot be searched to place a file in — hence the evidence's noun.
-        for mode in (0o500, 0o600):
+        for mode, bit in ((0o500, "write"), (0o600, "search"), (0o000, "write or search")):
             sealed_home.chmod(mode)
             finding = _home(monkeypatch, tmp_path, str(sealed_home))
             assert finding.verdict is Verdict.FAIL, mode
-            assert "cannot be written into" in finding.evidence, mode
+            # the evidence names WHICH bit is missing: one noun for both modes
+            # sent an operator to chmod +w a home that was already writable
+            assert f"no {bit} permission" in finding.evidence, mode
             assert f"make {sealed_home} a writable" in finding.remedy and _RUNBOOK in finding.remedy
+        # read is deliberately NOT required — a home no one can list still
+        # takes state.sqlite by name, and failing it would cry wolf
+        sealed_home.chmod(0o300)
+        assert _home(monkeypatch, tmp_path, str(sealed_home)).verdict is Verdict.OK
     finally:
         read_only.chmod(0o700)
         sealed_home.chmod(0o700)

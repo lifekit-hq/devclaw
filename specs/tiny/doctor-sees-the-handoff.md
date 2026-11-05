@@ -2,7 +2,7 @@
 
 **Branch**: goal/dc-doctor-no-mistakes-982
 **Date**: 2026-11-05
-**Status**: in review (self-review round 2: the home's unreadable and uncreatable states were landing in the self-healing `warn`; round 3: `expanduser` on the operator's value cleared a tilde home no-mistakes resolves elsewhere; no-mistakes review rounds: a present-but-unwritable home read as `ok`, the uncreatable remedy named a missing component instead of the read-only ancestor, and a dangling symlink in the middle of the path read as absent — all three now `fail`; round 4: the unset-and-unexpandable home blamed an `NM_HOME` nobody set, the sealed-home evidence read "not writable" for a home that is writable but not searchable, and the default's test read the runner's own `$HOME`)
+**Status**: delivered — review rounds moved every home state no session heals out of the self-healing `warn` and into `fail` (unreadable, uncreatable, present-but-unwritable, a dangling symlink mid-path, relative), and left the default expanded only when `NM_HOME` is unset
 **Complexity**: small (one doctor check, one test file, four doc lines, and `.devclaw/verify`'s bootstrap — see Context)
 **Issue**: #982 — doctor names a missing `claude` or `treehouse`, but not the
 no-mistakes hand-off the goal layer now depends on
@@ -68,7 +68,7 @@ A `handoff` check in `devclaw/doctor/checks.py`, between `tools` and `pause`:
 | `devclaw/engine/claude.py` | `NO_MISTAKES` — the one name of the binary, imported rather than re-spelled |
 | `devclaw/cli.py` | `_cmd_doctor`: exit 1 when any finding is `fail` or `unknown` |
 | `tests/test_doctor_seeded_faults.py` | the tripwire — the "doctor seeded faults" class had no test since the v2 rewrite deleted `tests/test_doctor.py`, so it is named and parametrized after the CLASS (every binary on the delivery path), not after this instance |
-| `.devclaw/verify` | carried in this increment, not by #982: inside the devclaw container the script could not run at all (the image installs runtime deps only, so `python3 -m pytest` died on line one), which is a verify that lies. It now bootstraps the declared deps into a worktree-local `.venv` — the shape `.no-mistakes.yaml`'s `prepare` already uses — probing by distribution name so a dep added later is installed rather than skipped, topping up an interpreter that runs, and replacing a tree that has none (which otherwise killed the script under `set -e` before the first gate). The trade-off, written down: the first round on a fresh worktree needs the package index, so an index outage reads as a red verify (`INTERRUPTED`) rather than a stop on a fact. Accepted because the alternative is a script that cannot execute; every later round is a probe and a PATH prepend. |
+| `.devclaw/verify` | carried in this increment, not by #982: inside the devclaw container the script could not run at all (the image installs runtime deps only, so `python3 -m pytest` died on line one), which is a verify that lies. It now bootstraps the declared deps into a worktree-local `.venv` — the shape `.no-mistakes.yaml`'s `prepare` already uses — probing by distribution name so a dep added later is installed rather than skipped, topping up an interpreter that runs, and replacing a tree that has none (which otherwise killed the script under `set -e` before the first gate). The trade-off, written down: workspace prep runs `git clean -fdx` and `.venv` is gitignored, so EVERY session's first round builds the venv from the package index — not just a fresh worktree's — and an index outage reads as a red verify (`INTERRUPTED`) rather than a stop on a fact, on a `DEVCLAW_VERIFY_TIMEOUT_S` budget it now shares with `npm ci`. Accepted because the alternative is a script that cannot execute at all, and `npm ci` already made every round network-bound; later rounds within a session are a probe and a PATH prepend. |
 | `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/runbooks/live-shakedown.md`, `docs/reference/env-vars.md` | the four doc lines the diff makes wrong |
 
 `NM_HOME` is not a `DEVCLAW_*` dial — no-mistakes reads it itself — so the read
@@ -135,4 +135,4 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
 
 - [x] `devclaw doctor` on this host shows the two hand-off lines
 - [x] `.devclaw/verify` green
-- [ ] This PR's CI green
+- [ ] This PR's CI green — the host's read on the delivered head, not a session's (green on a2e7b69)
