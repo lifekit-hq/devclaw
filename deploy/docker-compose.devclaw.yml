@@ -79,8 +79,7 @@ services:
       FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
       # The no-mistakes home — gates, run history, daemon state — on the
       # durable `devclaw-state` volume (docs/runbooks/no-mistakes-in-container.md).
-      # Same value as the image's ENV; tests/test_no_mistakes_state_survives_redeploy.py
-      # fails if the two drift or leave the volume.
+      # tests/test_no_mistakes_state_survives_redeploy.py fails if it leaves the volume.
       NM_HOME: /var/lib/devclaw/no-mistakes
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude

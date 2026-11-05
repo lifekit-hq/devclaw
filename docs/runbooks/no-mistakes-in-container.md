@@ -68,8 +68,8 @@ removes.)
 
 The stubbed tripwires: `tests/test_handoff_fails_closed.py` (the pipeline is
 initialised before the first turn; a dead pipeline spends no session) and
-`tests/test_no_mistakes_state_survives_redeploy.py` (image and compose name one
-`NM_HOME` on the state volume; the entrypoint runs first and clears only the
+`tests/test_no_mistakes_state_survives_redeploy.py` (compose names one
+`NM_HOME` on the state volume; the entrypoint clears only the
 daemon files).
 
 ## Check the live instance (read-only)
