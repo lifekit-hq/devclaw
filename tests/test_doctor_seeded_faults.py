@@ -8,7 +8,8 @@ file.
 
 The hand-off's home is the one check with three states rather than two: a home
 the first goal's ``no-mistakes init`` creates is a ``warn``, and only a home no
-session can heal — uncreatable, unreadable, or not a directory — is a ``fail``.
+session can heal — uncreatable, unwritable, unreadable, or not a directory — is a
+``fail``.
 
 The last test pins the verdict → exit-code mapping itself: "the same verdict"
 only means "the same exit code" while ``fail`` and ``unknown`` are the two that
