@@ -4,8 +4,9 @@ The tripwire class is doctor's seeded faults: for every piece of tooling an
 unattended session needs, a host that lacks it must be a LOUD finding with a
 nonzero exit, not a goal that stops at the hand-off and reads as a mute
 instance (goal dc-phone-tab-bar-971, issue #982). The binary is a ``fail``
-exactly like ``claude`` / ``treehouse``; the home is a ``warn``, because the
-first goal's ``no-mistakes init`` is what creates it.
+exactly like ``claude`` / ``treehouse``; a home that is merely not created yet
+is a ``warn``, because the first goal's ``no-mistakes init`` creates it, and a
+home that ``init`` cannot create is a ``fail``.
 
 The second half pins the verdict → exit-code mapping itself: "the same verdict"
 only means "the same exit code" while ``fail`` and ``unknown`` are the two that
@@ -75,7 +76,10 @@ def test_a_missing_no_mistakes_fails_like_a_missing_engine_binary(monkeypatch, t
     assert engine["tools.claude"].verdict is engine["tools.treehouse"].verdict is missing.verdict
 
 
-def test_the_handoff_home_is_reported_and_never_fails_the_instance(monkeypatch, tmp_path, production_engine):
+def test_the_handoff_home_separates_not_yet_created_from_uncreatable(monkeypatch, tmp_path, production_engine):
+    """The home's three states. ``warn`` is for the one a goal heals by itself;
+    a home ``no-mistakes init`` CANNOT create is as loud as a missing binary,
+    because no session will fix it and exit 0 reads as healthy."""
     present = tmp_path / "nm"
     present.mkdir()
     assert _findings(monkeypatch, tmp_path, on_path=True, home=str(present))["handoff.home"] == Finding(
@@ -92,6 +96,28 @@ def test_the_handoff_home_is_reported_and_never_fails_the_instance(monkeypatch, 
     default = _findings(monkeypatch, tmp_path, on_path=True, home=None)["handoff.home"]
     assert os.path.expanduser(NM_HOME_DEFAULT) in default.evidence
     assert "~" not in default.evidence
+
+    # a symlink to a real directory is a home, not a misconfiguration
+    link = tmp_path / "link-to-nm"
+    link.symlink_to(present)
+    assert _findings(monkeypatch, tmp_path, on_path=True, home=str(link))["handoff.home"].verdict is Verdict.OK
+
+    file_on_the_path = tmp_path / "nm-file"
+    file_on_the_path.write_text("")
+    dangling = tmp_path / "dangling"
+    dangling.symlink_to(tmp_path / "nowhere")
+    for broken in (file_on_the_path, dangling):
+        finding = _findings(monkeypatch, tmp_path, on_path=True, home=str(broken))["handoff.home"]
+        assert finding.verdict is Verdict.FAIL, broken
+        assert str(broken) in finding.evidence and _RUNBOOK in finding.remedy
+
+    # a relative NM_HOME resolves against whatever cwd doctor happens to run
+    # in — never a home, even when a directory of that name exists here
+    (tmp_path / "relative-nm").mkdir()
+    monkeypatch.chdir(tmp_path)
+    relative = _findings(monkeypatch, tmp_path, on_path=True, home="relative-nm")["handoff.home"]
+    assert relative.verdict is Verdict.FAIL
+    assert "relative-nm" in relative.evidence and _RUNBOOK in relative.remedy
 
 
 def test_the_stub_engine_never_needs_the_handoff(monkeypatch, tmp_path):

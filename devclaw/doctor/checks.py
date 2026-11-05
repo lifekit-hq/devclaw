@@ -46,38 +46,54 @@ def check_tools(store, registry) -> list[Finding]:
 
 #: no-mistakes' own home — gates, run history, daemon files. Not a ``DEVCLAW_*``
 #: dial: no-mistakes reads it itself (docs/reference/env-vars.md), and doctor
-#: only reports whether it is there.
+#: only reports the state of the directory it names.
 NM_HOME_DEFAULT = "~/.no-mistakes"
 _RUNBOOK = "docs/runbooks/no-mistakes-in-container.md"
 
 
 def check_handoff(store, registry) -> list[Finding]:
     """The hand-off a delivered branch ships through: the ``no-mistakes``
-    binary on PATH and whether its home exists.
+    binary on PATH and the state of its home.
 
     A host without a usable no-mistakes stops the goal at the hand-off, which
     read as a mute instance until a human went looking (goal
-    dc-phone-tab-bar-971) — so the binary is a ``fail``, exactly like the
-    ``claude`` and ``treehouse`` binaries above. The home is a ``warn``: the
-    first goal's ``no-mistakes init`` creates it, so an instance that has not
-    run one yet is healthy without it (same shape as a goal whose project
-    checkout is not cloned yet)."""
+    dc-phone-tab-bar-971 — what it found unusable was the pipeline, not the
+    binary; see ``_handoff_home``). The binary is a ``fail``, exactly like the
+    ``claude`` and ``treehouse`` binaries above."""
     if _config.ENGINE == "stub":
         return [Finding("handoff", Verdict.OK, "stub engine — no hand-off")]
-    out: list[Finding] = []
     binary = shutil.which(NO_MISTAKES)
     if binary:
-        out.append(Finding(f"handoff.{NO_MISTAKES}", Verdict.OK, f"on PATH ({binary})"))
+        found = Finding(f"handoff.{NO_MISTAKES}", Verdict.OK, f"on PATH ({binary})")
     else:
-        out.append(Finding(f"handoff.{NO_MISTAKES}", Verdict.FAIL, "not on PATH",
-                           remedy=f"install it in the image (deploy/Dockerfile, NO_MISTAKES_VERSION) — {_RUNBOOK}"))
-    home = os.path.expanduser((os.environ.get("NM_HOME") or "").strip() or NM_HOME_DEFAULT)
+        found = Finding(f"handoff.{NO_MISTAKES}", Verdict.FAIL, "not on PATH",
+                        remedy=f"install it in the image (deploy/Dockerfile, NO_MISTAKES_VERSION) — {_RUNBOOK}")
+    return [found, _handoff_home()]
+
+
+def _handoff_home() -> Finding:
+    """``$NM_HOME`` (or no-mistakes' own default) and what its state means.
+
+    Three states, not two. A home that is merely not there yet is ``warn`` —
+    the shape ``check_goals`` uses for a checkout the first session clones. It
+    is the state an emptied state volume leaves (#981) and it heals itself:
+    the engine runs ``no-mistakes init`` before the first turn that hands off.
+    A home ``init`` CANNOT create — a relative path, or a file or dangling
+    symlink sitting on it — no session heals, so it is a ``fail`` rather than
+    an exit 0 that reads as a healthy instance. No deploy has produced that
+    state; it is a forward guard, not a fix for an observed one."""
+    raw = (os.environ.get("NM_HOME") or "").strip()
+    home = os.path.expanduser(raw or NM_HOME_DEFAULT)
+    if raw and not os.path.isabs(home):
+        return Finding("handoff.home", Verdict.FAIL, f"NM_HOME is a relative path ({raw})",
+                       remedy=f"set it to an absolute path on the state volume — {_RUNBOOK}")
     if os.path.isdir(home):
-        out.append(Finding("handoff.home", Verdict.OK, home))
-    else:
-        out.append(Finding("handoff.home", Verdict.WARN, f"no directory at {home} yet",
-                           remedy=f"the first goal's `no-mistakes init` creates it — {_RUNBOOK}"))
-    return out
+        return Finding("handoff.home", Verdict.OK, home)
+    if os.path.lexists(home):
+        return Finding("handoff.home", Verdict.FAIL, f"{home} is not a directory",
+                       remedy=f"`no-mistakes init` cannot create it — clear the path — {_RUNBOOK}")
+    return Finding("handoff.home", Verdict.WARN, f"no directory at {home} yet",
+                   remedy=f"the first goal's `no-mistakes init` creates it — {_RUNBOOK}")
 
 
 def check_pause(store, registry) -> list[Finding]:

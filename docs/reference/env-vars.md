@@ -46,7 +46,7 @@ vars always win over `.env`.
 
 | Var | Default | Purpose |
 |---|---|---|
-| `NM_HOME` | `~/.no-mistakes` | no-mistakes' own home: gates, run history, config, daemon files. The image and compose set `/var/lib/devclaw/no-mistakes` (on the `devclaw-state` volume) — see [`runbooks/no-mistakes-in-container.md`](../runbooks/no-mistakes-in-container.md). Set for no-mistakes, which reads it; devclaw only reports whether the home exists (`devclaw doctor`'s `handoff.home`). |
+| `NM_HOME` | `~/.no-mistakes` | no-mistakes' own home: gates, run history, config, daemon files. The image and compose set `/var/lib/devclaw/no-mistakes` (on the `devclaw-state` volume) — see [`runbooks/no-mistakes-in-container.md`](../runbooks/no-mistakes-in-container.md). Set for no-mistakes, which reads it; devclaw only reports the state of the directory it names (`devclaw doctor`'s `handoff.home`: present, not created yet, or uncreatable). |
 
 ## Queue (money brakes)
 

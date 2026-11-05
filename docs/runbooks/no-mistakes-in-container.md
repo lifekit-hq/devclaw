@@ -76,9 +76,10 @@ daemon files).
 
 `devclaw doctor` reports the hand-off too — `no-mistakes` on PATH (a `fail`
 naming this runbook when it is missing, like a missing `claude` or
-`treehouse`) and whether `$NM_HOME` exists (a `warn` until the first `init`
-creates it) — so a host that cannot ship a branch is a finding instead of a
-goal that stops at the hand-off.
+`treehouse`) and the state of `$NM_HOME` (a `warn` while it is merely not
+created yet, a `fail` when `init` cannot create it: a relative path, or a file
+or dangling symlink on it) — so a host that cannot ship a branch is a finding
+instead of a goal that stops at the hand-off.
 
 ```bash
 docker exec devclaw-devclaw-mcp-1 sh -c 'echo $NM_HOME; ls $NM_HOME/repos; no-mistakes daemon status | tail -1'
