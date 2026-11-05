@@ -3,7 +3,7 @@
 **Branch**: goal/dc-doctor-no-mistakes-982
 **Date**: 2026-11-05
 **Status**: in review
-**Complexity**: small (one doctor check, one test file, three doc lines, and `.devclaw/verify`'s bootstrap — see Context)
+**Complexity**: small (one doctor check, one test file, four doc lines, and `.devclaw/verify`'s bootstrap — see Context)
 **Issue**: #982 — doctor names a missing `claude` or `treehouse`, but not the
 no-mistakes hand-off the goal layer now depends on
 
@@ -59,7 +59,7 @@ A `handoff` check in `devclaw/doctor/checks.py`, between `tools` and `pause`:
 | `devclaw/cli.py` | `_cmd_doctor`: exit 1 when any finding is `fail` or `unknown` |
 | `tests/test_doctor_sees_the_handoff.py` | new — the tripwire |
 | `.devclaw/verify` | carried in this increment, not by #982: inside the devclaw container the script could not run at all (the image installs runtime deps only, so `python3 -m pytest` died on line one), which is a verify that lies. It now bootstraps the declared deps into a worktree-local `.venv` — the shape `.no-mistakes.yaml`'s `prepare` already uses — probing by distribution name so a dep added later is installed rather than skipped, topping up an interpreter that runs, and replacing a tree that has none (which otherwise killed the script under `set -e` before the first gate). The trade-off, written down: the first round on a fresh worktree needs the package index, so an index outage reads as a red verify (`INTERRUPTED`) rather than a stop on a fact. Accepted because the alternative is a script that cannot execute; every later round is a probe and a PATH prepend. |
-| `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/reference/env-vars.md` | the three doc lines the diff makes wrong |
+| `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/runbooks/live-shakedown.md`, `docs/reference/env-vars.md` | the four doc lines the diff makes wrong |
 
 `NM_HOME` is not a `DEVCLAW_*` dial — no-mistakes reads it itself — so the read
 stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
@@ -108,7 +108,7 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
 - [x] `tests/test_doctor_sees_the_handoff.py` — found / missing on a stubbed
       PATH, home present / absent / defaulted / symlinked / a file on the path
       / relative, the stub engine, and the verdict → exit-code mapping
-- [x] `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`,
+- [x] `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/runbooks/live-shakedown.md`,
       `docs/reference/env-vars.md` + their `docs/INDEX.md` currency tags
 
 ## Done When
