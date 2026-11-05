@@ -21,6 +21,19 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# The gates below are the dev extras (CI: `install: -e '.[dev]'`). The deployed
+# devclaw image installs the RUNTIME deps only (deploy/Dockerfile:
+# `pip install .`), so a session running INSIDE the devclaw container used to
+# die on the first line with "No module named pytest" — a script that cannot
+# run is a script that lies. Bootstrap them into a worktree-local .venv, the
+# same shape `.no-mistakes.yaml`'s `prepare` step already uses (it reuses this
+# .venv), and leave a host that already has them untouched.
+if ! python3 -c "import pytest, pytest_asyncio, xdist, ruff, mypy, importlinter, yamllint" 2>/dev/null; then
+  [ -x .venv/bin/python ] || python3 -m venv .venv
+  .venv/bin/python -m pip install -q -e '.[dev]'
+  export PATH="$PWD/.venv/bin:$PATH"
+fi
+
 # /tmp/pytest-of-<user> can be root-owned on some hosts, which crashes every
 # tmp_path fixture — give the run a private basetemp.
 export TMPDIR="${TMPDIR:-$(mktemp -d)}"

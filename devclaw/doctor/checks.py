@@ -7,6 +7,7 @@ import shutil
 
 from .. import config as _config
 from .. import credentials as _credentials
+from ..engine.claude import NO_MISTAKES
 from ..engine.workspace import goal_checkout_dir
 from ..probes import green_credentials
 from ..state_store import _now_ms
@@ -40,6 +41,42 @@ def check_tools(store, registry) -> list[Finding]:
         out.append(Finding(f"tools.{os.path.basename(binary)}",
                            Verdict.OK if shutil.which(binary) else Verdict.FAIL,
                            "on PATH" if shutil.which(binary) else "not on PATH"))
+    return out
+
+
+#: no-mistakes' own home — gates, run history, daemon files. Not a ``DEVCLAW_*``
+#: dial: no-mistakes reads it itself (docs/reference/env-vars.md), and doctor
+#: only reports whether it is there.
+NM_HOME_DEFAULT = "~/.no-mistakes"
+_RUNBOOK = "docs/runbooks/no-mistakes-in-container.md"
+
+
+def check_handoff(store, registry) -> list[Finding]:
+    """The hand-off a delivered branch ships through: the ``no-mistakes``
+    binary on PATH and whether its home exists.
+
+    A host without a usable no-mistakes stops the goal at the hand-off, which
+    read as a mute instance until a human went looking (goal
+    dc-phone-tab-bar-971) — so the binary is a ``fail``, exactly like the
+    ``claude`` and ``treehouse`` binaries above. The home is a ``warn``: the
+    first goal's ``no-mistakes init`` creates it, so an instance that has not
+    run one yet is healthy without it (same shape as a goal whose project
+    checkout is not cloned yet)."""
+    if _config.ENGINE == "stub":
+        return [Finding("handoff", Verdict.OK, "stub engine — no hand-off")]
+    out: list[Finding] = []
+    binary = shutil.which(NO_MISTAKES)
+    if binary:
+        out.append(Finding(f"handoff.{NO_MISTAKES}", Verdict.OK, f"on PATH ({binary})"))
+    else:
+        out.append(Finding(f"handoff.{NO_MISTAKES}", Verdict.FAIL, "not on PATH",
+                           remedy=f"install it in the image (deploy/Dockerfile, NO_MISTAKES_VERSION) — {_RUNBOOK}"))
+    home = os.path.expanduser((os.environ.get("NM_HOME") or "").strip() or NM_HOME_DEFAULT)
+    if os.path.isdir(home):
+        out.append(Finding("handoff.home", Verdict.OK, home))
+    else:
+        out.append(Finding("handoff.home", Verdict.WARN, f"no directory at {home} yet",
+                           remedy=f"the first goal's `no-mistakes init` creates it — {_RUNBOOK}"))
     return out
 
 
@@ -84,4 +121,5 @@ def check_database(store, registry) -> list[Finding]:
     return [Finding("database", Verdict.OK, f"{store.db_path} ({size >> 20} MB)")]
 
 
-CHECKS = (check_credentials, check_tools, check_pause, check_goals, check_projects, check_database)
+CHECKS = (check_credentials, check_tools, check_handoff, check_pause, check_goals, check_projects,
+          check_database)
