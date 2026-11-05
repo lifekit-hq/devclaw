@@ -43,8 +43,9 @@ no-mistakes), `closes` (the goal's issues, passed as `--closes`). The session's 
 host-only credentials — `GH_TOKEN`, the MCP bearer `DEVCLAW_TOKEN`, the
 `DEVCLAW_GOAL_NOTIFY_URL` webhook (`credentials.session_env`); `no-mistakes init`
 runs under the host env less only the metered keys, so the daemon it starts can
-push and open the PR. The result: `status`, `agent_output` (the final message,
-exit line included), `verify`, `pr_url` (when the hand-off shipped), `usage`,
+push and open the PR; it runs before the first turn of a code task that hands
+off (so the session finds a gate) and again before the ship turn. The result:
+`status`, `agent_output` (the final message, exit line included), `verify`, `pr_url` (when the hand-off shipped), `usage`,
 `session_id`.
 
 Both the `claude -p` child and the `.devclaw/verify` child run in their own

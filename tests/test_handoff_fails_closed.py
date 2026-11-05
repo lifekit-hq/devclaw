@@ -41,6 +41,7 @@ def stubbed(monkeypatch):
 
     async def fake_turn(req, prompt, *, resume):
         turns.append(prompt)
+        seen.setdefault("calls", []).append(("turn", len(turns)))
         return engine.Turn(session_id="s1", ok=True, text="DELIVERED: one increment")
 
     async def fake_gate(req, cmd):
@@ -50,6 +51,7 @@ def stubbed(monkeypatch):
         return HEAD
 
     async def fake_host(workspace_dir, *argv, timeout=120.0):
+        seen.setdefault("calls", []).append(argv[:2])
         if argv[:2] == ("no-mistakes", "init"):
             return seen.get("init", (0, ""))
         if argv[:3] == ("no-mistakes", "axi", "status"):
@@ -137,3 +139,20 @@ async def test_no_hand_off_flag_never_runs_no_mistakes(stubbed, tmp_path):
     turns, state = stubbed
     result = await engine.run_claude(_req(tmp_path, hand_off=False))
     assert result["status"] == "ok" and "pr_url" not in result and len(turns) == 1
+
+
+async def test_the_pipeline_is_initialised_before_the_session_and_a_dead_one_spends_no_session(stubbed, tmp_path):
+    """A session that finds no gate reads the hand-off as impossible and ends
+    BLOCKED (2026-11-05, the first goal in the container). The host stands the
+    pipeline up BEFORE the first turn; if it cannot, no session is spent."""
+    turns, state = stubbed
+    (tmp_path / ".git").mkdir()
+    state["status"] = (0, _status("passed"))
+    assert (await engine.run_claude(_req(tmp_path)))["status"] == "ok"
+    assert state["calls"][:2] == [("no-mistakes", "init"), ("turn", 1)]
+
+    turns.clear()
+    state["init"] = (1, "daemon unreachable")
+    result = await engine.run_claude(_req(tmp_path))
+    assert result["status"] == "error" and "init failed" in result["error"]
+    assert turns == []

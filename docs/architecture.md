@@ -154,9 +154,15 @@ back to the session, which un-ignores and commits it.
 
 ### The branch ships through no-mistakes
 
-After a green verify on a branch its remote has not seen, the engine runs
-`no-mistakes init` on the host (it starts the daemon under the host env, which
-keeps the GitHub credential: the daemon pushes and opens the PR) and resumes
+The pipeline exists before the session does: the engine runs `no-mistakes init`
+first thing for a code task that hands off (a session that finds no gate reads
+the hand-off as impossible and ends `BLOCKED`; a pipeline that cannot start
+fails the row before a session is spent), and its home (`NM_HOME`) is on the
+`devclaw-state` volume so a redeploy keeps the gates
+([runbook](./runbooks/no-mistakes-in-container.md)). After a green verify on a
+branch its remote has not seen, the engine runs `no-mistakes init` again (it
+starts the daemon under the host env, which keeps the GitHub credential: the
+daemon pushes and opens the PR) and resumes
 the SAME session with one hand-off prompt: write the contract to an intent
 file, `no-mistakes axi run --intent-file … --skip ci --closes <issue>`, answer
 each gate (fix, approve, or a reviewer question from the contract; anything

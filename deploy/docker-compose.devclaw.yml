@@ -77,6 +77,10 @@ services:
       # the tailnet console host (else 421 / 403 on non-loopback routes).
       FASTMCP_HTTP_ALLOWED_HOSTS: ${FASTMCP_HTTP_ALLOWED_HOSTS:-["devclaw-mcp:8000","lifekit-vps.tail1cb676.ts.net:18791"]}
       FASTMCP_HTTP_ALLOWED_ORIGINS: ${FASTMCP_HTTP_ALLOWED_ORIGINS:-["https://lifekit-vps.tail1cb676.ts.net:18791"]}
+      # The no-mistakes home — gates, run history, daemon state — on the
+      # durable `devclaw-state` volume (docs/runbooks/no-mistakes-in-container.md).
+      # tests/test_no_mistakes_state_survives_redeploy.py fails if it leaves the volume.
+      NM_HOME: /var/lib/devclaw/no-mistakes
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
       CLAUDE_CONFIG_DIR: /home/node/.claude
       # CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN + GH_TOKEN: see env_file
