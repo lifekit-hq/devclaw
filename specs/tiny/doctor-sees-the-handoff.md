@@ -2,7 +2,7 @@
 
 **Branch**: goal/dc-doctor-no-mistakes-982
 **Date**: 2026-11-05
-**Status**: in review
+**Status**: in review (self-review round 2: the home's unreadable and uncreatable states were landing in the self-healing `warn`; round 3: `expanduser` on the operator's value cleared a tilde home no-mistakes resolves elsewhere)
 **Complexity**: small (one doctor check, one test file, four doc lines, and `.devclaw/verify`'s bootstrap — see Context)
 **Issue**: #982 — doctor names a missing `claude` or `treehouse`, but not the
 no-mistakes hand-off the goal layer now depends on
@@ -44,8 +44,16 @@ A `handoff` check in `devclaw/doctor/checks.py`, between `tools` and `pause`:
 - `handoff.home` — `ok` with the expanded path when `$NM_HOME` (default
   `~/.no-mistakes`) is a directory; `warn` naming the path and the fact that
   the first goal's `no-mistakes init` creates it when nothing is there yet;
-  `fail` when `init` cannot create it — a relative `NM_HOME`, or a file or
-  dangling symlink on the path.
+  `fail` for every home no session heals — a path that does not resolve
+  absolute, a file or dangling symlink on it, an unwritable parent (`mkdir -p`
+  semantics: the nearest existing ancestor must be a writable directory), or a
+  home `os.stat` cannot read. `$NM_HOME` is judged as the TOOL receives it:
+  the engine hands no-mistakes the raw environment (`host_env`), so stripping
+  or expanding the operator's value would clear a host that cannot ship. The
+  tilde is the case that matters — no-mistakes does not expand one either (it
+  makes a literal `~` directory in its cwd), and the documented default is
+  written with one, so `NM_HOME: ~/.no-mistakes` in a compose block is a
+  relative home. Only the default is expanded, and only when the var is unset.
 - Both skipped under `DEVCLAW_ENGINE=stub` (one `ok` finding instead), the way
   `check_tools` already skips the engine binaries: a stub engine hands nothing
   off, and a `fail` there would be a false alarm on every dev box.
@@ -57,7 +65,7 @@ A `handoff` check in `devclaw/doctor/checks.py`, between `tools` and `pause`:
 | `devclaw/doctor/checks.py` | the checks, in declared order; `check_tools` is the precedent for "a binary on PATH, `fail` when absent" |
 | `devclaw/engine/claude.py` | `NO_MISTAKES` — the one name of the binary, imported rather than re-spelled |
 | `devclaw/cli.py` | `_cmd_doctor`: exit 1 when any finding is `fail` or `unknown` |
-| `tests/test_doctor_sees_the_handoff.py` | new — the tripwire |
+| `tests/test_doctor_seeded_faults.py` | the tripwire — the "doctor seeded faults" class had no test since the v2 rewrite deleted `tests/test_doctor.py`, so it is named and parametrized after the CLASS (every binary on the delivery path), not after this instance |
 | `.devclaw/verify` | carried in this increment, not by #982: inside the devclaw container the script could not run at all (the image installs runtime deps only, so `python3 -m pytest` died on line one), which is a verify that lies. It now bootstraps the declared deps into a worktree-local `.venv` — the shape `.no-mistakes.yaml`'s `prepare` already uses — probing by distribution name so a dep added later is installed rather than skipped, topping up an interpreter that runs, and replacing a tree that has none (which otherwise killed the script under `set -e` before the first gate). The trade-off, written down: the first round on a fresh worktree needs the package index, so an index outage reads as a red verify (`INTERRUPTED`) rather than a stop on a fact. Accepted because the alternative is a script that cannot execute; every later round is a probe and a PATH prepend. |
 | `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/runbooks/live-shakedown.md`, `docs/reference/env-vars.md` | the four doc lines the diff makes wrong |
 
@@ -73,9 +81,12 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
   `treehouse`, hence the same exit code — and its remedy names
   `docs/runbooks/no-mistakes-in-container.md`.
 - The line for the home reports the resolved `$NM_HOME` (or the expanded
-  default) and its state: a home that is not there yet is `warn`, never
-  `fail`; a home `no-mistakes init` cannot create is `fail`, because no
-  session heals it.
+  default) and its state: a home that is not there yet AND creatable is
+  `warn`, never `fail`; every home no session heals is `fail` — uncreatable,
+  unreadable, or not a directory. A state the checker cannot observe must
+  never fall into the self-healing `warn`: `os.path.isdir` and
+  `os.path.lexists` both swallow `EACCES`, which is why the home is stat'd
+  explicitly.
 - Under the stub engine the check reports `ok` and probes nothing.
 - The runbook says in one sentence that doctor now checks this.
 
@@ -104,10 +115,13 @@ stays in `checks.py`; the config doorway is for `DEVCLAW_*` only
 ## Tasks
 
 - [x] `check_handoff` + registered in `CHECKS`, with the home's three states
-      (`ok` / `warn` not-yet-created / `fail` uncreatable) in `_handoff_home`
-- [x] `tests/test_doctor_sees_the_handoff.py` — found / missing on a stubbed
-      PATH, home present / absent / defaulted / symlinked / a file on the path
-      / relative, the stub engine, and the verdict → exit-code mapping
+      (`ok` / `warn` not-yet-created-and-creatable / `fail` everything a
+      session cannot heal) in `_handoff_home` + `_creatable`
+- [x] `tests/test_doctor_seeded_faults.py` — the missing-binary sweep
+      parametrized over all five, the home's states (present / absent /
+      defaulted / symlinked / a file on the path / relative / padded /
+      unwritable parent / unreadable), the stub engine, registration in
+      `CHECKS`, and the exit code end to end plus the verdict → code mapping
 - [x] `docs/runbooks/doctor.md`, `docs/runbooks/no-mistakes-in-container.md`, `docs/runbooks/live-shakedown.md`,
       `docs/reference/env-vars.md` + their `docs/INDEX.md` currency tags
 

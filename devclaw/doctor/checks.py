@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 
 from .. import config as _config
 from .. import credentials as _credentials
@@ -49,6 +50,7 @@ def check_tools(store, registry) -> list[Finding]:
 #: only reports the state of the directory it names.
 NM_HOME_DEFAULT = "~/.no-mistakes"
 _RUNBOOK = "docs/runbooks/no-mistakes-in-container.md"
+_UNCREATABLE = f"`no-mistakes init` cannot create it — clear the path — {_RUNBOOK}"
 
 
 def check_handoff(store, registry) -> list[Finding]:
@@ -56,10 +58,8 @@ def check_handoff(store, registry) -> list[Finding]:
     binary on PATH and the state of its home.
 
     A host without a usable no-mistakes stops the goal at the hand-off, which
-    read as a mute instance until a human went looking (goal
-    dc-phone-tab-bar-971 — what it found unusable was the pipeline, not the
-    binary; see ``_handoff_home``). The binary is a ``fail``, exactly like the
-    ``claude`` and ``treehouse`` binaries above."""
+    reads as a mute instance until a human goes looking (#982). The binary is a
+    ``fail``, exactly like the ``claude`` and ``treehouse`` binaries above."""
     if _config.ENGINE == "stub":
         return [Finding("handoff", Verdict.OK, "stub engine — no hand-off")]
     binary = shutil.which(NO_MISTAKES)
@@ -74,26 +74,76 @@ def check_handoff(store, registry) -> list[Finding]:
 def _handoff_home() -> Finding:
     """``$NM_HOME`` (or no-mistakes' own default) and what its state means.
 
-    Three states, not two. A home that is merely not there yet is ``warn`` —
-    the shape ``check_goals`` uses for a checkout the first session clones. It
-    is the state an emptied state volume leaves (#981) and it heals itself:
-    the engine runs ``no-mistakes init`` before the first turn that hands off.
-    A home ``init`` CANNOT create — a relative path, or a file or dangling
-    symlink sitting on it — no session heals, so it is a ``fail`` rather than
-    an exit 0 that reads as a healthy instance. No deploy has produced that
-    state; it is a forward guard, not a fix for an observed one."""
-    raw = (os.environ.get("NM_HOME") or "").strip()
-    home = os.path.expanduser(raw or NM_HOME_DEFAULT)
-    if raw and not os.path.isabs(home):
-        return Finding("handoff.home", Verdict.FAIL, f"NM_HOME is a relative path ({raw})",
+    Three states, not two. A home that is merely not created yet is a ``warn``
+    — the engine's pre-session ``no-mistakes init`` creates it, so a goal heals
+    it. A home no session can heal is a ``fail`` rather than an exit 0 that
+    reads as a healthy instance: one ``init`` cannot create, or one doctor
+    cannot even read.
+
+    The operator's value is judged as the tool receives it — the engine passes
+    no-mistakes the raw environment (``engine.claude.host_env``) — so a padded,
+    relative or unexpanded ``NM_HOME`` is a ``fail``, not a path doctor tidies
+    into an ``ok``. The sole normalisation is that an empty value means unset,
+    which no-mistakes reads the same way."""
+    raw = os.environ.get("NM_HOME") or ""
+    #: Only the DEFAULT is expanded. no-mistakes does not expand a tilde in
+    #: NM_HOME — `NM_HOME=~/x` makes it a literal `~` directory in its cwd —
+    #: and a compose `environment:` block passes `~/.no-mistakes` through
+    #: unexpanded, so expanding it here would clear the likeliest misconfig.
+    home = raw or os.path.expanduser(NM_HOME_DEFAULT)
+    if not os.path.isabs(home):
+        return Finding("handoff.home", Verdict.FAIL, f"NM_HOME does not resolve to an absolute path ({raw!r})",
                        remedy=f"set it to an absolute path on the state volume — {_RUNBOOK}")
-    if os.path.isdir(home):
-        return Finding("handoff.home", Verdict.OK, home)
-    if os.path.lexists(home):
-        return Finding("handoff.home", Verdict.FAIL, f"{home} is not a directory",
-                       remedy=f"`no-mistakes init` cannot create it — clear the path — {_RUNBOOK}")
-    return Finding("handoff.home", Verdict.WARN, f"no directory at {home} yet",
-                   remedy=f"the first goal's `no-mistakes init` creates it — {_RUNBOOK}")
+    try:
+        present_and_dir = stat.S_ISDIR(os.stat(home).st_mode)
+    except FileNotFoundError:
+        # The leaf is absent; the walk to it succeeded, so islink is honest here.
+        if os.path.islink(home):
+            return Finding("handoff.home", Verdict.FAIL, f"{home} is a dangling symlink", remedy=_UNCREATABLE)
+        if not _creatable(home):
+            return Finding("handoff.home", Verdict.FAIL, f"no directory at {home}, and it cannot be created",
+                           remedy=f"make {_blocked_at(home)} a writable directory on the state volume — {_RUNBOOK}")
+        return Finding("handoff.home", Verdict.WARN, f"no directory at {home} yet",
+                       remedy=f"the first goal's `no-mistakes init` creates it — {_RUNBOOK}")
+    except OSError as exc:
+        # Permission, a non-directory on the walk, a symlink loop: states that
+        # neither `init` nor a session resolves, so never the self-healing warn.
+        blocked = _blocked_at(home)
+        return Finding("handoff.home", Verdict.FAIL,
+                       f"{home} cannot be read ({exc.strerror or type(exc).__name__}"
+                       + (f", at {blocked}" if blocked != home else "") + ")",
+                       remedy=_UNCREATABLE if isinstance(exc, NotADirectoryError)
+                       else f"make {blocked} a readable directory on the state volume — {_RUNBOOK}")
+    if not present_and_dir:
+        return Finding("handoff.home", Verdict.FAIL, f"{home} is not a directory", remedy=_UNCREATABLE)
+    return Finding("handoff.home", Verdict.OK, home)
+
+
+def _creatable(path: str) -> bool:
+    """``mkdir -p`` semantics: the nearest existing ancestor must be a
+    directory this process can write into. Read-only — probes, never creates.
+
+    It answers for doctor's own uid, which is the uid the session's ``init``
+    runs under on this deployment (one container, one user)."""
+    ancestor = os.path.dirname(path)
+    while not os.path.exists(ancestor) and ancestor != os.path.dirname(ancestor):
+        ancestor = os.path.dirname(ancestor)
+    return os.path.isdir(ancestor) and os.access(ancestor, os.W_OK | os.X_OK)
+
+
+def _blocked_at(path: str) -> str:
+    """The shallowest ancestor of an absolute ``path`` an operator has to fix:
+    the first one that is not a directory this process can descend into.
+    Falls back to ``path`` itself, which is the answer for a symlink loop.
+
+    A wrongly-owned mount point is reported at the mount point, not at the leaf
+    the operator configured — otherwise the line leaves them to bisect."""
+    parts = path.split(os.sep)
+    for depth in range(2, len(parts)):
+        ancestor = os.sep.join(parts[:depth]) or os.sep
+        if not os.path.isdir(ancestor) or not os.access(ancestor, os.X_OK):
+            return ancestor
+    return path
 
 
 def check_pause(store, registry) -> list[Finding]:
