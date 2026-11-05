@@ -42,6 +42,12 @@ vars always win over `.env`.
 | `DEVCLAW_GIT_NAME` | `devclaw` | Git author/committer name for every commit devclaw or a session writes |
 | `DEVCLAW_GIT_EMAIL` | `devclaw@local` | Its email |
 
+## Pipeline home (not a `DEVCLAW_*` dial)
+
+| Var | Default | Purpose |
+|---|---|---|
+| `NM_HOME` | `~/.no-mistakes` | no-mistakes' own home: gates, run history, config, daemon files. The image and compose set `/var/lib/devclaw/no-mistakes` (on the `devclaw-state` volume) — see [`runbooks/no-mistakes-in-container.md`](../runbooks/no-mistakes-in-container.md). Read by no-mistakes, not by devclaw. |
+
 ## Queue (money brakes)
 
 | Var | Default | Purpose |

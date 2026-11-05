@@ -558,6 +558,13 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         prompt = wrap_goal(req.kind, req.goal, req.workspace_dir)
     except RuntimeError as exc:
         return {"status": "error", "error": f"skills_missing: {exc}"}
+    # The pipeline exists BEFORE the session starts: a session that probes
+    # `no-mistakes` and finds no gate reads the hand-off as impossible and ends
+    # BLOCKED. A pipeline that cannot start spends no session.
+    if req.hand_off and req.kind in WRITES_CODE_KINDS and _has_git_dir(req.workspace_dir):
+        error = await _init_pipeline(req.workspace_dir)
+        if error:
+            return {"status": "error", "error": error}
     # a resumed session already holds the skills; it is handed only the new brief
     resume = req.resume_session_id
     turn = await run_turn(req, req.goal if resume else prompt, resume=resume)
@@ -631,13 +638,22 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     return result
 
 
+async def _init_pipeline(workspace_dir: str) -> Optional[str]:
+    """``no-mistakes init`` on the host (idempotent: it repairs the gate remote
+    and starts the daemon under :func:`host_env`, which keeps the GitHub
+    credential). The failure text, or None."""
+    rc, out = await _host(workspace_dir, NO_MISTAKES, "init")
+    return None if rc == 0 else f"no-mistakes init failed: {out[-500:]}"
+
+
 async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str]:
-    """The ship turn: ``no-mistakes init`` on the host (it also starts the
-    daemon, under :func:`host_env`), then the SAME session drives the run.
+    """The ship turn: re-init the pipeline (the daemon may have died during the
+    session, and only the host env restarts it with the GitHub credential), then
+    the SAME session drives the run.
     ``(turn, pr_url, why)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
-    rc, out = await _host(req.workspace_dir, NO_MISTAKES, "init")
-    if rc != 0:
-        return Turn(session_id=session_id, error=f"no-mistakes init failed: {out[-500:]}"), None, ""
+    error = await _init_pipeline(req.workspace_dir)
+    if error:
+        return Turn(session_id=session_id, error=error), None, ""
     closes = "".join(f" --closes {n}" for n in req.closes)
     with tempfile.TemporaryDirectory(prefix="devclaw-intent-") as tmp:
         prompt = HANDOFF_PROMPT.format(intent_file=os.path.join(tmp, "intent.md"), closes=closes)

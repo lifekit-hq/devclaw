@@ -98,6 +98,9 @@ RUN arch="$(dpkg --print-architecture)" \
 # ---- no-mistakes (the session ships its branch through it, #953) ----------
 # Pinned release, checksum-verified. The engine runs `no-mistakes init` and
 # reads `axi status`; the session drives `axi run` / `respond` / `answer`.
+# Its home (NM_HOME, set below) lives on the `devclaw-state` volume so the
+# gates and run history survive a redeploy; deploy/entrypoint.sh clears the
+# previous container's stale daemon pid/lock/socket at start.
 ARG NO_MISTAKES_VERSION=v1.99.0
 ARG NO_MISTAKES_SHA256_AMD64=e891cc9ccc37bbbdd43897690788dc7a86567a3dcadfe8dd96eb62ddc71b416d
 ARG NO_MISTAKES_SHA256_ARM64=66d0699e4d4babdd4d63191b17a26a3c6306f5f6652ac26915be720644092f4e
@@ -143,7 +146,8 @@ ENV DEVCLAW_TRANSPORT=http \
     CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude \
     CLAUDE_CONFIG_DIR=/home/node/.claude \
     TREEHOUSE_ROOT=/var/lib/devclaw/workspaces/.treehouse \
-    DEVCLAW_SKILL_LIBRARY=/app/skill-library
+    DEVCLAW_SKILL_LIBRARY=/app/skill-library \
+    NM_HOME=/var/lib/devclaw/no-mistakes
 
 # ---- build identity (LAST layer — bust only this on each commit) -----------
 # Read per request by _health_freshness() and surfaced on /health + /node.json
@@ -157,4 +161,5 @@ ENV DEVCLAW_GIT_SHA=${DEVCLAW_GIT_SHA} \
 
 EXPOSE 8000
 USER node
+ENTRYPOINT ["/app/deploy/entrypoint.sh"]
 CMD ["devclaw-mcp"]

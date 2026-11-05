@@ -153,6 +153,8 @@ docker ps --format '{{.Names}}\t{{.Status}}' | grep -E 'gateway|dashboard|notify
 
 Success = new SHA on `/health`, goal count unchanged, lifekit-stack uptimes unbroken.
 
+The no-mistakes home rides the same volume (`NM_HOME`, so gates and run history survive the recreate); its read-only check is in [`no-mistakes-in-container.md`](./no-mistakes-in-container.md).
+
 ---
 
 ## 4. lifekit-stack companion change
