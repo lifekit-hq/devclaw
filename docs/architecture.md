@@ -63,8 +63,9 @@ settles or a webhook arrives, for every open goal (`devclaw/goal/tick.py`):
    session continues the unfinished work from the goal branch; an interrupted
    review is a review again).
 8. Last exit `REVIEW` on the head the review read → post the verdict once;
-   achieved → squash-merge and close; refused → blocked until the owner
-   answers. A PR that moved since the review read it falls through.
+   achieved → squash-merge and close (a hard-to-reverse change first posts a
+   `hard_to_reverse` block and merges only after the owner answers `merge`);
+   refused → blocked until the owner answers. A PR that moved since the review read it falls through.
 9. Last exit `DONE` → CI pending: wait; CI green and no verdict for this head:
    spawn the read-only review session.
 10. Fingerprint unchanged since the last session was given it → nothing.
@@ -86,7 +87,7 @@ in it: a session that pushed nothing changed nothing.
 A comment on the issue or PR that mentions `@devclaw` (`DEVCLAW_MENTION`).
 The `decide` tool posts one and records a Decision. Everything devclaw writes
 on a thread carries `<!-- devclaw:<kind> k=v -->` and is a fact, never an
-instruction: `block` (task, head, why) and `verdict` (head, task, achieved,
+instruction: `block` (task, head, why — `hard_to_reverse` is the merge wait) and `verdict` (head, task, achieved,
 unreadable).
 
 ### One session
@@ -122,6 +123,21 @@ evidence and no question is open; no readable JSON is `unreadable` and never
 passes. The verdict is posted on the PR; achieved squash-merges
 (`gh pr merge --squash --match-head-commit <the judged head>`) and closes
 the goal.
+
+The merge has one more rule (#979, `devclaw/goal/blast.py`): at the merge edge
+the goal is classified live, with no model call, as `hard` / `wide` /
+`reversible` from the issues' `## Done when` text (migrate, delete, drop table,
+purge, production data …) and the PR's changed paths (`migrations/`,
+`alembic/`, `*.sql`). Only `hard` changes the outcome: it posts a `block`
+record (`why=hard_to_reverse`) and waits for a comment mentioning the bot
+whose whole text is `merge` (`decide(goal, "merge")`), newer than that record
+and written by the account the host's own `gh` credential acts as (the one
+`decide` posts through; `gh api user`, read when needed, no config) or whose
+`author_association` is `OWNER`; any other or missing author does not release
+it, and an unreadable host identity leaves only `OWNER`. While it waits, each
+newer instruction that is not that answer is not applied: the block notice is
+posted again once for it, with no session spawned. The class is never stored
+(pillar 5); a moved head asks again.
 
 ## Part II — the locked contracts
 

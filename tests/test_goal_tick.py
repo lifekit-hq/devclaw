@@ -33,13 +33,14 @@ BASE_TREE = frozenset({"devclaw/goal/donegate.py", "devclaw/goal/world.py", "dev
 
 
 class FakeWorld:
-    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=(), tree=BASE_TREE):
+    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=(), tree=BASE_TREE, login="host"):
         self.pr = pr or gh.PrFacts("none")
         self.issues = issues or [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open")]
         self.comments = comments or []
         self.creds = creds
         self.files = files  # what the PR changes; None = unreadable
         self.tree = tree  # the base branch's paths; None = unreadable
+        self.login = login  # the account the host's gh acts as; "" = unreadable
 
     def reader(self) -> WorldReader:
         async def pr(repo_url, branch):
@@ -57,8 +58,11 @@ class FakeWorld:
         async def tree(repo_url, base):
             return self.tree
 
+        async def login():
+            return self.login
+
         return WorldReader(pr=pr, issue=issue, comments=comments, credentials=lambda: tuple(self.creds),
-                           files=files, tree=tree)
+                           files=files, tree=tree, login=login)
 
 
 class Recorder:
@@ -83,12 +87,12 @@ class Recorder:
         return True
 
 
-def _comment(id_, number, body, marker_kind="", **fields):
+def _comment(id_, number, body, marker_kind="", author="denys", association="", **fields):
     if marker_kind:
         body = gh.marker(marker_kind, **fields) + "\n" + body
     kind, fs = gh.parse_marker(body)
-    return gh.Comment(id=id_, number=number, author="denys", body=body, url="", created_at="2026-09-13",
-                      marker=kind, marker_fields=fs)
+    return gh.Comment(id=id_, number=number, author=author, body=body, url="", created_at="2026-09-13",
+                      marker=kind, marker_fields=fs, association=association)
 
 
 @pytest.fixture
@@ -304,6 +308,61 @@ async def test_an_achieved_verdict_merges_and_closes(harness):
     assert await tick_goal(goal, ctx(FakeWorld(pr=green))) == "closed"
     assert rec.merges == [("u", "abc123")] and "achieved=1" in rec.comments[0][1]
     assert store.get_goal(goal.id).outcome == "achieved"
+
+
+@pytest.mark.parametrize("body, files", [
+    ("## Done when\n- the users table migration runs on deploy", ()),
+    ("## Done when\n- /health returns 200", ("db/migrations/0003_add_col.sql",)),
+])
+async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(harness, body, files):
+    """Issue 979, fail-closed: an achieved verdict on a migration/deletion/data
+    change posts one decision and waits; only the owner's `merge` after it
+    squash-merges. Nothing else spawns a session or merges."""
+    store, queue, rec, goal, ctx = harness
+    issues = [gh.Issue(1, "t", body, "open")]
+    await tick_goal(goal, ctx(FakeWorld(issues=issues)))
+    t = _sessions(store, goal.id)[0]
+    store.claim_pending(t.id)
+    store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
+    green = gh.PrFacts("open", 5, "u", "abc123", ci="green")
+    await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues, files=files)))
+    review = _sessions(store, goal.id)[0]
+    store.claim_pending(review.id)
+    verdict = '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n```'
+    store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
+    assert await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues, files=files))) == "blocked"
+    assert rec.merges == [] and "why=hard_to_reverse" in rec.comments[-1][1] and "merge" in rec.pings[-1]
+    records = [_comment(30, 5, "v", "verdict", head="abc123", task=review.id, achieved="1", unreadable="0"),
+               _comment(31, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")]
+
+    def world(*owner, login="host"):
+        return FakeWorld(pr=green, issues=issues, files=files, comments=[*records, *owner], login=login)
+    assert await tick_goal(goal, ctx(world())) == "blocked"
+    assert len(rec.comments) == 2
+    ask = _comment(33, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")
+    for i, answer in enumerate(("@devclaw looks fine", "@devclaw do not merge", "@devclaw merge it later")):
+        before = len(rec.comments)
+        assert await tick_goal(goal, ctx(world(_comment(32, 5, answer)))) == "blocked"
+        assert len(rec.comments) == before + 1 and "waits for a merge decision" in rec.comments[-1][1]
+        assert await tick_goal(goal, ctx(world(_comment(32, 5, answer), ask))) == "blocked"  # answered once, never again
+        assert len(rec.comments) == before + 1
+    assert rec.merges == [] and len(_sessions(store, goal.id)) == 2
+    assert await tick_goal(goal, ctx(world(_comment(29, 5, "@devclaw merge", author="o", association="OWNER")))) == "blocked"  # older than the ask
+    for stranger in (dict(author="mallory", association="NONE"), dict(author="", association=""),
+                     dict(author="mallory", association="MEMBER"), dict(author="mallory", association="COLLABORATOR")):
+        before = len(rec.comments)
+        assert await tick_goal(goal, ctx(world(_comment(34, 5, "@devclaw merge", **stranger)))) == "blocked"
+        assert len(rec.comments) == before + 1
+    assert await tick_goal(goal, ctx(world(_comment(34, 5, "@devclaw merge", author="host"), login=""))) == "blocked"
+    assert "OWNER" in rec.comments[-1][1] and rec.merges == []
+    for releaser, login in ((dict(author="host", association="MEMBER"), "host"), (dict(author="HOST", association="MEMBER"), "host"),
+                            (dict(author="denys", association="OWNER"), "host"), (dict(author="denys", association="OWNER"), "")):
+        assert await tick_goal(goal, ctx(world(_comment(34, 5, "@devclaw decide: merge", **releaser), login=login))) == "closed"
+        assert rec.merges == [("u", "abc123")]
+        rec.merges.clear()
+    notice = _comment(34, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")  # posted while the owner's merge (33) landed
+    assert await tick_goal(goal, ctx(world(_comment(32, 5, "@devclaw rename it"), _comment(33, 5, "@devclaw merge", author="denys", association="OWNER"), notice))) == "closed"
+    assert rec.merges == [("u", "abc123")]
 
 
 @pytest.mark.parametrize("settle, outcome, unreadable", [

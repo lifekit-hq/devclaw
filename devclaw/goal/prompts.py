@@ -28,8 +28,7 @@ def _render_issues(issues: tuple[_gh.Issue, ...], goal: Goal) -> str:
 
 
 def _render_comments(world: World) -> str:
-    relevant = [c for c in world.comments if c.is_instruction or c.marker]
-    relevant = relevant[-_MAX_COMMENTS:]
+    relevant = [c for c in world.comments if c.is_instruction or c.marker][-_MAX_COMMENTS:]
     if not relevant:
         return ""
     lines = ["", "## On the threads (newest last)", ""]
@@ -54,15 +53,9 @@ def _render_ci_logs(world: World) -> str:
 
 def session_brief(goal: Goal, world: World, last: "Task | None") -> str:
     pr = world.pr
-    if pr.state == "none":
-        pr_line = "none yet — the first delivery opens it"
-    else:
-        pr_line = f"{pr.url} ({pr.state}, head {pr.head_sha[:10]})"
+    pr_line = "none yet — the first delivery opens it" if pr.state == "none" else f"{pr.url} ({pr.state}, head {pr.head_sha[:10]})"
     ci_line = f"{pr.ci}" + (f" — {pr.ci_detail}" if pr.ci_detail else "")
-    if last is None:
-        last_exit = "this is the first session"
-    else:
-        last_exit = f"{last.exit or last.status}" + (f": {last.exit_detail}" if last.exit_detail else "")
+    last_exit = "this is the first session" if last is None else f"{last.exit or last.status}" + (f": {last.exit_detail}" if last.exit_detail else "")
     return load_prompt(
         "session",
         branch=goal.branch,

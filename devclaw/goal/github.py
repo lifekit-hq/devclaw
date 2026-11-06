@@ -71,11 +71,14 @@ def _parse_json(rc: int, out: str) -> Optional[object]:
         return None
 
 
+async def host_login() -> str:
+    rc, out = await gh("api", "user", "--jq", ".login")
+    return out.strip() if rc == 0 else ""
+
+
 def owner_repo(repo_url: str) -> Optional[str]:
     """``https://github.com/o/r.git`` / ``git@github.com:o/r.git`` → ``o/r``."""
-    if not repo_url:
-        return None
-    m = _OWNER_REPO_RE.search(repo_url.strip())
+    m = _OWNER_REPO_RE.search((repo_url or "").strip())
     return f"{m.group(1)}/{m.group(2)}" if m else None
 
 
@@ -203,10 +206,8 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     head = str(pr.get("headRefOid") or "")
     base = str(pr.get("baseRefName") or "")
     gh_state = str(pr.get("state") or "").upper()
-    if gh_state == "MERGED":
-        return PrFacts("merged", number, url, head, base, ci="none")
-    if gh_state == "CLOSED":
-        return PrFacts("closed", number, url, head, base, ci="none")
+    if gh_state in ("MERGED", "CLOSED"):
+        return PrFacts(gh_state.lower(), number, url, head, base, ci="none")
     if str(pr.get("mergeable") or "").upper() == "CONFLICTING":
         return PrFacts("conflicting", number, url, head, base, ci="none",
                        ci_detail="the PR conflicts with its base; GitHub runs no checks on it")
@@ -301,6 +302,7 @@ class Comment:
     #: devclaw's own record kind (``block`` / ``verdict`` / ``decision`` / ...) or ""
     marker: str = ""
     marker_fields: tuple[tuple[str, str], ...] = ()
+    association: str = ""  # GitHub's author_association
 
     @property
     def is_instruction(self) -> bool:
@@ -331,14 +333,11 @@ async def list_comments(repo_url: str, number: int) -> list[Comment]:
     if not slug or not number:
         return []
     rc, out = await gh("api", f"repos/{slug}/issues/{number}/comments?per_page=100", "--paginate",
-                       "--jq", ".[] | {id, body, user: .user.login, html_url, created_at}")
+                       "--jq", ".[] | {id, body, user: .user.login, html_url, created_at, association: .author_association}")
     if rc != 0:
         return []
     comments: list[Comment] = []
     for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
         try:
             d = json.loads(line)
         except ValueError:
@@ -348,7 +347,7 @@ async def list_comments(repo_url: str, number: int) -> list[Comment]:
         comments.append(Comment(
             id=int(d.get("id") or 0), number=number, author=str(d.get("user") or ""),
             body=body, url=str(d.get("html_url") or ""), created_at=str(d.get("created_at") or ""),
-            marker=kind, marker_fields=fields,
+            marker=kind, marker_fields=fields, association=str(d.get("association") or ""),
         ))
     comments.sort(key=lambda c: c.id)
     return comments
@@ -376,14 +375,3 @@ async def squash_merge(repo_url: str, pr_url: str, head: str) -> tuple[str, str]
     if any(m in low for m in ("not mergeable", "merge conflict", "conflicting")):
         return "conflict", out[:300]
     return "error", out[:300]
-
-
-async def sync_workspace_to_default(workspace_dir: str) -> None:
-    """Best-effort post-merge sync of a checkout onto the merged default branch."""
-    rc, _ = await run_bounded("git", "fetch", "origin", cwd=workspace_dir)
-    if rc != 0:
-        return
-    rc, head = await run_bounded("git", "symbolic-ref", "refs/remotes/origin/HEAD", "--short", cwd=workspace_dir)
-    default = head.rsplit("/", 1)[-1] if rc == 0 and head else "main"
-    await run_bounded("git", "checkout", "-f", default, cwd=workspace_dir)
-    await run_bounded("git", "reset", "--hard", f"origin/{default}", cwd=workspace_dir)
