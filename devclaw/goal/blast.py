@@ -1,7 +1,6 @@
 """Blast radius (issue 979): rule-based, no model call. The safety pillar's
-rule for the merge: hard-to-reverse work waits for the owner's ``merge``."""
-
-from __future__ import annotations
+rule for the merge: hard-to-reverse work waits for the owner's ``merge``.
+``wide`` is classified but not yet gated: it merges as ``reversible``."""
 
 import re
 

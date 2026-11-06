@@ -38,8 +38,11 @@
 - Classified at the merge edge from the live contract and the live PR files,
   not stored "on intake": the PR's files do not exist at intake, and the host
   holds no derived state (pillar 5).
-- `wide` is classified and proceeds as `reversible` today; the issue names the
-  class and gives it no behaviour.
+- `wide` is classified but not yet gated: it proceeds as `reversible` today;
+  the issue names the class and gives it no behaviour.
+- The release comes from the repository owner only (`author_association` is
+  `OWNER`, or the author is the repo's owner login); any other or missing
+  author leaves the block standing. No config surface.
 - Fail closed on the answer: anything but the bare word `merge` (`do not
   merge`, `merge it later`) leaves the goal waiting.
 

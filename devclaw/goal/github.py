@@ -303,6 +303,7 @@ class Comment:
     #: devclaw's own record kind (``block`` / ``verdict`` / ``decision`` / ...) or ""
     marker: str = ""
     marker_fields: tuple[tuple[str, str], ...] = ()
+    association: str = ""   # GitHub's author_association (OWNER, MEMBER, NONE, ...) or ""
 
     @property
     def is_instruction(self) -> bool:
@@ -333,7 +334,7 @@ async def list_comments(repo_url: str, number: int) -> list[Comment]:
     if not slug or not number:
         return []
     rc, out = await gh("api", f"repos/{slug}/issues/{number}/comments?per_page=100", "--paginate",
-                       "--jq", ".[] | {id, body, user: .user.login, html_url, created_at}")
+                       "--jq", ".[] | {id, body, user: .user.login, html_url, created_at, association: .author_association}")
     if rc != 0:
         return []
     comments: list[Comment] = []
@@ -350,7 +351,7 @@ async def list_comments(repo_url: str, number: int) -> list[Comment]:
         comments.append(Comment(
             id=int(d.get("id") or 0), number=number, author=str(d.get("user") or ""),
             body=body, url=str(d.get("html_url") or ""), created_at=str(d.get("created_at") or ""),
-            marker=kind, marker_fields=fields,
+            marker=kind, marker_fields=fields, association=str(d.get("association") or ""),
         ))
     comments.sort(key=lambda c: c.id)
     return comments
@@ -378,14 +379,3 @@ async def squash_merge(repo_url: str, pr_url: str, head: str) -> tuple[str, str]
     if any(m in low for m in ("not mergeable", "merge conflict", "conflicting")):
         return "conflict", out[:300]
     return "error", out[:300]
-
-
-async def sync_workspace_to_default(workspace_dir: str) -> None:
-    """Best-effort post-merge sync of a checkout onto the merged default branch."""
-    rc, _ = await run_bounded("git", "fetch", "origin", cwd=workspace_dir)
-    if rc != 0:
-        return
-    rc, head = await run_bounded("git", "symbolic-ref", "refs/remotes/origin/HEAD", "--short", cwd=workspace_dir)
-    default = head.rsplit("/", 1)[-1] if rc == 0 and head else "main"
-    await run_bounded("git", "checkout", "-f", default, cwd=workspace_dir)
-    await run_bounded("git", "reset", "--hard", f"origin/{default}", cwd=workspace_dir)

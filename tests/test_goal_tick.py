@@ -83,12 +83,12 @@ class Recorder:
         return True
 
 
-def _comment(id_, number, body, marker_kind="", **fields):
+def _comment(id_, number, body, marker_kind="", author="denys", association="", **fields):
     if marker_kind:
         body = gh.marker(marker_kind, **fields) + "\n" + body
     kind, fs = gh.parse_marker(body)
-    return gh.Comment(id=id_, number=number, author="denys", body=body, url="", created_at="2026-09-13",
-                      marker=kind, marker_fields=fs)
+    return gh.Comment(id=id_, number=number, author=author, body=body, url="", created_at="2026-09-13",
+                      marker=kind, marker_fields=fs, association=association)
 
 
 @pytest.fixture
@@ -337,8 +337,11 @@ async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(ha
     for answer in ("@devclaw looks fine", "@devclaw do not merge", "@devclaw merge it later"):
         assert await tick_goal(goal, ctx(world(_comment(32, 5, answer)))) == "awaiting merge decision"
     assert rec.merges == [] and len(rec.comments) == 2 and len(_sessions(store, goal.id)) == 2
-    assert await tick_goal(goal, ctx(world(_comment(29, 5, "@devclaw merge")))) == "blocked"  # older than the ask
-    assert await tick_goal(goal, ctx(world(_comment(33, 5, "@devclaw decide: merge")))) == "closed"
+    assert await tick_goal(goal, ctx(world(_comment(29, 5, "@devclaw merge", author="o")))) == "blocked"  # older than the ask
+    for stranger in (dict(author="mallory", association="NONE"), dict(author="", association=""), dict(author="mallory", association="MEMBER")):
+        assert await tick_goal(goal, ctx(world(_comment(33, 5, "@devclaw merge", **stranger)))) == "awaiting merge decision"
+    assert rec.merges == [] and len(rec.comments) == 2
+    assert await tick_goal(goal, ctx(world(_comment(33, 5, "@devclaw decide: merge", author="O")))) == "closed"
     assert rec.merges == [("u", "abc123")]
 
 

@@ -259,7 +259,10 @@ async def _merge(ctx: TickContext, goal: Goal, world: World) -> str:
         if not asked:
             return await _block(ctx, goal, world, task_id="", head=world.pr.head_sha, kind="hard to reverse",
                                 text=f"The done-gate passed, but this change is hard to reverse (a migration, a deletion or production data). Reply mentioning the bot with `merge` (or decide(\"{goal.id}\", \"merge\")) to squash-merge it as judged; cancel the goal to refuse.")
-        if not any(c.id > asked[-1].id and _blast.is_merge_decision(c.body, _config.mention()) for c in world.comments if c.is_instruction):
+        owner = (_gh.owner_repo(goal.repo_url) or "").split("/")[0].lower()
+        if not any(c.id > asked[-1].id and _blast.is_merge_decision(c.body, _config.mention())
+                   and (c.association.upper() == "OWNER" or (c.author and c.author.lower() == owner))
+                   for c in world.comments if c.is_instruction):
             return "awaiting merge decision"
     outcome, detail = await ctx.merge(goal.repo_url, world.pr.url, world.pr.head_sha)
     if outcome == "merged":

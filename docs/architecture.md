@@ -130,7 +130,9 @@ the goal is classified live, with no model call, as `hard` / `wide` /
 purge, production data …) and the PR's changed paths (`migrations/`,
 `alembic/`, `*.sql`). Only `hard` changes the outcome: it posts a `block`
 record (`why=hard_to_reverse`) and waits for a comment mentioning the bot
-whose whole text is `merge` (`decide(goal, "merge")`), newer than that record.
+whose whole text is `merge` (`decide(goal, "merge")`), newer than that record
+and written by the repository owner (`author_association` `OWNER`, or the
+author is the repo's owner login); any other author leaves it waiting.
 The class is never stored (pillar 5); a moved head asks again.
 
 ## Part II — the locked contracts
