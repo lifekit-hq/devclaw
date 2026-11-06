@@ -176,6 +176,8 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
             verdicts = world.verdicts_for_head(head)
             unreadable = [v for v in verdicts if v.field("unreadable") == "1"]
             if not verdicts or (len(verdicts) == len(unreadable) == 1):
+                if not verdicts and (held := await _scope_gate(ctx, goal, world, last)):
+                    return held
                 return await _spawn(ctx, goal, world, "review_repository", review_brief(goal, world), "gate")
             if unreadable and len(unreadable) >= 2:
                 return await _block(ctx, goal, world, task_id=last.id, head=head,
@@ -189,6 +191,32 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
     if goal.last_seen_json == world.fingerprint_json():
         return "idle"
     return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "spawned")
+
+
+async def _scope_gate(ctx: TickContext, goal: Goal, world: World, last: Task) -> Optional[str]:
+    """Before a head's first review: the PR may change only files the issue or
+    the owner names. The first excess gets ONE correction session (its record
+    is on the thread); a second stops the goal. The owner's newer word waives."""
+    head, recs = world.pr.head_sha, world.records("scope")
+    if recs and world.last_instruction_id > recs[-1].id:
+        return None
+    changed = await ctx.world.files(goal.repo_url, world.pr.number)
+    if changed is None:
+        ctx.log(goal.id, "scope check: the PR's files are unreadable")
+        return "unreadable"
+    words = [goal.objective, *(f"{i.title}\n{i.body}" for i in world.issues),
+             *(c.body for c in world.comments if c.is_instruction)]
+    extra = _donegate.scope_extras(changed, "\n".join(words))
+    if not extra:
+        return None
+    text = "the PR changes files the issue and the owner name nowhere: " + ", ".join(f"`{f}`" for f in extra[:20])
+    if recs:
+        return await _block(ctx, goal, world, task_id=last.id, head=head, kind="SCOPE_EXCEEDED", text=text)
+    await ctx.post_comment(goal.repo_url, world.pr.number, _gh.marker("scope", head=head, task=last.id)
+                           + f"\n**devclaw scope check: SCOPE_EXCEEDED** — {text}.\n\nRevert them and propose DONE "
+                           "again, or end BLOCKED saying why the contract needs them.")
+    world = await ctx.world.read(goal)  # the record is now a fact the session reads
+    return await _spawn(ctx, goal, world, "implement_feature", session_brief(goal, world, last), "resumed")
 
 
 async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Task) -> Optional[str]:

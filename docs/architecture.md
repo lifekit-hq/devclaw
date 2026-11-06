@@ -105,7 +105,14 @@ sha, run the engine once, then classify how it ended:
 
 ### The done-gate
 
-A `DONE` proposal with green CI spawns a `review_repository` session over the
+A `DONE` proposal with green CI is first scope-checked (`_scope_gate` in
+`goal/tick.py`): the PR's changed files (`gh pr diff --name-only`) must each be
+named — by path, directory, file name, or a test sharing a named file's stem —
+in the goal's objective, the issues or the owner's comments (`.devclaw/` is
+always in scope; text naming no file states no scope). A file named nowhere
+posts a `scope` record and spawns one correction session; a second excess
+stops the goal with `SCOPE_EXCEEDED`; the owner's newer comment waives it; an
+unreadable file list never passes. Then it spawns a `review_repository` session over the
 delivered head with `devclaw/prompts/done-gate.md`: decompose the contract
 into clauses, cite evidence per clause, answer in JSON. `devclaw/goal/donegate.py`
 validates it mechanically — achieved only when every clause is satisfied with

@@ -12,7 +12,7 @@ import json
 import pytest
 
 from devclaw.goal import github as gh
-from devclaw.goal.donegate import parse_verdict
+from devclaw.goal.donegate import parse_verdict, scope_extras
 from devclaw.goal.tick import TickContext, tick_goal
 from devclaw.goal.world import WorldReader
 from devclaw.state_store import EXIT_DELIVERED, EXIT_DONE, EXIT_REVIEW, StateStore
@@ -29,11 +29,12 @@ def _lease_in_place(project_ws, repo_url, goal_id):
 
 
 class FakeWorld:
-    def __init__(self, *, pr=None, issues=None, comments=None, creds=()):
+    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=()):
         self.pr = pr or gh.PrFacts("none")
         self.issues = issues or [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open")]
         self.comments = comments or []
         self.creds = creds
+        self.files = files  # what the PR changes; None = unreadable
 
     def reader(self) -> WorldReader:
         async def pr(repo_url, branch):
@@ -45,7 +46,11 @@ class FakeWorld:
         async def comments(repo_url, n):
             return [c for c in self.comments if c.number == n]
 
-        return WorldReader(pr=pr, issue=issue, comments=comments, credentials=lambda: tuple(self.creds))
+        async def files(repo_url, number):
+            return self.files
+
+        return WorldReader(pr=pr, issue=issue, comments=comments, credentials=lambda: tuple(self.creds),
+                           files=files)
 
 
 class Recorder:
@@ -204,6 +209,46 @@ async def test_done_with_green_ci_spawns_the_review_session_once(harness):
     assert await tick_goal(goal, ctx(FakeWorld(pr=green))) == "gate"
     tasks = _sessions(store, goal.id)
     assert len(tasks) == 2 and tasks[0].kind == "review_repository" and not tasks[0].deliver
+
+
+SCOPED = gh.Issue(1, "Fix the gate", "Touch `devclaw/goal/donegate.py` and `docs/flows/`.\n## Done when\n- it holds", "open")
+
+
+async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
+    """Fail-closed gate: a PR changing a file the issue and the owner name
+    nowhere never reaches a review session. An unreadable file list never
+    passes; the first excess gets ONE correction session, the second stops the
+    goal; the owner's newer word waives. A named file, its test, a named
+    directory and the .devclaw manifest are in scope; text naming no file
+    states no scope."""
+    store, queue, rec, goal, ctx = harness
+    await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED])))
+    t = _sessions(store, goal.id)[0]
+    store.claim_pending(t.id)
+    store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
+    green = gh.PrFacts("open", 5, "u", "abc123", ci="green")
+    inside = ("devclaw/goal/donegate.py", "tests/test_donegate.py", "docs/flows/delivery.md", ".devclaw/verify")
+    over = inside + ("devclaw/goal/world.py",)
+
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=None))) == "unreadable"
+    assert len(_sessions(store, goal.id)) == 1
+
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over))) == "resumed"
+    correction = _sessions(store, goal.id)[0]
+    assert correction.kind == "implement_feature" and "SCOPE_EXCEEDED" in rec.comments[-1][1]
+    assert "devclaw/goal/world.py" in rec.comments[-1][1] and "donegate.py" not in rec.comments[-1][1].split("nowhere:")[1]
+    store.claim_pending(correction.id)
+    store.mark_done(correction.id, "{}", pr_url="u", exit=EXIT_DONE)
+
+    record = _comment(40, 5, "x", "scope", head="abc123", task=t.id)
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over, comments=[record]))) == "blocked"
+    assert "SCOPE_EXCEEDED" in rec.comments[-1][1] and len(_sessions(store, goal.id)) == 2
+
+    answered = FakeWorld(issues=[SCOPED], pr=green, files=over,
+                         comments=[record, _comment(41, 5, "@devclaw those are fine")])
+    assert await tick_goal(goal, ctx(answered)) == "gate"  # the owner's word waives the check
+
+    assert scope_extras(over, "no file is named here") == []
 
 
 async def test_an_achieved_verdict_merges_and_closes(harness):

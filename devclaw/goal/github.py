@@ -229,6 +229,13 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     return PrFacts("open", number, url, head, base, ci, detail, failing, logs)
 
 
+async def pr_files(repo_url: str, number: int) -> Optional[tuple[str, ...]]:
+    """Every file the PR changes against its base, or None when unreadable."""
+    slug = owner_repo(repo_url)
+    rc, out = await gh("pr", "diff", str(number), "--repo", slug or "", "--name-only")
+    return tuple(out.splitlines()) if slug and rc == 0 else None
+
+
 # ---- issues ------------------------------------------------------------------
 
 @dataclass(frozen=True)

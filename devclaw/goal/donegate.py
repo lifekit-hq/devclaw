@@ -12,10 +12,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 
 from . import github as _gh
 
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+#: a file (known extension) or a directory (trailing slash) written into prose
+_PATH_RE = re.compile(r"[\w.-]+(?:/[\w.-]+)*\.(?:py|md|tsx?|js|json|ya?ml|toml|cs|sh|html|s?css|sql|txt)\b"
+                      r"|[\w.-]+(?:/[\w.-]+)*/(?![\w.-])")
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,20 @@ def parse_verdict(agent_output: str) -> Verdict:
         structural_health=str(data.get("structural_health") or "").strip(),
         concerns=tuple(str(x) for x in concerns),
     )
+
+
+def scope_extras(changed: "tuple[str, ...]", text: str) -> list[str]:
+    """The changed files that ``text`` (the issue and the owner's words) names
+    nowhere — by path, directory, bare file name, or a test sharing a named
+    file's stem. Deterministic. ``[]`` when the text names no file at all:
+    with no stated scope there is nothing to exceed. ``.devclaw/`` is the
+    session's own manifest and is always in scope."""
+    named = {n for m in _PATH_RE.findall(text) if (n := m.removeprefix("./").rstrip("/"))}
+    if not named:
+        return []
+    return [f for f in changed if not f.startswith(".devclaw/") and not any(
+        f == n or f.startswith(n + "/") or f.endswith("/" + n)
+        or ("test" in f.lower() and PurePosixPath(n).stem in f) for n in named)]
 
 
 def render_verdict(verdict: Verdict, *, head: str, task_id: str) -> str:

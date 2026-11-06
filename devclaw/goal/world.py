@@ -87,6 +87,7 @@ PrReader = Callable[[str, str], Awaitable[_gh.PrFacts]]
 IssueReader = Callable[[str, int], Awaitable[_gh.Issue]]
 CommentsReader = Callable[[str, int], Awaitable[list[_gh.Comment]]]
 CredentialProbe = Callable[[], tuple[str, ...]]
+FilesReader = Callable[[str, int], Awaitable[Optional[tuple[str, ...]]]]
 
 
 @dataclass
@@ -95,6 +96,7 @@ class WorldReader:
     issue: IssueReader = _gh.fetch_issue
     comments: CommentsReader = _gh.list_comments
     credentials: CredentialProbe = field(default=lambda: ())
+    files: FilesReader = _gh.pr_files
 
     async def read(self, goal: Goal) -> World:
         pr = await self.pr(goal.repo_url, goal.branch)
