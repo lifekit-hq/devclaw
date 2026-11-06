@@ -310,8 +310,8 @@ clauses with evidence; an unreadable verdict is shown as unreadable.
   figure to show and none is estimated.
 - Usage covers worker sessions and review sessions alike; v2 has no host cognition, so
   there is no other spender.
-- Verdicts are done-gate reviews only; a session's own pre-DONE self-review is not a
-  verdict and is not listed.
+- Verdicts are done-gate reviews only; a session's own `DONE` claim and the no-mistakes
+  hand-off review are not verdicts and are not listed.
 - Goals blocked on a probeable credential (`BLOCKED: env — needs <name>`) appear on the
   needs-you page with the credential name and no buttons; they leave on their own when the
   probe turns green (existing behaviour).
