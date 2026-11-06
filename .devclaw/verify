@@ -9,17 +9,18 @@
 #              egress would read a network flake as a secrets finding.
 #   frontend e2e — and with it CI's `sh e2e/impeccable-engine.sh` step, which
 #              only fetches the impeccable detector that quality.spec.ts runs
-#              inside the e2e step. Needs browser bits the sandbox image does
-#              not carry; CI runs it (`npx playwright install --with-deps
-#              chromium`). To drive it
-#              here anyway: the Playwright Chromium needs libXfixes.so.3, which
-#              is absent and cannot be apt-installed without root (extract it
-#              from the Debian package into a scratch dir and point
-#              LD_LIBRARY_PATH at it). That gets `playwright test` running, but
-#              quality.spec.ts's `impeccable` scan still fails — it launches its
-#              OWN Chrome, and this host restricts unprivileged user namespaces
-#              ("No usable sandbox!"). So the most a sandbox run proves is
-#              "everything but impeccable".
+#              inside the e2e step. CI owns it
+#              (`npx playwright install --with-deps chromium`). In the worker
+#              container the browser's system libraries are installed
+#              (deploy/Dockerfile), so Playwright's own Chromium launches
+#              (Playwright starts it with --no-sandbox). A browser a test
+#              launches itself with its sandbox on (quality.spec.ts's impeccable
+#              scan) still dies with "No usable sandbox!": Docker's default
+#              seccomp profile withholds the user namespaces that sandbox needs,
+#              and widening it is an owner decision. So a documentation-only
+#              diff runs with DEVCLAW_DOCS_ONLY=1 (a script that honours it
+#              skips the browser e2e), and any other diff cannot run the
+#              impeccable scan in the worker.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

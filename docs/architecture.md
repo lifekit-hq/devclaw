@@ -148,7 +148,16 @@ Two host facts reach the session instead of being found at the end of it (#987).
 Before a code session's first turn, a repository that drives a browser
 (`playwright.config.*`) on a host whose Chromium cannot load a shared library
 (`ldd`) gets one `Host preflight:` paragraph at the top of its prompt and a
-`Preflight` event; an inconclusive check is silent. And when the branch's whole
+`Preflight` event; an inconclusive check is silent. The worker image installs
+Playwright's Chromium system libraries as root and carries the .NET SDK that
+finance-sentry's `.devclaw/verify` and lifekit-dashboard's gates run (#987), so
+that preflight fires only on a stale build. Chromium still cannot build its own
+sandbox in the container (Docker's default seccomp profile withholds user
+namespaces; letting them through is an owner decision, not made): Playwright's
+Chromium runs because Playwright starts it with `--no-sandbox`, but a browser a
+test launches itself with its sandbox on (devclaw's impeccable design scan in
+`frontend/e2e/quality.spec.ts`) fails with "No usable sandbox!".
+And when the branch's whole
 diff against its base is documentation (`is_doc_path`), the verify run's env
 carries `DEVCLAW_DOCS_ONLY=1`; the browser e2e is left out only if the
 repository's existing script already honours it (a script without the guard still
