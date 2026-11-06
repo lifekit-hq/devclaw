@@ -96,6 +96,7 @@ class PrFacts:
     ci_detail: str = ""
     failing_names: tuple[str, ...] = ()
     failing_logs: tuple[tuple[str, str], ...] = ()
+    files: tuple[str, ...] = ()  # the paths the PR changes (blast radius)
 
 
 def combine_checks(rollup: Optional[list[dict]], *, required: Optional[frozenset[str]],
@@ -190,7 +191,7 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     if not slug:
         return PrFacts("unknown", ci="unknown", ci_detail=f"not a GitHub remote: {repo_url!r}")
     rc, out = await gh("pr", "view", branch, "--repo", slug, "--json",
-                       "number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeable")
+                       "number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeable,files")
     if rc != 0:
         if any(m in out.lower() for m in _NO_PR_MARKERS):
             return PrFacts("none")
@@ -227,7 +228,8 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     logs: tuple[tuple[str, str], ...] = ()
     if ci == "red":
         logs = await failed_check_logs(slug, head, failing, lines=_config.ci_log_tail_lines())
-    return PrFacts("open", number, url, head, base, ci, detail, failing, logs)
+    files = tuple(str(f["path"]) for f in pr.get("files") or [] if isinstance(f, dict) and f.get("path"))
+    return PrFacts("open", number, url, head, base, ci, detail, failing, logs, files)
 
 
 async def pr_files(repo_url: str, number: int) -> Optional[tuple[str, ...]]:

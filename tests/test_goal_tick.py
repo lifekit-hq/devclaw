@@ -306,6 +306,42 @@ async def test_an_achieved_verdict_merges_and_closes(harness):
     assert store.get_goal(goal.id).outcome == "achieved"
 
 
+@pytest.mark.parametrize("body, files", [
+    ("## Done when\n- the users table migration runs on deploy", ()),
+    ("## Done when\n- /health returns 200", ("db/migrations/0003_add_col.sql",)),
+])
+async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(harness, body, files):
+    """Issue 979, fail-closed: an achieved verdict on a migration/deletion/data
+    change posts one decision and waits; only the owner's `merge` after it
+    squash-merges. Nothing else spawns a session or merges."""
+    store, queue, rec, goal, ctx = harness
+    issues = [gh.Issue(1, "t", body, "open")]
+    await tick_goal(goal, ctx(FakeWorld(issues=issues)))
+    t = _sessions(store, goal.id)[0]
+    store.claim_pending(t.id)
+    store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
+    green = gh.PrFacts("open", 5, "u", "abc123", ci="green", files=files)
+    await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues)))
+    review = _sessions(store, goal.id)[0]
+    store.claim_pending(review.id)
+    verdict = '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n```'
+    store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
+    assert await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues))) == "blocked"
+    assert rec.merges == [] and "why=hard_to_reverse" in rec.comments[-1][1] and "merge" in rec.pings[-1]
+    records = [_comment(30, 5, "v", "verdict", head="abc123", task=review.id, achieved="1", unreadable="0"),
+               _comment(31, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")]
+
+    def world(*owner):
+        return FakeWorld(pr=green, issues=issues, comments=[*records, *owner])
+    assert await tick_goal(goal, ctx(world())) == "blocked"
+    for answer in ("@devclaw looks fine", "@devclaw do not merge", "@devclaw merge it later"):
+        assert await tick_goal(goal, ctx(world(_comment(32, 5, answer)))) == "awaiting merge decision"
+    assert rec.merges == [] and len(rec.comments) == 2 and len(_sessions(store, goal.id)) == 2
+    assert await tick_goal(goal, ctx(world(_comment(29, 5, "@devclaw merge")))) == "blocked"  # older than the ask
+    assert await tick_goal(goal, ctx(world(_comment(33, 5, "@devclaw decide: merge")))) == "closed"
+    assert rec.merges == [("u", "abc123")]
+
+
 @pytest.mark.parametrize("settle, outcome, unreadable", [
     ("refused", "blocked", "0"),
     ("unreadable", "gate unreadable", "1"),

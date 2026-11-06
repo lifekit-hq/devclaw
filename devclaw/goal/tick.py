@@ -23,6 +23,7 @@ from ..engine.workspace import lease_goal_checkout, remove_goal_checkout
 from ..state_store import (
     EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REVIEW, Goal, StateStore, Task,
 )
+from . import blast as _blast
 from . import donegate as _donegate
 from . import github as _gh
 from .notify import Notifier
@@ -252,6 +253,14 @@ async def _merge(ctx: TickContext, goal: Goal, world: World) -> str:
         return "conflicting"  # the fingerprint moved: the next tick spawns the resolution
     if world.pr.state == "open" and world.pr.ci not in ("green", "no_workflows"):
         return "ci pending" if world.pr.ci == "pending" else "merge held"
+    contract = "\n".join(_gh.extract_acceptance(i.body) or "" for i in world.issues)
+    if _blast.classify(contract, world.pr.files) == "hard":  # waits for the owner's `merge`
+        asked = [c for c in world.records("block") if c.field("why") == "hard_to_reverse" and c.field("head") == world.pr.head_sha]
+        if not asked:
+            return await _block(ctx, goal, world, task_id="", head=world.pr.head_sha, kind="hard to reverse",
+                                text=f"The done-gate passed, but this change is hard to reverse (a migration, a deletion or production data). Reply mentioning the bot with `merge` (or decide(\"{goal.id}\", \"merge\")) to squash-merge it as judged; cancel the goal to refuse.")
+        if not any(c.id > asked[-1].id and _blast.is_merge_decision(c.body, _config.mention()) for c in world.comments if c.is_instruction):
+            return "awaiting merge decision"
     outcome, detail = await ctx.merge(goal.repo_url, world.pr.url, world.pr.head_sha)
     if outcome == "merged":
         return await _close(ctx, goal, "achieved", f"merged {world.pr.url}")
