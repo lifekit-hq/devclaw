@@ -1,0 +1,21 @@
+run:
+  id: "01M6PWDQQYMSHF0B8EWSGM25KJ"
+  branch: goal/dc-doctor-no-mistakes-982
+  status: cancelled
+  head: a2e7b692
+  head_sha: a2e7b692223f949f6f10f2ed11c845ed5b078c40
+  verification_plan: none
+  pr: "https://github.com/lifekit-hq/devclaw/pull/983"
+  findings: none
+  steps[9]{step,status,findings,duration_ms}:
+    intent,completed,0,35
+    rebase,completed,0,1108
+    review,completed,0,272785
+    test,completed,0,640701
+    document,completed,0,100058
+    lint,completed,0,43734
+    push,completed,0,7594
+    pr,completed,0,54637
+    ci,failed,0,1971359
+outcome: cancelled
+error: "cancelled: aborted by user"

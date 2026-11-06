@@ -1,0 +1,20 @@
+run:
+  id: "01M6PZC9Y1V35YKM67JFKGF4NQ"
+  branch: goal/dc-doctor-no-mistakes-982
+  status: failed
+  head: 6e553b1f
+  head_sha: 6e553b1f19527d754ae9d5328f4742790cda2421
+  verification_plan: none
+  findings: none
+  steps[9]{step,status,findings,duration_ms}:
+    intent,completed,0,56
+    rebase,completed,0,1159
+    review,completed,0,253555
+    test,completed,0,603622
+    document,completed,0,186549
+    lint,completed,0,74026
+    push,failed,0,7283
+    pr,pending,0,0
+    ci,skipped,0,0
+outcome: failed
+error: "step push failed: push to upstream: git push https://github.com/lifekit-hq/devclaw.git 6e553b1f19527d754ae9d5328f4742790cda2421:refs/heads/goal/dc-doctor-no-mistakes-982: exit status 1: remote: fatal error in commit_refs_rules        \nTo https://github.com/lifekit-hq/devclaw.git\n ! [remote rejected] 6e553b1f19527d754ae9d5328f4742790cda2421 -> goal/dc-doctor-no-mistakes-982 (fatal error in commit_refs_rules\n)\nerror: failed to push some refs to 'https://github.com/lifekit-hq/devclaw.git'"
