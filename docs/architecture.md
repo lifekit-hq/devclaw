@@ -170,7 +170,11 @@ only the owner can settle ends `BLOCKED`). The session never pushes. CI is
 skipped in the pipeline because the tick reads it: a red CI still stops the
 goal with the failing log posted. The engine takes nobody's word for the
 outcome: the branch's newest run must carry the session's head and have
-passed, or the row is `INTERRUPTED` — as is a green verify that leaves
+passed, or the row is `INTERRUPTED`. "Carries" is read from `axi status`: the
+head the run was submitted at while it is pre-push, else (once it has pushed or
+finished, when status prints only the run's own `head_sha`) that head after a
+`git fetch no-mistakes`, which must descend from the session's. A green verify
+that leaves uncommitted changes and no commit is `INTERRUPTED` too that leaves
 uncommitted changes and no commit. Fix commits the pipeline pushes are on
 the remote branch the next session resets to. One session runs one pipeline,
 so `DEVCLAW_MAX_CONCURRENT` (default 1) bounds no-mistakes load too.

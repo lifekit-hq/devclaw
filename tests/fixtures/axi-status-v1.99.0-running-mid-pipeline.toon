@@ -1,0 +1,21 @@
+run:
+  id: "01M6Q2PRJSWMB8RJTXFM9RSGZW"
+  branch: goal/dc-doctor-no-mistakes-982
+  status: running
+  head: 983aecf7
+  head_sha: 983aecf7b333978b467d65acebe9e93dadb1ebff
+  verification_plan: none
+  pr: "https://github.com/lifekit-hq/devclaw/pull/983"
+  findings: none
+  steps[9]{step,status,findings,duration_ms}:
+    intent,completed,0,15
+    rebase,completed,0,1164
+    review,completed,0,363436
+    test,completed,0,430177
+    document,running,0,0
+    lint,pending,0,0
+    push,pending,0,0
+    pr,pending,0,0
+    ci,skipped,0,0
+  active_steps[1]{step,status,active_for,round_active_for,last_activity,agent_pid,round}:
+    document,running,11m56s,11m56s,"quiet 10m43s ago: claude producing output","97865",starting
