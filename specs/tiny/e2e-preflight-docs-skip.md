@@ -16,7 +16,7 @@
 - **Number that shows it**: paid session time between the start of a session
   and the first mention of a missing browser library: 95 minutes before, the
   first turn after. Docs-only branches blocked by the browser e2e: 1 before, 0
-  after (given a repository script that honours the signal).
+  after (given a repository script that already honours the signal).
 - **Cut when**: the worker host ships the browser libraries (the preflight then
   never fires), or the engine stops running a repository script for verify.
 
@@ -36,13 +36,18 @@
    documentation (`is_doc_path`: a doc-format file at the root, under
    `docs/`, `doc/`, `specs/`, `.devclaw/`, or a README/CHANGELOG/LICENSE-style
    name anywhere). `run_verify` then sets `DEVCLAW_DOCS_ONLY=1` for the script.
-   A missing base, an empty diff or any other path fails closed.
+   A missing base, an empty diff or any other path fails closed. The skip
+   applies ONLY when the repository's existing `.devclaw/verify` already
+   honours the variable; the session is not told to add the guard, because
+   `.devclaw/verify` is not documentation and editing it would make the diff
+   non-docs-only. **Remaining gap (follow-up)**: an existing verify script
+   without the guard still runs the browser e2e on a docs-only diff.
 
 ## Requirements
 
 - The engine decides the facts (software owns the verdict inputs); the
   repository's own `.devclaw/verify` decides what to leave out. The skill
-  states that only the browser step may be skipped.
+  states that the skip applies only when the existing script already honours the variable.
 - Not changed: the worker image, the container, `DEVCLAW_SKIP_E2E`, spec 100 —
   those are owner decisions.
 

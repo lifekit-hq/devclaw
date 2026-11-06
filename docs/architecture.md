@@ -150,8 +150,10 @@ Before a code session's first turn, a repository that drives a browser
 (`ldd`) gets one `Host preflight:` paragraph at the top of its prompt and a
 `Preflight` event; an inconclusive check is silent. And when the branch's whole
 diff against its base is documentation (`is_doc_path`), the verify run's env
-carries `DEVCLAW_DOCS_ONLY=1`, so the repository's script may leave its browser
-e2e out; a missing base, an empty diff or a mixed one fails closed (e2e stays in).
+carries `DEVCLAW_DOCS_ONLY=1`; the browser e2e is left out only if the
+repository's existing script already honours it (a script without the guard still
+runs the e2e — follow-up), and a missing base, an empty diff or a mixed one fails
+closed (e2e stays in).
 
 A green run is not yet a pass. The engine then checks that the first-run
 manifest — `.devclaw/verify` and `.devclaw/workflow.md`, how the repo verifies

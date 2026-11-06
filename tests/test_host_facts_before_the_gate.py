@@ -145,3 +145,10 @@ async def test_no_installed_browser_is_not_a_preflight_failure(tmp_path, monkeyp
     work.mkdir()
     (work / "playwright.config.ts").write_text("")
     assert await engine.browser_preflight(str(work)) is None
+
+
+def test_the_emitted_prompt_makes_the_docs_only_skip_conditional_on_the_repo_script():
+    prompt = engine.load_skills("implement_feature")
+    assert engine.DOCS_ONLY_ENV in prompt
+    assert "already honours" in prompt
+    assert "add the guard" not in prompt and "make the script skip" not in prompt
