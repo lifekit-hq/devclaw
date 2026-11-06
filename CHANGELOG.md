@@ -2,6 +2,18 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.5.0](https://github.com/lifekit-hq/devclaw/compare/v2.4.2...v2.5.0) (2026-11-06)
+
+
+### Features
+
+* **doctor:** report the no-mistakes hand-off and the state of its home ([#983](https://github.com/lifekit-hq/devclaw/issues/983)) ([431874a](https://github.com/lifekit-hq/devclaw/commit/431874ae9e23fe77ee57e46fa2dfa4319a68905a))
+
+
+### Bug Fixes
+
+* **engine:** accept a pushed or finished no-mistakes run in the hand-off check ([#986](https://github.com/lifekit-hq/devclaw/issues/986)) ([dc0b372](https://github.com/lifekit-hq/devclaw/commit/dc0b3723c7049c9d536304c55aaf6bd81aeed101))
+
 ## [2.4.2](https://github.com/lifekit-hq/devclaw/compare/v2.4.1...v2.4.2) (2026-11-05)
 
 
