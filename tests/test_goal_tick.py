@@ -266,6 +266,10 @@ async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
     # a real file: by '/' (even a new one), or by existing in the base tree; a tree directory counts
     assert scope_extras(claude, "Fix new/thing.py", BASE_TREE) == list(claude)
     assert scope_extras(claude, "Fix world.py", BASE_TREE) == list(claude)
+    # any extension names a file, not a closed list: .go, .csproj, .razor
+    for name in ("cmd/server/main.go", "src/Api/Api.csproj", "src/Pages/Index.razor"):
+        assert scope_extras((name, "devclaw/x.py"), f"Fix the handler in {name}; see docs.", BASE_TREE) == ["devclaw/x.py"]
+    assert scope_extras(("main.go",), "Fix main.go.", BASE_TREE | {"main.go"}) == []
     assert scope_extras(("docs/flows/x.md",), "see docs/flows/ and tick.py", BASE_TREE | {"tick.py"}) == []
     # docs, the spec/test of a named file and a lockfile of a named or changed manifest ride along
     named = "Edit devclaw/goal/tick.py and frontend/src/a/foo.ts"

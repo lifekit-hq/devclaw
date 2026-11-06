@@ -17,8 +17,7 @@ from pathlib import PurePosixPath
 from . import github as _gh
 
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
-_PATH_RE = re.compile(r"[\w.-]+(?:/[\w.-]+)*\.(?:py|md|tsx?|js|json|ya?ml|toml|cs|sh|html|s?css|sql|txt)\b"
-                      r"|[\w.-]+(?:/[\w.-]+)*/(?![\w.-])")
+_PATH_RE = re.compile(r"[\w.-]+(?:/[\w.-]+)*\.\w+|[\w.-]+(?:/[\w.-]+)*/(?![\w.-])")
 _LOCKS = {"package-lock.json": "package.json", "pnpm-lock.yaml": "package.json", "yarn.lock": "package.json",
           "poetry.lock": "pyproject.toml", "uv.lock": "pyproject.toml", "Cargo.lock": "Cargo.toml"}
 
