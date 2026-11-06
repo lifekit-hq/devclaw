@@ -73,9 +73,7 @@ def _parse_json(rc: int, out: str) -> Optional[object]:
 
 def owner_repo(repo_url: str) -> Optional[str]:
     """``https://github.com/o/r.git`` / ``git@github.com:o/r.git`` → ``o/r``."""
-    if not repo_url:
-        return None
-    m = _OWNER_REPO_RE.search(repo_url.strip())
+    m = _OWNER_REPO_RE.search((repo_url or "").strip())
     return f"{m.group(1)}/{m.group(2)}" if m else None
 
 
@@ -96,7 +94,6 @@ class PrFacts:
     ci_detail: str = ""
     failing_names: tuple[str, ...] = ()
     failing_logs: tuple[tuple[str, str], ...] = ()
-    files: tuple[str, ...] = ()  # the paths the PR changes (blast radius)
 
 
 def combine_checks(rollup: Optional[list[dict]], *, required: Optional[frozenset[str]],
@@ -191,7 +188,7 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     if not slug:
         return PrFacts("unknown", ci="unknown", ci_detail=f"not a GitHub remote: {repo_url!r}")
     rc, out = await gh("pr", "view", branch, "--repo", slug, "--json",
-                       "number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeable,files")
+                       "number,url,state,headRefOid,baseRefName,statusCheckRollup,mergeable")
     if rc != 0:
         if any(m in out.lower() for m in _NO_PR_MARKERS):
             return PrFacts("none")
@@ -204,10 +201,8 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     head = str(pr.get("headRefOid") or "")
     base = str(pr.get("baseRefName") or "")
     gh_state = str(pr.get("state") or "").upper()
-    if gh_state == "MERGED":
-        return PrFacts("merged", number, url, head, base, ci="none")
-    if gh_state == "CLOSED":
-        return PrFacts("closed", number, url, head, base, ci="none")
+    if gh_state in ("MERGED", "CLOSED"):
+        return PrFacts(gh_state.lower(), number, url, head, base, ci="none")
     if str(pr.get("mergeable") or "").upper() == "CONFLICTING":
         return PrFacts("conflicting", number, url, head, base, ci="none",
                        ci_detail="the PR conflicts with its base; GitHub runs no checks on it")
@@ -228,8 +223,7 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     logs: tuple[tuple[str, str], ...] = ()
     if ci == "red":
         logs = await failed_check_logs(slug, head, failing, lines=_config.ci_log_tail_lines())
-    files = tuple(str(f["path"]) for f in pr.get("files") or [] if isinstance(f, dict) and f.get("path"))
-    return PrFacts("open", number, url, head, base, ci, detail, failing, logs, files)
+    return PrFacts("open", number, url, head, base, ci, detail, failing, logs)
 
 
 async def pr_files(repo_url: str, number: int) -> Optional[tuple[str, ...]]:
@@ -303,7 +297,7 @@ class Comment:
     #: devclaw's own record kind (``block`` / ``verdict`` / ``decision`` / ...) or ""
     marker: str = ""
     marker_fields: tuple[tuple[str, str], ...] = ()
-    association: str = ""   # GitHub's author_association (OWNER, MEMBER, NONE, ...) or ""
+    association: str = ""  # GitHub's author_association
 
     @property
     def is_instruction(self) -> bool:
@@ -339,9 +333,6 @@ async def list_comments(repo_url: str, number: int) -> list[Comment]:
         return []
     comments: list[Comment] = []
     for line in out.splitlines():
-        line = line.strip()
-        if not line:
-            continue
         try:
             d = json.loads(line)
         except ValueError:

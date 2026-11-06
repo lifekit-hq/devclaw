@@ -30,8 +30,9 @@
   record (`why=hard_to_reverse`, the judged head) and returns; it merges only
   when a comment mentioning the bot, newer than that record, answers `merge`.
   A moved head is a new head and asks again.
-- `github.PrFacts.files`: the PR's changed paths, read in the existing
-  `gh pr view` call.
+- The PR's changed paths come from the existing `WorldReader.files` read
+  (`gh pr diff --name-only`, complete for large PRs); unreadable files leave
+  the merge undecided until the next tick.
 
 ## Decisions
 

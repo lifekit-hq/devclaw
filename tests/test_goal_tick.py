@@ -320,19 +320,19 @@ async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(ha
     t = _sessions(store, goal.id)[0]
     store.claim_pending(t.id)
     store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
-    green = gh.PrFacts("open", 5, "u", "abc123", ci="green", files=files)
-    await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues)))
+    green = gh.PrFacts("open", 5, "u", "abc123", ci="green")
+    await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues, files=files)))
     review = _sessions(store, goal.id)[0]
     store.claim_pending(review.id)
     verdict = '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n```'
     store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
-    assert await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues))) == "blocked"
+    assert await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues, files=files))) == "blocked"
     assert rec.merges == [] and "why=hard_to_reverse" in rec.comments[-1][1] and "merge" in rec.pings[-1]
     records = [_comment(30, 5, "v", "verdict", head="abc123", task=review.id, achieved="1", unreadable="0"),
                _comment(31, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")]
 
     def world(*owner):
-        return FakeWorld(pr=green, issues=issues, comments=[*records, *owner])
+        return FakeWorld(pr=green, issues=issues, files=files, comments=[*records, *owner])
     assert await tick_goal(goal, ctx(world())) == "blocked"
     for answer in ("@devclaw looks fine", "@devclaw do not merge", "@devclaw merge it later"):
         assert await tick_goal(goal, ctx(world(_comment(32, 5, answer)))) == "awaiting merge decision"

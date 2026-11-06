@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from . import github as _gh
@@ -34,11 +34,6 @@ class Verdict:
     unreadable: bool = False
     raw_error: str = ""
 
-    def to_dict(self) -> dict:
-        return {"achieved": self.achieved, "clauses": list(self.clauses), "question": self.question,
-                "summary": self.summary, "structural_health": self.structural_health,
-                "concerns": list(self.concerns), "unreadable": self.unreadable}
-
 
 def parse_verdict(agent_output: str) -> Verdict:
     """Read the reviewer's JSON; validate the achieved claim against the
@@ -58,15 +53,9 @@ def parse_verdict(agent_output: str) -> Verdict:
     if not isinstance(data, dict):
         return Verdict(False, unreadable=True, raw_error="verdict is not an object")
     clauses_raw = data.get("clauses")
-    clauses: list[dict] = []
-    if isinstance(clauses_raw, list):
-        for c in clauses_raw:
-            if isinstance(c, dict):
-                clauses.append({
-                    "clause": str(c.get("clause") or "").strip(),
-                    "satisfied": bool(c.get("satisfied")),
-                    "evidence": str(c.get("evidence") or "").strip(),
-                })
+    clauses = [{"clause": str(c.get("clause") or "").strip(), "satisfied": bool(c.get("satisfied")),
+                "evidence": str(c.get("evidence") or "").strip()}
+               for c in (clauses_raw if isinstance(clauses_raw, list) else []) if isinstance(c, dict)]
     if not clauses:
         return Verdict(False, unreadable=True, raw_error="verdict names no clauses")
     all_ok = all(c["satisfied"] and c["evidence"] for c in clauses)
@@ -132,9 +121,8 @@ def render_block(*, task_id: str, head: str, kind: str, text: str, default: str 
     lines = [_gh.marker("block", task=task_id or "-", head=head or "-", why=kind.replace(" ", "_")),
              f"**devclaw stopped: {kind}**", "", text]
     if options:
-        lines.append("")
-        for i, o in enumerate(options):
-            lines.append(f"- ({chr(97 + i)}) {o}" + (" — the session would take this" if i == recommended else ""))
+        lines += [""] + [f"- ({chr(97 + i)}) {o}" + (" — the session would take this" if i == recommended else "")
+                         for i, o in enumerate(options)]
     if default:
         lines += ["", f"Default the session would take: {default}"]
     lines += ["", "Reply on this thread mentioning the bot to continue, or cancel the goal."]
@@ -163,4 +151,4 @@ def block_fields(result_json: "str | None", exit_detail: "str | None") -> dict:
     }
 
 
-__all__ = ["Verdict", "parse_verdict", "render_verdict", "render_block", "block_fields", "field"]
+__all__ = ["Verdict", "parse_verdict", "render_verdict", "render_block", "block_fields"]

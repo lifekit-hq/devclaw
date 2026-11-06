@@ -68,12 +68,10 @@ async def reconcile(state, *, now_ms: int) -> bool:
 async def maybe_trigger(state, *, now_ms: int) -> "str | None":
     """``triggered`` / ``expired`` / ``trigger_failed`` / None. Never raises."""
     pending = state.deploy_pending()
-    if pending is None:
-        if not await reconcile(state, now_ms=now_ms):
-            return None
+    if pending is None and await reconcile(state, now_ms=now_ms):
         pending = state.deploy_pending()
-        if pending is None:
-            return None
+    if pending is None:
+        return None
     sha, goal_id, since_ms = pending
     if now_ms - since_ms > _config.deploy_quiescence_s() * 1000:
         state.record_deploy_last(sha=sha, goal_id=goal_id, outcome="expired", at_ms=now_ms,
