@@ -310,12 +310,14 @@ HANDOFF_PROMPT = (
 )
 _STATUS_KEY_RE = re.compile(r'^( *)([A-Za-z_][A-Za-z0-9_]*)(?:\[\d+\](?:\{[^}]*\})?)?:[ \t]*(.*?)[ \t]*$')
 #: The run's own fields in ``axi status`` (TOON, v1.99.0; it has no
-#: machine-readable mode): its outcome at column 0, its PR under ``run:``, the
-#: head it was submitted at under ``branch_sync: > pipeline:``. A step row or
-#: another branch's ``other_branch_run:`` block never matches.
+#: machine-readable mode): its outcome at column 0, its PR and its head under
+#: ``run:`` (always printed), the head it was submitted at under
+#: ``branch_sync: > pipeline:`` (printed only while the run is pre-push). A step
+#: row or another branch's ``other_branch_run:`` block never matches.
 _STATUS_RUN_FIELDS = {
     ("outcome",): "outcome",
     ("run", "pr"): "pr",
+    ("run", "head_sha"): "run_head",
     ("branch_sync", "pipeline", "submitted_head"): "submitted_head",
 }
 
@@ -359,7 +361,7 @@ async def unshipped_head(workspace_dir: str) -> Optional[str]:
 
 
 def parse_status(text: str) -> dict[str, str]:
-    """The run's ``outcome`` / ``pr`` / ``submitted_head`` from ``axi status``,
+    """The run's ``outcome`` / ``pr`` / ``run_head`` / ``submitted_head`` from ``axi status``,
     each read only at its own position in the document."""
     fields: dict[str, str] = {}
     stack: list[tuple[int, str]] = []
@@ -389,12 +391,19 @@ async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str
     """``(pr_url, "")`` when the branch's newest no-mistakes run carries the
     unshipped ``head`` and passed, else ``(None, why)``. Carrying it proves the
     run is this session's: no earlier run was submitted at a descendant of a
-    commit the remote has never seen."""
+    commit the remote has never seen. ``axi status`` prints the submitted head
+    only while the run is pre-push; once it has pushed or finished, the run's own
+    ``head_sha`` is the only head printed — a descendant of the submitted one,
+    which lives in the gate repo until fetched."""
     rc, out = await _host(workspace_dir, NO_MISTAKES, "axi", "status")
     if rc != 0:
         return None, f"no-mistakes axi status failed: {out[-300:]}"
     fields = parse_status(out)
     submitted = fields.get("submitted_head", "")
+    if not submitted and fields.get("run_head"):
+        # a failed fetch leaves the object missing, so the ancestry test fails closed
+        await _host(workspace_dir, "git", "fetch", NO_MISTAKES)
+        submitted = fields["run_head"]
     if not submitted or (await _host(workspace_dir, "git", "merge-base", "--is-ancestor", head, submitted))[0] != 0:
         return None, f"no no-mistakes run carries {head[:8]}"
     if fields.get("outcome") not in SHIPPED_OUTCOMES:
