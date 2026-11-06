@@ -258,15 +258,15 @@ async def _merge(ctx: TickContext, goal: Goal, world: World) -> str:
         return "unreadable"
     if _blast.classify("\n".join(_gh.extract_acceptance(i.body) or "" for i in world.issues), changed) == "hard":
         asked = [c for c in world.records("block") if c.field("why") == "hard_to_reverse" and c.field("head") == world.pr.head_sha]
-        if not asked:
+        me = (await ctx.world.login()).lower()
+        if not (asked and any(c.id > asked[-1].id and _blast.is_merge_decision(c.body, _config.mention()) and c.author
+                              and (c.association.upper() == "OWNER" or c.author.lower() == me)
+                              for c in world.comments if c.is_instruction)):
             return await _block(ctx, goal, world, task_id="", head=world.pr.head_sha, kind="hard to reverse",
-                                text="The done-gate passed, but this change is hard to reverse (a migration, a deletion or production data). "
-                                "Reply mentioning the bot with `merge` (or decide(\"" + goal.id + "\", \"merge\")) to squash-merge it as judged; cancel the goal to refuse.")
-        owner = (_gh.owner_repo(goal.repo_url) or "").split("/")[0].lower()
-        if not any(c.id > asked[-1].id and _blast.is_merge_decision(c.body, _config.mention())
-                   and (c.association.upper() == "OWNER" or (c.author and c.author.lower() == owner))
-                   for c in world.comments if c.is_instruction):
-            return "awaiting merge decision"
+                                text="The done-gate passed, but this change is hard to reverse (a migration, a deletion or production data), so the goal "
+                                "waits for a merge decision and applies no other instruction. Reply mentioning the bot with `merge` (or "
+                                f"decide(\"{goal.id}\", \"merge\")) to squash-merge it as judged; cancel the goal to refuse."
+                                + ("" if me else " The host's GitHub identity is unreadable: only the repository OWNER can release it."))
     outcome, detail = await ctx.merge(goal.repo_url, world.pr.url, world.pr.head_sha)
     if outcome == "merged":
         return await _close(ctx, goal, "achieved", f"merged {world.pr.url}")

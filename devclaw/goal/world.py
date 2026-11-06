@@ -98,6 +98,7 @@ class WorldReader:
     credentials: CredentialProbe = field(default=lambda: ())
     files: FilesReader = _gh.pr_files
     tree: Callable[[str, str], Awaitable[Optional[frozenset[str]]]] = _gh.pr_tree
+    login: Callable[[], Awaitable[str]] = _gh.host_login
 
     async def read(self, goal: Goal) -> World:
         pr = await self.pr(goal.repo_url, goal.branch)

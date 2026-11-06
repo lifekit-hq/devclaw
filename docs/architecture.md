@@ -131,9 +131,13 @@ purge, production data …) and the PR's changed paths (`migrations/`,
 `alembic/`, `*.sql`). Only `hard` changes the outcome: it posts a `block`
 record (`why=hard_to_reverse`) and waits for a comment mentioning the bot
 whose whole text is `merge` (`decide(goal, "merge")`), newer than that record
-and written by the repository owner (`author_association` `OWNER`, or the
-author is the repo's owner login); any other author leaves it waiting.
-The class is never stored (pillar 5); a moved head asks again.
+and written by the account the host's own `gh` credential acts as (the one
+`decide` posts through; `gh api user`, read when needed, no config) or whose
+`author_association` is `OWNER`; any other or missing author does not release
+it, and an unreadable host identity leaves only `OWNER`. While it waits, each
+newer instruction that is not that answer is not applied: the block notice is
+posted again once for it, with no session spawned. The class is never stored
+(pillar 5); a moved head asks again.
 
 ## Part II — the locked contracts
 

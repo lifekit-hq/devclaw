@@ -41,9 +41,16 @@
   holds no derived state (pillar 5).
 - `wide` is classified but not yet gated: it proceeds as `reversible` today;
   the issue names the class and gives it no behaviour.
-- The release comes from the repository owner only (`author_association` is
-  `OWNER`, or the author is the repo's owner login); any other or missing
-  author leaves the block standing. No config surface.
+- The release comes from the account the host's `gh` credential acts as (the
+  one `decide` posts through, read with `gh api user` at the merge edge) or an
+  `author_association` of `OWNER`. The repos sit in an organisation, so the
+  owner login is the org and the people are `MEMBER`: an owner-login rule
+  would deadlock every goal. Any other or missing author leaves the block
+  standing; an unreadable host identity leaves only `OWNER`, and the notice
+  says so. No config surface.
+- A newer instruction that is not that answer is not applied and not silent:
+  the block notice is posted again, once (it is a newer `block` record, so the
+  goal reads as blocked until the next instruction). No new state, no session.
 - Fail closed on the answer: anything but the bare word `merge` (`do not
   merge`, `merge it later`) leaves the goal waiting.
 
@@ -51,5 +58,6 @@
 
 - A `hard` goal with an achieved verdict never calls the merge without a
   newer `merge` answer; it posts one block record and one ping.
+- A non-`merge` instruction while it waits gets exactly one reply and spawns nothing.
 - A `reversible` goal merges as it did.
 - `tests/test_goal_layer_stays_readable.py` is green.

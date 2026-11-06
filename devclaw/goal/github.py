@@ -71,6 +71,12 @@ def _parse_json(rc: int, out: str) -> Optional[object]:
         return None
 
 
+async def host_login() -> str:
+    """The account the host's gh credential acts as; "" when unreadable."""
+    rc, out = await gh("api", "user", "--jq", ".login")
+    return out.strip() if rc == 0 else ""
+
+
 def owner_repo(repo_url: str) -> Optional[str]:
     """``https://github.com/o/r.git`` / ``git@github.com:o/r.git`` → ``o/r``."""
     m = _OWNER_REPO_RE.search((repo_url or "").strip())

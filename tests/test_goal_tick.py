@@ -33,13 +33,14 @@ BASE_TREE = frozenset({"devclaw/goal/donegate.py", "devclaw/goal/world.py", "dev
 
 
 class FakeWorld:
-    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=(), tree=BASE_TREE):
+    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=(), tree=BASE_TREE, login="host"):
         self.pr = pr or gh.PrFacts("none")
         self.issues = issues or [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open")]
         self.comments = comments or []
         self.creds = creds
         self.files = files  # what the PR changes; None = unreadable
         self.tree = tree  # the base branch's paths; None = unreadable
+        self.login = login  # the account the host's gh acts as; "" = unreadable
 
     def reader(self) -> WorldReader:
         async def pr(repo_url, branch):
@@ -57,8 +58,11 @@ class FakeWorld:
         async def tree(repo_url, base):
             return self.tree
 
+        async def login():
+            return self.login
+
         return WorldReader(pr=pr, issue=issue, comments=comments, credentials=lambda: tuple(self.creds),
-                           files=files, tree=tree)
+                           files=files, tree=tree, login=login)
 
 
 class Recorder:
@@ -331,18 +335,31 @@ async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(ha
     records = [_comment(30, 5, "v", "verdict", head="abc123", task=review.id, achieved="1", unreadable="0"),
                _comment(31, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")]
 
-    def world(*owner):
-        return FakeWorld(pr=green, issues=issues, files=files, comments=[*records, *owner])
+    def world(*owner, login="host"):
+        return FakeWorld(pr=green, issues=issues, files=files, comments=[*records, *owner], login=login)
     assert await tick_goal(goal, ctx(world())) == "blocked"
-    for answer in ("@devclaw looks fine", "@devclaw do not merge", "@devclaw merge it later"):
-        assert await tick_goal(goal, ctx(world(_comment(32, 5, answer)))) == "awaiting merge decision"
-    assert rec.merges == [] and len(rec.comments) == 2 and len(_sessions(store, goal.id)) == 2
-    assert await tick_goal(goal, ctx(world(_comment(29, 5, "@devclaw merge", author="o")))) == "blocked"  # older than the ask
-    for stranger in (dict(author="mallory", association="NONE"), dict(author="", association=""), dict(author="mallory", association="MEMBER")):
-        assert await tick_goal(goal, ctx(world(_comment(33, 5, "@devclaw merge", **stranger)))) == "awaiting merge decision"
-    assert rec.merges == [] and len(rec.comments) == 2
-    assert await tick_goal(goal, ctx(world(_comment(33, 5, "@devclaw decide: merge", author="O")))) == "closed"
-    assert rec.merges == [("u", "abc123")]
+    assert len(rec.comments) == 2
+    ask = _comment(33, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")
+    for i, answer in enumerate(("@devclaw looks fine", "@devclaw do not merge", "@devclaw merge it later")):
+        before = len(rec.comments)
+        assert await tick_goal(goal, ctx(world(_comment(32, 5, answer)))) == "blocked"
+        assert len(rec.comments) == before + 1 and "waits for a merge decision" in rec.comments[-1][1]
+        assert await tick_goal(goal, ctx(world(_comment(32, 5, answer), ask))) == "blocked"  # answered once, never again
+        assert len(rec.comments) == before + 1
+    assert rec.merges == [] and len(_sessions(store, goal.id)) == 2
+    assert await tick_goal(goal, ctx(world(_comment(29, 5, "@devclaw merge", author="o", association="OWNER")))) == "blocked"  # older than the ask
+    for stranger in (dict(author="mallory", association="NONE"), dict(author="", association=""),
+                     dict(author="mallory", association="MEMBER"), dict(author="mallory", association="COLLABORATOR")):
+        before = len(rec.comments)
+        assert await tick_goal(goal, ctx(world(_comment(34, 5, "@devclaw merge", **stranger)))) == "blocked"
+        assert len(rec.comments) == before + 1
+    assert await tick_goal(goal, ctx(world(_comment(34, 5, "@devclaw merge", author="host"), login=""))) == "blocked"
+    assert "OWNER" in rec.comments[-1][1] and rec.merges == []
+    for releaser, login in ((dict(author="host", association="MEMBER"), "host"), (dict(author="HOST", association="MEMBER"), "host"),
+                            (dict(author="denys", association="OWNER"), "host"), (dict(author="denys", association="OWNER"), "")):
+        assert await tick_goal(goal, ctx(world(_comment(34, 5, "@devclaw decide: merge", **releaser), login=login))) == "closed"
+        assert rec.merges == [("u", "abc123")]
+        rec.merges.clear()
 
 
 @pytest.mark.parametrize("settle, outcome, unreadable", [
