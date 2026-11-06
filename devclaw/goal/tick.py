@@ -144,7 +144,7 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
         return await _block(ctx, goal, world, task_id=last.id, head=head, kind="session blocked",
                             text=b["question"] or "(no question stated)", default=b["default"],
                             options=b["options"], recommended=b["recommended"])
-    if world.blocked:
+    if world.blocked and not await _merge_released(ctx, world):
         return "blocked"
 
     # a red CI on a delivered head is an environment gap: stop, never retry
@@ -248,25 +248,26 @@ async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Tas
     return None
 
 
+async def _merge_released(ctx: TickContext, world: World) -> bool:
+    ask = next((c.id for c in world.records("block") if c.field("why") == "hard_to_reverse" and c.field("head") == world.pr.head_sha), 0)
+    answers = [c for c in world.comments if ask and c.id > ask and c.is_instruction and c.author and _blast.is_merge_decision(c.body, _config.mention())]
+    me = (await ctx.world.login()).lower() if answers else ""
+    return any(c.association.upper() == "OWNER" or c.author.lower() == me for c in answers)
+
+
 async def _merge(ctx: TickContext, goal: Goal, world: World) -> str:
     if world.pr.state == "conflicting":
         return "conflicting"  # the fingerprint moved: the next tick spawns the resolution
     if world.pr.state == "open" and world.pr.ci not in ("green", "no_workflows"):
         return "ci pending" if world.pr.ci == "pending" else "merge held"
-    changed = await ctx.world.files(goal.repo_url, world.pr.number)
-    if changed is None:
+    if (changed := await ctx.world.files(goal.repo_url, world.pr.number)) is None:
         return "unreadable"
-    if _blast.classify("\n".join(_gh.extract_acceptance(i.body) or "" for i in world.issues), changed) == "hard":
-        asked = [c for c in world.records("block") if c.field("why") == "hard_to_reverse" and c.field("head") == world.pr.head_sha]
-        me = (await ctx.world.login()).lower()
-        if not (asked and any(c.id > asked[-1].id and _blast.is_merge_decision(c.body, _config.mention()) and c.author
-                              and (c.association.upper() == "OWNER" or c.author.lower() == me)
-                              for c in world.comments if c.is_instruction)):
-            return await _block(ctx, goal, world, task_id="", head=world.pr.head_sha, kind="hard to reverse",
-                                text="The done-gate passed, but this change is hard to reverse (a migration, a deletion or production data), so the goal "
-                                "waits for a merge decision and applies no other instruction. Reply mentioning the bot with `merge` (or "
-                                f"decide(\"{goal.id}\", \"merge\")) to squash-merge it as judged; cancel the goal to refuse."
-                                + ("" if me else " The host's GitHub identity is unreadable: only the repository OWNER can release it."))
+    if _blast.classify("\n".join(_gh.extract_acceptance(i.body) or "" for i in world.issues), changed) == "hard" and not await _merge_released(ctx, world):
+        return await _block(ctx, goal, world, task_id="", head=world.pr.head_sha, kind="hard to reverse",
+                            text="The done-gate passed, but this change is hard to reverse (a migration, a deletion or production data), so the goal "
+                            "waits for a merge decision and applies no other instruction. Reply mentioning the bot with `merge` (or "
+                            f"decide(\"{goal.id}\", \"merge\")) to squash-merge it as judged; cancel the goal to refuse."
+                            + ("" if await ctx.world.login() else " The host's GitHub identity is unreadable: only the repository OWNER can release it."))
     outcome, detail = await ctx.merge(goal.repo_url, world.pr.url, world.pr.head_sha)
     if outcome == "merged":
         return await _close(ctx, goal, "achieved", f"merged {world.pr.url}")

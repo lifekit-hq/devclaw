@@ -360,6 +360,9 @@ async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(ha
         assert await tick_goal(goal, ctx(world(_comment(34, 5, "@devclaw decide: merge", **releaser), login=login))) == "closed"
         assert rec.merges == [("u", "abc123")]
         rec.merges.clear()
+    notice = _comment(34, 5, "b", "block", task="-", head="abc123", why="hard_to_reverse")  # posted while the owner's merge (33) landed
+    assert await tick_goal(goal, ctx(world(_comment(32, 5, "@devclaw rename it"), _comment(33, 5, "@devclaw merge", author="denys", association="OWNER"), notice))) == "closed"
+    assert rec.merges == [("u", "abc123")]
 
 
 @pytest.mark.parametrize("settle, outcome, unreadable", [

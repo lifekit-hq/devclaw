@@ -72,7 +72,6 @@ def _parse_json(rc: int, out: str) -> Optional[object]:
 
 
 async def host_login() -> str:
-    """The account the host's gh credential acts as; "" when unreadable."""
     rc, out = await gh("api", "user", "--jq", ".login")
     return out.strip() if rc == 0 else ""
 
