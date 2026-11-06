@@ -1,0 +1,8 @@
+#!/bin/sh
+# Starts $DEVCLAW_CHROMIUM with Chromium's own sandbox off. Only the worker
+# image reaches it (it sets DEVCLAW_CHROMIUM_NO_SANDBOX to this file; nothing
+# else does): Docker's default seccomp profile withholds the user namespaces the
+# sandbox builds on, the container is the boundary, and the pages loaded are the
+# project's own test pages. A browser launched by a tool that takes only an
+# executable path (impeccable's detector: IMPECCABLE_BROWSER) goes through here.
+exec "${DEVCLAW_CHROMIUM:?chromium-no-sandbox: DEVCLAW_CHROMIUM names the Chromium to start}" --no-sandbox "$@"

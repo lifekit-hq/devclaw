@@ -147,6 +147,16 @@ USER node
 RUN npx -y playwright@latest install chromium
 USER root
 
+# A browser a test starts itself (impeccable's design scan, which takes only an
+# executable path) cannot build Chromium's sandbox here: Docker's default
+# seccomp profile withholds user namespaces, and widening it is not done. The
+# container is the boundary, so those launches go through a wrapper that adds
+# --no-sandbox. Set in this image only; CI, local dev and the projects' own
+# Playwright configs never see it. (Playwright's own launches already pass
+# --no-sandbox.)
+COPY --chmod=755 deploy/chromium-no-sandbox /usr/local/bin/chromium-no-sandbox
+ENV DEVCLAW_CHROMIUM_NO_SANDBOX=/usr/local/bin/chromium-no-sandbox
+
 # ---- devclaw source (COPY from the checked-out tree — no git clone) --------
 # Everything above is source-independent and stays cached across code changes.
 # The COPY below is the only layer a code change invalidates.

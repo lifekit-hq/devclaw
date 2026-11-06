@@ -5,6 +5,7 @@ Read this when the change touches a web UI — pages, forms, navigation, anythin
 ## What you have
 
 - In the devclaw-mcp runtime: a Playwright Chromium under `~/.cache/ms-playwright/`, `@playwright/mcp` installed globally, and the system libs `chromium.launch()` needs. Elsewhere, check before assuming.
+- In that runtime Chromium cannot build its own sandbox. Playwright's launches already pass `--no-sandbox`; a tool that starts a browser from one executable path (impeccable's `IMPECCABLE_BROWSER`) goes through `$DEVCLAW_CHROMIUM_NO_SANDBOX`, with `DEVCLAW_CHROMIUM` set to the real binary. Never edit a project's committed Playwright config for it.
 - No `.mcp.json` is written for you: the Playwright MCP tools are available only if the project configures them.
 
 ## Two ways to use it
