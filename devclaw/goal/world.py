@@ -97,6 +97,7 @@ class WorldReader:
     comments: CommentsReader = _gh.list_comments
     credentials: CredentialProbe = field(default=lambda: ())
     files: FilesReader = _gh.pr_files
+    tree: Callable[[str, str], Awaitable[Optional[frozenset[str]]]] = _gh.pr_tree
 
     async def read(self, goal: Goal) -> World:
         pr = await self.pr(goal.repo_url, goal.branch)

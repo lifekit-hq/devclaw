@@ -17,9 +17,10 @@ from pathlib import PurePosixPath
 from . import github as _gh
 
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
-#: a file (known extension) or a directory (trailing slash) written into prose
 _PATH_RE = re.compile(r"[\w.-]+(?:/[\w.-]+)*\.(?:py|md|tsx?|js|json|ya?ml|toml|cs|sh|html|s?css|sql|txt)\b"
                       r"|[\w.-]+(?:/[\w.-]+)*/(?![\w.-])")
+_LOCKS = {"package-lock.json": "package.json", "pnpm-lock.yaml": "package.json", "yarn.lock": "package.json",
+          "poetry.lock": "pyproject.toml", "uv.lock": "pyproject.toml", "Cargo.lock": "Cargo.toml"}
 
 
 @dataclass(frozen=True)
@@ -84,18 +85,24 @@ def parse_verdict(agent_output: str) -> Verdict:
     )
 
 
-def scope_extras(changed: "tuple[str, ...]", text: str) -> list[str]:
-    """The changed files that ``text`` (the issue and the owner's words) names
-    nowhere — by path, directory, bare file name, or a test sharing a named
-    file's stem. Deterministic. ``[]`` when the text names no file at all:
-    with no stated scope there is nothing to exceed. ``.devclaw/`` is the
-    session's own manifest and is always in scope."""
-    named = {n for m in _PATH_RE.findall(text) if (n := m.removeprefix("./").rstrip("/"))}
-    if not named:
-        return []
-    return [f for f in changed if not f.startswith(".devclaw/") and not any(
-        f == n or f.startswith(n + "/") or f.endswith("/" + n)
-        or ("test" in f.lower() and PurePosixPath(n).stem in f) for n in named)]
+def scope_extras(changed: "tuple[str, ...]", text: str, tree: "frozenset[str]") -> list[str]:
+    """The changed files ``text`` names nowhere; ``[]`` when it names no file. A token
+    names one only with a non-trailing ``/`` or if it exists in ``tree`` (the base tree).
+    Always in scope: ``.devclaw/``, ``docs/``, tests and specs of a named file, lockfiles
+    whose manifest is named or changed."""
+    named = {n for m in _PATH_RE.findall(text) if (n := m.removeprefix("./").rstrip("/")) and (
+        n in tree or any(p.endswith("/" + n) for p in tree) or ("/" in n and not m.endswith("/")))}
+
+    def hit(f: str) -> bool:
+        return any(f == n or f.startswith(n + "/") or f.endswith("/" + n) or (
+            ("test" in f.lower() or "spec" in f.lower()) and PurePosixPath(n).stem in f) for n in named)
+
+    def ok(f: str) -> bool:
+        man = _LOCKS.get(PurePosixPath(f).name)
+        lock = str(PurePosixPath(f).with_name(man)) if man else ""
+        return f.startswith((".devclaw/", "docs/")) or hit(f) or lock in changed or hit(lock)
+
+    return [f for f in changed if named and not ok(f)]
 
 
 def render_verdict(verdict: Verdict, *, head: str, task_id: str) -> str:

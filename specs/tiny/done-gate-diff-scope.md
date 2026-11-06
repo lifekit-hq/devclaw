@@ -28,20 +28,26 @@ deterministic, no model). The "plan" the issue speaks of has no host-side
 source (pillars 3 and 4), so the issue and the owner's words are the plan; the
 session's intent file is the issue verbatim and lives in a temp dir.
 
+- A token in the text names a file only if it has a `/` (a trailing-slash
+  directory token excluded) or exists in the PR base's tree
+  (`github.pr_tree`) — so `Node.js`, `Next.js` and a prose `foo/bar/` name
+  nothing. A directory token counts only if the base tree has it.
 - Every changed file is named (by path, directory, bare file name, or a test
-  sharing a named file's stem), or is under `.devclaw/` → the review runs.
+  or spec sharing a named file's stem), or is always in scope: `.devclaw/`,
+  `docs/`, and a lockfile (a small fixed list in `donegate._LOCKS`) whose
+  manifest is named or changed in the diff → the review runs.
 - A file named nowhere → a `scope` record on the PR listing them and ONE
   correction session (the record is in its prompt; it reverts and proposes
   DONE again, or ends BLOCKED with the reason). A second excess → `_block`
   with kind `SCOPE_EXCEEDED`; the goal stops.
 - An owner comment newer than the `scope` record waives the check.
-- An unreadable file list never passes (`unreadable`, no session).
+- An unreadable file list or base tree never passes (`unreadable`, no session).
 - Text naming no file at all → `[]`: with no stated scope there is nothing to
   exceed (the check cannot fire on an issue like #978 itself).
 
 ## Tasks
 
-- [x] `github.pr_files`, `WorldReader.files`
+- [x] `github.pr_files` / `github.pr_tree`, `WorldReader.files` / `.tree`
 - [x] `donegate.scope_extras`, `tick._scope_gate`
 - [x] `test_the_scope_gate_fails_closed_before_any_review_runs`
 - [x] `docs/architecture.md`, `docs/flows/delivery.md`, `docs/INDEX.md`
@@ -50,4 +56,4 @@ session's intent file is the issue verbatim and lives in a temp dir.
 
 A PR changing a file named nowhere never reaches a review session; one
 correction, then `SCOPE_EXCEEDED` stops the goal; the goal layer stays under
-1,500 lines (1,492); `ruff`, `mypy`, `lint-imports` and the suite are green.
+1,500 lines (1,500); `ruff`, `mypy`, `lint-imports` and the suite are green.

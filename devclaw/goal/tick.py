@@ -194,19 +194,15 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
 
 
 async def _scope_gate(ctx: TickContext, goal: Goal, world: World, last: Task) -> Optional[str]:
-    """Before a head's first review: the PR may change only files the issue or
-    the owner names. The first excess gets ONE correction session (its record
-    is on the thread); a second stops the goal. The owner's newer word waives."""
+    """Before a head's first review: one correction for files named nowhere, then SCOPE_EXCEEDED."""
     head, recs = world.pr.head_sha, world.records("scope")
     if recs and world.last_instruction_id > recs[-1].id:
         return None
-    changed = await ctx.world.files(goal.repo_url, world.pr.number)
-    if changed is None:
-        ctx.log(goal.id, "scope check: the PR's files are unreadable")
+    changed, tree = await ctx.world.files(goal.repo_url, world.pr.number), await ctx.world.tree(goal.repo_url, world.pr.base)
+    if changed is None or tree is None:
         return "unreadable"
-    words = [goal.objective, *(f"{i.title}\n{i.body}" for i in world.issues),
-             *(c.body for c in world.comments if c.is_instruction)]
-    extra = _donegate.scope_extras(changed, "\n".join(words))
+    extra = _donegate.scope_extras(changed, "\n".join([goal.objective, *(f"{i.title}\n{i.body}" for i in world.issues),
+                                                       *(c.body for c in world.comments if c.is_instruction)]), tree)
     if not extra:
         return None
     text = "the PR changes files the issue and the owner name nowhere: " + ", ".join(f"`{f}`" for f in extra[:20])

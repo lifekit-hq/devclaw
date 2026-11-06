@@ -28,13 +28,18 @@ def _lease_in_place(project_ws, repo_url, goal_id):
     return leased()
 
 
+BASE_TREE = frozenset({"devclaw/goal/donegate.py", "devclaw/goal/world.py", "devclaw/engine/claude.py", "docs/flows",
+                       "docs/flows/delivery.md", "docs/INDEX.md", "pyproject.toml", "uv.lock"})
+
+
 class FakeWorld:
-    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=()):
+    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=(), tree=BASE_TREE):
         self.pr = pr or gh.PrFacts("none")
         self.issues = issues or [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open")]
         self.comments = comments or []
         self.creds = creds
         self.files = files  # what the PR changes; None = unreadable
+        self.tree = tree  # the base branch's paths; None = unreadable
 
     def reader(self) -> WorldReader:
         async def pr(repo_url, branch):
@@ -49,8 +54,11 @@ class FakeWorld:
         async def files(repo_url, number):
             return self.files
 
+        async def tree(repo_url, base):
+            return self.tree
+
         return WorldReader(pr=pr, issue=issue, comments=comments, credentials=lambda: tuple(self.creds),
-                           files=files)
+                           files=files, tree=tree)
 
 
 class Recorder:
@@ -227,10 +235,11 @@ async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
     store.claim_pending(t.id)
     store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
     green = gh.PrFacts("open", 5, "u", "abc123", ci="green")
-    inside = ("devclaw/goal/donegate.py", "tests/test_donegate.py", "docs/flows/delivery.md", ".devclaw/verify")
+    inside = ("devclaw/goal/donegate.py", "tests/test_donegate.py", "docs/flows/delivery.md", "docs/INDEX.md", ".devclaw/verify")
     over = inside + ("devclaw/goal/world.py",)
 
     assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=None))) == "unreadable"
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over, tree=None))) == "unreadable"
     assert len(_sessions(store, goal.id)) == 1
 
     assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over))) == "resumed"
@@ -248,7 +257,22 @@ async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
                          comments=[record, _comment(41, 5, "@devclaw those are fine")])
     assert await tick_goal(goal, ctx(answered)) == "gate"  # the owner's word waives the check
 
-    assert scope_extras(over, "no file is named here") == []
+    assert scope_extras(over, "no file is named here", BASE_TREE) == []
+    # prose that merely looks like a file, or a directory that is not in the tree, names no scope
+    claude = ("devclaw/engine/claude.py",)
+    for prose in ("Bug in Node.js handling", "Upgrade Next.js and Vue.js", "use a layout like foo/bar/ here"):
+        assert scope_extras(claude, prose, BASE_TREE) == []
+    # a real file: by '/' (even a new one), or by existing in the base tree; a tree directory counts
+    assert scope_extras(claude, "Fix new/thing.py", BASE_TREE) == list(claude)
+    assert scope_extras(claude, "Fix world.py", BASE_TREE) == list(claude)
+    assert scope_extras(("docs/flows/x.md",), "see docs/flows/ and tick.py", BASE_TREE | {"tick.py"}) == []
+    # docs, the spec/test of a named file and a lockfile of a named or changed manifest ride along
+    named = "Edit devclaw/goal/tick.py and frontend/src/a/foo.ts"
+    companions = ("docs/INDEX.md", "frontend/src/a/foo.spec.ts", "tests/test_tick.py", "frontend/package-lock.json")
+    assert scope_extras(("devclaw/goal/tick.py",) + companions, named, BASE_TREE) == ["frontend/package-lock.json"]
+    assert scope_extras(("frontend/package.json",) + companions[-1:], named + " and frontend/package.json", BASE_TREE) == []
+    assert scope_extras(("frontend/package.json", "frontend/package-lock.json", "devclaw/x.py"), named, BASE_TREE) == [
+        "frontend/package.json", "devclaw/x.py"]
 
 
 async def test_an_achieved_verdict_merges_and_closes(harness):

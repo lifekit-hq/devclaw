@@ -107,9 +107,11 @@ sha, run the engine once, then classify how it ended:
 
 A `DONE` proposal with green CI is first scope-checked (`_scope_gate` in
 `goal/tick.py`): the PR's changed files (`gh pr diff --name-only`) must each be
-named — by path, directory, file name, or a test sharing a named file's stem —
-in the goal's objective, the issues or the owner's comments (`.devclaw/` is
-always in scope; text naming no file states no scope). A file named nowhere
+named — by path, directory, file name, or a test or spec sharing a named file's
+stem — in the goal's objective, the issues or the owner's comments (a token
+counts as a file only with a `/` or if the base tree has it, so `Node.js` is
+prose; `.devclaw/`, `docs/` and a lockfile whose manifest is named or changed
+are always in scope; text naming no file states no scope). A file named nowhere
 posts a `scope` record and spawns one correction session; a second excess
 stops the goal with `SCOPE_EXCEEDED`; the owner's newer comment waives it; an
 unreadable file list never passes. Then it spawns a `review_repository` session over the

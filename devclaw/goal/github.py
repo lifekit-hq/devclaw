@@ -230,10 +230,14 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
 
 
 async def pr_files(repo_url: str, number: int) -> Optional[tuple[str, ...]]:
-    """Every file the PR changes against its base, or None when unreadable."""
     slug = owner_repo(repo_url)
     rc, out = await gh("pr", "diff", str(number), "--repo", slug or "", "--name-only")
     return tuple(out.splitlines()) if slug and rc == 0 else None
+
+
+async def pr_tree(repo_url: str, base: str) -> Optional[frozenset[str]]:
+    rc, out = await gh("api", f"repos/{owner_repo(repo_url)}/git/trees/{base}?recursive=1", "--jq", ".tree[].path")
+    return frozenset(out.splitlines()) if rc == 0 else None
 
 
 # ---- issues ------------------------------------------------------------------
