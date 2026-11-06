@@ -157,9 +157,8 @@ namespaces; letting them through is an owner decision, not made): Playwright's
 Chromium runs because Playwright starts it with `--no-sandbox`, but a browser a
 test launches itself with its sandbox on (devclaw's impeccable design scan in
 `frontend/e2e/quality.spec.ts`) fails with "No usable sandbox!".
-And when the branch's whole
-diff against its base is documentation (`is_doc_path`), the verify run's env
-carries `DEVCLAW_DOCS_ONLY=1`; the browser e2e is left out only if the
+And when the branch's whole diff against its base is documentation
+(`is_doc_path`), the verify run's env carries `DEVCLAW_DOCS_ONLY=1`; the browser e2e is left out only if the
 repository's existing script already honours it (a script without the guard still
 runs the e2e — follow-up), and a missing base, an empty diff or a mixed one fails
 closed (e2e stays in).
