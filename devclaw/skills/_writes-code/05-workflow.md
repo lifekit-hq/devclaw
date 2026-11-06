@@ -16,4 +16,4 @@ Then, every run:
 - **The branch is the ledger.** Continue what THIS branch added — its commits, its PR description, the planning artifacts the manifest names. You cannot adopt another goal's plan.
 - Take the smallest not-yet-done piece; one coherent reviewable increment per session.
 - Record load-bearing choices (a stack, a schema, an API shape) with a one-line why where the manifest says plans live, so no session relitigates them.
-- Correct the manifest in place when a change makes it wrong. Never append to it, and never create a root `PLAN.md`.
+- Correct the manifest in place when a change makes it wrong. Never append to it — the one exception is a proven constraint, one `CONSTRAINT: <what was proven>` line under `## Learned constraints` — and never create a root `PLAN.md`.
