@@ -40,7 +40,7 @@ session's intent file is the issue verbatim and lives in a temp dir.
   correction session (the record is in its prompt; it reverts and proposes
   DONE again, or ends BLOCKED with the reason). A second excess → `_block`
   with kind `SCOPE_EXCEEDED`; the goal stops.
-- An owner comment newer than the `scope` record waives the check.
+- An owner comment newer than a `scope` record or `SCOPE_EXCEEDED` block about the head waives the check for that head only; any later head is checked afresh.
 - An unreadable file list or base tree never passes (`unreadable`, no session).
 - Text naming no file at all → `[]`: with no stated scope there is nothing to
   exceed (the check cannot fire on an issue like #978 itself).

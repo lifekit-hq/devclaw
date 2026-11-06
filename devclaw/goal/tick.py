@@ -196,7 +196,8 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
 async def _scope_gate(ctx: TickContext, goal: Goal, world: World, last: Task) -> Optional[str]:
     """Before a head's first review: one correction for files named nowhere, then SCOPE_EXCEEDED."""
     head, recs = world.pr.head_sha, world.records("scope")
-    if recs and world.last_instruction_id > recs[-1].id:
+    about = [c.id for c in (*recs, *(b for b in world.records("block") if b.field("why") == "SCOPE_EXCEEDED")) if c.field("head") == head]
+    if about and world.last_instruction_id > max(about):
         return None
     changed, tree = await ctx.world.files(goal.repo_url, world.pr.number), await ctx.world.tree(goal.repo_url, world.pr.base)
     if changed is None or tree is None:

@@ -113,7 +113,7 @@ counts as a file only with a `/` or if the base tree has it, so `Node.js` is
 prose; `.devclaw/`, `docs/` and a lockfile whose manifest is named or changed
 are always in scope; text naming no file states no scope). A file named nowhere
 posts a `scope` record and spawns one correction session; a second excess
-stops the goal with `SCOPE_EXCEEDED`; the owner's newer comment waives it; an
+stops the goal with `SCOPE_EXCEEDED`; the owner's newer comment waives that head only; an
 unreadable file list never passes. Then it spawns a `review_repository` session over the
 delivered head with `devclaw/prompts/done-gate.md`: decompose the contract
 into clauses, cite evidence per clause, answer in JSON. `devclaw/goal/donegate.py`

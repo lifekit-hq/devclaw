@@ -13,7 +13,7 @@ import pytest
 
 from devclaw.goal import github as gh
 from devclaw.goal.donegate import parse_verdict, scope_extras
-from devclaw.goal.tick import TickContext, tick_goal
+from devclaw.goal.tick import TickContext, _scope_gate, tick_goal
 from devclaw.goal.world import WorldReader
 from devclaw.state_store import EXIT_DELIVERED, EXIT_DONE, EXIT_REVIEW, StateStore
 from devclaw.task_queue import TaskQueue
@@ -252,6 +252,15 @@ async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
     record = _comment(40, 5, "x", "scope", head="abc123", task=t.id)
     assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over, comments=[record]))) == "blocked"
     assert "SCOPE_EXCEEDED" in rec.comments[-1][1] and len(_sessions(store, goal.id)) == 2
+
+    # the waiver is per head: a later owner comment never disables the check for a new head
+    h3 = gh.PrFacts("open", 5, "u", "def456", ci="green")
+    later = FakeWorld(issues=[SCOPED], pr=h3, files=over, comments=[record, _comment(41, 5, "@devclaw also fix Y")])
+    assert await tick_goal(goal, ctx(later)) == "blocked" and "SCOPE_EXCEEDED" in rec.comments[-1][1]
+    # ...while an owner reply to the SCOPE_EXCEEDED block waives the head that block was posted on
+    block = _comment(50, 5, "x", "block", task="t", head="def456", why="SCOPE_EXCEEDED")
+    replied = FakeWorld(issues=[SCOPED], pr=h3, files=over, comments=[record, block, _comment(51, 5, "@devclaw ok")])
+    assert await _scope_gate(ctx(replied), goal, await ctx(replied).world.read(goal), correction) is None
 
     answered = FakeWorld(issues=[SCOPED], pr=green, files=over,
                          comments=[record, _comment(41, 5, "@devclaw those are fine")])
