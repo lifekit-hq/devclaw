@@ -54,13 +54,15 @@ https://cli.github.com/packages stable main" \
  && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
-# ---- chromium system libs for the done-gate E2E phase ----------------------
-# Same lib list as openclaw-gateway so we don't drift.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        libnspr4 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
-        libxcomposite1 libxdamage1 libatspi2.0-0 libdrm2 libxkbcommon0 \
-        libxrandr2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
- && rm -rf /var/lib/apt/lists/*
+# ---- chromium system libs (root) for the browser e2e step -------------------
+# A session runs as `node` and cannot apt-install, so the shared libraries the
+# Playwright Chromium links against (libXfixes, libXrandr, libgbm, ...) and the
+# fonts its screenshots need come from the image. `install-deps` is Playwright's
+# own list for this Debian release, the same step CI runs as `--with-deps`; the
+# browser itself is fetched per project, as `node`, further down and by the
+# project's own `npx playwright install chromium`. (#987)
+RUN npx -y playwright@latest install-deps chromium \
+ && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # ---- tailscale CLI ---------------------------------------------------------
 # deploy.py shells out to `tailscale serve`. ONLY the CLI is used — tailscaled
@@ -113,10 +115,34 @@ RUN arch="$(dpkg --print-architecture)" \
  && rm "/tmp/$tarball" \
  && no-mistakes --version
 
+# ---- .NET SDK (finance-sentry and lifekit-dashboard verify with `dotnet`) ---
+# Pinned release, SHA-512 verified against the release metadata
+# (builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json).
+# finance-sentry's `.devclaw/verify` runs `dotnet restore/build/test`; its
+# global.json asks for 10.0.100 with rollForward latestFeature. The runtime's
+# native deps (ICU, OpenSSL, libstdc++) already ship in the base image.
+ARG DOTNET_SDK_VERSION=10.0.403
+ARG DOTNET_SDK_SHA512_AMD64=b7b3d8461cf98b07d2552ce9199702fa3ad010ac2671a5f8cd5136f7534e50f6855ba7bbb02b11494563f1d04156276a31cda1103b900e5eecd0d9473dc7b9c5
+ARG DOTNET_SDK_SHA512_ARM64=0966aa2b70f4677b8319be9df447a78a0dcd6164836425b55a68fd714f4023feb87b4cac21b9a996b79472ad54487cd0adcd2a9dfd570e2b2a1d26423a2baa9b
+RUN arch="$(dpkg --print-architecture)" \
+ && case "$arch" in amd64) rid=x64; sum="$DOTNET_SDK_SHA512_AMD64" ;; arm64) rid=arm64; sum="$DOTNET_SDK_SHA512_ARM64" ;; *) echo "no .NET SDK build for $arch" >&2; exit 1 ;; esac \
+ && tarball="dotnet-sdk-${DOTNET_SDK_VERSION}-linux-${rid}.tar.gz" \
+ && curl -fsSL -o "/tmp/$tarball" "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_SDK_VERSION}/$tarball" \
+ && echo "$sum  /tmp/$tarball" | sha512sum -c - \
+ && mkdir -p /usr/share/dotnet \
+ && tar -xzf "/tmp/$tarball" -C /usr/share/dotnet \
+ && rm "/tmp/$tarball" \
+ && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
+ && DOTNET_NOLOGO=1 dotnet --version
+ENV DOTNET_ROOT=/usr/share/dotnet \
+    DOTNET_NOLOGO=1 \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1
+
 # ---- Playwright Chromium (runtime user, BEFORE the source COPY) ------------
-# Pre-fetch the ~150MB browser so the done-gate E2E phase doesn't download it
+# Pre-fetch the ~150MB browser so the browser e2e step doesn't download it
 # on first use, and so it stays cached across code-only rebuilds (it sits
-# before the cache-busted source layers below).
+# before the cache-busted source layers below). Its system libs are the root
+# layer above.
 USER node
 RUN npx -y playwright@latest install chromium
 USER root
