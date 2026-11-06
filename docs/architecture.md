@@ -144,6 +144,15 @@ a code-writing session that leaves no script after being asked ends with a
 failed verify. The host then fails a red run closed (`queue/settle.py`:
 `INTERRUPTED`; the next session starts fresh on the reset goal branch).
 
+Two host facts reach the session instead of being found at the end of it (#987).
+Before a code session's first turn, a repository that drives a browser
+(`playwright.config.*`) on a host whose Chromium cannot load a shared library
+(`ldd`) gets one `Host preflight:` paragraph at the top of its prompt and a
+`Preflight` event; an inconclusive check is silent. And when the branch's whole
+diff against its base is documentation (`is_doc_path`), the verify run's env
+carries `DEVCLAW_DOCS_ONLY=1`, so the repository's script may leave its browser
+e2e out; a missing base, an empty diff or a mixed one fails closed (e2e stays in).
+
 A green run is not yet a pass. The engine then checks that the first-run
 manifest — `.devclaw/verify` and `.devclaw/workflow.md`, how the repo verifies
 and how it plans — is TRACKED in the git index, not merely present in the

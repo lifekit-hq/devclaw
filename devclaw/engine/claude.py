@@ -232,11 +232,15 @@ def discover_verify(workspace_dir: str) -> Optional[str]:
     return f"./{VERIFY_SCRIPT_REL}" if os.access(path, os.X_OK) else f"bash {VERIFY_SCRIPT_REL}"
 
 
-async def run_verify(cmd: str, workspace_dir: str, timeout: float) -> dict:
-    """Never raises — a crash or a timeout is a failed gate."""
+async def run_verify(cmd: str, workspace_dir: str, timeout: float, *, docs_only: bool = False) -> dict:
+    """Never raises — a crash or a timeout is a failed gate. ``docs_only`` sets
+    :data:`DOCS_ONLY_ENV` for the script (see :func:`docs_only_diff`)."""
+    env = session_env()
+    if docs_only:
+        env[DOCS_ONLY_ENV] = "1"
     try:
         proc = await asyncio.create_subprocess_exec(
-            *_VERIFY_SHELL, _OOM_SHIELD + cmd, cwd=workspace_dir, env=session_env(),
+            *_VERIFY_SHELL, _OOM_SHIELD + cmd, cwd=workspace_dir, env=env,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
@@ -413,6 +417,91 @@ async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str
     return fields["pr"], ""
 
 
+# ---- host facts: what this host cannot run, what the diff touches -----------
+
+#: Set to ``1`` in the verify run's env when the branch's diff against its base
+#: touches only documentation, so the repo's script may leave its browser e2e out.
+DOCS_ONLY_ENV = "DEVCLAW_DOCS_ONLY"
+_DOC_SUFFIXES = (".md", ".mdx", ".rst", ".adoc")
+_DOC_DIRS = frozenset({"docs", "doc", "specs", ".devclaw"})
+_DOC_NAMES = frozenset({"README", "CHANGELOG", "CONTRIBUTING", "LICENSE", "NOTICE", "COPYING"})
+_BASE_REFS = ("origin/HEAD", "origin/main", "origin/master")
+_CHROMIUM_GLOBS = (
+    "chromium-*/chrome-linux*/chrome",
+    "chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell",
+    "chromium_headless_shell-*/chrome-linux*/headless_shell",
+)
+_LDD_MISSING_RE = re.compile(r"^\s*(\S+)\s+=>\s+not found\s*$", re.MULTILINE)
+
+
+def is_doc_path(path: str) -> bool:
+    """Documentation: prose in a doc format at the repo root, under a docs
+    directory, or named like a project doc. A markdown file elsewhere may be
+    read by the product (a prompt, a skill), so it is not."""
+    parts = path.split("/")
+    name = parts[-1]
+    stem = name.split(".")[0].upper()
+    if not (name.endswith(_DOC_SUFFIXES) or ("." not in name and stem in _DOC_NAMES)):
+        return False
+    return len(parts) == 1 or parts[0] in _DOC_DIRS or stem in _DOC_NAMES
+
+
+async def docs_only_diff(workspace_dir: str) -> bool:
+    """True when everything the branch changed against its base — commits,
+    working-tree edits and new files — is documentation. Fails CLOSED: no base,
+    no change or an unreadable diff is not docs-only."""
+    if not _has_git_dir(workspace_dir):
+        return False
+    for ref in _BASE_REFS:
+        rc, base = await _host(workspace_dir, "git", "merge-base", "HEAD", ref)
+        if rc == 0 and base:
+            break
+    else:
+        return False
+    rc_d, changed = await _host(workspace_dir, "git", "diff", "--name-only", base)
+    rc_n, new = await _host(workspace_dir, "git", "ls-files", "--others", "--exclude-standard")
+    if rc_d != 0 or rc_n != 0:
+        return False
+    paths = [p for p in (*changed.splitlines(), *new.splitlines()) if p]
+    return bool(paths) and all(is_doc_path(p) for p in paths)
+
+
+def _wants_browser(workspace_dir: str) -> bool:
+    if glob.glob(os.path.join(workspace_dir, "playwright.config.*")) \
+            or glob.glob(os.path.join(workspace_dir, "*", "playwright.config.*")):
+        return True
+    return "playwright" in _read(os.path.join(workspace_dir, VERIFY_SCRIPT_REL)).lower()
+
+
+def _chromium_binary() -> Optional[str]:
+    roots = [os.environ.get("PLAYWRIGHT_BROWSERS_PATH", ""), os.path.expanduser("~/.cache/ms-playwright")]
+    for root in (r for r in roots if r and r != "0"):
+        found = sorted(p for pattern in _CHROMIUM_GLOBS for p in glob.glob(os.path.join(root, pattern)))
+        if found:
+            return found[-1]
+    return None
+
+
+async def browser_preflight(workspace_dir: str) -> Optional[str]:
+    """A one-paragraph fact for the session prompt when the repository drives a
+    browser and the host's Chromium cannot load a shared library, else None. It
+    costs one ``ldd`` — the same gap otherwise surfaces only when the e2e step
+    runs, at the end of a paid session. Inconclusive (no browser installed, no
+    ``ldd``) is silent: the session installs what is missing."""
+    if not _wants_browser(workspace_dir):
+        return None
+    binary = _chromium_binary()
+    if binary is None:
+        return None
+    rc, out = await _host(workspace_dir, "ldd", binary, timeout=30.0)
+    missing = sorted(set(_LDD_MISSING_RE.findall(out))) if rc == 0 else []
+    if not missing:
+        return None
+    return (f"Host preflight: the Chromium at `{binary}` cannot load {', '.join(missing)}, so the "
+            f"browser e2e step cannot run on this host. `.devclaw/verify` runs with `{DOCS_ONLY_ENV}=1` "
+            "when the branch's diff touches only documentation.")
+
+
 # ---- one claude -p turn ----------------------------------------------------
 
 def session_env() -> dict[str, str]:
@@ -576,6 +665,12 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             return {"status": "error", "error": error}
     # a resumed session already holds the skills; it is handed only the new brief
     resume = req.resume_session_id
+    if not resume and req.kind in WRITES_CODE_KINDS:
+        # a host gap the session would otherwise find at the end of its work
+        note = await browser_preflight(req.workspace_dir)
+        if note:
+            _emit(req, "preflight", "Preflight", {"note": note})
+            prompt = f"{note}\n\n{prompt}"
     turn = await run_turn(req, req.goal if resume else prompt, resume=resume)
     if turn.resume_missing:
         sys.stderr.write(f"claude-engine: session {req.resume_session_id} not found — starting fresh\n")
@@ -676,7 +771,8 @@ async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Tur
 async def _gate(req: EngineRequest, cmd: str) -> tuple[dict, Optional[str]]:
     """The end-of-session verdict plus the feedback to hand back when red: the
     project's checks run green AND the first-run manifest is TRACKED."""
-    verify = await run_verify(cmd, req.workspace_dir, _config.VERIFY_TIMEOUT_S)
+    verify = await run_verify(cmd, req.workspace_dir, _config.VERIFY_TIMEOUT_S,
+                              docs_only=await docs_only_diff(req.workspace_dir))
     _emit_verify(req, verify)
     if not verify["passed"]:
         return verify, VERIFY_FAILED_PROMPT.format(cmd=cmd, code=verify["exit_code"],
@@ -691,8 +787,11 @@ async def _gate(req: EngineRequest, cmd: str) -> tuple[dict, Optional[str]]:
     return refusal, UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
 
 
-def _emit_verify(req: EngineRequest, verify: dict) -> None:
+def _emit(req: EngineRequest, id: str, type: str, payload: dict) -> None:
     if req.on_event:
-        req.on_event(EngineEvent(id="verify", type="VerifyResult", source="devclaw",
-                                 ts=int(time.time() * 1000),
-                                 payload={k: verify[k] for k in ("cmd", "passed", "exit_code", "timed_out")}))
+        req.on_event(EngineEvent(id=id, type=type, source="devclaw", ts=int(time.time() * 1000),
+                                 payload=payload))
+
+
+def _emit_verify(req: EngineRequest, verify: dict) -> None:
+    _emit(req, "verify", "VerifyResult", {k: verify[k] for k in ("cmd", "passed", "exit_code", "timed_out")})

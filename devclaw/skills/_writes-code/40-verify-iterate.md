@@ -8,4 +8,6 @@ When done, VERIFY with the project's OWN tools and iterate until they pass: run 
 
 Bound every build/test run: the host is shared with other sessions. Cap test-runner workers (e.g. `maxWorkers`, `-n 2`), limit node heap (`NODE_OPTIONS=--max-old-space-size`), and run heavy suites serially. Prefer a slower run over a faster parallel one that risks the OOM killer; a command that dies with `Killed` hit the memory limit — bound it tighter and re-run, do not just retry it.
 
+A host-preflight line at the top of your brief names a prerequisite this host lacks (a browser library): if the contract needs it, end BLOCKED before implementing. `.devclaw/verify` runs with `DEVCLAW_DOCS_ONLY=1` when the branch's diff touches only documentation — a script that drives a browser skips that step then, and only that step.
+
 Finish with a short summary of what you changed and the checks you ran (tests + lint + types).
