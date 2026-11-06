@@ -38,17 +38,17 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-10-21 (`stub` also serves the README *Try it* quickstart — #957; the Engine group: `DEVCLAW_CLAUDE_BIN`, the stream watchdog, the verify rounds, `DEVCLAW_TREEHOUSE_BIN`; the sandbox and Runner groups removed — #952; 2026-10-13: `DEVCLAW_DB` names the per-user console appearance it now holds) |
+| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-11-05 (`NM_HOME`'s state is reported by `devclaw doctor` — #982; 2026-10-21: `stub` also serves the README *Try it* quickstart — #957; the Engine group: `DEVCLAW_CLAUDE_BIN`, the stream watchdog, the verify rounds, `DEVCLAW_TREEHOUSE_BIN`; the sandbox and Runner groups removed — #952; 2026-10-13: `DEVCLAW_DB` names the per-user console appearance it now holds) |
 
 ## Runbooks
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`runbooks/doctor.md`](./runbooks/doctor.md) | The read-only post-deploy check: `doctor` tool / `devclaw doctor`. | **CURRENT** — 2026-10-21 (tools: `gh`, `git`, and the `claude` and `treehouse` binaries off the stub engine, no `docker`; a goal's leased worktree — #955) |
-| [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + treehouse) on one goal. | **CURRENT** — 2026-10-21 (no sandbox image — #952) |
+| [`runbooks/doctor.md`](./runbooks/doctor.md) | The read-only post-deploy check: `doctor` tool / `devclaw doctor`. | **CURRENT** — 2026-11-05 (the `handoff` check: `no-mistakes` on PATH and the state of `NM_HOME` — #982; 2026-10-21: tools: `gh`, `git`, and the `claude` and `treehouse` binaries off the stub engine, no `docker`; a goal's leased worktree — #955) |
+| [`runbooks/live-shakedown.md`](./runbooks/live-shakedown.md) | Exercising the real pipeline (logged-in `claude` + treehouse) on one goal. | **CURRENT** — 2026-11-05 (`devclaw doctor` also names a missing `no-mistakes` — #982; 2026-10-21: no sandbox image — #952) |
 | [`runbooks/webhooks.md`](./runbooks/webhooks.md) | The GitHub webhook that wakes the tick early. | **CURRENT** — 2026-10-21 (re-verified, unchanged) |
 | [`runbooks/devclaw-self-deploy.md`](./runbooks/devclaw-self-deploy.md) | The self-deploy: a published main commit (or the heartbeat noticing the build trails main) arms it, the heartbeat fires it once no session runs. | **CURRENT** — 2026-10-21 (§4 is the dated 2026-08-16 cutover record in past tense, making no current sandbox or waiter claim; the seam step attaches `notify-relay` only, no waiter seam, and the spec link points at its superseded row — #955; one image, `devclaw-mcp`, builds on hosted arm64 via `docker-build.yml`; the box pulls by SHA; the sandbox image is gone — #952) |
-| [`runbooks/no-mistakes-in-container.md`](./runbooks/no-mistakes-in-container.md) | How the no-mistakes pipeline is wired into the `devclaw-mcp` container (`NM_HOME` on the state volume, the pre-session `init`, the entrypoint's stale-daemon cleanup), the fresh-container check, the read-only live check, and the undo. | **CURRENT** — 2026-11-05 (written for the wiring; the fresh-container check was run on the deployed image) |
+| [`runbooks/no-mistakes-in-container.md`](./runbooks/no-mistakes-in-container.md) | How the no-mistakes pipeline is wired into the `devclaw-mcp` container (`NM_HOME` on the state volume, the pre-session `init`, the entrypoint's stale-daemon cleanup), the fresh-container check, the read-only live check, and the undo. | **CURRENT** — 2026-11-05 (`devclaw doctor` reports the hand-off — #982; written for the wiring; the fresh-container check was run on the deployed image) |
 
 ## Spikes
 

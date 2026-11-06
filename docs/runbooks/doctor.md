@@ -4,6 +4,7 @@
 
 - **credentials** — every registry credential present, well-formed, and (the GitHub-shaped ones) accepted by GitHub right now;
 - **tools** — `gh` and `git` on PATH, and (unless `DEVCLAW_ENGINE=stub`) the `claude` and `treehouse` binaries the engine runs;
+- **handoff** — (unless `DEVCLAW_ENGINE=stub`) `no-mistakes` on PATH, a `fail` with the fix when it is not, and the state of its home (`NM_HOME`, judged as the tool receives it — absolute, no `~`; default `~/.no-mistakes` when unset): a `warn` only while the home is merely not created yet and a goal's `no-mistakes init` can create it, and a `fail` for every home no session heals — a path that is not absolute (or an unset `NM_HOME` whose default no-mistakes cannot resolve: `$HOME` unset, empty or relative), a file or dangling symlink on it, a parent that cannot be written, a home `no-mistakes init` cannot place a file in (no write or no search permission for doctor's uid), or a home doctor cannot even read ([runbook](./no-mistakes-in-container.md));
 - **pause** — an active quota/auth pause and when it lifts;
 - **goals** — every open goal's project checkout and its leased treehouse worktree (none until the first spawn);
 - **projects** — every project has a `repo_url` and a `workspace_dir`;
