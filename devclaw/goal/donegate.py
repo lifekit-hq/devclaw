@@ -86,11 +86,9 @@ def parse_verdict(agent_output: str) -> Verdict:
 
 
 def scope_extras(changed: "tuple[str, ...]", text: str, tree: "frozenset[str]") -> list[str]:
-    """The changed files ``text`` names nowhere; ``[]`` when it names no file. A token
-    names one only with a non-trailing ``/`` or if it exists in ``tree`` (the base tree).
-    Always in scope: ``.devclaw/``, ``docs/``, tests and specs of a named file, lockfiles
-    whose manifest is named or changed."""
-    named = {n for m in _PATH_RE.findall(text) if (n := m.removeprefix("./").rstrip("/")) and (
+    """Changed files ``text`` (URLs ignored) names nowhere; ``[]`` if it names no file: a token needs a
+    non-trailing ``/`` or to exist in ``tree``. In scope: .devclaw/, docs/, tests/specs, lockfiles."""
+    named = {n for m in _PATH_RE.findall(re.sub(r"\w+://\S+", "", text)) if (n := m.removeprefix("./").rstrip("/")) and (
         n in tree or any(p.endswith("/" + n) for p in tree) or ("/" in n and not m.endswith("/")))}
 
     def hit(f: str) -> bool:

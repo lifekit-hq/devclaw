@@ -15,6 +15,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import quote
 
 from .. import config as _config
 
@@ -236,7 +237,7 @@ async def pr_files(repo_url: str, number: int) -> Optional[tuple[str, ...]]:
 
 
 async def pr_tree(repo_url: str, base: str) -> Optional[frozenset[str]]:
-    rc, out = await gh("api", f"repos/{owner_repo(repo_url)}/git/trees/{base}?recursive=1", "--jq", ".tree[].path")
+    rc, out = await gh("api", f"repos/{owner_repo(repo_url)}/git/trees/{quote(base, safe='')}?recursive=1", "--jq", ".tree[].path")
     return frozenset(out.splitlines()) if rc == 0 else None
 
 

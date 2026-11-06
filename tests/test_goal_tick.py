@@ -260,7 +260,8 @@ async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
     assert scope_extras(over, "no file is named here", BASE_TREE) == []
     # prose that merely looks like a file, or a directory that is not in the tree, names no scope
     claude = ("devclaw/engine/claude.py",)
-    for prose in ("Bug in Node.js handling", "Upgrade Next.js and Vue.js", "use a layout like foo/bar/ here"):
+    for prose in ("Bug in Node.js handling", "Upgrade Next.js and Vue.js", "use a layout like foo/bar/ here",
+                  "see https://docs.python.org/3/library/json.html and https://github.com/o/r/blob/main/README.md"):
         assert scope_extras(claude, prose, BASE_TREE) == []
     # a real file: by '/' (even a new one), or by existing in the base tree; a tree directory counts
     assert scope_extras(claude, "Fix new/thing.py", BASE_TREE) == list(claude)
