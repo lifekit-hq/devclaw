@@ -12,10 +12,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 
 from . import github as _gh
 
 _JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+_PATH_RE = re.compile(r"[\w.-]+(?:/[\w.-]+)*\.\w+|[\w.-]+(?:/[\w.-]+)*/(?![\w.-])")
+_LOCKS = {"package-lock.json": "package.json", "pnpm-lock.yaml": "package.json", "yarn.lock": "package.json",
+          "poetry.lock": "pyproject.toml", "uv.lock": "pyproject.toml", "Cargo.lock": "Cargo.toml"}
 
 
 @dataclass(frozen=True)
@@ -78,6 +82,24 @@ def parse_verdict(agent_output: str) -> Verdict:
         structural_health=str(data.get("structural_health") or "").strip(),
         concerns=tuple(str(x) for x in concerns),
     )
+
+
+def scope_extras(changed: "tuple[str, ...]", text: str, tree: "frozenset[str]") -> list[str]:
+    """Changed files ``text`` (URLs ignored) names nowhere; ``[]`` if it names no file: a token needs a
+    non-trailing ``/`` or to exist in ``tree``. In scope: .devclaw/, docs/, tests/specs, lockfiles."""
+    named = {n for m in _PATH_RE.findall(re.sub(r"\w+://\S+", "", text)) if (n := m.removeprefix("./").rstrip("/")) and (
+        n in tree or any(p.endswith("/" + n) for p in tree) or ("/" in n and not m.endswith("/")))}
+
+    def hit(f: str) -> bool:
+        return any(f == n or f.startswith(n + "/") or f.endswith("/" + n) or (
+            ("test" in f.lower() or "spec" in f.lower()) and PurePosixPath(n).stem in f) for n in named)
+
+    def ok(f: str) -> bool:
+        man = _LOCKS.get(PurePosixPath(f).name)
+        lock = str(PurePosixPath(f).with_name(man)) if man else ""
+        return f.startswith((".devclaw/", "docs/")) or hit(f) or lock in changed or hit(lock)
+
+    return [f for f in changed if named and not ok(f)]
 
 
 def render_verdict(verdict: Verdict, *, head: str, task_id: str) -> str:

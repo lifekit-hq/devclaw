@@ -15,6 +15,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import quote
 
 from .. import config as _config
 
@@ -227,6 +228,17 @@ async def pr_facts(repo_url: str, branch: str) -> PrFacts:
     if ci == "red":
         logs = await failed_check_logs(slug, head, failing, lines=_config.ci_log_tail_lines())
     return PrFacts("open", number, url, head, base, ci, detail, failing, logs)
+
+
+async def pr_files(repo_url: str, number: int) -> Optional[tuple[str, ...]]:
+    slug = owner_repo(repo_url)
+    rc, out = await gh("pr", "diff", str(number), "--repo", slug or "", "--name-only")
+    return tuple(out.splitlines()) if slug and rc == 0 else None
+
+
+async def pr_tree(repo_url: str, base: str) -> Optional[frozenset[str]]:
+    rc, out = await gh("api", f"repos/{owner_repo(repo_url)}/git/trees/{quote(base, safe='')}?recursive=1", "--jq", ".tree[].path")
+    return frozenset(out.splitlines()) if rc == 0 else None
 
 
 # ---- issues ------------------------------------------------------------------

@@ -12,8 +12,8 @@ import json
 import pytest
 
 from devclaw.goal import github as gh
-from devclaw.goal.donegate import parse_verdict
-from devclaw.goal.tick import TickContext, tick_goal
+from devclaw.goal.donegate import parse_verdict, scope_extras
+from devclaw.goal.tick import TickContext, _scope_gate, tick_goal
 from devclaw.goal.world import WorldReader
 from devclaw.state_store import EXIT_DELIVERED, EXIT_DONE, EXIT_REVIEW, StateStore
 from devclaw.task_queue import TaskQueue
@@ -28,12 +28,18 @@ def _lease_in_place(project_ws, repo_url, goal_id):
     return leased()
 
 
+BASE_TREE = frozenset({"devclaw/goal/donegate.py", "devclaw/goal/world.py", "devclaw/engine/claude.py", "docs/flows",
+                       "docs/flows/delivery.md", "docs/INDEX.md", "pyproject.toml", "uv.lock"})
+
+
 class FakeWorld:
-    def __init__(self, *, pr=None, issues=None, comments=None, creds=()):
+    def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=(), tree=BASE_TREE):
         self.pr = pr or gh.PrFacts("none")
         self.issues = issues or [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open")]
         self.comments = comments or []
         self.creds = creds
+        self.files = files  # what the PR changes; None = unreadable
+        self.tree = tree  # the base branch's paths; None = unreadable
 
     def reader(self) -> WorldReader:
         async def pr(repo_url, branch):
@@ -45,7 +51,14 @@ class FakeWorld:
         async def comments(repo_url, n):
             return [c for c in self.comments if c.number == n]
 
-        return WorldReader(pr=pr, issue=issue, comments=comments, credentials=lambda: tuple(self.creds))
+        async def files(repo_url, number):
+            return self.files
+
+        async def tree(repo_url, base):
+            return self.tree
+
+        return WorldReader(pr=pr, issue=issue, comments=comments, credentials=lambda: tuple(self.creds),
+                           files=files, tree=tree)
 
 
 class Recorder:
@@ -204,6 +217,76 @@ async def test_done_with_green_ci_spawns_the_review_session_once(harness):
     assert await tick_goal(goal, ctx(FakeWorld(pr=green))) == "gate"
     tasks = _sessions(store, goal.id)
     assert len(tasks) == 2 and tasks[0].kind == "review_repository" and not tasks[0].deliver
+
+
+SCOPED = gh.Issue(1, "Fix the gate", "Touch `devclaw/goal/donegate.py` and `docs/flows/`.\n## Done when\n- it holds", "open")
+
+
+async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
+    """Fail-closed gate: a PR changing a file the issue and the owner name
+    nowhere never reaches a review session. An unreadable file list never
+    passes; the first excess gets ONE correction session, the second stops the
+    goal; the owner's newer word waives. A named file, its test, a named
+    directory and the .devclaw manifest are in scope; text naming no file
+    states no scope."""
+    store, queue, rec, goal, ctx = harness
+    await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED])))
+    t = _sessions(store, goal.id)[0]
+    store.claim_pending(t.id)
+    store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
+    green = gh.PrFacts("open", 5, "u", "abc123", ci="green")
+    inside = ("devclaw/goal/donegate.py", "tests/test_donegate.py", "docs/flows/delivery.md", "docs/INDEX.md", ".devclaw/verify")
+    over = inside + ("devclaw/goal/world.py",)
+
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=None))) == "unreadable"
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over, tree=None))) == "unreadable"
+    assert len(_sessions(store, goal.id)) == 1
+
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over))) == "resumed"
+    correction = _sessions(store, goal.id)[0]
+    assert correction.kind == "implement_feature" and "SCOPE_EXCEEDED" in rec.comments[-1][1]
+    assert "devclaw/goal/world.py" in rec.comments[-1][1] and "donegate.py" not in rec.comments[-1][1].split("nowhere:")[1]
+    store.claim_pending(correction.id)
+    store.mark_done(correction.id, "{}", pr_url="u", exit=EXIT_DONE)
+
+    record = _comment(40, 5, "x", "scope", head="abc123", task=t.id)
+    assert await tick_goal(goal, ctx(FakeWorld(issues=[SCOPED], pr=green, files=over, comments=[record]))) == "blocked"
+    assert "SCOPE_EXCEEDED" in rec.comments[-1][1] and len(_sessions(store, goal.id)) == 2
+
+    # the waiver is per head: a later owner comment never disables the check for a new head
+    h3 = gh.PrFacts("open", 5, "u", "def456", ci="green")
+    later = FakeWorld(issues=[SCOPED], pr=h3, files=over, comments=[record, _comment(41, 5, "@devclaw also fix Y")])
+    assert await tick_goal(goal, ctx(later)) == "blocked" and "SCOPE_EXCEEDED" in rec.comments[-1][1]
+    # ...while an owner reply to the SCOPE_EXCEEDED block waives the head that block was posted on
+    block = _comment(50, 5, "x", "block", task="t", head="def456", why="SCOPE_EXCEEDED")
+    replied = FakeWorld(issues=[SCOPED], pr=h3, files=over, comments=[record, block, _comment(51, 5, "@devclaw ok")])
+    assert await _scope_gate(ctx(replied), goal, await ctx(replied).world.read(goal), correction) is None
+
+    answered = FakeWorld(issues=[SCOPED], pr=green, files=over,
+                         comments=[record, _comment(41, 5, "@devclaw those are fine")])
+    assert await tick_goal(goal, ctx(answered)) == "gate"  # the owner's word waives the check
+
+    assert scope_extras(over, "no file is named here", BASE_TREE) == []
+    # prose that merely looks like a file, or a directory that is not in the tree, names no scope
+    claude = ("devclaw/engine/claude.py",)
+    for prose in ("Bug in Node.js handling", "Upgrade Next.js and Vue.js", "use a layout like foo/bar/ here",
+                  "see https://docs.python.org/3/library/json.html and https://github.com/o/r/blob/main/README.md"):
+        assert scope_extras(claude, prose, BASE_TREE) == []
+    # a real file: by '/' (even a new one), or by existing in the base tree; a tree directory counts
+    assert scope_extras(claude, "Fix new/thing.py", BASE_TREE) == list(claude)
+    assert scope_extras(claude, "Fix world.py", BASE_TREE) == list(claude)
+    # any extension names a file, not a closed list: .go, .csproj, .razor
+    for name in ("cmd/server/main.go", "src/Api/Api.csproj", "src/Pages/Index.razor"):
+        assert scope_extras((name, "devclaw/x.py"), f"Fix the handler in {name}; see docs.", BASE_TREE) == ["devclaw/x.py"]
+    assert scope_extras(("main.go",), "Fix main.go.", BASE_TREE | {"main.go"}) == []
+    assert scope_extras(("docs/flows/x.md",), "see docs/flows/ and tick.py", BASE_TREE | {"tick.py"}) == []
+    # docs, the spec/test of a named file and a lockfile of a named or changed manifest ride along
+    named = "Edit devclaw/goal/tick.py and frontend/src/a/foo.ts"
+    companions = ("docs/INDEX.md", "frontend/src/a/foo.spec.ts", "tests/test_tick.py", "frontend/package-lock.json")
+    assert scope_extras(("devclaw/goal/tick.py",) + companions, named, BASE_TREE) == ["frontend/package-lock.json"]
+    assert scope_extras(("frontend/package.json",) + companions[-1:], named + " and frontend/package.json", BASE_TREE) == []
+    assert scope_extras(("frontend/package.json", "frontend/package-lock.json", "devclaw/x.py"), named, BASE_TREE) == [
+        "frontend/package.json", "devclaw/x.py"]
 
 
 async def test_an_achieved_verdict_merges_and_closes(harness):

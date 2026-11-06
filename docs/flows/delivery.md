@@ -16,7 +16,9 @@ so a red CI is an environment gap, not a retry. Conflicting → a changed world;
 the next session merges the base branch and resolves.
 
 **The done-gate.** A session's `DONE` line is a proposal. With green CI the
-tick spawns a read-only review session (`devclaw/prompts/done-gate.md`) over
+tick first checks the PR's changed files against the files the issue and the
+owner name (a file named nowhere: one correction session, then `SCOPE_EXCEEDED`
+stops the goal), then spawns a read-only review session (`devclaw/prompts/done-gate.md`) over
 the same head; the host validates its JSON (every clause satisfied with
 evidence) and posts the verdict on the PR. A verdict counts only for the head
 the review read; a PR that moved since gets a fresh review. Achieved →
