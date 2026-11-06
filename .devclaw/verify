@@ -14,13 +14,14 @@
 #              container the browser's system libraries are installed
 #              (deploy/Dockerfile), so Playwright's own Chromium launches
 #              (Playwright starts it with --no-sandbox). A browser a test
-#              launches itself with its sandbox on (quality.spec.ts's impeccable
-#              scan) still dies with "No usable sandbox!": Docker's default
-#              seccomp profile withholds the user namespaces that sandbox needs,
-#              and widening it is an owner decision. So a documentation-only
-#              diff runs with DEVCLAW_DOCS_ONLY=1 (a script that honours it
-#              skips the browser e2e), and any other diff cannot run the
-#              impeccable scan in the worker.
+#              launches itself, from one executable path (quality.spec.ts's
+#              impeccable scan), goes through the image's chromium-no-sandbox
+#              wrapper (DEVCLAW_CHROMIUM_NO_SANDBOX, set in that image only): the
+#              container's default seccomp profile withholds the user namespaces
+#              Chromium's sandbox needs, so the container is the boundary. A session
+#              can therefore run the e2e (`npm run e2e`) in the worker, scan
+#              included. A documentation-only diff runs with DEVCLAW_DOCS_ONLY=1
+#              (a script that honours it skips the browser e2e).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

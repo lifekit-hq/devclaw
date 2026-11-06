@@ -62,11 +62,20 @@ const exceptions = JSON.parse(readFileSync(join(__dirname, 'quality-exceptions.j
 const covers = (entry: Accepted, route: string): boolean =>
   entry.routes.includes('*') || entry.routes.includes(route);
 
+// The scan starts its own Chrome from one executable path. In the DevClaw worker image that path
+// is a wrapper that turns the browser sandbox off (the container cannot build Chromium's sandbox); the image sets
+// DEVCLAW_CHROMIUM_NO_SANDBOX, nothing else does, so CI and local runs launch the browser as is.
+const scanBrowserEnv = (): Record<string, string> => {
+  const chrome = chromium.executablePath();
+  const wrapper = process.env['DEVCLAW_CHROMIUM_NO_SANDBOX'];
+  return wrapper ? {IMPECCABLE_BROWSER: wrapper, DEVCLAW_CHROMIUM: chrome} : {IMPECCABLE_BROWSER: chrome};
+};
+
 const scanUrl = (engine: string, url: string, width: number, height: number) =>
   promisify(execFile)(
     engine,
     ['detect', '--json', '--no-config', '--no-advisory', '--viewport', `${width}x${height}`, url],
-    {env: {...process.env, IMPECCABLE_BROWSER: chromium.executablePath()}}
+    {env: {...process.env, ...scanBrowserEnv()}}
   ).then(
     ({stdout}) => ({code: 0, stdout}),
     (e: {code?: number; stdout?: string; stderr?: string}) => {

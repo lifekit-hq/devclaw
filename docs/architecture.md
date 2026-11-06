@@ -151,12 +151,16 @@ Before a code session's first turn, a repository that drives a browser
 `Preflight` event; an inconclusive check is silent. The worker image installs
 Playwright's Chromium system libraries as root and carries the .NET SDK that
 finance-sentry's `.devclaw/verify` and lifekit-dashboard's gates run (#987), so
-that preflight fires only on a stale build. Chromium still cannot build its own
+that preflight fires only on a stale build. Chromium cannot build its own
 sandbox in the container (Docker's default seccomp profile withholds user
-namespaces; letting them through is an owner decision, not made): Playwright's
-Chromium runs because Playwright starts it with `--no-sandbox`, but a browser a
-test launches itself with its sandbox on (devclaw's impeccable design scan in
-`frontend/e2e/quality.spec.ts`) fails with "No usable sandbox!".
+namespaces; widening it was refused, ruled 2026-11-06): Playwright's Chromium runs
+because Playwright starts it with `--no-sandbox`, and a browser a test launches
+itself from one executable path (devclaw's impeccable design scan in
+`frontend/e2e/quality.spec.ts`) goes through `/usr/local/bin/chromium-no-sandbox`,
+a wrapper that adds the flag. The image alone sets
+`DEVCLAW_CHROMIUM_NO_SANDBOX` to it; CI, local runs and the committed Playwright
+config never see it. The container is the boundary and only the project's own
+test pages load.
 And when the branch's whole diff against its base is documentation
 (`is_doc_path`), the verify run's env carries `DEVCLAW_DOCS_ONLY=1`; the browser e2e is left out only if the
 repository's existing script already honours it (a script without the guard still
