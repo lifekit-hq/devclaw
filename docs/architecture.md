@@ -120,7 +120,10 @@ delivered head with `devclaw/prompts/done-gate.md`: decompose the contract
 into clauses, cite evidence per clause, answer in JSON. `devclaw/goal/donegate.py`
 validates it mechanically — achieved only when every clause is satisfied with
 evidence and no question is open; no readable JSON is `unreadable` and never
-passes. The verdict is posted on the PR; achieved squash-merges
+passes. A `CONSTRAINT:` line the PR adds to `.devclaw/workflow.md` (a session's
+proven constraint, #980) with no clause or test behind it is a concern the review
+names; the line reaches `main` only through the squash-merge below, so the next
+goal's sessions read it only after an achieved goal. The verdict is posted on the PR; achieved squash-merges
 (`gh pr merge --squash --match-head-commit <the judged head>`) and closes
 the goal.
 
