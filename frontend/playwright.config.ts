@@ -20,9 +20,6 @@ export default defineConfig({
   // (updateSnapshots: 'none'), and compared exactly with animations off.
   ...screenBaselineConfig(),
   testDir: './e2e',
-  // The fixture registers its tests from inside node_modules, where Playwright would look for the
-  // images; they live in the repository, next to the spec that lists the routes.
-  snapshotPathTemplate: '{testDir}/screens/baselines/{arg}{-projectName}{-snapshotSuffix}{ext}',
   reporter: process.env['CI'] ? 'github' : 'list',
   use: {
     baseURL: origin,

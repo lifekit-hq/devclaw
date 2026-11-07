@@ -82,6 +82,28 @@ jobs:
           path: frontend/test-results
           if-no-files-found: ignore
 
+  # A pull request that changes a screen baseline gets the screen before and after as one comment,
+  # edited on every push (lifekit-common's report action). Same-repository branches only.
+  baseline-report:
+    name: Screen baselines before and after
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: lifekit-hq/lifekit-common/.github/actions/baseline-report@v4.4.1
+        with:
+          token: ${{ github.token }}
+          repo: ${{ github.repository }}
+          pr: ${{ github.event.pull_request.number }}
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
+
   secrets-scan:
     name: Secrets scan (gitleaks)
     uses: lifekit-hq/.github/.github/workflows/secrets-scan.yml@v1
