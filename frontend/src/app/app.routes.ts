@@ -58,12 +58,12 @@ export const APP_ROUTES: Routes = [
         loadComponent: () =>
           import('./projects/project-page.component').then(m => m.ProjectPageComponent),
       },
-      // A session is reached from its goal or its project: no declared parent, so back follows
-      // the history the app itself made.
+      // A session is reached from its goal, its project or a verdict. The fallback parent gives a
+      // direct open (a pasted link, a push notification) a way up; the shell's back goes there.
       {
         path: 'sessions/:id',
         ...named(id => `Session ${id}`),
-        data: chrome({}),
+        data: chrome({parent: '/goals'}),
         loadComponent: () =>
           import('./sessions/session-page.component').then(m => m.SessionPageComponent),
       },
@@ -73,6 +73,13 @@ export const APP_ROUTES: Routes = [
         data: chrome({title: 'Verdicts'}),
         loadComponent: () =>
           import('./verdicts/verdicts-page.component').then(m => m.VerdictsPageComponent),
+      },
+      {
+        path: 'verdicts/:id',
+        ...named(() => 'Verdict'),
+        data: chrome({parent: '/verdicts'}),
+        loadComponent: () =>
+          import('./verdicts/verdict-page.component').then(m => m.VerdictPageComponent),
       },
       {
         path: 'more',

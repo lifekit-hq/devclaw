@@ -13,7 +13,14 @@ const fixture = (name: string): unknown =>
 const FEEDS = fixture('feeds') as Record<string, string>;
 
 const PHONES = [375, 390, 402];
-const PAGES = ['needs-you', 'goals', 'projects', 'verdicts'];
+const PAGES = [
+  'needs-you',
+  'goals',
+  'projects',
+  'verdicts',
+  'verdicts/t-review-0005',
+  'sessions/t-deliver-0001',
+];
 
 async function serve(page: Page, failGoals = false): Promise<void> {
   await page.route(
@@ -61,6 +68,31 @@ for (const width of PHONES) {
         expect(gap).toBeGreaterThanOrEqual(0);
       });
     }
+
+    test('the session record keeps each time and sha on one line', async ({page}) => {
+      await serve(page);
+      await page.goto('/console/sessions/t-deliver-0001');
+      await expect(page.getByRole('heading', {level: 1})).toBeVisible();
+
+      const record = page.getByRole('region', {name: 'Exit'}).locator('dl');
+      const times = record.locator('time');
+      await expect(times).toHaveCount(3);
+      for (const time of await times.all()) {
+        const line = await time.evaluate(el => ({
+          height: el.getBoundingClientRect().height,
+          lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+        }));
+        expect(line.height).toBeLessThanOrEqual(line.lineHeight + 1);
+      }
+      await expect(record).toContainText('4f2c9e1');
+      await expect(record).not.toContainText('4f2c9e1a7b3d');
+
+      await page.getByRole('checkbox', {name: 'Exact times (UTC)'}).click();
+      await expect(times.first()).toHaveText(/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\dZ$/);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+        width
+      );
+    });
 
     test('the offline notice sits between the top bar and the tab bar', async ({page, context}) => {
       await serve(page);

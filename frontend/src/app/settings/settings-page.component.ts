@@ -15,6 +15,7 @@ import {
   CheckboxComponent,
   FormFieldComponent,
   InputComponent,
+  type InputType,
   PageComponent,
   SettingRowComponent,
   SettingsSectionComponent,
@@ -27,6 +28,11 @@ import {DevclawApiService, errorText} from '../api/devclaw-api.service';
 import {ControlFeed} from '../api/feeds';
 import {DispatchStatusComponent} from '../shared/dispatch-status.component';
 import {VERSION} from '../version';
+
+// The kit's `InputType` does not list `time` yet, but `cmn-input` binds the value straight to the
+// native element's `type`; typed properly once lifekit-common adds it (e2e/console.spec.ts pins
+// that the field renders as a time input, so a kit change that stops passing it through fails).
+const TIME_TYPE = 'time' as unknown as InputType;
 
 const NO_SCHEDULE: RunSchedule = {enabled: false, start: '22:00', end: '05:00', tz: 'UTC'};
 
@@ -114,18 +120,18 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
             <cmn-form-field
               [ngModel]="form().start"
               (ngModelChange)="patch({start: $event})"
-              class="w-28"
+              class="w-32"
               label="Start"
             >
-              <cmn-input placeholder="22:00" size="sm" />
+              <cmn-input [type]="timeType" size="sm" />
             </cmn-form-field>
             <cmn-form-field
               [ngModel]="form().end"
               (ngModelChange)="patch({end: $event})"
-              class="w-28"
+              class="w-32"
               label="End"
             >
-              <cmn-input placeholder="05:00" size="sm" />
+              <cmn-input [type]="timeType" size="sm" />
             </cmn-form-field>
             <cmn-form-field
               [ngModel]="form().tz"
@@ -172,6 +178,7 @@ export class SettingsPageComponent {
   });
 
   protected readonly accounts = inject(AccountService);
+  protected readonly timeType = TIME_TYPE;
   protected readonly appSeed = APP_SEEDS.dc.seed;
   protected readonly version = VERSION;
   protected readonly feed = inject(ControlFeed);

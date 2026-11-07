@@ -165,8 +165,12 @@ export class GoalsPageComponent {
       FILTERS.map(f => [f.id, goals.filter(g => matches(g, f.id)).length])
     ) as Record<Filter, number>;
   });
+  // A count appears with the first read: until then a zero would read as data.
   protected readonly options = computed<SegmentedOption[]>(() =>
-    FILTERS.map(f => ({value: f.id, label: `${f.label} ${this.counts()[f.id]}`}))
+    FILTERS.map(f => ({
+      value: f.id,
+      label: this.feed.state().data ? `${f.label} ${this.counts()[f.id]}` : f.label,
+    }))
   );
   protected readonly shown = computed(() =>
     (this.feed.state().data ?? []).filter(g => matches(g, this.filter()))

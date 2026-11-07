@@ -19,8 +19,3 @@ export class AgoPipe implements PipeTransform {
 export function utcSecond(ms: number): string {
   return `${new Date(ms).toISOString().replace('T', ' ').slice(0, ISO_SECONDS)}Z`;
 }
-
-/** `2026-10-06 14:03:09Z (5m ago)`, for the session record. */
-export function stamp(ms: number | null | undefined): string {
-  return ms ? `${utcSecond(ms)} (${formatRelativeTime(ms)})` : '—';
-}

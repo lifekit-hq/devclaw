@@ -14,6 +14,7 @@ export const PATHS = [
   'projects/widgets',
   'sessions/t-deliver-0001',
   'verdicts',
+  'verdicts/t-review-0005',
   'more',
   'settings',
 ];
