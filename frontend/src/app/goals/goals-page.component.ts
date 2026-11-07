@@ -7,7 +7,7 @@ import {
   CmnColumnComponent,
   DataTableComponent,
   EmptyStateComponent,
-  PageContainerComponent,
+  PageComponent,
   SegmentedComponent,
   type SegmentedOption,
   StatusIndicatorComponent,
@@ -54,7 +54,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
     CmnColumnComponent,
     DataTableComponent,
     EmptyStateComponent,
-    PageContainerComponent,
+    PageComponent,
     RouterLink,
     SegmentedComponent,
     StatusIndicatorComponent,
@@ -63,7 +63,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container>
+    <cmn-page kind="overview">
       <p class="text-cmn-sm text-text-secondary">
         Every goal devclaw is working on, one per GitHub issue.
       </p>
@@ -150,7 +150,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
           </cmn-data-table>
         }
       </cmn-async-state>
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class GoalsPageComponent {

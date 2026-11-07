@@ -76,7 +76,7 @@ interface Option {
               >
                 {{ option.firstLine }}
                 @if (option.recommended) {
-                  <span class="font-mono text-cmn-xs opacity-75">recommended</span>
+                  <span class="font-mono text-cmn-xs">recommended</span>
                 }
               </cmn-button>
             }

@@ -34,7 +34,8 @@ jobs:
 
   # The Angular console (frontend/): lint, unit tests, the production build,
   # then Playwright against that build with the feeds answered from fixtures,
-  # including the design and accessibility gate (e2e/quality.spec.ts).
+  # including the screen check (e2e/screen.spec.ts), the design and accessibility
+  # route scan (e2e/quality.spec.ts) and the screen baselines (e2e/screens/).
   frontend:
     name: Frontend (lint, test, build, e2e)
     runs-on: ubuntu-latest
@@ -64,12 +65,49 @@ jobs:
         run: npm run build:demo
       - name: Browser chrome (lifekit-chrome-check)
         run: npx lifekit-chrome-check --app dc --name devclaw --base-path /console/ ../devclaw/server/console_dist
-      - name: Design scan engine (impeccable, sha256-pinned)
-        run: sh e2e/impeccable-engine.sh
-      - name: E2E (Playwright on the built dist, with the impeccable and axe gate)
+      # The route scan downloads its sha256-pinned design engine (impeccable) once.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.impeccable
+          key: impeccable-${{ hashFiles('frontend/package-lock.json') }}
+      - name: Screen baselines notice
+        run: |
+          if ! ls e2e/screens/screens.spec.ts-snapshots/*-linux.png >/dev/null 2>&1; then
+            echo "::notice title=Screen baselines::No CI-rendered baseline images exist yet, so the pixel comparison is deferred until the update-screen-baselines workflow adds them (label update-baselines, or the Actions button); the follow-up PR makes the gate unconditional."
+          fi
+      - name: E2E (Playwright on the built dist, screen check, route scan, baselines)
         run: |
           npx playwright install --with-deps chromium
           npm run e2e
+      - name: Upload the screen diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-e2e-diff
+          path: frontend/test-results
+          if-no-files-found: ignore
+
+  # A pull request that changes a screen baseline gets the screen before and after as one comment,
+  # edited on every push (lifekit-common's report action). Same-repository branches only.
+  baseline-report:
+    name: Screen baselines before and after
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: lifekit-hq/lifekit-common/.github/actions/baseline-report@v4.4.1
+        with:
+          token: ${{ github.token }}
+          repo: ${{ github.repository }}
+          pr: ${{ github.event.pull_request.number }}
+          base: ${{ github.event.pull_request.base.sha }}
+          head: ${{ github.event.pull_request.head.sha }}
 
   secrets-scan:
     name: Secrets scan (gitleaks)

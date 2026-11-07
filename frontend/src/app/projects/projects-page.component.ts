@@ -5,7 +5,7 @@ import {
   AsyncStateComponent,
   CardComponent,
   EmptyStateComponent,
-  PageContainerComponent,
+  PageComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
 
@@ -21,14 +21,14 @@ import {UsageComponent} from '../shared/usage';
     AsyncStateComponent,
     CardComponent,
     EmptyStateComponent,
-    PageContainerComponent,
+    PageComponent,
     RouterLink,
     TagComponent,
     UsageComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container>
+    <cmn-page kind="list">
       <p class="text-cmn-sm text-text-secondary">The repositories devclaw works on for you.</p>
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
@@ -84,7 +84,7 @@ import {UsageComponent} from '../shared/usage';
           }
         </div>
       </cmn-async-state>
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class ProjectsPageComponent {

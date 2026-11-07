@@ -4,7 +4,7 @@ import {
   AsyncStateComponent,
   CardComponent,
   EmptyStateComponent,
-  PageContainerComponent,
+  PageComponent,
 } from '@lifekit-hq/ui';
 
 import {DevclawApiService} from '../api/devclaw-api.service';
@@ -25,12 +25,12 @@ const POLL_MS = 30_000;
     AsyncStateComponent,
     CardComponent,
     EmptyStateComponent,
-    PageContainerComponent,
+    PageComponent,
     VerdictListComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container>
+    <cmn-page kind="list">
       <p class="text-cmn-sm text-text-secondary">
         How each finished goal was checked against its requirements. Open a row for details.
       </p>
@@ -64,7 +64,7 @@ const POLL_MS = 30_000;
           }
         }
       </cmn-async-state>
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class VerdictsPageComponent {

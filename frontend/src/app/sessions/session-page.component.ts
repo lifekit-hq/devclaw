@@ -14,7 +14,7 @@ import {
   AsyncStateComponent,
   ButtonComponent,
   ListItemRowComponent,
-  PageContainerComponent,
+  PageComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
 
@@ -69,7 +69,7 @@ function absent(value: unknown): boolean {
     ButtonComponent,
     JsonPipe,
     ListItemRowComponent,
-    PageContainerComponent,
+    PageComponent,
     RouterLink,
     SectionComponent,
     TagComponent,
@@ -77,7 +77,7 @@ function absent(value: unknown): boolean {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container>
+    <cmn-page kind="detail">
       @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
@@ -91,7 +91,7 @@ function absent(value: unknown): boolean {
       >
         @if (detail(); as d) {
           @let t = d.task;
-          <div class="flex flex-col gap-cmn-5">
+          <div class="flex flex-col gap-cmn-section-gap">
             <header class="flex min-w-0 flex-col gap-cmn-1">
               @if (t.kind === 'review_repository') {
                 <p class="text-cmn-md font-medium text-text-primary">Review session</p>
@@ -216,7 +216,7 @@ function absent(value: unknown): boolean {
           </div>
         }
       </cmn-async-state>
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class SessionPageComponent {

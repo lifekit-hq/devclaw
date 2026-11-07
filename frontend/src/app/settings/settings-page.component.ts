@@ -15,7 +15,7 @@ import {
   CheckboxComponent,
   FormFieldComponent,
   InputComponent,
-  PageContainerComponent,
+  PageComponent,
   SettingRowComponent,
   SettingsSectionComponent,
 } from '@lifekit-hq/ui';
@@ -38,7 +38,7 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
  * The standard settings page: Account (the gate's identity, read-only), Appearance (applies at
  * once and follows the account), the Workspace: Instance controls (dispatch hold and the run
  * window, each its own section with its own Save) and About. Sections are direct children of the
- * page container, which owns the dividers.
+ * settings page template, which owns the dividers.
  */
 @Component({
   selector: 'dc-settings-page',
@@ -51,13 +51,13 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
     FormFieldComponent,
     FormsModule,
     InputComponent,
-    PageContainerComponent,
+    PageComponent,
     SettingRowComponent,
     SettingsSectionComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container spacing="none">
+    <cmn-page kind="settings">
       <cmn-settings-section heading="Account" caption="Signed in through the gate">
         @if (accounts.account(); as account) {
           @if (account.name !== account.email) {
@@ -160,7 +160,7 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
           </cmn-setting-row>
         </cmn-settings-section>
       }
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class SettingsPageComponent {
