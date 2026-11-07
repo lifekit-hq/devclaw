@@ -12,8 +12,9 @@ const LIMIT = 200;
 const SHORT_SHA = 7;
 
 /**
- * One done-gate review, clause by clause with the evidence verbatim. It reads the same feed as
- * the verdicts list, so a review older than the newest few hundred is not reachable here.
+ * One done-gate review, clause by clause with the evidence verbatim. Only the verdicts
+ * page links here, and it reads the same feed, so every pushed row has its detail; an id outside
+ * the feed (a pasted link to an older review) lands on the not-found state.
  */
 @Component({
   selector: 'dc-verdict-page',

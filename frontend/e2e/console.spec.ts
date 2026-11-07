@@ -127,13 +127,28 @@ test('the filter shows no counts until the goals have loaded', async ({page}) =>
   await expect(filter.getByRole('radio', {name: /^All \d+$/})).toBeVisible();
 });
 
-test('a closed goal shows its verdict row and no decide form', async ({page}) => {
+test('a closed goal shows its verdict and no decide form', async ({page}) => {
   await page.goto('/console/goals/g-done');
 
   await expect(page.getByRole('region', {name: 'Verdicts'})).toContainText(
-    'Digests are computed in UTC and the drift test pins it.'
+    "Daily digests use the subscriber's timezone"
   );
   await expect(page.getByRole('region', {name: 'Decide'})).toHaveCount(0);
+});
+
+test('a goal’s verdict older than the feed window still expands in place', async ({page}) => {
+  const feed = fixture('verdicts') as Record<string, unknown>;
+  await page.route('**/verdicts.json', route =>
+    route.fulfill({json: {...feed, count: 0, verdicts: []}})
+  );
+  await page.goto('/console/goals/g-done');
+
+  const clause = page.getByText("Daily digests use the subscriber's timezone");
+  await expect(clause).toBeHidden();
+  await page.getByText('Digests are computed in UTC and the drift test pins it.').click();
+  await expect(clause).toBeVisible();
+  await expect(page.getByText('tests/test_digest.py::test_tz_boundary')).toBeVisible();
+  await expect(page).toHaveURL(/\/console\/goals\/g-done$/);
 });
 
 test('Projects and a project page list the goals', async ({page}) => {

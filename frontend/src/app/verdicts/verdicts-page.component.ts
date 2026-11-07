@@ -49,7 +49,7 @@ const POLL_MS = 30_000;
         @if (feed.state().data; as f) {
           @if (f.count) {
             <cmn-card>
-              <dc-verdict-list [rows]="f.verdicts" [showGoal]="true" />
+              <dc-verdict-list [rows]="f.verdicts" [showGoal]="true" [pushed]="true" />
               @if (f.truncated) {
                 <p class="mt-cmn-3 text-cmn-xs text-text-secondary">
                   Showing the newest {{ f.count }}; older reviews are not listed.
