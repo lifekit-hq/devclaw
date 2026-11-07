@@ -1,0 +1,53 @@
+name: Update screen baselines
+
+# The one step that rewrites the console's screen baselines (frontend/e2e/screens/baselines, held by
+# lifekit-common's fixture: docs/SCREEN-BASELINES.md there). Run it from the Actions tab on a branch
+# whose screens changed on purpose: it renders them on the CI runner, the machine every later
+# comparison runs on (an arm64 or desktop machine draws different pixels), commits the changed
+# images to that branch and starts CI on it. It never runs on its own and never on main.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+  packages: read  # @lifekit-hq/* from GitHub Packages
+
+jobs:
+  update:
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Render the baselines
+        run: npx playwright test -g "screen baseline" --update-snapshots=all
+      - name: Commit the changed baselines
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git add -A -- 'e2e/screens/baselines/*-linux.png'
+          if git diff --cached --quiet; then
+            echo "No baseline changed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "test(console): update screen baselines"
+          git push origin "HEAD:$BRANCH"
+          # A push made with the workflow token does not start the pull request run.
+          gh workflow run ci.yml --ref "$BRANCH"

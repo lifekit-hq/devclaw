@@ -34,7 +34,8 @@ jobs:
 
   # The Angular console (frontend/): lint, unit tests, the production build,
   # then Playwright against that build with the feeds answered from fixtures,
-  # including the design and accessibility gate (e2e/quality.spec.ts).
+  # including the screen check (e2e/screen.spec.ts), the design and accessibility
+  # route scan (e2e/quality.spec.ts) and the screen baselines (e2e/screens/).
   frontend:
     name: Frontend (lint, test, build, e2e)
     runs-on: ubuntu-latest
@@ -64,12 +65,22 @@ jobs:
         run: npm run build:demo
       - name: Browser chrome (lifekit-chrome-check)
         run: npx lifekit-chrome-check --app dc --name devclaw --base-path /console/ ../devclaw/server/console_dist
-      - name: Design scan engine (impeccable, sha256-pinned)
-        run: sh e2e/impeccable-engine.sh
-      - name: E2E (Playwright on the built dist, with the impeccable and axe gate)
+      # The route scan downloads its sha256-pinned design engine (impeccable) once.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.impeccable
+          key: impeccable-${{ hashFiles('frontend/package-lock.json') }}
+      - name: E2E (Playwright on the built dist, screen check, route scan, baselines)
         run: |
           npx playwright install --with-deps chromium
           npm run e2e
+      - name: Upload the screen diffs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-e2e-diff
+          path: frontend/test-results
+          if-no-files-found: ignore
 
   secrets-scan:
     name: Secrets scan (gitleaks)

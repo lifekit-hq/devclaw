@@ -7,15 +7,14 @@
 # Deliberately NOT here, with reason:
 #   gitleaks — downloads a pinned binary from the network; a sandbox without
 #              egress would read a network flake as a secrets finding.
-#   frontend e2e — and with it CI's `sh e2e/impeccable-engine.sh` step, which
-#              only fetches the impeccable detector that quality.spec.ts runs
-#              inside the e2e step. CI owns it
+#   frontend e2e — the screen check, the route scan (which downloads its
+#              pinned impeccable detector) and the screen baselines. CI owns it
 #              (`npx playwright install --with-deps chromium`). In the worker
 #              container the browser's system libraries are installed
 #              (deploy/Dockerfile), so Playwright's own Chromium launches
 #              (Playwright starts it with --no-sandbox). A browser a test
-#              launches itself, from one executable path (quality.spec.ts's
-#              impeccable scan), goes through the image's chromium-no-sandbox
+#              launches itself, from one executable path (the route scan's
+#              impeccable detector, wired in playwright.config.ts), goes through the image's chromium-no-sandbox
 #              wrapper (DEVCLAW_CHROMIUM_NO_SANDBOX, set in that image only): the
 #              container's default seccomp profile withholds the user namespaces
 #              Chromium's sandbox needs, so the container is the boundary. A session

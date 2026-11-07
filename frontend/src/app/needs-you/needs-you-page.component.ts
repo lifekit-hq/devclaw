@@ -5,7 +5,7 @@ import {
   AsyncStateComponent,
   CardComponent,
   EmptyStateComponent,
-  PageContainerComponent,
+  PageComponent,
 } from '@lifekit-hq/ui';
 
 import {type GoalRow} from '../api/devclaw.model';
@@ -33,12 +33,12 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
     CardComponent,
     DispatchStatusComponent,
     EmptyStateComponent,
-    PageContainerComponent,
+    PageComponent,
     RouterLink,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container>
+    <cmn-page kind="list">
       <p class="text-cmn-sm text-text-secondary">
         Goals waiting for your decision. Your answer is posted on the issue.
       </p>
@@ -54,7 +54,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
         class="block"
         retryable
       >
-        <div class="flex flex-col gap-cmn-5">
+        <div class="flex flex-col gap-cmn-section-gap">
           @if (feed.state().data && !open().length && !answered().length) {
             <cmn-empty-state
               message="Nothing needs you"
@@ -100,7 +100,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
           }
         </div>
       </cmn-async-state>
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class NeedsYouPageComponent {

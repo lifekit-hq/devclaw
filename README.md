@@ -103,12 +103,14 @@ same production bundle under `/devclaw/`, with `src/app/demo/demo.pages.ts`
 swapped in (an Angular `fileReplacements`) to answer every feed from the e2e
 fixtures and refuse every verb.
 
-`npm run e2e` includes the design and accessibility gate
-(`e2e/quality.spec.ts`): every route, light and dark, desktop and phone,
-through the impeccable URL scan and axe. The scan is repeated until the route
-has settled, so the judge never accepts a loading skeleton. The scan's engine is fetched once by
-`e2e/impeccable-engine.sh` and pinned by sha256. A finding the console cannot
-fix itself is accepted, with its reason, in `e2e/quality-exceptions.json`.
+`npm run e2e` runs lifekit-common's screen gates on every route (`e2e/routes.ts`)
+at 390 and 1280: the screen check (`e2e/screen.spec.ts`: every page is built on
+`cmn-page` with one left edge), the route scan (`e2e/quality.spec.ts`: light and
+dark, through the impeccable design judge and axe, on the settled page, with its
+engine fetched once and pinned by sha256) and the screen baselines
+(`e2e/screens/`: exact pixel comparison against Linux images rendered on the CI
+runner by the "Update screen baselines" workflow). The console accepts no
+findings: one in a library component or page template is fixed in lifekit-common.
 
 ## How it works
 

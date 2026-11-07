@@ -5,7 +5,7 @@ import {
   AlertComponent,
   AsyncStateComponent,
   ListItemRowComponent,
-  PageContainerComponent,
+  PageComponent,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
@@ -40,7 +40,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
     DecideFormComponent,
     JsonPipe,
     ListItemRowComponent,
-    PageContainerComponent,
+    PageComponent,
     RouterLink,
     SectionComponent,
     StatusIndicatorComponent,
@@ -50,7 +50,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container>
+    <cmn-page kind="detail">
       @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
@@ -62,7 +62,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
         class="block"
         retryable
       >
-        <div class="flex flex-col gap-cmn-5">
+        <div class="flex flex-col gap-cmn-section-gap">
           @if (goal(); as g) {
             <header class="flex flex-wrap items-start justify-between gap-cmn-4">
               <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
@@ -196,7 +196,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
           }
         </div>
       </cmn-async-state>
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class GoalPageComponent {

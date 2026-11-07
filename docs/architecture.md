@@ -183,11 +183,11 @@ that preflight fires only on a stale build. Chromium cannot build its own
 sandbox in the container (Docker's default seccomp profile withholds user
 namespaces; widening it was refused, ruled 2026-11-06): Playwright's Chromium runs
 because Playwright starts it with `--no-sandbox`, and a browser a test launches
-itself from one executable path (devclaw's impeccable design scan in
-`frontend/e2e/quality.spec.ts`) goes through `/usr/local/bin/chromium-no-sandbox`,
+itself from one executable path (the route scan's impeccable design
+judge, wired in `frontend/playwright.config.ts`) goes through `/usr/local/bin/chromium-no-sandbox`,
 a wrapper that adds the flag. The image alone sets
-`DEVCLAW_CHROMIUM_NO_SANDBOX` to it; CI, local runs and the committed Playwright
-config never see it. The container is the boundary and only the project's own
+`DEVCLAW_CHROMIUM_NO_SANDBOX` to it; CI and local runs never see it, so the
+committed Playwright config leaves the scan on the page's own Chromium there. The container is the boundary and only the project's own
 test pages load.
 And when the branch's whole diff against its base is documentation
 (`is_doc_path`), the verify run's env carries `DEVCLAW_DOCS_ONLY=1`; the browser e2e is left out only if the

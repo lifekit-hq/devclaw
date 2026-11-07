@@ -8,7 +8,7 @@ import {
   CmnColumnComponent,
   DataTableComponent,
   ListSectionComponent,
-  PageContainerComponent,
+  PageComponent,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
@@ -35,14 +35,14 @@ const NOT_FOUND = 404;
     CmnColumnComponent,
     DataTableComponent,
     ListSectionComponent,
-    PageContainerComponent,
+    PageComponent,
     StatusIndicatorComponent,
     TagComponent,
     UsageComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page-container>
+    <cmn-page kind="detail">
       @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
@@ -55,7 +55,7 @@ const NOT_FOUND = 404;
         retryable
       >
         @if (project(); as p) {
-          <div class="flex flex-col gap-cmn-5">
+          <div class="flex flex-col gap-cmn-section-gap">
             <header class="flex flex-wrap items-start justify-between gap-cmn-4">
               <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
                 @if (p.name !== p.id) {
@@ -143,7 +143,7 @@ const NOT_FOUND = 404;
           </div>
         }
       </cmn-async-state>
-    </cmn-page-container>
+    </cmn-page>
   `,
 })
 export class ProjectPageComponent {
