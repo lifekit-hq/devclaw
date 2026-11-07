@@ -61,6 +61,22 @@ test('an option posts its full text on the decide route', async ({page}) => {
   await expect.poll(() => posted).toEqual({text: 'Include them behind a checkbox'});
 });
 
+test('the decide field’s keyboard key says send and sends', async ({page}) => {
+  const posted: unknown[] = [];
+  await page.route('**/goals/g-running/decide', route => {
+    posted.push(route.request().postDataJSON());
+    return route.fulfill({json: {ok: true}});
+  });
+  await page.goto('/console/goals/g-running');
+
+  const field = page.getByRole('textbox', {name: 'Your decision'});
+  await expect(field).toHaveAttribute('enterkeyhint', 'send');
+  await field.fill('Exclude them for now');
+  await field.press('Enter');
+
+  await expect.poll(() => posted).toEqual([{text: 'Exclude them for now'}]);
+});
+
 test('the goal page decides in the owner’s own words and shows a refusal', async ({page}) => {
   const posted: unknown[] = [];
   await page.route('**/goals/g-running/decide', route => {
@@ -95,6 +111,22 @@ test('Goals filters open from closed and opens one', async ({page}) => {
   await expect(page.getByRole('region', {name: 'Sessions'})).toContainText('t-runnin');
 });
 
+test('the filter shows no counts until the goals have loaded', async ({page}) => {
+  let release = (): void => undefined;
+  const held = new Promise<void>(resolve => (release = resolve));
+  await page.route('**/goals.json', async route => {
+    await held;
+    await route.fulfill({json: fixture('goals')});
+  });
+  await page.goto('/console/goals');
+
+  const filter = page.getByRole('radiogroup', {name: 'Filter goals'});
+  await expect(filter.getByRole('radio')).toHaveText(['Open', 'Blocked', 'Closed', 'All']);
+  release();
+  await expect(filter.getByRole('radio', {name: /^Open \d+$/})).toBeVisible();
+  await expect(filter.getByRole('radio', {name: /^All \d+$/})).toBeVisible();
+});
+
 test('a closed goal shows its verdict and no decide form', async ({page}) => {
   await page.goto('/console/goals/g-done');
 
@@ -102,6 +134,21 @@ test('a closed goal shows its verdict and no decide form', async ({page}) => {
     "Daily digests use the subscriber's timezone"
   );
   await expect(page.getByRole('region', {name: 'Decide'})).toHaveCount(0);
+});
+
+test('a goal’s verdict older than the feed window still expands in place', async ({page}) => {
+  const feed = fixture('verdicts') as Record<string, unknown>;
+  await page.route('**/verdicts.json', route =>
+    route.fulfill({json: {...feed, count: 0, verdicts: []}})
+  );
+  await page.goto('/console/goals/g-done');
+
+  const clause = page.getByText("Daily digests use the subscriber's timezone");
+  await expect(clause).toBeHidden();
+  await page.getByText('Digests are computed in UTC and the drift test pins it.').click();
+  await expect(clause).toBeVisible();
+  await expect(page.getByText('tests/test_digest.py::test_tz_boundary')).toBeVisible();
+  await expect(page).toHaveURL(/\/console\/goals\/g-done$/);
 });
 
 test('Projects and a project page list the goals', async ({page}) => {
@@ -124,14 +171,34 @@ test('a session page shows its exit, parts and events', async ({page}) => {
   await expect(page.getByRole('region', {name: 'Events'})).toContainText('session_exit');
 });
 
-test('Verdicts lists each review clause by clause', async ({page}) => {
+test('a session opened directly still has a way up', async ({page}) => {
+  await page.goto('/console/sessions/t-deliver-0001');
+
+  await expect(page.getByRole('heading', {level: 1})).toContainText('Session');
+  await page.getByRole('button', {name: 'Back'}).click();
+  await expect(page).toHaveURL(/\/console\/goals$/);
+});
+
+test('Verdicts rows push a page with the review clause by clause', async ({page}) => {
   await page.goto('/console/verdicts');
 
   await expect(page.getByRole('heading', {level: 1, name: 'Verdicts'})).toBeVisible();
   const clause = page.getByText("Daily digests use the subscriber's timezone");
-  await expect(clause).toBeHidden();
-  await page.getByText('Digests are computed in UTC and the drift test pins it.').click();
+  await expect(clause).toHaveCount(0);
+  await page.getByText('Digests are computed in UTC and the drift test pins it.').first().click();
+
+  await expect(page).toHaveURL(/\/console\/verdicts\/t-review-0005$/);
+  await expect(page.getByRole('heading', {level: 1, name: 'Verdict'})).toBeVisible();
   await expect(clause).toBeVisible();
+  await expect(page.getByText('tests/test_digest.py::test_tz_boundary')).toBeVisible();
+  await page.getByRole('button', {name: 'Back'}).click();
+  await expect(page).toHaveURL(/\/console\/verdicts$/);
+});
+
+test('a verdict that is not in the feed says so', async ({page}) => {
+  await page.goto('/console/verdicts/t-gone');
+
+  await expect(page.getByRole('alert')).toContainText('No such verdict: t-gone');
 });
 
 test('Settings shows the account, the run window and posts a hold', async ({page}) => {
@@ -145,7 +212,9 @@ test('Settings shows the account, the run window and posts a hold', async ({page
   await expect(page.getByRole('heading', {level: 1, name: 'Settings'})).toBeVisible();
   await expect(page.getByRole('region', {name: 'Account'})).toContainText('owner@example.com');
   const window = page.getByRole('region', {name: 'Run window'});
+  await expect(window.getByRole('textbox', {name: 'Start'})).toHaveAttribute('type', 'time');
   await expect(window.getByRole('textbox', {name: 'Start'})).toHaveValue('22:00');
+  await expect(window.getByRole('textbox', {name: 'End'})).toHaveAttribute('type', 'time');
   await expect(window.getByRole('textbox', {name: 'Time zone'})).toHaveValue('Europe/Dublin');
   await page.getByRole('button', {name: 'Hold all new sessions'}).click();
   await expect.poll(() => held).toBe(true);

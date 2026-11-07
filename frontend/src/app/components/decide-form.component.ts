@@ -21,7 +21,11 @@ import {DevclawApiService, errorText} from '../api/devclaw-api.service';
         class="min-w-0 flex-1 basis-64"
         label="Your decision"
       >
-        <cmn-input [placeholder]="placeholder()" />
+        <cmn-input
+          [placeholder]="placeholder()"
+          (keydown.enter)="onEnter($event)"
+          enterkeyhint="send"
+        />
       </cmn-form-field>
       <cmn-button
         [disabled]="busy() || !text().trim()"
@@ -55,6 +59,13 @@ export class DecideFormComponent {
   public readonly busy = signal(false);
   protected readonly text = signal('');
   protected readonly error = signal<string | null>(null);
+
+  /** The keyboard's send key does what the Decide button does; a key that only commits an IME word does not. */
+  protected onEnter(event: Event): void {
+    if (!(event as KeyboardEvent).isComposing) {
+      this.decideWith(this.text());
+    }
+  }
 
   public decideWith(raw: string): void {
     const text = raw.trim();

@@ -13,6 +13,7 @@ import {
   AlertComponent,
   AsyncStateComponent,
   ButtonComponent,
+  CheckboxComponent,
   ListItemRowComponent,
   PageComponent,
   TagComponent,
@@ -23,13 +24,22 @@ import {DevclawApiService} from '../api/devclaw-api.service';
 import {feedStatus, liveFeed} from '../api/live-feed';
 import {SectionComponent} from '../shared/section.component';
 import {exitVariant} from '../shared/status';
-import {stamp} from '../shared/time';
+import {ago, utcSecond} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
 
 const NOT_FOUND = 404;
 const SUMMARY_KEYS = 4;
 const SUMMARY_VALUE = 80;
 const SUMMARY_RAW = 160;
+const SHORT_SHA = 7;
+
+/** One `name: value` row of the record; a row with `at` is a time and can show its exact form. */
+interface RecordRow {
+  name: string;
+  value: string;
+  at?: number | null;
+  title?: string;
+}
 
 /** The first few `key=value` pairs of an event's payload, for one line. */
 export function payloadSummary(e: TaskEvent): string {
@@ -67,6 +77,7 @@ function absent(value: unknown): boolean {
     AlertComponent,
     AsyncStateComponent,
     ButtonComponent,
+    CheckboxComponent,
     JsonPipe,
     ListItemRowComponent,
     PageComponent,
@@ -129,11 +140,25 @@ function absent(value: unknown): boolean {
                   ><span class="whitespace-pre-wrap">{{ t.error }}</span></cmn-alert
                 >
               }
+              <cmn-checkbox [checked]="exactTimes()" (changed)="exactTimes.set($event)">
+                Exact times (UTC)
+              </cmn-checkbox>
               <dl class="flex flex-col gap-cmn-1 font-mono text-cmn-xs text-text-secondary">
                 @for (row of record(t); track row.name) {
                   <div class="flex gap-cmn-3">
                     <dt class="w-32 shrink-0">{{ row.name }}</dt>
-                    <dd class="min-w-0 flex-1 break-all">{{ row.value }}</dd>
+                    <dd [attr.title]="row.title" class="min-w-0 flex-1 break-words">
+                      @if (row.at) {
+                        <time
+                          [attr.datetime]="isoTime(row.at)"
+                          [attr.title]="utcSecond(row.at)"
+                          class="whitespace-nowrap"
+                          >{{ exactTimes() ? utcSecond(row.at) : ago(row.at) }}</time
+                        >
+                      } @else {
+                        {{ row.value }}
+                      }
+                    </dd>
                   </div>
                 }
                 <div class="flex gap-cmn-3">
@@ -254,6 +279,10 @@ export class SessionPageComponent {
   protected readonly cursor = signal<number | null>(null);
   protected readonly loadingMore = signal(false);
   protected readonly exitVariant = exitVariant;
+  protected readonly ago = ago;
+  protected readonly utcSecond = utcSecond;
+  /** Every time on the record shows its UTC second instead of how long ago. */
+  protected readonly exactTimes = signal(false);
 
   constructor() {
     effect(onCleanup => {
@@ -271,14 +300,22 @@ export class SessionPageComponent {
     });
   }
 
+  protected isoTime(ms: number): string {
+    return new Date(ms).toISOString();
+  }
+
   /** The record's plain facts, one `name: value` row each. */
-  protected record(t: TaskRow): {name: string; value: string}[] {
+  protected record(t: TaskRow): RecordRow[] {
     return [
       {name: 'status', value: t.status},
-      {name: 'created', value: stamp(t.createdAt)},
-      {name: 'started', value: stamp(t.startedAt)},
-      {name: 'completed', value: stamp(t.completedAt)},
-      {name: 'pre-run sha', value: t.preRunSha || 'not recorded'},
+      {name: 'created', value: ago(t.createdAt), at: t.createdAt},
+      {name: 'started', value: ago(t.startedAt), at: t.startedAt},
+      {name: 'completed', value: ago(t.completedAt), at: t.completedAt},
+      {
+        name: 'pre-run sha',
+        value: t.preRunSha ? t.preRunSha.slice(0, SHORT_SHA) : 'not recorded',
+        title: t.preRunSha || undefined,
+      },
       {name: 'branch', value: t.targetBranch || 'not recorded'},
       {name: 'workspace', value: t.workspaceDir},
       {name: 'delivers', value: t.deliver ? 'yes' : 'no'},
@@ -286,7 +323,7 @@ export class SessionPageComponent {
   }
 
   protected eventLine(e: TaskEvent): string {
-    return `${stamp(e.ts)} · ${e.source} · ${payloadSummary(e)}`;
+    return `${utcSecond(e.ts)} · ${e.source} · ${payloadSummary(e)}`;
   }
 
   protected more(): void {

@@ -32,7 +32,8 @@ const POLL_MS = 30_000;
   template: `
     <cmn-page kind="list">
       <p class="text-cmn-sm text-text-secondary">
-        How each finished goal was checked against its requirements. Open a row for details.
+        How each finished goal was checked against its requirements. Tap a row for the clauses and
+        their evidence.
       </p>
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
@@ -48,7 +49,7 @@ const POLL_MS = 30_000;
         @if (feed.state().data; as f) {
           @if (f.count) {
             <cmn-card>
-              <dc-verdict-list [rows]="f.verdicts" [showGoal]="true" />
+              <dc-verdict-list [rows]="f.verdicts" [showGoal]="true" [pushed]="true" />
               @if (f.truncated) {
                 <p class="mt-cmn-3 text-cmn-xs text-text-secondary">
                   Showing the newest {{ f.count }}; older reviews are not listed.
