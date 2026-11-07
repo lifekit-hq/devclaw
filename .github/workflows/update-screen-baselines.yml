@@ -23,8 +23,13 @@ jobs:
     with:
       lifekit-common-ref: v4.4.1
       working-directory: frontend
-      # @lifekit-hq/* installs from GitHub Packages; the token is this job's, with `packages: read`.
-      install-command: NODE_AUTH_TOKEN=${{ github.token }} npm ci --no-audit --no-fund
+      # @lifekit-hq/* installs from GitHub Packages. The reusable workflow's install step has no
+      # token of its own (`github.token` is empty in a `with:` input), so it takes the one
+      # actions/checkout left in git config: this job's token, with `packages: read`.
+      install-command: >-
+        NODE_AUTH_TOKEN=$(git config --get http.https://github.com/.extraheader
+        | sed 's/^AUTHORIZATION: basic //' | base64 -d | cut -d: -f2)
+        npm ci --no-audit --no-fund
       build-command: npm run build
       command: SCREEN_BASELINES=update npx playwright test -g "screen baseline" --update-snapshots=changed
       baselines: frontend/e2e/screens
