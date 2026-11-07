@@ -70,11 +70,6 @@ jobs:
         with:
           path: ~/.impeccable
           key: impeccable-${{ hashFiles('frontend/package-lock.json') }}
-      - name: Screen baselines notice
-        run: |
-          if ! ls e2e/screens/screens.spec.ts-snapshots/*-linux.png >/dev/null 2>&1; then
-            echo "::notice title=Screen baselines::No CI-rendered baseline images exist yet, so the pixel comparison is deferred until the update-screen-baselines workflow adds them (label update-baselines, or the Actions button); the follow-up PR makes the gate unconditional."
-          fi
       - name: E2E (Playwright on the built dist, screen check, route scan, baselines)
         run: |
           npx playwright install --with-deps chromium

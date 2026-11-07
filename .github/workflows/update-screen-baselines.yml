@@ -24,6 +24,6 @@ jobs:
       lifekit-common-ref: v4.4.2
       working-directory: frontend
       build-command: npm run build
-      command: SCREEN_BASELINES=update npx playwright test -g "screen baseline" --update-snapshots=changed
+      command: npx playwright test -g "screen baseline" --update-snapshots=changed
       baselines: frontend/e2e/screens
       commit-message: "test(console): update screen baselines"
