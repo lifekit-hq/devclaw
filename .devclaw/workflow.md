@@ -32,9 +32,8 @@ but the whole spec is the commitment.
 `./.devclaw/verify` runs what CI gates on a PR: the pytest suite, `ruff`,
 `mypy`, `lint-imports`, `yamllint` over `.github/workflows/`, and the console's
 lint, unit tests, build, demo build and chrome check (`frontend/`). It skips
-gitleaks and the console's Playwright e2e (and with it CI's impeccable-engine
-step, which only serves that e2e), each with its reason at the top of the
-script. It bootstraps the declared deps into a worktree-local `.venv` when the
+gitleaks and the console's Playwright e2e (the screen check, the route scan
+and the screen baselines), each with its reason at the top of the script. It bootstraps the declared deps into a worktree-local `.venv` when the
 interpreter lacks them — the deployed image carries the runtime deps only. That
 bootstrap is a probe and a PATH prepend only on a round whose `.venv` is
 already complete — which never includes a session's FIRST round, because
