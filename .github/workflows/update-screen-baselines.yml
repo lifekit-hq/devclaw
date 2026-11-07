@@ -18,14 +18,12 @@ jobs:
       contents: write
       actions: write
       pull-requests: write
-      packages: read  # @lifekit-hq/* from GitHub Packages
-    uses: lifekit-hq/lifekit-common/.github/workflows/screen-baselines.yml@v4.4.1
+      packages: read  # the install step reads the private @lifekit-hq/* packages
+    uses: lifekit-hq/lifekit-common/.github/workflows/screen-baselines.yml@v4.4.2
     with:
-      lifekit-common-ref: v4.4.1
+      lifekit-common-ref: v4.4.2
       working-directory: frontend
-      # @lifekit-hq/* installs from GitHub Packages; the token is this job's, with `packages: read`.
-      install-command: NODE_AUTH_TOKEN=${{ github.token }} npm ci --no-audit --no-fund
       build-command: npm run build
-      command: SCREEN_BASELINES=update npx playwright test -g "screen baseline" --update-snapshots=changed
+      command: npx playwright test -g "screen baseline" --update-snapshots=changed
       baselines: frontend/e2e/screens
       commit-message: "test(console): update screen baselines"
