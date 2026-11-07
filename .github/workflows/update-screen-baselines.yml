@@ -26,6 +26,6 @@ jobs:
       # @lifekit-hq/* installs from GitHub Packages; the token is this job's, with `packages: read`.
       install-command: NODE_AUTH_TOKEN=${{ github.token }} npm ci --no-audit --no-fund
       build-command: npm run build
-      command: npx playwright test -g "screen baseline" --update-snapshots=changed
+      command: SCREEN_BASELINES=update npx playwright test -g "screen baseline" --update-snapshots=changed
       baselines: frontend/e2e/screens
       commit-message: "test(console): update screen baselines"
