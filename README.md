@@ -109,7 +109,8 @@ at 390 and 1280: the screen check (`e2e/screen.spec.ts`: every page is built on
 dark, through the impeccable design judge and axe, on the settled page, with its
 engine fetched once and pinned by sha256) and the screen baselines
 (`e2e/screens/`: exact pixel comparison against Linux images rendered on the CI
-runner by the "Update screen baselines" workflow). The console accepts no
+runner by the "Update screen baselines" workflow; the comparison is registered
+only once such images exist). The console accepts no
 findings: one in a library component or page template is fixed in lifekit-common.
 
 ## How it works
