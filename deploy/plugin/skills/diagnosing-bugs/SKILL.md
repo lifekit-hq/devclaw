@@ -1,3 +1,8 @@
+---
+name: diagnosing-bugs
+description: Use when a test, build or CI check is red and the cause is not obvious from its log.
+---
+
 # Diagnosis loop (hard bugs)
 
 For bugs that don't fall to the first obvious fix, work this loop in order.

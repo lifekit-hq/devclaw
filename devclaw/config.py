@@ -127,6 +127,23 @@ SILENCE_S = float(os.environ.get("DEVCLAW_SILENCE_S", "1800"))
 #: red ``.devclaw/verify`` runs handed back to the same session before it settles.
 VERIFY_ROUNDS = int(os.environ.get("DEVCLAW_VERIFY_ROUNDS", "3"))
 VERIFY_TIMEOUT_S = float(os.environ.get("DEVCLAW_VERIFY_TIMEOUT_S", "900"))
+def plugin_dir() -> str:
+    """``DEVCLAW_PLUGIN_DIR`` — a Claude Code plugin directory loaded into every
+    session (``--plugin-dir``); "" → none. The image bakes one at
+    ``/opt/devclaw/plugin``; setting this turns it on, so one image serves both
+    arms of a trial."""
+    return (os.environ.get("DEVCLAW_PLUGIN_DIR") or "").strip()
+
+
+def diagnosis_hint() -> str:
+    """The one sentence step 1 of the session prompt gains when the plugin is
+    loaded (it names the skill the plugin ships); "" otherwise, so the arm
+    without the plugin reads the prompt it always read."""
+    if not plugin_dir():
+        return ""
+    return " If the cause is not obvious from the log, invoke the `devclaw-skills:diagnosing-bugs` skill first."
+
+
 #: the treehouse binary that leases one worktree per goal.
 TREEHOUSE_BIN = os.environ.get("DEVCLAW_TREEHOUSE_BIN", "treehouse")
 

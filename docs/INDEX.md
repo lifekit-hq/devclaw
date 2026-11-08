@@ -38,7 +38,7 @@ every v1 spec is a superseded row in `specs/README.md`.
 
 | Doc | Purpose | Currency |
 |---|---|---|
-| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-11-05 (`NM_HOME`'s state is reported by `devclaw doctor` — #982; 2026-10-21: `stub` also serves the README *Try it* quickstart — #957; the Engine group: `DEVCLAW_CLAUDE_BIN`, the stream watchdog, the verify rounds, `DEVCLAW_TREEHOUSE_BIN`; the sandbox and Runner groups removed — #952; 2026-10-13: `DEVCLAW_DB` names the per-user console appearance it now holds) |
+| [`reference/env-vars.md`](./reference/env-vars.md) | Every env var the runtime reads, grouped; pinned to `devclaw/config.py` by `tests/test_env_vars_doc_sync.py`. | **CURRENT** — 2026-11-08 (`DEVCLAW_PLUGIN_DIR` — the opt-in session plugin, #1007; 2026-11-05: `NM_HOME`'s state is reported by `devclaw doctor` — #982; 2026-10-21: `stub` also serves the README *Try it* quickstart — #957; the Engine group: `DEVCLAW_CLAUDE_BIN`, the stream watchdog, the verify rounds, `DEVCLAW_TREEHOUSE_BIN`; the sandbox and Runner groups removed — #952; 2026-10-13: `DEVCLAW_DB` names the per-user console appearance it now holds) |
 
 ## Runbooks
 

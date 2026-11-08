@@ -1,0 +1,5 @@
+{
+  "name": "devclaw-skills",
+  "version": "0.1.0",
+  "description": "Skills devclaw sessions can invoke when the world calls for one. Loaded per session by --plugin-dir; see DEVCLAW_PLUGIN_DIR."
+}
