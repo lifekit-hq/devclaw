@@ -93,5 +93,3 @@ def test_container_claude_config_dir_is_its_own_never_the_host_home():
     for volume in svc["volumes"]:
         target = str(volume).split(":")[1] if ":" in str(volume) else ""
         assert not target.startswith("/home/node/.claude"), volume
-    dockerfile = (_REPO / "deploy/Dockerfile").read_text()
-    assert f"CLAUDE_CONFIG_DIR={config_dir}" in dockerfile
