@@ -30,4 +30,6 @@ not shippable (e.g. "zero-token guard tests stay green"). -->
 ## Established
 
 <!-- Settled decisions the worker must build on instead of re-deriving
-(rulings, prior findings, measured facts — with dates where they matter). -->
+(rulings, prior findings, measured facts — with dates where they matter).
+If the premise depends on another repo, library or host state, name the command
+you ran today that proves it holds. -->
