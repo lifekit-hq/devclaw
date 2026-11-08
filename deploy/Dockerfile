@@ -157,6 +157,12 @@ USER root
 COPY --chmod=755 deploy/chromium-no-sandbox /usr/local/bin/chromium-no-sandbox
 ENV DEVCLAW_CHROMIUM_NO_SANDBOX=/usr/local/bin/chromium-no-sandbox
 
+# ---- session plugin (opt-in per session) ----------------------------------
+# A one-skill Claude Code plugin. A session loads it only when
+# DEVCLAW_PLUGIN_DIR=/opt/devclaw/plugin is set, so one image serves both arms
+# of a trial. It is never written into the shared CLAUDE_CONFIG_DIR.
+COPY deploy/plugin/ /opt/devclaw/plugin/
+
 # ---- devclaw source (COPY from the checked-out tree — no git clone) --------
 # Everything above is source-independent and stays cached across code changes.
 # The COPY below is the only layer a code change invalidates.

@@ -66,7 +66,7 @@ def session_brief(goal: Goal, world: World, last: "Task | None") -> str:
         last_exit=last_exit,
         comments=_render_comments(world),
         ci_logs=_render_ci_logs(world),
-        mention=_config.mention(),
+        mention=_config.mention(), diagnosis_hint=_config.diagnosis_hint(),
     )
 
 

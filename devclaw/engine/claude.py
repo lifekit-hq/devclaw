@@ -516,6 +516,8 @@ def claude_argv(prompt: str, *, resume: Optional[str]) -> list[str]:
             "--dangerously-skip-permissions"]
     if _config.EXEC_MODEL:
         argv += ["--model", _config.EXEC_MODEL]
+    if _config.plugin_dir():
+        argv += ["--plugin-dir", _config.plugin_dir()]
     if resume:
         argv += ["--resume", resume]
     return argv

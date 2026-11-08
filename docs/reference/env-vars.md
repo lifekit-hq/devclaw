@@ -38,6 +38,7 @@ vars always win over `.env`.
 | `DEVCLAW_SILENCE_S` | `1800` | A session silent this long after its first frame is killed and settles interrupted |
 | `DEVCLAW_VERIFY_TIMEOUT_S` | `900` | Wall-clock cap for one `.devclaw/verify` run |
 | `DEVCLAW_VERIFY_ROUNDS` | `3` | Red-verify rounds handed back to the same session (`--resume`) before it ends |
+| `DEVCLAW_PLUGIN_DIR` | unset | A Claude Code plugin directory loaded into every session (`--plugin-dir`); the image bakes one at `/opt/devclaw/plugin` (the `diagnosing-bugs` skill). Setting it also adds one line to step 1 of the session prompt naming that skill. Unset → neither |
 | `DEVCLAW_TREEHOUSE_BIN` | `treehouse` | The treehouse CLI that leases one worktree per goal (pool root: treehouse's own `TREEHOUSE_ROOT`) |
 | `DEVCLAW_GIT_NAME` | `devclaw` | Git author/committer name for every commit devclaw or a session writes |
 | `DEVCLAW_GIT_EMAIL` | `devclaw@local` | Its email |

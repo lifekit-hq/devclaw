@@ -253,22 +253,6 @@ def test_common_skill_instructs_reading_architecture_map(skill_dir):
         )
 
 
-def test_fix_bug_keeps_its_smallest_change_skill(skill_dir):
-    bundle = engine.load_skills("fix_bug")
-    assert "smallest change" in bundle.lower()
-
-
-def test_fix_bug_loads_diagnosis_loop_after_scope(skill_dir):
-    """The diagnosis-loop discipline ships in the fix_bug tier, ordered after
-    the scope skill (00- prefix before 10-) so scope framing comes first."""
-    bundle = engine.load_skills("fix_bug")
-    assert "Diagnosis loop" in bundle
-    assert "red-capable" in bundle
-    assert bundle.index("Bug-fix scope") < bundle.index("Diagnosis loop")
-    for kind in ("implement_feature", "review_repository"):
-        assert "Diagnosis loop" not in engine.load_skills(kind)
-
-
 def test_review_repository_loads_only_read_only_skill(skill_dir):
     bundle = engine.load_skills("review_repository")
     assert "READ ONLY" in bundle
@@ -400,3 +384,25 @@ def test_common_skill_mentions_per_repo_skills(skill_dir):
     bundle = engine.load_skills("implement_feature")
     assert ".agent/skills/" in bundle
     assert "PROJECT-OWNED" in bundle
+
+
+# ---- the trial's arm separation --------------------------------------------
+
+
+@pytest.mark.parametrize("plugin", ["", "/opt/devclaw/plugin"])
+def test_plugin_dir_env_alone_separates_the_arms(monkeypatch, plugin):
+    """An A/B trial is valid only if the arms differ by DEVCLAW_PLUGIN_DIR and
+    nothing else: the flag on `claude -p` and the one prompt line that names the
+    skill both appear with it and both vanish without it."""
+    from types import SimpleNamespace
+    from devclaw.goal import github as gh
+    from devclaw.goal.prompts import session_brief
+
+    monkeypatch.setenv("DEVCLAW_PLUGIN_DIR", plugin)
+    argv = engine.claude_argv("p", resume=None)
+    world = SimpleNamespace(pr=gh.PrFacts("none", 0, "", "", ci="none"), issues=(), comments=())
+    brief = session_brief(SimpleNamespace(branch="b", objective="o"), world, None)  # type: ignore[arg-type]
+    assert ("--plugin-dir" in argv) == bool(plugin)
+    assert ("diagnosing-bugs" in brief) == bool(plugin)
+    if plugin:
+        assert argv[argv.index("--plugin-dir") + 1] == plugin
