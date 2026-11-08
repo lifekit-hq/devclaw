@@ -81,3 +81,15 @@ def test_deploy_script_writes_the_home_dies_on_absence_and_never_echoes_a_value(
     # truncates what the first one wrote. Asserted structurally rather than by
     # quoting the current variable list, which a third credential invalidated.
     assert src.count('> "$SECRETS_FILE"') == 1
+
+
+def test_container_claude_config_dir_is_its_own_never_the_host_home():
+    # A host ~/.claude projected into the container loaded every plugin skill
+    # and the shared CLAUDE.md into each session turn (#1008). The credential is
+    # the env token; the config dir is private, on the durable state volume.
+    svc = _compose_service()
+    config_dir = svc["environment"]["CLAUDE_CONFIG_DIR"]
+    assert config_dir.startswith("/var/lib/devclaw/"), config_dir
+    for volume in svc["volumes"]:
+        target = str(volume).split(":")[1] if ":" in str(volume) else ""
+        assert not target.startswith("/home/node/.claude"), volume
