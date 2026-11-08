@@ -25,9 +25,9 @@ inherits both from the server process. No secret is in the image, the volume
 layout above or a log.
 
 Side effect of `init` to know about: it installs the `/no-mistakes` skill into
-`~/.claude/skills/` and `~/.agents/skills/` (the host's Claude home is
-bind-mounted, so `/home/lifekit/.claude/skills/no-mistakes` appears on the box)
-and a user systemd unit file in the container's ephemeral home. Harmless.
+`$CLAUDE_CONFIG_DIR/skills/` (the container's own config dir on the state volume,
+not the host's `~/.claude`) and `~/.agents/skills/`, and a user systemd unit
+file in the container's ephemeral home. Harmless.
 
 ## Prove it from a fresh container (no secrets, no goal)
 

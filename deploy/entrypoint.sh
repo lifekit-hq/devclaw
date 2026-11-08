@@ -16,4 +16,12 @@ if [ -n "${NM_HOME:-}" ]; then
   rm -f -- "$NM_HOME/daemon.pid" "$NM_HOME/daemon.lock" "$NM_HOME/socket"
 fi
 
+# The sessions' Claude config dir (CLAUDE_CONFIG_DIR, on the same volume) starts
+# empty: built-in skills only, plus the /no-mistakes skill `init` installs. It
+# is created here so a first boot on a fresh volume has it; nothing from the
+# host's ~/.claude is ever copied in (#1008).
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+  mkdir -p -- "$CLAUDE_CONFIG_DIR"
+fi
+
 exec "$@"

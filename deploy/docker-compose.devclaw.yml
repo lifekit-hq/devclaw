@@ -82,7 +82,13 @@ services:
       # tests/test_no_mistakes_state_survives_redeploy.py fails if it leaves the volume.
       NM_HOME: /var/lib/devclaw/no-mistakes
       CLAUDE_CODE_EXECUTABLE: /usr/local/bin/claude
-      CLAUDE_CONFIG_DIR: /home/node/.claude
+      # The sessions' Claude config dir lives on the durable state volume, seeded
+      # by nothing: it starts empty, so a session sees the built-in skills plus
+      # what `no-mistakes init` installs. It is NEVER the host's ~/.claude (that
+      # projection loaded 52 skills and the shared CLAUDE.md into every turn,
+      # #1008); it holds the session transcripts `--resume` reads, so it
+      # survives a recreate. tests/test_deploy_oauth_token_wiring.py pins it.
+      CLAUDE_CONFIG_DIR: /var/lib/devclaw/claude
       # CLAUDE_CODE_OAUTH_TOKEN + NODE_AUTH_TOKEN + GH_TOKEN: see env_file
       # above — never here (an `environment:` entry would override the file
       # with blank). GH_TOKEN also supersedes the ~/.config/gh mount below for
@@ -127,9 +133,9 @@ services:
       - ${LIFEKIT_DEVCLAW_WORKSPACES:-/srv/devclaw/workspaces}:/var/lib/devclaw/workspaces
       # Host tailscaled control socket — `tailscale serve` for durable deploys.
       - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
-      # Claude Code OAuth — inherited from the host session (no API key, ever).
-      - ${LIFEKIT_CLAUDE_HOME:-/home/lifekit/.claude}:/home/node/.claude
-      - ${LIFEKIT_CLAUDE_JSON:-/home/lifekit/.claude.json}:/home/node/.claude.json
+      # No Claude home from the host: the credential is CLAUDE_CODE_OAUTH_TOKEN
+      # from the secrets file (the boot guard refuses to start without it) and
+      # the config dir is CLAUDE_CONFIG_DIR above, on the state volume.
       # The /srv/memory vault — trend retrospectives + self-reflection reads.
       - ${LIFEKIT_LIFE_DIR:-/srv/memory}:/home/node/memory
       # gitconfig: commit authorship AND the `gh auth git-credential` helper

@@ -18,8 +18,9 @@
 # source makes the build a normal cache-respecting COPY: the image contains
 # exactly this commit, verifiable via the DEVCLAW_GIT_SHA baked on /health.
 #
-# Auth: inherits Claude Code OAuth from the bind-mounted ~/.claude session at
-# runtime (compose). No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, ever
+# Auth: CLAUDE_CODE_OAUTH_TOKEN from the secrets file at runtime (compose); the
+# Claude config dir is CLAUDE_CONFIG_DIR on the state volume, never a host
+# ~/.claude. No ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, ever
 # (Constitution I — OAuth-only).
 
 # ---- console bundle (its own stage; only the built dist reaches the image) ---
@@ -186,7 +187,7 @@ ENV DEVCLAW_TRANSPORT=http \
     DEVCLAW_PORT=8000 \
     DEVCLAW_DB=/var/lib/devclaw/devclaw.db \
     CLAUDE_CODE_EXECUTABLE=/usr/local/bin/claude \
-    CLAUDE_CONFIG_DIR=/home/node/.claude \
+    CLAUDE_CONFIG_DIR=/var/lib/devclaw/claude \
     TREEHOUSE_ROOT=/var/lib/devclaw/workspaces/.treehouse \
     DEVCLAW_SKILL_LIBRARY=/app/skill-library \
     NM_HOME=/var/lib/devclaw/no-mistakes
