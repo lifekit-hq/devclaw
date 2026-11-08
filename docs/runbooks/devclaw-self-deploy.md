@@ -45,8 +45,9 @@ two externally-declared seams: the `lifekit-shared` network and the
   **devclaw-owned** — reading another entity's env file (the old
   `/srv/lifekit-stack/.env` / `/srv/openclaw/config/.env` default) is the exact
   cross-entity coupling the ecosystem decoupling removes. It carries every var
-  the fragment reads: the `LIFEKIT_*` host facts (vault dir, workspaces dir — duplicated from the host on purpose; a little
-  host-fact duplication is the price of entity independence), the operator-set
+  the fragment reads: the `LIFEKIT_*` host facts (vault dir, workspaces dir —
+  duplicated from the host on purpose; a little host-fact duplication is the
+  price of entity independence), the operator-set
   `DEVCLAW_*` knobs, `DEVCLAW_TOKEN`, and on the cutover host
   `DEVCLAW_STATE_VOLUME=compose_devclaw-state`.
 - **The secrets file** the compose fragment declares as its `env_file`
