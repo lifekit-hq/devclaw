@@ -16,7 +16,7 @@ from pathlib import PurePosixPath
 
 from . import github as _gh
 
-_JSON_FENCE_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+_JSON_START_RE = re.compile(r"[{\[]")
 _PATH_RE = re.compile(r"[\w.-]+(?:/[\w.-]+)*\.\w+|[\w.-]+(?:/[\w.-]+)*/(?![\w.-])")
 _LOCKS = {"package-lock.json": "package.json", "pnpm-lock.yaml": "package.json", "yarn.lock": "package.json",
           "poetry.lock": "pyproject.toml", "uv.lock": "pyproject.toml", "Cargo.lock": "Cargo.toml"}
@@ -36,26 +36,26 @@ class Verdict:
 
 
 def parse_verdict(agent_output: str) -> Verdict:
-    """Read the reviewer's JSON; validate the achieved claim against the
-    clauses. Anything unreadable is ``unreadable`` (fails closed)."""
-    matches = _JSON_FENCE_RE.findall(agent_output or "")
-    raw = matches[-1] if matches else None
-    if raw is None:
-        # a bare object at the end of the message, last resort
-        m = re.search(r"\{.*\}", agent_output or "", re.DOTALL)
-        raw = m.group(0) if m else None
-    if raw is None:
-        return Verdict(False, unreadable=True, raw_error="no JSON verdict in the review")
-    try:
-        data = json.loads(raw)
-    except ValueError as exc:
-        return Verdict(False, unreadable=True, raw_error=f"unparseable JSON: {exc}")
-    if not isinstance(data, dict):
-        return Verdict(False, unreadable=True, raw_error="verdict is not an object")
-    clauses_raw = data.get("clauses")
+    """Read the verdict — the LAST JSON object carrying a clauses list, fenced
+    or bare, whatever prose surrounds it (#1013): ``raw_decode`` bounds each
+    value, so a brace in a sentence is skipped, never fused into the slice.
+    Validate the claim against the clauses; unreadable fails closed."""
+    text, decoder, pos, data = agent_output or "", json.JSONDecoder(), 0, {}
+    why = "no JSON verdict in the review"  # overwritten by the last value seen
+    while m := _JSON_START_RE.search(text, pos):
+        try:
+            value, pos = decoder.raw_decode(text, m.start())
+        except ValueError:
+            pos = m.start() + 1
+            continue
+        why = "verdict names no clauses" if isinstance(value, dict) else "verdict is not an object"
+        if isinstance(value, dict) and isinstance(value.get("clauses"), list):
+            data = value
+    if not data:
+        return Verdict(False, unreadable=True, raw_error=why)
     clauses = [{"clause": str(c.get("clause") or "").strip(), "satisfied": bool(c.get("satisfied")),
                 "evidence": str(c.get("evidence") or "").strip()}
-               for c in (clauses_raw if isinstance(clauses_raw, list) else []) if isinstance(c, dict)]
+               for c in data["clauses"] if isinstance(c, dict)]
     if not clauses:
         return Verdict(False, unreadable=True, raw_error="verdict names no clauses")
     all_ok = all(c["satisfied"] and c["evidence"] for c in clauses)

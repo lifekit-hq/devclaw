@@ -67,3 +67,10 @@ tests (`.claude/rules/testing.md`).
   (`~/memory/projects/devclaw/`), not in `.devclaw/memory/` — see the
   "Memory (vault)" section of `CLAUDE.md`. A session without vault access
   leaves its facts in the commit message.
+
+## Learned constraints
+
+CONSTRAINT: `devclaw/goal/*.py` + `devclaw/prompts/*.md` sat at exactly 1,500
+lines on 2026-11-09, the `GOAL_LAYER_CEILING` in
+`tests/test_goal_layer_stays_readable.py` — ANY net line added to the goal
+layer fails the suite, so a fix there has to pay for itself in the same file.

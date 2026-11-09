@@ -443,12 +443,29 @@ async def test_a_verdict_counts_only_for_the_head_it_read(harness):
 
 def test_the_verdict_claim_never_beats_the_clauses():
     """Pillar 7, mechanically: 'achieved' with an unsatisfied clause is not achieved,
-    a question is not an achievement, no JSON is unreadable (fails closed)."""
+    a question is not an achievement, no JSON is unreadable (fails closed) — and a
+    valid verdict is READ whatever prose or extra JSON surrounds it (#1013)."""
     assert not parse_verdict('```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": ""}]}\n```').achieved
     assert not parse_verdict('```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}], "question": "which?"}\n```').achieved
     assert parse_verdict("I think it is fine.").unreadable
     assert parse_verdict('```json\n{"achieved": true, "clauses": []}\n```').unreadable
     assert parse_verdict('```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n```').achieved
+    # a valid bare verdict with brace-carrying prose on both sides is read
+    noisy = ('The contract says {Done when} names one clause; my read follows.\n'
+             '{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n'
+             'Out of scope: the set {a, b}. Nothing else changed.')
+    assert parse_verdict(noisy).achieved and not parse_verdict(noisy).unreadable
+    # trailing text after a bare object, and a trailing non-verdict object
+    assert parse_verdict('{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\nThanks!').achieved
+    assert parse_verdict('{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n{"status": "done"}').achieved
+    # of two fenced blocks the LAST valid verdict wins
+    two = ('```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": true, "evidence": "x"}]}\n```\n'
+           'On a second read the evidence was missing:\n'
+           '```json\n{"achieved": true, "clauses": [{"clause": "c", "satisfied": false, "evidence": "missing"}]}\n```')
+    assert not parse_verdict(two).achieved and not parse_verdict(two).unreadable
+    # still unreadable: a non-object, and an object that names no clauses
+    assert parse_verdict("[1, 2]").unreadable
+    assert parse_verdict('```json\n{"note": "looks fine"}\n```').unreadable
 
 
 async def test_a_merged_pr_closes_the_goal(harness):
