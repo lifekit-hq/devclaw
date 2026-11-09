@@ -2,6 +2,36 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.6.0](https://github.com/lifekit-hq/devclaw/compare/v2.5.0...v2.6.0) (2026-11-08)
+
+
+### Features
+
+* **console:** adopt lifekit-common 4.4 page templates, screen check and baselines ([#998](https://github.com/lifekit-hq/devclaw/issues/998)) ([148b6a2](https://github.com/lifekit-hq/devclaw/commit/148b6a20ef16177f2c7b3ba3d8d2d9aa72adadf9))
+* **deploy:** curated CLAUDE_CONFIG_DIR on the state volume, no host ~/.claude bind ([#1011](https://github.com/lifekit-hq/devclaw/issues/1011)) ([fc3b346](https://github.com/lifekit-hq/devclaw/commit/fc3b3461825ec1850e14b9421b290273160bc310))
+* **engine:** opt-in diagnosing-bugs session plugin for the [#1007](https://github.com/lifekit-hq/devclaw/issues/1007) trial ([#1010](https://github.com/lifekit-hq/devclaw/issues/1010)) ([a1cbdc1](https://github.com/lifekit-hq/devclaw/commit/a1cbdc19d8361d00b060f7b60bedaa749b45bde4))
+* **frontend:** phone UX page fixes from the 390px audit ([#1001](https://github.com/lifekit-hq/devclaw/issues/1001)) ([86327e1](https://github.com/lifekit-hq/devclaw/commit/86327e131f952d3b93b826d0cc7cf029f5fc3362))
+* **goal:** check PR's changed files against issue scope before review ([#994](https://github.com/lifekit-hq/devclaw/issues/994)) ([221e575](https://github.com/lifekit-hq/devclaw/commit/221e575c83a9dc2a5dc687308c11df71cd0354ec))
+* **goal:** hold hard-to-reverse goals for an explicit merge decision ([#995](https://github.com/lifekit-hq/devclaw/issues/995)) ([58d4ccf](https://github.com/lifekit-hq/devclaw/commit/58d4ccf11e5f3c73ad87295b85acf0bd3ef472bd))
+* **prompts:** sessions record proven constraints in .devclaw/workflow.md ([#997](https://github.com/lifekit-hq/devclaw/issues/997)) ([66e686d](https://github.com/lifekit-hq/devclaw/commit/66e686d8e2232f522d5b7c5c2815c89817d3755f))
+
+
+### Bug Fixes
+
+* **deploy:** let worker sessions run Chromium e2e and .NET builds ([#990](https://github.com/lifekit-hq/devclaw/issues/990)) ([0c4edfc](https://github.com/lifekit-hq/devclaw/commit/0c4edfca7dd54fef28c59268b953d6fd6916c6cd))
+* **deploy:** run Chromium without its sandbox inside the worker container ([#991](https://github.com/lifekit-hq/devclaw/issues/991)) ([9f12919](https://github.com/lifekit-hq/devclaw/commit/9f12919408fd578f1fca4541513a53f73851db5d))
+* **engine:** fail fast on a missing browser library and flag docs-only diffs to verify ([#988](https://github.com/lifekit-hq/devclaw/issues/988)) ([b3bd0ca](https://github.com/lifekit-hq/devclaw/commit/b3bd0ca7dee6dd0fca402e4d5b2c6f2ef91f4d18))
+
+
+### Refactoring
+
+* **skills:** drop in-session self-review; no-mistakes is the one review gate ([#993](https://github.com/lifekit-hq/devclaw/issues/993)) ([3037f0f](https://github.com/lifekit-hq/devclaw/commit/3037f0f85ec5ef6c22236fab27661ce777640c39))
+
+
+### Documentation
+
+* **template:** name the command that proves a cross-repo premise ([#1009](https://github.com/lifekit-hq/devclaw/issues/1009)) ([ba8f30c](https://github.com/lifekit-hq/devclaw/commit/ba8f30c40664a05e0ff811517267ac33246da33e))
+
 ## [2.5.0](https://github.com/lifekit-hq/devclaw/compare/v2.4.2...v2.5.0) (2026-11-06)
 
 
