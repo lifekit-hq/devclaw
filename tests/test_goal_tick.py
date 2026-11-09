@@ -293,26 +293,45 @@ async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
         "frontend/package.json", "devclaw/x.py"]
 
 
-async def test_an_achieved_verdict_merges_and_closes(harness):
+@pytest.mark.parametrize("body, files", [
+    ("## Done when\n- /health returns 200", ()),
+    # a deletion whose only paths are tests and docs is reversible (#996): it
+    # trips neither the contract's destructive vocabulary nor a migration path,
+    # so it merges on the verdict alone and never asks the owner to decide
+    ("## Done when\n- the suite no longer ships the retired snapshot fixtures",
+     ("tests/test_legacy_snapshot.py", "docs/legacy.md")),
+])
+async def test_an_achieved_verdict_merges_and_closes(harness, body, files):
     store, queue, rec, goal, ctx = harness
-    await tick_goal(goal, ctx(FakeWorld()))
+    issues = [gh.Issue(1, "t", body, "open")]
+    await tick_goal(goal, ctx(FakeWorld(issues=issues, files=files)))
     t = _sessions(store, goal.id)[0]
     store.claim_pending(t.id)
     store.mark_done(t.id, "{}", pr_url="u", exit=EXIT_DONE)
     green = gh.PrFacts("open", 5, "u", "abc123", ci="green")
-    await tick_goal(goal, ctx(FakeWorld(pr=green)))
+    await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues, files=files)))
     review = _sessions(store, goal.id)[0]
     store.claim_pending(review.id)
     verdict = '```json\n{"achieved": true, "clauses": [{"clause": "/health returns 200", "satisfied": true, "evidence": "app.py:health, tests/test_health.py"}], "summary": "ok"}\n```'
     store.mark_done(review.id, json.dumps({"agent_output": verdict}), exit=EXIT_REVIEW)
-    assert await tick_goal(goal, ctx(FakeWorld(pr=green))) == "closed"
+    assert await tick_goal(goal, ctx(FakeWorld(pr=green, issues=issues, files=files))) == "closed"
     assert rec.merges == [("u", "abc123")] and "achieved=1" in rec.comments[0][1]
+    # no hard_to_reverse block was posted: the verdict record is the only comment
+    assert len(rec.comments) == 1 and "devclaw:verdict" in rec.comments[0][1]
     assert store.get_goal(goal.id).outcome == "achieved"
 
 
 @pytest.mark.parametrize("body, files", [
+    # a migration: named by the contract, then named only by the PR's paths
     ("## Done when\n- the users table migration runs on deploy", ()),
     ("## Done when\n- /health returns 200", ("db/migrations/0003_add_col.sql",)),
+    # a deletion (#996). The host reads the contract's words and the PR's path
+    # names, never the diff body, so a deletion is hard three ways: the contract
+    # says files are deleted, the contract carries a destructive statement, or
+    # the PR touches a `.sql` file outside any migrations/ directory.
+    ("## Done when\n- the retired devclaw/legacy/v1.py handler is deleted", ("devclaw/legacy/v1.py",)),
+    ("## Done when\n- the orphaned rows are gone: DROP TABLE legacy_sessions", ()),
+    ("## Done when\n- /health returns 200", ("db/teardown.sql",)),
 ])
 async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(harness, body, files):
     """Issue 979, fail-closed: an achieved verdict on a migration/deletion/data
