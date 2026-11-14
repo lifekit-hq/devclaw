@@ -19,9 +19,9 @@ jobs:
       actions: write
       pull-requests: write
       packages: read  # the install step reads the private @lifekit-hq/* packages
-    uses: lifekit-hq/lifekit-common/.github/workflows/screen-baselines.yml@v4.4.2
+    uses: lifekit-hq/lifekit-common/.github/workflows/screen-baselines.yml@v5.0.0
     with:
-      lifekit-common-ref: v4.4.2
+      lifekit-common-ref: v5.0.0
       working-directory: frontend
       build-command: npm run build
       command: npx playwright test -g "screen baseline" --update-snapshots=changed
