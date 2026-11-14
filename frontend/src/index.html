@@ -17,7 +17,7 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <!-- theme-init:start - generated from @lifekit-hq/tokens by lifekit-theme-sync; do not edit. -->
     <!-- prettier-ignore -->
-    <script>// Apply the stored/OS theme and the stored seed colour before first paint so pages never flash.
+    <script>// Apply the stored/OS theme, the stored design preset and the stored seed colour before first paint so pages never flash.
 (function () {
   var root = document.documentElement;
   var theme = 'light';
@@ -27,6 +27,11 @@
     else if (window.matchMedia('(prefers-color-scheme: dark)').matches) theme = 'dark';
   } catch (e) {}
   root.setAttribute('data-theme', theme);
+  try {
+    var preset = localStorage.getItem('cmn-preset');
+    if (preset === 'carbon') root.removeAttribute('data-preset');
+    else if (preset && /^[a-z][a-z0-9-]*$/.test(preset)) root.setAttribute('data-preset', preset);
+  } catch (e) {}
   try {
     var seed = JSON.parse(localStorage.getItem('cmn-theme-seed'));
     if (!seed || seed.v !== 1 || !seed.css) return;

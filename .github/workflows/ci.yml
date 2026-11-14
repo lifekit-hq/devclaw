@@ -96,7 +96,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-      - uses: lifekit-hq/lifekit-common/.github/actions/baseline-report@v4.4.2
+      - uses: lifekit-hq/lifekit-common/.github/actions/baseline-report@v5.0.0
         with:
           token: ${{ github.token }}
           repo: ${{ github.repository }}
