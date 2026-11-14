@@ -10,6 +10,7 @@
     "lint": "lifekit-theme-sync --check && npm run drift && ng lint --max-warnings 0",
     "drift": "lifekit-chrome-check drift src public",
     "sync:theme": "lifekit-theme-sync",
+    "startup-images": "node scripts/generate-startup-images.mjs",
     "test": "ng test --no-watch",
     "e2e": "playwright test"
   },
