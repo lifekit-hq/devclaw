@@ -2,6 +2,13 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.6.1](https://github.com/lifekit-hq/devclaw/compare/v2.6.0...v2.6.1) (2026-11-14)
+
+
+### Bug Fixes
+
+* **donegate:** read a valid verdict through the prose around it ([#1014](https://github.com/lifekit-hq/devclaw/issues/1014)) ([686e891](https://github.com/lifekit-hq/devclaw/commit/686e891d531428b5c7408fce6d61a020c87f20e5)), closes [#1013](https://github.com/lifekit-hq/devclaw/issues/1013)
+
 ## [2.6.0](https://github.com/lifekit-hq/devclaw/compare/v2.5.0...v2.6.0) (2026-11-08)
 
 
