@@ -5,7 +5,7 @@ import {TestBed} from '@angular/core/testing';
 import {provideRouter, Router, withComponentInputBinding} from '@angular/router';
 import {RouterTestingHarness} from '@angular/router/testing';
 import {AppUpdateService} from '@lifekit-hq/core/pwa';
-import {CmnPullRefreshService, CmnShellService} from '@lifekit-hq/ui';
+import {CmnPullRefreshService, CmnShellService, provideWhatsNew} from '@lifekit-hq/ui';
 
 import {APP_ROUTES} from '../app.routes';
 
@@ -83,6 +83,12 @@ describe('AppShellComponent', () => {
         provideRouter(APP_ROUTES, withComponentInputBinding()),
         provideHttpClient(),
         provideHttpClientTesting(),
+        // The library's What's new, with no notes to fetch and a marker kept in memory.
+        provideWhatsNew({
+          version: '0.0.0',
+          load: () => Promise.resolve({versions: []}),
+          storage: {getItem: () => null, setItem: () => undefined},
+        }),
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -131,7 +137,7 @@ describe('AppShellComponent', () => {
     (root().querySelector('button[aria-label="Account menu"]') as HTMLButtonElement).click();
     await harness.fixture.whenStable();
 
-    expect(menuItems()).toEqual(['Settings', 'Sign out']);
+    expect(menuItems()).toEqual(['Settings', "What's new", 'Sign out']);
     expect(document.body.textContent).toContain('ada@example.com');
   });
 
@@ -144,7 +150,7 @@ describe('AppShellComponent', () => {
     (root().querySelector('button[aria-label="Account menu"]') as HTMLButtonElement).click();
     await harness.fixture.whenStable();
 
-    expect(menuItems()).toEqual(['Not signed in', 'Settings']);
+    expect(menuItems()).toEqual(['Not signed in', 'Settings', "What's new"]);
   });
 
   it('has no light/dark toggle in the top bar: appearance is Settings and the palette', async () => {

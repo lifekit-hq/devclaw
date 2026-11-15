@@ -13,15 +13,16 @@ import {
   AppLayoutComponent,
   CmnPullRefreshService,
   CmnShellService,
+  CmnWhatsNewService,
   type CommandPaletteItem,
   type MenuItem,
   type NavItem,
+  WHATS_NEW_MENU_ID,
 } from '@lifekit-hq/ui';
 
 import {SETTINGS_ROUTE} from '../account/account';
 import {AccountService} from '../account/account.service';
 import {GoalsFeed} from '../api/feeds';
-import {VERSION} from '../version';
 
 /** The console's four pages: the phone's tabs and the sidebar's entries. */
 export const NAV_ITEMS: NavItem[] = [
@@ -75,10 +76,12 @@ const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
       [account]="layoutAccount()"
       [tabRoutes]="tabRoutes"
       [moreRoute]="moreRoute"
-      [versionLabel]="versionLabel"
+      [versionLabel]="whatsNew.versionLabel"
+      [versionDot]="whatsNew.hasUnread()"
       [phoneOverlay]="true"
       (navClick)="navigate($event)"
       (paletteAction)="onPaletteAction($event)"
+      (versionClick)="whatsNew.open()"
       (avatarMenuSelect)="onAccountItem($event)"
       brand="devclaw"
     >
@@ -100,12 +103,13 @@ export class AppShellComponent {
   private readonly accounts = inject(AccountService);
   private readonly goals = inject(GoalsFeed);
 
+  protected readonly whatsNew = inject(CmnWhatsNewService);
+
   protected readonly update = inject(AppUpdateService);
 
   protected readonly layoutAccount = this.accounts.layoutAccount;
   protected readonly tabRoutes = NAV_ITEMS.map(item => item.route);
   protected readonly moreRoute = MORE_ROUTE;
-  protected readonly versionLabel = `v${VERSION}`;
   /** Needs you carries the number of goals waiting on the owner. */
   protected readonly navItems = NAV_ITEMS.map((item): NavItem =>
     item.route === '/needs-you' ? {...item, badge: () => this.goals.waiting()} : item
@@ -138,8 +142,12 @@ export class AppShellComponent {
     }
   }
 
-  // The layout navigates to Settings itself; Sign out is the app's.
+  // The layout navigates to Settings itself; Sign out and What's new are the app's.
   protected onAccountItem(item: MenuItem): void {
+    if (item.id === WHATS_NEW_MENU_ID) {
+      this.whatsNew.open();
+      return;
+    }
     if (item.id === ACCOUNT_SIGN_OUT_ID) {
       this.accounts.signOut();
     }
