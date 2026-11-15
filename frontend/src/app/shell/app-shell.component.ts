@@ -11,6 +11,7 @@ import {
   ACCOUNT_SIGN_OUT_ID,
   APPEARANCE_PALETTE_ITEMS,
   AppLayoutComponent,
+  CmnPullRefreshService,
   CmnShellService,
   type CommandPaletteItem,
   type MenuItem,
@@ -42,6 +43,15 @@ const PAGE_ITEMS: CommandPaletteItem[] = [
   })),
   {id: SETTINGS_ROUTE, label: 'Settings', icon: 'Settings', group: 'Pages'},
 ];
+// Pull to refresh is a touch gesture; this is the reload a keyboard or a screen reader reaches.
+// The layout treats a palette id without the leading underscore as a route to navigate to.
+const REFRESH_ACTION_ID = '_refresh';
+const REFRESH_PALETTE_ITEM: CommandPaletteItem = {
+  id: REFRESH_ACTION_ID,
+  label: 'Refresh this page',
+  icon: 'RefreshCw',
+  group: 'Actions',
+};
 const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
   id: ACCOUNT_SIGN_OUT_ID,
   label: 'Sign out',
@@ -86,6 +96,7 @@ const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
 export class AppShellComponent {
   private readonly router = inject(Router);
   private readonly shell = inject(CmnShellService);
+  private readonly pullRefresh = inject(CmnPullRefreshService);
   private readonly accounts = inject(AccountService);
   private readonly goals = inject(GoalsFeed);
 
@@ -102,6 +113,7 @@ export class AppShellComponent {
   /** Sign out is offered in the palette only for a signed-in account. */
   protected readonly paletteItems = computed((): CommandPaletteItem[] => [
     ...PAGE_ITEMS,
+    ...(this.pullRefresh.available() ? [REFRESH_PALETTE_ITEM] : []),
     ...APPEARANCE_PALETTE_ITEMS,
     ...(this.accounts.account() ? [SIGN_OUT_PALETTE_ITEM] : []),
   ]);
@@ -117,6 +129,10 @@ export class AppShellComponent {
 
   // The layout navigates to a page entry and applies the appearance entries itself.
   protected onPaletteAction(id: string): void {
+    if (id === REFRESH_ACTION_ID) {
+      void this.pullRefresh.refresh();
+      return;
+    }
     if (id === ACCOUNT_SIGN_OUT_ID) {
       this.accounts.signOut();
     }

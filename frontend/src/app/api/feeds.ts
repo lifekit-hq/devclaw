@@ -16,14 +16,13 @@ export class GoalsFeed {
   private readonly feed = liveFeed(() => this.api.goals(), POLL_MS);
 
   public readonly state = this.feed.state;
+  public readonly loading = this.feed.loading;
   /** Goals with an ask nobody has answered yet. */
   public readonly waiting = computed(
     () => (this.state().data ?? []).filter(g => g.attention && !g.attention.answered).length
   );
 
-  public reload(): void {
-    this.feed.reload();
-  }
+  public readonly reload = (): void => this.feed.reload();
 }
 
 /** Dispatch control: the hold, the quota pause and the run window. */
@@ -33,8 +32,7 @@ export class ControlFeed {
   private readonly feed = liveFeed(() => this.api.control(), POLL_MS);
 
   public readonly state = this.feed.state;
+  public readonly loading = this.feed.loading;
 
-  public reload(): void {
-    this.feed.reload();
-  }
+  public readonly reload = (): void => this.feed.reload();
 }

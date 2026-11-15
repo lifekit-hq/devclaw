@@ -63,7 +63,7 @@ function matches(g: GoalRow, filter: Filter): boolean {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page kind="overview">
+    <cmn-page [reload]="feed.reload" [reloading]="feed.loading()" kind="overview">
       <p class="text-cmn-sm text-text-secondary">
         Every goal devclaw is working on, one per GitHub issue.
       </p>

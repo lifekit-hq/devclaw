@@ -5,7 +5,7 @@ import {TestBed} from '@angular/core/testing';
 import {provideRouter, Router, withComponentInputBinding} from '@angular/router';
 import {RouterTestingHarness} from '@angular/router/testing';
 import {AppUpdateService} from '@lifekit-hq/core/pwa';
-import {CmnShellService} from '@lifekit-hq/ui';
+import {CmnPullRefreshService, CmnShellService} from '@lifekit-hq/ui';
 
 import {APP_ROUTES} from '../app.routes';
 
@@ -22,6 +22,13 @@ const WAITING_GOAL = {
     link: '',
     answered: null,
   },
+};
+
+const CONTROL = {
+  operatorHold: {on: false, reason: ''},
+  schedule: {enabled: false, start: '', end: '', tz: ''},
+  pause: null,
+  blocked: false,
 };
 
 // The test browser's width is not the app's: the sidebar and avatar need the wide mode and the
@@ -164,5 +171,63 @@ describe('AppShellComponent', () => {
     await harness.fixture.whenStable();
 
     expect(root().querySelector('button[aria-label="Account menu"]')).toBeNull();
+  });
+
+  // A dead gesture is silent: the shell offers the pull only to a tab root that registered a
+  // reload, and matches a tab root by the exact URL after redirects. Each root, and the bare
+  // origin that redirects to one, must have a reload that reaches the network.
+  it.each([
+    ['/', '/needs-you', ['/goals.json']],
+    ['/needs-you', '/needs-you', ['/goals.json']],
+    ['/goals', '/goals', ['/goals.json']],
+    ['/projects', '/projects', ['/projects.json']],
+    ['/verdicts', '/verdicts', ['/verdicts.json?limit=50']],
+  ])('pulls %s to refresh: its reload reads the feed again', async (path, landed, urls) => {
+    await start('phone');
+    await harness.navigateByUrl(path);
+    await settle();
+    for (const req of http.match(() => true)) {
+      req.flush(req.request.url === '/control.json' ? CONTROL : [], {
+        status: 200,
+        statusText: 'OK',
+      });
+    }
+    await harness.fixture.whenStable();
+    const pull = TestBed.inject(CmnPullRefreshService);
+
+    expect(TestBed.inject(Router).url).toBe(landed);
+    expect(pull.available()).toBe(true);
+    void pull.refresh();
+    await settle();
+    const reads = http.match(() => true).map(r => r.request.url);
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.some(u => urls.some(want => u.startsWith(want.split('?')[0])))).toBe(true);
+  });
+
+  // The layout navigates to any palette id that does not start with an underscore, so a mislabelled
+  // entry leaves the page instead of reloading it.
+  it('reloads the page from the palette entry: it stays on the tab root and reads the feed', async () => {
+    await start('phone');
+    await harness.navigateByUrl('/projects');
+    await settle();
+    for (const req of http.match(() => true)) {
+      req.flush(req.request.url === '/control.json' ? CONTROL : [], {
+        status: 200,
+        statusText: 'OK',
+      });
+    }
+    await harness.fixture.whenStable();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true}));
+    await settle();
+    const entry = Array.from(document.querySelectorAll<HTMLElement>('*')).find(
+      el => el.children.length === 0 && el.textContent?.trim() === 'Refresh this page'
+    );
+    expect(entry).toBeDefined();
+    entry?.click();
+    await settle();
+
+    expect(TestBed.inject(Router).url).toBe('/projects');
+    expect(http.match(r => r.url.startsWith('/projects.json')).length).toBeGreaterThan(0);
   });
 });
