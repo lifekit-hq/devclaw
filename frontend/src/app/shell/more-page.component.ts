@@ -1,12 +1,13 @@
 import {ChangeDetectionStrategy, Component, inject} from '@angular/core';
 import {
   ACCOUNT_SIGN_OUT_ID,
+  CmnWhatsNewService,
   type MenuItem,
   MorePageComponent as KitMorePageComponent,
+  WHATS_NEW_MENU_ID,
 } from '@lifekit-hq/ui';
 
 import {AccountService} from '../account/account.service';
-import {VERSION} from '../version';
 import {NAV_ITEMS} from './app-shell.component';
 
 /**
@@ -22,7 +23,7 @@ import {NAV_ITEMS} from './app-shell.component';
       [items]="navItems"
       [tabRoutes]="tabRoutes"
       [account]="accounts.layoutAccount()"
-      [versionLabel]="versionLabel"
+      [versionLabel]="whatsNew.versionLabel"
       (itemSelect)="select($event)"
     />
   `,
@@ -31,10 +32,14 @@ export class MorePageComponent {
   protected readonly accounts = inject(AccountService);
   protected readonly navItems = NAV_ITEMS;
   protected readonly tabRoutes = NAV_ITEMS.map(item => item.route);
-  protected readonly versionLabel = `v${VERSION}`;
+  protected readonly whatsNew = inject(CmnWhatsNewService);
 
-  /** Settings is a link the kit follows itself; Sign out is the app's. */
+  /** Settings is a link the kit follows itself; What's new and Sign out are the app's. */
   protected select(item: MenuItem): void {
+    if (item.id === WHATS_NEW_MENU_ID) {
+      this.whatsNew.open();
+      return;
+    }
     if (item.id === ACCOUNT_SIGN_OUT_ID) {
       this.accounts.signOut();
     }

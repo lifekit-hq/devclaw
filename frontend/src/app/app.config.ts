@@ -9,12 +9,13 @@ import {
 } from '@angular/core';
 import {provideRouter, UrlSerializer, withComponentInputBinding} from '@angular/router';
 import {provideServiceWorker} from '@angular/service-worker';
-import {provideAppearanceSync, provideToastPreferenceErrors} from '@lifekit-hq/ui';
+import {provideAppearanceSync, provideToastPreferenceErrors, provideWhatsNew} from '@lifekit-hq/ui';
 
 import {AppPreferencesStore} from './account/preferences';
 import {accessTokenInterceptor, AccessTokenUrlSerializer} from './api/access-token';
 import {APP_ROUTES} from './app.routes';
 import {DEMO, DEMO_INTERCEPTORS} from './demo/demo';
+import {VERSION} from './version';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -30,6 +31,13 @@ export const appConfig: ApplicationConfig = {
     // written through to /api/me/preferences, and a failed save toasts. Also starts the theme.
     provideAppearanceSync(AppPreferencesStore),
     provideToastPreferenceErrors(),
+    // The console's own release notes (src/whats-new/notes.md, built into whats-new.json).
+    provideWhatsNew({
+      version: VERSION,
+      // Relative, so it resolves under the console's /console/ base like the rest of the bundle.
+      url: 'whats-new.json',
+      storageKey: 'devclaw.whatsNew.lastSeen',
+    }),
     // The gate only serves the console to a signed-in user, so the account's preferences load at
     // start; the server's appearance then wins over the device cache. A failed load (no gate
     // identity, offline) leaves the cache in charge.

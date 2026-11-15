@@ -33,17 +33,20 @@ const NOT_SIGNED_IN: MenuItem = {id: '_none', label: 'Not signed in', disabled: 
  * The layout's account model: the standard account menu (identity header, Settings, Sign out).
  * Without a gate session there is no identity and no Sign out, only a note and Settings.
  */
-export function layoutAccount(account: Account | null): AppLayoutAccount {
+export function layoutAccount(account: Account | null, extras: MenuItem[] = []): AppLayoutAccount {
   if (!account) {
     return {
       label: '',
-      menuItems: [NOT_SIGNED_IN, ...accountMenu({settingsRoute: SETTINGS_ROUTE, signOut: false})],
+      menuItems: [
+        NOT_SIGNED_IN,
+        ...accountMenu({settingsRoute: SETTINGS_ROUTE, signOut: false, extras}),
+      ],
     };
   }
   return {
     label: account.name || account.email,
     name: account.name && account.name !== account.email ? account.name : undefined,
     email: account.email || undefined,
-    menuItems: accountMenu({settingsRoute: SETTINGS_ROUTE}),
+    menuItems: accountMenu({settingsRoute: SETTINGS_ROUTE, extras}),
   };
 }
