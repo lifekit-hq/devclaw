@@ -30,7 +30,7 @@ const POLL_MS = 30_000;
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page kind="list">
+    <cmn-page [reload]="feed.reload" [reloading]="feed.loading()" kind="list">
       <p class="text-cmn-sm text-text-secondary">
         How each finished goal was checked against its requirements. Tap a row for the clauses and
         their evidence.

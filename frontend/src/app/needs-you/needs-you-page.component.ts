@@ -38,7 +38,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <cmn-page kind="list">
+    <cmn-page [reload]="feed.reload" [reloading]="feed.loading()" kind="list">
       <p class="text-cmn-sm text-text-secondary">
         Goals waiting for your decision. Your answer is posted on the issue.
       </p>

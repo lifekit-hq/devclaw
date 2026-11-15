@@ -2,7 +2,7 @@ import {type Signal, signal} from '@angular/core';
 import {toObservable, toSignal} from '@angular/core/rxjs-interop';
 import {poll} from '@lifekit-hq/core';
 import {type AsyncStateStatus} from '@lifekit-hq/ui';
-import {catchError, map, type Observable, of, scan, startWith, Subject, switchMap} from 'rxjs';
+import {catchError, map, type Observable, of, scan, startWith, Subject, switchMap, tap} from 'rxjs';
 
 import {errorText} from './devclaw-api.service';
 
@@ -16,6 +16,8 @@ export interface FeedState<T> {
 
 export interface LiveFeed<T> {
   readonly state: Signal<FeedState<T>>;
+  /** A `reload()` is still waiting for its read (what pull to refresh keeps its indicator up on). */
+  readonly loading: Signal<boolean>;
   /** Reads now (after a verb) and restarts the interval. */
   reload(): void;
 }
@@ -35,6 +37,7 @@ export function liveFeed<T, K = null>(
   key: Signal<K> = signal(null as K)
 ): LiveFeed<T> {
   const reloads$ = new Subject<void>();
+  const loading = signal(false);
   const read = (k: K): Observable<Read<T>> =>
     request(k).pipe(
       map((data): Read<T> => ({ok: true, data})),
@@ -54,6 +57,7 @@ export function liveFeed<T, K = null>(
           switchMap(() =>
             intervalMs > 0 ? poll(() => read(k), {intervalMs, isDone: () => false}) : read(k)
           ),
+          tap(() => loading.set(false)),
           scan(
             (prev: FeedState<T>, r: Read<T>): FeedState<T> =>
               r.ok
@@ -67,7 +71,14 @@ export function liveFeed<T, K = null>(
     ),
     {initialValue: EMPTY}
   );
-  return {state, reload: () => reloads$.next()};
+  return {
+    state,
+    loading: loading.asReadonly(),
+    reload: () => {
+      loading.set(true);
+      reloads$.next();
+    },
+  };
 }
 
 /**
