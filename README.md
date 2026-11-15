@@ -98,6 +98,12 @@ build takes the same token as a BuildKit secret):
 cd frontend && npm ci && npm run lint && npm test && npm run build && npm run e2e
 ```
 
+The console's "What's new" sheet reads `public/whats-new.json`, which
+`lifekit-whats-new` generates from `src/whats-new/notes.md` before `npm start`
+and `npm run build`; `npm run lint` fails when the two drift. A shipped console
+change bumps `package.json` and `src/app/version.ts` and adds a `## <version>`
+section to `notes.md`.
+
 `npm run build:demo` builds the hosted demo into `frontend/dist/demo`: the
 same production bundle under `/devclaw/`, with `src/app/demo/demo.pages.ts`
 swapped in (an Angular `fileReplacements`) to answer every feed from the e2e
