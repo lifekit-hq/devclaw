@@ -203,4 +203,31 @@ describe('AppShellComponent', () => {
     expect(reads.length).toBeGreaterThan(0);
     expect(reads.some(u => urls.some(want => u.startsWith(want.split('?')[0])))).toBe(true);
   });
+
+  // The layout navigates to any palette id that does not start with an underscore, so a mislabelled
+  // entry leaves the page instead of reloading it.
+  it('reloads the page from the palette entry: it stays on the tab root and reads the feed', async () => {
+    await start('phone');
+    await harness.navigateByUrl('/projects');
+    await settle();
+    for (const req of http.match(() => true)) {
+      req.flush(req.request.url === '/control.json' ? CONTROL : [], {
+        status: 200,
+        statusText: 'OK',
+      });
+    }
+    await harness.fixture.whenStable();
+
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true}));
+    await settle();
+    const entry = Array.from(document.querySelectorAll<HTMLElement>('*')).find(
+      el => el.children.length === 0 && el.textContent?.trim() === 'Refresh this page'
+    );
+    expect(entry).toBeDefined();
+    entry?.click();
+    await settle();
+
+    expect(TestBed.inject(Router).url).toBe('/projects');
+    expect(http.match(r => r.url.startsWith('/projects.json')).length).toBeGreaterThan(0);
+  });
 });

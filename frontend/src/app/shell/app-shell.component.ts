@@ -44,7 +44,8 @@ const PAGE_ITEMS: CommandPaletteItem[] = [
   {id: SETTINGS_ROUTE, label: 'Settings', icon: 'Settings', group: 'Pages'},
 ];
 // Pull to refresh is a touch gesture; this is the reload a keyboard or a screen reader reaches.
-const REFRESH_ACTION_ID = 'action:refresh';
+// The layout treats a palette id without the leading underscore as a route to navigate to.
+const REFRESH_ACTION_ID = '_refresh';
 const REFRESH_PALETTE_ITEM: CommandPaletteItem = {
   id: REFRESH_ACTION_ID,
   label: 'Refresh this page',
