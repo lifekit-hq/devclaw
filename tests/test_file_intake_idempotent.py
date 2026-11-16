@@ -98,3 +98,62 @@ async def test_a_concurrent_double_call_files_one_issue_counted_twice(forge):
     a, b = await asyncio.gather(_file(fp="x"), _file(fp="x"))
     assert len(forge.issues["o/r"]) == 1
     assert sorted(r["count"] for r in (a, b)) == [1, 2]
+
+
+# --- the envelope and the receipt (tinyspec file-intake-envelope) -------------
+
+
+def test_a_refused_envelope_is_a_rejected_receipt_with_a_reason():
+    cases = (("", "x", "dev", "owner"), ("o/r", " ", "dev", "acceptance"),
+             ("x/other", "x", "dev", "owner"), ("o/r", "x", "ops", "class"))
+    for owner, acc, cls, word in cases:
+        reason = intake.check_envelope("o/r", "p", owner, cls, acc)
+        assert word in reason
+        out = intake.rejected(reason)
+        assert out["state"] == "rejected" and out["id"] == "" and out["grade"]["reason"] == reason
+    assert intake.check_envelope("o/r", "p", "o/r", "dev", "x") == ""
+
+
+async def test_a_full_envelope_returns_a_submitted_receipt_and_writes_the_block(forge):
+    block = intake._envelope_block("ci-timeout", "night-agent", "o/r", "dev", "the build stops timing out", "t-1")
+    out = intake.receipt("o/r", await intake.file_intake_in("o/r", "build timed out", "log", "ci-timeout", block, "t-1"))
+    assert (out["id"], out["state"], out["url"]) == ("o/r#1", "submitted", "https://github.com/o/r/issues/1")
+    body = forge.issues["o/r"][0]["body"]
+    assert "devclaw-envelope" in body and "thread: t-1" in body and "acceptance: the build stops timing out" in body
+
+
+async def test_a_repeat_returns_a_working_receipt_with_the_count(forge):
+    block = intake._envelope_block("x", "a", "o/r", "dev", "done", "t-1")
+    await intake.file_intake_in("o/r", "t", "", "x", block, "t-1")
+    out = intake.receipt("o/r", await intake.file_intake_in("o/r", "t", "again", "x", block, "t-2"))
+    assert out["state"] == "working" and out["count"] == 2 and out["id"] == "o/r#1"
+    assert "thread: t-2" in forge.comments[-1][2]
+
+
+# --- the tool itself: the wiring between the envelope check and the filing ----
+
+
+@pytest.fixture
+def tool(forge, monkeypatch):
+    from devclaw.project_registry import ResolvedDispatch
+
+    monkeypatch.setattr(intake, "_resolve_project_or_reject",
+                        lambda project_id, name: ResolvedDispatch("/w", "https://github.com/o/r", project_id))
+    return getattr(intake.file_intake, "fn", intake.file_intake)
+
+
+async def test_the_tool_files_nothing_for_a_refused_envelope(tool, forge):
+    out = json.loads(await tool("p", "build timed out", owner="o/r", acceptance="  ", fingerprint="ci-timeout"))
+    assert out["state"] == "rejected" and "acceptance" in out["grade"]["reason"] and out["id"] == ""
+    assert forge.issues == {} and forge.comments == []
+
+
+async def test_the_tool_returns_the_receipt_and_the_issue_carries_the_same_fingerprint(tool, forge):
+    out = json.loads(await tool("p", "build timed out", owner="o/r", acceptance="the build stops timing out",
+                                fingerprint="ci-timeout", origin="night-agent", thread="t-1"))
+    assert (out["id"], out["state"]) == ("o/r#1", "submitted") and out["fingerprint"] == "ci-timeout"
+    issue = forge.issues["o/r"][0]
+    assert issue["labels"] == ["intake:" + out["fingerprint"]]
+    assert "fingerprint: ci-timeout" in issue["body"] and "thread: t-1" in issue["body"]
+    again = json.loads(await tool("p", "build timed out", owner="o/r", acceptance="x", fingerprint="ci-timeout"))
+    assert (again["id"], again["state"], again["count"]) == ("o/r#1", "working", 2)
