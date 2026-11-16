@@ -2,6 +2,20 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.7.0](https://github.com/lifekit-hq/devclaw/compare/v2.6.0...v2.7.0) (2026-11-16)
+
+
+### Features
+
+* **frontend:** adopt What's new from lifekit-common in the console ([#1018](https://github.com/lifekit-hq/devclaw/issues/1018)) ([6eb2fb1](https://github.com/lifekit-hq/devclaw/commit/6eb2fb1268a5b4426ba31054bcd1b46d914c9f3c))
+* **frontend:** page-shaped loading skeletons and a pending account shell ([#1019](https://github.com/lifekit-hq/devclaw/issues/1019)) ([1e6e587](https://github.com/lifekit-hq/devclaw/commit/1e6e587d56a2e258e7a8d5e7a8cfdc4934c88131))
+* **frontend:** pull to refresh on the tab root pages ([#1017](https://github.com/lifekit-hq/devclaw/issues/1017)) ([ba8940d](https://github.com/lifekit-hq/devclaw/commit/ba8940dc8d53f6ab04a20e6e6ab235f03314f6ee))
+
+
+### Bug Fixes
+
+* **donegate:** read a valid verdict through the prose around it ([#1014](https://github.com/lifekit-hq/devclaw/issues/1014)) ([686e891](https://github.com/lifekit-hq/devclaw/commit/686e891d531428b5c7408fce6d61a020c87f20e5)), closes [#1013](https://github.com/lifekit-hq/devclaw/issues/1013)
+
 ## [2.6.0](https://github.com/lifekit-hq/devclaw/compare/v2.5.0...v2.6.0) (2026-11-08)
 
 
