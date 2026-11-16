@@ -77,10 +77,10 @@ function matches(g: GoalRow, filter: Filter): boolean {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        skeletonShape="overview"
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="overview"
         emptySubMessage="Goals appear here once an issue is handed to devclaw."
         class="block"
         retryable

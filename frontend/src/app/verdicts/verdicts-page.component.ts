@@ -39,10 +39,10 @@ const POLL_MS = 30_000;
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        skeletonShape="list"
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="list"
         emptySubMessage="No verdicts have been recorded yet."
         class="block"
         retryable

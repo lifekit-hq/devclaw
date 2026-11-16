@@ -33,10 +33,10 @@ const SHORT_SHA = 7;
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        skeletonShape="detail"
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="detail"
         emptySubMessage="This review has no detail to show."
         class="block"
         retryable

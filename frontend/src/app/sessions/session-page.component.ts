@@ -93,10 +93,10 @@ function absent(value: unknown): boolean {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
       <cmn-async-state
-        skeletonShape="detail"
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="detail"
         emptySubMessage="This session has no detail to show yet."
         class="block"
         retryable
