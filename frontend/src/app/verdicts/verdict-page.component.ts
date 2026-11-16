@@ -1,12 +1,6 @@
 import {ChangeDetectionStrategy, Component, computed, inject, input} from '@angular/core';
 import {RouterLink} from '@angular/router';
-import {
-  AlertComponent,
-  AsyncStateComponent,
-  PageComponent,
-  SkeletonComponent,
-  TagComponent,
-} from '@lifekit-hq/ui';
+import {AlertComponent, AsyncStateComponent, PageComponent, TagComponent} from '@lifekit-hq/ui';
 
 import {DevclawApiService} from '../api/devclaw-api.service';
 import {feedStatus, liveFeed} from '../api/live-feed';
@@ -25,7 +19,6 @@ const SHORT_SHA = 7;
 @Component({
   selector: 'dc-verdict-page',
   imports: [
-    SkeletonComponent,
     AlertComponent,
     AsyncStateComponent,
     PageComponent,
@@ -39,93 +32,90 @@ const SHORT_SHA = 7;
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      @if (feedStatus(feed.state()) === 'loading') {
-        <cmn-skeleton shape="detail" />
-      } @else {
-        <cmn-async-state
-          [status]="feedStatus(feed.state())"
-          [errorMessage]="feed.state().error ?? ''"
-          (retry)="feed.reload()"
-          emptySubMessage="This review has no detail to show."
-          class="block"
-          retryable
-        >
-          @if (verdict(); as v) {
-            @let word = verdictWord(v);
-            <div class="flex flex-col gap-cmn-section-gap">
-              <header class="flex min-w-0 flex-col gap-cmn-2">
-                <p class="flex flex-wrap items-baseline gap-cmn-2 text-cmn-sm">
-                  <cmn-tag [variant]="word.variant">{{ word.text }}</cmn-tag>
-                  <span class="font-mono text-cmn-xs text-text-secondary">{{ meta() }}</span>
-                </p>
-                @if (v.summary) {
-                  <p class="text-cmn-sm text-text-primary">{{ v.summary }}</p>
+      <cmn-async-state
+        skeletonShape="detail"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="feed.state().error ?? ''"
+        (retry)="feed.reload()"
+        emptySubMessage="This review has no detail to show."
+        class="block"
+        retryable
+      >
+        @if (verdict(); as v) {
+          @let word = verdictWord(v);
+          <div class="flex flex-col gap-cmn-section-gap">
+            <header class="flex min-w-0 flex-col gap-cmn-2">
+              <p class="flex flex-wrap items-baseline gap-cmn-2 text-cmn-sm">
+                <cmn-tag [variant]="word.variant">{{ word.text }}</cmn-tag>
+                <span class="font-mono text-cmn-xs text-text-secondary">{{ meta() }}</span>
+              </p>
+              @if (v.summary) {
+                <p class="text-cmn-sm text-text-primary">{{ v.summary }}</p>
+              }
+              <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
+                @if (v.goalId) {
+                  <a [routerLink]="['/goals', v.goalId]" class="cmn-link">goal {{ v.goalId }}</a>
                 }
-                <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
-                  @if (v.goalId) {
-                    <a [routerLink]="['/goals', v.goalId]" class="cmn-link">goal {{ v.goalId }}</a>
-                  }
-                  <a [routerLink]="['/sessions', v.taskId]" class="cmn-link">review session</a>
-                  @if (v.prUrl) {
-                    <a [href]="v.prUrl" class="cmn-link" target="_blank" rel="noopener noreferrer"
-                      >the PR</a
-                    >
-                  }
-                </p>
-              </header>
+                <a [routerLink]="['/sessions', v.taskId]" class="cmn-link">review session</a>
+                @if (v.prUrl) {
+                  <a [href]="v.prUrl" class="cmn-link" target="_blank" rel="noopener noreferrer"
+                    >the PR</a
+                  >
+                }
+              </p>
+            </header>
 
-              @if (v.unreadable) {
-                <cmn-alert variant="warning">
-                  The review produced no readable verdict{{ v.rawError ? ': ' + v.rawError : '' }}.
-                </cmn-alert>
-              }
+            @if (v.unreadable) {
+              <cmn-alert variant="warning">
+                The review produced no readable verdict{{ v.rawError ? ': ' + v.rawError : '' }}.
+              </cmn-alert>
+            }
 
-              @if (v.clauses.length) {
-                <dc-section [count]="v.clauses.length" heading="Clauses">
-                  <ul class="flex flex-col gap-cmn-3 text-cmn-sm">
-                    @for (c of v.clauses; track $index) {
-                      @let met = c.satisfied && !!c.evidence;
-                      <li class="flex gap-cmn-2">
+            @if (v.clauses.length) {
+              <dc-section [count]="v.clauses.length" heading="Clauses">
+                <ul class="flex flex-col gap-cmn-3 text-cmn-sm">
+                  @for (c of v.clauses; track $index) {
+                    @let met = c.satisfied && !!c.evidence;
+                    <li class="flex gap-cmn-2">
+                      <span
+                        [class]="met ? 'text-status-success' : 'text-status-error'"
+                        class="w-cmn-5 shrink-0 font-mono"
+                        >{{ met ? '✓' : '✗' }}</span
+                      >
+                      <span class="min-w-0 flex-1">
+                        <span class="block text-text-primary">{{ c.clause }}</span>
                         <span
-                          [class]="met ? 'text-status-success' : 'text-status-error'"
-                          class="w-cmn-5 shrink-0 font-mono"
-                          >{{ met ? '✓' : '✗' }}</span
+                          class="block whitespace-pre-wrap break-words font-mono text-cmn-xs text-text-secondary"
+                          >{{ c.evidence || 'no evidence' }}</span
                         >
-                        <span class="min-w-0 flex-1">
-                          <span class="block text-text-primary">{{ c.clause }}</span>
-                          <span
-                            class="block whitespace-pre-wrap break-words font-mono text-cmn-xs text-text-secondary"
-                            >{{ c.evidence || 'no evidence' }}</span
-                          >
-                        </span>
-                      </li>
-                    }
-                  </ul>
-                </dc-section>
-              }
-
-              @if (v.question) {
-                <dc-section heading="Question for the owner">
-                  <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">{{ v.question }}</p>
-                </dc-section>
-              }
-
-              @if (v.structuralHealth || v.concerns.length) {
-                <dc-section heading="Structural health">
-                  <p class="font-mono text-cmn-sm text-text-primary">
-                    {{ v.structuralHealth || '—' }}
-                  </p>
-                  @for (concern of v.concerns; track $index) {
-                    <p class="text-cmn-xs text-text-secondary">· {{ concern }}</p>
+                      </span>
+                    </li>
                   }
-                </dc-section>
-              }
-            </div>
-          } @else if (feed.state().data) {
-            <cmn-alert variant="error">No such verdict: {{ id() }}</cmn-alert>
-          }
-        </cmn-async-state>
-      }
+                </ul>
+              </dc-section>
+            }
+
+            @if (v.question) {
+              <dc-section heading="Question for the owner">
+                <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">{{ v.question }}</p>
+              </dc-section>
+            }
+
+            @if (v.structuralHealth || v.concerns.length) {
+              <dc-section heading="Structural health">
+                <p class="font-mono text-cmn-sm text-text-primary">
+                  {{ v.structuralHealth || '—' }}
+                </p>
+                @for (concern of v.concerns; track $index) {
+                  <p class="text-cmn-xs text-text-secondary">· {{ concern }}</p>
+                }
+              </dc-section>
+            }
+          </div>
+        } @else if (feed.state().data) {
+          <cmn-alert variant="error">No such verdict: {{ id() }}</cmn-alert>
+        }
+      </cmn-async-state>
     </cmn-page>
   `,
 })

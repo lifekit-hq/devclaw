@@ -6,7 +6,6 @@ import {
   CardComponent,
   EmptyStateComponent,
   PageComponent,
-  SkeletonComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
 
@@ -18,7 +17,6 @@ import {UsageComponent} from '../shared/usage';
 @Component({
   selector: 'dc-projects-page',
   imports: [
-    SkeletonComponent,
     AlertComponent,
     AsyncStateComponent,
     CardComponent,
@@ -35,61 +33,58 @@ import {UsageComponent} from '../shared/usage';
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      @if (feedStatus(feed.state()) === 'loading') {
-        <cmn-skeleton shape="list" />
-      } @else {
-        <cmn-async-state
-          [status]="feedStatus(feed.state())"
-          [errorMessage]="feed.state().error ?? ''"
-          (retry)="feed.reload()"
-          emptySubMessage="Registered projects appear here."
-          class="block"
-          retryable
-        >
-          <div class="flex flex-col gap-cmn-3">
-            @for (p of feed.state().data ?? []; track p.id) {
-              <cmn-card>
-                <article [attr.aria-label]="p.name" class="flex flex-col gap-cmn-2">
-                  <header class="flex flex-wrap items-start justify-between gap-cmn-3">
-                    <div class="flex min-w-0 flex-col gap-cmn-1">
-                      <p class="font-medium text-text-primary">
-                        <a [routerLink]="['/projects', p.id]" class="cmn-link cmn-link--primary">{{
-                          p.name
-                        }}</a>
-                        <span class="ml-cmn-2 font-mono text-cmn-xs text-text-secondary">{{
-                          p.id
-                        }}</span>
-                      </p>
-                      <p class="break-all font-mono text-cmn-xs text-text-secondary">
-                        {{ p.repoUrl || 'no repo_url' }} · {{ p.workspaceDir || 'no workspace' }}
-                      </p>
-                      <dc-usage [usage]="p.usage" />
-                    </div>
-                    <cmn-tag>{{ p.health }}</cmn-tag>
-                  </header>
-                  @if (p.goals.length) {
-                    <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
-                      @for (g of p.goals; track g.id) {
-                        <a [routerLink]="['/goals', g.id]" class="cmn-link">
-                          {{ g.id }} ({{ g.outcome ?? g.state
-                          }}{{ g.attentionKind ? ', needs you' : '' }})
-                        </a>
-                      }
+      <cmn-async-state
+        skeletonShape="list"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="feed.state().error ?? ''"
+        (retry)="feed.reload()"
+        emptySubMessage="Registered projects appear here."
+        class="block"
+        retryable
+      >
+        <div class="flex flex-col gap-cmn-3">
+          @for (p of feed.state().data ?? []; track p.id) {
+            <cmn-card>
+              <article [attr.aria-label]="p.name" class="flex flex-col gap-cmn-2">
+                <header class="flex flex-wrap items-start justify-between gap-cmn-3">
+                  <div class="flex min-w-0 flex-col gap-cmn-1">
+                    <p class="font-medium text-text-primary">
+                      <a [routerLink]="['/projects', p.id]" class="cmn-link cmn-link--primary">{{
+                        p.name
+                      }}</a>
+                      <span class="ml-cmn-2 font-mono text-cmn-xs text-text-secondary">{{
+                        p.id
+                      }}</span>
                     </p>
-                  }
-                </article>
-              </cmn-card>
-            } @empty {
-              @if (feed.state().data) {
-                <cmn-empty-state
-                  message="No projects"
-                  subMessage="register_project from the waiter or the CLI."
-                />
-              }
+                    <p class="break-all font-mono text-cmn-xs text-text-secondary">
+                      {{ p.repoUrl || 'no repo_url' }} · {{ p.workspaceDir || 'no workspace' }}
+                    </p>
+                    <dc-usage [usage]="p.usage" />
+                  </div>
+                  <cmn-tag>{{ p.health }}</cmn-tag>
+                </header>
+                @if (p.goals.length) {
+                  <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
+                    @for (g of p.goals; track g.id) {
+                      <a [routerLink]="['/goals', g.id]" class="cmn-link">
+                        {{ g.id }} ({{ g.outcome ?? g.state
+                        }}{{ g.attentionKind ? ', needs you' : '' }})
+                      </a>
+                    }
+                  </p>
+                }
+              </article>
+            </cmn-card>
+          } @empty {
+            @if (feed.state().data) {
+              <cmn-empty-state
+                message="No projects"
+                subMessage="register_project from the waiter or the CLI."
+              />
             }
-          </div>
-        </cmn-async-state>
-      }
+          }
+        </div>
+      </cmn-async-state>
     </cmn-page>
   `,
 })

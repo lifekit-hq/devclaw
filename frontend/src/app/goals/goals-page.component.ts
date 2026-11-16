@@ -10,7 +10,6 @@ import {
   PageComponent,
   SegmentedComponent,
   type SegmentedOption,
-  SkeletonComponent,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
@@ -48,7 +47,6 @@ function matches(g: GoalRow, filter: Filter): boolean {
 @Component({
   selector: 'dc-goals-page',
   imports: [
-    SkeletonComponent,
     AgoPipe,
     AlertComponent,
     AsyncStateComponent,
@@ -78,89 +76,81 @@ function matches(g: GoalRow, filter: Filter): boolean {
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      @if (feedStatus(feed.state()) === 'loading') {
-        <cmn-skeleton shape="overview" />
-      } @else {
-        <cmn-async-state
-          [status]="feedStatus(feed.state())"
-          [errorMessage]="feed.state().error ?? ''"
-          (retry)="feed.reload()"
-          emptySubMessage="Goals appear here once an issue is handed to devclaw."
-          class="block"
-          retryable
-        >
-          @if (!shown().length) {
-            <cmn-empty-state message="Nothing here" subMessage="No goals match this filter." />
-          } @else {
-            <cmn-data-table
-              [rows]="shown()"
-              [trackBy]="trackById"
-              [rowsActionable]="true"
-              (rowClick)="open($event)"
-            >
-              <cmn-column key="objective" header="Goal" listSlot="primary">
-                <ng-template let-g cmnCell>
-                  <span class="block min-w-0">
-                    <span
-                      [class.text-text-secondary]="!!g.outcome"
-                      class="block truncate font-medium"
-                      >{{ g.objective || g.id }}</span
-                    >
-                    <span class="block truncate font-mono text-cmn-xs text-text-secondary">
-                      {{ g.id }} · #{{ g.issues.join(', #') }}
-                    </span>
-                  </span>
-                </ng-template>
-              </cmn-column>
-              <cmn-column key="projectId" header="Project" listSlot="secondary" />
-              <cmn-column key="state" header="State" listSlot="trailing">
-                <ng-template let-g cmnCell>
-                  <cmn-status-indicator
-                    [variant]="stateVariant(g.outcome ?? g.state)"
-                    [live]="stateIsLive(g.state)"
+      <cmn-async-state
+        skeletonShape="overview"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="feed.state().error ?? ''"
+        (retry)="feed.reload()"
+        emptySubMessage="Goals appear here once an issue is handed to devclaw."
+        class="block"
+        retryable
+      >
+        @if (!shown().length) {
+          <cmn-empty-state message="Nothing here" subMessage="No goals match this filter." />
+        } @else {
+          <cmn-data-table
+            [rows]="shown()"
+            [trackBy]="trackById"
+            [rowsActionable]="true"
+            (rowClick)="open($event)"
+          >
+            <cmn-column key="objective" header="Goal" listSlot="primary">
+              <ng-template let-g cmnCell>
+                <span class="block min-w-0">
+                  <span
+                    [class.text-text-secondary]="!!g.outcome"
+                    class="block truncate font-medium"
+                    >{{ g.objective || g.id }}</span
                   >
-                    {{ g.outcome ?? g.state }}
-                  </cmn-status-indicator>
-                </ng-template>
-              </cmn-column>
-              <cmn-column key="lastSession" header="Last session">
-                <ng-template let-g cmnCell>
-                  @if (g.lastSession; as s) {
-                    <a
-                      [routerLink]="['/sessions', s.id]"
-                      (click)="$event.stopPropagation()"
-                      class="cmn-link cmn-link--inherit flex items-baseline gap-cmn-2"
-                      title="open the session"
-                    >
-                      <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
-                        s.exit ?? s.status
-                      }}</cmn-tag>
-                      @if (s.exitDetail) {
-                        <span class="text-cmn-sm text-text-secondary">{{ s.exitDetail }}</span>
-                      }
-                    </a>
-                  } @else {
-                    —
-                  }
-                </ng-template>
-              </cmn-column>
-              <cmn-column key="usage" header="Tokens">
-                <ng-template let-g cmnCell
-                  ><dc-usage [usage]="g.usage" [compact]="true"
-                /></ng-template>
-              </cmn-column>
-              <cmn-column
-                key="lastSeenAt"
-                header="Seen"
-                align="right"
-                listSlot="trailing-secondary"
-              >
-                <ng-template let-g cmnCell>{{ g.lastSeenAt | ago }}</ng-template>
-              </cmn-column>
-            </cmn-data-table>
-          }
-        </cmn-async-state>
-      }
+                  <span class="block truncate font-mono text-cmn-xs text-text-secondary">
+                    {{ g.id }} · #{{ g.issues.join(', #') }}
+                  </span>
+                </span>
+              </ng-template>
+            </cmn-column>
+            <cmn-column key="projectId" header="Project" listSlot="secondary" />
+            <cmn-column key="state" header="State" listSlot="trailing">
+              <ng-template let-g cmnCell>
+                <cmn-status-indicator
+                  [variant]="stateVariant(g.outcome ?? g.state)"
+                  [live]="stateIsLive(g.state)"
+                >
+                  {{ g.outcome ?? g.state }}
+                </cmn-status-indicator>
+              </ng-template>
+            </cmn-column>
+            <cmn-column key="lastSession" header="Last session">
+              <ng-template let-g cmnCell>
+                @if (g.lastSession; as s) {
+                  <a
+                    [routerLink]="['/sessions', s.id]"
+                    (click)="$event.stopPropagation()"
+                    class="cmn-link cmn-link--inherit flex items-baseline gap-cmn-2"
+                    title="open the session"
+                  >
+                    <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
+                      s.exit ?? s.status
+                    }}</cmn-tag>
+                    @if (s.exitDetail) {
+                      <span class="text-cmn-sm text-text-secondary">{{ s.exitDetail }}</span>
+                    }
+                  </a>
+                } @else {
+                  —
+                }
+              </ng-template>
+            </cmn-column>
+            <cmn-column key="usage" header="Tokens">
+              <ng-template let-g cmnCell
+                ><dc-usage [usage]="g.usage" [compact]="true"
+              /></ng-template>
+            </cmn-column>
+            <cmn-column key="lastSeenAt" header="Seen" align="right" listSlot="trailing-secondary">
+              <ng-template let-g cmnCell>{{ g.lastSeenAt | ago }}</ng-template>
+            </cmn-column>
+          </cmn-data-table>
+        }
+      </cmn-async-state>
     </cmn-page>
   `,
 })

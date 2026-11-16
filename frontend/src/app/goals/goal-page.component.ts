@@ -6,7 +6,6 @@ import {
   AsyncStateComponent,
   ListItemRowComponent,
   PageComponent,
-  SkeletonComponent,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
@@ -34,7 +33,6 @@ export function issueUrl(repoUrl: string, issue: number): string {
 @Component({
   selector: 'dc-goal-page',
   imports: [
-    SkeletonComponent,
     AgoPipe,
     AlertComponent,
     AsyncStateComponent,
@@ -56,152 +54,149 @@ export function issueUrl(repoUrl: string, issue: number): string {
       @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      @if (feedStatus(feed.state()) === 'loading') {
-        <cmn-skeleton shape="detail" />
-      } @else {
-        <cmn-async-state
-          [status]="feedStatus(feed.state())"
-          [errorMessage]="error() ?? ''"
-          (retry)="feed.reload()"
-          emptySubMessage="This goal has nothing to show yet."
-          class="block"
-          retryable
-        >
-          <div class="flex flex-col gap-cmn-section-gap">
-            @if (goal(); as g) {
-              <header class="flex flex-wrap items-start justify-between gap-cmn-4">
-                <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
-                  @if (g.objective) {
-                    <p class="break-words text-cmn-md font-medium text-text-primary">
-                      {{ g.objective }}
-                    </p>
-                  }
-                  <p class="font-mono text-cmn-xs text-text-secondary">
-                    <a
-                      [routerLink]="['/projects', g.projectId]"
-                      class="cmn-link cmn-link--underlined"
-                      >{{ g.projectId }}</a
-                    >
-                    · <code>{{ g.branch }}</code>
+      <cmn-async-state
+        skeletonShape="detail"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="error() ?? ''"
+        (retry)="feed.reload()"
+        emptySubMessage="This goal has nothing to show yet."
+        class="block"
+        retryable
+      >
+        <div class="flex flex-col gap-cmn-section-gap">
+          @if (goal(); as g) {
+            <header class="flex flex-wrap items-start justify-between gap-cmn-4">
+              <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
+                @if (g.objective) {
+                  <p class="break-words text-cmn-md font-medium text-text-primary">
+                    {{ g.objective }}
                   </p>
-                  <dc-usage [usage]="g.usage" />
-                </div>
-                <cmn-status-indicator
-                  [variant]="stateVariant(g.outcome ?? g.state)"
-                  [live]="stateIsLive(g.state)"
-                >
-                  {{ g.outcome ?? g.state }}
-                </cmn-status-indicator>
-              </header>
-
-              <dc-section heading="The contract">
-                <p class="flex flex-wrap gap-cmn-3 text-cmn-sm">
-                  @for (n of g.issues; track n) {
-                    <a
-                      [href]="issueUrl(g.repoUrl, n)"
-                      class="cmn-link"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      >issue #{{ n }}</a
-                    >
-                  }
-                  @if (g.lastSession?.prUrl; as pr) {
-                    <a [href]="pr" class="cmn-link" target="_blank" rel="noopener noreferrer"
-                      >the PR</a
-                    >
-                  }
+                }
+                <p class="font-mono text-cmn-xs text-text-secondary">
+                  <a
+                    [routerLink]="['/projects', g.projectId]"
+                    class="cmn-link cmn-link--underlined"
+                    >{{ g.projectId }}</a
+                  >
+                  · <code>{{ g.branch }}</code>
                 </p>
-              </dc-section>
+                <dc-usage [usage]="g.usage" />
+              </div>
+              <cmn-status-indicator
+                [variant]="stateVariant(g.outcome ?? g.state)"
+                [live]="stateIsLive(g.state)"
+              >
+                {{ g.outcome ?? g.state }}
+              </cmn-status-indicator>
+            </header>
 
-              @if (g.attention; as attention) {
-                <dc-section heading="Needs you">
-                  <dc-attention-card
-                    [goalId]="g.id"
-                    [attention]="attention"
-                    [cancellable]="true"
-                    (decided)="feed.reload()"
-                    (cancelRequested)="cancel()"
-                  />
-                </dc-section>
-              } @else if (!g.outcome) {
-                <dc-section heading="Decide">
-                  <p class="text-cmn-sm text-text-secondary">
-                    Posted on the issue as an instruction mentioning the bot; it is read on the next
-                    check. This is the owner's one verb.
-                  </p>
-                  <dc-decide-form
-                    [goalId]="g.id"
-                    [cancellable]="true"
-                    (decided)="feed.reload()"
-                    (cancelRequested)="cancel()"
-                    placeholder="e.g. use SQLite; or: accept the gate's finding as a follow-up and close"
-                  />
-                </dc-section>
-              }
-
-              <dc-section [count]="g.sessions.length" [flush]="true" heading="Sessions">
-                @for (s of g.sessions; track s.id) {
-                  <cmn-list-item-row [label]="s.exitDetail || '—'" [sublabel]="sublabel(s)">
-                    <span meta class="flex items-center gap-cmn-2">
-                      <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
-                        s.exit ?? s.status
-                      }}</cmn-tag>
-                      <dc-usage [usage]="s.usage" [compact]="true" class="hidden sm:inline" />
-                    </span>
-                    <a
-                      [routerLink]="['/sessions', s.id]"
-                      actions
-                      class="cmn-link cmn-hit-slop font-mono text-cmn-xs"
-                      >{{ s.id.slice(0, shortId) }} →</a
-                    >
-                  </cmn-list-item-row>
-                } @empty {
-                  <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">No session yet.</p>
+            <dc-section heading="The contract">
+              <p class="flex flex-wrap gap-cmn-3 text-cmn-sm">
+                @for (n of g.issues; track n) {
+                  <a
+                    [href]="issueUrl(g.repoUrl, n)"
+                    class="cmn-link"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >issue #{{ n }}</a
+                  >
                 }
-              </dc-section>
-
-              <dc-section [count]="g.verdicts.length" heading="Verdicts">
-                @if (g.verdicts.length) {
-                  <dc-verdict-list [rows]="g.verdicts" />
-                } @else {
-                  <p class="text-cmn-sm text-text-secondary">No done-gate review yet.</p>
+                @if (g.lastSession?.prUrl; as pr) {
+                  <a [href]="pr" class="cmn-link" target="_blank" rel="noopener noreferrer"
+                    >the PR</a
+                  >
                 }
-              </dc-section>
+              </p>
+            </dc-section>
 
-              <dc-section heading="Decisions">
-                <ul class="divide-y divide-border-default text-cmn-sm">
-                  @for (d of g.decisions; track d.id) {
-                    <li class="py-cmn-2 text-text-primary">
-                      <span class="font-mono text-cmn-xs text-text-secondary">{{
-                        d.madeAt | ago
-                      }}</span>
-                      — {{ d.text }}
-                      @if (d.commentUrl) {
-                        ·
-                        <a
-                          [href]="d.commentUrl"
-                          class="cmn-link cmn-link--underlined"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          >thread</a
-                        >
-                      }
-                    </li>
-                  } @empty {
-                    <li class="text-text-secondary">None.</li>
-                  }
-                </ul>
+            @if (g.attention; as attention) {
+              <dc-section heading="Needs you">
+                <dc-attention-card
+                  [goalId]="g.id"
+                  [attention]="attention"
+                  [cancellable]="true"
+                  (decided)="feed.reload()"
+                  (cancelRequested)="cancel()"
+                />
               </dc-section>
-
-              <dc-section heading="World the last session saw">
-                <pre class="cmn-code-block cmn-code-block--bare">{{
-                  g.lastSeen ? (g.lastSeen | json) : '—'
-                }}</pre>
+            } @else if (!g.outcome) {
+              <dc-section heading="Decide">
+                <p class="text-cmn-sm text-text-secondary">
+                  Posted on the issue as an instruction mentioning the bot; it is read on the next
+                  check. This is the owner's one verb.
+                </p>
+                <dc-decide-form
+                  [goalId]="g.id"
+                  [cancellable]="true"
+                  (decided)="feed.reload()"
+                  (cancelRequested)="cancel()"
+                  placeholder="e.g. use SQLite; or: accept the gate's finding as a follow-up and close"
+                />
               </dc-section>
             }
-          </div>
-        </cmn-async-state>
-      }
+
+            <dc-section [count]="g.sessions.length" [flush]="true" heading="Sessions">
+              @for (s of g.sessions; track s.id) {
+                <cmn-list-item-row [label]="s.exitDetail || '—'" [sublabel]="sublabel(s)">
+                  <span meta class="flex items-center gap-cmn-2">
+                    <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
+                      s.exit ?? s.status
+                    }}</cmn-tag>
+                    <dc-usage [usage]="s.usage" [compact]="true" class="hidden sm:inline" />
+                  </span>
+                  <a
+                    [routerLink]="['/sessions', s.id]"
+                    actions
+                    class="cmn-link cmn-hit-slop font-mono text-cmn-xs"
+                    >{{ s.id.slice(0, shortId) }} →</a
+                  >
+                </cmn-list-item-row>
+              } @empty {
+                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">No session yet.</p>
+              }
+            </dc-section>
+
+            <dc-section [count]="g.verdicts.length" heading="Verdicts">
+              @if (g.verdicts.length) {
+                <dc-verdict-list [rows]="g.verdicts" />
+              } @else {
+                <p class="text-cmn-sm text-text-secondary">No done-gate review yet.</p>
+              }
+            </dc-section>
+
+            <dc-section heading="Decisions">
+              <ul class="divide-y divide-border-default text-cmn-sm">
+                @for (d of g.decisions; track d.id) {
+                  <li class="py-cmn-2 text-text-primary">
+                    <span class="font-mono text-cmn-xs text-text-secondary">{{
+                      d.madeAt | ago
+                    }}</span>
+                    — {{ d.text }}
+                    @if (d.commentUrl) {
+                      ·
+                      <a
+                        [href]="d.commentUrl"
+                        class="cmn-link cmn-link--underlined"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >thread</a
+                      >
+                    }
+                  </li>
+                } @empty {
+                  <li class="text-text-secondary">None.</li>
+                }
+              </ul>
+            </dc-section>
+
+            <dc-section heading="World the last session saw">
+              <pre class="cmn-code-block cmn-code-block--bare">{{
+                g.lastSeen ? (g.lastSeen | json) : '—'
+              }}</pre>
+            </dc-section>
+          }
+        </div>
+      </cmn-async-state>
     </cmn-page>
   `,
 })

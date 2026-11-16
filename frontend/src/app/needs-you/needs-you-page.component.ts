@@ -6,7 +6,6 @@ import {
   CardComponent,
   EmptyStateComponent,
   PageComponent,
-  SkeletonComponent,
 } from '@lifekit-hq/ui';
 
 import {type GoalRow} from '../api/devclaw.model';
@@ -28,7 +27,6 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
 @Component({
   selector: 'dc-needs-you-page',
   imports: [
-    SkeletonComponent,
     AlertComponent,
     AsyncStateComponent,
     AttentionCardComponent,
@@ -48,64 +46,61 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
       @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      @if (feedStatus(feed.state()) === 'loading') {
-        <cmn-skeleton shape="list" />
-      } @else {
-        <cmn-async-state
-          [status]="feedStatus(feed.state())"
-          [errorMessage]="error() ?? ''"
-          (retry)="feed.reload()"
-          emptySubMessage="Nothing is waiting on you right now."
-          class="block"
-          retryable
-        >
-          <div class="flex flex-col gap-cmn-section-gap">
-            @if (feed.state().data && !open().length && !answered().length) {
-              <cmn-empty-state
-                message="Nothing needs you"
-                subMessage="Every open goal is running, waiting on the world, or answered."
-                icon="CircleCheck"
-              />
+      <cmn-async-state
+        skeletonShape="list"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="error() ?? ''"
+        (retry)="feed.reload()"
+        emptySubMessage="Nothing is waiting on you right now."
+        class="block"
+        retryable
+      >
+        <div class="flex flex-col gap-cmn-section-gap">
+          @if (feed.state().data && !open().length && !answered().length) {
+            <cmn-empty-state
+              message="Nothing needs you"
+              subMessage="Every open goal is running, waiting on the world, or answered."
+              icon="CircleCheck"
+            />
+          }
+          @for (group of groups(); track group.title) {
+            @if (group.goals.length) {
+              <section [attr.aria-label]="group.title" class="flex flex-col gap-cmn-3">
+                <h2 class="font-headline text-cmn-sm font-semibold text-text-secondary">
+                  {{ group.title }} · {{ group.goals.length }}
+                </h2>
+                @for (g of group.goals; track g.id) {
+                  <cmn-card>
+                    <article
+                      [attr.aria-label]="g.objective || g.id"
+                      class="flex flex-col gap-cmn-2"
+                    >
+                      <header class="flex flex-wrap items-baseline justify-between gap-cmn-2">
+                        <a
+                          [routerLink]="['/goals', g.id]"
+                          class="cmn-link cmn-link--primary min-w-0 truncate font-medium"
+                        >
+                          {{ g.objective || g.id }}
+                        </a>
+                        <span class="font-mono text-cmn-xs text-text-secondary"
+                          >{{ g.id }} · {{ g.projectId }}</span
+                        >
+                      </header>
+                      <dc-attention-card
+                        [goalId]="g.id"
+                        [attention]="g.attention"
+                        [cancellable]="true"
+                        (decided)="feed.reload()"
+                        (cancelRequested)="cancel(g.id)"
+                      />
+                    </article>
+                  </cmn-card>
+                }
+              </section>
             }
-            @for (group of groups(); track group.title) {
-              @if (group.goals.length) {
-                <section [attr.aria-label]="group.title" class="flex flex-col gap-cmn-3">
-                  <h2 class="font-headline text-cmn-sm font-semibold text-text-secondary">
-                    {{ group.title }} · {{ group.goals.length }}
-                  </h2>
-                  @for (g of group.goals; track g.id) {
-                    <cmn-card>
-                      <article
-                        [attr.aria-label]="g.objective || g.id"
-                        class="flex flex-col gap-cmn-2"
-                      >
-                        <header class="flex flex-wrap items-baseline justify-between gap-cmn-2">
-                          <a
-                            [routerLink]="['/goals', g.id]"
-                            class="cmn-link cmn-link--primary min-w-0 truncate font-medium"
-                          >
-                            {{ g.objective || g.id }}
-                          </a>
-                          <span class="font-mono text-cmn-xs text-text-secondary"
-                            >{{ g.id }} · {{ g.projectId }}</span
-                          >
-                        </header>
-                        <dc-attention-card
-                          [goalId]="g.id"
-                          [attention]="g.attention"
-                          [cancellable]="true"
-                          (decided)="feed.reload()"
-                          (cancelRequested)="cancel(g.id)"
-                        />
-                      </article>
-                    </cmn-card>
-                  }
-                </section>
-              }
-            }
-          </div>
-        </cmn-async-state>
-      }
+          }
+        </div>
+      </cmn-async-state>
     </cmn-page>
   `,
 })

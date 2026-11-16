@@ -16,7 +16,6 @@ import {
   CheckboxComponent,
   ListItemRowComponent,
   PageComponent,
-  SkeletonComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
 
@@ -75,7 +74,6 @@ function absent(value: unknown): boolean {
 @Component({
   selector: 'dc-session-page',
   imports: [
-    SkeletonComponent,
     AlertComponent,
     AsyncStateComponent,
     ButtonComponent,
@@ -94,159 +92,156 @@ function absent(value: unknown): boolean {
       @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      @if (feedStatus(feed.state()) === 'loading') {
-        <cmn-skeleton shape="detail" />
-      } @else {
-        <cmn-async-state
-          [status]="feedStatus(feed.state())"
-          [errorMessage]="error() ?? ''"
-          (retry)="feed.reload()"
-          emptySubMessage="This session has no detail to show yet."
-          class="block"
-          retryable
-        >
-          @if (detail(); as d) {
-            @let t = d.task;
-            <div class="flex flex-col gap-cmn-section-gap">
-              <header class="flex min-w-0 flex-col gap-cmn-1">
-                @if (t.kind === 'review_repository') {
-                  <p class="text-cmn-md font-medium text-text-primary">Review session</p>
-                }
-                <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
-                  @if (t.parentGoalId) {
-                    <a [routerLink]="['/goals', t.parentGoalId]" class="cmn-link"
-                      >goal {{ t.parentGoalId }}</a
-                    >
-                  }
-                  @if (t.projectId) {
-                    <a [routerLink]="['/projects', t.projectId]" class="cmn-link"
-                      >project {{ t.projectId }}</a
-                    >
-                  }
-                  @if (t.prUrl) {
-                    <a [href]="t.prUrl" class="cmn-link" target="_blank" rel="noopener noreferrer"
-                      >the PR</a
-                    >
-                  }
-                </p>
-              </header>
-
-              <dc-section heading="Exit">
-                <p class="flex flex-wrap items-baseline gap-cmn-2 text-cmn-sm">
-                  <cmn-tag [variant]="exitVariant(t.exit ?? t.status)">{{
-                    t.exit ?? t.status
-                  }}</cmn-tag>
-                  @if (t.exitDetail) {
-                    <span class="whitespace-pre-wrap text-text-primary">{{ t.exitDetail }}</span>
-                  }
-                </p>
-                @if (t.error) {
-                  <cmn-alert variant="error"
-                    ><span class="whitespace-pre-wrap">{{ t.error }}</span></cmn-alert
+      <cmn-async-state
+        skeletonShape="detail"
+        [status]="feedStatus(feed.state())"
+        [errorMessage]="error() ?? ''"
+        (retry)="feed.reload()"
+        emptySubMessage="This session has no detail to show yet."
+        class="block"
+        retryable
+      >
+        @if (detail(); as d) {
+          @let t = d.task;
+          <div class="flex flex-col gap-cmn-section-gap">
+            <header class="flex min-w-0 flex-col gap-cmn-1">
+              @if (t.kind === 'review_repository') {
+                <p class="text-cmn-md font-medium text-text-primary">Review session</p>
+              }
+              <p class="flex flex-wrap gap-cmn-3 font-mono text-cmn-xs">
+                @if (t.parentGoalId) {
+                  <a [routerLink]="['/goals', t.parentGoalId]" class="cmn-link"
+                    >goal {{ t.parentGoalId }}</a
                   >
                 }
-                <cmn-checkbox [checked]="exactTimes()" (changed)="exactTimes.set($event)">
-                  Exact times (UTC)
-                </cmn-checkbox>
-                <dl class="flex flex-col gap-cmn-1 font-mono text-cmn-xs text-text-secondary">
-                  @for (row of record(t); track row.name) {
-                    <div class="flex gap-cmn-3">
-                      <dt class="w-32 shrink-0">{{ row.name }}</dt>
-                      <dd [attr.title]="row.title" class="min-w-0 flex-1 break-words">
-                        @if (row.at) {
-                          <time
-                            [attr.datetime]="isoTime(row.at)"
-                            [attr.title]="utcSecond(row.at)"
-                            class="whitespace-nowrap"
-                            >{{ exactTimes() ? utcSecond(row.at) : ago(row.at) }}</time
-                          >
-                        } @else {
-                          {{ row.value }}
-                        }
-                      </dd>
-                    </div>
-                  }
+                @if (t.projectId) {
+                  <a [routerLink]="['/projects', t.projectId]" class="cmn-link"
+                    >project {{ t.projectId }}</a
+                  >
+                }
+                @if (t.prUrl) {
+                  <a [href]="t.prUrl" class="cmn-link" target="_blank" rel="noopener noreferrer"
+                    >the PR</a
+                  >
+                }
+              </p>
+            </header>
+
+            <dc-section heading="Exit">
+              <p class="flex flex-wrap items-baseline gap-cmn-2 text-cmn-sm">
+                <cmn-tag [variant]="exitVariant(t.exit ?? t.status)">{{
+                  t.exit ?? t.status
+                }}</cmn-tag>
+                @if (t.exitDetail) {
+                  <span class="whitespace-pre-wrap text-text-primary">{{ t.exitDetail }}</span>
+                }
+              </p>
+              @if (t.error) {
+                <cmn-alert variant="error"
+                  ><span class="whitespace-pre-wrap">{{ t.error }}</span></cmn-alert
+                >
+              }
+              <cmn-checkbox [checked]="exactTimes()" (changed)="exactTimes.set($event)">
+                Exact times (UTC)
+              </cmn-checkbox>
+              <dl class="flex flex-col gap-cmn-1 font-mono text-cmn-xs text-text-secondary">
+                @for (row of record(t); track row.name) {
                   <div class="flex gap-cmn-3">
-                    <dt class="w-32 shrink-0">tokens</dt>
-                    <dd class="min-w-0 flex-1"><dc-usage [usage]="d.usage" /></dd>
-                  </div>
-                </dl>
-              </dc-section>
-
-              <dc-section heading="Brief the session was given">
-                <pre
-                  class="cmn-code-block cmn-code-block--bare dc-code-capped"
-                  aria-label="Brief the session was given"
-                  role="group"
-                  tabindex="0"
-                  >{{ t.goal || 'not recorded' }}</pre>
-              </dc-section>
-
-              @if (d.block; as block) {
-                <dc-section heading="Block">
-                  <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">
-                    {{ block.question }}
-                  </p>
-                  @if (block.options.length) {
-                    <ol class="list-decimal pl-cmn-5 text-cmn-sm text-text-primary">
-                      @for (option of block.options; track $index) {
-                        <li>
-                          {{ option }}
-                          @if ($index === block.recommended) {
-                            <span class="font-mono text-cmn-xs text-text-secondary">
-                              — the session would take this</span
-                            >
-                          }
-                        </li>
+                    <dt class="w-32 shrink-0">{{ row.name }}</dt>
+                    <dd [attr.title]="row.title" class="min-w-0 flex-1 break-words">
+                      @if (row.at) {
+                        <time
+                          [attr.datetime]="isoTime(row.at)"
+                          [attr.title]="utcSecond(row.at)"
+                          class="whitespace-nowrap"
+                          >{{ exactTimes() ? utcSecond(row.at) : ago(row.at) }}</time
+                        >
+                      } @else {
+                        {{ row.value }}
                       }
-                    </ol>
-                  }
-                  @if (block.default && block.recommended < 0) {
-                    <p class="text-cmn-sm text-text-secondary">default: {{ block.default }}</p>
-                  }
-                  @if (block.kind === 'env') {
-                    <p class="text-cmn-sm text-text-secondary">environment gap: {{ block.item }}</p>
-                  }
-                </dc-section>
-              }
-
-              @for (part of parts(); track part.title) {
-                <dc-section [heading]="part.title">
-                  @if (part.absent) {
-                    <p class="text-cmn-sm text-text-secondary">not recorded</p>
-                  } @else {
-                    <pre
-                      [attr.aria-label]="part.title"
-                      class="cmn-code-block cmn-code-block--bare dc-code-capped"
-                      role="group"
-                      tabindex="0"
-                      >{{ part.text ?? (part.value | json) }}</pre>
-                  }
-                </dc-section>
-              }
-
-              <dc-section [count]="events().length" [flush]="true" heading="Events">
-                @for (e of events(); track e.id) {
-                  <cmn-list-item-row
-                    [attr.title]="e.payloadJson"
-                    [label]="e.type"
-                    [sublabel]="eventLine(e)"
-                  />
-                } @empty {
-                  <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">not recorded</p>
-                }
-                @if (cursor()) {
-                  <div class="border-t border-border-default p-cmn-3">
-                    <cmn-button [loading]="loadingMore()" (clicked)="more()" variant="secondary"
-                      >load more</cmn-button
-                    >
+                    </dd>
                   </div>
                 }
+                <div class="flex gap-cmn-3">
+                  <dt class="w-32 shrink-0">tokens</dt>
+                  <dd class="min-w-0 flex-1"><dc-usage [usage]="d.usage" /></dd>
+                </div>
+              </dl>
+            </dc-section>
+
+            <dc-section heading="Brief the session was given">
+              <pre
+                class="cmn-code-block cmn-code-block--bare dc-code-capped"
+                aria-label="Brief the session was given"
+                role="group"
+                tabindex="0"
+                >{{ t.goal || 'not recorded' }}</pre>
+            </dc-section>
+
+            @if (d.block; as block) {
+              <dc-section heading="Block">
+                <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">
+                  {{ block.question }}
+                </p>
+                @if (block.options.length) {
+                  <ol class="list-decimal pl-cmn-5 text-cmn-sm text-text-primary">
+                    @for (option of block.options; track $index) {
+                      <li>
+                        {{ option }}
+                        @if ($index === block.recommended) {
+                          <span class="font-mono text-cmn-xs text-text-secondary">
+                            — the session would take this</span
+                          >
+                        }
+                      </li>
+                    }
+                  </ol>
+                }
+                @if (block.default && block.recommended < 0) {
+                  <p class="text-cmn-sm text-text-secondary">default: {{ block.default }}</p>
+                }
+                @if (block.kind === 'env') {
+                  <p class="text-cmn-sm text-text-secondary">environment gap: {{ block.item }}</p>
+                }
               </dc-section>
-            </div>
-          }
-        </cmn-async-state>
-      }
+            }
+
+            @for (part of parts(); track part.title) {
+              <dc-section [heading]="part.title">
+                @if (part.absent) {
+                  <p class="text-cmn-sm text-text-secondary">not recorded</p>
+                } @else {
+                  <pre
+                    [attr.aria-label]="part.title"
+                    class="cmn-code-block cmn-code-block--bare dc-code-capped"
+                    role="group"
+                    tabindex="0"
+                    >{{ part.text ?? (part.value | json) }}</pre>
+                }
+              </dc-section>
+            }
+
+            <dc-section [count]="events().length" [flush]="true" heading="Events">
+              @for (e of events(); track e.id) {
+                <cmn-list-item-row
+                  [attr.title]="e.payloadJson"
+                  [label]="e.type"
+                  [sublabel]="eventLine(e)"
+                />
+              } @empty {
+                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">not recorded</p>
+              }
+              @if (cursor()) {
+                <div class="border-t border-border-default p-cmn-3">
+                  <cmn-button [loading]="loadingMore()" (clicked)="more()" variant="secondary"
+                    >load more</cmn-button
+                  >
+                </div>
+              }
+            </dc-section>
+          </div>
+        }
+      </cmn-async-state>
     </cmn-page>
   `,
 })
