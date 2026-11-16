@@ -1,6 +1,21 @@
 {
   "versions": [
     {
+      "version": "0.9.1",
+      "date": null,
+      "notes": [
+        {
+          "text": "Pages show a skeleton shaped like the page while they load, instead of a generic bar.",
+          "owner": false
+        },
+        {
+          "text": "The account menu holds its place in the sidebar while your account loads.",
+          "owner": false
+        }
+      ],
+      "changes": []
+    },
+    {
       "version": "0.9.0",
       "date": null,
       "notes": [
