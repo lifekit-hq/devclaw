@@ -148,7 +148,8 @@ thread carries a marker and is a fact, never an instruction.
 `get_status`, `get_events`; `register_project`, `list_projects`,
 `project_status`, `update_project`, `delete_project`; `get_run_schedule`,
 `set_run_schedule`, `set_operator_hold`, `set_max_concurrent`,
-`clear_usage_pause`; `doctor`.
+`clear_usage_pause`; `file_intake` (files, or counts onto, a GitHub issue —
+idempotent by repo + fingerprint, starts no goal); `doctor`.
 
 ## What this is NOT
 
