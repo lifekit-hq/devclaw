@@ -9,6 +9,7 @@ import {
   DataTableComponent,
   ListSectionComponent,
   PageComponent,
+  SkeletonComponent,
   StatusIndicatorComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
@@ -27,6 +28,7 @@ const NOT_FOUND = 404;
 @Component({
   selector: 'dc-project-page',
   imports: [
+    SkeletonComponent,
     AgoPipe,
     AlertComponent,
     AsyncStateComponent,
@@ -46,103 +48,109 @@ const NOT_FOUND = 404;
       @if (feed.state().data && error(); as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      <cmn-async-state
-        [status]="feedStatus(feed.state())"
-        [errorMessage]="error() ?? ''"
-        (retry)="feed.reload()"
-        emptySubMessage="This project has nothing to show yet."
-        class="block"
-        retryable
-      >
-        @if (project(); as p) {
-          <div class="flex flex-col gap-cmn-section-gap">
-            <header class="flex flex-wrap items-start justify-between gap-cmn-4">
-              <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
-                @if (p.name !== p.id) {
-                  <p class="break-words text-cmn-md font-medium text-text-primary">{{ p.name }}</p>
-                }
-                <p class="break-all font-mono text-cmn-xs text-text-secondary">
-                  {{ p.status }}
-                  @if (repoLink(); as repo) {
-                    ·
-                    <a [href]="repo" class="cmn-link" target="_blank" rel="noopener noreferrer">{{
-                      repo
-                    }}</a>
+      @if (feedStatus(feed.state()) === 'loading') {
+        <cmn-skeleton shape="detail" />
+      } @else {
+        <cmn-async-state
+          [status]="feedStatus(feed.state())"
+          [errorMessage]="error() ?? ''"
+          (retry)="feed.reload()"
+          emptySubMessage="This project has nothing to show yet."
+          class="block"
+          retryable
+        >
+          @if (project(); as p) {
+            <div class="flex flex-col gap-cmn-section-gap">
+              <header class="flex flex-wrap items-start justify-between gap-cmn-4">
+                <div class="flex min-w-0 flex-1 basis-64 flex-col gap-cmn-1">
+                  @if (p.name !== p.id) {
+                    <p class="break-words text-cmn-md font-medium text-text-primary">
+                      {{ p.name }}
+                    </p>
                   }
-                </p>
-                <p class="break-all font-mono text-cmn-xs text-text-secondary">
-                  {{ p.workspaceDir || 'no workspace' }}
-                </p>
-                <dc-usage [usage]="p.usage" />
-              </div>
-              <cmn-tag>{{ p.health }}</cmn-tag>
-            </header>
-
-            <!-- The card is declared here, not in dc-section, so the table drops its own frame. -->
-            <cmn-list-section [card]="false" heading="Goals">
-              <span cmnListSectionAside class="font-mono font-normal">{{ p.goals.length }}</span>
-              <cmn-card padding="none">
-                @if (p.goals.length) {
-                  <cmn-data-table
-                    [rows]="p.goals"
-                    [trackBy]="trackById"
-                    [rowsActionable]="true"
-                    (rowClick)="open($event)"
-                  >
-                    <cmn-column key="objective" header="Goal" listSlot="primary">
-                      <ng-template let-g cmnCell>
-                        <span class="block min-w-0">
-                          <span
-                            [class.text-text-secondary]="!!g.outcome"
-                            class="block truncate font-medium"
-                            >{{ g.objective || g.id }}</span
-                          >
-                          <span class="block truncate font-mono text-cmn-xs text-text-secondary">
-                            {{ g.id }}{{ g.issues.length ? ' · #' + g.issues.join(', #') : '' }}
-                          </span>
-                        </span>
-                      </ng-template>
-                    </cmn-column>
-                    <cmn-column key="state" header="State" listSlot="trailing">
-                      <ng-template let-g cmnCell>
-                        <cmn-status-indicator
-                          [variant]="stateVariant(g.outcome ?? g.state)"
-                          [live]="stateIsLive(g.state)"
-                        >
-                          {{ g.outcome ?? g.state }}
-                        </cmn-status-indicator>
-                      </ng-template>
-                    </cmn-column>
-                    <cmn-column key="lastSession" header="Last session" listSlot="secondary">
-                      <ng-template let-g cmnCell>
-                        @if (g.lastSession; as s) {
-                          <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
-                            {{ s.exit ?? s.status }} · {{ s.completedAt ?? s.createdAt | ago }}
-                          </cmn-tag>
-                        } @else {
-                          —
-                        }
-                      </ng-template>
-                    </cmn-column>
-                    <cmn-column
-                      key="attentionKind"
-                      header="Needs"
-                      align="right"
-                      listSlot="trailing-secondary"
-                    >
-                      <ng-template let-g cmnCell>{{ g.attentionKind ? 'you' : '' }}</ng-template>
-                    </cmn-column>
-                  </cmn-data-table>
-                } @else {
-                  <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">
-                    No goals on this project.
+                  <p class="break-all font-mono text-cmn-xs text-text-secondary">
+                    {{ p.status }}
+                    @if (repoLink(); as repo) {
+                      ·
+                      <a [href]="repo" class="cmn-link" target="_blank" rel="noopener noreferrer">{{
+                        repo
+                      }}</a>
+                    }
                   </p>
-                }
-              </cmn-card>
-            </cmn-list-section>
-          </div>
-        }
-      </cmn-async-state>
+                  <p class="break-all font-mono text-cmn-xs text-text-secondary">
+                    {{ p.workspaceDir || 'no workspace' }}
+                  </p>
+                  <dc-usage [usage]="p.usage" />
+                </div>
+                <cmn-tag>{{ p.health }}</cmn-tag>
+              </header>
+
+              <!-- The card is declared here, not in dc-section, so the table drops its own frame. -->
+              <cmn-list-section [card]="false" heading="Goals">
+                <span cmnListSectionAside class="font-mono font-normal">{{ p.goals.length }}</span>
+                <cmn-card padding="none">
+                  @if (p.goals.length) {
+                    <cmn-data-table
+                      [rows]="p.goals"
+                      [trackBy]="trackById"
+                      [rowsActionable]="true"
+                      (rowClick)="open($event)"
+                    >
+                      <cmn-column key="objective" header="Goal" listSlot="primary">
+                        <ng-template let-g cmnCell>
+                          <span class="block min-w-0">
+                            <span
+                              [class.text-text-secondary]="!!g.outcome"
+                              class="block truncate font-medium"
+                              >{{ g.objective || g.id }}</span
+                            >
+                            <span class="block truncate font-mono text-cmn-xs text-text-secondary">
+                              {{ g.id }}{{ g.issues.length ? ' · #' + g.issues.join(', #') : '' }}
+                            </span>
+                          </span>
+                        </ng-template>
+                      </cmn-column>
+                      <cmn-column key="state" header="State" listSlot="trailing">
+                        <ng-template let-g cmnCell>
+                          <cmn-status-indicator
+                            [variant]="stateVariant(g.outcome ?? g.state)"
+                            [live]="stateIsLive(g.state)"
+                          >
+                            {{ g.outcome ?? g.state }}
+                          </cmn-status-indicator>
+                        </ng-template>
+                      </cmn-column>
+                      <cmn-column key="lastSession" header="Last session" listSlot="secondary">
+                        <ng-template let-g cmnCell>
+                          @if (g.lastSession; as s) {
+                            <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
+                              {{ s.exit ?? s.status }} · {{ s.completedAt ?? s.createdAt | ago }}
+                            </cmn-tag>
+                          } @else {
+                            —
+                          }
+                        </ng-template>
+                      </cmn-column>
+                      <cmn-column
+                        key="attentionKind"
+                        header="Needs"
+                        align="right"
+                        listSlot="trailing-secondary"
+                      >
+                        <ng-template let-g cmnCell>{{ g.attentionKind ? 'you' : '' }}</ng-template>
+                      </cmn-column>
+                    </cmn-data-table>
+                  } @else {
+                    <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">
+                      No goals on this project.
+                    </p>
+                  }
+                </cmn-card>
+              </cmn-list-section>
+            </div>
+          }
+        </cmn-async-state>
+      }
     </cmn-page>
   `,
 })

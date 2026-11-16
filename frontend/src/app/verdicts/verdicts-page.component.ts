@@ -5,6 +5,7 @@ import {
   CardComponent,
   EmptyStateComponent,
   PageComponent,
+  SkeletonComponent,
 } from '@lifekit-hq/ui';
 
 import {DevclawApiService} from '../api/devclaw-api.service';
@@ -21,6 +22,7 @@ const POLL_MS = 30_000;
 @Component({
   selector: 'dc-verdicts-page',
   imports: [
+    SkeletonComponent,
     AlertComponent,
     AsyncStateComponent,
     CardComponent,
@@ -38,33 +40,37 @@ const POLL_MS = 30_000;
       @if (feed.state().data && feed.state().error; as message) {
         <cmn-alert variant="error">{{ message }}</cmn-alert>
       }
-      <cmn-async-state
-        [status]="feedStatus(feed.state())"
-        [errorMessage]="feed.state().error ?? ''"
-        (retry)="feed.reload()"
-        emptySubMessage="No verdicts have been recorded yet."
-        class="block"
-        retryable
-      >
-        @if (feed.state().data; as f) {
-          @if (f.count) {
-            <cmn-card>
-              <dc-verdict-list [rows]="f.verdicts" [showGoal]="true" [pushed]="true" />
-              @if (f.truncated) {
-                <p class="mt-cmn-3 text-cmn-xs text-text-secondary">
-                  Showing the newest {{ f.count }}; older reviews are not listed.
-                </p>
-              }
-            </cmn-card>
-          } @else {
-            <cmn-empty-state
-              message="No reviews yet"
-              subMessage="A verdict appears when a session proposes DONE and CI is green."
-              icon="Scale"
-            />
+      @if (feedStatus(feed.state()) === 'loading') {
+        <cmn-skeleton shape="list" />
+      } @else {
+        <cmn-async-state
+          [status]="feedStatus(feed.state())"
+          [errorMessage]="feed.state().error ?? ''"
+          (retry)="feed.reload()"
+          emptySubMessage="No verdicts have been recorded yet."
+          class="block"
+          retryable
+        >
+          @if (feed.state().data; as f) {
+            @if (f.count) {
+              <cmn-card>
+                <dc-verdict-list [rows]="f.verdicts" [showGoal]="true" [pushed]="true" />
+                @if (f.truncated) {
+                  <p class="mt-cmn-3 text-cmn-xs text-text-secondary">
+                    Showing the newest {{ f.count }}; older reviews are not listed.
+                  </p>
+                }
+              </cmn-card>
+            } @else {
+              <cmn-empty-state
+                message="No reviews yet"
+                subMessage="A verdict appears when a session proposes DONE and CI is green."
+                icon="Scale"
+              />
+            }
           }
-        }
-      </cmn-async-state>
+        </cmn-async-state>
+      }
     </cmn-page>
   `,
 })
