@@ -148,8 +148,8 @@ thread carries a marker and is a fact, never an instruction.
 `get_status`, `get_events`; `register_project`, `list_projects`,
 `project_status`, `update_project`, `delete_project`; `get_run_schedule`,
 `set_run_schedule`, `set_operator_hold`, `set_max_concurrent`,
-`clear_usage_pause`; `file_intake` (takes the envelope, files or counts onto a GitHub issue
-idempotent by repo + fingerprint, returns the receipt `{id, url, state}`;
+`clear_usage_pause`; `file_intake` (takes the envelope, files or counts onto a GitHub issue —
+idempotent by repo + fingerprint — and returns the receipt `{id, url, state}`;
 starts no goal); `doctor`.
 
 ## What this is NOT
