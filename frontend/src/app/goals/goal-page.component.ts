@@ -4,6 +4,7 @@ import {RouterLink} from '@angular/router';
 import {
   AlertComponent,
   AsyncStateComponent,
+  EmptyStateComponent,
   ListItemRowComponent,
   PageComponent,
   StatusIndicatorComponent,
@@ -38,6 +39,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
     AsyncStateComponent,
     AttentionCardComponent,
     DecideFormComponent,
+    EmptyStateComponent,
     JsonPipe,
     ListItemRowComponent,
     PageComponent,
@@ -152,7 +154,11 @@ export function issueUrl(repoUrl: string, issue: number): string {
                   >
                 </cmn-list-item-row>
               } @empty {
-                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">No session yet.</p>
+                <cmn-empty-state
+                  variant="bare"
+                  message="No session yet"
+                  subMessage="A session starts when the world moves."
+                />
               }
             </dc-section>
 
