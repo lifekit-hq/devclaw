@@ -36,6 +36,7 @@ const SHORT_SHA = 7;
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="detail"
         emptySubMessage="This review has no detail to show."
         class="block"
         retryable

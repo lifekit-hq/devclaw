@@ -74,6 +74,7 @@ const SIGN_OUT_PALETTE_ITEM: CommandPaletteItem = {
       [navItems]="navItems"
       [paletteItems]="paletteItems()"
       [account]="layoutAccount()"
+      [accountPending]="pending()"
       [tabRoutes]="tabRoutes"
       [moreRoute]="moreRoute"
       [versionLabel]="whatsNew.versionLabel"
@@ -108,6 +109,7 @@ export class AppShellComponent {
   protected readonly update = inject(AppUpdateService);
 
   protected readonly layoutAccount = this.accounts.layoutAccount;
+  protected readonly pending = this.accounts.pending;
   protected readonly tabRoutes = NAV_ITEMS.map(item => item.route);
   protected readonly moreRoute = MORE_ROUTE;
   /** Needs you carries the number of goals waiting on the owner. */

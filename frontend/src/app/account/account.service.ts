@@ -15,14 +15,20 @@ export class AccountService {
   private readonly preferences = inject(AppPreferencesStore);
   private readonly whatsNew = inject(CmnWhatsNewService);
 
-  /** The signed-in account, or null while loading and when there is no readable session. */
-  public readonly account = toSignal(
+  // undefined until the session call returns; null is a read that found no account.
+  private readonly session = toSignal<Account | null | undefined>(
     this.http.get<Record<string, unknown>>('/oauth2/userinfo').pipe(
       map(accountFromUserinfo),
       catchError((): Observable<Account | null> => of(null))
     ),
-    {initialValue: null}
+    {initialValue: undefined}
   );
+
+  /** The signed-in account, or null while loading and when there is no readable session. */
+  public readonly account = computed(() => this.session() ?? null);
+
+  /** The session call is still out: the shell holds the account's place instead of guessing. */
+  public readonly pending = computed(() => this.session() === undefined);
 
   /** The account as the app layout takes it: identity header, Settings, What's new and Sign out. */
   public readonly layoutAccount = computed(() =>

@@ -50,6 +50,7 @@ const asking = (g: GoalRow): g is Asking => g.attention !== null;
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="list"
         emptySubMessage="Nothing is waiting on you right now."
         class="block"
         retryable

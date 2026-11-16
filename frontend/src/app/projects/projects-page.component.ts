@@ -37,6 +37,7 @@ import {UsageComponent} from '../shared/usage';
         [status]="feedStatus(feed.state())"
         [errorMessage]="feed.state().error ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="list"
         emptySubMessage="Registered projects appear here."
         class="block"
         retryable

@@ -1,5 +1,10 @@
 <!-- Plain notes for the "What's new" sheet, read by lifekit-whats-new. -->
 
+## 0.9.1
+
+- Pages show a skeleton shaped like the page while they load, instead of a generic bar.
+- The account menu holds its place in the sidebar while your account loads.
+
 ## 0.9.0
 
 - Pull down on Needs you, Goals, Projects or Verdicts to reload the page on your phone.

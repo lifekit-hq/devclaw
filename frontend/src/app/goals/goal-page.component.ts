@@ -58,6 +58,7 @@ export function issueUrl(repoUrl: string, issue: number): string {
         [status]="feedStatus(feed.state())"
         [errorMessage]="error() ?? ''"
         (retry)="feed.reload()"
+        skeletonShape="detail"
         emptySubMessage="This goal has nothing to show yet."
         class="block"
         retryable
