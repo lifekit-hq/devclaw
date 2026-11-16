@@ -239,7 +239,7 @@ world the host cannot read (`gh` down) does nothing and says so.
 ## The code map
 
 ```
-devclaw/server/      tools/ (goals, projects, control, doctor) · routes/ (health, control, goals, projects, tasks, webhooks, me, console) · lifecycle.py
+devclaw/server/      tools/ (goals, projects, control, intake, doctor) · routes/ (health, control, goals, projects, tasks, webhooks, me, console) · lifecycle.py
 devclaw/goal/        tick.py · world.py · prompts.py · donegate.py · github.py · service.py · notify.py · self_deploy.py
 devclaw/prompts/     session.md · done-gate.md
 devclaw/task_queue.py · queue/settle.py · queue/admission.py
