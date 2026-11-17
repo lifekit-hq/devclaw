@@ -2,6 +2,15 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.8.0](https://github.com/lifekit-hq/devclaw/compare/v2.7.0...v2.8.0) (2026-11-17)
+
+
+### Features
+
+* **frontend:** goal page empty sessions use cmn-empty-state ([#1021](https://github.com/lifekit-hq/devclaw/issues/1021)) ([01d94e4](https://github.com/lifekit-hq/devclaw/commit/01d94e4df810a5f4f3ed3f7a63d0f4f3246cc8e5))
+* **server:** file_intake accepts the envelope and returns the receipt ([#1026](https://github.com/lifekit-hq/devclaw/issues/1026)) ([58f6cb6](https://github.com/lifekit-hq/devclaw/commit/58f6cb6fa034145c17c4435975858a0538948f19))
+* **server:** make file_intake idempotent by repo and failure fingerprint ([#1025](https://github.com/lifekit-hq/devclaw/issues/1025)) ([21771b7](https://github.com/lifekit-hq/devclaw/commit/21771b777e3e6c81f793da7003c164809ec8d74e))
+
 ## [2.7.0](https://github.com/lifekit-hq/devclaw/compare/v2.6.0...v2.7.0) (2026-11-16)
 
 
