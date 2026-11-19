@@ -53,7 +53,7 @@ export class DecideFormComponent {
   /** Offers Cancel goal next to Decide; the page owns the confirm. */
   public readonly cancellable = input(false);
   /** A decision was posted on the issue; the page re-reads its feed. */
-  public readonly decided = output();
+  public readonly decided = output<string>();
   public readonly cancelRequested = output();
 
   public readonly busy = signal(false);
@@ -78,7 +78,7 @@ export class DecideFormComponent {
       next: () => {
         this.busy.set(false);
         this.text.set('');
-        this.decided.emit();
+        this.decided.emit(text);
       },
       error: (e: unknown) => {
         this.busy.set(false);
