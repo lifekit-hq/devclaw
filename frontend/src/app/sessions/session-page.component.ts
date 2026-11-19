@@ -32,6 +32,38 @@ const SUMMARY_KEYS = 4;
 const SUMMARY_VALUE = 80;
 const SUMMARY_RAW = 160;
 const SHORT_SHA = 7;
+/** Events fetched per request. */
+export const EVENT_PAGE = 100;
+const FACT_VALUE = 120;
+const INDENT = 2;
+/** Parts of the record shown as short `key: value` lists instead of JSON. */
+const FACT_PARTS = new Set(['Verify', 'Delivery']);
+
+/** One `key: value` fact of a recorded object; nested values are cut to one short line. */
+export interface Fact {
+  key: string;
+  value: string;
+}
+
+/** A recorded object as short facts — never the whole JSON. */
+export function factList(value: unknown): Fact[] {
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+  return Object.entries(value).map(([key, v]) => {
+    const text = typeof v === 'string' ? v : (JSON.stringify(v) ?? String(v));
+    return {key, value: text.length > FACT_VALUE ? `${text.slice(0, FACT_VALUE)}…` : text};
+  });
+}
+
+/** An event's payload, indented for the disclosure; text that is not JSON stays as written. */
+export function prettyPayload(payloadJson: string): string {
+  try {
+    return JSON.stringify(JSON.parse(payloadJson), null, INDENT);
+  } catch {
+    return payloadJson;
+  }
+}
 
 /** One `name: value` row of the record; a row with `at` is a time and can show its exact form. */
 interface RecordRow {
@@ -210,6 +242,18 @@ function absent(value: unknown): boolean {
               <dc-section [heading]="part.title">
                 @if (part.absent) {
                   <p class="text-cmn-sm text-text-secondary">not recorded</p>
+                } @else if (part.facts; as facts) {
+                  <dl
+                    [attr.aria-label]="part.title"
+                    class="flex flex-col gap-cmn-1 font-mono text-cmn-xs text-text-secondary"
+                  >
+                    @for (f of facts; track f.key) {
+                      <div class="flex gap-cmn-3">
+                        <dt class="w-32 shrink-0">{{ f.key }}</dt>
+                        <dd class="min-w-0 flex-1 break-words text-text-primary">{{ f.value }}</dd>
+                      </div>
+                    }
+                  </dl>
                 } @else {
                   <pre
                     [attr.aria-label]="part.title"
@@ -223,11 +267,25 @@ function absent(value: unknown): boolean {
 
             <dc-section [count]="events().length" [flush]="true" heading="Events">
               @for (e of events(); track e.id) {
-                <cmn-list-item-row
-                  [attr.title]="e.payloadJson"
-                  [label]="e.type"
-                  [sublabel]="eventLine(e)"
-                />
+                <div class="border-b border-border-default last:border-b-0">
+                  <cmn-list-item-row [label]="e.type" [sublabel]="eventLine(e)" />
+                  <div class="px-cmn-4 pb-cmn-2">
+                    <cmn-button
+                      [attr.aria-expanded]="isOpen(e.id)"
+                      (clicked)="toggle(e.id)"
+                      variant="secondary"
+                      >{{ isOpen(e.id) ? 'hide payload' : 'show payload' }}</cmn-button
+                    >
+                    @if (isOpen(e.id)) {
+                      <pre
+                        class="cmn-code-block cmn-code-block--bare dc-code-capped mt-cmn-1"
+                        role="group"
+                        aria-label="Event payload"
+                        tabindex="0"
+                        >{{ payload(e) }}</pre>
+                    }
+                  </div>
+                </div>
               } @empty {
                 <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">not recorded</p>
               }
@@ -247,6 +305,9 @@ function absent(value: unknown): boolean {
 })
 export class SessionPageComponent {
   private readonly api = inject(DevclawApiService);
+
+  /** Events whose payload is expanded; a closed row holds no payload in the page. */
+  private readonly open = signal<ReadonlySet<number>>(new Set());
 
   /** The route's `:id`. */
   public readonly id = input.required<string>();
@@ -274,6 +335,10 @@ export class SessionPageComponent {
       ...p,
       absent: absent(p.value),
       text: typeof p.value === 'string' ? p.value : null,
+      facts:
+        FACT_PARTS.has(p.title) && !absent(p.value) && typeof p.value === 'object'
+          ? factList(p.value)
+          : null,
     }));
   });
   protected readonly events = signal<TaskEvent[]>([]);
@@ -287,7 +352,7 @@ export class SessionPageComponent {
 
   constructor() {
     effect(onCleanup => {
-      const sub = this.api.taskEvents(this.id()).subscribe({
+      const sub = this.api.taskEvents(this.id(), null, EVENT_PAGE).subscribe({
         next: r => {
           this.events.set(r.events);
           this.cursor.set(r.nextCursor);
@@ -323,6 +388,24 @@ export class SessionPageComponent {
     ];
   }
 
+  protected isOpen(id: number): boolean {
+    return this.open().has(id);
+  }
+
+  protected toggle(id: number): void {
+    this.open.update(o => {
+      const next = new Set(o);
+      if (!next.delete(id)) {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  protected payload(e: TaskEvent): string {
+    return prettyPayload(e.payloadJson);
+  }
+
   protected eventLine(e: TaskEvent): string {
     return `${utcSecond(e.ts)} · ${e.source} · ${payloadSummary(e)}`;
   }
@@ -333,7 +416,7 @@ export class SessionPageComponent {
       return;
     }
     this.loadingMore.set(true);
-    this.api.taskEvents(this.id(), cursor).subscribe({
+    this.api.taskEvents(this.id(), cursor, EVENT_PAGE).subscribe({
       next: r => {
         this.events.update(ev => [...ev, ...r.events]);
         this.cursor.set(r.nextCursor);

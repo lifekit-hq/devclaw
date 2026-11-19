@@ -53,8 +53,8 @@ export class DevclawApiService {
     return this.http.get<TaskDetail>(`/tasks/${id(taskId)}.json`);
   }
 
-  public taskEvents(taskId: string, since?: number | null): Observable<TaskEvents> {
-    const params: Record<string, number> = since ? {since} : {};
+  public taskEvents(taskId: string, since?: number | null, limit?: number): Observable<TaskEvents> {
+    const params: Record<string, number> = {...(since ? {since} : {}), ...(limit ? {limit} : {})};
     return this.http.get<TaskEvents>(`/tasks/${id(taskId)}/events.json`, {params});
   }
 
