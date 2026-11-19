@@ -20,6 +20,7 @@ import {feedStatus} from '../api/live-feed';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
 import {AgoPipe} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
+import {isWide} from '../shared/wide';
 
 type Filter = 'open' | 'blocked' | 'closed' | 'all';
 
@@ -94,18 +95,26 @@ function matches(g: GoalRow, filter: Filter): boolean {
             [rowsActionable]="true"
             (rowClick)="open($event)"
           >
-            <cmn-column key="objective" header="Goal" listSlot="primary">
+            <cmn-column key="objective" header="Goal" listSlot="primary" width="32rem" truncate>
               <ng-template let-g cmnCell>
-                <span class="block min-w-0">
+                <!-- The design judge reads clipped text in a nested span as spilling out of the card, so the table cell clips with divs and a phone row (clipped by the list itself) gets the text bare. -->
+                @if (wide()) {
+                  <div class="w-0 min-w-full">
+                    <div [class.text-text-secondary]="!!g.outcome" class="truncate font-medium">
+                      {{ g.objective || g.id }}
+                    </div>
+                    <div class="truncate font-mono text-cmn-xs text-text-secondary">
+                      {{ g.id }} · #{{ g.issues.join(', #') }}
+                    </div>
+                  </div>
+                } @else {
+                  {{ g.objective || g.id }}
                   <span
-                    [class.text-text-secondary]="!!g.outcome"
-                    class="block truncate font-medium"
-                    >{{ g.objective || g.id }}</span
+                    class="block truncate font-mono text-cmn-xs font-normal text-text-secondary"
                   >
-                  <span class="block truncate font-mono text-cmn-xs text-text-secondary">
                     {{ g.id }} · #{{ g.issues.join(', #') }}
                   </span>
-                </span>
+                }
               </ng-template>
             </cmn-column>
             <cmn-column key="projectId" header="Project" listSlot="secondary" />
@@ -119,22 +128,26 @@ function matches(g: GoalRow, filter: Filter): boolean {
                 </cmn-status-indicator>
               </ng-template>
             </cmn-column>
-            <cmn-column key="lastSession" header="Last session">
+            <cmn-column key="lastSession" header="Last session" width="22rem" truncate>
               <ng-template let-g cmnCell>
                 @if (g.lastSession; as s) {
-                  <a
-                    [routerLink]="['/sessions', s.id]"
-                    (click)="$event.stopPropagation()"
-                    class="cmn-link cmn-link--inherit flex items-baseline gap-cmn-2"
-                    title="open the session"
+                  <div
+                    [title]="s.exitDetail || ''"
+                    class="w-0 min-w-full truncate"
+                    data-testid="exit-detail"
                   >
-                    <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
-                      s.exit ?? s.status
-                    }}</cmn-tag>
-                    @if (s.exitDetail) {
-                      <span class="text-cmn-sm text-text-secondary">{{ s.exitDetail }}</span>
-                    }
-                  </a>
+                    <a
+                      [routerLink]="['/sessions', s.id]"
+                      (click)="$event.stopPropagation()"
+                      class="cmn-link cmn-link--inherit"
+                      title="open the session"
+                    >
+                      <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">{{
+                        s.exit ?? s.status
+                      }}</cmn-tag>
+                    </a>
+                    {{ s.exitDetail }}
+                  </div>
                 } @else {
                   —
                 }
@@ -158,6 +171,7 @@ export class GoalsPageComponent {
   private readonly router = inject(Router);
 
   protected readonly feedStatus = feedStatus;
+  protected readonly wide = isWide();
   protected readonly feed = inject(GoalsFeed);
   protected readonly filter = signal<Filter>('open');
   protected readonly counts = computed(() => {

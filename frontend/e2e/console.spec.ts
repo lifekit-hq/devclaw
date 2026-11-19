@@ -151,6 +151,36 @@ test('a goal’s verdict older than the feed window still expands in place', asy
   await expect(page).toHaveURL(/\/console\/goals\/g-done$/);
 });
 
+test('a long goal and its exit text are cut to one line inside the table card', async ({page}) => {
+  await page.setViewportSize({width: 1280, height: 900});
+  await page.goto('/console/goals');
+  await expect(page.getByText('Add CSV export to the reports page')).toBeVisible();
+
+  // Allowed: a short goal title shows whole, with no cut.
+  const short = page.getByText('Add CSV export to the reports page');
+  expect(await short.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+
+  // Blocked: the real-length goal may not widen the table past its card, and its exit is one
+  // clipped line whose full text is the tooltip.
+  const long = page.getByTestId('exit-detail').filter({hasText: 'Reworked the reconciliation'});
+  await expect(long).toBeVisible();
+  expect(await long.evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+  await expect(long).toHaveAttribute('title', /migration of the two legacy callers/);
+  expect((await long.boundingBox())!.height).toBeLessThan(30);
+  const table = page.getByRole('table');
+  expect(
+    await table.evaluate(t => {
+      const box = t.closest('[class*="overflow"]') ?? t.parentElement!;
+      return t.scrollWidth <= box.clientWidth + 1;
+    })
+  ).toBe(true);
+  await expect(page.getByRole('columnheader', {name: 'Seen'})).toBeInViewport();
+
+  await page.goto('/console/projects/widgets');
+  await expect(page.getByRole('table')).toContainText('Replace the hand-rolled retry loop');
+  await expect(page.getByRole('columnheader', {name: 'Needs'})).toBeInViewport();
+});
+
 test('Projects and a project page list the goals', async ({page}) => {
   await page.goto('/console/projects');
 

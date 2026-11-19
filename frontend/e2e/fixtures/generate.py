@@ -19,6 +19,19 @@ HERE = pathlib.Path(__file__).resolve().parent
 REPO = "https://github.com/example/widgets"
 HEAD = "4f2c9e1a7b3d5c8e0f1a2b3c4d5e6f708192a3b4"
 
+LONG_OBJECTIVE = (
+    "Replace the hand-rolled retry loop in the nightly reconciliation job with the shared backoff "
+    "helper, keep the per-account idempotency keys intact across restarts, and make every failed "
+    "attempt visible on the ledger page with its cause, its attempt count and the next retry time "
+    "so an operator never has to read the worker logs to learn why a reconciliation is late"
+)
+LONG_EXIT = (
+    "Reworked the reconciliation retry loop onto the shared backoff helper, kept the per-account "
+    "idempotency keys across restarts and surfaced each failed attempt on the ledger page. The "
+    "last verify run is green; the remaining work is the migration of the two legacy callers in "
+    "src/jobs/reconcile.py and the follow-up to drop the old retry settings from the config schema."
+)
+
 
 def _usage(i: int, o: int, r: int, w: int) -> dict:
     return {"input_tokens": i, "output_tokens": o, "cache_read_tokens": r,
@@ -31,6 +44,8 @@ def _seed(store, registry) -> None:
         ("g-blocked", "Add CSV export to the reports page", [41]),
         ("g-running", "Speed up the search index rebuild", [52]),
         ("g-done", "Fix the timezone drift in daily digests", [37]),
+        # Real-length text: the tables must cut it to one line instead of growing past the card.
+        ("g-long", LONG_OBJECTIVE, [77]),
     ):
         store.create_goal(id=gid, project_id="widgets", workspace_dir="/work/widgets",
                           repo_url=REPO, objective=objective, issues=issues,
@@ -75,6 +90,14 @@ def _seed(store, registry) -> None:
                       goal="#52", parent_goal_id="g-running", project_id="widgets",
                       target_branch="devclaw/g-running", deliver=True)
     store.claim_pending("t-running-0003")
+
+    # g-long: a delivered increment whose objective and exit text are real-length.
+    store.create_task(id="t-long-0006", kind="implement_feature", workspace_dir="/work/widgets",
+                      goal="#77", parent_goal_id="g-long", project_id="widgets",
+                      target_branch="devclaw/g-long", deliver=True)
+    store.claim_pending("t-long-0006")
+    store.mark_done("t-long-0006", json.dumps({"agent_output": "DELIVERED"}),
+                    pr_url=f"{REPO}/pull/61", exit="DELIVERED", exit_detail=LONG_EXIT)
 
     # g-done: delivered, reviewed, merged.
     store.create_task(id="t-deliver-0004", kind="fix_bug", workspace_dir="/work/widgets",

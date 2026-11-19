@@ -9,7 +9,8 @@
     "goalIds": [
       "g-blocked",
       "g-running",
-      "g-done"
+      "g-done",
+      "g-long"
     ],
     "notes": "",
     "autodeploy": null,
@@ -17,8 +18,8 @@
     "verifyDone": null,
     "browserGateMode": null,
     "bench": false,
-    "createdAt": 1792564312482,
-    "updatedAt": 1792564312516,
+    "createdAt": 1795109578041,
+    "updatedAt": 1795109578137,
     "goals": [
       {
         "id": "g-blocked",
@@ -35,8 +36,8 @@
           "exit": "BLOCKED",
           "exitDetail": "Should the export include archived reports?",
           "prUrl": null,
-          "createdAt": 1792564312560,
-          "completedAt": 1792564312569,
+          "createdAt": 1795109578276,
+          "completedAt": 1795109578289,
           "usage": {
             "input_tokens": 64000,
             "output_tokens": 2100,
@@ -62,7 +63,7 @@
           "exit": null,
           "exitDetail": null,
           "prUrl": null,
-          "createdAt": 1792564312572,
+          "createdAt": 1795109578298,
           "completedAt": null,
           "usage": null
         },
@@ -83,8 +84,8 @@
           "exit": "REVIEW",
           "exitDetail": null,
           "prUrl": null,
-          "createdAt": 1792564312589,
-          "completedAt": 1792564312597,
+          "createdAt": 1795109578345,
+          "completedAt": 1795109578391,
           "usage": {
             "input_tokens": 40000,
             "output_tokens": 1800,
@@ -92,6 +93,27 @@
             "cache_creation_tokens": 6000,
             "source": "acp"
           }
+        },
+        "attentionKind": null
+      },
+      {
+        "id": "g-long",
+        "state": "waiting",
+        "outcome": null,
+        "objective": "Replace the hand-rolled retry loop in the nightly reconciliation job with the shared backoff helper, keep the per-account idempotency keys intact across restarts, and make every failed attempt visible on the ledger page with its cause, its attempt count and the next retry time so an operator never has to read the worker logs to learn why a reconciliation is late",
+        "issues": [
+          77
+        ],
+        "lastSession": {
+          "id": "t-long-0006",
+          "kind": "implement_feature",
+          "status": "done",
+          "exit": "DELIVERED",
+          "exitDetail": "Reworked the reconciliation retry loop onto the shared backoff helper, kept the per-account idempotency keys across restarts and surfaced each failed attempt on the ledger page. The last verify run is green; the remaining work is the migration of the two legacy callers in src/jobs/reconcile.py and the follow-up to drop the old retry settings from the config schema.",
+          "prUrl": "https://github.com/example/widgets/pull/61",
+          "createdAt": 1795109578306,
+          "completedAt": 1795109578314,
+          "usage": null
         },
         "attentionKind": null
       }
@@ -102,7 +124,7 @@
       "output_tokens": 13300,
       "cache_read_tokens": 1880000,
       "cache_creation_tokens": 59000,
-      "sessions_total": 5,
+      "sessions_total": 6,
       "sessions_reported": 3
     }
   }

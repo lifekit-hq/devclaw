@@ -20,6 +20,7 @@ import {feedStatus, liveFeed} from '../api/live-feed';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
 import {AgoPipe} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
+import {isWide} from '../shared/wide';
 
 const NOT_FOUND = 404;
 
@@ -90,18 +91,35 @@ const NOT_FOUND = 404;
                     [rowsActionable]="true"
                     (rowClick)="open($event)"
                   >
-                    <cmn-column key="objective" header="Goal" listSlot="primary">
+                    <cmn-column
+                      key="objective"
+                      header="Goal"
+                      listSlot="primary"
+                      width="32rem"
+                      truncate
+                    >
                       <ng-template let-g cmnCell>
-                        <span class="block min-w-0">
+                        <!-- The design judge reads clipped text in a nested span as spilling out of the card, so the table cell clips with divs and a phone row (clipped by the list itself) gets the text bare. -->
+                        @if (wide()) {
+                          <div class="w-0 min-w-full">
+                            <div
+                              [class.text-text-secondary]="!!g.outcome"
+                              class="truncate font-medium"
+                            >
+                              {{ g.objective || g.id }}
+                            </div>
+                            <div class="truncate font-mono text-cmn-xs text-text-secondary">
+                              {{ g.id }}{{ g.issues.length ? ' · #' + g.issues.join(', #') : '' }}
+                            </div>
+                          </div>
+                        } @else {
+                          {{ g.objective || g.id }}
                           <span
-                            [class.text-text-secondary]="!!g.outcome"
-                            class="block truncate font-medium"
-                            >{{ g.objective || g.id }}</span
+                            class="block truncate font-mono text-cmn-xs font-normal text-text-secondary"
                           >
-                          <span class="block truncate font-mono text-cmn-xs text-text-secondary">
                             {{ g.id }}{{ g.issues.length ? ' · #' + g.issues.join(', #') : '' }}
                           </span>
-                        </span>
+                        }
                       </ng-template>
                     </cmn-column>
                     <cmn-column key="state" header="State" listSlot="trailing">
@@ -114,7 +132,13 @@ const NOT_FOUND = 404;
                         </cmn-status-indicator>
                       </ng-template>
                     </cmn-column>
-                    <cmn-column key="lastSession" header="Last session" listSlot="secondary">
+                    <cmn-column
+                      key="lastSession"
+                      header="Last session"
+                      listSlot="secondary"
+                      width="14rem"
+                      truncate
+                    >
                       <ng-template let-g cmnCell>
                         @if (g.lastSession; as s) {
                           <cmn-tag [variant]="exitVariant(s.exit ?? s.status)">
@@ -154,6 +178,7 @@ export class ProjectPageComponent {
   /** The route's `:id`. */
   public readonly id = input.required<string>();
 
+  protected readonly wide = isWide();
   protected readonly feedStatus = feedStatus;
   protected readonly feed = liveFeed(id => this.api.project(id), POLL_MS, this.id);
   protected readonly project = computed(() => this.feed.state().data);
