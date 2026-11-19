@@ -44,6 +44,32 @@ function matches(g: GoalRow, filter: Filter): boolean {
   }
 }
 
+export interface GoalsEmpty {
+  message: string;
+  subMessage: string;
+  /** A filter that has goals, offered as a one-tap switch; null when no goal exists at all. */
+  switchTo: Filter | null;
+}
+
+/** What an empty filter says: its own name, the other counts, and where goals are. */
+export function goalsEmpty(filter: Filter, counts: Record<Filter, number>): GoalsEmpty {
+  if (!counts.all) {
+    return {
+      message: 'No goals yet',
+      subMessage: 'Goals appear here once an issue is handed to devclaw.',
+      switchTo: null,
+    };
+  }
+  const others = FILTERS.filter(f => f.id !== filter && f.id !== 'all' && counts[f.id] > 0);
+  const name = FILTERS.find(f => f.id === filter)?.label.toLowerCase() ?? filter;
+  const subMessage = others.map(f => `${counts[f.id]} ${f.label.toLowerCase()}`).join(' · ');
+  return {
+    message: `No ${name} goals`,
+    subMessage: subMessage ? `${subMessage}.` : `${counts.all} in all.`,
+    switchTo: others[0]?.id ?? 'all',
+  };
+}
+
 /** Every goal: one issue, one branch, one PR, filtered by where it stands. */
 @Component({
   selector: 'dc-goals-page',
@@ -87,7 +113,13 @@ function matches(g: GoalRow, filter: Filter): boolean {
         retryable
       >
         @if (!shown().length) {
-          <cmn-empty-state message="Nothing here" subMessage="No goals match this filter." />
+          @let empty = emptyState();
+          <cmn-empty-state
+            [message]="empty.message"
+            [subMessage]="empty.subMessage"
+            [actionLabel]="empty.switchTo ? 'Show ' + empty.switchTo : null"
+            (action)="choose(empty.switchTo ?? 'open')"
+          />
         } @else {
           <cmn-data-table
             [rows]="shown()"
@@ -190,6 +222,7 @@ export class GoalsPageComponent {
   protected readonly shown = computed(() =>
     (this.feed.state().data ?? []).filter(g => matches(g, this.filter()))
   );
+  protected readonly emptyState = computed(() => goalsEmpty(this.filter(), this.counts()));
   protected readonly stateVariant = stateVariant;
   protected readonly stateIsLive = stateIsLive;
   protected readonly exitVariant = exitVariant;
