@@ -11,7 +11,7 @@ import {
   TagComponent,
 } from '@lifekit-hq/ui';
 
-import {type SessionRow} from '../api/devclaw.model';
+import {type SessionRow, type VerdictRow} from '../api/devclaw.model';
 import {DevclawApiService, errorText} from '../api/devclaw-api.service';
 import {POLL_MS} from '../api/feeds';
 import {feedStatus, liveFeed} from '../api/live-feed';
@@ -28,6 +28,30 @@ const SHORT_ID = 8;
 
 export function issueUrl(repoUrl: string, issue: number): string {
   return `${repoUrl.replace(/\.git$/, '')}/issues/${issue}`;
+}
+
+/**
+ * The goal's PR: the newest verdict that carries a `prUrl`, else the GitHub pull-request
+ * search for the goal's branch (`head:goal/<id>`).
+ */
+export function goalPrUrl(
+  repoUrl: string,
+  goalId: string,
+  verdicts: readonly Pick<VerdictRow, 'createdAt' | 'prUrl'>[],
+  lastSessionPrUrl?: string | null
+): string {
+  const newest = verdicts
+    .filter(v => v.prUrl)
+    .reduce<Pick<VerdictRow, 'createdAt' | 'prUrl'> | null>(
+      (best, v) => (!best || v.createdAt > best.createdAt ? v : best),
+      null
+    );
+  const direct = newest?.prUrl || lastSessionPrUrl;
+  if (direct) {
+    return direct;
+  }
+  const query = encodeURIComponent(`is:pr head:goal/${goalId}`);
+  return `${repoUrl.replace(/\.git$/, '')}/pulls?q=${query}`;
 }
 
 /** One goal: its contract, what it needs, its sessions, verdicts and decisions. */
@@ -103,11 +127,13 @@ export function issueUrl(repoUrl: string, issue: number): string {
                     >issue #{{ n }}</a
                   >
                 }
-                @if (g.lastSession?.prUrl; as pr) {
-                  <a [href]="pr" class="cmn-link" target="_blank" rel="noopener noreferrer"
-                    >the PR</a
-                  >
-                }
+                <a
+                  [href]="goalPrUrl(g.repoUrl, g.id, g.verdicts, g.lastSession?.prUrl)"
+                  class="cmn-link"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  >the PR</a
+                >
               </p>
             </dc-section>
 
@@ -220,6 +246,7 @@ export class GoalPageComponent {
   protected readonly error = computed(() => this.verbError() ?? this.feed.state().error);
   protected readonly shortId = SHORT_ID;
   protected readonly issueUrl = issueUrl;
+  protected readonly goalPrUrl = goalPrUrl;
   protected readonly stateVariant = stateVariant;
   protected readonly stateIsLive = stateIsLive;
   protected readonly exitVariant = exitVariant;
