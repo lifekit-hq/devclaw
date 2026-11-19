@@ -74,6 +74,11 @@ describe('AttentionCardComponent', () => {
     expect(buttons()).toEqual([]);
     expect(el().textContent).toContain('Sent:');
     expect(el().textContent).toContain('Postgres');
+
+    // A reload that does not yet show the answer replaces the object but not the ask.
+    await render({...ASK, recommended: -1});
+    expect(buttons()).toEqual([]);
+    expect(el().textContent).toContain('Sent:');
     http.verify();
   });
 

@@ -133,7 +133,9 @@ export class AttentionCardComponent {
 
   /** The answer just posted; it holds the card until the reload shows it, and a new ask clears it. */
   protected readonly sent = linkedSignal<number, string | null>({
-    source: () => this.attention().since,
+    // A computed stops propagating while `since` is unchanged, so a reload that replaces the
+    // attention object with the same ask does not clear the Sent state.
+    source: computed(() => this.attention().since),
     computation: () => null,
   });
 
