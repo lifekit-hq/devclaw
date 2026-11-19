@@ -2,6 +2,14 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.8.1](https://github.com/lifekit-hq/devclaw/compare/v2.8.0...v2.8.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* **frontend:** clamp long goal and exit text to one line in tables ([#1040](https://github.com/lifekit-hq/devclaw/issues/1040)) ([de58b19](https://github.com/lifekit-hq/devclaw/commit/de58b19da01db91bce0f28ae36caaded7df035bc))
+* **frontend:** keep the attention card in a Sent state after a decide ([#1042](https://github.com/lifekit-hq/devclaw/issues/1042)) ([3c586a0](https://github.com/lifekit-hq/devclaw/commit/3c586a0a1518395c8175f8f0888a56ea51475bfb))
+
 ## [2.8.0](https://github.com/lifekit-hq/devclaw/compare/v2.7.0...v2.8.0) (2026-11-17)
 
 
