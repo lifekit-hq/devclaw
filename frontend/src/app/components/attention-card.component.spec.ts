@@ -65,6 +65,23 @@ describe('AttentionCardComponent', () => {
     expect(decided).toBe(1);
   });
 
+  it('keeps the card in a Sent state after a decide, so the answer cannot be posted twice', async () => {
+    await render({...ASK, recommended: -1});
+    buttons()[0].click();
+    http.expectOne('/goals/g%201/decide').flush({ok: true});
+    await fixture.whenStable();
+
+    expect(buttons()).toEqual([]);
+    expect(el().textContent).toContain('Sent:');
+    expect(el().textContent).toContain('Postgres');
+
+    // A reload that does not yet show the answer replaces the object but not the ask.
+    await render({...ASK, recommended: -1});
+    expect(buttons()).toEqual([]);
+    expect(el().textContent).toContain('Sent:');
+    http.verify();
+  });
+
   it("shows the host's error and keeps the ask open when the decide is refused", async () => {
     await render(ASK);
     buttons()[0].click();

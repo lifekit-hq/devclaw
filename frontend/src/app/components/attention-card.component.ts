@@ -1,4 +1,11 @@
-import {ChangeDetectionStrategy, Component, computed, input, output} from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  input,
+  linkedSignal,
+  output,
+} from '@angular/core';
 import {ButtonComponent} from '@lifekit-hq/ui';
 
 import {type Attention} from '../api/devclaw.model';
@@ -40,6 +47,15 @@ interface Option {
       </p>
       <p class="mt-cmn-1 font-mono text-cmn-xs text-text-secondary">
         waiting to be picked up{{ answered.waitingOn === 'tick' ? '' : ' · ' + answered.waitingOn }}
+      </p>
+    } @else if (sent(); as postedAnswer) {
+      <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">{{ a.question }}</p>
+      <p class="mt-cmn-2 text-cmn-sm text-text-secondary">
+        Sent:
+        <span class="whitespace-pre-wrap text-text-primary">{{ postedAnswer }}</span>
+      </p>
+      <p class="mt-cmn-1 font-mono text-cmn-xs text-text-secondary">
+        waiting for the goal to update
       </p>
     } @else {
       <p class="mb-cmn-2 font-mono text-cmn-xs text-text-secondary">
@@ -98,7 +114,7 @@ interface Option {
             options().length ? 'or answer in your own words' : 'your decision, posted on the issue'
           "
           [cancellable]="cancellable()"
-          (decided)="decided.emit()"
+          (decided)="onDecided($event)"
           (cancelRequested)="cancelRequested.emit()"
           class="mt-cmn-3 block"
         />
@@ -115,6 +131,14 @@ export class AttentionCardComponent {
   public readonly decided = output();
   public readonly cancelRequested = output();
 
+  /** The answer just posted; it holds the card until the reload shows it, and a new ask clears it. */
+  protected readonly sent = linkedSignal<number, string | null>({
+    // A computed stops propagating while `since` is unchanged, so a reload that replaces the
+    // attention object with the same ask does not clear the Sent state.
+    source: computed(() => this.attention().since),
+    computation: () => null,
+  });
+
   protected readonly options = computed<Option[]>(() => {
     const a = this.attention();
     return a.options
@@ -126,4 +150,9 @@ export class AttentionCardComponent {
     const a = this.attention();
     return a.default && a.recommended < 0 ? a.default : '';
   });
+
+  protected onDecided(text: string): void {
+    this.sent.set(text);
+    this.decided.emit();
+  }
 }
