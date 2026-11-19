@@ -9,7 +9,7 @@
       41
     ],
     "branch": "devclaw/g-blocked",
-    "createdAt": 1792564312488,
+    "createdAt": 1795109578073,
     "closedAt": null,
     "outcome": null,
     "lastSeenAt": null,
@@ -21,8 +21,8 @@
       "exit": "BLOCKED",
       "exitDetail": "Should the export include archived reports?",
       "prUrl": null,
-      "createdAt": 1792564312560,
-      "completedAt": 1792564312569,
+      "createdAt": 1795109578276,
+      "completedAt": 1795109578289,
       "usage": {
         "input_tokens": 64000,
         "output_tokens": 2100,
@@ -41,7 +41,7 @@
       "recommended": 1,
       "default": "Exclude archived reports",
       "link": "https://github.com/example/widgets/issues/41",
-      "since": 1792564312569,
+      "since": 1795109578289,
       "answered": null
     },
     "usage": {
@@ -63,7 +63,7 @@
       52
     ],
     "branch": "devclaw/g-running",
-    "createdAt": 1792564312497,
+    "createdAt": 1795109578097,
     "closedAt": null,
     "outcome": null,
     "lastSeenAt": null,
@@ -75,7 +75,7 @@
       "exit": null,
       "exitDetail": null,
       "prUrl": null,
-      "createdAt": 1792564312572,
+      "createdAt": 1795109578298,
       "completedAt": null,
       "usage": null
     },
@@ -99,8 +99,8 @@
       37
     ],
     "branch": "devclaw/g-done",
-    "createdAt": 1792564312509,
-    "closedAt": 1792564312600,
+    "createdAt": 1795109578118,
+    "closedAt": 1795109578396,
     "outcome": "achieved",
     "lastSeenAt": null,
     "state": "achieved",
@@ -111,8 +111,8 @@
       "exit": "REVIEW",
       "exitDetail": null,
       "prUrl": null,
-      "createdAt": 1792564312589,
-      "completedAt": 1792564312597,
+      "createdAt": 1795109578345,
+      "completedAt": 1795109578391,
       "usage": {
         "input_tokens": 40000,
         "output_tokens": 1800,
@@ -129,6 +129,42 @@
       "cache_creation_tokens": 6000,
       "sessions_total": 2,
       "sessions_reported": 1
+    }
+  },
+  {
+    "id": "g-long",
+    "projectId": "widgets",
+    "workspaceDir": "/work/widgets",
+    "repoUrl": "https://github.com/example/widgets",
+    "objective": "Replace the hand-rolled retry loop in the nightly reconciliation job with the shared backoff helper, keep the per-account idempotency keys intact across restarts, and make every failed attempt visible on the ledger page with its cause, its attempt count and the next retry time so an operator never has to read the worker logs to learn why a reconciliation is late",
+    "issues": [
+      77
+    ],
+    "branch": "devclaw/g-long",
+    "createdAt": 1795109578131,
+    "closedAt": null,
+    "outcome": null,
+    "lastSeenAt": null,
+    "state": "waiting",
+    "lastSession": {
+      "id": "t-long-0006",
+      "kind": "implement_feature",
+      "status": "done",
+      "exit": "DELIVERED",
+      "exitDetail": "Reworked the reconciliation retry loop onto the shared backoff helper, kept the per-account idempotency keys across restarts and surfaced each failed attempt on the ledger page. The last verify run is green; the remaining work is the migration of the two legacy callers in src/jobs/reconcile.py and the follow-up to drop the old retry settings from the config schema.",
+      "prUrl": "https://github.com/example/widgets/pull/61",
+      "createdAt": 1795109578306,
+      "completedAt": 1795109578314,
+      "usage": null
+    },
+    "attention": null,
+    "usage": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cache_read_tokens": 0,
+      "cache_creation_tokens": 0,
+      "sessions_total": 1,
+      "sessions_reported": 0
     }
   }
 ]

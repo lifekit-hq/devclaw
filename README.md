@@ -25,8 +25,8 @@ spawn site rather than honored.
 
 **The console, in your browser, no install and no token:**
 [lifekit-hq.github.io/devclaw](https://lifekit-hq.github.io/devclaw/). It
-runs on invented data: one goal waiting on your decision, one running, and one
-merged with its review verdict. Open the waiting goal on *Needs you*, follow it
+runs on invented data: one goal waiting on your decision, one running, one
+merged with its review verdict, and one with real-length text. Open the waiting goal on *Needs you*, follow it
 to its session and project, and read the verdict under *Verdicts*. The demo is
 read-only: a verb answers with a notice and sends nothing. CI publishes it from
 `main` (`.github/workflows/pages.yml`) with every feed answered from
