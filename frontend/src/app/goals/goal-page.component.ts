@@ -22,6 +22,7 @@ import {SectionComponent} from '../shared/section.component';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
 import {ago, AgoPipe} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
+import {noVerdictMessage} from './goal-closed';
 import {GoalVerbs} from './goal-verbs.service';
 
 const SHORT_ID = 8;
@@ -192,7 +193,7 @@ export function goalPrUrl(
               @if (g.verdicts.length) {
                 <dc-verdict-list [rows]="g.verdicts" />
               } @else {
-                <p class="text-cmn-sm text-text-secondary">No done-gate review yet.</p>
+                <p class="text-cmn-sm text-text-secondary">{{ noVerdict(g.outcome) }}</p>
               }
             </dc-section>
 
@@ -250,6 +251,7 @@ export class GoalPageComponent {
   protected readonly stateVariant = stateVariant;
   protected readonly stateIsLive = stateIsLive;
   protected readonly exitVariant = exitVariant;
+  protected readonly noVerdict = noVerdictMessage;
 
   protected sublabel(s: SessionRow): string {
     return `${ago(s.createdAt)} · ${s.kind === 'review_repository' ? 'review' : 'session'}`;
