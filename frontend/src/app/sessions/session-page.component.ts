@@ -28,9 +28,7 @@ import {ago, utcSecond} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
 
 const NOT_FOUND = 404;
-const SUMMARY_KEYS = 4;
-const SUMMARY_VALUE = 80;
-const SUMMARY_RAW = 160;
+const SUMMARY_TEXT = 120;
 const SHORT_SHA = 7;
 /** Events fetched per request. */
 export const EVENT_PAGE = 100;
@@ -73,24 +71,51 @@ interface RecordRow {
   title?: string;
 }
 
-/** The first few `key=value` pairs of an event's payload, for one line. */
+function oneLine(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > SUMMARY_TEXT ? `${flat.slice(0, SUMMARY_TEXT)}…` : flat;
+}
+
+/** One readable phrase for an event: what the agent said or did, never raw JSON. */
 export function payloadSummary(e: TaskEvent): string {
+  let p: unknown;
   try {
-    const p: unknown = JSON.parse(e.payloadJson);
-    if (p && typeof p === 'object') {
-      const entries = Object.entries(p);
-      const head = entries
-        .slice(0, SUMMARY_KEYS)
-        .map(
-          ([k, v]) =>
-            `${k}=${(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, SUMMARY_VALUE)}`
-        );
-      return head.join('  ') + (entries.length > SUMMARY_KEYS ? '  …' : '');
-    }
+    p = JSON.parse(e.payloadJson);
   } catch {
-    // Not JSON: shown raw below.
+    return oneLine(String(e.payloadJson));
   }
-  return String(e.payloadJson).slice(0, SUMMARY_RAW);
+  if (typeof p === 'string') {
+    return oneLine(p);
+  }
+  if (!p || typeof p !== 'object') {
+    return String(p);
+  }
+  const frame = p as Record<string, unknown>;
+  const message = frame['message'];
+  const content: unknown[] =
+    message &&
+    typeof message === 'object' &&
+    Array.isArray((message as {content?: unknown}).content)
+      ? (message as {content: unknown[]}).content
+      : [];
+  for (const block of content) {
+    const b = (block && typeof block === 'object' ? block : {}) as Record<string, unknown>;
+    if (b['type'] === 'tool_use' && typeof b['name'] === 'string') {
+      return `tool ${b['name']}`;
+    }
+    if (b['type'] === 'tool_result') {
+      return 'tool result';
+    }
+    if (b['type'] === 'text' && typeof b['text'] === 'string') {
+      return oneLine(b['text']);
+    }
+  }
+  for (const key of ['result', 'text', 'message', 'subtype', 'error']) {
+    if (typeof frame[key] === 'string') {
+      return oneLine(frame[key]);
+    }
+  }
+  return '';
 }
 
 /** A part of the session record that may never have been written. */
@@ -407,7 +432,7 @@ export class SessionPageComponent {
   }
 
   protected eventLine(e: TaskEvent): string {
-    return `${utcSecond(e.ts)} · ${e.source} · ${payloadSummary(e)}`;
+    return [utcSecond(e.ts), e.source, payloadSummary(e)].filter(Boolean).join(' · ');
   }
 
   protected more(): void {
