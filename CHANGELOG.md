@@ -2,6 +2,18 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.8.2](https://github.com/lifekit-hq/devclaw/compare/v2.8.1...v2.8.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* **frontend:** a closed goal says it was closed, not pending ([#1049](https://github.com/lifekit-hq/devclaw/issues/1049)) ([97f1ea5](https://github.com/lifekit-hq/devclaw/commit/97f1ea5433817e941e837e6e3737999cd529268f))
+* **frontend:** confirm the dispatch hold, show one dispatch line and pick a time zone ([#1048](https://github.com/lifekit-hq/devclaw/issues/1048)) ([0d1f653](https://github.com/lifekit-hq/devclaw/commit/0d1f65349207b86bc79472739aed301d4493d37d))
+* **frontend:** lighten the session page with per-row payload disclosure and 100-event pages ([#1046](https://github.com/lifekit-hq/devclaw/issues/1046)) ([60ec972](https://github.com/lifekit-hq/devclaw/commit/60ec972d6a9d16f6f3ce6a00672fe1d228611e59))
+* **frontend:** link a goal's PR from its newest verdict ([#1043](https://github.com/lifekit-hq/devclaw/issues/1043)) ([c8f5928](https://github.com/lifekit-hq/devclaw/commit/c8f5928d5a63881b809059621fa2f87e963ccb36))
+* **frontend:** name the other counts when a goals filter is empty ([#1045](https://github.com/lifekit-hq/devclaw/issues/1045)) ([dd318f5](https://github.com/lifekit-hq/devclaw/commit/dd318f5078de4fa61915f3192cf2e63dccfabf6e))
+* **frontend:** poll a running session page and show a failed event read with a retry ([#1047](https://github.com/lifekit-hq/devclaw/issues/1047)) ([4d32644](https://github.com/lifekit-hq/devclaw/commit/4d32644f3ed443364f64d53f7a3bd2a59ee8e6ac))
+
 ## [2.8.1](https://github.com/lifekit-hq/devclaw/compare/v2.8.0...v2.8.1) (2026-11-19)
 
 
