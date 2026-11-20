@@ -17,22 +17,47 @@ import {
   InputComponent,
   type InputType,
   PageComponent,
+  SelectComponent,
+  type SelectOption,
   SettingRowComponent,
   SettingsSectionComponent,
 } from '@lifekit-hq/ui';
 import {type Observable} from 'rxjs';
 
 import {AccountService} from '../account/account.service';
-import {type RunSchedule} from '../api/devclaw.model';
+import {type ControlState, type RunSchedule} from '../api/devclaw.model';
 import {DevclawApiService, errorText} from '../api/devclaw-api.service';
 import {ControlFeed} from '../api/feeds';
-import {DispatchStatusComponent} from '../shared/dispatch-status.component';
+import {inFuture} from '../shared/time';
 import {VERSION} from '../version';
+import {DispatchVerbs} from './dispatch-verbs.service';
 
 // The kit's `InputType` does not list `time` yet, but `cmn-input` binds the value straight to the
 // native element's `type`; typed properly once lifekit-common adds it (e2e/console.spec.ts pins
 // that the field renders as a time input, so a kit change that stops passing it through fails).
 const TIME_TYPE = 'time' as unknown as InputType;
+
+/** Every IANA zone the browser knows, plus `UTC` and the saved one in case the list omits them. */
+export function zoneOptions(
+  saved: string,
+  supported = Intl.supportedValuesOf('timeZone')
+): SelectOption[] {
+  return [...new Set(['UTC', saved, ...supported].filter(Boolean))].map(z => ({
+    label: z,
+    value: z,
+  }));
+}
+
+/** Why dispatch is or is not starting sessions, in one line. */
+export function dispatchLine(c: ControlState, now = Date.now()): string {
+  if (c.operatorHold.on) {
+    return `Held: ${c.operatorHold.reason || '(no reason)'}`;
+  }
+  if (c.pause) {
+    return `Paused, resumes ${inFuture(c.pause.untilMs, now)} - ${c.pause.reason}`;
+  }
+  return c.blocked ? `Off-hours: ${c.whyBlocked}` : 'Running';
+}
 
 const NO_SCHEDULE: RunSchedule = {enabled: false, start: '22:00', end: '05:00', tz: 'UTC'};
 
@@ -42,7 +67,7 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
 
 /**
  * The standard settings page: Account (the gate's identity, read-only), Appearance (applies at
- * once and follows the account), the Workspace: Instance controls (dispatch hold and the run
+ * once and follows the account), the This devclaw controls (dispatch hold and the run
  * window, each its own section with its own Save) and About. Sections are direct children of the
  * settings page template, which owns the dividers.
  */
@@ -53,11 +78,11 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
     AppearanceSettingsComponent,
     ButtonComponent,
     CheckboxComponent,
-    DispatchStatusComponent,
     FormFieldComponent,
     FormsModule,
     InputComponent,
     PageComponent,
+    SelectComponent,
     SettingRowComponent,
     SettingsSectionComponent,
   ],
@@ -85,14 +110,10 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
         <cmn-appearance-settings [appSeed]="appSeed" />
       </cmn-settings-section>
 
-      <cmn-settings-section
-        heading="Workspace: Instance"
-        caption="Shared by everyone on this devclaw."
-      >
+      <cmn-settings-section heading="This devclaw" caption="Shared by everyone on this devclaw.">
         @if (error(); as message) {
           <cmn-alert variant="error">{{ message }}</cmn-alert>
         }
-        <dc-dispatch-status />
         @if (control(); as c) {
           <cmn-setting-row [description]="dispatchState()" label="Dispatch">
             @if (c.operatorHold.on) {
@@ -133,14 +154,16 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
             >
               <cmn-input [type]="timeType" size="sm" />
             </cmn-form-field>
-            <cmn-form-field
-              [ngModel]="form().tz"
-              (ngModelChange)="patch({tz: $event})"
-              class="w-48"
-              label="Time zone"
-            >
-              <cmn-input placeholder="Europe/Dublin" size="sm" />
-            </cmn-form-field>
+            <div class="w-64">
+              <span class="mb-cmn-1 block text-cmn-sm">Time zone</span>
+              <cmn-select
+                [ngModel]="form().tz"
+                [options]="zones()"
+                (ngModelChange)="patch({tz: $event})"
+                aria-label="Time zone"
+                size="sm"
+              />
+            </div>
           </div>
           <div>
             <cmn-button [loading]="busy()" (clicked)="save()" variant="primary">Save</cmn-button>
@@ -171,6 +194,7 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
 })
 export class SettingsPageComponent {
   private readonly api = inject(DevclawApiService);
+  private readonly verbs = inject(DispatchVerbs);
   private readonly verbError = signal<string | null>(null);
   /** The saved window; a new object on every poll, equal unless it really changed. */
   private readonly saved = computed(() => this.control()?.schedule ?? NO_SCHEDULE, {
@@ -187,27 +211,27 @@ export class SettingsPageComponent {
   /** The window being edited; resets only when the saved one changes, never on a poll. */
   protected readonly form = linkedSignal(() => ({...this.saved()}));
   protected readonly busy = signal(false);
-  /** Why dispatch is or is not starting sessions, in one line. */
-  protected readonly dispatchState = computed((): string => {
+  /** The one dispatch line. */
+  protected readonly dispatchState = computed(() => {
     const c = this.control();
-    if (!c) {
-      return '';
-    }
-    if (c.operatorHold.on) {
-      return `Held: ${c.operatorHold.reason || '(no reason)'}`;
-    }
-    if (c.pause) {
-      return `Paused until ${new Date(c.pause.untilMs).toLocaleString()} - ${c.pause.reason}`;
-    }
-    return c.blocked ? `Off-hours: ${c.whyBlocked}` : 'Open.';
+    return c ? dispatchLine(c) : '';
   });
+  protected readonly zones = computed(() => zoneOptions(this.form().tz));
 
   protected patch(change: Partial<RunSchedule>): void {
     this.form.update(f => ({...f, ...change}));
   }
 
   protected hold(): void {
-    this.run(this.api.holdDispatch('held from the console'));
+    this.verbError.set(null);
+    this.verbs.hold().subscribe({
+      next: held => {
+        if (held) {
+          this.feed.reload();
+        }
+      },
+      error: (e: unknown) => this.verbError.set(errorText(e)),
+    });
   }
 
   protected release(): void {
