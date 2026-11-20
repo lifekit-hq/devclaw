@@ -233,6 +233,11 @@ test('a verdict that is not in the feed says so', async ({page}) => {
 
 test('Settings shows the account, the run window and posts a hold', async ({page}) => {
   let held = false;
+  const saved: unknown[] = [];
+  await page.route('**/control/schedule', route => {
+    saved.push(route.request().postDataJSON());
+    return route.fulfill({json: {}});
+  });
   await page.route('**/control/pause', route => {
     held = true;
     return route.fulfill({json: {operatorHold: {on: true, reason: 'held from the console'}}});
@@ -246,6 +251,10 @@ test('Settings shows the account, the run window and posts a hold', async ({page
   await expect(window.getByRole('textbox', {name: 'Start'})).toHaveValue('22:00');
   await expect(window.getByRole('textbox', {name: 'End'})).toHaveAttribute('type', 'time');
   await expect(window.getByRole('combobox', {name: 'Time zone'})).toHaveValue('Europe/Dublin');
+  await window.getByRole('combobox', {name: 'Time zone'}).selectOption('Africa/Cairo');
+  await window.getByRole('button', {name: 'Save'}).click();
+  await expect.poll(() => saved.length).toBe(1);
+  expect(saved[0]).toMatchObject({tz: 'Africa/Cairo'});
   await page.getByRole('button', {name: 'Hold all new sessions'}).click();
   await page.getByRole('dialog').getByRole('button', {name: 'Hold', exact: true}).click();
   await expect.poll(() => held).toBe(true);

@@ -154,14 +154,16 @@ function sameSchedule(a: RunSchedule, b: RunSchedule): boolean {
             >
               <cmn-input [type]="timeType" size="sm" />
             </cmn-form-field>
-            <cmn-form-field
-              [ngModel]="form().tz"
-              (ngModelChange)="patch({tz: $event})"
-              class="w-64"
-              label="Time zone"
-            >
-              <cmn-select [options]="zones()" size="sm" />
-            </cmn-form-field>
+            <div class="w-64">
+              <span class="mb-cmn-1 block text-sm">Time zone</span>
+              <cmn-select
+                [ngModel]="form().tz"
+                (ngModelChange)="patch({tz: $event})"
+                [options]="zones()"
+                aria-label="Time zone"
+                size="sm"
+              />
+            </div>
           </div>
           <div>
             <cmn-button [loading]="busy()" (clicked)="save()" variant="primary">Save</cmn-button>
