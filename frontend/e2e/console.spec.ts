@@ -245,8 +245,9 @@ test('Settings shows the account, the run window and posts a hold', async ({page
   await expect(window.getByRole('textbox', {name: 'Start'})).toHaveAttribute('type', 'time');
   await expect(window.getByRole('textbox', {name: 'Start'})).toHaveValue('22:00');
   await expect(window.getByRole('textbox', {name: 'End'})).toHaveAttribute('type', 'time');
-  await expect(window.getByRole('textbox', {name: 'Time zone'})).toHaveValue('Europe/Dublin');
+  await expect(window.getByRole('combobox', {name: 'Time zone'})).toHaveValue('Europe/Dublin');
   await page.getByRole('button', {name: 'Hold all new sessions'}).click();
+  await page.getByRole('dialog').getByRole('button', {name: 'Hold', exact: true}).click();
   await expect.poll(() => held).toBe(true);
 });
 
