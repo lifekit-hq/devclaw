@@ -29,12 +29,14 @@ const EMPTY = {data: null, error: null, status: null};
 /**
  * Polls one feed while the page is open: now, then every `intervalMs` (0 reads once), again whenever `key`
  * changes (a new route id) and on `reload()`. A failed read keeps the last good data and sets
- * the error, so a blip never blanks the page. Call in an injection context.
+ * the error, so a blip never blanks the page. With `isDone`, polling stops once a good read
+ * satisfies it (a final record needs no more reads). Call in an injection context.
  */
 export function liveFeed<T, K = null>(
   request: (key: K) => Observable<T>,
   intervalMs: number,
-  key: Signal<K> = signal(null as K)
+  key: Signal<K> = signal(null as K),
+  isDone: (data: T) => boolean = () => false
 ): LiveFeed<T> {
   const reloads$ = new Subject<void>();
   const loading = signal(false);
@@ -55,7 +57,9 @@ export function liveFeed<T, K = null>(
         reloads$.pipe(
           startWith(undefined),
           switchMap(() =>
-            intervalMs > 0 ? poll(() => read(k), {intervalMs, isDone: () => false}) : read(k)
+            intervalMs > 0
+              ? poll(() => read(k), {intervalMs, isDone: r => r.ok && isDone(r.data)})
+              : read(k)
           ),
           tap(() => loading.set(false)),
           scan(

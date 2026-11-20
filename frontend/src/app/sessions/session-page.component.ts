@@ -7,6 +7,7 @@ import {
   inject,
   input,
   signal,
+  untracked,
 } from '@angular/core';
 import {RouterLink} from '@angular/router';
 import {
@@ -18,9 +19,11 @@ import {
   PageComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
+import {finalize, type Subscription} from 'rxjs';
 
 import {type TaskEvent, type TaskRow} from '../api/devclaw.model';
-import {DevclawApiService} from '../api/devclaw-api.service';
+import {DevclawApiService, errorText} from '../api/devclaw-api.service';
+import {POLL_MS} from '../api/feeds';
 import {feedStatus, liveFeed} from '../api/live-feed';
 import {SectionComponent} from '../shared/section.component';
 import {exitVariant} from '../shared/status';
@@ -33,6 +36,8 @@ const SHORT_SHA = 7;
 /** Events fetched per request. */
 export const EVENT_PAGE = 100;
 const FACT_VALUE = 120;
+/** A session in either state still changes; any other status is its final record. */
+const LIVE_STATUSES = new Set(['pending', 'queued', 'running']);
 const INDENT = 2;
 /** Parts of the record shown as short `key: value` lists instead of JSON. */
 const FACT_PARTS = new Set(['Verify', 'Delivery']);
@@ -291,6 +296,14 @@ function absent(value: unknown): boolean {
             }
 
             <dc-section [count]="events().length" [flush]="true" heading="Events">
+              @if (eventsError(); as message) {
+                <div class="flex flex-col gap-cmn-2 px-cmn-4 py-cmn-3">
+                  <cmn-alert variant="error">Could not read the events: {{ message }}</cmn-alert>
+                  <div>
+                    <cmn-button (clicked)="loadEvents()" variant="secondary">retry</cmn-button>
+                  </div>
+                </div>
+              }
               @for (e of events(); track e.id) {
                 <div class="border-b border-border-default last:border-b-0">
                   <cmn-list-item-row [label]="e.type" [sublabel]="eventLine(e)" />
@@ -312,7 +325,9 @@ function absent(value: unknown): boolean {
                   </div>
                 </div>
               } @empty {
-                <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">not recorded</p>
+                @if (!eventsError()) {
+                  <p class="px-cmn-4 py-cmn-3 text-cmn-sm text-text-secondary">not recorded</p>
+                }
               }
               @if (cursor()) {
                 <div class="border-t border-border-default p-cmn-3">
@@ -332,6 +347,8 @@ export class SessionPageComponent {
   private readonly api = inject(DevclawApiService);
 
   /** Events whose payload is expanded; a closed row holds no payload in the page. */
+  private eventsSub: Subscription | null = null;
+
   private readonly open = signal<ReadonlySet<number>>(new Set());
 
   /** The route's `:id`. */
@@ -339,8 +356,13 @@ export class SessionPageComponent {
 
   protected readonly feedStatus = feedStatus;
 
-  /** A session's record is final once it ends; read once per id, not polled. */
-  protected readonly feed = liveFeed(id => this.api.task(id), 0, this.id);
+  /** Polled while the session is queued or running; its record is final once it ends. */
+  protected readonly feed = liveFeed(
+    id => this.api.task(id),
+    POLL_MS,
+    this.id,
+    d => !LIVE_STATUSES.has(d.task.status)
+  );
   protected readonly detail = computed(() => this.feed.state().data);
   protected readonly error = computed(() => {
     const {error, status} = this.feed.state();
@@ -367,6 +389,8 @@ export class SessionPageComponent {
     }));
   });
   protected readonly events = signal<TaskEvent[]>([]);
+  /** The newest events read failed (the list is then not "not recorded", it is unknown). */
+  protected readonly eventsError = signal<string | null>(null);
   protected readonly cursor = signal<number | null>(null);
   protected readonly loadingMore = signal(false);
   protected readonly exitVariant = exitVariant;
@@ -376,19 +400,43 @@ export class SessionPageComponent {
   protected readonly exactTimes = signal(false);
 
   constructor() {
+    // Read the events after the last shown whenever the session record is (re)read: once it ends
+    // the record stops polling, so the events stop with it. No record (another id) starts over.
     effect(onCleanup => {
-      const sub = this.api.taskEvents(this.id(), null, EVENT_PAGE).subscribe({
-        next: r => {
-          this.events.set(r.events);
-          this.cursor.set(r.nextCursor);
-        },
-        error: () => {
+      if (this.detail()) {
+        untracked(() => this.loadEvents());
+      } else {
+        untracked(() => {
           this.events.set([]);
           this.cursor.set(null);
-        },
-      });
-      onCleanup(() => sub.unsubscribe());
+          this.eventsError.set(null);
+        });
+      }
+      onCleanup(() => this.eventsSub?.unsubscribe());
     });
+  }
+
+  /**
+   * Reads the events after the newest one already shown (the first page when none): a poll
+   * appends the new tail and "load more" the next page, so neither drops rows nor races the
+   * other. A failure is shown with a retry, never as an empty log.
+   */
+  protected loadEvents(more = false): void {
+    this.eventsSub?.unsubscribe();
+    if (more) {
+      this.loadingMore.set(true);
+    }
+    this.eventsSub = this.api
+      .taskEvents(this.id(), this.events().at(-1)?.id ?? null, EVENT_PAGE)
+      .pipe(finalize(() => this.loadingMore.set(false)))
+      .subscribe({
+        next: r => {
+          this.events.update(ev => [...ev, ...r.events]);
+          this.cursor.set(r.nextCursor);
+          this.eventsError.set(null);
+        },
+        error: e => this.eventsError.set(errorText(e)),
+      });
   }
 
   protected isoTime(ms: number): string {
@@ -436,18 +484,8 @@ export class SessionPageComponent {
   }
 
   protected more(): void {
-    const cursor = this.cursor();
-    if (!cursor || this.loadingMore()) {
-      return;
+    if (this.cursor() && !this.loadingMore()) {
+      this.loadEvents(true);
     }
-    this.loadingMore.set(true);
-    this.api.taskEvents(this.id(), cursor, EVENT_PAGE).subscribe({
-      next: r => {
-        this.events.update(ev => [...ev, ...r.events]);
-        this.cursor.set(r.nextCursor);
-        this.loadingMore.set(false);
-      },
-      error: () => this.loadingMore.set(false),
-    });
   }
 }
