@@ -18,9 +18,9 @@ import {type GoalRow} from '../api/devclaw.model';
 import {GoalsFeed} from '../api/feeds';
 import {feedStatus} from '../api/live-feed';
 import {exitVariant, stateIsLive, stateVariant} from '../shared/status';
-import {AgoPipe} from '../shared/time';
 import {UsageComponent} from '../shared/usage';
 import {isWide} from '../shared/wide';
+import {seenLabel} from './goal-closed';
 
 type Filter = 'open' | 'blocked' | 'closed' | 'all';
 
@@ -74,7 +74,6 @@ export function goalsEmpty(filter: Filter, counts: Record<Filter, number>): Goal
 @Component({
   selector: 'dc-goals-page',
   imports: [
-    AgoPipe,
     AlertComponent,
     AsyncStateComponent,
     CmnCellDirective,
@@ -191,7 +190,7 @@ export function goalsEmpty(filter: Filter, counts: Record<Filter, number>): Goal
               /></ng-template>
             </cmn-column>
             <cmn-column key="lastSeenAt" header="Seen" align="right" listSlot="trailing-secondary">
-              <ng-template let-g cmnCell>{{ g.lastSeenAt | ago }}</ng-template>
+              <ng-template let-g cmnCell>{{ seen(g) }}</ng-template>
             </cmn-column>
           </cmn-data-table>
         }
@@ -226,6 +225,7 @@ export class GoalsPageComponent {
   protected readonly stateVariant = stateVariant;
   protected readonly stateIsLive = stateIsLive;
   protected readonly exitVariant = exitVariant;
+  protected readonly seen = seenLabel;
 
   protected choose(value: string): void {
     const picked = FILTERS.find(f => f.id === value);
