@@ -12,6 +12,15 @@ import {
 } from './session-page.component';
 
 const ID = 'ea178b7d';
+
+/** jsdom has no `DOMMatrixReadOnly`; the library's list motion measures rows with it. */
+vi.stubGlobal(
+  'DOMMatrixReadOnly',
+  class {
+    public readonly m41 = 0;
+    public readonly m42 = 0;
+  }
+);
 const SECRET = 'SECRET-PAYLOAD-MARKER';
 
 function event(id: number, payload: object): TaskEvent {
@@ -30,13 +39,23 @@ const ASSISTANT = event(1, {
   message: {model: 'claude-x', content: [{type: 'text', text: `Reading the issue. ${SECRET}`}]},
 });
 
+/** Lets the zero-delay poll timer and the render run; the page's timers are faked. */
+async function settle(fixture: ComponentFixture<SessionPageComponent>, ms = 0): Promise<void> {
+  fixture.detectChanges();
+  await vi.advanceTimersByTimeAsync(ms);
+  fixture.detectChanges();
+}
+
 describe('session page weight', () => {
   let fixture: ComponentFixture<SessionPageComponent>;
   let http: HttpTestingController;
 
   const el = (): HTMLElement => fixture.nativeElement as HTMLElement;
 
+  afterEach(() => vi.useRealTimers());
+
   beforeEach(async () => {
+    vi.useFakeTimers();
     TestBed.configureTestingModule({
       providers: [
         provideZonelessChangeDetection(),
@@ -47,15 +66,16 @@ describe('session page weight', () => {
     http = TestBed.inject(HttpTestingController);
     fixture = TestBed.createComponent(SessionPageComponent);
     fixture.componentRef.setInput('id', ID);
-    await fixture.whenStable();
+    await settle(fixture);
     http.expectOne(`/tasks/${ID}.json`).flush({
       task: {id: ID, status: 'completed', workspaceDir: '/w'},
       verify: {ok: true, log: 'x'.repeat(5000)},
     });
+    await settle(fixture);
     const req = http.expectOne(r => r.url === `/tasks/${ID}/events.json`);
     expect(req.request.params.get('limit')).toBe('100');
     req.flush({events: [ASSISTANT], count: 1, nextCursor: 1});
-    await fixture.whenStable();
+    await settle(fixture);
   });
 
   it('asks for the next 100 events when loading more', () => {
@@ -78,7 +98,7 @@ describe('session page weight', () => {
       b.textContent?.includes('show payload')
     );
     toggle?.click();
-    await fixture.whenStable();
+    await settle(fixture);
 
     const payload = el().querySelector('pre[aria-label="Event payload"]');
     expect(payload?.textContent).toContain('"model": "claude-x"');
@@ -96,6 +116,79 @@ describe('session page weight', () => {
     expect(facts?.textContent).toContain('ok');
     expect(facts?.textContent).toContain('true');
     expect((facts?.textContent ?? '').length).toBeLessThan(400);
+  });
+});
+
+describe('session page liveness', () => {
+  let fixture: ComponentFixture<SessionPageComponent>;
+  let http: HttpTestingController;
+  const POLL = 15_000;
+
+  const el = (): HTMLElement => fixture.nativeElement as HTMLElement;
+  const task = (status: string): object => ({task: {id: ID, status, workspaceDir: '/w'}});
+
+  async function open(status: string): Promise<void> {
+    vi.useFakeTimers();
+    TestBed.configureTestingModule({
+      providers: [
+        provideZonelessChangeDetection(),
+        provideHttpClient(),
+        provideHttpClientTesting(),
+      ],
+    });
+    http = TestBed.inject(HttpTestingController);
+    fixture = TestBed.createComponent(SessionPageComponent);
+    fixture.componentRef.setInput('id', ID);
+    await settle(fixture);
+    http.expectOne(`/tasks/${ID}.json`).flush(task(status));
+    await settle(fixture);
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it('reads a running session again, record and events', async () => {
+    await open('running');
+    http
+      .expectOne(r => r.url === `/tasks/${ID}/events.json`)
+      .flush({events: [ASSISTANT], count: 1, nextCursor: null});
+    await settle(fixture, POLL);
+    http.expectOne(`/tasks/${ID}.json`).flush(task('completed'));
+    await settle(fixture);
+    http
+      .expectOne(r => r.url === `/tasks/${ID}/events.json`)
+      .flush({events: [ASSISTANT], count: 1, nextCursor: null});
+  });
+
+  it('reads an ended session once', async () => {
+    await open('completed');
+    http
+      .expectOne(r => r.url === `/tasks/${ID}/events.json`)
+      .flush({events: [], count: 0, nextCursor: null});
+    await settle(fixture, POLL * 3);
+    http.expectNone(`/tasks/${ID}.json`);
+    http.expectNone(r => r.url === `/tasks/${ID}/events.json`);
+  });
+
+  it('shows a failed event read as an error with a retry, never "not recorded"', async () => {
+    await open('completed');
+    http
+      .expectOne(r => r.url === `/tasks/${ID}/events.json`)
+      .flush('boom', {status: 500, statusText: 'Server Error'});
+    await settle(fixture);
+    expect(el().textContent).toContain('Could not read the events');
+    const events = el().querySelector('dc-section:last-of-type');
+    expect(events?.textContent).not.toContain('not recorded');
+
+    const retry = Array.from(el().querySelectorAll('button')).find(b =>
+      b.textContent?.includes('retry')
+    );
+    retry?.click();
+    http
+      .expectOne(r => r.url === `/tasks/${ID}/events.json`)
+      .flush({events: [ASSISTANT], count: 1, nextCursor: null});
+    await settle(fixture);
+    expect(el().textContent).not.toContain('Could not read the events');
+    expect(el().textContent).toContain('Reading the issue.');
   });
 });
 
