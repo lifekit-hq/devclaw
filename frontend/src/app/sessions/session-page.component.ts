@@ -19,7 +19,7 @@ import {
   PageComponent,
   TagComponent,
 } from '@lifekit-hq/ui';
-import {type Subscription} from 'rxjs';
+import {finalize, type Subscription} from 'rxjs';
 
 import {type TaskEvent, type TaskRow} from '../api/devclaw.model';
 import {DevclawApiService, errorText} from '../api/devclaw-api.service';
@@ -400,27 +400,43 @@ export class SessionPageComponent {
   protected readonly exactTimes = signal(false);
 
   constructor() {
-    // Re-read the first page whenever the session record is (re)read: once it ends the record
-    // stops polling, so the events stop with it.
+    // Read the events after the last shown whenever the session record is (re)read: once it ends
+    // the record stops polling, so the events stop with it. No record (another id) starts over.
     effect(onCleanup => {
       if (this.detail()) {
         untracked(() => this.loadEvents());
+      } else {
+        untracked(() => {
+          this.events.set([]);
+          this.cursor.set(null);
+          this.eventsError.set(null);
+        });
       }
       onCleanup(() => this.eventsSub?.unsubscribe());
     });
   }
 
-  /** Reads the first page of events; a failure is shown with a retry, never as an empty log. */
-  protected loadEvents(): void {
+  /**
+   * Reads the events after the newest one already shown (the first page when none): a poll
+   * appends the new tail and "load more" the next page, so neither drops rows nor races the
+   * other. A failure is shown with a retry, never as an empty log.
+   */
+  protected loadEvents(more = false): void {
     this.eventsSub?.unsubscribe();
-    this.eventsSub = this.api.taskEvents(this.id(), null, EVENT_PAGE).subscribe({
-      next: r => {
-        this.events.set(r.events);
-        this.cursor.set(r.nextCursor);
-        this.eventsError.set(null);
-      },
-      error: e => this.eventsError.set(errorText(e)),
-    });
+    if (more) {
+      this.loadingMore.set(true);
+    }
+    this.eventsSub = this.api
+      .taskEvents(this.id(), this.events().at(-1)?.id ?? null, EVENT_PAGE)
+      .pipe(finalize(() => this.loadingMore.set(false)))
+      .subscribe({
+        next: r => {
+          this.events.update(ev => [...ev, ...r.events]);
+          this.cursor.set(r.nextCursor);
+          this.eventsError.set(null);
+        },
+        error: e => this.eventsError.set(errorText(e)),
+      });
   }
 
   protected isoTime(ms: number): string {
@@ -468,18 +484,8 @@ export class SessionPageComponent {
   }
 
   protected more(): void {
-    const cursor = this.cursor();
-    if (!cursor || this.loadingMore()) {
-      return;
+    if (this.cursor() && !this.loadingMore()) {
+      this.loadEvents(true);
     }
-    this.loadingMore.set(true);
-    this.api.taskEvents(this.id(), cursor, EVENT_PAGE).subscribe({
-      next: r => {
-        this.events.update(ev => [...ev, ...r.events]);
-        this.cursor.set(r.nextCursor);
-        this.loadingMore.set(false);
-      },
-      error: () => this.loadingMore.set(false),
-    });
   }
 }

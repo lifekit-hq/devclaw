@@ -146,7 +146,7 @@ describe('session page liveness', () => {
 
   afterEach(() => vi.useRealTimers());
 
-  it('reads a running session again, record and events', async () => {
+  it('appends only the new tail when a running session is re-read', async () => {
     await open('running');
     http
       .expectOne(r => r.url === `/tasks/${ID}/events.json`)
@@ -154,9 +154,16 @@ describe('session page liveness', () => {
     await settle(fixture, POLL);
     http.expectOne(`/tasks/${ID}.json`).flush(task('completed'));
     await settle(fixture);
-    http
-      .expectOne(r => r.url === `/tasks/${ID}/events.json`)
-      .flush({events: [ASSISTANT], count: 1, nextCursor: null});
+    const tail = http.expectOne(r => r.url === `/tasks/${ID}/events.json`);
+    expect(tail.request.params.get('since')).toBe('1');
+    tail.flush({
+      events: [event(2, {type: 'result', result: 'second event'})],
+      count: 1,
+      nextCursor: null,
+    });
+    await settle(fixture);
+    expect(el().textContent).toContain('Reading the issue.');
+    expect(el().textContent).toContain('second event');
   });
 
   it('reads an ended session once', async () => {
