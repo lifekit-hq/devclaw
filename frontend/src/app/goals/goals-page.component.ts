@@ -44,6 +44,12 @@ function matches(g: GoalRow, filter: Filter): boolean {
   }
 }
 
+/** Newest first: a closed goal by when it closed, an open one by when it was last seen. */
+export function sortGoals(goals: GoalRow[]): GoalRow[] {
+  const at = (g: GoalRow) => g.closedAt ?? g.lastSeenAt ?? g.createdAt;
+  return [...goals].sort((a, b) => at(b) - at(a));
+}
+
 export interface GoalsEmpty {
   message: string;
   subMessage: string;
@@ -219,7 +225,7 @@ export class GoalsPageComponent {
     }))
   );
   protected readonly shown = computed(() =>
-    (this.feed.state().data ?? []).filter(g => matches(g, this.filter()))
+    sortGoals((this.feed.state().data ?? []).filter(g => matches(g, this.filter())))
   );
   protected readonly emptyState = computed(() => goalsEmpty(this.filter(), this.counts()));
   protected readonly stateVariant = stateVariant;
