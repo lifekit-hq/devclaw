@@ -23,6 +23,15 @@ export function verdictWord(v: VerdictRow): {text: string; variant: TagVariant} 
     : {text: 'not achieved', variant: 'error'};
 }
 
+/** The row's headline: the review's summary, else the question that blocked it, else the word. */
+export function verdictLabel(v: VerdictRow): string {
+  const text = v.unreadable ? v.rawError : v.summary;
+  if (text) {
+    return text;
+  }
+  return !v.unreadable && v.question ? `Asked: ${v.question}` : verdictWord(v).text;
+}
+
 /**
  * The done-gate's reviews. On the verdicts page (across goals, `pushed`) a row pushes the
  * review's own page (`/verdicts/:id`); on the goal page (its own) each row expands in place to
@@ -44,7 +53,7 @@ export function verdictWord(v: VerdictRow): {text: string; variant: TagVariant} 
       @let word = verdictWord(v);
       @if (pushed()) {
         <cmn-list-item-row
-          [label]="(v.unreadable ? v.rawError : v.summary) || word.text"
+          [label]="verdictLabel(v)"
           [sublabel]="sublabel(v)"
           [action]="true"
           (activated)="open(v)"
@@ -61,7 +70,7 @@ export function verdictWord(v: VerdictRow): {text: string; variant: TagVariant} 
         </cmn-list-item-row>
       } @else {
         <cmn-disclosure-row
-          [label]="(v.unreadable ? v.rawError : v.summary) || word.text"
+          [label]="verdictLabel(v)"
           [sublabel]="sublabel(v)"
           [open]="false"
         >
@@ -135,6 +144,7 @@ export class VerdictListComponent {
   public readonly pushed = input(false);
 
   protected readonly verdictWord = verdictWord;
+  protected readonly verdictLabel = verdictLabel;
 
   protected sublabel(v: VerdictRow): string {
     const parts = [
