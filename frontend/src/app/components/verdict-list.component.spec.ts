@@ -1,8 +1,25 @@
 import {type VerdictRow} from '../api/devclaw.model';
 import {verdictLabel} from './verdict-list.component';
 
-const row = (over: Partial<VerdictRow>): VerdictRow =>
-  ({summary: '', question: '', unreadable: false, achieved: false, ...over}) as VerdictRow;
+const row = (over: Partial<VerdictRow>): VerdictRow => ({
+  taskId: 't',
+  goalId: null,
+  createdAt: 0,
+  completedAt: null,
+  head: '',
+  achieved: false,
+  unreadable: false,
+  rawError: '',
+  question: '',
+  structuralHealth: '',
+  concerns: [],
+  summary: '',
+  clauses: [],
+  satisfied: 0,
+  total: 0,
+  prUrl: '',
+  ...over,
+});
 
 describe('verdictLabel', () => {
   it('names the question that blocked a review with no summary', () => {

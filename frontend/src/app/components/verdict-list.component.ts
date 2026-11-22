@@ -69,11 +69,7 @@ export function verdictLabel(v: VerdictRow): string {
           </span>
         </cmn-list-item-row>
       } @else {
-        <cmn-disclosure-row
-          [label]="verdictLabel(v)"
-          [sublabel]="sublabel(v)"
-          [open]="false"
-        >
+        <cmn-disclosure-row [label]="verdictLabel(v)" [sublabel]="sublabel(v)" [open]="false">
           <cmn-tag [variant]="word.variant" status>{{ word.text }}</cmn-tag>
           <div class="flex flex-col gap-cmn-2 px-cmn-4 pb-cmn-4 text-cmn-sm">
             @if (v.unreadable) {
