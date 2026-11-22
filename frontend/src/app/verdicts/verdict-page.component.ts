@@ -71,6 +71,12 @@ const SHORT_SHA = 7;
               </cmn-alert>
             }
 
+            @if (v.question) {
+              <dc-section heading="Question for the owner">
+                <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">{{ v.question }}</p>
+              </dc-section>
+            }
+
             @if (v.clauses.length) {
               <dc-section [count]="v.clauses.length" heading="Clauses">
                 <ul class="flex flex-col gap-cmn-3 text-cmn-sm">
@@ -92,12 +98,6 @@ const SHORT_SHA = 7;
                     </li>
                   }
                 </ul>
-              </dc-section>
-            }
-
-            @if (v.question) {
-              <dc-section heading="Question for the owner">
-                <p class="whitespace-pre-wrap text-cmn-sm text-text-primary">{{ v.question }}</p>
               </dc-section>
             }
 
