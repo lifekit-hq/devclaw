@@ -558,14 +558,33 @@ async def test_create_goal_accepts_a_ready_issue(tmp_path):
     assert out["id"] == "g"
 
 
-async def test_a_goal_whose_issue_lost_ready_is_reported_not_continued(harness):
+async def test_an_issue_without_ready_is_reported_once_and_the_goal_keeps_running(harness):
     store, queue, rec, goal, ctx = harness
     world = FakeWorld(issues=[gh.Issue(1, "t", "## Done when\n- x", "open", ())])
-    assert await tick_goal(goal, ctx(world)) == "blocked"
-    assert not _sessions(store, goal.id)
-    assert len(rec.comments) == 1 and "issue_not_ready" in rec.comments[0][1]
-    world.comments = [c for c in [gh.Comment(id=2000, number=1, author="bot", body=rec.comments[0][1],
-                                              url="", created_at="", marker="block",
-                                              marker_fields=(("why", "issue_not_ready"),))]]
-    assert await tick_goal(goal, ctx(world)) == "blocked"
-    assert len(rec.comments) == 1  # reported once, not every tick
+    assert await tick_goal(goal, ctx(world)) == "spawned"
+    assert len(_sessions(store, goal.id)) == 1
+    assert len(rec.comments) == 1 and "devclaw:notice" in rec.comments[0][1] and "devclaw:block" not in rec.comments[0][1]
+    assert "#1" in rec.comments[0][1] and "`ready`" in rec.comments[0][1] and not rec.pings
+    t = _sessions(store, goal.id)[0]
+    store.claim_pending(t.id)
+    store.mark_done(t.id, "{}", exit="NOTHING", exit_detail="nothing to do")
+    world.comments = [_comment(2000, 1, "note", "notice", why="issue_not_ready", issue=1)]
+    for _ in range(3):  # the note is a fact on the thread: not repeated, and it wakes nothing
+        assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
+    assert len(rec.comments) == 1 and len(_sessions(store, goal.id)) == 1
+
+
+async def test_a_label_removed_after_creation_is_reported_on_the_next_round_and_the_goal_continues(harness):
+    store, queue, rec, goal, ctx = harness
+    world = FakeWorld()
+    assert await tick_goal(goal, ctx(world)) == "spawned" and not rec.comments
+    t = _sessions(store, goal.id)[0]
+    store.claim_pending(t.id)
+    store.mark_done(t.id, "{}", exit="NOTHING", exit_detail="nothing to do")
+    world.issues = [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open", ())]
+    assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
+    assert len(rec.comments) == 1 and "devclaw:notice" in rec.comments[0][1]
+    world.comments = [_comment(2000, 1, "note", "notice", why="issue_not_ready", issue=1)]
+    world.pr = gh.PrFacts("open", 5, "u", "abc", ci="green")
+    assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "spawned"
+    assert len(rec.comments) == 1

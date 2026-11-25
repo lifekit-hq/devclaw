@@ -131,12 +131,14 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
     last: Optional[Task] = store.latest_task_for_goal(goal.id)
     head = world.pr.head_sha
 
-    # the label is read live: an issue that lost `ready` stops the goal, once
-    if unshaped := [f"#{i.number}" for i in world.issues if _gh.READY_LABEL not in i.labels]:
-        if any(c.field("why") == "issue_not_ready" and c.id > world.last_instruction_id for c in world.records("block")):
-            return "blocked"
-        return await _block(ctx, goal, world, task_id="", head=head, kind="issue not ready",
-                            text=f"{', '.join(unshaped)} no longer carry the `{_gh.READY_LABEL}` label")
+    # the label is read live; an issue without it is reported once and the goal keeps running
+    noted = {c.field("issue") for c in world.records("notice") if c.field("why") == "issue_not_ready"}
+    for i in world.issues:
+        if _gh.READY_LABEL not in i.labels and str(i.number) not in noted and (number := _thread_number(goal, world)):
+            await ctx.post_comment(goal.repo_url, number, _gh.marker("notice", why="issue_not_ready", issue=i.number)
+                                   + f"\n**devclaw note:** issue #{i.number} does not carry the `{_gh.READY_LABEL}` label. "
+                                   "The goal keeps running; shape the issue and add the label.")
+            ctx.log(goal.id, f"issue #{i.number} lacks the {_gh.READY_LABEL!r} label")
 
     # a session that ended BLOCKED: post its question once, then wait
     if last is not None and last.exit == EXIT_BLOCKED and not world.block_exists(task_id=last.id):

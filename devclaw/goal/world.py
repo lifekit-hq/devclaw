@@ -67,7 +67,7 @@ class World:
             "head": self.pr.head_sha,
             "ci": self.pr.ci,
             "instruction": self.last_instruction_id,
-            "record": max([c.id for c in self.comments if c.marker] + [0]),
+            "record": max([c.id for c in self.comments if c.marker and c.marker != "notice"] + [0]),
             "credentials": list(self.green_credentials),
             "issues": [[i.number, i.state] for i in self.issues],
         }
