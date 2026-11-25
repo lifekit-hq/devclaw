@@ -51,7 +51,9 @@ settles or a webhook arrives, for every open goal (`devclaw/goal/tick.py`):
 2. Read the world (`devclaw/goal/world.py`): the PR for `goal/<id>` (head,
    state, mergeability, the check rollup and failing logs), each referenced
    issue, every comment on the issue and the PR, the credentials that probe
-   green.
+   green. Each issue's labels are read live: one without `ready` gets a single
+   `<!-- devclaw:notice -->` comment and the goal keeps running; `create_goal`
+   refuses such an issue outright.
 3. PR merged → close the goal `achieved`.
 4. The last session ended `BLOCKED` and its question is not on the thread yet →
    post it (a `<!-- devclaw:block -->` record) and ping once.

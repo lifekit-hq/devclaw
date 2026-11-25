@@ -4,7 +4,7 @@ An autonomous delivery host behind MCP: you hand it GitHub issues, it spawns `cl
 ## Language
 
 **Goal**:
-The unit of work devclaw supervises: one or more GitHub issues, an objective and a branch `goal/<id>`, stored as a row in `goals` and closed with an outcome (achieved, cancelled, ...). One goal yields exactly one PR.
+The unit of work devclaw supervises: one or more GitHub issues (each labelled `ready`, read live), a display-only objective and a branch `goal/<id>`, stored as a row in `goals` and closed with an outcome (achieved, cancelled, ...). One goal yields exactly one PR.
 
 **Project**:
 A registered repository (`register_project`) that goals run against. At most one goal per project has a live session at a time.
@@ -49,7 +49,7 @@ A marked comment devclaw writes on a thread, `<!-- devclaw:<kind> k=v -->`, of k
 A record saying why a goal stopped (session blocked, red CI after a green verify, `hard_to_reverse`, DONE without a PR) with its question. A blocked goal releases its project lane; only a newer owner comment or `decide` wakes it.
 
 **Scope gate**:
-The check before review that every file in the PR's diff is named by the goal's objective, issues or owner comments. An unnamed file posts a `scope` record and spawns one correction session; a second excess stops the goal with `SCOPE_EXCEEDED`.
+The check before review that every file in the PR's diff is named by the goal's issues or owner comments. An unnamed file posts a `scope` record and spawns one correction session; a second excess stops the goal with `SCOPE_EXCEEDED`.
 
 **Hard-to-reverse**:
 The merge-edge classification (`hard` / `wide` / `reversible`, `devclaw/goal/blast.py`) computed live from the issues' text and changed paths. Only `hard` changes the outcome: the merge waits for the owner to answer `merge`.
