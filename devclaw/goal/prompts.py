@@ -18,7 +18,7 @@ _LOG_CAP = 4000
 
 def _render_issues(issues: tuple[_gh.Issue, ...], goal: Goal) -> str:
     if not issues:
-        return fence_untrusted("GOAL", goal.objective or "(no contract text)")
+        return fence_untrusted("GOAL", "(the goal's issues could not be read — the issue is the contract)")
     parts = []
     for i in issues:
         body = i.body if len(i.body) <= _BODY_CAP else i.body[:_BODY_CAP] + "\n…(truncated)"
@@ -74,7 +74,7 @@ def contract_text(goal: Goal, issues: tuple[_gh.Issue, ...]) -> str:
     """The completion contract, read live: each issue's acceptance section,
     or its whole body when it has none."""
     if not issues:
-        return goal.objective
+        return "(the goal's issues could not be read — the issue is the contract)"
     parts = []
     for i in issues:
         section = _gh.extract_acceptance(i.body) or i.body

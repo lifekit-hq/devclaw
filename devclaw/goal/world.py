@@ -1,12 +1,6 @@
-"""The world a goal lives in, read fresh every tick (spec 046, pillar 5).
-
-The host holds nothing it concluded. What it hands a session — and what it
-compares to decide whether anything happened — is this observation: the
-PR's head and state, the CI rollup, the newest instruction and the newest
-devclaw record on the threads, the credentials that probe green, the issues'
-states. :meth:`World.fingerprint` is the part that must MOVE for a session
-to spawn; everything else is context for the prompt.
-"""
+"""The world a goal lives in, read fresh every tick (spec 046, pillar 5). The
+host holds nothing it concluded: :meth:`World.fingerprint` is the observation
+that must MOVE for a session to spawn; the rest is context for the prompt."""
 
 from __future__ import annotations
 

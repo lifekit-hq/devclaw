@@ -13,6 +13,7 @@ import pytest
 
 from devclaw.goal import github as gh
 from devclaw.goal.donegate import parse_verdict, scope_extras
+from devclaw.goal.service import GoalService
 from devclaw.goal.tick import TickContext, _scope_gate, tick_goal
 from devclaw.goal.world import WorldReader
 from devclaw.state_store import EXIT_DELIVERED, EXIT_DONE, EXIT_REVIEW, StateStore
@@ -35,7 +36,7 @@ BASE_TREE = frozenset({"devclaw/goal/donegate.py", "devclaw/goal/world.py", "dev
 class FakeWorld:
     def __init__(self, *, pr=None, issues=None, comments=None, creds=(), files=(), tree=BASE_TREE, login="host"):
         self.pr = pr or gh.PrFacts("none")
-        self.issues = issues or [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open")]
+        self.issues = issues or [gh.Issue(1, "Add /health", "## Done when\n- /health returns 200", "open", ("ready",))]
         self.comments = comments or []
         self.creds = creds
         self.files = files  # what the PR changes; None = unreadable
@@ -223,7 +224,7 @@ async def test_done_with_green_ci_spawns_the_review_session_once(harness):
     assert len(tasks) == 2 and tasks[0].kind == "review_repository" and not tasks[0].deliver
 
 
-SCOPED = gh.Issue(1, "Fix the gate", "Touch `devclaw/goal/donegate.py` and `docs/flows/`.\n## Done when\n- it holds", "open")
+SCOPED = gh.Issue(1, "Fix the gate", "Touch `devclaw/goal/donegate.py` and `docs/flows/`.\n## Done when\n- it holds", "open", ("ready",))
 
 
 async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
@@ -303,7 +304,7 @@ async def test_the_scope_gate_fails_closed_before_any_review_runs(harness):
 ])
 async def test_an_achieved_verdict_merges_and_closes(harness, body, files):
     store, queue, rec, goal, ctx = harness
-    issues = [gh.Issue(1, "t", body, "open")]
+    issues = [gh.Issue(1, "t", body, "open", ("ready",))]
     await tick_goal(goal, ctx(FakeWorld(issues=issues, files=files)))
     t = _sessions(store, goal.id)[0]
     store.claim_pending(t.id)
@@ -338,7 +339,7 @@ async def test_a_hard_to_reverse_change_never_merges_without_the_owners_merge(ha
     change posts one decision and waits; only the owner's `merge` after it
     squash-merges. Nothing else spawns a session or merges."""
     store, queue, rec, goal, ctx = harness
-    issues = [gh.Issue(1, "t", body, "open")]
+    issues = [gh.Issue(1, "t", body, "open", ("ready",))]
     await tick_goal(goal, ctx(FakeWorld(issues=issues)))
     t = _sessions(store, goal.id)[0]
     store.claim_pending(t.id)
@@ -526,9 +527,45 @@ async def test_one_session_per_project_lane(tmp_path):
     for gid in ("a", "b"):
         store.create_goal(id=gid, project_id="p", workspace_dir=str(ws), repo_url=REPO,
                           objective="o", issues=[1 if gid == "a" else 2], branch=f"goal/{gid}")
-    world = FakeWorld(issues=[gh.Issue(1, "one", "x", "open"), gh.Issue(2, "two", "y", "open")])
+    world = FakeWorld(issues=[gh.Issue(1, "one", "x", "open", ("ready",)), gh.Issue(2, "two", "y", "open", ("ready",))])
     svc = GoalService(queue, store, notifier=rec, world_reader=world.reader(),
                       post_comment=rec.post_comment, merge=rec.merge, lease=_lease_in_place, tick_seconds=900)
     outcomes = await svc.tick_all()
     assert outcomes == {"a": "spawned", "b": "lane busy"}
     assert len(store.list_tasks(limit=10)) == 1
+
+
+# ---- the ready gate: an unshaped issue never starts, and never silently continues ----
+
+async def _create(tmp_path, issue_labels):
+    store = StateStore(str(tmp_path / "r.db"))
+    world = FakeWorld(issues=[gh.Issue(1, "t", "## Done when\n- x", "open", issue_labels)])
+    svc = GoalService(TaskQueue(store, runner=None), store, notifier=Recorder(), world_reader=world.reader(),
+                      lease=_lease_in_place, tick_seconds=900)
+    return svc, store
+
+
+async def test_create_goal_refuses_an_issue_without_the_ready_label(tmp_path):
+    svc, store = await _create(tmp_path, ())
+    with pytest.raises(ValueError, match=r"#1 .*'ready'"):
+        await svc.create_goal("g", project_id="p", workspace_dir=str(tmp_path), repo_url=REPO, issues=[1])
+    assert store.get_goal("g") is None
+
+
+async def test_create_goal_accepts_a_ready_issue(tmp_path):
+    svc, store = await _create(tmp_path, ("ready",))
+    out = await svc.create_goal("g", project_id="p", workspace_dir=str(tmp_path), repo_url=REPO, issues=[1])
+    assert out["id"] == "g"
+
+
+async def test_a_goal_whose_issue_lost_ready_is_reported_not_continued(harness):
+    store, queue, rec, goal, ctx = harness
+    world = FakeWorld(issues=[gh.Issue(1, "t", "## Done when\n- x", "open", ())])
+    assert await tick_goal(goal, ctx(world)) == "blocked"
+    assert not _sessions(store, goal.id)
+    assert len(rec.comments) == 1 and "issue_not_ready" in rec.comments[0][1]
+    world.comments = [c for c in [gh.Comment(id=2000, number=1, author="bot", body=rec.comments[0][1],
+                                              url="", created_at="", marker="block",
+                                              marker_fields=(("why", "issue_not_ready"),))]]
+    assert await tick_goal(goal, ctx(world)) == "blocked"
+    assert len(rec.comments) == 1  # reported once, not every tick

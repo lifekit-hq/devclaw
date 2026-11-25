@@ -19,7 +19,8 @@ async def create_goal(goal_id: str, project_id: str, issues: list[int], objectiv
     """Register a goal devclaw drives to completion. ``issues`` are the
     issue numbers on the project's repository — the issue IS the contract:
     its ``## Done when`` (or ``## Acceptance``) section is what the done-gate
-    judges, read live on every round. Every session works on branch
+    judges, read live on every round. Each issue must carry the ``ready``
+    label (read live; the shape step sets it). Every session works on branch
     ``goal/<goal_id>`` and delivers one cumulative PR; a confirmed-achieved
     close squash-merges it. ``objective`` is display text only."""
     if not goal_id or not goal_id.replace("-", "").replace("_", "").isalnum():
