@@ -8,7 +8,7 @@ sandbox — so use a throwaway repository.
 1. `pip install -e .` and `devclaw doctor` (it names a missing `claude`, `treehouse` or `no-mistakes`).
 2. `DEVCLAW_TRANSPORT=http devclaw-mcp` with `DEVCLAW_ENGINE` unset.
 3. `register_project(project_id, name, repo_url, workspace_dir)`.
-4. File an issue on the repo with a `## Done when` section; `create_goal(goal_id, project_id, issues=[N])`.
+4. File an issue on the repo with a `## Done when` section and the `ready` label (`create_goal` refuses an issue without it); `create_goal(goal_id, project_id, issues=[N])`.
 5. Watch `get_goal` and the goal's thread: the first session opens the PR
    (`DELIVERED`), CI runs, later sessions continue until one says `DONE`; the
    review session's verdict lands on the PR; the merge closes the goal.

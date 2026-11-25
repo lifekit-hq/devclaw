@@ -14,6 +14,7 @@ from typing import Optional
 from .. import config as _config
 from ..engine.workspace import remove_goal_checkout
 from ..state_store import Goal, StateStore, _now_ms
+from . import github as _gh
 from . import self_deploy as _self_deploy
 from .notify import HttpNotifier, Notifier, NullNotifier
 from .tick import SPAWNING, TickContext, tick_goal
@@ -140,6 +141,8 @@ class GoalService:
         titles = []
         for n in issues:
             issue = await self._ctx.world.issue(repo_url, n)  # raises IssueError loudly
+            if _gh.READY_LABEL not in issue.labels:
+                raise ValueError(f"issue #{n} does not carry the {_gh.READY_LABEL!r} label — shape it first")
             titles.append(issue.title)
         goal = self._store.create_goal(
             id=goal_id, project_id=project_id, workspace_dir=workspace_dir, repo_url=repo_url,

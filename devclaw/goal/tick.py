@@ -1,14 +1,7 @@
-"""The tick rule — the whole control plane (spec 046, section 1).
-
-Every ~15 minutes, for every open goal: read the world, compare it to what
-the last session was given, and either spawn ONE session, run the done-gate,
-close, or do nothing. The host routes on facts the world holds (PR state,
-CI, the newest instruction and the newest devclaw record); it never stores
-why the world changed and never retries a stop.
-
-Pure over its context: every read and verb is injected, so the tick is
-testable with zero subprocesses and the idle path costs zero sessions.
-"""
+"""The tick rule — the whole control plane (spec 046, section 1). Every ~15
+minutes, per open goal: read the world, compare it to what the last session was
+given, then spawn ONE session, run the done-gate, close, or do nothing. Every
+read and verb is injected, so the idle path costs zero sessions in tests."""
 
 from __future__ import annotations
 
@@ -138,6 +131,15 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
     last: Optional[Task] = store.latest_task_for_goal(goal.id)
     head = world.pr.head_sha
 
+    # the label is read live; an issue without it is reported once and the goal keeps running
+    noted = {c.field("issue") for c in world.records("notice") if c.field("why") == "issue_not_ready"}
+    for i in world.issues:
+        if _gh.READY_LABEL not in i.labels and str(i.number) not in noted and (number := _thread_number(goal, world)):
+            await ctx.post_comment(goal.repo_url, number, _gh.marker("notice", why="issue_not_ready", issue=i.number)
+                                   + f"\n**devclaw note:** issue #{i.number} does not carry the `{_gh.READY_LABEL}` label. "
+                                   "The goal keeps running; shape the issue and add the label.")
+            ctx.log(goal.id, f"issue #{i.number} lacks the {_gh.READY_LABEL!r} label")
+
     # a session that ended BLOCKED: post its question once, then wait
     if last is not None and last.exit == EXIT_BLOCKED and not world.block_exists(task_id=last.id):
         b = _donegate.block_fields(last.result_json, last.exit_detail)
@@ -204,7 +206,7 @@ async def _scope_gate(ctx: TickContext, goal: Goal, world: World, last: Task) ->
     if changed is None or tree is None:
         ctx.log(goal.id, f"scope unreadable: PR #{world.pr.number} {'file list' if changed is None else 'base tree'}")
         return "unreadable"
-    text = "\n".join([goal.objective, *(f"{i.title}\n{i.body}" for i in world.issues), *(c.body for c in world.comments if c.is_instruction)])
+    text = "\n".join([*(f"{i.title}\n{i.body}" for i in world.issues), *(c.body for c in world.comments if c.is_instruction)])
     extra = _donegate.scope_extras(changed, text, tree)
     if not extra:
         return None

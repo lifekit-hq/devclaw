@@ -1,12 +1,6 @@
-"""GitHub is the state (spec 046). Every read and every verb the goal layer
-needs from the forge, through the ``gh`` CLI under one wall-clock bound.
-
-Reads: the PR for a branch (head, state, mergeability, check rollup), the
-failing check logs, an issue's live body, the comments that carry an
-instruction or a devclaw record. Verbs: post a comment, squash-merge.
-Everything is best-effort in one direction — a failure reads as ``unknown``
-or ``(-1, reason)``, never an exception into the tick.
-"""
+"""GitHub is the state (spec 046): every read and verb the goal layer needs from
+the forge, through the ``gh`` CLI under one wall-clock bound. A failed read is
+``unknown`` or ``(-1, reason)``, never an exception into the tick."""
 
 from __future__ import annotations
 
@@ -250,6 +244,11 @@ class Issue:
     title: str
     body: str
     state: str  # open | closed
+    labels: tuple[str, ...] = ()  # read live, never stored
+
+
+#: the label the shape step sets: an issue without it was never shaped
+READY_LABEL = "ready"
 
 
 class IssueError(Exception):
@@ -268,7 +267,8 @@ async def fetch_issue(repo_url: str, number: int) -> Issue:
     if not isinstance(data, dict) or "state" not in data:
         raise IssueError(f"unexpected gh response for {slug}#{number}")
     return Issue(number=number, title=str(data.get("title") or ""),
-                 body=str(data.get("body") or ""), state=str(data.get("state") or "open"))
+                 body=str(data.get("body") or ""), state=str(data.get("state") or "open"),
+                 labels=tuple(str(lb.get("name")) for lb in data.get("labels") or [] if isinstance(lb, dict)))
 
 
 CONTRACT_HEADINGS = ("Done when", "Acceptance")
