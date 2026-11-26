@@ -14,7 +14,7 @@ commands:
   # the CI frontend job's `npm ci`. lint and test call the env's tools by path,
   # so the host PATH needs neither python nor ruff/mypy/yamllint.
   prepare: >-
-    { [ -x .venv/bin/python ] || python3 -m venv .venv; } &&
+    { .venv/bin/python -m pip --version >/dev/null 2>&1 || python3 -m venv --clear .venv; } &&
     .venv/bin/python -m pip install -q -e '.[dev]' &&
     cd frontend && npm ci
   lint: >-
