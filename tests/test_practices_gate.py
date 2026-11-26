@@ -75,9 +75,8 @@ def session(monkeypatch):
     async def fake_init(ws):
         return None
 
-    async def fake_hand_off(req, session_id, head, notes=()):
+    async def fake_hand_off(req, session_id, head):
         state["prompts"].append("<hand-off>")
-        state["notes"] = list(notes)
         if state.get("hand_off"):
             state["hand_off"](req.workspace_dir)
         return (engine.Turn(session_id=session_id, ok=True, text="DELIVERED: shipped",
@@ -293,7 +292,9 @@ async def test_the_mutations_block_carries_across_turns_of_one_run(session, tmp_
     assert next(e for e in session["events"] if e.type == "MutationCheck").payload["failures"] == []
 
 
-@pytest.mark.parametrize("target", ["test_more.py", "tests/more.py", "more_test.py", "more.spec.py"])
+@pytest.mark.parametrize("target", ["test_more.py", "tests/more.py", "more_test.py", "more.spec.py",
+                                    "Tests/More.py", "Adult.Tests/More.py", "__tests__/more.py", "spec/more.py",
+                                    "more_spec.py"])
 async def test_a_mutation_of_a_test_file_is_refused(session, tmp_path, target):
     ws = _repo(tmp_path)
     mutate = ('```json\n{"mutations": [{"criterion": 1, "file": "%s", "find": "assert is_adult(40)", '
@@ -332,9 +333,9 @@ async def test_a_mutation_check_that_cannot_run_here_is_shown_and_not_charged(se
     check = next(e for e in session["events"] if e.type == "MutationCheck").payload
     assert check["failures"] == [] and "red in the scratch worktree" in check["couldNotRun"]
     assert len(_git(ws, "worktree", "list").splitlines()) == 1  # the scratch worktree is gone
-    # loud, not silent: the goal layer posts the result's notes, the hand-off puts them in the PR body
+    # loud, not silent: the goal layer posts the result's notes on the goal thread
     assert len(result["notes"]) == 1 and "one-mutation check" in result["notes"][0]
-    assert "did not run" in result["notes"][0] and session["notes"] == result["notes"]
+    assert "did not run" in result["notes"][0]
 
 
 async def test_a_changed_contract_reruns_the_test_pass_and_refreezes(session, tmp_path):
@@ -425,6 +426,27 @@ async def test_a_stub_or_manifest_the_test_writer_needed_is_committed_but_not_fr
     recorded = await practices.recorded_test_pass(str(ws))
     assert recorded is not None and recorded.files == ("test_adult.py", ".devclaw/verify")
     assert {"calc.py", "requirements.txt"} <= set(_git(ws, "show", "--name-only", "--format=", recorded.commit).split())
+
+
+async def test_tests_in_a_layout_not_named_like_tests_run_red_first_and_freeze_nothing(session, tmp_path):
+    """A writer that follows the repository's own layout (here a `checks.py`
+    the verify script runs) is not stopped BLOCKED: its tests must still be
+    red, nothing is frozen, and the goal thread is told no test file was recognised."""
+    ws = _repo(tmp_path)
+
+    def writer(w):
+        _write(ws, "checks.py", STRONG_TEST)
+        _write(ws, ".devclaw/verify", "#!/bin/sh\nset -e\npython3 checks.py\n")
+        return "TESTS: adulthood"
+
+    session["script"] = [writer, lambda w: (_write(ws, "calc.py", FIXED), _commit(ws), "DELIVERED: d")[-1]]
+    result = await engine.run_claude(_req(ws, session, PLAIN))
+    assert result["status"] == "ok" and result["verify"]["passed"] is True, result
+    assert next(e for e in session["events"] if e.type == "TestPass").payload["red"] is True
+    recorded = await practices.recorded_test_pass(str(ws))
+    assert recorded is not None and recorded.files == ()
+    assert "checks.py" in _git(ws, "show", "--name-only", "--format=", recorded.commit).split()
+    assert result["notes"] == [practices.NO_TEST_FILE_NOTE]
 
 
 @pytest.mark.parametrize("brief, refused", [

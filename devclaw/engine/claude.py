@@ -673,6 +673,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     resume = req.resume_session_id
     plan: Optional[_practices.Plan] = None
     usage: Optional[dict] = None
+    unrecognised: list[str] = []
     if req.kind in WRITES_CODE_KINDS and req.hand_off and _has_git_dir(req.workspace_dir):
         plan = await _practices.plan_for(req.goal, req.size, req.workspace_dir, req.closes)
     if plan is not None and plan.wants_test_pass:
@@ -688,6 +689,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             stop, usage = await _test_pass(req, plan, prompt)
             if stop is not None:
                 return stop
+            if plan.test_pass is not None and not plan.test_pass.files:
+                unrecognised = [_practices.NO_TEST_FILE_NOTE]
         if plan is not None:
             prompt = f"{plan.note()}\n\n{prompt}"
     turn = await run_turn(req, req.goal if resume else prompt, resume=resume)
@@ -739,7 +742,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     if reason is None and req.hand_off and verify is not None and verify.get("passed"):
         head = await unshipped_head(req.workspace_dir)
         if head:
-            turn, pr_url, why, shipped = await _hand_off(req, turn.session_id, head, plan.notes if plan else [])
+            turn, pr_url, why, shipped = await _hand_off(req, turn.session_id, head)
             usage = _add_usage(usage, turn.usage)
             if not turn.ok:
                 return failed(turn)
@@ -769,8 +772,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         result["verify"] = verify
     if pr_url:
         result["pr_url"] = pr_url
-    if plan is not None and plan.notes:
-        result["notes"] = plan.notes
+    if notes := unrecognised + (plan.notes if plan is not None else []):
+        result["notes"] = notes
     return result
 
 
@@ -782,12 +785,10 @@ async def _init_pipeline(workspace_dir: str) -> Optional[str]:
     return None if rc == 0 else f"no-mistakes init failed: {out[-500:]}"
 
 
-async def _hand_off(req: EngineRequest, session_id: str, head: str,
-                    notes: "list[str] | tuple[str, ...]" = ()) -> tuple[Turn, Optional[str], str, str]:
+async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str, str]:
     """The ship turn: re-init the pipeline (the daemon may have died during the
     session, and only the host env restarts it with the GitHub credential), then
-    the SAME session drives the run; ``notes`` (what a gate could not check)
-    go into the pull request description.
+    the SAME session drives the run.
     ``(turn, pr_url, why, shipped_head)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
     error = await _init_pipeline(req.workspace_dir)
     if error:
@@ -795,9 +796,6 @@ async def _hand_off(req: EngineRequest, session_id: str, head: str,
     closes = "".join(f" --closes {n}" for n in req.closes)
     with tempfile.TemporaryDirectory(prefix="devclaw-intent-") as tmp:
         prompt = HANDOFF_PROMPT.format(intent_file=os.path.join(tmp, "intent.md"), closes=closes)
-        if notes:
-            prompt += "\n\n" + _practices.PR_NOTES_PROMPT.format(
-                intent_file=os.path.join(tmp, "intent.md"), notes="\n".join(f"- {n}" for n in notes))
         turn = await run_turn(req, prompt, resume=session_id)
     if not turn.ok or parse_blocked_reason(turn.text) is not None:
         return turn, None, "", ""
@@ -850,15 +848,14 @@ async def _test_pass(req: EngineRequest, plan: _practices.Plan,
     files = [f for f in changed if _practices.frozen_name(f)]
     if prior is not None:
         files += [f for f in prior.files if f not in files]
-    if not files:
-        return stop("the test pass wrote no test file (under a `tests/` or `test/` directory, or `test_*`, "
-                    "`*_test.*`, `*.test.*`, `*.spec.*`) from the contract's `## Done when` criteria")
+    if not files and not changed:
+        return stop("the test pass wrote no test from the contract's `## Done when` criteria")
     verify = await run_verify(cmd, ws, _config.VERIFY_TIMEOUT_S)
     _emit(req, "test-pass", "TestPass", {"files": files, "red": not verify["passed"],
                                          "exit_code": verify["exit_code"], "refreeze": prior is not None})
     if verify["passed"] and prior is None:
         return stop("the tests written from the contract pass before any code is written, so they do "
-                    f"not pin the change: `{cmd}` is green with {', '.join(files)}")
+                    f"not pin the change: `{cmd}` is green with {', '.join(files or changed)}")
     if not await _practices.commit_test_pass(ws, files, verify, plan.contract):
         return {"status": "error", "error": "test pass: the engine could not commit the test files",
                 "usage": usage}, usage

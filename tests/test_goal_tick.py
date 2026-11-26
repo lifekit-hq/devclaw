@@ -576,7 +576,8 @@ async def test_an_issue_without_ready_is_reported_once_and_the_goal_keeps_runnin
 
 async def test_what_a_gate_could_not_check_is_said_once_on_the_thread_and_wakes_nothing(harness):
     """#1053: a mutation check that could not run passes the gate, loudly — the
-    engine's ``notes`` become one notice record, never repeated, never a session."""
+    engine's ``notes`` become one notice record per goal, never repeated by a
+    later session with the same note, never a session."""
     store, queue, rec, goal, ctx = harness
     world = FakeWorld()
     assert await tick_goal(goal, ctx(world)) == "spawned"
@@ -584,6 +585,12 @@ async def test_what_a_gate_could_not_check_is_said_once_on_the_thread_and_wakes_
     store.claim_pending(t.id)
     store.mark_done(t.id, json.dumps({"status": "ok", "notes": ["the one-mutation check did not run: no venv"]}),
                     exit="NOTHING", exit_detail="nothing to do")
+    world.comments = [_comment(1999, 1, "**devclaw note:** the one-mutation check did not run: no venv",
+                               "notice", why="unchecked", task="an-earlier-session")]
+    assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
+    assert not rec.comments  # the same note an earlier session posted is not said again
+    world.comments = [_comment(1999, 1, "**devclaw note:** the one-mutation check did not run: elsewhere",
+                               "notice", why="unchecked", task="an-earlier-session")]
     assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
     assert len(rec.comments) == 1 and rec.comments[0][0] == 1
     assert "devclaw:notice" in rec.comments[0][1] and "did not run: no venv" in rec.comments[0][1]

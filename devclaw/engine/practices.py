@@ -117,7 +117,8 @@ CONTRACT_TRAILER = "Devclaw-Contract"
 #: what decides which tests run and are collected — frozen with the test pass
 _RUNNER_CONFIG_RE = re.compile(r"(?:^|/)(?:conftest\.py|pytest\.ini|(?:jest|vitest)\.config\.[\w.]+)$|^\.devclaw/verify$")
 #: a file named like a test — frozen with the test pass, never a mutation target
-_TEST_NAME_RE = re.compile(r"(?:^|/)tests?/|(?:^|/)test_[^/]*$|_test\.[^/]*$|\.(?:test|spec)\.[^/]*$")
+_TEST_NAME_RE = re.compile(r"(?:^|/)(?:tests?|spec|__tests__)/|\.tests/|(?:^|/)test_[^/]*$|_(?:test|spec)\.[^/]*$"
+                           r"|\.(?:test|spec)\.[^/]*$", re.IGNORECASE)
 
 
 def frozen_name(path: str) -> bool:
@@ -190,7 +191,8 @@ async def recorded_test_pass(workspace_dir: str, scope: str = "") -> Optional[Re
     names the branch: a squash-merge copies an earlier goal's trailer onto the
     default branch, and that one is not ours. The frozen files are the listed
     tests plus the runner config present at that commit, less the runner
-    config the goal's issue text ``scope`` names."""
+    config the goal's issue text ``scope`` names; a pass that recognised no
+    test file froze nothing."""
     mark = f"{TEST_PASS_TRAILER}: {await _branch(workspace_dir)} "
     rc, sha = await _git(workspace_dir, "log", "-n1", "-F", f"--grep={mark}", "--format=%H", "HEAD")
     if rc != 0 or not sha:
@@ -199,8 +201,9 @@ async def recorded_test_pass(workspace_dir: str, scope: str = "") -> Optional[Re
     trailers = [line.split(":", 1) for line in body.splitlines() if ":" in line]
     files = [v.strip() for k, v in trailers if k == TEST_FILE_TRAILER]
     contract = next((v.strip() for k, v in trailers if k == CONTRACT_TRAILER), "")
-    _, tree = await _git(workspace_dir, "ls-tree", "-r", "--name-only", sha)
-    files += [p for p in tree.splitlines() if _RUNNER_CONFIG_RE.search(p) and p not in files]
+    if files:
+        _, tree = await _git(workspace_dir, "ls-tree", "-r", "--name-only", sha)
+        files += [p for p in tree.splitlines() if _RUNNER_CONFIG_RE.search(p) and p not in files]
     return Record(sha, tuple(f for f in files if not _in_scope(f, scope)), contract)
 
 
@@ -386,7 +389,7 @@ class Plan:
     complete: bool = True
     #: the issue text: runner config it names is in scope, not frozen
     scope: str = ""
-    #: what the newest gate could not check, said on the thread and in the PR
+    #: what the newest gate could not check, said on the goal thread
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -436,7 +439,8 @@ TEST_PASS_PROMPT = (
     "TEST PASS — you are the test writer, not the engineer. This turn replaces the numbered steps and "
     "the exit lines in the brief below. Write tests, in the repository's own test layout and runner, "
     "that pin each criterion of the contract's `## Done when` section. Name each test file like a test "
-    "(under a `tests/` or `test/` directory, or `test_*`, `*_test.*`, `*.test.*`, `*.spec.*`): those files "
+    "(under a `tests/`, `test/`, `spec/` or `__tests__/` directory, or `test_*`, `*_test.*`, `*_spec.*`, "
+    "`*.test.*`, `*.spec.*`): those files "
     "and the runner config are frozen for the code pass. Write no production code beyond the minimum stub "
     "the tests need to fail for the right reason: the tests must fail now, because the change does not "
     "exist yet. If `.devclaw/verify` does not exist, "
@@ -473,9 +477,10 @@ MUTATION_FAILED_PROMPT = (
     "frozen), re-run `.devclaw/verify`, commit, and hand back with a fresh ```json mutations block and "
     "your exit line."
 )
-PR_NOTES_PROMPT = (
-    "Not every gate ran in full on this branch. After the contract in `{intent_file}`, add a "
-    "`## Not checked` section holding these lines as written, so the pull request description says so:\n{notes}"
+NO_TEST_FILE_NOTE = (
+    "the test pass recognised no file it wrote as a test (a `tests/`, `test/`, `spec/` or `__tests__/` "
+    "directory, a `.Tests` project, or `test_*`, `*_test.*`, `*_spec.*`, `*.test.*`, `*.spec.*`), so "
+    "nothing is frozen for the code pass"
 )
 HANDOFF_FROZEN_REASON = (
     "the hand-off changed the test-pass files ({commit}) after the gate passed: {violations}. The pull "

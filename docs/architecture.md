@@ -246,19 +246,22 @@ tests count as the pass's files:
    code beyond the minimum stub the tests need to fail for the right reason.
 2. `.devclaw/verify` must then run red. If it is green, the run stops `BLOCKED`
    with "the tests written from the contract pass before any code is written".
-   A test pass that writes no file named like a test, or leaves no verify
-   script, also stops `BLOCKED`.
+   A test pass that writes nothing, or leaves no verify script, also stops
+   `BLOCKED`.
 3. The engine commits everything the writer changed. The trailers
    `Devclaw-Test-Pass: <branch> …`, `Devclaw-Contract: <hash of the criteria>`
    and one `Devclaw-Test-File: <path>` per file named like a test (under a
-   `tests/` or `test/` directory, `test_*`, `*_test.*`, `*.test.*` or
-   `*.spec.*`) or runner config are the record; git holds it, not the host. A
-   stub, a manifest or a lock file the writer touched is committed but not
-   frozen.
+   `tests/`, `test/`, `spec/` or `__tests__/` directory or a `.Tests` project,
+   `test_*`, `*_test.*`, `*_spec.*`, `*.test.*` or `*.spec.*`, in any case) or
+   runner config are the record; git holds it, not the host. A stub, a manifest
+   or a lock file the writer touched is committed but not frozen. When no file
+   the writer wrote is named like a test (tests in a layout the rule does not
+   know), the run is not stopped: the red-first check still applies, nothing is
+   frozen, and the goal thread is told no test file was recognised.
 4. The code pass is a second fresh session, told which files are frozen.
 
-The frozen set is the listed test files plus the files that decide which tests
-run and are collected, when they exist at the test-pass commit:
+The frozen set is the listed test files plus, when there is one, the files that
+decide which tests run and are collected, when they exist at the test-pass commit:
 `.devclaw/verify`, any `conftest.py`, `pytest.ini`, and `jest.config.*` /
 `vitest.config.*`. Runner config the goal's issue names (its path; a config
 file's own name also counts, `.devclaw/verify` only by its path) is in scope and
@@ -271,7 +274,7 @@ pull request is left as pushed — not reverted, and not merged by the done-gate
 default branch merged in, so a change that arrives through a merge of the base
 is not the code pass's. A frozen file the default branch and the test pass
 changed in conflict is accepted in whatever resolution the branch holds, and
-that is noted on the goal thread and in the pull request description.
+that is noted on the goal thread.
 
 When the `## Done when` criteria change, their hash no longer matches the
 record. The next session runs the test pass again: the writer revises the
@@ -293,15 +296,15 @@ a squash-merge copies an earlier goal's trailer onto the default branch.
    `.venv`, `node_modules`) are not in it and are not rebuilt.
 3. Verify runs there unmutated first. If it is red, the check could not run
    here: nothing is counted against the branch, but it is said out loud — the
-   `MutationCheck` event, a `notice` record the goal layer posts once on the
-   goal thread (the engine result's `notes`), and a `## Not checked` section the
-   hand-off writes into the pull request description.
+   `MutationCheck` event and a `notice` record the goal layer posts on the
+   goal thread (the engine result's `notes`) — once per goal: a later session
+   with the same note posts nothing. The pull request description does not
+   carry it.
 4. It applies each mutation in the copy and requires verify to go red.
 5. A mutation every test survives fails the gate with the criterion named. So
    does a missing or invalid mutation: a file the test pass froze, a file named
-   like a test (under a `tests/` or `test/` directory, `test_*`, `*_test.*`,
-   `*.test.*` or `*.spec.*`), a `.devclaw/` file, or a line that does not occur
-   exactly once.
+   like a test (the same rule as the test pass's), a `.devclaw/` file, or a
+   line that does not occur exactly once.
 6. The newest mutations block the session sent in this run counts; a later turn
    that omits it keeps the earlier one.
 7. A goal with no critical criterion skips the check. The real tree is never
