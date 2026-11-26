@@ -47,7 +47,7 @@ TEST_FILE_TRAILER = "Devclaw-Test-File"
 _L_RE = re.compile(
     r"\b(money|payments?|billing|invoices?|refunds?|pricing|prices?|auth|authn|authz|authenticat\w*|"
     r"authori[sz]\w*|login|passwords?|credentials?|oauth|permissions?|migrations?|migrate|"
-    r"breaking)\b", re.IGNORECASE)
+    r"(?<!non-)breaking)\b", re.IGNORECASE)
 _NO_BEHAVIOUR_RE = re.compile(r"\bno behaviou?r change\b", re.IGNORECASE)
 _CODE_SPAN_RE = re.compile(r"`([^`\s]+)`")
 _CONTRACT_HEAD_RE = re.compile(r"^(#{2,4})[ \t]*(?:Done when|Acceptance)\b.*$", re.IGNORECASE | re.MULTILINE)
@@ -88,6 +88,7 @@ _CRITICAL_RE = re.compile(r"\((?:critical)\)|\[critical\]|\*\*critical\*\*|^crit
 
 
 _ISSUE_FENCE_RE = re.compile(r"^=+ BEGIN UNTRUSTED ISSUE \d+\b.*?$(.*?)^=+ END UNTRUSTED ISSUE \d+", re.M | re.S)
+_ISSUE_NUMBER_RE = re.compile(r"^=+ BEGIN UNTRUSTED ISSUE (\d+)\b", re.M)
 
 
 def contract_criteria(brief: str) -> list[tuple[str, bool]]:
@@ -144,11 +145,13 @@ async def merge_base(workspace_dir: str) -> Optional[str]:
 
 async def fresh_branch(workspace_dir: str) -> bool:
     """True when the branch carries no commit beyond its merge-base with the
-    default branch — no code exists yet for a test to fail against."""
+    default branch but the host's ``wip(devclaw):`` snapshots of an
+    interrupted session — no code exists yet for a test to fail against."""
     base = await merge_base(workspace_dir)
     if base is None:
         return False
-    rc, count = await _git(workspace_dir, "rev-list", "--count", f"{base}..HEAD")
+    rc, count = await _git(workspace_dir, "rev-list", "--count", "--invert-grep", "--grep=^wip(devclaw): ",
+                           f"{base}..HEAD")
     return rc == 0 and count == "0"
 
 
@@ -344,6 +347,9 @@ class Plan:
     test_pass: Optional[Record] = None
     #: the branch carries no commit beyond the default branch — no code yet
     fresh: bool = False
+    #: the brief rendered every issue the goal closes — a missing one is a
+    #: failed read, not a contract change
+    complete: bool = True
 
     @property
     def contract(self) -> str:
@@ -359,7 +365,9 @@ class Plan:
         skips it), again whenever the contract changed since the record."""
         if self.size == "S" or not self.criteria:
             return False
-        return self.fresh if self.test_pass is None else self.test_pass.contract != self.contract
+        if self.test_pass is None:
+            return self.fresh
+        return self.complete and self.test_pass.contract != self.contract
 
     def note(self) -> str:
         lines = [SIZE_NOTES.get(self.size, SIZE_NOTES["M"])]
@@ -371,9 +379,11 @@ class Plan:
         return "\n\n".join(lines)
 
 
-async def plan_for(brief: str, size: str, workspace_dir: str) -> Plan:
+async def plan_for(brief: str, size: str, workspace_dir: str, closes: Iterable[int] = ()) -> Plan:
+    rendered = {int(n) for n in _ISSUE_NUMBER_RE.findall(brief or "")}
     return Plan(size=size if size in SIZES else "M", criteria=contract_criteria(brief),
-                test_pass=await recorded_test_pass(workspace_dir), fresh=await fresh_branch(workspace_dir))
+                test_pass=await recorded_test_pass(workspace_dir), fresh=await fresh_branch(workspace_dir),
+                complete=set(closes) <= rendered)
 
 
 SIZE_NOTES = {

@@ -673,11 +673,11 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     plan: Optional[_practices.Plan] = None
     usage: Optional[dict] = None
     if req.kind in WRITES_CODE_KINDS and req.hand_off and _has_git_dir(req.workspace_dir):
-        plan = await _practices.plan_for(req.goal, req.size, req.workspace_dir)
+        plan = await _practices.plan_for(req.goal, req.size, req.workspace_dir, req.closes)
     if plan is not None and plan.wants_test_pass:
         # a test writer paused mid-pass restarts as a test writer, never as the engineer
         resume = None
-    if not resume and req.kind in WRITES_CODE_KINDS:
+    if req.kind in WRITES_CODE_KINDS:
         # a host gap the session would otherwise find at the end of its work
         note = await browser_preflight(req.workspace_dir)
         if note:
@@ -799,9 +799,13 @@ async def _test_pass(req: EngineRequest, plan: _practices.Plan,
     ``(stop, usage)`` — ``stop`` ends the task (a block or an error), or None."""
     ws = req.workspace_dir
     prior = plan.test_pass
-    rc, base = await _host(ws, "git", "rev-parse", "HEAD")
+    if prior is None:
+        mb = await _practices.merge_base(ws)
+        rc, base = (0, mb) if mb else (1, "no merge-base with the default branch")
+    else:
+        rc, base = await _host(ws, "git", "rev-parse", "HEAD")
     if rc != 0:
-        return {"status": "error", "error": f"test pass: no HEAD to start from: {base[-300:]}"}, None
+        return {"status": "error", "error": f"test pass: no base to start from: {base[-300:]}"}, None
     repass = "" if prior is None else _practices.TEST_REPASS_NOTE.format(
         commit=prior.commit[:10], files=", ".join(f"`{f}`" for f in prior.files)) + "\n\n"
     turn = await run_turn(req, f"{_practices.TEST_PASS_PROMPT}\n\n{repass}{prompt}", resume=None)

@@ -16,6 +16,8 @@ import pytest
 from devclaw.engine import EngineRequest
 from devclaw.engine import claude as engine
 from devclaw.engine import practices
+from devclaw.loom.untrusted import fence_untrusted
+from devclaw.task_git import _wip_commit_sync
 
 GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
 VERIFY = "#!/bin/sh\nset -e\nfor f in test_*.py; do python3 \"$f\"; done\n"
@@ -85,8 +87,9 @@ def session(monkeypatch):
 
 
 def _req(ws, state, brief, size="M", resume=None):
-    return EngineRequest(kind="implement_feature", workspace_dir=str(ws), goal=brief, hand_off=True,
-                         closes=(1,), size=size, on_event=lambda e: state["events"].append(e),
+    """``brief`` is issue #1's body, fenced the way the goal layer renders it."""
+    return EngineRequest(kind="implement_feature", workspace_dir=str(ws), goal=fence_untrusted("ISSUE 1", brief),
+                         hand_off=True, closes=(1,), size=size, on_event=lambda e: state["events"].append(e),
                          resume_session_id=resume)
 
 
@@ -212,6 +215,7 @@ async def test_a_test_pass_from_another_branch_is_not_this_goals(tmp_path):
     ("Tidy", "Size: S\n## Done when\n- tidy two files", "M"),
     ("Add a button", "## Done when\n- the console shows a button", "M"),
     ("Tidy", "## Done when\n- rename in `a.py` and `b.py`, no behaviour change", "M"),
+    ("Add an optional field", "## Done when\n- a non-breaking change to the response", "M"),
 ])
 def test_the_size_is_set_from_the_issue_by_the_written_rules(title, body, size):
     assert practices.size_of([(title, body)]) == size
@@ -232,7 +236,8 @@ async def test_a_branch_already_carrying_work_skips_the_test_pass_instead_of_blo
 
 async def test_a_quota_paused_test_writer_restarts_as_a_test_writer_not_the_engineer(session, tmp_path):
     ws = _repo(tmp_path)
-    _write(ws, "test_adult.py", STRONG_TEST)  # the paused writer's partial tests, kept in the tree
+    _write(ws, "test_adult.py", STRONG_TEST)  # the paused writer's partial tests, snapshotted by the pause
+    assert _wip_commit_sync(str(ws), "wip(devclaw): interrupted by usage limit (session writer)") == "committed"
     session["script"] = [
         lambda w: "TESTS: adulthood",
         lambda w: (_write(ws, "calc.py", FIXED), _commit(ws), MUTATE + "DELIVERED: adulthood")[-1],
@@ -339,3 +344,39 @@ async def test_a_frozen_file_change_merged_in_from_the_default_branch_is_not_the
     assert await practices.frozen_violations(str(ws), record.commit, record.files) == []
     _write(ws, "test_adult.py", (ws / "test_adult.py").read_text() + "assert True\n")
     assert await practices.frozen_violations(str(ws), record.commit, record.files) == ["edited `test_adult.py`"]
+
+
+async def test_an_issue_the_brief_could_not_read_is_not_a_contract_change(tmp_path):
+    """A transient read failure drops an issue from the brief; that is not the
+    contract changing, so no test writer re-pins the frozen tests to half of it."""
+    ws = _repo(tmp_path)
+    second = "## Done when\n\n1. A person of 3 is not an adult.\n"
+    both = fence_untrusted("ISSUE 1", PLAIN) + "\n\n" + fence_untrusted("ISSUE 2", second)
+    _write(ws, "test_adult.py", STRONG_TEST)
+    _commit(ws)
+    contract = practices.contract_hash(practices.contract_criteria(both))
+    assert await practices.commit_test_pass(str(ws), ["test_adult.py"], {"exit_code": 1}, contract)
+    partial = await practices.plan_for(fence_untrusted("ISSUE 1", PLAIN), "M", str(ws), (1, 2))
+    assert not partial.wants_test_pass
+    edited = both.replace("3 is", "4 is")
+    assert (await practices.plan_for(edited, "M", str(ws), (1, 2))).wants_test_pass
+
+
+async def test_a_lost_resume_starts_a_fresh_session_with_the_practices_note(session, tmp_path, monkeypatch):
+    ws = _repo(tmp_path)
+    _write(ws, "calc.py", FIXED)
+    _write(ws, "test_adult.py", STRONG_TEST)
+    _commit(ws)
+    scripted = engine.run_turn
+
+    async def turn(req, prompt, *, resume):
+        if resume == "gone":
+            return engine.Turn(session_id="gone", error="No conversation found", resume_missing=True)
+        return await scripted(req, prompt, resume=resume)
+
+    monkeypatch.setattr(engine, "run_turn", turn)
+    session["script"] = [lambda w: MUTATE + "DELIVERED: done"]
+    result = await engine.run_claude(_req(ws, session, CRITICAL, resume="gone"))
+    assert result["status"] == "ok", result
+    fresh = session["prompts"][0]
+    assert "Task size: M" in fresh and "1. (critical) A person of 18 or over is an adult." in fresh

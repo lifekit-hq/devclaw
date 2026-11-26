@@ -234,9 +234,11 @@ stages to the session. L skips none.
 
 **Tests first.** This runs on an M or L goal whose brief carries `## Done when`
 criteria, when the branch has no test pass of its own yet and no commit beyond
-its merge-base with the default branch. A branch that already carries work and
-no record (a goal in flight when this shipped) skips the test pass. A session
-paused by the quota mid-pass restarts as a test writer, never as the engineer:
+its merge-base with the default branch other than the host's `wip(devclaw):`
+snapshots. A branch that already carries work and no record (a goal in flight
+when this shipped) skips the test pass. A session paused by the quota mid-pass
+restarts as a test writer, never as the engineer, and its snapshotted partial
+tests count as the pass's files:
 
 1. A fresh test-writer session writes tests from the criteria and no product
    code.
@@ -261,7 +263,8 @@ is not the code pass's.
 When the `## Done when` criteria change, their hash no longer matches the
 record. The next session runs the test pass again: the writer revises the
 tests, red is not asked (the code exists), and the engine commits a new record
-that refreezes the set. Nothing else invalidates a record. The session gets the refusal through the usual
+that refreezes the set. A brief missing one of the goal's issues (a failed
+read) is not a change. Nothing else invalidates a record. The session gets the refusal through the usual
 verify round, and when the rounds run out the task is `INTERRUPTED`. Tests the
 code pass adds in new files are allowed. The trailer names the branch, because
 a squash-merge copies an earlier goal's trailer onto the default branch.

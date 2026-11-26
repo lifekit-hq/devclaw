@@ -40,10 +40,10 @@ pass, the mutation check, and the optional workflow stages. L skips none.
 ### User Story 2 — the test writer is not the coder (P1)
 
 On M and L goals with `## Done when` criteria, on a branch with no commit beyond
-the default branch:
+the default branch but the host's `wip(devclaw):` snapshots:
 
 - A fresh session writes tests and no code. A quota pause mid-pass restarts it
-  as a test writer.
+  as a test writer, and its snapshotted partial tests count as the pass's files.
 - Verify must be red.
 - The engine commits the file set, and a branch-named trailer is the record.
 - A second fresh session writes the code.
@@ -54,7 +54,8 @@ the default branch:
 - New test files are allowed.
 - A branch that already carries work and no record skips the test pass.
 - The record carries a hash of the criteria. When they change, the test pass runs
-  again and refreezes the set.
+  again and refreezes the set. A brief missing one of the goal's issues (a failed
+  read) is not a change.
 
 ### User Story 3 — one mutation per critical criterion (P1)
 
