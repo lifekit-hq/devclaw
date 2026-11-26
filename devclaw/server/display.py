@@ -8,8 +8,8 @@ with history. The stored copies (``goals.objective``, ``decisions.text``) are
 display-only: no tick, gate or merge path reads them.
 
 Reads are cached per process (``_TTL_S``) and bounded per request
-(``_BUDGET_S``): a cold console load shows what arrived in time — the goal id
-stands in for a missing title — and the rest fills on the next poll.
+(``_BUDGET_S``): a cold console load shows what arrived in time — the stored copy
+stands in for a missing read — and the rest fills on the next poll.
 """
 
 from __future__ import annotations
