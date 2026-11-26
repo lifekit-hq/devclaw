@@ -31,6 +31,7 @@ interview* artifact.
 
 from __future__ import annotations
 
+import builtins
 import json
 import sqlite3
 import threading
@@ -201,6 +202,24 @@ class ResolvedDispatch:
     workspace_dir: str
     repo_url: Optional[str] = None
     project_id: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class IntakeTarget:
+    """Where ``file_intake`` files an item: a repo and its intake label prefix."""
+    repo_url: str
+    label_prefix: str = "intake:"
+
+
+#: Owners with an issue queue and no workspace: devclaw files intake into
+#: their repository and never builds there. Every door files into the owning
+#: repository's issues (vault decision 0019); the fleet's queue is the ops
+#: queue, lifekit-stack's issues (decision 0016). A registered project with
+#: the same id takes precedence.
+INTAKE_ONLY_PROJECTS: dict[str, IntakeTarget] = {
+    "vault": IntakeTarget("https://github.com/dsdevq/memory"),
+    "fleet": IntakeTarget("https://github.com/lifekit-hq/lifekit-stack"),
+}
 
 
 class ProjectRegistry:
@@ -514,6 +533,24 @@ class ProjectRegistry:
         return ResolvedDispatch(
             workspace_dir=p.workspace_dir, repo_url=p.repo_url, project_id=project_id
         )
+
+    def resolve_intake(self, project_id: str) -> IntakeTarget:
+        """The repo ``file_intake`` files into for ``project_id``: a registered
+        project's ``repo_url``, else a declared intake-only owner. Raises
+        :class:`UnknownProject` for neither; ValueError for a registered
+        project with no ``repo_url``."""
+        p = self.get(project_id) if project_id else None
+        if p is not None and p.repo_url:
+            return IntakeTarget(p.repo_url)
+        if project_id in INTAKE_ONLY_PROJECTS:
+            return INTAKE_ONLY_PROJECTS[project_id]
+        if p is not None:
+            raise ValueError(f"project {project_id!r} has no GitHub repo_url — set it with update_project")
+        raise UnknownProject(project_id)
+
+    def intake_project_ids(self) -> "builtins.list[str]":
+        """Every id ``file_intake`` accepts, sorted."""
+        return sorted({p.id for p in self.list() if p.repo_url} | set(INTAKE_ONLY_PROJECTS))
 
 
 def _normalize_workspace(path: Optional[str]) -> Optional[str]:

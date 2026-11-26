@@ -21,8 +21,8 @@ from typing import Optional
 from fastmcp.exceptions import ToolError
 
 from ...goal.github import gh, owner_repo, post_comment
-from .._state import mcp
-from ._common import _resolve_project_or_reject
+from ...project_registry import UnknownProject
+from .._state import mcp, registry
 
 LABEL_PREFIX = "intake:"
 _PLAIN_FP_RE = re.compile(r"[a-z0-9._-]{1,40}")
@@ -94,13 +94,13 @@ async def _issues_with_label(slug: str, label: str) -> list[dict]:
 
 
 async def file_intake_in(slug: str, title: str, body: str, fingerprint: str = "", envelope: str = "",
-                         thread: str = "") -> dict:
+                         thread: str = "", label_prefix: str = LABEL_PREFIX) -> dict:
     """Idempotent by repo + fingerprint. Returns ``{url, number, count, created, fingerprint}``."""
     title = (title or "").strip()
     if not title:
         raise ToolError("file_intake requires a title")
     fp = derive_fingerprint(title, fingerprint)
-    label = LABEL_PREFIX + fp
+    label = label_prefix + fp
     lock = _locks.setdefault((slug, fp), asyncio.Lock())
     async with lock:
         issues = await _issues_with_label(slug, label)
@@ -170,10 +170,16 @@ async def file_intake(project_id: str, title: str, owner: str, acceptance: str, 
     references it. Returns the receipt as JSON ``{id, url, state, grade, number,
     count, created, fingerprint}`` with ``state`` ``submitted`` (new issue),
     ``working`` (a repeat that added a count) or ``rejected`` (the envelope
-    failed its grade; ``grade.reason`` says why). This only files; it starts no
+    failed its grade or the project is unknown; ``grade.reason`` says why). This only files; it starts no
     goal and changes no code."""
-    resolved = _resolve_project_or_reject(project_id, "file_intake")
-    slug = owner_repo(resolved.repo_url or "")
+    try:
+        target = registry.resolve_intake(project_id)
+    except UnknownProject:
+        valid = ", ".join(registry.intake_project_ids())
+        return json.dumps(rejected(f"unknown project_id {project_id!r}; valid projects: {valid}"), indent=2)
+    except ValueError as exc:
+        raise ToolError(str(exc))
+    slug = owner_repo(target.repo_url)
     if not slug:
         raise ToolError(f"project {project_id!r} has no GitHub repo_url — set it with update_project")
     reason = check_envelope(slug, project_id, owner, class_, acceptance)
@@ -181,7 +187,7 @@ async def file_intake(project_id: str, title: str, owner: str, acceptance: str, 
         return json.dumps(rejected(reason), indent=2)
     fp = derive_fingerprint(title, fingerprint)
     block = _envelope_block(fp, origin, owner, class_, acceptance, thread)
-    result = await file_intake_in(slug, title, body, fingerprint, block, thread)
+    result = await file_intake_in(slug, title, body, fingerprint, block, thread, target.label_prefix)
     return json.dumps(receipt(slug, result), indent=2)
 
 

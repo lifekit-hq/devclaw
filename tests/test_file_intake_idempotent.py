@@ -134,11 +134,12 @@ async def test_a_repeat_returns_a_working_receipt_with_the_count(forge):
 
 
 @pytest.fixture
-def tool(forge, monkeypatch):
-    from devclaw.project_registry import ResolvedDispatch
+def tool(forge, monkeypatch, tmp_path):
+    from devclaw.project_registry import ProjectRegistry
 
-    monkeypatch.setattr(intake, "_resolve_project_or_reject",
-                        lambda project_id, name: ResolvedDispatch("/w", "https://github.com/o/r", project_id))
+    reg = ProjectRegistry(str(tmp_path / "reg.db"))
+    reg.create(id="p", name="p", repo_url="https://github.com/o/r", workspace_dir="/w")
+    monkeypatch.setattr(intake, "registry", reg)
     return getattr(intake.file_intake, "fn", intake.file_intake)
 
 
@@ -157,3 +158,23 @@ async def test_the_tool_returns_the_receipt_and_the_issue_carries_the_same_finge
     assert "fingerprint: ci-timeout" in issue["body"] and "thread: t-1" in issue["body"]
     again = json.loads(await tool("p", "build timed out", owner="o/r", acceptance="x", fingerprint="ci-timeout"))
     assert (again["id"], again["state"], again["count"]) == ("o/r#1", "working", 2)
+
+
+# --- the vault and the fleet: owners with an issue queue and no workspace -----
+
+
+@pytest.mark.parametrize("project_id,slug", [("vault", "dsdevq/memory"), ("fleet", "lifekit-hq/lifekit-stack")])
+async def test_the_vault_and_the_fleet_file_and_count_like_any_project(tool, forge, project_id, slug):
+    out = json.loads(await tool(project_id, "note rots", owner=slug, acceptance="it stops", fingerprint="rot"))
+    assert (out["id"], out["state"], out["url"]) == (f"{slug}#1", "submitted", f"https://github.com/{slug}/issues/1")
+    assert forge.issues[slug][0]["labels"] == ["intake:rot"]
+    again = json.loads(await tool(project_id, "note rots", owner=project_id, acceptance="it stops", fingerprint="rot"))
+    assert (again["id"], again["state"], again["count"]) == (f"{slug}#1", "working", 2)
+    assert len(forge.issues[slug]) == 1
+
+
+async def test_an_unknown_project_is_refused_with_the_valid_list(tool, forge):
+    out = json.loads(await tool("nope", "t", owner="o/r", acceptance="x"))
+    assert out["state"] == "rejected" and out["id"] == ""
+    assert "'nope'" in out["grade"]["reason"] and "fleet, p, vault" in out["grade"]["reason"]
+    assert forge.issues == {} and forge.comments == []
