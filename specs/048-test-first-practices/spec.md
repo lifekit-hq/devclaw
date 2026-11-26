@@ -42,15 +42,21 @@ pass, the mutation check, and the optional workflow stages. L skips none.
 On M and L goals with `## Done when` criteria, on a branch with no commit beyond
 the default branch but the host's `wip(devclaw):` snapshots:
 
-- A fresh session writes tests and no code. A quota pause mid-pass restarts it
+- A fresh session writes tests and no code beyond the minimum stub the tests
+  need to fail for the right reason. A quota pause mid-pass restarts it
   as a test writer, and its snapshotted partial tests count as the pass's files.
 - Verify must be red.
-- The engine commits the file set, and a branch-named trailer is the record.
+- The engine commits what the writer changed, and a branch-named trailer is the
+  record. Only files named like tests (a `tests/` or `test/` directory,
+  `test_*`, `*_test.*`, `*.test.*`, `*.spec.*`) and runner config are frozen; a
+  stub, manifest or lock file is not.
 - A second fresh session writes the code.
 - The gate refuses a later diff that edits or deletes a test-pass file, or the
   verify script and runner config present at that commit (`.devclaw/verify`,
   `conftest.py`, `pytest.ini`, jest and vitest config), and names the file.
-  Changes merged in from the default branch are not the code pass's. The same
+  Runner config the goal's issue names is in scope and not frozen; no other
+  exception. Changes merged in from the default branch are not the code pass's;
+  a frozen file they conflicted in is accepted in any resolution, and noted. The same
   check runs on the head the hand-off shipped: a touched file there ends the
   task `BLOCKED` naming it, and the pushed pull request is left as it is.
 - New test files are allowed.
@@ -66,7 +72,8 @@ The engine breaks that line in a detached worktree of HEAD carrying the working
 tree's changes, and requires verify to go red there. A survivor fails the gate
 with the criterion named. The mutation may not target a test-pass file or a file
 named like a test. Verify red there unmutated means the check could not run
-here, which the goal shows and the branch is not charged for. A goal with no
+here: the branch is not charged for it, and the fact is posted once on the goal
+thread and written into the pull request description. A goal with no
 critical criterion skips the check. The check runs before the hand-off only.
 
 ## Requirements

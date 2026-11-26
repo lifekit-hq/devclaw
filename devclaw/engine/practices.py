@@ -10,8 +10,10 @@ one mutation per critical criterion.
   ``.devclaw/verify`` must then be RED. The engine commits that file set with a
   :data:`TEST_PASS_TRAILER` trailer — git is the record, no host state — and
   every later code pass on the branch is refused when it edits, deletes or
-  rewrites one of those files or the runner config that decides which tests
-  run. New test files are always allowed. A contract change re-runs the pass.
+  rewrites one of the files named like tests or the runner config that decides
+  which tests run (a stub or a manifest the writer needed is not frozen; runner
+  config the goal's issue names is in scope). New test files are always
+  allowed. A contract change re-runs the pass.
 - **One mutation.** For each criterion marked critical, the session names one
   condition to break; the engine breaks it in a scratch copy of the tree and
   requires ``.devclaw/verify`` to go red. A mutation every test survives fails
@@ -114,6 +116,24 @@ BASE_REFS = ("origin/HEAD", "origin/main", "origin/master")
 CONTRACT_TRAILER = "Devclaw-Contract"
 #: what decides which tests run and are collected — frozen with the test pass
 _RUNNER_CONFIG_RE = re.compile(r"(?:^|/)(?:conftest\.py|pytest\.ini|(?:jest|vitest)\.config\.[\w.]+)$|^\.devclaw/verify$")
+#: a file named like a test — frozen with the test pass, never a mutation target
+_TEST_NAME_RE = re.compile(r"(?:^|/)tests?/|(?:^|/)test_[^/]*$|_test\.[^/]*$|\.(?:test|spec)\.[^/]*$")
+
+
+def frozen_name(path: str) -> bool:
+    """What a test pass freezes: a file named like a test, or runner config."""
+    return bool(_TEST_NAME_RE.search(path) or _RUNNER_CONFIG_RE.search(path))
+
+
+def issue_text(brief: str) -> str:
+    """The text of the brief's ISSUE fences — what the goal names in scope."""
+    return "\n".join(_ISSUE_FENCE_RE.findall(brief or ""))
+
+
+def _in_scope(path: str, scope: str) -> bool:
+    """Runner config the goal's issue names (its path, or a config file's own name)."""
+    return bool(_RUNNER_CONFIG_RE.search(path)) and (
+        path in scope or (path != ".devclaw/verify" and os.path.basename(path) in scope))
 
 
 def contract_hash(criteria: list[tuple[str, bool]]) -> str:
@@ -165,11 +185,12 @@ class Record:
     contract: str
 
 
-async def recorded_test_pass(workspace_dir: str) -> Optional[Record]:
+async def recorded_test_pass(workspace_dir: str, scope: str = "") -> Optional[Record]:
     """The newest test-pass record THIS branch committed, or None. The trailer
     names the branch: a squash-merge copies an earlier goal's trailer onto the
     default branch, and that one is not ours. The frozen files are the listed
-    tests plus the runner config present at that commit."""
+    tests plus the runner config present at that commit, less the runner
+    config the goal's issue text ``scope`` names."""
     mark = f"{TEST_PASS_TRAILER}: {await _branch(workspace_dir)} "
     rc, sha = await _git(workspace_dir, "log", "-n1", "-F", f"--grep={mark}", "--format=%H", "HEAD")
     if rc != 0 or not sha:
@@ -180,7 +201,7 @@ async def recorded_test_pass(workspace_dir: str) -> Optional[Record]:
     contract = next((v.strip() for k, v in trailers if k == CONTRACT_TRAILER), "")
     _, tree = await _git(workspace_dir, "ls-tree", "-r", "--name-only", sha)
     files += [p for p in tree.splitlines() if _RUNNER_CONFIG_RE.search(p) and p not in files]
-    return Record(sha, tuple(files), contract)
+    return Record(sha, tuple(f for f in files if not _in_scope(f, scope)), contract)
 
 
 async def changed_since(workspace_dir: str, base: str) -> Optional[list[str]]:
@@ -204,29 +225,40 @@ async def commit_test_pass(workspace_dir: str, files: list[str], verify: dict, c
 
 
 async def frozen_violations(workspace_dir: str, commit: str, files: "tuple[str, ...]",
-                            head: Optional[str] = None) -> list[str]:
-    """How the code pass touched the test-pass files: one line per file it
+                            head: Optional[str] = None) -> tuple[list[str], list[str]]:
+    """``(violations, accepted)``: one line per test-pass file the code pass
     edited or deleted, or the record itself rewritten away — in the working
     tree, or at the commit ``head`` when given. A change the default branch
-    made, merged in, is not the code pass's. Fails CLOSED."""
+    made, merged in, is not the code pass's; a file the default branch and the
+    test pass changed in conflict is ``accepted`` in whatever resolution the
+    branch holds. Fails CLOSED."""
     rc, _ = await _git(workspace_dir, "merge-base", "--is-ancestor", commit, head or "HEAD")
     if rc != 0:
-        return [f"the test-pass commit {commit[:10]} is no longer on the branch — its tests were rewritten away"]
-    if not files:
-        return []
-    expected = commit
+        return [f"the test-pass commit {commit[:10]} is no longer on the branch — its tests were rewritten away"], []
+    expected, accepted = commit, list[str]()
     base = await merge_base(workspace_dir, head or "HEAD")
-    if base is not None and (await _git(workspace_dir, "merge-base", "--is-ancestor", base, commit))[0] != 0:
-        rc, out = await _git(workspace_dir, "merge-tree", "--write-tree", commit, base)
+    if files and base is not None and (await _git(workspace_dir, "merge-base", "--is-ancestor", base, commit))[0] != 0:
+        rc, out = await _git(workspace_dir, "merge-tree", "--write-tree", "--name-only", "--no-messages", commit, base)
         if rc not in (0, 1) or not out:
-            return [f"git could not merge the default branch into the test-pass files: {out[-200:]}"]
-        expected = out.splitlines()[0]
+            return [f"git could not merge the default branch into the test-pass files: {out[-200:]}"], []
+        expected, *conflicted = out.splitlines()
+        accepted = [f for f in files if f in conflicted]
+    paths = [f for f in files if f not in accepted]
+    if not paths:
+        return [], accepted
     rc, out = await _git(workspace_dir, "diff", "--name-status", "--no-renames", expected, *([head] if head else []),
-                         "--", *files)
+                         "--", *paths)
     if rc != 0:
-        return [f"git could not diff the test-pass files against {commit[:10]}: {out[-200:]}"]
+        return [f"git could not diff the test-pass files against {commit[:10]}: {out[-200:]}"], accepted
     verbs = {"D": "deleted"}
-    return [f"{verbs.get(s[:1], 'edited')} `{p}`" for s, _, p in (line.partition("\t") for line in out.splitlines()) if p]
+    return [f"{verbs.get(s[:1], 'edited')} `{p}`" for s, _, p in (line.partition("\t") for line in out.splitlines())
+            if p], accepted
+
+
+def accepted_note(accepted: list[str]) -> list[str]:
+    """The thread note for frozen files a merge of the default branch conflicted in."""
+    return [f"the test-pass files {', '.join(f'`{f}`' for f in accepted)} conflicted with the default branch; "
+            "the frozen-file check accepted the branch's resolution of them unchecked"] if accepted else []
 
 
 # ---- the one-mutation check ---------------------------------------------------
@@ -256,9 +288,6 @@ def parse_mutations(text: str) -> list[Mutation]:
             out.append(Mutation(item["criterion"], str(item.get("file") or ""), str(item.get("find") or ""),
                                 str(item.get("replace") or "")))
     return out
-
-
-_TEST_NAME_RE = re.compile(r"(?:^|/)tests?/|(?:^|/)test_[^/]*$|_test\.[^/]*$|\.(?:test|spec)\.[^/]*$")
 
 
 def _invalid(m: Mutation, tree: str, frozen: "tuple[str, ...]") -> str:
@@ -355,6 +384,10 @@ class Plan:
     #: the brief rendered every issue the goal closes — a missing one is a
     #: failed read, not a contract change
     complete: bool = True
+    #: the issue text: runner config it names is in scope, not frozen
+    scope: str = ""
+    #: what the newest gate could not check, said on the thread and in the PR
+    notes: list[str] = field(default_factory=list)
 
     @property
     def contract(self) -> str:
@@ -386,9 +419,10 @@ class Plan:
 
 async def plan_for(brief: str, size: str, workspace_dir: str, closes: Iterable[int] = ()) -> Plan:
     rendered = {int(n) for n in _ISSUE_NUMBER_RE.findall(brief or "")}
+    scope = issue_text(brief)
     return Plan(size=size if size in SIZES else "M", criteria=contract_criteria(brief),
-                test_pass=await recorded_test_pass(workspace_dir), fresh=await fresh_branch(workspace_dir),
-                complete=set(closes) <= rendered)
+                test_pass=await recorded_test_pass(workspace_dir, scope), fresh=await fresh_branch(workspace_dir),
+                complete=set(closes) <= rendered, scope=scope)
 
 
 SIZE_NOTES = {
@@ -401,8 +435,11 @@ SIZE_NOTES = {
 TEST_PASS_PROMPT = (
     "TEST PASS — you are the test writer, not the engineer. This turn replaces the numbered steps and "
     "the exit lines in the brief below. Write tests, in the repository's own test layout and runner, "
-    "that pin each criterion of the contract's `## Done when` section. Write NO production code: the "
-    "tests must fail now, because the change does not exist yet. If `.devclaw/verify` does not exist, "
+    "that pin each criterion of the contract's `## Done when` section. Name each test file like a test "
+    "(under a `tests/` or `test/` directory, or `test_*`, `*_test.*`, `*.test.*`, `*.spec.*`): those files "
+    "and the runner config are frozen for the code pass. Write no production code beyond the minimum stub "
+    "the tests need to fail for the right reason: the tests must fail now, because the change does not "
+    "exist yet. If `.devclaw/verify` does not exist, "
     "derive it from the project's CI (it runs what CI runs) and include it. Run it and confirm your new "
     "tests fail for the right reason. Do not commit, push or ship — the host records your files and "
     "proves they fail. End your final message with `TESTS: <what the tests pin>`, or with "
@@ -436,6 +473,10 @@ MUTATION_FAILED_PROMPT = (
     "frozen), re-run `.devclaw/verify`, commit, and hand back with a fresh ```json mutations block and "
     "your exit line."
 )
+PR_NOTES_PROMPT = (
+    "Not every gate ran in full on this branch. After the contract in `{intent_file}`, add a "
+    "`## Not checked` section holding these lines as written, so the pull request description says so:\n{notes}"
+)
 HANDOFF_FROZEN_REASON = (
     "the hand-off changed the test-pass files ({commit}) after the gate passed: {violations}. The pull "
     "request {pr_url} is left as pushed — not reverted and not merged."
@@ -448,4 +489,5 @@ FROZEN_FAILED_PROMPT = (
 
 __all__ = ["SIZES", "BASE_REFS", "Plan", "Record", "Mutation", "size_of", "contract_criteria", "contract_hash",
            "plan_for", "merge_base", "fresh_branch", "recorded_test_pass", "changed_since", "commit_test_pass",
-           "frozen_violations", "parse_mutations", "mutation_failures"]
+           "frozen_violations", "accepted_note", "frozen_name", "issue_text", "parse_mutations",
+           "mutation_failures"]

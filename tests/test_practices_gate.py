@@ -75,8 +75,9 @@ def session(monkeypatch):
     async def fake_init(ws):
         return None
 
-    async def fake_hand_off(req, session_id, head):
+    async def fake_hand_off(req, session_id, head, notes=()):
         state["prompts"].append("<hand-off>")
+        state["notes"] = list(notes)
         if state.get("hand_off"):
             state["hand_off"](req.workspace_dir)
         return (engine.Turn(session_id=session_id, ok=True, text="DELIVERED: shipped",
@@ -331,6 +332,9 @@ async def test_a_mutation_check_that_cannot_run_here_is_shown_and_not_charged(se
     check = next(e for e in session["events"] if e.type == "MutationCheck").payload
     assert check["failures"] == [] and "red in the scratch worktree" in check["couldNotRun"]
     assert len(_git(ws, "worktree", "list").splitlines()) == 1  # the scratch worktree is gone
+    # loud, not silent: the goal layer posts the result's notes, the hand-off puts them in the PR body
+    assert len(result["notes"]) == 1 and "one-mutation check" in result["notes"][0]
+    assert "did not run" in result["notes"][0] and session["notes"] == result["notes"]
 
 
 async def test_a_changed_contract_reruns_the_test_pass_and_refreezes(session, tmp_path):
@@ -370,9 +374,76 @@ async def test_a_frozen_file_change_merged_in_from_the_default_branch_is_not_the
     _git(ws, "update-ref", "refs/remotes/origin/main", "HEAD")
     _git(ws, "checkout", "-q", "goal/g1")
     _git(ws, "merge", "-q", "--no-edit", "origin/main")
-    assert await practices.frozen_violations(str(ws), record.commit, record.files) == []
+    assert await practices.frozen_violations(str(ws), record.commit, record.files) == ([], [])
     _write(ws, "test_adult.py", (ws / "test_adult.py").read_text() + "assert True\n")
-    assert await practices.frozen_violations(str(ws), record.commit, record.files) == ["edited `test_adult.py`"]
+    assert await practices.frozen_violations(str(ws), record.commit, record.files) == (["edited `test_adult.py`"], [])
+
+
+async def test_a_frozen_file_that_conflicted_with_the_default_branch_accepts_any_resolution(tmp_path):
+    """The test pass and the default branch edit the same line; the code pass
+    resolves the merge. A marker-laden merge is never the expected file, so
+    the resolution passes and is noted, and the other frozen files are still checked."""
+    ws = _repo(tmp_path)
+    _write(ws, "test_adult.py", "# base\n")
+    _commit(ws)
+    _git(ws, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _write(ws, "test_adult.py", "# writer\n" + STRONG_TEST)
+    _git(ws, "add", "-A")
+    assert await practices.commit_test_pass(str(ws), ["test_adult.py"], {"exit_code": 1}, "h")
+    record = await practices.recorded_test_pass(str(ws))
+    _git(ws, "checkout", "-q", "-b", "main", "origin/main")
+    _write(ws, "test_adult.py", "# main\n")
+    _commit(ws)
+    _git(ws, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(ws, "checkout", "-q", "goal/g1")
+    assert subprocess.run(["git", "merge", "-q", "--no-edit", "origin/main"], cwd=ws, capture_output=True,
+                          env={**os.environ, **GIT_ENV}).returncode != 0  # a real conflict
+    _write(ws, "test_adult.py", "# main\n" + STRONG_TEST)
+    _commit(ws)
+    touched, accepted = await practices.frozen_violations(str(ws), record.commit, record.files)
+    assert touched == [] and accepted == ["test_adult.py"]
+    assert "`test_adult.py`" in practices.accepted_note(accepted)[0]
+    _write(ws, ".devclaw/verify", "#!/bin/sh\nexit 0\n")
+    assert await practices.frozen_violations(str(ws), record.commit, record.files) == (
+        ["edited `.devclaw/verify`"], ["test_adult.py"])
+
+
+async def test_a_stub_or_manifest_the_test_writer_needed_is_committed_but_not_frozen(session, tmp_path):
+    """Only files named like tests and the runner config are frozen: the code
+    pass must be able to implement the stub the tests needed to fail."""
+    ws = _repo(tmp_path)
+
+    def writer(w):
+        _write(ws, "test_adult.py", STRONG_TEST)
+        _write(ws, "calc.py", "def is_adult(age):\n    raise NotImplementedError\n")
+        _write(ws, "requirements.txt", "pytest\n")
+        return "TESTS: adulthood"
+
+    session["script"] = [writer, lambda w: (_write(ws, "calc.py", FIXED), _commit(ws), MUTATE + "DELIVERED: d")[-1]]
+    result = await engine.run_claude(_req(ws, session, CRITICAL))
+    assert result["status"] == "ok" and result["verify"]["passed"] is True, result
+    recorded = await practices.recorded_test_pass(str(ws))
+    assert recorded is not None and recorded.files == ("test_adult.py", ".devclaw/verify")
+    assert {"calc.py", "requirements.txt"} <= set(_git(ws, "show", "--name-only", "--format=", recorded.commit).split())
+
+
+@pytest.mark.parametrize("brief, refused", [
+    (PLAIN + "\nThe change also makes `.devclaw/verify` print the python version.\n", False),
+    (PLAIN + "\nThe change also makes verify print the python version.\n", True),
+])
+async def test_runner_config_stays_frozen_unless_the_issue_names_it(session, tmp_path, brief, refused):
+    ws = _repo(tmp_path)
+
+    def code(w):
+        _write(ws, "calc.py", FIXED)
+        _write(ws, ".devclaw/verify", "#!/bin/sh\nset -e\npython3 --version\nfor f in test_*.py; do python3 \"$f\"; done\n")
+        _commit(ws)
+        return "DELIVERED: done"
+
+    session["script"] = [lambda w: _write(ws, "test_adult.py", STRONG_TEST) or "TESTS: t"] + [code] * 9
+    result = await engine.run_claude(_req(ws, session, brief))
+    assert ("edited `.devclaw/verify`" in result["verify"]["output"]) is refused
+    assert result["verify"]["passed"] is not refused
 
 
 async def test_an_issue_the_brief_could_not_read_is_not_a_contract_change(tmp_path):

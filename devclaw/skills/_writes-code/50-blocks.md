@@ -20,4 +20,4 @@ CI workflows, AGENTS.md, test-runner and build configuration, pre-commit/husky h
 
 ## `.devclaw/verify` is yours
 
-The one script that runs what this project's CI runs. Derive it from `.github/workflows` on your first session, keep it honest, run it before you hand back. A red CI after a green local run means the script lies — fix the script, not the check.
+The one script that runs what this project's CI runs. Derive it from `.github/workflows` on your first session, keep it honest, run it before you hand back. A red CI after a green local run means the script lies — fix the script, not the check. The exception is a test pass: once it froze the script and the runner config (`conftest.py`, `pytest.ini`, jest or vitest config — the brief lists the frozen files), they change only when the goal's issue names that file in scope; otherwise end `BLOCKED` with the gap.

@@ -14,12 +14,8 @@ from typing import Awaitable, Callable, Optional
 
 from .. import config as _config
 from ..engine.workspace import lease_goal_checkout, remove_goal_checkout
-from ..state_store import (
-    EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REVIEW, Goal, StateStore, Task,
-)
-from . import blast as _blast
-from . import donegate as _donegate
-from . import github as _gh
+from ..state_store import EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REVIEW, Goal, StateStore, Task
+from . import blast as _blast, donegate as _donegate, github as _gh
 from .notify import Notifier
 from .prompts import review_brief, session_brief
 from .world import World, WorldReader
@@ -140,6 +136,11 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
                                    + f"\n**devclaw note:** issue #{i.number} does not carry the `{_gh.READY_LABEL}` label. "
                                    "The goal keeps running; shape the issue and add the label.")
             ctx.log(goal.id, f"issue #{i.number} lacks the {_gh.READY_LABEL!r} label")
+    notes = json.loads(last.result_json or "{}").get("notes") if last is not None else None  # unchecked gates, #1053
+    if notes and last is not None and last.id not in {c.field("task") for c in world.records("notice")} \
+            and (number := _thread_number(goal, world)):
+        await ctx.post_comment(goal.repo_url, number, _gh.marker("notice", why="unchecked", task=last.id)
+                               + "\n**devclaw note:** " + "; ".join(str(n) for n in notes))
 
     # a session that ended BLOCKED: post its question once, then wait
     if last is not None and last.exit == EXIT_BLOCKED and not world.block_exists(task_id=last.id):

@@ -243,27 +243,35 @@ restarts as a test writer, never as the engineer, and its snapshotted partial
 tests count as the pass's files:
 
 1. A fresh test-writer session writes tests from the criteria and no product
-   code.
+   code beyond the minimum stub the tests need to fail for the right reason.
 2. `.devclaw/verify` must then run red. If it is green, the run stops `BLOCKED`
    with "the tests written from the contract pass before any code is written".
-   A test pass that writes no file, or leaves no verify script, also stops
-   `BLOCKED`.
-3. The engine commits the file set. The trailers `Devclaw-Test-Pass: <branch> …`,
-   `Devclaw-Contract: <hash of the criteria>` and `Devclaw-Test-File: <path>`
-   are the record; git holds it, not the host.
+   A test pass that writes no file named like a test, or leaves no verify
+   script, also stops `BLOCKED`.
+3. The engine commits everything the writer changed. The trailers
+   `Devclaw-Test-Pass: <branch> …`, `Devclaw-Contract: <hash of the criteria>`
+   and one `Devclaw-Test-File: <path>` per file named like a test (under a
+   `tests/` or `test/` directory, `test_*`, `*_test.*`, `*.test.*` or
+   `*.spec.*`) or runner config are the record; git holds it, not the host. A
+   stub, a manifest or a lock file the writer touched is committed but not
+   frozen.
 4. The code pass is a second fresh session, told which files are frozen.
 
 The frozen set is the listed test files plus the files that decide which tests
 run and are collected, when they exist at the test-pass commit:
 `.devclaw/verify`, any `conftest.py`, `pytest.ini`, and `jest.config.*` /
-`vitest.config.*`. At every gate after that, a diff that edits or deletes one
-of those files is refused with the file named. So is a branch that no longer
+`vitest.config.*`. Runner config the goal's issue names (its path; a config
+file's own name also counts, `.devclaw/verify` only by its path) is in scope and
+not frozen; nothing else is exempt. At every gate after that, a diff that edits
+or deletes one of the frozen files is refused with the file named. So is a branch that no longer
 contains the commit. The check runs once more on the head the no-mistakes
 hand-off shipped, because the pipeline's fixes land after the gate: a shipped
 head that touches a frozen file ends the task `BLOCKED` naming the file, and the
 pull request is left as pushed — not reverted, and not merged by the done-gate. The diff is taken against the test-pass commit with the
 default branch merged in, so a change that arrives through a merge of the base
-is not the code pass's.
+is not the code pass's. A frozen file the default branch and the test pass
+changed in conflict is accepted in whatever resolution the branch holds, and
+that is noted on the goal thread and in the pull request description.
 
 When the `## Done when` criteria change, their hash no longer matches the
 record. The next session runs the test pass again: the writer revises the
@@ -284,8 +292,10 @@ a squash-merge copies an earlier goal's trailer onto the default branch.
    working tree's changes applied, removed afterwards. Ignored files (a
    `.venv`, `node_modules`) are not in it and are not rebuilt.
 3. Verify runs there unmutated first. If it is red, the check could not run
-   here: the `MutationCheck` event says so on the goal, and nothing is counted
-   against the branch.
+   here: nothing is counted against the branch, but it is said out loud — the
+   `MutationCheck` event, a `notice` record the goal layer posts once on the
+   goal thread (the engine result's `notes`), and a `## Not checked` section the
+   hand-off writes into the pull request description.
 4. It applies each mutation in the copy and requires verify to go red.
 5. A mutation every test survives fails the gate with the criterion named. So
    does a missing or invalid mutation: a file the test pass froze, a file named

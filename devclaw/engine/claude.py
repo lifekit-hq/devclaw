@@ -739,7 +739,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     if reason is None and req.hand_off and verify is not None and verify.get("passed"):
         head = await unshipped_head(req.workspace_dir)
         if head:
-            turn, pr_url, why, shipped = await _hand_off(req, turn.session_id, head)
+            turn, pr_url, why, shipped = await _hand_off(req, turn.session_id, head, plan.notes if plan else [])
             usage = _add_usage(usage, turn.usage)
             if not turn.ok:
                 return failed(turn)
@@ -749,7 +749,9 @@ async def run_claude(req: EngineRequest) -> EngineResult:
                         "agent_output": turn.text, "usage": usage, "session_id": turn.session_id}
             if reason is None and plan is not None and plan.test_pass is not None:
                 record = plan.test_pass
-                touched = await _practices.frozen_violations(req.workspace_dir, record.commit, record.files, shipped)
+                touched, accepted = await _practices.frozen_violations(
+                    req.workspace_dir, record.commit, record.files, shipped)
+                plan.notes += [n for n in _practices.accepted_note(accepted) if n not in plan.notes]
                 if touched:
                     reason = _practices.HANDOFF_FROZEN_REASON.format(
                         commit=record.commit[:10], violations="; ".join(touched), pr_url=pr_url)
@@ -767,6 +769,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         result["verify"] = verify
     if pr_url:
         result["pr_url"] = pr_url
+    if plan is not None and plan.notes:
+        result["notes"] = plan.notes
     return result
 
 
@@ -778,10 +782,12 @@ async def _init_pipeline(workspace_dir: str) -> Optional[str]:
     return None if rc == 0 else f"no-mistakes init failed: {out[-500:]}"
 
 
-async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str, str]:
+async def _hand_off(req: EngineRequest, session_id: str, head: str,
+                    notes: "list[str] | tuple[str, ...]" = ()) -> tuple[Turn, Optional[str], str, str]:
     """The ship turn: re-init the pipeline (the daemon may have died during the
     session, and only the host env restarts it with the GitHub credential), then
-    the SAME session drives the run.
+    the SAME session drives the run; ``notes`` (what a gate could not check)
+    go into the pull request description.
     ``(turn, pr_url, why, shipped_head)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
     error = await _init_pipeline(req.workspace_dir)
     if error:
@@ -789,6 +795,9 @@ async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Tur
     closes = "".join(f" --closes {n}" for n in req.closes)
     with tempfile.TemporaryDirectory(prefix="devclaw-intent-") as tmp:
         prompt = HANDOFF_PROMPT.format(intent_file=os.path.join(tmp, "intent.md"), closes=closes)
+        if notes:
+            prompt += "\n\n" + _practices.PR_NOTES_PROMPT.format(
+                intent_file=os.path.join(tmp, "intent.md"), notes="\n".join(f"- {n}" for n in notes))
         turn = await run_turn(req, prompt, resume=session_id)
     if not turn.ok or parse_blocked_reason(turn.text) is not None:
         return turn, None, "", ""
@@ -834,14 +843,16 @@ async def _test_pass(req: EngineRequest, plan: _practices.Plan,
         cmd = req.verify_cmd or discover_verify(ws)
         if not cmd:
             return stop("the test pass left no `.devclaw/verify` to prove its tests fail before any code")
-    files = await _practices.changed_since(ws, base)
-    if files is None:
+    changed = await _practices.changed_since(ws, base)
+    if changed is None:
         return {"status": "error", "error": "test pass: git could not list the files it wrote",
                 "usage": usage}, usage
+    files = [f for f in changed if _practices.frozen_name(f)]
     if prior is not None:
         files += [f for f in prior.files if f not in files]
     if not files:
-        return stop("the test pass wrote no test from the contract's `## Done when` criteria")
+        return stop("the test pass wrote no test file (under a `tests/` or `test/` directory, or `test_*`, "
+                    "`*_test.*`, `*.test.*`, `*.spec.*`) from the contract's `## Done when` criteria")
     verify = await run_verify(cmd, ws, _config.VERIFY_TIMEOUT_S)
     _emit(req, "test-pass", "TestPass", {"files": files, "red": not verify["passed"],
                                          "exit_code": verify["exit_code"], "refreeze": prior is not None})
@@ -851,7 +862,7 @@ async def _test_pass(req: EngineRequest, plan: _practices.Plan,
     if not await _practices.commit_test_pass(ws, files, verify, plan.contract):
         return {"status": "error", "error": "test pass: the engine could not commit the test files",
                 "usage": usage}, usage
-    plan.test_pass = await _practices.recorded_test_pass(ws)
+    plan.test_pass = await _practices.recorded_test_pass(ws, plan.scope)
     if plan.test_pass is None:
         return {"status": "error", "error": "test pass: the committed record could not be read back",
                 "usage": usage}, usage
@@ -883,10 +894,12 @@ async def _gate(req: EngineRequest, cmd: str, plan: Optional[_practices.Plan] = 
             UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
     if plan is None:
         return verify, None
+    plan.notes = []
     frozen: tuple[str, ...] = ()
     if plan.test_pass is not None:
         commit, frozen = plan.test_pass.commit, plan.test_pass.files
-        touched = await _practices.frozen_violations(req.workspace_dir, commit, frozen)
+        touched, accepted = await _practices.frozen_violations(req.workspace_dir, commit, frozen)
+        plan.notes += _practices.accepted_note(accepted)
         if touched:
             return _refuse(req, f"git diff --name-status {commit[:10]} -- <test-pass files>",
                            "the code pass touched the test-pass files: " + "; ".join(touched)), \
@@ -897,6 +910,8 @@ async def _gate(req: EngineRequest, cmd: str, plan: Optional[_practices.Plan] = 
             lambda c, tree: run_verify(c, tree, _config.VERIFY_TIMEOUT_S))
         _emit(req, "mutation", "MutationCheck", {"critical": len(plan.critical), "failures": failures,
                                                  "couldNotRun": could_not_run})
+        if could_not_run:
+            plan.notes.append(f"the one-mutation check on the critical criteria did not run: {could_not_run}")
         if failures:
             return _refuse(req, "one-mutation check", "the one-mutation check failed: " + "; ".join(failures)), \
                 _practices.MUTATION_FAILED_PROMPT.format(failures="\n".join(f"- {f}" for f in failures))

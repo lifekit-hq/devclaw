@@ -31,7 +31,7 @@ tick again (settle wakes it)
   snapshotted, `INTERRUPTED`; the next row resets the goal branch and starts a
   fresh session (never `--resume` — the old session's edits are not in the tree);
 - the test pass (M/L goal with `## Done when` criteria, [architecture](../architecture.md#size-tests-first-one-mutation-1053-spec-048)) leaves its tests green before any code, writes no test, or leaves no `.devclaw/verify` → `BLOCKED` with that reason;
-- the code pass edits or deletes a test-pass file, or a critical criterion's one-line mutation leaves every test green → a refusal naming the file or the criterion is handed back like a red verify, and counts against the same rounds;
+- the code pass edits or deletes a test-pass file (a file named like a test, or runner config the issue does not name), or a critical criterion's one-line mutation leaves every test green → a refusal naming the file or the criterion is handed back like a red verify, and counts against the same rounds; a mutation check that could not run, or a frozen file accepted after a conflicted merge of the base, passes and is posted on the goal thread and in the PR description;
 - the head the hand-off shipped edits or deletes a test-pass file → `BLOCKED` naming the file; the pull request is left as pushed (the mutation check is not re-run on it);
 - the verify is red after `DEVCLAW_VERIFY_ROUNDS` (each round `--resume`s the same session in-run) →
   `INTERRUPTED`; the next row starts a fresh session on the reset goal branch;
