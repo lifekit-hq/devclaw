@@ -594,10 +594,23 @@ async def test_what_a_gate_could_not_check_is_said_once_on_the_thread_and_wakes_
     assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
     assert len(rec.comments) == 1 and rec.comments[0][0] == 1
     assert "devclaw:notice" in rec.comments[0][1] and "did not run: no venv" in rec.comments[0][1]
+    rec.comments.clear()
+    store.mark_done(t.id, json.dumps({"status": "ok", "notes": ["no test file was recognised",
+                                                                "the one-mutation check did not run: no venv"]}),
+                    exit="NOTHING", exit_detail="nothing to do")
+    assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
+    assert len(rec.comments) == 1 and "did not run: no venv" in rec.comments[0][1]
+    world.comments = [_comment(1999, 1, "**devclaw note:** no test file was recognised; the one-mutation check "
+                               "did not run: no venv", "notice", why="unchecked", task="an-earlier-session")]
+    store.mark_done(t.id, json.dumps({"status": "ok", "notes": ["the one-mutation check did not run: no venv"]}),
+                    exit="NOTHING", exit_detail="nothing to do")
+    rec.comments.clear()
+    assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
+    assert not rec.comments  # each note is deduped on its own, not as the joined line
     world.comments = [_comment(2000, 1, "note", "notice", why="unchecked", task=t.id)]
     for _ in range(2):
         assert await tick_goal(store.get_goal(goal.id), ctx(world)) == "idle"
-    assert len(rec.comments) == 1 and len(_sessions(store, goal.id)) == 1
+    assert not rec.comments and len(_sessions(store, goal.id)) == 1
 
 
 async def test_a_label_removed_after_creation_is_reported_on_the_next_round_and_the_goal_continues(harness):

@@ -673,7 +673,6 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     resume = req.resume_session_id
     plan: Optional[_practices.Plan] = None
     usage: Optional[dict] = None
-    unrecognised: list[str] = []
     if req.kind in WRITES_CODE_KINDS and req.hand_off and _has_git_dir(req.workspace_dir):
         plan = await _practices.plan_for(req.goal, req.size, req.workspace_dir, req.closes)
     if plan is not None and plan.wants_test_pass:
@@ -689,8 +688,6 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             stop, usage = await _test_pass(req, plan, prompt)
             if stop is not None:
                 return stop
-            if plan.test_pass is not None and not plan.test_pass.files:
-                unrecognised = [_practices.NO_TEST_FILE_NOTE]
         if plan is not None:
             prompt = f"{plan.note()}\n\n{prompt}"
     turn = await run_turn(req, req.goal if resume else prompt, resume=resume)
@@ -772,7 +769,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         result["verify"] = verify
     if pr_url:
         result["pr_url"] = pr_url
-    if notes := unrecognised + (plan.notes if plan is not None else []):
+    if plan is not None and (notes := [_practices.NO_TEST_FILE_NOTE] * plan.no_test_file + plan.notes):
         result["notes"] = notes
     return result
 
@@ -902,11 +899,11 @@ async def _gate(req: EngineRequest, cmd: str, plan: Optional[_practices.Plan] = 
                            "the code pass touched the test-pass files: " + "; ".join(touched)), \
                 _practices.FROZEN_FAILED_PROMPT.format(commit=commit[:10], violations="; ".join(touched))
     if plan.critical:
-        failures, could_not_run = await _practices.mutation_failures(
+        failures, could_not_run, detail = await _practices.mutation_failures(
             req.workspace_dir, cmd, plan.critical, mutations or [], frozen,
             lambda c, tree: run_verify(c, tree, _config.VERIFY_TIMEOUT_S))
         _emit(req, "mutation", "MutationCheck", {"critical": len(plan.critical), "failures": failures,
-                                                 "couldNotRun": could_not_run})
+                                                 "couldNotRun": could_not_run, "detail": detail})
         if could_not_run:
             plan.notes.append(f"the one-mutation check on the critical criteria did not run: {could_not_run}")
         if failures:

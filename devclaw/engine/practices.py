@@ -329,23 +329,23 @@ async def _scratch(workspace_dir: str, tmp: str) -> str:
 
 async def mutation_failures(workspace_dir: str, cmd: str, critical: list[str], mutations: list[Mutation],
                             frozen: "tuple[str, ...]", run: Callable[[str, str], Awaitable[dict]]
-                            ) -> tuple[list[str], str]:
-    """``(failures, could_not_run)``: one failure per critical criterion the
-    check refuses (no mutation, an invalid one, or one every test survives);
-    ``could_not_run`` says why the check could not run here — the scratch
-    worktree failed or verify is red in it unmutated — and counts against
-    nothing. Runs in a detached worktree; the real tree is never touched."""
+                            ) -> tuple[list[str], str, str]:
+    """``(failures, could_not_run, detail)``: one failure per critical criterion
+    the check refuses (no mutation, an invalid one, or one every test survives);
+    ``could_not_run`` says, in words that do not vary between sessions, why the
+    check could not run here — the scratch worktree failed or verify is red in
+    it unmutated — and counts against nothing; ``detail`` is the output behind
+    it. Runs in a detached worktree; the real tree is never touched."""
     with tempfile.TemporaryDirectory(prefix="devclaw-mutation-") as tmp:
         tree = os.path.join(tmp, "tree")
         try:
             why = await _scratch(workspace_dir, tmp)
             if why:
-                return [], f"the scratch worktree could not be made: {why}"
+                return [], "the scratch worktree could not be made", why
             base = await run(cmd, tree)
             if not base.get("passed"):
-                return [], (f"`{cmd}` is red in the scratch worktree unmutated: "
-                            f"{(base.get('output') or '')[-300:]}")
-            return await _mutate_each(tree, cmd, critical, mutations, frozen, run), ""
+                return [], f"`{cmd}` is red in the scratch worktree unmutated", (base.get("output") or "")[-300:]
+            return await _mutate_each(tree, cmd, critical, mutations, frozen, run), "", ""
         finally:
             await _git(workspace_dir, "worktree", "remove", "--force", tree)
             await _git(workspace_dir, "worktree", "prune")
@@ -399,6 +399,11 @@ class Plan:
     @property
     def critical(self) -> list[str]:
         return [] if self.size == "S" else [c for c, crit in self.criteria if crit]
+
+    @property
+    def no_test_file(self) -> bool:
+        """The branch's test pass recognised no file it wrote as a test."""
+        return self.test_pass is not None and not any(_TEST_NAME_RE.search(f) for f in self.test_pass.files)
 
     @property
     def wants_test_pass(self) -> bool:
@@ -480,7 +485,7 @@ MUTATION_FAILED_PROMPT = (
 NO_TEST_FILE_NOTE = (
     "the test pass recognised no file it wrote as a test (a `tests/`, `test/`, `spec/` or `__tests__/` "
     "directory, a `.Tests` project, or `test_*`, `*_test.*`, `*_spec.*`, `*.test.*`, `*.spec.*`), so "
-    "nothing is frozen for the code pass"
+    "no test is frozen for the code pass"
 )
 HANDOFF_FROZEN_REASON = (
     "the hand-off changed the test-pass files ({commit}) after the gate passed: {violations}. The pull "

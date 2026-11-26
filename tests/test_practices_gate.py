@@ -335,7 +335,7 @@ async def test_a_mutation_check_that_cannot_run_here_is_shown_and_not_charged(se
     assert len(_git(ws, "worktree", "list").splitlines()) == 1  # the scratch worktree is gone
     # loud, not silent: the goal layer posts the result's notes on the goal thread
     assert len(result["notes"]) == 1 and "one-mutation check" in result["notes"][0]
-    assert "did not run" in result["notes"][0]
+    assert "did not run" in result["notes"][0] and result["notes"][0].endswith("red in the scratch worktree unmutated")
 
 
 async def test_a_changed_contract_reruns_the_test_pass_and_refreezes(session, tmp_path):
@@ -428,24 +428,32 @@ async def test_a_stub_or_manifest_the_test_writer_needed_is_committed_but_not_fr
     assert {"calc.py", "requirements.txt"} <= set(_git(ws, "show", "--name-only", "--format=", recorded.commit).split())
 
 
-async def test_tests_in_a_layout_not_named_like_tests_run_red_first_and_freeze_nothing(session, tmp_path):
+@pytest.mark.parametrize("conftest, frozen", [(False, ()), (True, ("conftest.py", ".devclaw/verify"))])
+async def test_tests_in_a_layout_not_named_like_tests_run_red_first_and_freeze_no_test(session, tmp_path,
+                                                                                      conftest, frozen):
     """A writer that follows the repository's own layout (here a `checks.py`
     the verify script runs) is not stopped BLOCKED: its tests must still be
-    red, nothing is frozen, and the goal thread is told no test file was recognised."""
+    red, no test is frozen (runner config it touched may be), and every later
+    session on the branch tells the goal thread no test file was recognised —
+    the tick posts it once."""
     ws = _repo(tmp_path)
 
     def writer(w):
         _write(ws, "checks.py", STRONG_TEST)
         _write(ws, ".devclaw/verify", "#!/bin/sh\nset -e\npython3 checks.py\n")
+        if conftest:
+            _write(ws, "conftest.py", "collect_ignore = []\n")
         return "TESTS: adulthood"
 
-    session["script"] = [writer, lambda w: (_write(ws, "calc.py", FIXED), _commit(ws), "DELIVERED: d")[-1]]
-    result = await engine.run_claude(_req(ws, session, PLAIN))
-    assert result["status"] == "ok" and result["verify"]["passed"] is True, result
+    session["script"] = [writer, lambda w: "BLOCKED: which age is adult?"]
+    assert "notes" not in await engine.run_claude(_req(ws, session, PLAIN))
     assert next(e for e in session["events"] if e.type == "TestPass").payload["red"] is True
     recorded = await practices.recorded_test_pass(str(ws))
-    assert recorded is not None and recorded.files == ()
+    assert recorded is not None and recorded.files == frozen
     assert "checks.py" in _git(ws, "show", "--name-only", "--format=", recorded.commit).split()
+    session["script"] = [lambda w: (_write(ws, "calc.py", FIXED), _commit(ws), "DELIVERED: d")[-1]]
+    result = await engine.run_claude(_req(ws, session, PLAIN))
+    assert result["status"] == "ok" and result["verify"]["passed"] is True, result
     assert result["notes"] == [practices.NO_TEST_FILE_NOTE]
 
 

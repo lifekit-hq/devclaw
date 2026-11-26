@@ -136,11 +136,10 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
                                    + f"\n**devclaw note:** issue #{i.number} does not carry the `{_gh.READY_LABEL}` label. "
                                    "The goal keeps running; shape the issue and add the label.")
             ctx.log(goal.id, f"issue #{i.number} lacks the {_gh.READY_LABEL!r} label")
-    notes = json.loads(last.result_json or "{}").get("notes") if last is not None else None  # unchecked gates, #1053
-    note = "**devclaw note:** " + "; ".join(str(n) for n in notes or [])
-    if notes and last is not None and not any(c.field("task") == last.id or (c.field("why") == "unchecked" and note in c.body)
-                                              for c in world.records("notice")) and (number := _thread_number(goal, world)):
-        await ctx.post_comment(goal.repo_url, number, _gh.marker("notice", why="unchecked", task=last.id) + "\n" + note)
+    said = [c.body for c in world.records("notice") if c.field("why") == "unchecked"]  # unchecked gates, #1053
+    notes = [str(n) for n in json.loads(last.result_json or "{}").get("notes") or [] if not any(str(n) in b for b in said)] if last else []
+    if notes and last and not any(c.field("task") == last.id for c in world.records("notice")) and (number := _thread_number(goal, world)):
+        await ctx.post_comment(goal.repo_url, number, _gh.marker("notice", why="unchecked", task=last.id) + "\n**devclaw note:** " + "; ".join(notes))
 
     # a session that ended BLOCKED: post its question once, then wait
     if last is not None and last.exit == EXIT_BLOCKED and not world.block_exists(task_id=last.id):

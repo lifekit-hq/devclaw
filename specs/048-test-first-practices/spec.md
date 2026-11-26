@@ -51,8 +51,8 @@ the default branch but the host's `wip(devclaw):` snapshots:
   `__tests__/` directory, a `.Tests` project, `test_*`, `*_test.*`, `*_spec.*`,
   `*.test.*`, `*.spec.*`, in any case) and runner config are frozen; a stub,
   manifest or lock file is not. A writer whose files match none of these is not
-  stopped: red is still required, nothing is frozen, and the goal thread is
-  told no test file was recognised.
+  stopped: red is still required, no test is frozen (runner config it touched
+  still is), and the goal thread is told once that no test file was recognised.
 - A second fresh session writes the code.
 - The gate refuses a later diff that edits or deletes a test-pass file, or the
   verify script and runner config present at that commit (`.devclaw/verify`,
@@ -75,8 +75,9 @@ The engine breaks that line in a detached worktree of HEAD carrying the working
 tree's changes, and requires verify to go red there. A survivor fails the gate
 with the criterion named. The mutation may not target a test-pass file or a file
 named like a test. Verify red there unmutated means the check could not run
-here: the branch is not charged for it, and the fact is posted once per goal on
-the goal thread — not in the pull request description. A goal with no
+here: the branch is not charged for it, and the fact — the command, not its
+output — is posted once per goal on the goal thread — not in the pull request
+description. A goal with no
 critical criterion skips the check. The check runs before the hand-off only.
 
 ## Requirements

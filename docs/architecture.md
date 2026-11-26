@@ -256,8 +256,10 @@ tests count as the pass's files:
    runner config are the record; git holds it, not the host. A stub, a manifest
    or a lock file the writer touched is committed but not frozen. When no file
    the writer wrote is named like a test (tests in a layout the rule does not
-   know), the run is not stopped: the red-first check still applies, nothing is
-   frozen, and the goal thread is told no test file was recognised.
+   know), the run is not stopped: the red-first check still applies, no test is
+   frozen (runner config the writer touched still is), and every later session
+   on the branch says so; the goal thread is told once that no test file was
+   recognised.
 4. The code pass is a second fresh session, told which files are frozen.
 
 The frozen set is the listed test files plus, when there is one, the files that
@@ -297,9 +299,10 @@ a squash-merge copies an earlier goal's trailer onto the default branch.
 3. Verify runs there unmutated first. If it is red, the check could not run
    here: nothing is counted against the branch, but it is said out loud — the
    `MutationCheck` event and a `notice` record the goal layer posts on the
-   goal thread (the engine result's `notes`) — once per goal: a later session
-   with the same note posts nothing. The pull request description does not
-   carry it.
+   goal thread (the engine result's `notes`) — once per goal: each note is
+   compared on its own, its text names the command and not its output (that
+   stays on the event), so a later session with the same note posts nothing.
+   The pull request description does not carry it.
 4. It applies each mutation in the copy and requires verify to go red.
 5. A mutation every test survives fails the gate with the criterion named. So
    does a missing or invalid mutation: a file the test pass froze, a file named
