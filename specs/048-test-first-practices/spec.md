@@ -32,29 +32,39 @@ is the contract and its `## Out of scope` is the boundary.
 
 `create_goal` sets S, M or L from the issues by the rules in
 `docs/architecture.md`. L covers money, auth, data migrations and breaking API
-changes. S covers one named file with no behaviour change, or an explicit
-`Size: S`. Everything else is M. The size is stored on the goal row and shown by
+changes. S covers one named file with no behaviour change. Everything else is
+M. An issue cannot declare its own size. The size is stored on the goal row and shown by
 `get_goal` and `list_goals`. The session's prompt opens with it. S skips the test
 pass, the mutation check, and the optional workflow stages. L skips none.
 
 ### User Story 2 — the test writer is not the coder (P1)
 
-On M and L goals with `## Done when` criteria:
+On M and L goals with `## Done when` criteria, on a branch with no commit beyond
+the default branch:
 
-- A fresh session writes tests and no code.
+- A fresh session writes tests and no code. A quota pause mid-pass restarts it
+  as a test writer.
 - Verify must be red.
 - The engine commits the file set, and a branch-named trailer is the record.
 - A second fresh session writes the code.
-- The gate refuses a later diff that edits or deletes a test-pass file, and names
-  the file.
+- The gate refuses a later diff that edits or deletes a test-pass file, or the
+  verify script and runner config present at that commit (`.devclaw/verify`,
+  `conftest.py`, `pytest.ini`, jest and vitest config), and names the file.
+  Changes merged in from the default branch are not the code pass's.
 - New test files are allowed.
+- A branch that already carries work and no record skips the test pass.
+- The record carries a hash of the criteria. When they change, the test pass runs
+  again and refreezes the set.
 
 ### User Story 3 — one mutation per critical criterion (P1)
 
 For each criterion tagged critical, the session names one single-line mutation.
-The engine breaks that line in a scratch copy and requires verify to go red there.
-A survivor fails the gate with the criterion named. A goal with no critical
-criterion skips the check.
+The engine breaks that line in a detached worktree of HEAD carrying the working
+tree's changes, and requires verify to go red there. A survivor fails the gate
+with the criterion named. The mutation may not target a test-pass file or a file
+named like a test. Verify red there unmutated means the check could not run
+here, which the goal shows and the branch is not charged for. A goal with no
+critical criterion skips the check.
 
 ## Requirements
 
@@ -70,8 +80,8 @@ criterion skips the check.
   retry is added.
 - **FR-004** Tripwires live in `tests/test_practices_gate.py`. They use real git
   and a real verify script, and stub only the session and the hand-off. The S-size
-  case records the baseline cost as two turns and the stub's usage, and asserts
-  that S stays at it.
+  case records the baseline cost as two turns (a session and its hand-off) and
+  asserts that S adds none.
 
 ## Rejected alternatives
 
@@ -85,9 +95,13 @@ criterion skips the check.
   language-specific and fails on most files. The model knows which condition a
   criterion depends on, and the host only checks that breaking it turns the tests
   red.
-- **Freezing `.devclaw/verify` too.** A code pass may need to change how the
-  project verifies, and a frozen script turns that into an owner question. Using
-  the verify script to deselect the frozen tests is a follow-up. On critical
-  criteria the mutation check already catches it.
+- **Leaving `.devclaw/verify` and the runner config editable.** Rejected in
+  review (2026-11-26): the criterion forbids a code pass that skips a frozen
+  file, and a rewritten verify script or `collect_ignore` skips it on goals with
+  no critical criterion. Freezing those files is the check; no
+  collection-analysis machinery.
+- **A declared `Size:` line in the issue.** Rejected in review (2026-11-26): it
+  let any issue opt out of the test pass and the mutation check. Only the
+  written rules set the size.
 - **Showing the size in the console now.** The goal page's screen baselines would
   move. It is a follow-up together with the baseline update.

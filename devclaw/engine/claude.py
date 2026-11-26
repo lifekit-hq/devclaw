@@ -432,7 +432,6 @@ DOCS_ONLY_ENV = "DEVCLAW_DOCS_ONLY"
 _DOC_SUFFIXES = (".md", ".mdx", ".rst", ".adoc")
 _DOC_DIRS = frozenset({"docs", "doc", "specs", ".devclaw"})
 _DOC_NAMES = frozenset({"README", "CHANGELOG", "CONTRIBUTING", "LICENSE", "NOTICE", "COPYING"})
-_BASE_REFS = ("origin/HEAD", "origin/main", "origin/master")
 _CHROMIUM_GLOBS = (
     "chromium-*/chrome-linux*/chrome",
     "chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell",
@@ -459,11 +458,8 @@ async def docs_only_diff(workspace_dir: str) -> bool:
     no change or an unreadable diff is not docs-only."""
     if not _has_git_dir(workspace_dir):
         return False
-    for ref in _BASE_REFS:
-        rc, base = await _host(workspace_dir, "git", "merge-base", "HEAD", ref)
-        if rc == 0 and base:
-            break
-    else:
+    base = await _practices.merge_base(workspace_dir)
+    if base is None:
         return False
     rc_d, changed = await _host(workspace_dir, "git", "diff", "--name-only", base)
     rc_n, new = await _host(workspace_dir, "git", "ls-files", "--others", "--exclude-standard")
@@ -678,6 +674,9 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     usage: Optional[dict] = None
     if req.kind in WRITES_CODE_KINDS and req.hand_off and _has_git_dir(req.workspace_dir):
         plan = await _practices.plan_for(req.goal, req.size, req.workspace_dir)
+    if plan is not None and plan.wants_test_pass:
+        # a test writer paused mid-pass restarts as a test writer, never as the engineer
+        resume = None
     if not resume and req.kind in WRITES_CODE_KINDS:
         # a host gap the session would otherwise find at the end of its work
         note = await browser_preflight(req.workspace_dir)
@@ -692,7 +691,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             prompt = f"{plan.note()}\n\n{prompt}"
     turn = await run_turn(req, req.goal if resume else prompt, resume=resume)
     if turn.resume_missing:
-        sys.stderr.write(f"claude-engine: session {req.resume_session_id} not found — starting fresh\n")
+        sys.stderr.write(f"claude-engine: session {resume} not found — starting fresh\n")
         turn = await run_turn(req, prompt, resume=None)
     usage = _add_usage(usage, turn.usage)
 
@@ -703,6 +702,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     if not turn.ok:
         return failed(turn)
     verify: Optional[dict] = None
+    mutations: list[_practices.Mutation] = []
     if req.kind in WRITES_CODE_KINDS:
         asked = False
         feedback: Optional[str]
@@ -716,7 +716,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
                 asked = True
                 feedback = VERIFY_MISSING_PROMPT
             else:
-                verify, feedback = await _gate(req, cmd, plan, turn.text)
+                mutations = _practices.parse_mutations(turn.text) or mutations
+                verify, feedback = await _gate(req, cmd, plan, mutations)
                 if feedback is None:
                     break
             turn = await run_turn(req, feedback, resume=turn.session_id)
@@ -726,7 +727,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         else:
             if parse_blocked_reason(turn.text) is None:
                 cmd = req.verify_cmd or discover_verify(req.workspace_dir)
-                verify = (await _gate(req, cmd, plan, turn.text))[0] if cmd else None
+                mutations = _practices.parse_mutations(turn.text) or mutations
+                verify = (await _gate(req, cmd, plan, mutations))[0] if cmd else None
         if verify is None and parse_blocked_reason(turn.text) is None:
             verify = {"ran": True, "cmd": VERIFY_SCRIPT_REL, "passed": False, "exit_code": None,
                       "timed_out": False,
@@ -790,14 +792,19 @@ async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Tur
 async def _test_pass(req: EngineRequest, plan: _practices.Plan,
                      prompt: str) -> tuple[Optional[EngineResult], Optional[dict]]:
     """The test writer (#1053): a fresh session writes tests from the contract
-    and NO code; ``.devclaw/verify`` must then be red. The engine commits the
-    file set with its record and sets ``plan.test_pass``. ``(stop, usage)`` —
-    ``stop`` is the result that ends the task (a block or an error), or None."""
+    and NO code; on a fresh branch ``.devclaw/verify`` must then be red. The
+    engine commits the file set with its record and sets ``plan.test_pass``.
+    A contract changed since the record re-runs it: the writer revises the
+    tests and the record is refrozen (the code exists, so red is not asked).
+    ``(stop, usage)`` — ``stop`` ends the task (a block or an error), or None."""
     ws = req.workspace_dir
+    prior = plan.test_pass
     rc, base = await _host(ws, "git", "rev-parse", "HEAD")
     if rc != 0:
         return {"status": "error", "error": f"test pass: no HEAD to start from: {base[-300:]}"}, None
-    turn = await run_turn(req, f"{_practices.TEST_PASS_PROMPT}\n\n{prompt}", resume=None)
+    repass = "" if prior is None else _practices.TEST_REPASS_NOTE.format(
+        commit=prior.commit[:10], files=", ".join(f"`{f}`" for f in prior.files)) + "\n\n"
+    turn = await run_turn(req, f"{_practices.TEST_PASS_PROMPT}\n\n{repass}{prompt}", resume=None)
     usage = _add_usage(None, turn.usage)
 
     def stop(reason: str) -> tuple[EngineResult, Optional[dict]]:
@@ -821,19 +828,23 @@ async def _test_pass(req: EngineRequest, plan: _practices.Plan,
     if files is None:
         return {"status": "error", "error": "test pass: git could not list the files it wrote",
                 "usage": usage}, usage
+    if prior is not None:
+        files += [f for f in prior.files if f not in files]
     if not files:
         return stop("the test pass wrote no test from the contract's `## Done when` criteria")
     verify = await run_verify(cmd, ws, _config.VERIFY_TIMEOUT_S)
     _emit(req, "test-pass", "TestPass", {"files": files, "red": not verify["passed"],
-                                         "exit_code": verify["exit_code"]})
-    if verify["passed"]:
+                                         "exit_code": verify["exit_code"], "refreeze": prior is not None})
+    if verify["passed"] and prior is None:
         return stop("the tests written from the contract pass before any code is written, so they do "
                     f"not pin the change: `{cmd}` is green with {', '.join(files)}")
-    sha = await _practices.commit_test_pass(ws, files, verify)
-    if sha is None:
+    if not await _practices.commit_test_pass(ws, files, verify, plan.contract):
         return {"status": "error", "error": "test pass: the engine could not commit the test files",
                 "usage": usage}, usage
-    plan.test_pass = (sha, tuple(files))
+    plan.test_pass = await _practices.recorded_test_pass(ws)
+    if plan.test_pass is None:
+        return {"status": "error", "error": "test pass: the committed record could not be read back",
+                "usage": usage}, usage
     return None, usage
 
 
@@ -844,7 +855,7 @@ def _refuse(req: EngineRequest, cmd: str, output: str) -> dict:
 
 
 async def _gate(req: EngineRequest, cmd: str, plan: Optional[_practices.Plan] = None,
-                text: str = "") -> tuple[dict, Optional[str]]:
+                mutations: "list[_practices.Mutation] | None" = None) -> tuple[dict, Optional[str]]:
     """The end-of-session verdict plus the feedback to hand back when red: the
     project's checks run green, the first-run manifest is TRACKED, the
     test-pass files are untouched, and each critical criterion's mutation
@@ -864,17 +875,18 @@ async def _gate(req: EngineRequest, cmd: str, plan: Optional[_practices.Plan] = 
         return verify, None
     frozen: tuple[str, ...] = ()
     if plan.test_pass is not None:
-        commit, frozen = plan.test_pass
+        commit, frozen = plan.test_pass.commit, plan.test_pass.files
         touched = await _practices.frozen_violations(req.workspace_dir, commit, frozen)
         if touched:
             return _refuse(req, f"git diff --name-status {commit[:10]} -- <test-pass files>",
                            "the code pass touched the test-pass files: " + "; ".join(touched)), \
                 _practices.FROZEN_FAILED_PROMPT.format(commit=commit[:10], violations="; ".join(touched))
     if plan.critical:
-        failures = await _practices.mutation_failures(
-            req.workspace_dir, cmd, plan.critical, _practices.parse_mutations(text), frozen,
+        failures, could_not_run = await _practices.mutation_failures(
+            req.workspace_dir, cmd, plan.critical, mutations or [], frozen,
             lambda c, tree: run_verify(c, tree, _config.VERIFY_TIMEOUT_S))
-        _emit(req, "mutation", "MutationCheck", {"critical": len(plan.critical), "failures": failures})
+        _emit(req, "mutation", "MutationCheck", {"critical": len(plan.critical), "failures": failures,
+                                                 "couldNotRun": could_not_run})
         if failures:
             return _refuse(req, "one-mutation check", "the one-mutation check failed: " + "; ".join(failures)), \
                 _practices.MUTATION_FAILED_PROMPT.format(failures="\n".join(f"- {f}" for f in failures))

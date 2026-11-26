@@ -222,11 +222,10 @@ stored as `goals.size`. `get_goal` and `list_goals` show it. The rules:
 - **L**: the title or the `## Done when` / `## Acceptance` section (the whole
   body when there is none) names money (payment, billing, invoice, refund,
   price), auth (auth, login, password, credential, OAuth, permission), a
-  migration, or a breaking change. An issue can also declare `Size: L`.
-  L wins over everything, including a declared `Size: S`.
-- **S**: the issue declares `Size: S`, or one issue names exactly one file
-  (a code span with a path or an extension) and says "no behaviour change".
-- **M**: everything else, and any declared `Size: M`.
+  migration, or a breaking change. L wins over everything.
+- **S**: one issue names exactly one file (a code span with a path or an
+  extension) and says "no behaviour change".
+- **M**: everything else. An issue cannot declare its own size.
 
 The session's prompt opens with its size. The stages an S goal skips are the
 test pass, the one-mutation check, and the optional stages `.devclaw/workflow.md`
@@ -234,7 +233,10 @@ names (a spec, a plan, a design review). M leaves the workflow's optional
 stages to the session. L skips none.
 
 **Tests first.** This runs on an M or L goal whose brief carries `## Done when`
-criteria, when the branch has no test pass of its own yet:
+criteria, when the branch has no test pass of its own yet and no commit beyond
+its merge-base with the default branch. A branch that already carries work and
+no record (a goal in flight when this shipped) skips the test pass. A session
+paused by the quota mid-pass restarts as a test writer, never as the engineer:
 
 1. A fresh test-writer session writes tests from the criteria and no product
    code.
@@ -242,13 +244,24 @@ criteria, when the branch has no test pass of its own yet:
    with "the tests written from the contract pass before any code is written".
    A test pass that writes no file, or leaves no verify script, also stops
    `BLOCKED`.
-3. The engine commits the file set. The trailers `Devclaw-Test-Pass: <branch> …`
-   and `Devclaw-Test-File: <path>` are the record; git holds it, not the host.
+3. The engine commits the file set. The trailers `Devclaw-Test-Pass: <branch> …`,
+   `Devclaw-Contract: <hash of the criteria>` and `Devclaw-Test-File: <path>`
+   are the record; git holds it, not the host.
 4. The code pass is a second fresh session, told which files are frozen.
 
-At every gate after that, a diff since the test-pass commit that edits or
-deletes one of those files is refused with the file named. So is a branch that
-no longer contains the commit. The session gets the refusal through the usual
+The frozen set is the listed test files plus the files that decide which tests
+run and are collected, when they exist at the test-pass commit:
+`.devclaw/verify`, any `conftest.py`, `pytest.ini`, and `jest.config.*` /
+`vitest.config.*`. At every gate after that, a diff that edits or deletes one
+of those files is refused with the file named. So is a branch that no longer
+contains the commit. The diff is taken against the test-pass commit with the
+default branch merged in, so a change that arrives through a merge of the base
+is not the code pass's.
+
+When the `## Done when` criteria change, their hash no longer matches the
+record. The next session runs the test pass again: the writer revises the
+tests, red is not asked (the code exists), and the engine commits a new record
+that refreezes the set. Nothing else invalidates a record. The session gets the refusal through the usual
 verify round, and when the rounds run out the task is `INTERRUPTED`. Tests the
 code pass adds in new files are allowed. The trailer names the branch, because
 a squash-merge copies an earlier goal's trailer onto the default branch.
@@ -259,13 +272,21 @@ a squash-merge copies an earlier goal's trailer onto the default branch.
 1. On an M or L goal, the session names one single-line mutation per critical
    criterion in a fenced json `mutations` block: the file, the exact line, and
    that line with the condition broken.
-2. The engine copies the tree to a scratch directory and requires `.devclaw/verify`
-   to pass there unmutated.
-3. It applies each mutation in the copy and requires verify to go red.
-4. A mutation every test survives fails the gate with the criterion named. So
-   does a missing or invalid mutation: a test file, a `.devclaw/` file, or a
-   line that does not occur exactly once.
-5. A goal with no critical criterion skips the check. The real tree is never
+2. The engine makes a scratch copy: a detached `git worktree` of HEAD with the
+   working tree's changes applied, removed afterwards. Ignored files (a
+   `.venv`, `node_modules`) are not in it and are not rebuilt.
+3. Verify runs there unmutated first. If it is red, the check could not run
+   here: the `MutationCheck` event says so on the goal, and nothing is counted
+   against the branch.
+4. It applies each mutation in the copy and requires verify to go red.
+5. A mutation every test survives fails the gate with the criterion named. So
+   does a missing or invalid mutation: a file the test pass froze, a file named
+   like a test (under a `tests/` or `test/` directory, `test_*`, `*_test.*`,
+   `*.test.*` or `*.spec.*`), a `.devclaw/` file, or a line that does not occur
+   exactly once.
+6. The newest mutations block the session sent in this run counts; a later turn
+   that omits it keeps the earlier one.
+7. A goal with no critical criterion skips the check. The real tree is never
    mutated.
 
 ### The branch ships through no-mistakes
