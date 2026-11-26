@@ -4,7 +4,7 @@ An autonomous delivery host behind MCP: you hand it GitHub issues, it spawns `cl
 ## Language
 
 **Goal**:
-The unit of work devclaw supervises: one or more GitHub issues (each labelled `ready`, read live), a display-only objective and a branch `goal/<id>`, stored as a row in `goals` and closed with an outcome (achieved, cancelled, ...). One goal yields exactly one PR.
+The unit of work devclaw supervises: one or more GitHub issues (each labelled `ready`, read live), a display-only objective (no path decides on it; the console shows the issue's live title) and a branch `goal/<id>`, stored as a row in `goals` and closed with an outcome (achieved, cancelled, ...). One goal yields exactly one PR.
 
 **Project**:
 A registered repository (`register_project`) that goals run against. At most one goal per project has a live session at a time.
@@ -40,7 +40,7 @@ The mechanical check that decides a goal is achieved: CI green on the delivered 
 The review session's validated JSON: achieved only when every clause is satisfied with evidence and no question is open; unreadable JSON is `unreadable` and never passes. Posted on the PR before a squash-merge.
 
 **Decision**:
-The owner's answer on a goal, recorded in `decisions` and posted as a comment mentioning the bot (`@devclaw`, `DEVCLAW_MENTION`) via the `decide` tool. It is the owner's one channel: the owner acts only on decisions.
+The owner's answer on a goal, recorded in `decisions` and posted as a comment mentioning the bot (`@devclaw`, `DEVCLAW_MENTION`) via the `decide` tool. Its `comment_url` is the record; the stored text is a display-only copy, and the console shows the comment's live body. It is the owner's one channel: the owner acts only on decisions.
 
 **Record**:
 A marked comment devclaw writes on a thread, `<!-- devclaw:<kind> k=v -->`, of kind `block`, `verdict`, `scope` or `intake`. A record is a fact, never an instruction.

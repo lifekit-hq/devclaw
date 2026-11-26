@@ -65,7 +65,7 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
               project_id      TEXT NOT NULL,
               workspace_dir   TEXT NOT NULL,
               repo_url        TEXT NOT NULL DEFAULT '',
-              objective       TEXT NOT NULL DEFAULT '',
+              objective       TEXT NOT NULL DEFAULT '',  -- display-only (#1058)
               issues_json     TEXT NOT NULL DEFAULT '[]',
               branch          TEXT NOT NULL,
               created_at      INTEGER NOT NULL,
@@ -77,7 +77,7 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
             CREATE TABLE IF NOT EXISTS decisions (
               id              INTEGER PRIMARY KEY AUTOINCREMENT,
               goal_id         TEXT NOT NULL,
-              text            TEXT NOT NULL,
+              text            TEXT NOT NULL,  -- display-only; comment_url is the record (#1058)
               comment_url     TEXT NOT NULL DEFAULT '',
               made_at         INTEGER NOT NULL
             );

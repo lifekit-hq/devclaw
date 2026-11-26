@@ -11,6 +11,7 @@ from pydantic import Field
 
 from ...goal.github import IssueError
 from .._state import goals, mcp, store
+from ..display import with_display
 from ._common import _resolve_project_or_reject
 
 
@@ -22,7 +23,8 @@ async def create_goal(goal_id: str, project_id: str, issues: list[int], objectiv
     judges, read live on every round. Each issue must carry the ``ready``
     label (read live; the shape step sets it). Every session works on branch
     ``goal/<goal_id>`` and delivers one cumulative PR; a confirmed-achieved
-    close squash-merges it. ``objective`` is display text only."""
+    close squash-merges it. ``objective`` is a display-only label no path
+    decides on; reads show the issues' live titles (#1058)."""
     if not goal_id or not goal_id.replace("-", "").replace("_", "").isalnum():
         raise ToolError("create_goal requires a slug-shaped goal_id")
     if not issues:
@@ -40,7 +42,7 @@ async def create_goal(goal_id: str, project_id: str, issues: list[int], objectiv
         raise ToolError(f"goal {goal_id!r} already exists")
     except (ValueError, IssueError) as exc:
         raise ToolError(str(exc))
-    return json.dumps(out, indent=2)
+    return json.dumps((await with_display([out]))[0], indent=2)
 
 
 @mcp.tool
@@ -48,7 +50,7 @@ async def get_goal(goal_id: str) -> str:
     """One goal: its facts, derived state, recent sessions (how each ended),
     the last world fingerprint it was given, and its decisions."""
     try:
-        return json.dumps(goals.get_goal(goal_id), indent=2)
+        return json.dumps((await with_display([goals.get_goal(goal_id)]))[0], indent=2)
     except KeyError:
         raise ToolError(f"unknown goal_id: {goal_id}")
 
@@ -56,7 +58,7 @@ async def get_goal(goal_id: str) -> str:
 @mcp.tool
 async def list_goals() -> str:
     """Every goal with its derived state and last session."""
-    return json.dumps(goals.list_goals(), indent=2)
+    return json.dumps(await with_display(goals.list_goals()), indent=2)
 
 
 @mcp.tool

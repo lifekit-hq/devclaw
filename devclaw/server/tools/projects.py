@@ -11,6 +11,7 @@ from fastmcp.exceptions import ToolError
 from ...engine.workspace import remove_goal_checkout
 from ...project_registry import ProjectExists, project_rollup
 from .._state import goals, mcp, registry
+from ..display import with_display
 
 
 @mcp.tool
@@ -34,7 +35,7 @@ async def register_project(project_id: str, name: str, repo_url: Optional[str] =
 @mcp.tool
 async def list_projects(status: Optional[str] = None) -> str:
     """Registered projects with their goals' live state and a health word."""
-    all_goals = goals.list_goals()
+    all_goals = await with_display(goals.list_goals())
     return json.dumps([project_rollup(p, all_goals) for p in registry.list(status=status)],  # type: ignore[arg-type]
                       indent=2)
 
@@ -45,7 +46,7 @@ async def project_status(project_id: str) -> str:
     p = registry.get(project_id)
     if p is None:
         raise ToolError(f"unknown project_id: {project_id}")
-    return json.dumps(project_rollup(p, goals.list_goals()), indent=2)
+    return json.dumps(project_rollup(p, await with_display(goals.list_goals())), indent=2)
 
 
 @mcp.tool
