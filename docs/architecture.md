@@ -166,6 +166,12 @@ identity (the `X-Auth-Request-Email` the sso forwardAuth sets), written only by
 judgment. `tests/test_goal_layer_stays_readable.py` fails the build
 on a judgment column and on a goal layer past 1,500 lines.
 
+A goal row holds issue numbers, not issue text, and a decision's `comment_url`
+is its record. `goals.objective` and `decisions.text` are display-only copies
+that no tick, gate or merge path reads: `server/display.py` reads an open
+goal's issue titles and its decisions' comment bodies live for the console and
+the MCP read tools, and a closed goal shows the stored copies (#1058).
+
 ### The session runs what CI runs
 
 The engine (`engine/claude.py`) runs `.devclaw/verify` after the agent's turn
@@ -241,7 +247,7 @@ world the host cannot read (`gh` down) does nothing and says so.
 ## The code map
 
 ```
-devclaw/server/      tools/ (goals, projects, control, intake, doctor) · routes/ (health, control, goals, projects, tasks, webhooks, me, console) · lifecycle.py
+devclaw/server/      tools/ (goals, projects, control, intake, doctor) · routes/ (health, control, goals, projects, tasks, webhooks, me, console) · display.py · lifecycle.py
 devclaw/goal/        tick.py · world.py · prompts.py · donegate.py · github.py · service.py · notify.py · self_deploy.py
 devclaw/prompts/     session.md · done-gate.md
 devclaw/task_queue.py · queue/settle.py · queue/admission.py

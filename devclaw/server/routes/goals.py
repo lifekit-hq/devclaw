@@ -6,6 +6,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from .._state import goals, mcp, store
+from ..display import with_display
 from ._attention import control_facts, with_attention
 from .verdicts import verdict_rows
 
@@ -18,13 +19,15 @@ def _with_usage(row: dict) -> dict:
 @mcp.custom_route("/goals.json", methods=["GET"])
 async def goals_json(_request: Request) -> Response:
     control = control_facts(store)
-    return JSONResponse([_with_usage(with_attention(g, store, control)) for g in goals.list_goals()])
+    rows = await with_display([with_attention(g, store, control) for g in goals.list_goals()])
+    return JSONResponse([_with_usage(r) for r in rows])
 
 
 @mcp.custom_route("/goals/{goal_id}.json", methods=["GET"])
 async def goal_json(request: Request) -> Response:
     try:
         row = with_attention(goals.get_goal(request.path_params["goal_id"]), store, control_facts(store))
+        await with_display([row])
         row["verdicts"] = verdict_rows(parent_goal_id=row["id"], limit=50)
         return JSONResponse(_with_usage(row))
     except KeyError:

@@ -116,6 +116,8 @@ class Goal:
     project_id: str
     workspace_dir: str
     repo_url: str
+    #: display-only label (#1058): no tick, gate or merge path reads it; the
+    #: issue is the contract and its live title is what the console shows
     objective: str
     issues: list[int]
     branch: str
@@ -149,6 +151,10 @@ class Goal:
 
 @dataclass
 class Decision:
+    """The owner's ``decide``. ``comment_url`` is the record; ``text`` is a
+    display-only copy (#1058) — the console reads the comment's live body,
+    and the tick reads the comment itself off the thread."""
+
     id: int
     goal_id: str
     text: str

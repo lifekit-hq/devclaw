@@ -40,3 +40,18 @@ def test_the_goals_table_holds_no_derived_state():
     goals_ddl = schema[schema.index("CREATE TABLE IF NOT EXISTS goals"):schema.index("CREATE TABLE IF NOT EXISTS decisions")]
     hit = _FORBIDDEN.search(goals_ddl)
     assert hit is None, f"the goals table grew a judgment column: {hit.group(0)!r} (pillar 5)"
+
+
+def test_the_contract_is_read_from_the_issue_never_the_goal_row():
+    from devclaw.goal import github as gh
+    from devclaw.goal.prompts import review_brief, session_brief
+    from devclaw.goal.world import World
+    from devclaw.state_store import Goal
+
+    goal = Goal(id="g", project_id="p", workspace_dir="/w", repo_url="https://github.com/o/r",
+                objective="STALE-ROW-CLAUSE", issues=[1], branch="goal/g", created_at=0)
+    issue = gh.Issue(1, "t", "Body.\n\n## Done when\n\n- LIVE-ISSUE-CLAUSE\n", "open", ("ready",))
+    world = World(pr=gh.PrFacts("none", 0, "", "", ci="none"), issues=(issue,), comments=())
+    for brief in (session_brief(goal, world, None), review_brief(goal, world)):
+        assert "LIVE-ISSUE-CLAUSE" in brief
+        assert "STALE-ROW-CLAUSE" not in brief
