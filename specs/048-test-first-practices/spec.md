@@ -32,7 +32,7 @@ is the contract and its `## Out of scope` is the boundary.
 
 `create_goal` sets S, M or L from the issues by the rules in
 `docs/architecture.md`. L covers money, auth, data migrations and breaking API
-changes. S covers one named file with no behaviour change. Everything else is
+changes; a negated "breaking", a file permission or a docs migration is not L. S covers one named file with no behaviour change. Everything else is
 M. An issue cannot declare its own size. The size is stored on the goal row and shown by
 `get_goal` and `list_goals`. The session's prompt opens with it. S skips the test
 pass, the mutation check, and the optional workflow stages. L skips none.
@@ -50,7 +50,9 @@ the default branch but the host's `wip(devclaw):` snapshots:
 - The gate refuses a later diff that edits or deletes a test-pass file, or the
   verify script and runner config present at that commit (`.devclaw/verify`,
   `conftest.py`, `pytest.ini`, jest and vitest config), and names the file.
-  Changes merged in from the default branch are not the code pass's.
+  Changes merged in from the default branch are not the code pass's. The same
+  check runs on the head the hand-off shipped: a touched file there ends the
+  task `BLOCKED` naming it, and the pushed pull request is left as it is.
 - New test files are allowed.
 - A branch that already carries work and no record skips the test pass.
 - The record carries a hash of the criteria. When they change, the test pass runs
@@ -65,7 +67,7 @@ tree's changes, and requires verify to go red there. A survivor fails the gate
 with the criterion named. The mutation may not target a test-pass file or a file
 named like a test. Verify red there unmutated means the check could not run
 here, which the goal shows and the branch is not charged for. A goal with no
-critical criterion skips the check.
+critical criterion skips the check. The check runs before the hand-off only.
 
 ## Requirements
 

@@ -77,8 +77,11 @@ def session(monkeypatch):
 
     async def fake_hand_off(req, session_id, head):
         state["prompts"].append("<hand-off>")
-        return engine.Turn(session_id=session_id, ok=True, text="DELIVERED: shipped",
-                           usage={"input_tokens": 100, "output_tokens": 10}), "https://x/pull/1", ""
+        if state.get("hand_off"):
+            state["hand_off"](req.workspace_dir)
+        return (engine.Turn(session_id=session_id, ok=True, text="DELIVERED: shipped",
+                            usage={"input_tokens": 100, "output_tokens": 10}), "https://x/pull/1", "",
+                _git(req.workspace_dir, "rev-parse", "HEAD"))
 
     monkeypatch.setattr(engine, "run_turn", fake_turn)
     monkeypatch.setattr(engine, "_init_pipeline", fake_init)
@@ -145,6 +148,25 @@ async def test_a_code_pass_that_touches_a_test_pass_file_fails_the_gate_naming_i
     result = await engine.run_claude(_req(ws, session, CRITICAL))
     assert result["verify"]["passed"] is False and name in result["verify"]["output"]
     assert "<hand-off>" not in session["prompts"]
+
+
+async def test_a_hand_off_that_edits_a_test_pass_file_ends_blocked_naming_it(session, tmp_path):
+    """The pipeline's fixer commits after the gate passed; the shipped head is
+    checked too, and the pushed PR is left as it is."""
+    ws = _repo(tmp_path)
+
+    def code(w):
+        _write(ws, "calc.py", FIXED)
+        _commit(ws)
+        return MUTATE + "DELIVERED: done"
+
+    session["script"] = [lambda w: _write(ws, "test_adult.py", STRONG_TEST) or "TESTS: t", code]
+    session["hand_off"] = lambda w: (_write(ws, "test_adult.py", WEAK_TEST), _commit(ws))
+    result = await engine.run_claude(_req(ws, session, CRITICAL))
+    assert result["status"] == "blocked", result
+    assert "edited `test_adult.py`" in result["reason"] and "https://x/pull/1" in result["reason"]
+    assert "pr_url" not in result
+    assert session["prompts"][-1] == "<hand-off>"  # the gate before the hand-off passed
 
 
 async def test_a_new_test_file_from_the_code_pass_is_allowed(session, tmp_path):
@@ -216,6 +238,13 @@ async def test_a_test_pass_from_another_branch_is_not_this_goals(tmp_path):
     ("Add a button", "## Done when\n- the console shows a button", "M"),
     ("Tidy", "## Done when\n- rename in `a.py` and `b.py`, no behaviour change", "M"),
     ("Add an optional field", "## Done when\n- a non-breaking change to the response", "M"),
+    ("Add an optional field", "## Done when\n- No breaking API changes", "M"),
+    ("Add an optional field", "## Done when\n- not a breaking change; works without breaking callers", "M"),
+    ("Rename the flag", "## Done when\n- a breaking API change: `--old` is removed", "L"),
+    ("Migrate the docs to mkdocs", "## Done when\n- the docs site builds", "M"),
+    ("Add a column", "## Done when\n- a database migration adds `users.age`", "L"),
+    ("Fix the build", "## Done when\n- fix file permissions in the build script", "M"),
+    ("Admin page", "## Done when\n- user permissions are checked on every route", "L"),
 ])
 def test_the_size_is_set_from_the_issue_by_the_written_rules(title, body, size):
     assert practices.size_of([(title, body)]) == size

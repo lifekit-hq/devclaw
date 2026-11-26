@@ -221,8 +221,10 @@ stored as `goals.size`. `get_goal` and `list_goals` show it. The rules:
 
 - **L**: the title or the `## Done when` / `## Acceptance` section (the whole
   body when there is none) names money (payment, billing, invoice, refund,
-  price), auth (auth, login, password, credential, OAuth, permission), a
-  migration, or a breaking change. L wins over everything.
+  price), auth (auth, login, password, credential, OAuth, a user, role,
+  access or admin permission), a data migration (a data, database or schema
+  migration), or a breaking change ("no", "not", "without" or "non-" breaking
+  is not one). L wins over everything.
 - **S**: one issue names exactly one file (a code span with a path or an
   extension) and says "no behaviour change".
 - **M**: everything else. An issue cannot declare its own size.
@@ -256,7 +258,10 @@ run and are collected, when they exist at the test-pass commit:
 `.devclaw/verify`, any `conftest.py`, `pytest.ini`, and `jest.config.*` /
 `vitest.config.*`. At every gate after that, a diff that edits or deletes one
 of those files is refused with the file named. So is a branch that no longer
-contains the commit. The diff is taken against the test-pass commit with the
+contains the commit. The check runs once more on the head the no-mistakes
+hand-off shipped, because the pipeline's fixes land after the gate: a shipped
+head that touches a frozen file ends the task `BLOCKED` naming the file, and the
+pull request is left as pushed — not reverted, and not merged by the done-gate. The diff is taken against the test-pass commit with the
 default branch merged in, so a change that arrives through a merge of the base
 is not the code pass's.
 
@@ -290,7 +295,8 @@ a squash-merge copies an earlier goal's trailer onto the default branch.
 6. The newest mutations block the session sent in this run counts; a later turn
    that omits it keeps the earlier one.
 7. A goal with no critical criterion skips the check. The real tree is never
-   mutated.
+   mutated. The check runs before the hand-off only; the pushed head is not
+   mutated again.
 
 ### The branch ships through no-mistakes
 

@@ -43,11 +43,13 @@ TEST_FILE_TRAILER = "Devclaw-Test-File"
 # ---- size: set once at goal start, from the issue ---------------------------
 
 #: L: money, auth, data migrations, breaking API changes — read in the title and
-#: the contract section (the whole body when it has none)
+#: the contract section (the whole body when it has none); "no / not / without /
+#: non-breaking" is not breaking, a file permission is not auth
 _L_RE = re.compile(
     r"\b(money|payments?|billing|invoices?|refunds?|pricing|prices?|auth|authn|authz|authenticat\w*|"
-    r"authori[sz]\w*|login|passwords?|credentials?|oauth|permissions?|migrations?|migrate|"
-    r"(?<!non-)breaking)\b", re.IGNORECASE)
+    r"authori[sz]\w*|login|passwords?|credentials?|oauth|(?:user|role|access|admin)[ -]permissions?|"
+    r"(?:data(?:base)?|db|schema)[ -]migrations?|migrat\w*[ \t]+(?:the[ \t]+|a[ \t]+)?(?:data(?:base)?|db|schema)|"
+    r"(?<!non-)(?<!\bno )(?<!\bnot )(?<!\bnot a )(?<!\bwithout )breaking)\b", re.IGNORECASE)
 _NO_BEHAVIOUR_RE = re.compile(r"\bno behaviou?r change\b", re.IGNORECASE)
 _CODE_SPAN_RE = re.compile(r"`([^`\s]+)`")
 _CONTRACT_HEAD_RE = re.compile(r"^(#{2,4})[ \t]*(?:Done when|Acceptance)\b.*$", re.IGNORECASE | re.MULTILINE)
@@ -134,10 +136,10 @@ async def _branch(workspace_dir: str) -> str:
     return out if rc == 0 and out else "HEAD"
 
 
-async def merge_base(workspace_dir: str) -> Optional[str]:
-    """The newest commit of the default branch HEAD holds, or None."""
+async def merge_base(workspace_dir: str, head: str = "HEAD") -> Optional[str]:
+    """The newest commit of the default branch ``head`` holds, or None."""
     for ref in BASE_REFS:
-        rc, base = await _git(workspace_dir, "merge-base", "HEAD", ref)
+        rc, base = await _git(workspace_dir, "merge-base", head, ref)
         if rc == 0 and base:
             return base
     return None
@@ -201,23 +203,26 @@ async def commit_test_pass(workspace_dir: str, files: list[str], verify: dict, c
     return rc == 0
 
 
-async def frozen_violations(workspace_dir: str, commit: str, files: "tuple[str, ...]") -> list[str]:
+async def frozen_violations(workspace_dir: str, commit: str, files: "tuple[str, ...]",
+                            head: Optional[str] = None) -> list[str]:
     """How the code pass touched the test-pass files: one line per file it
-    edited or deleted, or the record itself rewritten away. A change the
-    default branch made, merged in, is not the code pass's. Fails CLOSED."""
-    rc, _ = await _git(workspace_dir, "merge-base", "--is-ancestor", commit, "HEAD")
+    edited or deleted, or the record itself rewritten away — in the working
+    tree, or at the commit ``head`` when given. A change the default branch
+    made, merged in, is not the code pass's. Fails CLOSED."""
+    rc, _ = await _git(workspace_dir, "merge-base", "--is-ancestor", commit, head or "HEAD")
     if rc != 0:
         return [f"the test-pass commit {commit[:10]} is no longer on the branch — its tests were rewritten away"]
     if not files:
         return []
     expected = commit
-    base = await merge_base(workspace_dir)
+    base = await merge_base(workspace_dir, head or "HEAD")
     if base is not None and (await _git(workspace_dir, "merge-base", "--is-ancestor", base, commit))[0] != 0:
         rc, out = await _git(workspace_dir, "merge-tree", "--write-tree", commit, base)
         if rc not in (0, 1) or not out:
             return [f"git could not merge the default branch into the test-pass files: {out[-200:]}"]
         expected = out.splitlines()[0]
-    rc, out = await _git(workspace_dir, "diff", "--name-status", "--no-renames", expected, "--", *files)
+    rc, out = await _git(workspace_dir, "diff", "--name-status", "--no-renames", expected, *([head] if head else []),
+                         "--", *files)
     if rc != 0:
         return [f"git could not diff the test-pass files against {commit[:10]}: {out[-200:]}"]
     verbs = {"D": "deleted"}
@@ -430,6 +435,10 @@ MUTATION_FAILED_PROMPT = (
     "critical criterion depends on breaks. Strengthen the tests (in a new file — the test-pass files are "
     "frozen), re-run `.devclaw/verify`, commit, and hand back with a fresh ```json mutations block and "
     "your exit line."
+)
+HANDOFF_FROZEN_REASON = (
+    "the hand-off changed the test-pass files ({commit}) after the gate passed: {violations}. The pull "
+    "request {pr_url} is left as pushed — not reverted and not merged."
 )
 FROZEN_FAILED_PROMPT = (
     "The code pass touched the test-pass files ({commit}): {violations}. Restore them with "

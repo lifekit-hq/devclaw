@@ -174,9 +174,9 @@ async def test_the_shipped_check_fails_closed_on_real_git_ancestry(tmp_path, mon
 
     monkeypatch.setattr(engine, "_host", host)
     host.run_head = run_head
-    assert await engine.shipped_run(str(work), head) == (None, f"no no-mistakes run carries {head[:8]}")
+    assert await engine.shipped_run(str(work), head) == (None, f"no no-mistakes run carries {head[:8]}", "")
     git(work, "remote", "set-url", "no-mistakes", str(gate))
-    assert await engine.shipped_run(str(work), head) == (PR, "")
+    assert await engine.shipped_run(str(work), head) == (PR, "", run_head)
     host.run_head = unrelated
     assert (await engine.shipped_run(str(work), head))[0] is None
     host.run_head = "d" * 40

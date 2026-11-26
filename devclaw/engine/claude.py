@@ -22,8 +22,9 @@ first-run manifest is TRACKED; a red run is handed back to the SAME session
 **Three practices ride the same loop** (#1053, :mod:`.practices`): the goal's
 size S/M/L is told to the session; on a contract with ``## Done when``
 criteria (size M/L) a fresh test-writer session writes tests first and they
-must run red; the code pass may not touch them; and each critical criterion
-needs a test that a one-line mutation of the code turns red.
+must run red; the code pass may not touch them (checked again on the head the
+hand-off shipped); and each critical criterion needs a test that a one-line
+mutation of the code turns red (before the hand-off only).
 
 **The branch ships through no-mistakes** (#953). Once verify is green and the
 branch carries a commit ``origin`` has not seen, the SAME session runs
@@ -398,9 +399,9 @@ async def dirty_tree(workspace_dir: str) -> bool:
     return rc != 0 or bool(out)
 
 
-async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str]:
-    """``(pr_url, "")`` when the branch's newest no-mistakes run carries the
-    unshipped ``head`` and passed, else ``(None, why)``. Carrying it proves the
+async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str, str]:
+    """``(pr_url, "", shipped_head)`` when the branch's newest no-mistakes run
+    carries the unshipped ``head`` and passed, else ``(None, why, "")``. Carrying it proves the
     run is this session's: no earlier run was submitted at a descendant of a
     commit the remote has never seen. ``axi status`` prints the submitted head
     only while the run is pre-push; once it has pushed or finished, the run's own
@@ -408,7 +409,7 @@ async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str
     which lives in the gate repo until fetched."""
     rc, out = await _host(workspace_dir, NO_MISTAKES, "axi", "status")
     if rc != 0:
-        return None, f"no-mistakes axi status failed: {out[-300:]}"
+        return None, f"no-mistakes axi status failed: {out[-300:]}", ""
     fields = parse_status(out)
     submitted = fields.get("submitted_head", "")
     if not submitted and fields.get("run_head"):
@@ -416,12 +417,12 @@ async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str
         await _host(workspace_dir, "git", "fetch", NO_MISTAKES)
         submitted = fields["run_head"]
     if not submitted or (await _host(workspace_dir, "git", "merge-base", "--is-ancestor", head, submitted))[0] != 0:
-        return None, f"no no-mistakes run carries {head[:8]}"
+        return None, f"no no-mistakes run carries {head[:8]}", ""
     if fields.get("outcome") not in SHIPPED_OUTCOMES:
-        return None, f"the no-mistakes run ended {fields.get('outcome') or 'without an outcome'}"
+        return None, f"the no-mistakes run ended {fields.get('outcome') or 'without an outcome'}", ""
     if not fields.get("pr"):
-        return None, "the no-mistakes run passed but names no PR"
-    return fields["pr"], ""
+        return None, "the no-mistakes run passed but names no PR", ""
+    return fields["pr"], "", submitted
 
 
 # ---- host facts: what this host cannot run, what the diff touches -----------
@@ -738,7 +739,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     if reason is None and req.hand_off and verify is not None and verify.get("passed"):
         head = await unshipped_head(req.workspace_dir)
         if head:
-            turn, pr_url, why = await _hand_off(req, turn.session_id, head)
+            turn, pr_url, why, shipped = await _hand_off(req, turn.session_id, head)
             usage = _add_usage(usage, turn.usage)
             if not turn.ok:
                 return failed(turn)
@@ -746,6 +747,12 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             if reason is None and pr_url is None:
                 return {"status": "error", "error": f"the hand-off did not ship: {why}",
                         "agent_output": turn.text, "usage": usage, "session_id": turn.session_id}
+            if reason is None and plan is not None and plan.test_pass is not None:
+                record = plan.test_pass
+                touched = await _practices.frozen_violations(req.workspace_dir, record.commit, record.files, shipped)
+                if touched:
+                    reason = _practices.HANDOFF_FROZEN_REASON.format(
+                        commit=record.commit[:10], violations="; ".join(touched), pr_url=pr_url)
         elif await dirty_tree(req.workspace_dir):
             return {"status": "error", "error": "the hand-off did not ship: the session left uncommitted "
                     "changes and no commit", "agent_output": turn.text, "usage": usage,
@@ -771,22 +778,21 @@ async def _init_pipeline(workspace_dir: str) -> Optional[str]:
     return None if rc == 0 else f"no-mistakes init failed: {out[-500:]}"
 
 
-async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str]:
+async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str, str]:
     """The ship turn: re-init the pipeline (the daemon may have died during the
     session, and only the host env restarts it with the GitHub credential), then
     the SAME session drives the run.
-    ``(turn, pr_url, why)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
+    ``(turn, pr_url, why, shipped_head)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
     error = await _init_pipeline(req.workspace_dir)
     if error:
-        return Turn(session_id=session_id, error=error), None, ""
+        return Turn(session_id=session_id, error=error), None, "", ""
     closes = "".join(f" --closes {n}" for n in req.closes)
     with tempfile.TemporaryDirectory(prefix="devclaw-intent-") as tmp:
         prompt = HANDOFF_PROMPT.format(intent_file=os.path.join(tmp, "intent.md"), closes=closes)
         turn = await run_turn(req, prompt, resume=session_id)
     if not turn.ok or parse_blocked_reason(turn.text) is not None:
-        return turn, None, ""
-    pr_url, why = await shipped_run(req.workspace_dir, head)
-    return turn, pr_url, why
+        return turn, None, "", ""
+    return (turn, *await shipped_run(req.workspace_dir, head))
 
 
 async def _test_pass(req: EngineRequest, plan: _practices.Plan,
