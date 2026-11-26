@@ -110,13 +110,13 @@ class TaskEvent:
 class Goal:
     """A durable goal (spec 046): the issue is the contract, the branch is the
     delivery, GitHub holds the state. The host stores identity plus the last
-    world fingerprint it handed a session — an observation, never a judgment."""
+    world fingerprint it handed a session — an observation, never a judgment.
+    No issue text: the title shown in the console is read live (#1058)."""
 
     id: str
     project_id: str
     workspace_dir: str
     repo_url: str
-    objective: str
     issues: list[int]
     branch: str
     created_at: int
@@ -137,7 +137,6 @@ class Goal:
             "projectId": self.project_id,
             "workspaceDir": self.workspace_dir,
             "repoUrl": self.repo_url,
-            "objective": self.objective,
             "issues": list(self.issues),
             "branch": self.branch,
             "createdAt": self.created_at,
@@ -149,14 +148,16 @@ class Goal:
 
 @dataclass
 class Decision:
+    """The owner's ``decide``: a pointer to the comment it posted. The
+    comment is the record; its text is read live for display (#1058)."""
+
     id: int
     goal_id: str
-    text: str
     comment_url: str
     made_at: int
 
     def to_dict(self) -> dict:
-        return {"id": self.id, "goalId": self.goal_id, "text": self.text,
+        return {"id": self.id, "goalId": self.goal_id,
                 "commentUrl": self.comment_url, "madeAt": self.made_at}
 
 
@@ -198,7 +199,7 @@ def _row_to_goal(r: sqlite3.Row) -> Goal:
         issues = []
     return Goal(
         id=r["id"], project_id=r["project_id"], workspace_dir=r["workspace_dir"],
-        repo_url=r["repo_url"] or "", objective=r["objective"] or "",
+        repo_url=r["repo_url"] or "",
         issues=issues, branch=r["branch"], created_at=r["created_at"],
         closed_at=r["closed_at"], outcome=r["outcome"],
         last_seen_json=r["last_seen_json"], last_seen_at=r["last_seen_at"],
@@ -206,7 +207,7 @@ def _row_to_goal(r: sqlite3.Row) -> Goal:
 
 
 def _row_to_decision(r: sqlite3.Row) -> Decision:
-    return Decision(id=r["id"], goal_id=r["goal_id"], text=r["text"],
+    return Decision(id=r["id"], goal_id=r["goal_id"],
                     comment_url=r["comment_url"] or "", made_at=r["made_at"])
 
 

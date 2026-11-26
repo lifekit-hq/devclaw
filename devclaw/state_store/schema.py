@@ -7,7 +7,7 @@ Tables a v1 instance carries beyond these are left
 untouched — the v1 database stays readable under its tag.
 
 Migration idiom: ``CREATE TABLE IF NOT EXISTS`` plus idempotent ``ALTER TABLE
-… ADD COLUMN`` calls that swallow the already-exists error.
+… ADD COLUMN`` / ``DROP COLUMN`` calls that swallow the already-done error.
 """
 
 from __future__ import annotations
@@ -29,6 +29,13 @@ _TASK_COLUMNS = (
     ("exit_detail", "TEXT"),
     ("notified", "INTEGER NOT NULL DEFAULT 0"),
     ("session_id", "TEXT"),
+)
+
+#: Second copies of GitHub text an older database carries (#1058): the issue
+#: and its comments are the record; the console reads display text live.
+_DROPPED_COLUMNS = (
+    ("goals", "objective"),
+    ("decisions", "text"),
 )
 
 
@@ -65,7 +72,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
               project_id      TEXT NOT NULL,
               workspace_dir   TEXT NOT NULL,
               repo_url        TEXT NOT NULL DEFAULT '',
-              objective       TEXT NOT NULL DEFAULT '',
               issues_json     TEXT NOT NULL DEFAULT '[]',
               branch          TEXT NOT NULL,
               created_at      INTEGER NOT NULL,
@@ -77,7 +83,6 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
             CREATE TABLE IF NOT EXISTS decisions (
               id              INTEGER PRIMARY KEY AUTOINCREMENT,
               goal_id         TEXT NOT NULL,
-              text            TEXT NOT NULL,
               comment_url     TEXT NOT NULL DEFAULT '',
               made_at         INTEGER NOT NULL
             );
@@ -95,6 +100,11 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {decl}")
             except sqlite3.OperationalError:
                 pass  # already there
+        for table, col in _DROPPED_COLUMNS:
+            try:
+                db.execute(f"ALTER TABLE {table} DROP COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass  # already gone
         db.executescript(
             """
             CREATE INDEX IF NOT EXISTS idx_tasks_status      ON tasks(status);

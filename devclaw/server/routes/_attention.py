@@ -101,7 +101,7 @@ def attention(goal: dict, last: Optional[Task], decisions: list[Decision],
     row["since"] = since
     newest = max(decisions, key=lambda d: d.made_at, default=None)
     if newest is not None and newest.made_at > since:
-        row["answered"] = {"text": newest.text, "madeAt": newest.made_at,
+        row["answered"] = {"madeAt": newest.made_at,
                            "commentUrl": newest.comment_url, "waitingOn": _waiting_on(control)}
     else:
         row["answered"] = None

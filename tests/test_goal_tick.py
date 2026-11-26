@@ -108,7 +108,7 @@ def harness(tmp_path):
     ws = tmp_path / "proj"
     ws.mkdir()
     goal = store.create_goal(id="g1", project_id="p", workspace_dir=str(ws), repo_url=REPO,
-                             objective="o", issues=[1], branch="goal/g1")
+                             issues=[1], branch="goal/g1")
 
     def ctx(world: FakeWorld) -> TickContext:
         return TickContext(store=store, queue=queue, world=world.reader(), notifier=rec,
@@ -526,7 +526,7 @@ async def test_one_session_per_project_lane(tmp_path):
     ws.mkdir()
     for gid in ("a", "b"):
         store.create_goal(id=gid, project_id="p", workspace_dir=str(ws), repo_url=REPO,
-                          objective="o", issues=[1 if gid == "a" else 2], branch=f"goal/{gid}")
+                          issues=[1 if gid == "a" else 2], branch=f"goal/{gid}")
     world = FakeWorld(issues=[gh.Issue(1, "one", "x", "open", ("ready",)), gh.Issue(2, "two", "y", "open", ("ready",))])
     svc = GoalService(queue, store, notifier=rec, world_reader=world.reader(),
                       post_comment=rec.post_comment, merge=rec.merge, lease=_lease_in_place, tick_seconds=900)

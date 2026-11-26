@@ -401,7 +401,7 @@ def test_plugin_dir_env_alone_separates_the_arms(monkeypatch, plugin):
     monkeypatch.setenv("DEVCLAW_PLUGIN_DIR", plugin)
     argv = engine.claude_argv("p", resume=None)
     world = SimpleNamespace(pr=gh.PrFacts("none", 0, "", "", ci="none"), issues=(), comments=())
-    brief = session_brief(SimpleNamespace(branch="b", objective="o"), world, None)  # type: ignore[arg-type]
+    brief = session_brief(SimpleNamespace(branch="b"), world, None)  # type: ignore[arg-type]
     assert ("--plugin-dir" in argv) == bool(plugin)
     assert ("diagnosing-bugs" in brief) == bool(plugin)
     if plugin:

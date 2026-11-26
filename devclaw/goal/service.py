@@ -127,7 +127,7 @@ class GoalService:
     # ---- verbs --------------------------------------------------------
 
     async def create_goal(self, goal_id: str, *, project_id: str, workspace_dir: str,
-                          repo_url: str, issues: list[int], objective: str = "") -> dict:
+                          repo_url: str, issues: list[int]) -> dict:
         if self._store.get_goal(goal_id) is not None:
             raise FileExistsError(goal_id)
         if not issues:
@@ -138,15 +138,12 @@ class GoalService:
             overlap = sorted(set(other.issues) & set(issues))
             if other.repo_url == repo_url and overlap:
                 raise ValueError(f"issue(s) {overlap} already belong to open goal {other.id!r} — cancel it first")
-        titles = []
         for n in issues:
             issue = await self._ctx.world.issue(repo_url, n)  # raises IssueError loudly
             if _gh.READY_LABEL not in issue.labels:
                 raise ValueError(f"issue #{n} does not carry the {_gh.READY_LABEL!r} label — shape it first")
-            titles.append(issue.title)
         goal = self._store.create_goal(
             id=goal_id, project_id=project_id, workspace_dir=workspace_dir, repo_url=repo_url,
-            objective=objective or "; ".join(t for t in titles if t)[:300],
             issues=list(issues), branch=f"goal/{goal_id}",
         )
         if self._registry is not None:
@@ -172,7 +169,8 @@ class GoalService:
 
     async def decide(self, goal_id: str, text: str) -> dict:
         """The owner's verb: an instruction on the goal's thread, recorded as
-        a Decision. The next tick sees a newer instruction and spawns."""
+        a Decision that points at it. The next tick sees a newer instruction
+        and spawns."""
         goal = self._store.get_goal(goal_id)
         if goal is None:
             raise KeyError(goal_id)
@@ -185,9 +183,9 @@ class GoalService:
         body = text if mention.lower() in text.lower() else f"{mention} {text}"
         number = goal.issues[0] if goal.issues else 0
         url = await self._ctx.post_comment(goal.repo_url, number, body) if number else ""
-        if number and not url:
+        if not url:
             raise RuntimeError(f"could not post the decision on issue #{number} — is gh authenticated?")
-        decision = self._store.record_decision(goal_id, text, url)
+        decision = self._store.record_decision(goal_id, url)
         self.poke()
         return {"goal": self.get_goal(goal_id), "decision": decision.to_dict()}
 

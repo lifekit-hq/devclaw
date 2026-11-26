@@ -7,6 +7,7 @@ from starlette.responses import JSONResponse, Response
 
 from ...project_registry import project_rollup
 from .._state import goals, mcp, registry, store
+from ..display import with_display
 from ._attention import control_facts, with_attention
 
 
@@ -15,9 +16,9 @@ def _with_usage(row: dict) -> dict:
     return row
 
 
-def _goal_rows() -> list[dict]:
+async def _goal_rows() -> list[dict]:
     control = control_facts(store)
-    return [with_attention(g, store, control) for g in goals.list_goals()]
+    return await with_display([with_attention(g, store, control) for g in goals.list_goals()])
 
 
 @mcp.custom_route("/projects/{project_id}.json", methods=["GET"])
@@ -25,10 +26,10 @@ async def project_json(request: Request) -> Response:
     p = registry.get(request.path_params["project_id"])
     if p is None:
         return JSONResponse({"error": "not_found"}, status_code=404)
-    return JSONResponse(_with_usage(project_rollup(p, _goal_rows())))
+    return JSONResponse(_with_usage(project_rollup(p, await _goal_rows())))
 
 
 @mcp.custom_route("/projects.json", methods=["GET"])
 async def projects_json(_request: Request) -> Response:
-    all_goals = _goal_rows()
+    all_goals = await _goal_rows()
     return JSONResponse([_with_usage(project_rollup(p, all_goals)) for p in registry.list()])

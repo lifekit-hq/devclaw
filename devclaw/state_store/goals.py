@@ -23,12 +23,12 @@ class GoalsMixin:
         def _commit(self) -> None: ...
 
     def create_goal(self, *, id: str, project_id: str, workspace_dir: str,
-                    repo_url: str, objective: str, issues: list[int], branch: str) -> Goal:
+                    repo_url: str, issues: list[int], branch: str) -> Goal:
         with self._lock:
             self._db.execute(
-                "INSERT INTO goals (id, project_id, workspace_dir, repo_url, objective, "
-                "issues_json, branch, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (id, project_id, workspace_dir, repo_url or "", objective or "",
+                "INSERT INTO goals (id, project_id, workspace_dir, repo_url, "
+                "issues_json, branch, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (id, project_id, workspace_dir, repo_url or "",
                  json.dumps([int(n) for n in issues]), branch, _now_ms()),
             )
             self._commit()
@@ -68,11 +68,12 @@ class GoalsMixin:
             self._commit()
             return cur.rowcount == 1
 
-    def record_decision(self, goal_id: str, text: str, comment_url: str = "") -> Decision:
+    def record_decision(self, goal_id: str, comment_url: str) -> Decision:
+        """A reference to the owner's comment, never a copy of its text (#1058)."""
         with self._lock:
             cur = self._db.execute(
-                "INSERT INTO decisions (goal_id, text, comment_url, made_at) VALUES (?, ?, ?, ?)",
-                (goal_id, text, comment_url or "", _now_ms()),
+                "INSERT INTO decisions (goal_id, comment_url, made_at) VALUES (?, ?, ?)",
+                (goal_id, comment_url or "", _now_ms()),
             )
             self._commit()
             row = self._db.execute("SELECT * FROM decisions WHERE id = ?", (cur.lastrowid,)).fetchone()
