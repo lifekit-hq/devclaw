@@ -1,0 +1,213 @@
+"""Three practices gate the code path (#1053, spec 048): a test writer that must
+leave the tests RED before any code, a code pass that may not touch those
+tests, and a one-line mutation per critical criterion that must turn the
+checks red. Each is a fail-closed gate on an unattended loop; S-size goals
+skip all three and cost no more than the baseline.
+
+Real git and a real ``.devclaw/verify``; only the session (``run_turn``), the
+pipeline init and the hand-off are stubbed.
+"""
+
+import os
+import subprocess
+
+import pytest
+
+from devclaw.engine import EngineRequest
+from devclaw.engine import claude as engine
+from devclaw.engine import practices
+
+GIT_ENV = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+VERIFY = "#!/bin/sh\nset -e\nfor f in test_*.py; do python3 \"$f\"; done\n"
+CRITICAL = "## Done when\n\n1. (critical) A person of 18 or over is an adult.\n"
+PLAIN = "## Done when\n\n1. A person of 18 or over is an adult.\n"
+FIXED = "def is_adult(age):\n    return age >= 18\n"
+STRONG_TEST = "from calc import is_adult\nassert is_adult(18)\nassert not is_adult(17)\n"
+WEAK_TEST = "from calc import is_adult\nassert is_adult(30)\nassert not is_adult(3)\n"
+MUTATE = ('```json\n{"mutations": [{"criterion": 1, "file": "calc.py", "find": "    return age >= 18", '
+          '"replace": "    return age > 18"}]}\n```\n')
+
+
+def _git(cwd, *argv):
+    return subprocess.run(["git", *argv], cwd=cwd, check=True, capture_output=True, text=True,
+                          env={**os.environ, **GIT_ENV}).stdout.strip()
+
+
+def _repo(tmp_path, *, verify=True):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    _git(ws, "init", "-q", "-b", "goal/g1")
+    (ws / "calc.py").write_text("def is_adult(age):\n    return False\n")
+    if verify:
+        (ws / ".devclaw").mkdir()
+        (ws / ".devclaw" / "verify").write_text(VERIFY)
+        (ws / ".devclaw" / "verify").chmod(0o755)
+        (ws / ".devclaw" / "workflow.md").write_text("plan: none\n")
+    _git(ws, "add", "-A")
+    _git(ws, "commit", "-q", "-m", "base")
+    return ws
+
+
+def _write(ws, name, text):
+    (ws / name).write_text(text)
+
+
+def _commit(ws):
+    _git(ws, "add", "-A")
+    _git(ws, "commit", "-q", "--allow-empty", "-m", "work")
+
+
+@pytest.fixture
+def session(monkeypatch):
+    """``script`` is a list of ``fn(ws) -> text``, one per turn; prompts land in ``prompts``."""
+    state = {"script": [], "prompts": [], "events": []}
+
+    async def fake_turn(req, prompt, *, resume):
+        state["prompts"].append(prompt)
+        step = state["script"].pop(0) if state["script"] else (lambda ws: "DELIVERED: done")
+        return engine.Turn(session_id="s1", ok=True, text=step(req.workspace_dir) or "DELIVERED: done",
+                           usage={"input_tokens": 100, "output_tokens": 10})
+
+    async def fake_init(ws):
+        return None
+
+    async def fake_hand_off(req, session_id, head):
+        state["prompts"].append("<hand-off>")
+        return engine.Turn(session_id=session_id, ok=True, text="DELIVERED: shipped",
+                           usage={"input_tokens": 100, "output_tokens": 10}), "https://x/pull/1", ""
+
+    monkeypatch.setattr(engine, "run_turn", fake_turn)
+    monkeypatch.setattr(engine, "_init_pipeline", fake_init)
+    monkeypatch.setattr(engine, "_hand_off", fake_hand_off)
+    return state
+
+
+def _req(ws, state, brief, size="M"):
+    return EngineRequest(kind="implement_feature", workspace_dir=str(ws), goal=brief, hand_off=True,
+                         closes=(1,), size=size, on_event=lambda e: state["events"].append(e))
+
+
+def _types(state):
+    return [e.type for e in state["events"]]
+
+
+async def test_the_tests_are_written_red_first_recorded_and_the_code_pass_makes_them_pass(session, tmp_path):
+    ws = _repo(tmp_path)
+    session["script"] = [
+        lambda w: _write(ws, "test_adult.py", STRONG_TEST) or "TESTS: adulthood",
+        lambda w: (_write(ws, "calc.py", FIXED), _commit(ws), MUTATE + "DELIVERED: adulthood")[-1],
+    ]
+    result = await engine.run_claude(_req(ws, session, CRITICAL))
+    assert result["status"] == "ok", result
+    test_pass = next(e for e in session["events"] if e.type == "TestPass")
+    assert test_pass.payload["red"] is True and test_pass.payload["files"] == ["test_adult.py"]
+    recorded = await practices.recorded_test_pass(str(ws))
+    assert recorded is not None and recorded[1] == ("test_adult.py",)
+    # the code pass is a second, fresh session told which files are frozen
+    assert "TEST PASS" in session["prompts"][0] and "TEST PASS" not in session["prompts"][1]
+    assert "`test_adult.py`" in session["prompts"][1]
+    assert next(e for e in session["events"] if e.type == "MutationCheck").payload["failures"] == []
+
+
+async def test_tests_that_pass_before_any_code_stop_the_run_with_that_reason(session, tmp_path):
+    ws = _repo(tmp_path)
+    session["script"] = [lambda w: _write(ws, "test_adult.py", "assert True\n") or "TESTS: nothing"]
+    result = await engine.run_claude(_req(ws, session, CRITICAL))
+    assert result["status"] == "blocked"
+    assert "pass before any code is written" in result["reason"]
+    assert len(session["prompts"]) == 1  # no code pass ran
+    assert await practices.recorded_test_pass(str(ws)) is None
+
+
+@pytest.mark.parametrize("touch, name", [
+    (lambda ws: _write(ws, "test_adult.py", "assert True\n"), "edited `test_adult.py`"),
+    (lambda ws: ((ws / "test_adult.py").unlink(missing_ok=True), _write(ws, "test_new.py", "assert True\n")),
+     "deleted `test_adult.py`"),
+])
+async def test_a_code_pass_that_touches_a_test_pass_file_fails_the_gate_naming_it(session, tmp_path, touch, name):
+    ws = _repo(tmp_path)
+
+    def cheat(w):
+        _write(ws, "calc.py", FIXED)
+        touch(ws)
+        _commit(ws)
+        return MUTATE + "DELIVERED: done"
+
+    session["script"] = [lambda w: _write(ws, "test_adult.py", STRONG_TEST) or "TESTS: t"] + [cheat] * 9
+    result = await engine.run_claude(_req(ws, session, CRITICAL))
+    assert result["verify"]["passed"] is False and name in result["verify"]["output"]
+    assert "<hand-off>" not in session["prompts"]
+
+
+async def test_a_new_test_file_from_the_code_pass_is_allowed(session, tmp_path):
+    ws = _repo(tmp_path)
+
+    def code(w):
+        _write(ws, "calc.py", FIXED)
+        _write(ws, "test_more.py", "from calc import is_adult\nassert is_adult(40)\n")
+        _commit(ws)
+        return "DELIVERED: done"
+
+    session["script"] = [lambda w: _write(ws, "test_adult.py", STRONG_TEST) or "TESTS: t", code]
+    result = await engine.run_claude(_req(ws, session, PLAIN))
+    assert result["status"] == "ok" and result["verify"]["passed"] is True
+    assert "MutationCheck" not in _types(session)  # no critical criterion: the check is skipped
+
+
+async def test_a_mutation_every_test_survives_fails_the_gate_naming_the_criterion(session, tmp_path):
+    ws = _repo(tmp_path)
+
+    def code(w):
+        _write(ws, "calc.py", FIXED)
+        _commit(ws)
+        return MUTATE + "DELIVERED: done"
+
+    session["script"] = [lambda w: _write(ws, "test_adult.py", WEAK_TEST) or "TESTS: t"] + [code] * 9
+    result = await engine.run_claude(_req(ws, session, CRITICAL))
+    out = result["verify"]["output"]
+    assert result["verify"]["passed"] is False and "critical criterion 1" in out and "18 or over" in out
+    assert "left every test green" in out
+    assert (ws / "calc.py").read_text() == FIXED  # the scratch copy took the mutation, never the tree
+
+
+async def test_a_small_task_skips_every_stage_and_costs_no_more_than_the_baseline(session, tmp_path):
+    """The recorded baseline: a session plus its hand-off — two turns, 220
+    tokens with the stub's per-turn usage. An S goal with a critical contract
+    runs no test pass and no mutation, so it stays at the baseline."""
+    baseline = {"turns": 2, "tokens": 220}
+    ws = _repo(tmp_path)
+
+    def code(w):
+        _write(ws, "calc.py", FIXED)
+        _write(ws, "test_adult.py", STRONG_TEST)
+        _commit(ws)
+        return "DELIVERED: done"
+
+    session["script"] = [code]
+    result = await engine.run_claude(_req(ws, session, CRITICAL, size="S"))
+    assert result["status"] == "ok"
+    assert len(session["prompts"]) <= baseline["turns"]
+    assert result["usage"]["input_tokens"] + result["usage"]["output_tokens"] <= baseline["tokens"]
+    assert not {"TestPass", "MutationCheck"} & set(_types(session))
+    assert "Task size: S" in session["prompts"][0]
+
+
+async def test_a_test_pass_from_another_branch_is_not_this_goals(tmp_path):
+    """A squash-merge copies an earlier goal's trailer onto the default branch."""
+    ws = _repo(tmp_path)
+    _git(ws, "commit", "-q", "--allow-empty", "-m",
+         f"squash\n\n{practices.TEST_PASS_TRAILER}: goal/old red\n{practices.TEST_FILE_TRAILER}: test_x.py")
+    assert await practices.recorded_test_pass(str(ws)) is None
+
+
+@pytest.mark.parametrize("title, body, size", [
+    ("Add Stripe billing", "## Done when\n- invoices go out", "L"),
+    ("Tidy", "## Done when\n- rename in `devclaw/x.py`, no behaviour change", "S"),
+    ("Tidy auth", "## Done when\n- rename in `devclaw/x.py`, no behaviour change", "L"),
+    ("Tidy", "Size: S\n## Done when\n- tidy the session login flow", "L"),
+    ("Tidy", "Size: S\n## Done when\n- tidy two files", "S"),
+    ("Add a button", "## Done when\n- the console shows a button", "M"),
+    ("Tidy", "## Done when\n- rename in `a.py` and `b.py`, no behaviour change", "M"),
+])
+def test_the_size_is_set_from_the_issue_by_the_written_rules(title, body, size):
+    assert practices.size_of([(title, body)]) == size

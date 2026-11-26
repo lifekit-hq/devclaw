@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import json
 import sys
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
@@ -227,9 +228,8 @@ async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Tas
     head = world.pr.head_sha
     existing = [v for v in world.verdicts_for_head(head) if v.field("task") == review.id]
     if not existing:
-        import json as _json
         try:
-            result = _json.loads(review.result_json or "{}")
+            result = json.loads(review.result_json or "{}")
         except ValueError:
             result = {}
         verdict = _donegate.parse_verdict(str(result.get("agent_output") or ""))

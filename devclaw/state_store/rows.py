@@ -128,6 +128,8 @@ class Goal:
     #: the world fingerprint the last session was given (JSON), or None
     last_seen_json: Optional[str] = None
     last_seen_at: Optional[int] = None
+    #: task size S / M / L, set once at goal start from the issue (#1053)
+    size: str = "M"
 
     @property
     def open(self) -> bool:
@@ -146,6 +148,7 @@ class Goal:
             "closedAt": self.closed_at,
             "outcome": self.outcome,
             "lastSeenAt": self.last_seen_at,
+            "size": self.size,
         }
 
 
@@ -208,6 +211,7 @@ def _row_to_goal(r: sqlite3.Row) -> Goal:
         issues=issues, branch=r["branch"], created_at=r["created_at"],
         closed_at=r["closed_at"], outcome=r["outcome"],
         last_seen_json=r["last_seen_json"], last_seen_at=r["last_seen_at"],
+        size=_col(r, "size", "M"),
     )
 
 

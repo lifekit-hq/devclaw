@@ -19,6 +19,12 @@ the engine runs ``.devclaw/verify`` after the session hands back and checks the
 first-run manifest is TRACKED; a red run is handed back to the SAME session
 (``--resume``), up to ``DEVCLAW_VERIFY_ROUNDS`` times.
 
+**Three practices ride the same loop** (#1053, :mod:`.practices`): the goal's
+size S/M/L is told to the session; on a contract with ``## Done when``
+criteria (size M/L) a fresh test-writer session writes tests first and they
+must run red; the code pass may not touch them; and each critical criterion
+needs a test that a one-line mutation of the code turns red.
+
 **The branch ships through no-mistakes** (#953). Once verify is green and the
 branch carries a commit ``origin`` has not seen, the SAME session runs
 ``no-mistakes axi run`` (review, test, document, lint, push, PR) and answers
@@ -48,6 +54,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import EngineEvent, EngineRequest, EngineResult
+from . import practices as _practices
 from .. import config as _config
 from .. import credentials as _credentials
 from ..git_identity import git_identity_env
@@ -667,17 +674,27 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             return {"status": "error", "error": error}
     # a resumed session already holds the skills; it is handed only the new brief
     resume = req.resume_session_id
+    plan: Optional[_practices.Plan] = None
+    usage: Optional[dict] = None
+    if req.kind in WRITES_CODE_KINDS and req.hand_off and _has_git_dir(req.workspace_dir):
+        plan = await _practices.plan_for(req.goal, req.size, req.workspace_dir)
     if not resume and req.kind in WRITES_CODE_KINDS:
         # a host gap the session would otherwise find at the end of its work
         note = await browser_preflight(req.workspace_dir)
         if note:
             _emit(req, "preflight", "Preflight", {"note": note})
             prompt = f"{note}\n\n{prompt}"
+        if plan is not None and plan.wants_test_pass:
+            stop, usage = await _test_pass(req, plan, prompt)
+            if stop is not None:
+                return stop
+        if plan is not None:
+            prompt = f"{plan.note()}\n\n{prompt}"
     turn = await run_turn(req, req.goal if resume else prompt, resume=resume)
     if turn.resume_missing:
         sys.stderr.write(f"claude-engine: session {req.resume_session_id} not found — starting fresh\n")
         turn = await run_turn(req, prompt, resume=None)
-    usage = _add_usage(None, turn.usage)
+    usage = _add_usage(usage, turn.usage)
 
     def failed(t: Turn) -> EngineResult:
         return {"status": "error", "error": t.error, "agent_output": t.text, "usage": usage,
@@ -699,7 +716,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
                 asked = True
                 feedback = VERIFY_MISSING_PROMPT
             else:
-                verify, feedback = await _gate(req, cmd)
+                verify, feedback = await _gate(req, cmd, plan, turn.text)
                 if feedback is None:
                     break
             turn = await run_turn(req, feedback, resume=turn.session_id)
@@ -709,7 +726,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         else:
             if parse_blocked_reason(turn.text) is None:
                 cmd = req.verify_cmd or discover_verify(req.workspace_dir)
-                verify = (await _gate(req, cmd))[0] if cmd else None
+                verify = (await _gate(req, cmd, plan, turn.text))[0] if cmd else None
         if verify is None and parse_blocked_reason(turn.text) is None:
             verify = {"ran": True, "cmd": VERIFY_SCRIPT_REL, "passed": False, "exit_code": None,
                       "timed_out": False,
@@ -770,9 +787,68 @@ async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Tur
     return turn, pr_url, why
 
 
-async def _gate(req: EngineRequest, cmd: str) -> tuple[dict, Optional[str]]:
+async def _test_pass(req: EngineRequest, plan: _practices.Plan,
+                     prompt: str) -> tuple[Optional[EngineResult], Optional[dict]]:
+    """The test writer (#1053): a fresh session writes tests from the contract
+    and NO code; ``.devclaw/verify`` must then be red. The engine commits the
+    file set with its record and sets ``plan.test_pass``. ``(stop, usage)`` —
+    ``stop`` is the result that ends the task (a block or an error), or None."""
+    ws = req.workspace_dir
+    rc, base = await _host(ws, "git", "rev-parse", "HEAD")
+    if rc != 0:
+        return {"status": "error", "error": f"test pass: no HEAD to start from: {base[-300:]}"}, None
+    turn = await run_turn(req, f"{_practices.TEST_PASS_PROMPT}\n\n{prompt}", resume=None)
+    usage = _add_usage(None, turn.usage)
+
+    def stop(reason: str) -> tuple[EngineResult, Optional[dict]]:
+        out = blocked_result(reason, workspace_dir=ws, agent_output=turn.text, usage=usage)
+        out["session_id"] = turn.session_id
+        return out, usage
+
+    if not turn.ok:
+        return {"status": "error", "error": turn.error, "agent_output": turn.text, "usage": usage,
+                "session_id": turn.session_id}, usage
+    if (reason := parse_blocked_reason(turn.text)) is not None:
+        return stop(reason)
+    cmd = req.verify_cmd or discover_verify(ws)
+    if not cmd:
+        turn = await run_turn(req, _practices.TEST_VERIFY_MISSING_PROMPT, resume=turn.session_id)
+        usage = _add_usage(usage, turn.usage)
+        cmd = req.verify_cmd or discover_verify(ws)
+        if not cmd:
+            return stop("the test pass left no `.devclaw/verify` to prove its tests fail before any code")
+    files = await _practices.changed_since(ws, base)
+    if files is None:
+        return {"status": "error", "error": "test pass: git could not list the files it wrote",
+                "usage": usage}, usage
+    if not files:
+        return stop("the test pass wrote no test from the contract's `## Done when` criteria")
+    verify = await run_verify(cmd, ws, _config.VERIFY_TIMEOUT_S)
+    _emit(req, "test-pass", "TestPass", {"files": files, "red": not verify["passed"],
+                                         "exit_code": verify["exit_code"]})
+    if verify["passed"]:
+        return stop("the tests written from the contract pass before any code is written, so they do "
+                    f"not pin the change: `{cmd}` is green with {', '.join(files)}")
+    sha = await _practices.commit_test_pass(ws, files, verify)
+    if sha is None:
+        return {"status": "error", "error": "test pass: the engine could not commit the test files",
+                "usage": usage}, usage
+    plan.test_pass = (sha, tuple(files))
+    return None, usage
+
+
+def _refuse(req: EngineRequest, cmd: str, output: str) -> dict:
+    refusal = {"ran": True, "cmd": cmd, "passed": False, "exit_code": None, "timed_out": False, "output": output}
+    _emit_verify(req, refusal)
+    return refusal
+
+
+async def _gate(req: EngineRequest, cmd: str, plan: Optional[_practices.Plan] = None,
+                text: str = "") -> tuple[dict, Optional[str]]:
     """The end-of-session verdict plus the feedback to hand back when red: the
-    project's checks run green AND the first-run manifest is TRACKED."""
+    project's checks run green, the first-run manifest is TRACKED, the
+    test-pass files are untouched, and each critical criterion's mutation
+    turns the checks red (#1053)."""
     verify = await run_verify(cmd, req.workspace_dir, _config.VERIFY_TIMEOUT_S,
                               docs_only=await docs_only_diff(req.workspace_dir))
     _emit_verify(req, verify)
@@ -780,13 +856,29 @@ async def _gate(req: EngineRequest, cmd: str) -> tuple[dict, Optional[str]]:
         return verify, VERIFY_FAILED_PROMPT.format(cmd=cmd, code=verify["exit_code"],
                                                    tail=(verify["output"] or "")[-3000:])
     untracked = await untracked_manifest(req.workspace_dir)
-    if untracked is None:
+    if untracked is not None:
+        return _refuse(req, f"git ls-files --error-unmatch {untracked}", f"`{untracked}` is not tracked on this "
+                       "branch — the manifest never reaches the next session"), \
+            UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
+    if plan is None:
         return verify, None
-    refusal = {"ran": True, "cmd": f"git ls-files --error-unmatch {untracked}", "passed": False,
-               "exit_code": None, "timed_out": False,
-               "output": f"`{untracked}` is not tracked on this branch — the manifest never reaches the next session"}
-    _emit_verify(req, refusal)
-    return refusal, UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
+    frozen: tuple[str, ...] = ()
+    if plan.test_pass is not None:
+        commit, frozen = plan.test_pass
+        touched = await _practices.frozen_violations(req.workspace_dir, commit, frozen)
+        if touched:
+            return _refuse(req, f"git diff --name-status {commit[:10]} -- <test-pass files>",
+                           "the code pass touched the test-pass files: " + "; ".join(touched)), \
+                _practices.FROZEN_FAILED_PROMPT.format(commit=commit[:10], violations="; ".join(touched))
+    if plan.critical:
+        failures = await _practices.mutation_failures(
+            req.workspace_dir, cmd, plan.critical, _practices.parse_mutations(text), frozen,
+            lambda c, tree: run_verify(c, tree, _config.VERIFY_TIMEOUT_S))
+        _emit(req, "mutation", "MutationCheck", {"critical": len(plan.critical), "failures": failures})
+        if failures:
+            return _refuse(req, "one-mutation check", "the one-mutation check failed: " + "; ".join(failures)), \
+                _practices.MUTATION_FAILED_PROMPT.format(failures="\n".join(f"- {f}" for f in failures))
+    return verify, None
 
 
 def _emit(req: EngineRequest, id: str, type: str, payload: dict) -> None:

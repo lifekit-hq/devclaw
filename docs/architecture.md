@@ -158,7 +158,7 @@ posted again once for it, with no session spawned. The class is never stored
 
 ### What the host stores (pillar 5)
 
-`goals` (identity, `last_seen`, outcome), `decisions`, `tasks` + `events`
+`goals` (identity, `last_seen`, outcome, and `size`: S/M/L, set once at goal start), `decisions`, `tasks` + `events`
 (the execution record), `meta` (the pause, the hold, the window, the dial,
 the deploy intent), and `user_preferences`: the console's appearance per gate
 identity (the `X-Auth-Request-Email` the sso forwardAuth sets), written only by
@@ -211,6 +211,63 @@ otherwise deliver a branch carrying neither, and every later session would
 re-derive from scratch with nothing able to notice. The untracked path is named
 back to the session, which un-ignores and commits it.
 
+### Size, tests first, one mutation (#1053, spec 048)
+
+Three practices ride the same loop, all in `engine/practices.py`. Each one is
+a mechanical check on a choice the model makes.
+
+**Size** is set once, when `create_goal` reads the issues (`size_of`), and
+stored as `goals.size`. `get_goal` and `list_goals` show it. The rules:
+
+- **L**: the title or the `## Done when` / `## Acceptance` section (the whole
+  body when there is none) names money (payment, billing, invoice, refund,
+  price), auth (auth, login, password, credential, OAuth, permission), a
+  migration, or a breaking change. An issue can also declare `Size: L`.
+  L wins over everything, including a declared `Size: S`.
+- **S**: the issue declares `Size: S`, or one issue names exactly one file
+  (a code span with a path or an extension) and says "no behaviour change".
+- **M**: everything else, and any declared `Size: M`.
+
+The session's prompt opens with its size. The stages an S goal skips are the
+test pass, the one-mutation check, and the optional stages `.devclaw/workflow.md`
+names (a spec, a plan, a design review). M leaves the workflow's optional
+stages to the session. L skips none.
+
+**Tests first.** This runs on an M or L goal whose brief carries `## Done when`
+criteria, when the branch has no test pass of its own yet:
+
+1. A fresh test-writer session writes tests from the criteria and no product
+   code.
+2. `.devclaw/verify` must then run red. If it is green, the run stops `BLOCKED`
+   with "the tests written from the contract pass before any code is written".
+   A test pass that writes no file, or leaves no verify script, also stops
+   `BLOCKED`.
+3. The engine commits the file set. The trailers `Devclaw-Test-Pass: <branch> …`
+   and `Devclaw-Test-File: <path>` are the record; git holds it, not the host.
+4. The code pass is a second fresh session, told which files are frozen.
+
+At every gate after that, a diff since the test-pass commit that edits or
+deletes one of those files is refused with the file named. So is a branch that
+no longer contains the commit. The session gets the refusal through the usual
+verify round, and when the rounds run out the task is `INTERRUPTED`. Tests the
+code pass adds in new files are allowed. The trailer names the branch, because
+a squash-merge copies an earlier goal's trailer onto the default branch.
+
+**One mutation.** A criterion is critical when it is tagged `(critical)`,
+`[critical]`, `**critical**` or `critical:`.
+
+1. On an M or L goal, the session names one single-line mutation per critical
+   criterion in a fenced json `mutations` block: the file, the exact line, and
+   that line with the condition broken.
+2. The engine copies the tree to a scratch directory and requires `.devclaw/verify`
+   to pass there unmutated.
+3. It applies each mutation in the copy and requires verify to go red.
+4. A mutation every test survives fails the gate with the criterion named. So
+   does a missing or invalid mutation: a test file, a `.devclaw/` file, or a
+   line that does not occur exactly once.
+5. A goal with no critical criterion skips the check. The real tree is never
+   mutated.
+
 ### The branch ships through no-mistakes
 
 The pipeline exists before the session does: the engine runs `no-mistakes init`
@@ -251,7 +308,7 @@ devclaw/server/      tools/ (goals, projects, control, intake, doctor) · routes
 devclaw/goal/        tick.py · world.py · prompts.py · donegate.py · github.py · service.py · notify.py · self_deploy.py
 devclaw/prompts/     session.md · done-gate.md
 devclaw/task_queue.py · queue/settle.py · queue/admission.py
-devclaw/engine/      claude.py · stub.py · workspace.py
+devclaw/engine/      claude.py · practices.py (size, tests first, one mutation) · stub.py · workspace.py
 devclaw/skills/      the worker-kind instructions the engine prepends (_common.md, _writes-code/, <kind>/, craft/)
 devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py · goals.py · preferences.py
 devclaw/loom/        limits.py · untrusted.py

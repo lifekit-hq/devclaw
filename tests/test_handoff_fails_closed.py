@@ -69,7 +69,7 @@ def stubbed(monkeypatch):
         seen.setdefault("calls", []).append(("turn", len(turns)))
         return engine.Turn(session_id="s1", ok=True, text="DELIVERED: one increment")
 
-    async def fake_gate(req, cmd):
+    async def fake_gate(req, cmd, *_):
         return {"ran": True, "cmd": cmd, "passed": True, "exit_code": 0, "timed_out": False, "output": ""}, None
 
     async def fake_unshipped(workspace_dir):
