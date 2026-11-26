@@ -71,7 +71,7 @@ The account-wide pause set when a quota, auth or provider-outage failure is clas
 A manual dispatch stop (`set_operator_hold`), stored in `meta` beside the run window (`set_run_schedule`) and the dial (`set_max_concurrent`); while a hold or an outside-window time applies, the queue dispatches no new session, though ticks still run and submit tasks that wait.
 
 **Intake**:
-`file_intake`: files, or counts onto, a GitHub issue in a registered project by repo plus fingerprint, returning a receipt `{id, url, state}`. It starts no goal and changes no code.
+`file_intake`: files, or counts onto, a GitHub issue in a registered project or an intake-only owner (`vault`, `fleet` — `INTAKE_ONLY_PROJECTS` in `devclaw/project_registry.py`) by repo plus fingerprint, returning a receipt `{id, url, state}`. It starts no goal and changes no code. An unknown project is refused with the valid list.
 
 **Console**:
 The Angular PWA served at `/console` that reads the same state as the MCP tools over HTTP; its per-user appearance is the one thing the host stores for it.
