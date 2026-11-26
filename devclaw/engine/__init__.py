@@ -60,6 +60,9 @@ class EngineRequest:
     hand_off: bool = False
     #: the issues the PR closes when it merges (``--closes``) — the goal's own
     closes: tuple[int, ...] = ()
+    #: the goal's task size S / M / L, set once at goal start (#1053,
+    #: :mod:`devclaw.engine.practices`) — what the session may skip
+    size: str = "M"
 
 
 #: Terminal verdict from one task. ``status == "ok"`` carries

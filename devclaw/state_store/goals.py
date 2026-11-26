@@ -23,13 +23,14 @@ class GoalsMixin:
         def _commit(self) -> None: ...
 
     def create_goal(self, *, id: str, project_id: str, workspace_dir: str,
-                    repo_url: str, objective: str, issues: list[int], branch: str) -> Goal:
+                    repo_url: str, objective: str, issues: list[int], branch: str,
+                    size: str = "M") -> Goal:
         with self._lock:
             self._db.execute(
                 "INSERT INTO goals (id, project_id, workspace_dir, repo_url, objective, "
-                "issues_json, branch, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "issues_json, branch, created_at, size) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (id, project_id, workspace_dir, repo_url or "", objective or "",
-                 json.dumps([int(n) for n in issues]), branch, _now_ms()),
+                 json.dumps([int(n) for n in issues]), branch, _now_ms(), size),
             )
             self._commit()
         goal = self.get_goal(id)

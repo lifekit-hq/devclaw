@@ -19,6 +19,13 @@ the engine runs ``.devclaw/verify`` after the session hands back and checks the
 first-run manifest is TRACKED; a red run is handed back to the SAME session
 (``--resume``), up to ``DEVCLAW_VERIFY_ROUNDS`` times.
 
+**Three practices ride the same loop** (#1053, :mod:`.practices`): the goal's
+size S/M/L is told to the session; on a contract with ``## Done when``
+criteria (size M/L) a fresh test-writer session writes tests first and they
+must run red; the code pass may not touch them (checked again on the head the
+hand-off shipped); and each critical criterion needs a test that a one-line
+mutation of the code turns red (before the hand-off only).
+
 **The branch ships through no-mistakes** (#953). Once verify is green and the
 branch carries a commit ``origin`` has not seen, the SAME session runs
 ``no-mistakes axi run`` (review, test, document, lint, push, PR) and answers
@@ -48,6 +55,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import EngineEvent, EngineRequest, EngineResult
+from . import practices as _practices
 from .. import config as _config
 from .. import credentials as _credentials
 from ..git_identity import git_identity_env
@@ -391,9 +399,9 @@ async def dirty_tree(workspace_dir: str) -> bool:
     return rc != 0 or bool(out)
 
 
-async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str]:
-    """``(pr_url, "")`` when the branch's newest no-mistakes run carries the
-    unshipped ``head`` and passed, else ``(None, why)``. Carrying it proves the
+async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str, str]:
+    """``(pr_url, "", shipped_head)`` when the branch's newest no-mistakes run
+    carries the unshipped ``head`` and passed, else ``(None, why, "")``. Carrying it proves the
     run is this session's: no earlier run was submitted at a descendant of a
     commit the remote has never seen. ``axi status`` prints the submitted head
     only while the run is pre-push; once it has pushed or finished, the run's own
@@ -401,7 +409,7 @@ async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str
     which lives in the gate repo until fetched."""
     rc, out = await _host(workspace_dir, NO_MISTAKES, "axi", "status")
     if rc != 0:
-        return None, f"no-mistakes axi status failed: {out[-300:]}"
+        return None, f"no-mistakes axi status failed: {out[-300:]}", ""
     fields = parse_status(out)
     submitted = fields.get("submitted_head", "")
     if not submitted and fields.get("run_head"):
@@ -409,12 +417,12 @@ async def shipped_run(workspace_dir: str, head: str) -> tuple[Optional[str], str
         await _host(workspace_dir, "git", "fetch", NO_MISTAKES)
         submitted = fields["run_head"]
     if not submitted or (await _host(workspace_dir, "git", "merge-base", "--is-ancestor", head, submitted))[0] != 0:
-        return None, f"no no-mistakes run carries {head[:8]}"
+        return None, f"no no-mistakes run carries {head[:8]}", ""
     if fields.get("outcome") not in SHIPPED_OUTCOMES:
-        return None, f"the no-mistakes run ended {fields.get('outcome') or 'without an outcome'}"
+        return None, f"the no-mistakes run ended {fields.get('outcome') or 'without an outcome'}", ""
     if not fields.get("pr"):
-        return None, "the no-mistakes run passed but names no PR"
-    return fields["pr"], ""
+        return None, "the no-mistakes run passed but names no PR", ""
+    return fields["pr"], "", submitted
 
 
 # ---- host facts: what this host cannot run, what the diff touches -----------
@@ -425,7 +433,6 @@ DOCS_ONLY_ENV = "DEVCLAW_DOCS_ONLY"
 _DOC_SUFFIXES = (".md", ".mdx", ".rst", ".adoc")
 _DOC_DIRS = frozenset({"docs", "doc", "specs", ".devclaw"})
 _DOC_NAMES = frozenset({"README", "CHANGELOG", "CONTRIBUTING", "LICENSE", "NOTICE", "COPYING"})
-_BASE_REFS = ("origin/HEAD", "origin/main", "origin/master")
 _CHROMIUM_GLOBS = (
     "chromium-*/chrome-linux*/chrome",
     "chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell",
@@ -452,11 +459,8 @@ async def docs_only_diff(workspace_dir: str) -> bool:
     no change or an unreadable diff is not docs-only."""
     if not _has_git_dir(workspace_dir):
         return False
-    for ref in _BASE_REFS:
-        rc, base = await _host(workspace_dir, "git", "merge-base", "HEAD", ref)
-        if rc == 0 and base:
-            break
-    else:
+    base = await _practices.merge_base(workspace_dir)
+    if base is None:
         return False
     rc_d, changed = await _host(workspace_dir, "git", "diff", "--name-only", base)
     rc_n, new = await _host(workspace_dir, "git", "ls-files", "--others", "--exclude-standard")
@@ -667,17 +671,30 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             return {"status": "error", "error": error}
     # a resumed session already holds the skills; it is handed only the new brief
     resume = req.resume_session_id
-    if not resume and req.kind in WRITES_CODE_KINDS:
+    plan: Optional[_practices.Plan] = None
+    usage: Optional[dict] = None
+    if req.kind in WRITES_CODE_KINDS and req.hand_off and _has_git_dir(req.workspace_dir):
+        plan = await _practices.plan_for(req.goal, req.size, req.workspace_dir, req.closes)
+    if plan is not None and plan.wants_test_pass:
+        # a test writer paused mid-pass restarts as a test writer, never as the engineer
+        resume = None
+    if req.kind in WRITES_CODE_KINDS:
         # a host gap the session would otherwise find at the end of its work
         note = await browser_preflight(req.workspace_dir)
         if note:
             _emit(req, "preflight", "Preflight", {"note": note})
             prompt = f"{note}\n\n{prompt}"
+        if plan is not None and plan.wants_test_pass:
+            stop, usage = await _test_pass(req, plan, prompt)
+            if stop is not None:
+                return stop
+        if plan is not None:
+            prompt = f"{plan.note()}\n\n{prompt}"
     turn = await run_turn(req, req.goal if resume else prompt, resume=resume)
     if turn.resume_missing:
-        sys.stderr.write(f"claude-engine: session {req.resume_session_id} not found — starting fresh\n")
+        sys.stderr.write(f"claude-engine: session {resume} not found — starting fresh\n")
         turn = await run_turn(req, prompt, resume=None)
-    usage = _add_usage(None, turn.usage)
+    usage = _add_usage(usage, turn.usage)
 
     def failed(t: Turn) -> EngineResult:
         return {"status": "error", "error": t.error, "agent_output": t.text, "usage": usage,
@@ -686,6 +703,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     if not turn.ok:
         return failed(turn)
     verify: Optional[dict] = None
+    mutations: list[_practices.Mutation] = []
     if req.kind in WRITES_CODE_KINDS:
         asked = False
         feedback: Optional[str]
@@ -699,7 +717,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
                 asked = True
                 feedback = VERIFY_MISSING_PROMPT
             else:
-                verify, feedback = await _gate(req, cmd)
+                mutations = _practices.parse_mutations(turn.text) or mutations
+                verify, feedback = await _gate(req, cmd, plan, mutations)
                 if feedback is None:
                     break
             turn = await run_turn(req, feedback, resume=turn.session_id)
@@ -709,7 +728,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         else:
             if parse_blocked_reason(turn.text) is None:
                 cmd = req.verify_cmd or discover_verify(req.workspace_dir)
-                verify = (await _gate(req, cmd))[0] if cmd else None
+                mutations = _practices.parse_mutations(turn.text) or mutations
+                verify = (await _gate(req, cmd, plan, mutations))[0] if cmd else None
         if verify is None and parse_blocked_reason(turn.text) is None:
             verify = {"ran": True, "cmd": VERIFY_SCRIPT_REL, "passed": False, "exit_code": None,
                       "timed_out": False,
@@ -719,7 +739,7 @@ async def run_claude(req: EngineRequest) -> EngineResult:
     if reason is None and req.hand_off and verify is not None and verify.get("passed"):
         head = await unshipped_head(req.workspace_dir)
         if head:
-            turn, pr_url, why = await _hand_off(req, turn.session_id, head)
+            turn, pr_url, why, shipped = await _hand_off(req, turn.session_id, head)
             usage = _add_usage(usage, turn.usage)
             if not turn.ok:
                 return failed(turn)
@@ -727,6 +747,14 @@ async def run_claude(req: EngineRequest) -> EngineResult:
             if reason is None and pr_url is None:
                 return {"status": "error", "error": f"the hand-off did not ship: {why}",
                         "agent_output": turn.text, "usage": usage, "session_id": turn.session_id}
+            if reason is None and plan is not None and plan.test_pass is not None:
+                record = plan.test_pass
+                touched, accepted = await _practices.frozen_violations(
+                    req.workspace_dir, record.commit, record.files, shipped)
+                plan.notes += [n for n in _practices.accepted_note(accepted) if n not in plan.notes]
+                if touched:
+                    reason = _practices.HANDOFF_FROZEN_REASON.format(
+                        commit=record.commit[:10], violations="; ".join(touched), pr_url=pr_url)
         elif await dirty_tree(req.workspace_dir):
             return {"status": "error", "error": "the hand-off did not ship: the session left uncommitted "
                     "changes and no commit", "agent_output": turn.text, "usage": usage,
@@ -741,6 +769,8 @@ async def run_claude(req: EngineRequest) -> EngineResult:
         result["verify"] = verify
     if pr_url:
         result["pr_url"] = pr_url
+    if plan is not None and (notes := [_practices.NO_TEST_FILE_NOTE] * plan.no_test_file + plan.notes):
+        result["notes"] = notes
     return result
 
 
@@ -752,27 +782,99 @@ async def _init_pipeline(workspace_dir: str) -> Optional[str]:
     return None if rc == 0 else f"no-mistakes init failed: {out[-500:]}"
 
 
-async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str]:
+async def _hand_off(req: EngineRequest, session_id: str, head: str) -> tuple[Turn, Optional[str], str, str]:
     """The ship turn: re-init the pipeline (the daemon may have died during the
     session, and only the host env restarts it with the GitHub credential), then
     the SAME session drives the run.
-    ``(turn, pr_url, why)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
+    ``(turn, pr_url, why, shipped_head)`` — ``pr_url`` only when :func:`shipped_run` proves it."""
     error = await _init_pipeline(req.workspace_dir)
     if error:
-        return Turn(session_id=session_id, error=error), None, ""
+        return Turn(session_id=session_id, error=error), None, "", ""
     closes = "".join(f" --closes {n}" for n in req.closes)
     with tempfile.TemporaryDirectory(prefix="devclaw-intent-") as tmp:
         prompt = HANDOFF_PROMPT.format(intent_file=os.path.join(tmp, "intent.md"), closes=closes)
         turn = await run_turn(req, prompt, resume=session_id)
     if not turn.ok or parse_blocked_reason(turn.text) is not None:
-        return turn, None, ""
-    pr_url, why = await shipped_run(req.workspace_dir, head)
-    return turn, pr_url, why
+        return turn, None, "", ""
+    return (turn, *await shipped_run(req.workspace_dir, head))
 
 
-async def _gate(req: EngineRequest, cmd: str) -> tuple[dict, Optional[str]]:
+async def _test_pass(req: EngineRequest, plan: _practices.Plan,
+                     prompt: str) -> tuple[Optional[EngineResult], Optional[dict]]:
+    """The test writer (#1053): a fresh session writes tests from the contract
+    and NO code; on a fresh branch ``.devclaw/verify`` must then be red. The
+    engine commits the file set with its record and sets ``plan.test_pass``.
+    A contract changed since the record re-runs it: the writer revises the
+    tests and the record is refrozen (the code exists, so red is not asked).
+    ``(stop, usage)`` — ``stop`` ends the task (a block or an error), or None."""
+    ws = req.workspace_dir
+    prior = plan.test_pass
+    if prior is None:
+        mb = await _practices.merge_base(ws)
+        rc, base = (0, mb) if mb else (1, "no merge-base with the default branch")
+    else:
+        rc, base = await _host(ws, "git", "rev-parse", "HEAD")
+    if rc != 0:
+        return {"status": "error", "error": f"test pass: no base to start from: {base[-300:]}"}, None
+    repass = "" if prior is None else _practices.TEST_REPASS_NOTE.format(
+        commit=prior.commit[:10], files=", ".join(f"`{f}`" for f in prior.files)) + "\n\n"
+    turn = await run_turn(req, f"{_practices.TEST_PASS_PROMPT}\n\n{repass}{prompt}", resume=None)
+    usage = _add_usage(None, turn.usage)
+
+    def stop(reason: str) -> tuple[EngineResult, Optional[dict]]:
+        out = blocked_result(reason, workspace_dir=ws, agent_output=turn.text, usage=usage)
+        out["session_id"] = turn.session_id
+        return out, usage
+
+    if not turn.ok:
+        return {"status": "error", "error": turn.error, "agent_output": turn.text, "usage": usage,
+                "session_id": turn.session_id}, usage
+    if (reason := parse_blocked_reason(turn.text)) is not None:
+        return stop(reason)
+    cmd = req.verify_cmd or discover_verify(ws)
+    if not cmd:
+        turn = await run_turn(req, _practices.TEST_VERIFY_MISSING_PROMPT, resume=turn.session_id)
+        usage = _add_usage(usage, turn.usage)
+        cmd = req.verify_cmd or discover_verify(ws)
+        if not cmd:
+            return stop("the test pass left no `.devclaw/verify` to prove its tests fail before any code")
+    changed = await _practices.changed_since(ws, base)
+    if changed is None:
+        return {"status": "error", "error": "test pass: git could not list the files it wrote",
+                "usage": usage}, usage
+    files = [f for f in changed if _practices.frozen_name(f)]
+    if prior is not None:
+        files += [f for f in prior.files if f not in files]
+    if not files and not changed:
+        return stop("the test pass wrote no test from the contract's `## Done when` criteria")
+    verify = await run_verify(cmd, ws, _config.VERIFY_TIMEOUT_S)
+    _emit(req, "test-pass", "TestPass", {"files": files, "red": not verify["passed"],
+                                         "exit_code": verify["exit_code"], "refreeze": prior is not None})
+    if verify["passed"] and prior is None:
+        return stop("the tests written from the contract pass before any code is written, so they do "
+                    f"not pin the change: `{cmd}` is green with {', '.join(files or changed)}")
+    if not await _practices.commit_test_pass(ws, files, verify, plan.contract):
+        return {"status": "error", "error": "test pass: the engine could not commit the test files",
+                "usage": usage}, usage
+    plan.test_pass = await _practices.recorded_test_pass(ws, plan.scope)
+    if plan.test_pass is None:
+        return {"status": "error", "error": "test pass: the committed record could not be read back",
+                "usage": usage}, usage
+    return None, usage
+
+
+def _refuse(req: EngineRequest, cmd: str, output: str) -> dict:
+    refusal = {"ran": True, "cmd": cmd, "passed": False, "exit_code": None, "timed_out": False, "output": output}
+    _emit_verify(req, refusal)
+    return refusal
+
+
+async def _gate(req: EngineRequest, cmd: str, plan: Optional[_practices.Plan] = None,
+                mutations: "list[_practices.Mutation] | None" = None) -> tuple[dict, Optional[str]]:
     """The end-of-session verdict plus the feedback to hand back when red: the
-    project's checks run green AND the first-run manifest is TRACKED."""
+    project's checks run green, the first-run manifest is TRACKED, the
+    test-pass files are untouched, and each critical criterion's mutation
+    turns the checks red (#1053)."""
     verify = await run_verify(cmd, req.workspace_dir, _config.VERIFY_TIMEOUT_S,
                               docs_only=await docs_only_diff(req.workspace_dir))
     _emit_verify(req, verify)
@@ -780,13 +882,34 @@ async def _gate(req: EngineRequest, cmd: str) -> tuple[dict, Optional[str]]:
         return verify, VERIFY_FAILED_PROMPT.format(cmd=cmd, code=verify["exit_code"],
                                                    tail=(verify["output"] or "")[-3000:])
     untracked = await untracked_manifest(req.workspace_dir)
-    if untracked is None:
+    if untracked is not None:
+        return _refuse(req, f"git ls-files --error-unmatch {untracked}", f"`{untracked}` is not tracked on this "
+                       "branch — the manifest never reaches the next session"), \
+            UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
+    if plan is None:
         return verify, None
-    refusal = {"ran": True, "cmd": f"git ls-files --error-unmatch {untracked}", "passed": False,
-               "exit_code": None, "timed_out": False,
-               "output": f"`{untracked}` is not tracked on this branch — the manifest never reaches the next session"}
-    _emit_verify(req, refusal)
-    return refusal, UNTRACKED_MANIFEST_PROMPT.format(path=untracked)
+    plan.notes = []
+    frozen: tuple[str, ...] = ()
+    if plan.test_pass is not None:
+        commit, frozen = plan.test_pass.commit, plan.test_pass.files
+        touched, accepted = await _practices.frozen_violations(req.workspace_dir, commit, frozen)
+        plan.notes += _practices.accepted_note(accepted)
+        if touched:
+            return _refuse(req, f"git diff --name-status {commit[:10]} -- <test-pass files>",
+                           "the code pass touched the test-pass files: " + "; ".join(touched)), \
+                _practices.FROZEN_FAILED_PROMPT.format(commit=commit[:10], violations="; ".join(touched))
+    if plan.critical:
+        failures, could_not_run, detail = await _practices.mutation_failures(
+            req.workspace_dir, cmd, plan.critical, mutations or [], frozen,
+            lambda c, tree: run_verify(c, tree, _config.VERIFY_TIMEOUT_S))
+        _emit(req, "mutation", "MutationCheck", {"critical": len(plan.critical), "failures": failures,
+                                                 "couldNotRun": could_not_run, "detail": detail})
+        if could_not_run:
+            plan.notes.append(f"the one-mutation check on the critical criteria did not run: {could_not_run}")
+        if failures:
+            return _refuse(req, "one-mutation check", "the one-mutation check failed: " + "; ".join(failures)), \
+                _practices.MUTATION_FAILED_PROMPT.format(failures="\n".join(f"- {f}" for f in failures))
+    return verify, None
 
 
 def _emit(req: EngineRequest, id: str, type: str, payload: dict) -> None:

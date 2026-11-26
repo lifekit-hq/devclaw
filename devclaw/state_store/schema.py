@@ -72,7 +72,8 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
               closed_at       INTEGER,
               outcome         TEXT,
               last_seen_json  TEXT,
-              last_seen_at    INTEGER
+              last_seen_at    INTEGER,
+              size            TEXT NOT NULL DEFAULT 'M'  -- S/M/L, set once at goal start (#1053)
             );
             CREATE TABLE IF NOT EXISTS decisions (
               id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -95,6 +96,10 @@ def bootstrap(db: sqlite3.Connection, lock: threading.RLock, commit: Callable[[]
                 db.execute(f"ALTER TABLE tasks ADD COLUMN {col} {decl}")
             except sqlite3.OperationalError:
                 pass  # already there
+        try:
+            db.execute("ALTER TABLE goals ADD COLUMN size TEXT NOT NULL DEFAULT 'M'")
+        except sqlite3.OperationalError:
+            pass  # already there
         db.executescript(
             """
             CREATE INDEX IF NOT EXISTS idx_tasks_status      ON tasks(status);

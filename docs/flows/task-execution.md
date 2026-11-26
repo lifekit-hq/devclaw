@@ -30,6 +30,9 @@ tick again (settle wakes it)
   `DEVCLAW_SILENCE_S` → the session's process group is killed, the tree is
   snapshotted, `INTERRUPTED`; the next row resets the goal branch and starts a
   fresh session (never `--resume` — the old session's edits are not in the tree);
+- the test pass (M/L goal with `## Done when` criteria, [architecture](../architecture.md#size-tests-first-one-mutation-1053-spec-048)) leaves its tests green before any code, writes no test, or leaves no `.devclaw/verify` → `BLOCKED` with that reason;
+- the code pass edits or deletes a test-pass file (a file named like a test, or runner config the issue does not name), or a critical criterion's one-line mutation leaves every test green → a refusal naming the file or the criterion is handed back like a red verify, and counts against the same rounds; a mutation check that could not run, a frozen file accepted after a conflicted merge of the base, or a test pass whose files are not named like tests (nothing frozen), passes and is posted once on the goal thread;
+- the head the hand-off shipped edits or deletes a test-pass file → `BLOCKED` naming the file; the pull request is left as pushed (the mutation check is not re-run on it);
 - the verify is red after `DEVCLAW_VERIFY_ROUNDS` (each round `--resume`s the same session in-run) →
   `INTERRUPTED`; the next row starts a fresh session on the reset goal branch;
 - the hand-off did not ship (`no-mistakes init` failed, or the branch's newest no-mistakes run does not carry the session's head or did not pass, or the session left uncommitted changes and no commit) → `INTERRUPTED` with the reason; a gate question only the owner can settle → `BLOCKED`.
@@ -39,7 +42,7 @@ The request (`engine/__init__.py` → `EngineRequest`): `kind`, `workspace_dir`
 discovers `.devclaw/verify`), `resume_session_id` (the row's own session, set only
 when a quota pause requeued it), `on_session` (persists the session id the moment the stream names
 it), `hand_off` (the row's `deliver` flag: ship a green, unpushed branch through
-no-mistakes), `closes` (the goal's issues, passed as `--closes`). The session's env is the host's less the refused metered keys and the
+no-mistakes), `closes` (the goal's issues, passed as `--closes`), `size` (the goal's S/M/L). The session's env is the host's less the refused metered keys and the
 host-only credentials — `GH_TOKEN`, the MCP bearer `DEVCLAW_TOKEN`, the
 `DEVCLAW_GOAL_NOTIFY_URL` webhook (`credentials.session_env`); `no-mistakes init`
 runs under the host env less only the metered keys, so the daemon it starts can

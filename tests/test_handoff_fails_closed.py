@@ -69,7 +69,7 @@ def stubbed(monkeypatch):
         seen.setdefault("calls", []).append(("turn", len(turns)))
         return engine.Turn(session_id="s1", ok=True, text="DELIVERED: one increment")
 
-    async def fake_gate(req, cmd):
+    async def fake_gate(req, cmd, *_):
         return {"ran": True, "cmd": cmd, "passed": True, "exit_code": 0, "timed_out": False, "output": ""}, None
 
     async def fake_unshipped(workspace_dir):
@@ -174,9 +174,9 @@ async def test_the_shipped_check_fails_closed_on_real_git_ancestry(tmp_path, mon
 
     monkeypatch.setattr(engine, "_host", host)
     host.run_head = run_head
-    assert await engine.shipped_run(str(work), head) == (None, f"no no-mistakes run carries {head[:8]}")
+    assert await engine.shipped_run(str(work), head) == (None, f"no no-mistakes run carries {head[:8]}", "")
     git(work, "remote", "set-url", "no-mistakes", str(gate))
-    assert await engine.shipped_run(str(work), head) == (PR, "")
+    assert await engine.shipped_run(str(work), head) == (PR, "", run_head)
     host.run_head = unrelated
     assert (await engine.shipped_run(str(work), head))[0] is None
     host.run_head = "d" * 40

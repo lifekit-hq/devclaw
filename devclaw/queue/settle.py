@@ -177,7 +177,7 @@ class SettleMixin:
             verify_cmd=row.verify_cmd,
             resume_session_id=row.session_id if resumed else None,
             on_session=functools.partial(self._store.set_task_session_id, task_id),
-            hand_off=row.deliver, closes=self._goal_issues(row.parent_goal_id),
+            hand_off=row.deliver, closes=self._goal_issues(row.parent_goal_id), size=self._goal_size(row.parent_goal_id),
         )
         try:
             result = await self._runner(request)
@@ -239,6 +239,10 @@ class SettleMixin:
     def _goal_issues(self, goal_id: "str | None") -> "tuple[int, ...]":
         goal = self._store.get_goal(goal_id) if goal_id else None
         return tuple(goal.issues) if goal is not None else ()
+
+    def _goal_size(self, goal_id: "str | None") -> str:
+        goal = self._store.get_goal(goal_id) if goal_id else None
+        return goal.size if goal is not None else "M"
 
     async def _maybe_pause(self, task_id: str, kind: str, workspace_dir: str, text: str) -> bool:
         """A usage / auth / provider-outage failure pauses the ACCOUNT and

@@ -158,7 +158,7 @@ posted again once for it, with no session spawned. The class is never stored
 
 ### What the host stores (pillar 5)
 
-`goals` (identity, `last_seen`, outcome), `decisions`, `tasks` + `events`
+`goals` (identity, `last_seen`, outcome, and `size`: S/M/L, set once at goal start), `decisions`, `tasks` + `events`
 (the execution record), `meta` (the pause, the hold, the window, the dial,
 the deploy intent), and `user_preferences`: the console's appearance per gate
 identity (the `X-Auth-Request-Email` the sso forwardAuth sets), written only by
@@ -211,6 +211,109 @@ otherwise deliver a branch carrying neither, and every later session would
 re-derive from scratch with nothing able to notice. The untracked path is named
 back to the session, which un-ignores and commits it.
 
+### Size, tests first, one mutation (#1053, spec 048)
+
+Three practices ride the same loop, all in `engine/practices.py`. Each one is
+a mechanical check on a choice the model makes.
+
+**Size** is set once, when `create_goal` reads the issues (`size_of`), and
+stored as `goals.size`. `get_goal` and `list_goals` show it. The rules:
+
+- **L**: the title or the `## Done when` / `## Acceptance` section (the whole
+  body when there is none) names money (payment, billing, invoice, refund,
+  price), auth (auth, login, password, credential, OAuth, a user, role,
+  access or admin permission), a data migration (a data, database or schema
+  migration), or a breaking change ("no", "not", "without" or "non-" breaking
+  is not one). L wins over everything.
+- **S**: one issue names exactly one file (a code span with a path or an
+  extension) and says "no behaviour change".
+- **M**: everything else. An issue cannot declare its own size.
+
+The session's prompt opens with its size. The stages an S goal skips are the
+test pass, the one-mutation check, and the optional stages `.devclaw/workflow.md`
+names (a spec, a plan, a design review). M leaves the workflow's optional
+stages to the session. L skips none.
+
+**Tests first.** This runs on an M or L goal whose brief carries `## Done when`
+criteria, when the branch has no test pass of its own yet and no commit beyond
+its merge-base with the default branch other than the host's `wip(devclaw):`
+snapshots. A branch that already carries work and no record (a goal in flight
+when this shipped) skips the test pass. A session paused by the quota mid-pass
+restarts as a test writer, never as the engineer, and its snapshotted partial
+tests count as the pass's files:
+
+1. A fresh test-writer session writes tests from the criteria and no product
+   code beyond the minimum stub the tests need to fail for the right reason.
+2. `.devclaw/verify` must then run red. If it is green, the run stops `BLOCKED`
+   with "the tests written from the contract pass before any code is written".
+   A test pass that writes nothing, or leaves no verify script, also stops
+   `BLOCKED`.
+3. The engine commits everything the writer changed. The trailers
+   `Devclaw-Test-Pass: <branch> …`, `Devclaw-Contract: <hash of the criteria>`
+   and one `Devclaw-Test-File: <path>` per file named like a test (under a
+   `tests/`, `test/`, `spec/` or `__tests__/` directory or a `.Tests` project,
+   `test_*`, `*_test.*`, `*_spec.*`, `*.test.*` or `*.spec.*`, in any case) or
+   runner config are the record; git holds it, not the host. A stub, a manifest
+   or a lock file the writer touched is committed but not frozen. When no file
+   the writer wrote is named like a test (tests in a layout the rule does not
+   know), the run is not stopped: the red-first check still applies, no test is
+   frozen (runner config the writer touched still is), and every later session
+   on the branch says so; the goal thread is told once that no test file was
+   recognised.
+4. The code pass is a second fresh session, told which files are frozen.
+
+The frozen set is the listed test files plus, when there is one, the files that
+decide which tests run and are collected, when they exist at the test-pass commit:
+`.devclaw/verify`, any `conftest.py`, `pytest.ini`, and `jest.config.*` /
+`vitest.config.*`. Runner config the goal's issue names (its path; a config
+file's own name also counts, `.devclaw/verify` only by its path) is in scope and
+not frozen; nothing else is exempt. At every gate after that, a diff that edits
+or deletes one of the frozen files is refused with the file named. So is a branch that no longer
+contains the commit. The check runs once more on the head the no-mistakes
+hand-off shipped, because the pipeline's fixes land after the gate: a shipped
+head that touches a frozen file ends the task `BLOCKED` naming the file, and the
+pull request is left as pushed — not reverted, and not merged by the done-gate. The diff is taken against the test-pass commit with the
+default branch merged in, so a change that arrives through a merge of the base
+is not the code pass's. A frozen file the default branch and the test pass
+changed in conflict is accepted in whatever resolution the branch holds, and
+that is noted on the goal thread.
+
+When the `## Done when` criteria change, their hash no longer matches the
+record. The next session runs the test pass again: the writer revises the
+tests, red is not asked (the code exists), and the engine commits a new record
+that refreezes the set. A brief missing one of the goal's issues (a failed
+read) is not a change. Nothing else invalidates a record. The session gets the refusal through the usual
+verify round, and when the rounds run out the task is `INTERRUPTED`. Tests the
+code pass adds in new files are allowed. The trailer names the branch, because
+a squash-merge copies an earlier goal's trailer onto the default branch.
+
+**One mutation.** A criterion is critical when it is tagged `(critical)`,
+`[critical]`, `**critical**` or `critical:`.
+
+1. On an M or L goal, the session names one single-line mutation per critical
+   criterion in a fenced json `mutations` block: the file, the exact line, and
+   that line with the condition broken.
+2. The engine makes a scratch copy: a detached `git worktree` of HEAD with the
+   working tree's changes applied, removed afterwards. Ignored files (a
+   `.venv`, `node_modules`) are not in it and are not rebuilt.
+3. Verify runs there unmutated first. If it is red, the check could not run
+   here: nothing is counted against the branch, but it is said out loud — the
+   `MutationCheck` event and a `notice` record the goal layer posts on the
+   goal thread (the engine result's `notes`) — once per goal: each note is
+   compared on its own, its text names the command and not its output (that
+   stays on the event), so a later session with the same note posts nothing.
+   The pull request description does not carry it.
+4. It applies each mutation in the copy and requires verify to go red.
+5. A mutation every test survives fails the gate with the criterion named. So
+   does a missing or invalid mutation: a file the test pass froze, a file named
+   like a test (the same rule as the test pass's), a `.devclaw/` file, or a
+   line that does not occur exactly once.
+6. The newest mutations block the session sent in this run counts; a later turn
+   that omits it keeps the earlier one.
+7. A goal with no critical criterion skips the check. The real tree is never
+   mutated. The check runs before the hand-off only; the pushed head is not
+   mutated again.
+
 ### The branch ships through no-mistakes
 
 The pipeline exists before the session does: the engine runs `no-mistakes init`
@@ -251,7 +354,7 @@ devclaw/server/      tools/ (goals, projects, control, intake, doctor) · routes
 devclaw/goal/        tick.py · world.py · prompts.py · donegate.py · github.py · service.py · notify.py · self_deploy.py
 devclaw/prompts/     session.md · done-gate.md
 devclaw/task_queue.py · queue/settle.py · queue/admission.py
-devclaw/engine/      claude.py · stub.py · workspace.py
+devclaw/engine/      claude.py · practices.py (size, tests first, one mutation) · stub.py · workspace.py
 devclaw/skills/      the worker-kind instructions the engine prepends (_common.md, _writes-code/, <kind>/, craft/)
 devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py · goals.py · preferences.py
 devclaw/loom/        limits.py · untrusted.py

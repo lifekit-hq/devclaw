@@ -7,18 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import datetime as _dt
+import json
 import sys
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
 from .. import config as _config
 from ..engine.workspace import lease_goal_checkout, remove_goal_checkout
-from ..state_store import (
-    EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REVIEW, Goal, StateStore, Task,
-)
-from . import blast as _blast
-from . import donegate as _donegate
-from . import github as _gh
+from ..state_store import EXIT_BLOCKED, EXIT_DONE, EXIT_INTERRUPTED, EXIT_REVIEW, Goal, StateStore, Task
+from . import blast as _blast, donegate as _donegate, github as _gh
 from .notify import Notifier
 from .prompts import review_brief, session_brief
 from .world import World, WorldReader
@@ -139,6 +136,10 @@ async def tick_goal(goal: Goal, ctx: TickContext) -> str:
                                    + f"\n**devclaw note:** issue #{i.number} does not carry the `{_gh.READY_LABEL}` label. "
                                    "The goal keeps running; shape the issue and add the label.")
             ctx.log(goal.id, f"issue #{i.number} lacks the {_gh.READY_LABEL!r} label")
+    said = [c.body for c in world.records("notice") if c.field("why") == "unchecked"]  # unchecked gates, #1053
+    notes = [str(n) for n in json.loads(last.result_json or "{}").get("notes") or [] if not any(str(n) in b for b in said)] if last else []
+    if notes and last and not any(c.field("task") == last.id for c in world.records("notice")) and (number := _thread_number(goal, world)):
+        await ctx.post_comment(goal.repo_url, number, _gh.marker("notice", why="unchecked", task=last.id) + "\n**devclaw note:** " + "; ".join(notes))
 
     # a session that ended BLOCKED: post its question once, then wait
     if last is not None and last.exit == EXIT_BLOCKED and not world.block_exists(task_id=last.id):
@@ -227,9 +228,8 @@ async def _settle_review(ctx: TickContext, goal: Goal, world: World, review: Tas
     head = world.pr.head_sha
     existing = [v for v in world.verdicts_for_head(head) if v.field("task") == review.id]
     if not existing:
-        import json as _json
         try:
-            result = _json.loads(review.result_json or "{}")
+            result = json.loads(review.result_json or "{}")
         except ValueError:
             result = {}
         verdict = _donegate.parse_verdict(str(result.get("agent_output") or ""))
