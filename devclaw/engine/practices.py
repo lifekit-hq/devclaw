@@ -2,7 +2,7 @@
 one mutation per critical criterion.
 
 - **Size** S / M / L is set once at goal start from the issue by the rules in
-  :func:`size_of` (written out in ``docs/flows/task-execution.md``). S skips the
+  :func:`size_of` (written out in ``docs/architecture.md``). S skips the
   optional stages — the test pass, the mutation check and the workflow's own
   optional planning stages; L skips none.
 - **Test-first.** On a goal whose contract has ``## Done when`` criteria, a
