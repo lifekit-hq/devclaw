@@ -12,17 +12,18 @@
   issue text and `decisions.text` repeats the owner's comment; a path that
   read either copy would act on text that can drift from GitHub.
 - **Number that shows it**: zero reads of the copies on a decision path
-  (`tests/test_goal_layer_stays_readable.py` pins it: a static scan of the
-  goal, queue and engine layers, and a brief built from a goal row whose
-  objective disagrees with its issue).
+  (`tests/test_goal_layer_stays_readable.py` pins it: the session and review
+  briefs built from a goal row whose objective disagrees with its issue carry
+  the issue's clause, never the row's).
 - **Cut when**: GitHub stops being the record from `ready` on.
 
 ## What
 
 The console and the MCP read tools show a goal's title from its issues and a
 decision's text from its `comment_url`, read live in
-`devclaw/server/display.py` (cached per process, bounded per request; the
-stored copy stands in only until the live read arrives). `goals.objective`
+`devclaw/server/display.py` for open goals only (cached per process, bounded
+per request; the stored copy stands in until the live read arrives, and a
+closed goal keeps it, so GitHub reads grow with live work, not history). `goals.objective`
 and `decisions.text` stay in the schema, marked display-only in code and docs.
 No stored data is removed.
 

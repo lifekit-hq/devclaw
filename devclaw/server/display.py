@@ -2,9 +2,10 @@
 
 The issue is the record from ``ready`` on, and a decision is the comment it
 posted. The title a goal row shows and the text a decision shows are read live
-here, from the issue and the decision's ``comment_url``. The stored copies
-(``goals.objective``, ``decisions.text``) are display-only: they stand in only
-while a live read has not arrived, and no tick, gate or merge path reads them.
+here, from the issue and the decision's ``comment_url``, for open goals only:
+a closed goal shows its stored copies, so reads grow with live work, never
+with history. The stored copies (``goals.objective``, ``decisions.text``) are
+display-only: no tick, gate or merge path reads them.
 
 Reads are cached per process (``_TTL_S``) and bounded per request
 (``_BUDGET_S``): a cold console load shows what arrived in time — the goal id
@@ -43,19 +44,6 @@ async def _comment_body(url: str) -> str:
         return ""
     rc, out = await _gh.gh("api", f"repos/{m.group(1)}/issues/comments/{m.group(2)}", "--jq", ".body")
     return out.strip() if rc == 0 else ""
-
-
-#: injectable readers (tests pass fakes)
-title_reader: Callable[[str, int], Awaitable[str]] = _issue_title
-comment_reader: Callable[[str], Awaitable[str]] = _comment_body
-
-
-async def _read_title(repo: str, n: int) -> str:
-    return await title_reader(repo, n)
-
-
-async def _read_comment(url: str) -> str:
-    return await comment_reader(url)
 
 
 def _ensure(key: tuple, make: Callable[[], Awaitable[str]]) -> Optional[asyncio.Task]:
@@ -104,20 +92,22 @@ def _comment_urls(row: dict) -> list[dict]:
 
 
 async def with_display(rows: list[dict]) -> list[dict]:
-    """Fill each goal row's ``objective`` (its issues' titles) and every
-    decision's ``text`` (its comment's body) from GitHub. Mutates and returns."""
+    """Fill each open goal row's ``objective`` (its issues' titles) and every
+    decision's ``text`` (its comment's body) from GitHub; a closed row keeps
+    its stored copies. Mutates and returns."""
+    live = [r for r in rows if r.get("outcome") is None]
     tasks = []
-    for row in rows:
+    for row in live:
         repo = str(row.get("repoUrl") or "")
         for n in row.get("issues") or []:
-            tasks.append(_ensure(_title_key(repo, n), functools.partial(_read_title, repo, n)))
+            tasks.append(_ensure(_title_key(repo, n), functools.partial(_issue_title, repo, n)))
         for h in _comment_urls(row):
             url = str(h["commentUrl"])
-            tasks.append(_ensure(_comment_key(url), functools.partial(_read_comment, url)))
+            tasks.append(_ensure(_comment_key(url), functools.partial(_comment_body, url)))
     waiting = [t for t in tasks if t is not None]
     if waiting:
         await asyncio.wait(waiting, timeout=_BUDGET_S)
-    for row in rows:
+    for row in live:
         repo = str(row.get("repoUrl") or "")
         titles = [_cached(_title_key(repo, n)) for n in row.get("issues") or []]
         row["objective"] = "; ".join(t for t in titles if t)[:300] or row.get("objective") or ""

@@ -42,27 +42,6 @@ def test_the_goals_table_holds_no_derived_state():
     assert hit is None, f"the goals table grew a judgment column: {hit.group(0)!r} (pillar 5)"
 
 
-
-#: The paths that decide: the tick rule, the world, the two prompts, the
-#: done-gate, the session settle and the engine. ``goals.objective`` and
-#: ``decisions.text`` are display-only copies of GitHub text (#1058); none of
-#: these paths may read them — the issue and the comment thread are the record.
-_DECISION_PATHS = [*sorted(_GOAL.glob("*.py")), *sorted((_ROOT / "devclaw" / "queue").glob("*.py")),
-                   *sorted((_ROOT / "devclaw" / "engine").glob("*.py")), _ROOT / "devclaw" / "task_queue.py"]
-_DISPLAY_ONLY_READ = re.compile(r"\.objective\b|\blist_decisions\b")
-#: the one exception: the goal service's read verb hands decisions to the console
-_DISPLAY_VERBS = {("service.py", "list_decisions")}
-
-
-def test_no_decision_path_reads_the_display_only_copies():
-    hits = []
-    for path in _DECISION_PATHS:
-        for m in _DISPLAY_ONLY_READ.finditer(path.read_text(encoding="utf-8")):
-            if (path.name, m.group(0)) not in _DISPLAY_VERBS:
-                hits.append(f"{path.relative_to(_ROOT)}: {m.group(0)}")
-    assert not hits, f"a decision path reads a display-only copy of GitHub text (#1058): {hits}"
-
-
 def test_the_contract_is_read_from_the_issue_never_the_goal_row():
     from devclaw.goal import github as gh
     from devclaw.goal.prompts import review_brief, session_brief

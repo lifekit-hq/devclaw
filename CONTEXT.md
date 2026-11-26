@@ -4,7 +4,7 @@ An autonomous delivery host behind MCP: you hand it GitHub issues, it spawns `cl
 ## Language
 
 **Goal**:
-The unit of work devclaw supervises: one or more GitHub issues (each labelled `ready`, read live), a display-only objective (no path decides on it; the console shows the issue's live title) and a branch `goal/<id>`, stored as a row in `goals` and closed with an outcome (achieved, cancelled, ...). One goal yields exactly one PR.
+The unit of work devclaw supervises: one or more GitHub issues (each labelled `ready`, read live), a display-only objective (no path decides on it; the issue's live title supersedes it, so a caller-supplied label shows only until the live title has been read) and a branch `goal/<id>`, stored as a row in `goals` and closed with an outcome (achieved, cancelled, ...). One goal yields exactly one PR.
 
 **Project**:
 A registered repository (`register_project`) that goals run against. At most one goal per project has a live session at a time.

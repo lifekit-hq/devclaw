@@ -24,7 +24,8 @@ async def create_goal(goal_id: str, project_id: str, issues: list[int], objectiv
     label (read live; the shape step sets it). Every session works on branch
     ``goal/<goal_id>`` and delivers one cumulative PR; a confirmed-achieved
     close squash-merges it. ``objective`` is a display-only label no path
-    decides on; reads show the issues' live titles (#1058)."""
+    decides on; the issues' live titles supersede it, so a caller-supplied
+    label shows only until the live title is read (and on a closed goal) (#1058)."""
     if not goal_id or not goal_id.replace("-", "").replace("_", "").isalnum():
         raise ToolError("create_goal requires a slug-shaped goal_id")
     if not issues:
