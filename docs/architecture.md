@@ -358,6 +358,6 @@ devclaw/engine/      claude.py · practices.py (size, tests first, one mutation)
 devclaw/skills/      the worker-kind instructions the engine prepends (_common.md, _writes-code/, <kind>/, craft/)
 devclaw/state_store/ core.py · schema.py · rows.py · control.py · events.py · goals.py · preferences.py
 devclaw/loom/        limits.py · untrusted.py
-devclaw/credentials.py · probes.py · config.py · project_registry.py · doctor/ · cli.py
+devclaw/credentials.py · probes.py · config.py · project_registry.py · doctor/ · cli.py · envelopes.py (read-only `devclaw tasks --json` export of open goals and tasks, #1061)
 frontend/            the console: an Angular PWA on @lifekit-hq/ui, built into devclaw/server/console_dist and served at /console
 ```
