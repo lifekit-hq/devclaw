@@ -10,6 +10,7 @@ from typing import Optional
 from . import config as _config
 from .dispatch_gate import _parse_hhmm
 from .doctor import run_doctor
+from .envelopes import open_envelopes
 from .project_registry import ProjectExists, ProjectRegistry
 from .state_store import StateStore
 
@@ -92,9 +93,23 @@ def _cmd_projects(args) -> int:
     return 2
 
 
+def _cmd_tasks(args) -> int:
+    envelopes = open_envelopes(_config.db_path())
+    if args.json:
+        print(json.dumps(envelopes, indent=2))
+    else:
+        for e in envelopes:
+            print(f"{e['id']:<40} {e['stage']:<7} {e['state']:<14} {e['owner']:<8} {e['ref']}")
+    return 0
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="devclaw", description="devclaw control-plane CLI")
     sub = parser.add_subparsers(dest="group", required=True)
+
+    p_tasks = sub.add_parser("tasks", help="read-only export of open goals and tasks as envelopes")
+    p_tasks.add_argument("--json", action="store_true")
+    p_tasks.set_defaults(func=_cmd_tasks)
 
     p_doctor = sub.add_parser("doctor", help="read-only instance diagnostics")
     p_doctor.add_argument("--json", action="store_true")

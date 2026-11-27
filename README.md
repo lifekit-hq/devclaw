@@ -70,7 +70,8 @@ DEVCLAW_TRANSPORT=http DEVCLAW_PORT=8000 devclaw-mcp   # MCP at /mcp, the consol
 ```
 
 `devclaw-mcp` is the server; `devclaw` is the CLI (`devclaw doctor`,
-`devclaw schedule …`, `devclaw projects …`). Configuration is environment-only:
+`devclaw schedule …`, `devclaw projects …`, `devclaw tasks --json` — a read-only export of open
+goals and tasks as envelopes that point at their issues). Configuration is environment-only:
 every variable is in [`docs/reference/env-vars.md`](./docs/reference/env-vars.md),
 pinned to `devclaw/config.py` by a sync test.
 
