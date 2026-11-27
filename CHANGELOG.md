@@ -2,6 +2,23 @@
 
 All notable changes to devclaw. Newest first. One release candidate tagged (`v0.1.0-rc.1`); every section is dated by the day its work landed on `main`.
 
+## [2.9.0](https://github.com/lifekit-hq/devclaw/compare/v2.8.2...v2.9.0) (2026-11-27)
+
+
+### Features
+
+* **cli:** read-only devclaw tasks --json export of open goals and tasks as envelopes ([#1070](https://github.com/lifekit-hq/devclaw/issues/1070)) ([3115c82](https://github.com/lifekit-hq/devclaw/commit/3115c82756193a0076fb838776a7245baccbc675))
+* **cli:** report devclaw tasks --json states as A2A state names ([#1074](https://github.com/lifekit-hq/devclaw/issues/1074)) ([ef3fc74](https://github.com/lifekit-hq/devclaw/commit/ef3fc741c899137dc550694a36851ab17d101e05))
+* **engine:** add test-first pass, S/M/L sizing and one-mutation gate ([#1063](https://github.com/lifekit-hq/devclaw/issues/1063)) ([2b454ed](https://github.com/lifekit-hq/devclaw/commit/2b454ed4de6c3f2ed81d0acf5bc423c8853a47e4))
+* **goal:** refuse create_goal for issues without the ready label ([#1057](https://github.com/lifekit-hq/devclaw/issues/1057)) ([d891b2b](https://github.com/lifekit-hq/devclaw/commit/d891b2bb2acf11c1b5e6fef91aa805c043f29a39))
+* **server:** file_intake targets for the vault and the fleet; refuse an unknown project ([#1062](https://github.com/lifekit-hq/devclaw/issues/1062)) ([549cd57](https://github.com/lifekit-hq/devclaw/commit/549cd5767600cc03bc869888dc6c9a6aff9f109b))
+* **server:** show goal titles and decision text live from GitHub ([#1059](https://github.com/lifekit-hq/devclaw/issues/1059)) ([d1ab3fe](https://github.com/lifekit-hq/devclaw/commit/d1ab3fe590a53163ea57db748d396f01ac23926b))
+
+
+### Documentation
+
+* add CONTEXT.md domain glossary ([#1054](https://github.com/lifekit-hq/devclaw/issues/1054)) ([dc585a6](https://github.com/lifekit-hq/devclaw/commit/dc585a66e0d784dd1a8f572d3e781025ef83f3ac))
+
 ## [2.8.2](https://github.com/lifekit-hq/devclaw/compare/v2.8.1...v2.8.2) (2026-11-22)
 
 
