@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import get_args
 
 from devclaw.envelopes import (A2A_STATES, ENVELOPE_KEYS, GOAL_STATES, TASK_STATES, _a2a,
-                               _goal_envelope, open_envelopes)
+                               _goal_envelope, _task_envelope, open_envelopes)
 from devclaw.goal.service import _state_word
 from devclaw.state_store import EXITS, StateStore
 from devclaw.state_store.rows import TaskStatus
@@ -118,6 +118,20 @@ def test_the_export_never_writes(db, capsys, monkeypatch):
     assert _snapshot(path.parent) == before
 
 
+#: issue #1071's mapping, with the two ruled deviations: a DONE proposal goes to
+#: the host's done-gate and an INTERRUPTED session is followed by a fresh one,
+#: so both stay devclaw's work (``working``), not the owner's
+EXPECTED_GOAL_STATES = {
+    "new": "submitted", "running": "working", "waiting": "working",
+    "proposed done": "working", "interrupted": "working", "blocked": "input-required",
+    "achieved": "completed", "cancelled": "canceled", "closed": "failed",
+}
+EXPECTED_TASK_STATES = {
+    "pending": "submitted", "running": "working", "done": "completed",
+    "failed": "failed", "cancelled": "canceled",
+}
+
+
 def _every_goal_word() -> set[str]:
     """Every word ``_state_word`` can produce: open goals over every task status
     and exit, closed goals over every outcome the tick writes, and none."""
@@ -133,9 +147,9 @@ def _every_goal_word() -> set[str]:
 
 def test_every_devclaw_state_maps_to_an_a2a_state_and_the_owner_only_on_input_required():
     words = _every_goal_word()
-    assert words == set(GOAL_STATES), "a goal state word with no A2A mapping (or a dead one)"
-    assert set(get_args(TaskStatus)) == set(TASK_STATES), "a task status with no A2A mapping"
-    assert set(GOAL_STATES.values()) | set(TASK_STATES.values()) <= set(A2A_STATES)
+    assert words == set(EXPECTED_GOAL_STATES), "a goal state word with no expected A2A state (or a dead one)"
+    assert set(get_args(TaskStatus)) == set(EXPECTED_TASK_STATES), "a task status with no expected A2A state"
+    assert set(EXPECTED_GOAL_STATES.values()) | set(EXPECTED_TASK_STATES.values()) <= set(A2A_STATES)
 
     for word in words:
         goal = SimpleNamespace(open=True, outcome=None, created_at=0, repo_url="", project_id="p",
@@ -147,8 +161,15 @@ def test_every_devclaw_state_maps_to_an_a2a_state_and_the_owner_only_on_input_re
         if word in ("achieved", "cancelled", "closed"):
             goal.open, goal.outcome = False, (None if word == "closed" else word)
         env = _goal_envelope(goal, last)
-        assert (env["state"], env["detail"]) == (GOAL_STATES[word], word)
+        assert (env["state"], env["detail"]) == (EXPECTED_GOAL_STATES[word], word)
         assert (env["owner"] == "owner") == (env["state"] == "input-required")
+
+    for status, state in EXPECTED_TASK_STATES.items():
+        env = _task_envelope(SimpleNamespace(id="t", kind="implement_feature", status=status,
+                                             started_at=0, created_at=0))
+        assert (env["state"], env["detail"], env["owner"]) == (state, status, "devclaw")
 
     with pytest.raises(ValueError):
         _a2a(GOAL_STATES, "some new word")
+    with pytest.raises(ValueError):
+        _a2a(TASK_STATES, "some new status")
